@@ -239,6 +239,12 @@ class PreviewDeliverer(Deliverer):
                     extension=extension
                 ),
                 release_source=bridge._release_payload,
+                # Request-scoped like the two knobs above, and for the extra
+                # reason that a callback is a live UI object: parked on the
+                # deliverer -- a CLASS attribute, shared by every instance of
+                # the bridge -- it would outlive the panel that supplied it and
+                # keep being called into a closed window.
+                progress=request.get("progress"),
                 logger=bridge.logger,
             )
         except (OSError, RuntimeError, ValueError) as error:

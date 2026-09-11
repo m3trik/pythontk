@@ -3,6 +3,23 @@
   "source_root": "pythontk/pythontk",
   "modules": [
     {
+      "relpath": "__init__.py",
+      "summary": "",
+      "functions": [],
+      "classes": [],
+      "constants": [
+        {
+          "name": "DEFAULT_INCLUDE",
+          "qualname": "DEFAULT_INCLUDE",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 11,
+          "deprecated": false
+        }
+      ]
+    },
+    {
       "relpath": "audio_utils/_audio_utils.py",
       "summary": "",
       "functions": [],
@@ -116,7 +133,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/_core_utils.py",
@@ -241,7 +259,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/app_handoff.py",
@@ -615,6 +634,62 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "SEND_TO",
+          "qualname": "SEND_TO",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 62,
+          "deprecated": false
+        },
+        {
+          "name": "SAVE_AS",
+          "qualname": "SAVE_AS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 63,
+          "deprecated": false
+        },
+        {
+          "name": "ROUND_TRIP",
+          "qualname": "ROUND_TRIP",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 64,
+          "deprecated": false
+        },
+        {
+          "name": "CARRIER_PARAM",
+          "qualname": "CARRIER_PARAM",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 67,
+          "deprecated": false
+        },
+        {
+          "name": "CARRIER_EXTENSIONS",
+          "qualname": "CARRIER_EXTENSIONS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 74,
+          "deprecated": false
+        },
+        {
+          "name": "CARRIER_BY_EXTENSION",
+          "qualname": "CARRIER_BY_EXTENSION",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 78,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -656,6 +731,17 @@
               "deprecated": false
             }
           ]
+        }
+      ],
+      "constants": [
+        {
+          "name": "FFMPEG_PLATFORMS",
+          "qualname": "FFMPEG_PLATFORMS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 26,
+          "deprecated": false
         }
       ]
     },
@@ -843,7 +929,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/cancel_scope.py",
@@ -1074,6 +1161,17 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "T",
+          "qualname": "T",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 53,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -1088,7 +1186,8 @@
           "bases": [],
           "members": []
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/cli.py",
@@ -1131,6 +1230,53 @@
               "deprecated": false
             }
           ]
+        }
+      ],
+      "constants": [
+        {
+          "name": "ENV_HOST",
+          "qualname": "ENV_HOST",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 11,
+          "deprecated": false
+        },
+        {
+          "name": "ENV_USER",
+          "qualname": "ENV_USER",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 12,
+          "deprecated": false
+        },
+        {
+          "name": "ENV_CRED_TARGET",
+          "qualname": "ENV_CRED_TARGET",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 13,
+          "deprecated": false
+        },
+        {
+          "name": "DEFAULT_HOST",
+          "qualname": "DEFAULT_HOST",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 15,
+          "deprecated": false
+        },
+        {
+          "name": "DEFAULT_PORT",
+          "qualname": "DEFAULT_PORT",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 16,
+          "deprecated": false
         }
       ]
     },
@@ -1381,7 +1527,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/doc_audit.py",
@@ -1434,7 +1581,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/instancing/assembly_sorter.py",
@@ -1458,7 +1606,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/key_stash/key_stash_model.py",
@@ -1769,6 +1918,17 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "SCHEMA_VERSION",
+          "qualname": "SCHEMA_VERSION",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 41,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -1840,7 +2000,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/shots/manifest/behaviors/_spec.py",
@@ -1893,6 +2054,17 @@
               "deprecated": false
             }
           ]
+        }
+      ],
+      "constants": [
+        {
+          "name": "KNOWN_VERIFY_MODES",
+          "qualname": "KNOWN_VERIFY_MODES",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 27,
+          "deprecated": false
         }
       ]
     },
@@ -1974,7 +2146,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/shots/manifest/manifest_model.py",
@@ -2119,6 +2292,35 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "DEFAULT_INITIAL_SHOT_LENGTH",
+          "qualname": "DEFAULT_INITIAL_SHOT_LENGTH",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 445,
+          "deprecated": false
+        },
+        {
+          "name": "DEFAULT_FIT_MODE",
+          "qualname": "DEFAULT_FIT_MODE",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 446,
+          "deprecated": false
+        },
+        {
+          "name": "AUDIO_PLACEHOLDER_DURATION",
+          "qualname": "AUDIO_PLACEHOLDER_DURATION",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 452,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -2172,6 +2374,17 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "DEFAULT_DIR",
+          "qualname": "DEFAULT_DIR",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 75,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -2224,6 +2437,17 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "AUDIO_METHODS",
+          "qualname": "AUDIO_METHODS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 41,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -2257,7 +2481,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/shots/shot_apply.py",
@@ -2281,7 +2506,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/shots/shot_detection.py",
@@ -2313,6 +2539,17 @@
               "deprecated": false
             }
           ]
+        }
+      ],
+      "constants": [
+        {
+          "name": "STANDARD_TRANSFORM_ATTRS",
+          "qualname": "STANDARD_TRANSFORM_ATTRS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 21,
+          "deprecated": false
         }
       ]
     },
@@ -2501,6 +2738,17 @@
               "deprecated": false
             }
           ]
+        }
+      ],
+      "constants": [
+        {
+          "name": "NO_OWNER",
+          "qualname": "NO_OWNER",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 39,
+          "deprecated": false
         }
       ]
     },
@@ -3183,6 +3431,17 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "CLIP_NAME_STRATEGIES",
+          "qualname": "CLIP_NAME_STRATEGIES",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 173,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -3394,7 +3653,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/textures/map_compositor.py",
@@ -3492,7 +3752,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/textures/map_factory/_map_factory.py",
@@ -3941,7 +4202,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/textures/map_factory/conversions.py",
@@ -3999,7 +4261,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/textures/map_factory/handlers.py",
@@ -4357,7 +4620,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/textures/map_factory/processor.py",
@@ -4367,7 +4631,7 @@
         {
           "name": "TextureProcessor",
           "summary": "Shared context and processor for all map operations.",
-          "line": 63,
+          "line": 65,
           "bases": [],
           "members": [
             {
@@ -4376,7 +4640,7 @@
               "kind": "method",
               "signature": "(self, map_type: str, ext: Optional[str] = None) -> str",
               "summary": "The canonical path ``save_map`` writes ``map_type`` to.",
-              "line": 84,
+              "line": 86,
               "deprecated": false
             },
             {
@@ -4385,7 +4649,7 @@
               "kind": "method",
               "signature": "(self, path: str) -> 'Image.Image'",
               "summary": "Load an image with caching to avoid redundant disk I/O.",
-              "line": 107,
+              "line": 168,
               "deprecated": false
             },
             {
@@ -4394,7 +4658,7 @@
               "kind": "method",
               "signature": "(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str",
               "summary": "Saves and optimizes a map, enforcing mode and naming conventions.",
-              "line": 146,
+              "line": 235,
               "deprecated": false
             },
             {
@@ -4403,7 +4667,7 @@
               "kind": "method",
               "signature": "(self, *preferred_types: str, allow_conversion: bool = True) -> Optional[Union[str, 'Image.Image']]",
               "summary": "Intelligently resolve a map from inventory with fallback conversions.",
-              "line": 455,
+              "line": 551,
               "deprecated": false
             },
             {
@@ -4412,7 +4676,7 @@
               "kind": "method",
               "signature": "(self, *map_types: str)",
               "summary": "Mark map types as consumed.",
-              "line": 520,
+              "line": 616,
               "deprecated": false
             },
             {
@@ -4421,7 +4685,7 @@
               "kind": "method",
               "signature": "(self) -> Tuple[Optional[Union[str, 'Image.Image']], bool]",
               "summary": "Resolve data for a smoothness-oriented channel, tracking inversion.",
-              "line": 536,
+              "line": 632,
               "deprecated": false
             },
             {
@@ -4430,7 +4694,7 @@
               "kind": "method",
               "signature": "(self) -> Tuple[Optional[Union[str, 'Image.Image']], bool]",
               "summary": "Resolve data for a roughness-oriented channel, tracking inversion.",
-              "line": 560,
+              "line": 656,
               "deprecated": false
             },
             {
@@ -4439,7 +4703,7 @@
               "kind": "method",
               "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 584,
+              "line": 680,
               "deprecated": false
             },
             {
@@ -4448,7 +4712,7 @@
               "kind": "method",
               "signature": "(self, smoothness_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 598,
+              "line": 694,
               "deprecated": false
             },
             {
@@ -4457,7 +4721,7 @@
               "kind": "method",
               "signature": "(self, roughness_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 614,
+              "line": 710,
               "deprecated": false
             },
             {
@@ -4466,7 +4730,7 @@
               "kind": "method",
               "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 630,
+              "line": 726,
               "deprecated": false
             },
             {
@@ -4475,7 +4739,7 @@
               "kind": "method",
               "signature": "(self, dx_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 644,
+              "line": 740,
               "deprecated": false
             },
             {
@@ -4484,7 +4748,7 @@
               "kind": "method",
               "signature": "(self, gl_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 658,
+              "line": 754,
               "deprecated": false
             },
             {
@@ -4493,7 +4757,7 @@
               "kind": "method",
               "signature": "(self, bump_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 672,
+              "line": 768,
               "deprecated": false
             },
             {
@@ -4502,7 +4766,7 @@
               "kind": "method",
               "signature": "(self, specular_path: Union[str, 'Image.Image']) -> 'Image.Image'",
               "summary": "",
-              "line": 688,
+              "line": 784,
               "deprecated": false
             },
             {
@@ -4511,7 +4775,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image'], target_type: str) -> Union[str, 'Image.Image']",
               "summary": "Simple copy/rename for compatible maps (e.g.",
-              "line": 705,
+              "line": 801,
               "deprecated": false
             },
             {
@@ -4520,7 +4784,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
               "summary": "Helper to unpack and cache results.",
-              "line": 715,
+              "line": 811,
               "deprecated": false
             },
             {
@@ -4529,7 +4793,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 734,
+              "line": 830,
               "deprecated": false
             },
             {
@@ -4538,7 +4802,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 740,
+              "line": 836,
               "deprecated": false
             },
             {
@@ -4547,7 +4811,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 746,
+              "line": 842,
               "deprecated": false
             },
             {
@@ -4556,7 +4820,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
               "summary": "Helper to unpack MSAO and cache results.",
-              "line": 757,
+              "line": 853,
               "deprecated": false
             },
             {
@@ -4565,7 +4829,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 782,
+              "line": 878,
               "deprecated": false
             },
             {
@@ -4574,7 +4838,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 788,
+              "line": 884,
               "deprecated": false
             },
             {
@@ -4583,7 +4847,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 794,
+              "line": 890,
               "deprecated": false
             },
             {
@@ -4592,7 +4856,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 804,
+              "line": 900,
               "deprecated": false
             },
             {
@@ -4601,7 +4865,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
               "summary": "Helper to unpack MRAO and cache results.",
-              "line": 810,
+              "line": 906,
               "deprecated": false
             },
             {
@@ -4610,7 +4874,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 839,
+              "line": 935,
               "deprecated": false
             },
             {
@@ -4619,7 +4883,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 845,
+              "line": 941,
               "deprecated": false
             },
             {
@@ -4628,7 +4892,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 851,
+              "line": 947,
               "deprecated": false
             },
             {
@@ -4637,7 +4901,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 859,
+              "line": 955,
               "deprecated": false
             },
             {
@@ -4646,7 +4910,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
               "summary": "Helper to unpack ORM and cache results.",
-              "line": 865,
+              "line": 961,
               "deprecated": false
             },
             {
@@ -4655,7 +4919,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 890,
+              "line": 986,
               "deprecated": false
             },
             {
@@ -4664,7 +4928,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 896,
+              "line": 992,
               "deprecated": false
             },
             {
@@ -4673,7 +4937,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 902,
+              "line": 998,
               "deprecated": false
             },
             {
@@ -4682,7 +4946,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 909,
+              "line": 1005,
               "deprecated": false
             },
             {
@@ -4691,7 +4955,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> None",
               "summary": "Helper to unpack Albedo+Transparency and cache results.",
-              "line": 915,
+              "line": 1011,
               "deprecated": false
             },
             {
@@ -4700,7 +4964,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 933,
+              "line": 1029,
               "deprecated": false
             },
             {
@@ -4709,7 +4973,7 @@
               "kind": "method",
               "signature": "(self, source_path: Union[str, 'Image.Image']) -> Union[str, 'Image.Image']",
               "summary": "",
-              "line": 939,
+              "line": 1035,
               "deprecated": false
             },
             {
@@ -4718,7 +4982,7 @@
               "kind": "method",
               "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
               "summary": "Create ORM map from components.",
-              "line": 945,
+              "line": 1041,
               "deprecated": false
             },
             {
@@ -4727,7 +4991,7 @@
               "kind": "method",
               "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
               "summary": "Create MRAO (Metallic R / Roughness G / AO B) map from components.",
-              "line": 971,
+              "line": 1067,
               "deprecated": false
             },
             {
@@ -4736,7 +5000,7 @@
               "kind": "method",
               "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
               "summary": "Create Mask Map (MSAO) from components.",
-              "line": 1022,
+              "line": 1118,
               "deprecated": false
             },
             {
@@ -4745,10 +5009,39 @@
               "kind": "method",
               "signature": "(self, inventory: Dict[str, Union[str, 'Image.Image']]) -> 'Image.Image'",
               "summary": "Create Metallic-Smoothness map from components.",
-              "line": 1074,
+              "line": 1170,
               "deprecated": false
             }
           ]
+        }
+      ],
+      "constants": [
+        {
+          "name": "DEFAULT_EXTENSION",
+          "qualname": "DEFAULT_EXTENSION",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 34,
+          "deprecated": false
+        },
+        {
+          "name": "ALPHA_EXTENSION",
+          "qualname": "ALPHA_EXTENSION",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 35,
+          "deprecated": false
+        },
+        {
+          "name": "DERIVED_SUBDIR",
+          "qualname": "DERIVED_SUBDIR",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 37,
+          "deprecated": false
         }
       ]
     },
@@ -4850,7 +5143,7 @@
               "kind": "staticmethod",
               "signature": "(image: 'Image.Image', ext: str) -> Optional[str]",
               "summary": "Warn when *ext* would discard a channel of *image* that holds data.",
-              "line": 1188,
+              "line": 1264,
               "deprecated": false
             },
             {
@@ -4859,7 +5152,7 @@
               "kind": "staticmethod",
               "signature": "(output_path: str, size_before: Optional[int], dims_before: Optional[Tuple[int, int]], image: 'Image.Image') -> str",
               "summary": "Render the one-line result summary for an optimized map.",
-              "line": 1228,
+              "line": 1293,
               "deprecated": false
             },
             {
@@ -4868,7 +5161,7 @@
               "kind": "classmethod",
               "signature": "(cls, directory: str, **kwargs)",
               "summary": "Batch optimizes all maps in a directory.",
-              "line": 1264,
+              "line": 1329,
               "deprecated": false
             },
             {
@@ -4877,12 +5170,13 @@
               "kind": "classmethod",
               "signature": "(cls, texture_path: str, max_size: int = None, force_pot: Optional[bool] = None, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False, enforce_budget: bool = False, lossy_quality: int = None, pot_mode: Optional[str] = None) -> Dict[str, Any]",
               "summary": "Predict whether :meth:`optimize_map` would change ``texture_path``.",
-              "line": 1280,
+              "line": 1345,
               "deprecated": false
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/textures/map_registry.py",
@@ -5184,7 +5478,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/textures/mat_report.py",
@@ -5235,7 +5530,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/textures/output_template.py",
@@ -5418,7 +5714,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/engines/textures/region_masks.py",
@@ -5721,6 +6018,44 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "ENCODING_VERTEX_COLOR",
+          "qualname": "ENCODING_VERTEX_COLOR",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 58,
+          "deprecated": false
+        },
+        {
+          "name": "ENCODING_CHANNELS",
+          "qualname": "ENCODING_CHANNELS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 59,
+          "deprecated": false
+        },
+        {
+          "name": "ENCODING_ID",
+          "qualname": "ENCODING_ID",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 60,
+          "deprecated": false
+        },
+        {
+          "name": "SLOT_CHANNELS",
+          "qualname": "SLOT_CHANNELS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 63,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -5808,7 +6143,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/execution_monitor/_sidecar.py",
@@ -5896,7 +6232,126 @@
           "deprecated": false
         }
       ],
-      "classes": []
+      "classes": [],
+      "constants": [
+        {
+          "name": "CHROMA_KEY",
+          "qualname": "CHROMA_KEY",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 40,
+          "deprecated": false
+        },
+        {
+          "name": "INDICATOR_SIZE",
+          "qualname": "INDICATOR_SIZE",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 41,
+          "deprecated": false
+        },
+        {
+          "name": "GIF_SIZE",
+          "qualname": "GIF_SIZE",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 42,
+          "deprecated": false
+        },
+        {
+          "name": "NUM_DOTS",
+          "qualname": "NUM_DOTS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 43,
+          "deprecated": false
+        },
+        {
+          "name": "FRAME_MS",
+          "qualname": "FRAME_MS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 44,
+          "deprecated": false
+        },
+        {
+          "name": "PARENT_POLL_MS",
+          "qualname": "PARENT_POLL_MS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 45,
+          "deprecated": false
+        },
+        {
+          "name": "DIALOG_MIN_WIDTH",
+          "qualname": "DIALOG_MIN_WIDTH",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 46,
+          "deprecated": false
+        },
+        {
+          "name": "DIALOG_WRAP",
+          "qualname": "DIALOG_WRAP",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 47,
+          "deprecated": false
+        },
+        {
+          "name": "DIALOG_KEEP_WAITING",
+          "qualname": "DIALOG_KEEP_WAITING",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 49,
+          "deprecated": false
+        },
+        {
+          "name": "DIALOG_FORCE",
+          "qualname": "DIALOG_FORCE",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 50,
+          "deprecated": false
+        },
+        {
+          "name": "DIALOG_CLOSED",
+          "qualname": "DIALOG_CLOSED",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 51,
+          "deprecated": false
+        },
+        {
+          "name": "DIALOG_CANCEL",
+          "qualname": "DIALOG_CANCEL",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 52,
+          "deprecated": false
+        },
+        {
+          "name": "KILL_TIMEOUT",
+          "qualname": "KILL_TIMEOUT",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 134,
+          "deprecated": false
+        }
+      ]
     },
     {
       "relpath": "core_utils/export_profile.py",
@@ -5956,7 +6411,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/git.py",
@@ -6052,7 +6508,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/help_mixin.py",
@@ -6139,7 +6596,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/hierarchy_utils/hierarchy_analyzer.py",
@@ -6233,7 +6691,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/hierarchy_utils/hierarchy_diff.py",
@@ -6365,7 +6824,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/hierarchy_utils/hierarchy_indexer.py",
@@ -6425,7 +6885,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/hierarchy_utils/hierarchy_matching.py",
@@ -6476,7 +6937,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/hierarchy_utils/hierarchy_path.py",
@@ -6590,7 +7052,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/logging_mixin.py",
@@ -6906,7 +7369,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/module_reloader.py",
@@ -6959,7 +7423,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/module_resolver.py",
@@ -7118,7 +7583,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/namedtuple_container.py",
@@ -7225,7 +7691,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/namespace_handler.py",
@@ -7403,7 +7870,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/naming_convention.py",
@@ -7598,6 +8066,44 @@
               "deprecated": false
             }
           ]
+        }
+      ],
+      "constants": [
+        {
+          "name": "CONFIG_NAME",
+          "qualname": "CONFIG_NAME",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 50,
+          "deprecated": false
+        },
+        {
+          "name": "CONFIG_PACKAGE",
+          "qualname": "CONFIG_PACKAGE",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 51,
+          "deprecated": false
+        },
+        {
+          "name": "CONFIG_ENV_VAR",
+          "qualname": "CONFIG_ENV_VAR",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 55,
+          "deprecated": false
+        },
+        {
+          "name": "AFFIX_MODES",
+          "qualname": "AFFIX_MODES",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 58,
+          "deprecated": false
         }
       ]
     },
@@ -7817,7 +8323,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/preset_store.py",
@@ -7958,7 +8465,54 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "JSON_CODEC",
+          "qualname": "JSON_CODEC",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 63,
+          "deprecated": false
+        },
+        {
+          "name": "ACTIVE_SENTINEL",
+          "qualname": "ACTIVE_SENTINEL",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 73,
+          "deprecated": false
+        }
       ]
+    },
+    {
+      "relpath": "core_utils/process_exit.py",
+      "summary": "Exit a DCC-hosted interpreter without running ``DLL_PROCESS_DETACH``.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ProcessExit",
+          "summary": "Process-wide exit that skips interpreter and DLL teardown.",
+          "line": 133,
+          "bases": [
+            "_ProcessExitInternal"
+          ],
+          "members": [
+            {
+              "name": "hard_exit",
+              "qualname": "ProcessExit.hard_exit",
+              "kind": "staticmethod",
+              "signature": "(code: int = 0) -> NoReturn",
+              "summary": "Stop this process immediately with status *code*.",
+              "line": 137,
+              "deprecated": false
+            }
+          ]
+        }
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/process_stream.py",
@@ -8118,7 +8672,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/qc_log.py",
@@ -8195,7 +8750,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/schema_spec.py",
@@ -8335,6 +8891,17 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "MISSING",
+          "qualname": "MISSING",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 47,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -8367,6 +8934,26 @@
           "line": 193,
           "bases": [],
           "members": []
+        }
+      ],
+      "constants": [
+        {
+          "name": "CREATED",
+          "qualname": "CREATED",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 38,
+          "deprecated": false
+        },
+        {
+          "name": "REWRITTEN",
+          "qualname": "REWRITTEN",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 39,
+          "deprecated": false
         }
       ]
     },
@@ -8448,6 +9035,35 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "SEND_TO",
+          "qualname": "SEND_TO",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 34,
+          "deprecated": false
+        },
+        {
+          "name": "SAVE_AS",
+          "qualname": "SAVE_AS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 40,
+          "deprecated": false
+        },
+        {
+          "name": "ROUND_TRIP",
+          "qualname": "ROUND_TRIP",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 60,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -8490,7 +9106,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/status_badge.py",
@@ -8588,7 +9205,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/step_toggle.py",
@@ -8675,6 +9293,26 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "DEFAULT_TIMEOUT",
+          "qualname": "DEFAULT_TIMEOUT",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 30,
+          "deprecated": false
+        },
+        {
+          "name": "STALE_POLICIES",
+          "qualname": "STALE_POLICIES",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 31,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -8717,7 +9355,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/task_factory.py",
@@ -8777,7 +9416,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/template_set.py",
@@ -8936,7 +9576,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/test_sandbox.py",
@@ -8946,7 +9587,7 @@
         {
           "name": "TestSandbox",
           "summary": "Keep this process's side effects off the developer's machine.",
-          "line": 79,
+          "line": 88,
           "bases": [
             "_TestSandboxInternal"
           ],
@@ -8957,7 +9598,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Refuse every ``webbrowser`` launch for the rest of the process.",
-              "line": 88,
+              "line": 97,
               "deprecated": false
             },
             {
@@ -8966,7 +9607,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> str",
               "summary": "Route the process's temp dir into one throwaway root;",
-              "line": 107,
+              "line": 120,
               "deprecated": false
             },
             {
@@ -8975,7 +9616,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> str",
               "summary": "Both guards; returns the temp root.",
-              "line": 137,
+              "line": 150,
               "deprecated": false
             },
             {
@@ -8984,12 +9625,13 @@
               "kind": "classmethod",
               "signature": "(cls) -> bool",
               "summary": "True while both guards are in place.",
-              "line": 143,
+              "line": 156,
               "deprecated": false
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "core_utils/user_config.py",
@@ -9066,6 +9708,17 @@
               "deprecated": false
             }
           ]
+        }
+      ],
+      "constants": [
+        {
+          "name": "CONFIG_ROOT_ENV_VAR",
+          "qualname": "CONFIG_ROOT_ENV_VAR",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 40,
+          "deprecated": false
         }
       ]
     },
@@ -9248,8 +9901,8 @@
               "name": "get_file_contents",
               "qualname": "FileUtils.get_file_contents",
               "kind": "staticmethod",
-              "signature": "(filepath: str, as_list: bool = False, encoding: str = 'utf-8') -> Optional[Union[str, List[str]]]",
-              "summary": "Read a text file, whole or as a list of lines.",
+              "signature": "(filepath: str, as_list: bool = False, encoding: str = 'utf-8', default: Optional[Union[str, List[str]]] = None) -> Optional[Union[str, List[str]]]",
+              "summary": "Read a text file, whole or as a list of lines, or return *default*.",
               "line": 870,
               "deprecated": false
             },
@@ -9259,7 +9912,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, lines)",
               "summary": "Write the given list contents to the given file.",
-              "line": 893,
+              "line": 911,
               "deprecated": false
             },
             {
@@ -9268,7 +9921,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, default=None, encoding: str = 'utf-8')",
               "summary": "Parse the JSON document at *filepath*, or return *default*.",
-              "line": 907,
+              "line": 925,
               "deprecated": false
             },
             {
@@ -9277,7 +9930,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath, data, *, indent=2, encoding: str = 'utf-8', sort_keys: bool = False) -> None",
               "summary": "Serialise *data* to *filepath* atomically, creating parent dirs.",
-              "line": 934,
+              "line": 952,
               "deprecated": false
             },
             {
@@ -9286,7 +9939,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, content: str, encoding: str = 'utf-8') -> None",
               "summary": "Write text to a file atomically.",
-              "line": 970,
+              "line": 988,
               "deprecated": false
             },
             {
@@ -9295,7 +9948,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str",
               "summary": "Copies a file to a specified folder, ensuring the folder exists.",
-              "line": 1019,
+              "line": 1037,
               "deprecated": false
             },
             {
@@ -9304,7 +9957,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]",
               "summary": "Moves one or more files to a specified folder.",
-              "line": 1058,
+              "line": 1076,
               "deprecated": false
             },
             {
@@ -9313,7 +9966,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, _runner=None)",
               "summary": "Open the OS file manager showing ``path`` (selecting the file when supported, else",
-              "line": 1126,
+              "line": 1144,
               "deprecated": false
             },
             {
@@ -9322,7 +9975,7 @@
               "kind": "classmethod",
               "signature": "(cls, paths, info, hash_algo=None, force_tuples=False)",
               "summary": "Returns file and directory information for a list of file strings based on specified parameters.",
-              "line": 1161,
+              "line": 1179,
               "deprecated": false
             },
             {
@@ -9331,7 +9984,7 @@
               "kind": "staticmethod",
               "signature": "(p: Union[str, List[str]], section: Union[str, None] = None, replace: Union[str, None] = None) -> Union[str, List[str]]",
               "summary": "Format a given filepath(s).",
-              "line": 1244,
+              "line": 1262,
               "deprecated": false
             },
             {
@@ -9340,7 +9993,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> Union[str, List[str]]",
               "summary": "Convert an absolute file path to a relative path based on the given base directory.",
-              "line": 1314,
+              "line": 1332,
               "deprecated": false
             },
             {
@@ -9349,7 +10002,7 @@
               "kind": "staticmethod",
               "signature": "(source_paths: List[str], target_dir: str, base_dir: str) -> List[Tuple[str, str, str]]",
               "summary": "Remap a list of file paths to a new directory while preserving their relative",
-              "line": 1361,
+              "line": 1379,
               "deprecated": false
             },
             {
@@ -9358,7 +10011,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, **kwargs)",
               "summary": "Append a directory to the python path.",
-              "line": 1414,
+              "line": 1432,
               "deprecated": false
             },
             {
@@ -9367,7 +10020,7 @@
               "kind": "staticmethod",
               "signature": "(obj, inc_filename: bool = False) -> str",
               "summary": "Retrieve the absolute file path associated with a Python object.",
-              "line": 1436,
+              "line": 1454,
               "deprecated": false
             },
             {
@@ -9376,7 +10029,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)",
               "summary": "Scan the specified directory or Python file and retrieve class information from each file.",
-              "line": 1557,
+              "line": 1575,
               "deprecated": false
             },
             {
@@ -9385,7 +10038,7 @@
               "kind": "classmethod",
               "signature": "(cls, file)",
               "summary": "Set the current json filepath.",
-              "line": 1742,
+              "line": 1760,
               "deprecated": false
             },
             {
@@ -9394,7 +10047,7 @@
               "kind": "classmethod",
               "signature": "(cls)",
               "summary": "Get the current json filepath.",
-              "line": 1756,
+              "line": 1774,
               "deprecated": false
             },
             {
@@ -9403,7 +10056,7 @@
               "kind": "classmethod",
               "signature": "(cls, key, value, file=None)",
               "summary": "**Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;",
-              "line": 1770,
+              "line": 1788,
               "deprecated": false
             },
             {
@@ -9412,12 +10065,13 @@
               "kind": "classmethod",
               "signature": "(cls, key, file=None)",
               "summary": "**Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;",
-              "line": 1808,
+              "line": 1826,
               "deprecated": false
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "file_utils/file_naming.py",
@@ -9508,7 +10162,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "file_utils/mesh_convert/_mesh_convert.py",
@@ -9903,6 +10558,26 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "FBX2GLTF_VERSION",
+          "qualname": "FBX2GLTF_VERSION",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 42,
+          "deprecated": false
+        },
+        {
+          "name": "FBX2GLTF_PLATFORMS",
+          "qualname": "FBX2GLTF_PLATFORMS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 43,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -10115,7 +10790,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "file_utils/mesh_convert/fbx_file.py",
@@ -10204,6 +10880,17 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "FBX_MAGIC",
+          "qualname": "FBX_MAGIC",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 25,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -10248,7 +10935,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "file_utils/mesh_convert/glb_clips.py",
@@ -10274,7 +10962,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "file_utils/mesh_convert/glb_fades.py",
@@ -10344,6 +11033,44 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "EXTENSION",
+          "qualname": "EXTENSION",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 53,
+          "deprecated": false
+        },
+        {
+          "name": "POINTER",
+          "qualname": "POINTER",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 58,
+          "deprecated": false
+        },
+        {
+          "name": "CHANNELS",
+          "qualname": "CHANNELS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 160,
+          "deprecated": false
+        },
+        {
+          "name": "DEFAULT_COLOR",
+          "qualname": "DEFAULT_COLOR",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 183,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -10354,7 +11081,7 @@
         {
           "name": "GlbPipeline",
           "summary": "FBX -> GLB, with every deliverable's passes, for every deliverable.",
-          "line": 49,
+          "line": 51,
           "bases": [
             "LoggingMixin"
           ],
@@ -10365,7 +11092,7 @@
               "kind": "classmethod",
               "signature": "(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, logger: Any = None) -> Dict[str, Any]",
               "summary": "The scene-sidecar envelope a build applies, from a host's reader.",
-              "line": 60,
+              "line": 62,
               "deprecated": false
             },
             {
@@ -10374,12 +11101,13 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]",
               "summary": "Build the GLB for *src* and report what each stage did.",
-              "line": 104,
+              "line": 106,
               "deprecated": false
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "file_utils/mesh_convert/glb_reader.py",
@@ -10567,7 +11295,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "file_utils/mesh_ops.py",
@@ -10682,6 +11411,44 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "PYMESHLAB_PYPI_URL",
+          "qualname": "PYMESHLAB_PYPI_URL",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 40,
+          "deprecated": false
+        },
+        {
+          "name": "SUPPORTED_EXTS",
+          "qualname": "SUPPORTED_EXTS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 44,
+          "deprecated": false
+        },
+        {
+          "name": "SAVE_EXTS",
+          "qualname": "SAVE_EXTS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 53,
+          "deprecated": false
+        },
+        {
+          "name": "OPS",
+          "qualname": "OPS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 75,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -10724,7 +11491,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "file_utils/temp_artifacts.py",
@@ -10878,7 +11646,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "file_utils/usd.py",
@@ -11010,6 +11779,17 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "USD_EXTENSIONS",
+          "qualname": "USD_EXTENSIONS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 36,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -11088,6 +11868,89 @@
               "deprecated": false
             }
           ]
+        }
+      ],
+      "constants": [
+        {
+          "name": "DEFAULT_TIMEOUT",
+          "qualname": "DEFAULT_TIMEOUT",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 14,
+          "deprecated": false
+        },
+        {
+          "name": "MOF_DOWNLOAD_URL",
+          "qualname": "MOF_DOWNLOAD_URL",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 19,
+          "deprecated": false
+        },
+        {
+          "name": "MOF_EXE",
+          "qualname": "MOF_EXE",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 20,
+          "deprecated": false
+        },
+        {
+          "name": "BFF_VERSION",
+          "qualname": "BFF_VERSION",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 24,
+          "deprecated": false
+        },
+        {
+          "name": "BFF_URL",
+          "qualname": "BFF_URL",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 25,
+          "deprecated": false
+        },
+        {
+          "name": "BFF_PLATFORMS",
+          "qualname": "BFF_PLATFORMS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 29,
+          "deprecated": false
+        },
+        {
+          "name": "BFF_SHA256",
+          "qualname": "BFF_SHA256",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 32,
+          "deprecated": false
+        },
+        {
+          "name": "BFF_DOWNLOAD_URL",
+          "qualname": "BFF_DOWNLOAD_URL",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 35,
+          "deprecated": false
+        },
+        {
+          "name": "ENGINES",
+          "qualname": "ENGINES",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 134,
+          "deprecated": false
         }
       ]
     },
@@ -11296,6 +12159,44 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "WORKSPACE_MARKER",
+          "qualname": "WORKSPACE_MARKER",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 41,
+          "deprecated": false
+        },
+        {
+          "name": "DEFAULT_FILE_RULES",
+          "qualname": "DEFAULT_FILE_RULES",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 47,
+          "deprecated": false
+        },
+        {
+          "name": "RULE_NICE_NAMES",
+          "qualname": "RULE_NICE_NAMES",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 69,
+          "deprecated": false
+        },
+        {
+          "name": "SCENE_RULES",
+          "qualname": "SCENE_RULES",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 110,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -11331,7 +12232,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "geo_utils/pointcloud.py",
@@ -11409,7 +12311,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "geo_utils/polyline.py",
@@ -11513,17 +12416,27 @@
               "deprecated": false
             },
             {
+              "name": "transport_frames",
+              "qualname": "Polyline.transport_frames",
+              "kind": "classmethod",
+              "signature": "(cls, points: Sequence[Vec], up: Optional[Vec] = None) -> List[Tuple[Vec, Vec, Vec]]",
+              "summary": "Minimal-rotation (parallel transport) frames, one per INPUT point.",
+              "line": 448,
+              "deprecated": false
+            },
+            {
               "name": "frames",
               "qualname": "Polyline.frames",
               "kind": "classmethod",
               "signature": "(cls, points: Sequence[Vec], segments: int, closed: bool, up: Vec = (0.0, 1.0, 0.0)) -> List[Tuple[Vec, Vec, Vec]]",
               "summary": "Resample to ``segments + 1`` even points with a local frame at each.",
-              "line": 448,
+              "line": 581,
               "deprecated": false
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "geo_utils/rail_surface.py",
@@ -11547,7 +12460,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "geo_utils/shadow_horizon.py",
@@ -11698,6 +12612,35 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "MAX16",
+          "qualname": "MAX16",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 64,
+          "deprecated": false
+        },
+        {
+          "name": "DIST_SCALE",
+          "qualname": "DIST_SCALE",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 66,
+          "deprecated": false
+        },
+        {
+          "name": "DIST_FAR",
+          "qualname": "DIST_FAR",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 68,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -11831,7 +12774,8 @@
           ],
           "members": []
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "geo_utils/uv_budget.py",
@@ -12015,7 +12959,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "geo_utils/uv_pack.py",
@@ -12065,6 +13010,26 @@
               "deprecated": false
             }
           ]
+        }
+      ],
+      "constants": [
+        {
+          "name": "XATLAS_PYPI_URL",
+          "qualname": "XATLAS_PYPI_URL",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 59,
+          "deprecated": false
+        },
+        {
+          "name": "XATLAS_REPO_URL",
+          "qualname": "XATLAS_REPO_URL",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 60,
+          "deprecated": false
         }
       ]
     },
@@ -12226,7 +13191,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "img_utils/_img_utils.py",
@@ -12254,9 +13220,18 @@
               "name": "dropped_channels",
               "qualname": "ImgUtils.dropped_channels",
               "kind": "classmethod",
-              "signature": "(cls, mode: str, ext: str) -> Tuple[str, ...]",
-              "summary": "Band names *ext* cannot keep from an image in *mode*.",
+              "signature": "(cls, mode: str, ext: str = '', *, target_mode: str = '') -> Tuple[str, ...]",
+              "summary": "Band names a write or a conversion cannot keep from *mode*.",
               "line": 203,
+              "deprecated": false
+            },
+            {
+              "name": "channels_carrying_data",
+              "qualname": "ImgUtils.channels_carrying_data",
+              "kind": "classmethod",
+              "signature": "(cls, image, bands) -> Tuple[str, ...]",
+              "summary": "Which of *bands* actually hold varying data in *image*.",
+              "line": 248,
               "deprecated": false
             },
             {
@@ -12265,7 +13240,7 @@
               "kind": "staticmethod",
               "signature": "(a=None)",
               "summary": "Get help documentation on a specific PIL image attribute",
-              "line": 271,
+              "line": 319,
               "deprecated": false
             },
             {
@@ -12274,7 +13249,7 @@
               "kind": "classmethod",
               "signature": "(cls)",
               "summary": "Context manager to safely load very large images.",
-              "line": 293,
+              "line": 341,
               "deprecated": false
             },
             {
@@ -12283,7 +13258,7 @@
               "kind": "classmethod",
               "signature": "(cls, input_image: Union[str, Image.Image], mode: str = None, *, max_pixels: Optional[int] = 268435456) -> Image.Image",
               "summary": "Ensures the input is a valid PIL Image.",
-              "line": 317,
+              "line": 365,
               "deprecated": false
             },
             {
@@ -12292,7 +13267,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image, target_mode: str, allow_compatible: bool = False) -> Image.Image",
               "summary": "Converts image to target_mode.",
-              "line": 385,
+              "line": 433,
               "deprecated": false
             },
             {
@@ -12301,7 +13276,7 @@
               "kind": "staticmethod",
               "signature": "(obj: object, name: str = 'argument') -> None",
               "summary": "Assert that the given object is a valid path-like object.",
-              "line": 431,
+              "line": 479,
               "deprecated": false
             },
             {
@@ -12310,7 +13285,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str) -> Tuple[bool, str]",
               "summary": "Cheaply check that an image file is complete and decodable.",
-              "line": 447,
+              "line": 495,
               "deprecated": false
             },
             {
@@ -12319,7 +13294,7 @@
               "kind": "staticmethod",
               "signature": "(mode, size=(4096, 4096), color=None)",
               "summary": "Create a new image.",
-              "line": 568,
+              "line": 616,
               "deprecated": false
             },
             {
@@ -12328,7 +13303,7 @@
               "kind": "classmethod",
               "signature": "(cls, codec) -> None",
               "summary": "Register an external DDS codec for block formats Pillow can't write.",
-              "line": 582,
+              "line": 630,
               "deprecated": false
             },
             {
@@ -12337,7 +13312,7 @@
               "kind": "classmethod",
               "signature": "(cls, encoder) -> None",
               "summary": "Register the KTX2/Basis encoder ``save_image`` uses for ``.ktx2``.",
-              "line": 595,
+              "line": 643,
               "deprecated": false
             },
             {
@@ -12346,7 +13321,7 @@
               "kind": "classmethod",
               "signature": "(cls, required: bool = False, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True)",
               "summary": "The registered KTX2 encoder, or the built-in ``toktx`` wrapper.",
-              "line": 614,
+              "line": 662,
               "deprecated": false
             },
             {
@@ -12355,7 +13330,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> bool",
               "summary": "True when ``.ktx2`` output is currently writable — the capability",
-              "line": 673,
+              "line": 721,
               "deprecated": false
             },
             {
@@ -12364,7 +13339,7 @@
               "kind": "classmethod",
               "signature": "(cls, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]",
               "summary": "Guarantee a KTX2 encoder, offering the managed install when none is found.",
-              "line": 679,
+              "line": 727,
               "deprecated": false
             },
             {
@@ -12373,7 +13348,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, quality: int = None, colorspace: str = None, **kwargs)",
               "summary": "Save an image to ``name``, dispatching on the file extension.",
-              "line": 731,
+              "line": 779,
               "deprecated": false
             },
             {
@@ -12382,7 +13357,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath)",
               "summary": "Load an image and return a PIL copy, dispatching on the file extension.",
-              "line": 1120,
+              "line": 1168,
               "deprecated": false
             },
             {
@@ -12391,7 +13366,7 @@
               "kind": "classmethod",
               "signature": "(cls, directory, exts=None, full_paths=False)",
               "summary": "Sorted image file names in a directory (non-recursive).",
-              "line": 1174,
+              "line": 1222,
               "deprecated": false
             },
             {
@@ -12400,7 +13375,7 @@
               "kind": "staticmethod",
               "signature": "(dirs)",
               "summary": "Unique, order-preserving output stems for a set of directories.",
-              "line": 1202,
+              "line": 1250,
               "deprecated": false
             },
             {
@@ -12409,7 +13384,7 @@
               "kind": "classmethod",
               "signature": "(cls, directory, inc=None, exc='')",
               "summary": "Get bitmap images from a given directory as PIL images.",
-              "line": 1237,
+              "line": 1285,
               "deprecated": false
             },
             {
@@ -12418,7 +13393,7 @@
               "kind": "staticmethod",
               "signature": "(image_path: str) -> Optional[Tuple[int, int]]",
               "summary": "``(width, height)`` of an image, read as cheaply as possible.",
-              "line": 1320,
+              "line": 1368,
               "deprecated": false
             },
             {
@@ -12427,7 +13402,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]",
               "summary": "Get information about image files.",
-              "line": 1341,
+              "line": 1389,
               "deprecated": false
             },
             {
@@ -12436,7 +13411,7 @@
               "kind": "classmethod",
               "signature": "(cls, imageA, imageB)",
               "summary": "Check if two images are the same.",
-              "line": 1387,
+              "line": 1435,
               "deprecated": false
             },
             {
@@ -12445,7 +13420,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, x, y)",
               "summary": "Returns a resized copy of an image.",
-              "line": 1405,
+              "line": 1453,
               "deprecated": false
             },
             {
@@ -12454,7 +13429,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> Image.Image",
               "summary": "Resizes an image to the nearest Power of Two dimensions.",
-              "line": 1420,
+              "line": 1468,
               "deprecated": false
             },
             {
@@ -12463,7 +13438,7 @@
               "kind": "classmethod",
               "signature": "(cls, mode_or_image) -> str",
               "summary": "Format bit depth as e.g.",
-              "line": 1445,
+              "line": 1493,
               "deprecated": false
             },
             {
@@ -12472,7 +13447,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, map_type: str, allow_palette: bool = False) -> object",
               "summary": "Sets the bit depth and image mode of an image according to the map type.",
-              "line": 1457,
+              "line": 1505,
               "deprecated": false
             },
             {
@@ -12481,7 +13456,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> Image.Image",
               "summary": "Inverts a grayscale image.",
-              "line": 1514,
+              "line": 1562,
               "deprecated": false
             },
             {
@@ -12490,7 +13465,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, channels='RGBA')",
               "summary": "Invert specified channels in an image.",
-              "line": 1527,
+              "line": 1575,
               "deprecated": false
             },
             {
@@ -12499,7 +13474,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, mapping)",
               "summary": "Reorder, duplicate, or constant-fill an image's channels.",
-              "line": 1567,
+              "line": 1615,
               "deprecated": false
             },
             {
@@ -12508,7 +13483,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, mask, background=(0, 0, 0, 255), foreground=(255, 255, 255, 255)) -> Union[Image.Image, List[Image.Image]]",
               "summary": "Create mask(s) from the given image(s).",
-              "line": 1633,
+              "line": 1681,
               "deprecated": false
             },
             {
@@ -12517,7 +13492,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, color, mask)",
               "summary": "Parameters:",
-              "line": 1678,
+              "line": 1726,
               "deprecated": false
             },
             {
@@ -12526,7 +13501,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, color=(0, 0, 0, 0))",
               "summary": "Parameters:",
-              "line": 1697,
+              "line": 1745,
               "deprecated": false
             },
             {
@@ -12535,7 +13510,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, mode=None, average=False)",
               "summary": "Sample the pixel values of each corner of an image and if they are uniform, return the result.",
-              "line": 1714,
+              "line": 1762,
               "deprecated": false
             },
             {
@@ -12544,7 +13519,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, from_color=(0, 0, 0, 0), to_color=(0, 0, 0, 0), mode=None)",
               "summary": "Parameters:",
-              "line": 1748,
+              "line": 1796,
               "deprecated": false
             },
             {
@@ -12553,7 +13528,7 @@
               "kind": "classmethod",
               "signature": "(cls, image, level=255)",
               "summary": "Parameters:",
-              "line": 1786,
+              "line": 1834,
               "deprecated": false
             },
             {
@@ -12562,7 +13537,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, 'Image.Image', 'np.ndarray'], radius: float = 2.0, channel: Optional[str] = None) -> Union['Image.Image', 'np.ndarray']",
               "summary": "Apply a Gaussian blur to an image or 2D/3D numpy array.",
-              "line": 1806,
+              "line": 1854,
               "deprecated": false
             },
             {
@@ -12571,7 +13546,7 @@
               "kind": "staticmethod",
               "signature": "(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8, return_mask: bool = False) -> 'np.ndarray'",
               "summary": "Extend valid pixels outward into empty (background) regions.",
-              "line": 1948,
+              "line": 1996,
               "deprecated": false
             },
             {
@@ -12580,7 +13555,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: 'np.ndarray', mask: Optional['np.ndarray'] = None) -> 'np.ndarray'",
               "summary": "Fill EVERY empty texel with its nearest valid texel's color.",
-              "line": 2064,
+              "line": 2112,
               "deprecated": false
             },
             {
@@ -12589,7 +13564,7 @@
               "kind": "staticmethod",
               "signature": "(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]",
               "summary": "Lay out N weighted items as non-overlapping rects tiling the unit square.",
-              "line": 2211,
+              "line": 2259,
               "deprecated": false
             },
             {
@@ -12598,7 +13573,7 @@
               "kind": "staticmethod",
               "signature": "(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[int, int, int, int]]",
               "summary": "Convert normalized ``scaleOffset`` rects to integer pixel rects.",
-              "line": 2369,
+              "line": 2417,
               "deprecated": false
             },
             {
@@ -12607,7 +13582,7 @@
               "kind": "staticmethod",
               "signature": "(rect: Sequence[float]) -> List[float]",
               "summary": "A ``[sx, sy, ox, oy]`` atlas rect, V-flipped between UV conventions.",
-              "line": 2404,
+              "line": 2452,
               "deprecated": false
             },
             {
@@ -12616,7 +13591,7 @@
               "kind": "staticmethod",
               "signature": "(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], gutter: int) -> List[Tuple[float, float, float, float]]",
               "summary": "Shrink each atlas rect by a pixel gutter on every side.",
-              "line": 2420,
+              "line": 2468,
               "deprecated": false
             },
             {
@@ -12625,7 +13600,7 @@
               "kind": "classmethod",
               "signature": "(cls, rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[float, float, float, float]]",
               "summary": "Snap normalized atlas rects onto the atlas's integer texel grid.",
-              "line": 2462,
+              "line": 2510,
               "deprecated": false
             },
             {
@@ -12634,7 +13609,7 @@
               "kind": "staticmethod",
               "signature": "(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], bboxes: Optional[Sequence[Optional[Tuple[float, float, float, float]]]] = None) -> List[Tuple[float, float, float, float]]",
               "summary": "Re-aim each rect so its content's edge UVs sample border-texel CENTERS.",
-              "line": 2506,
+              "line": 2554,
               "deprecated": false
             },
             {
@@ -12643,7 +13618,7 @@
               "kind": "classmethod",
               "signature": "(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'",
               "summary": "Composite per-item images into one atlas at normalized ``scaleOffset`` rects.",
-              "line": 2567,
+              "line": 2615,
               "deprecated": false
             },
             {
@@ -12652,7 +13627,7 @@
               "kind": "staticmethod",
               "signature": "(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'",
               "summary": "Generate a normalized radial gradient as a 2D numpy array.",
-              "line": 2661,
+              "line": 2709,
               "deprecated": false
             },
             {
@@ -12661,7 +13636,7 @@
               "kind": "classmethod",
               "signature": "(cls, triangles, size: int = 512, supersample: int = 4) -> 'np.ndarray'",
               "summary": "Rasterize filled UV-space triangles into a single-channel coverage image.",
-              "line": 2719,
+              "line": 2767,
               "deprecated": false
             },
             {
@@ -12670,7 +13645,7 @@
               "kind": "classmethod",
               "signature": "(cls, meshes, size=512, axis='auto', *, uniform_alpha=False, falloff_source=None, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.5)",
               "summary": "Rasterize a flattened-silhouette RGBA alpha from world-space mesh triangles.",
-              "line": 2861,
+              "line": 2909,
               "deprecated": false
             },
             {
@@ -12679,7 +13654,7 @@
               "kind": "classmethod",
               "signature": "(cls, meshes, *, up: int = 1, size: int = 64, ground: float = 0.0, bounds=None, padding: float = 0.02)",
               "summary": "Top and bottom height fields of world meshes over their footprint.",
-              "line": 2944,
+              "line": 2992,
               "deprecated": false
             },
             {
@@ -12688,7 +13663,7 @@
               "kind": "classmethod",
               "signature": "(cls, meshes, *, up: int = 1, size: int = 64, ground: float = 0.0, bounds=None, padding: float = 0.02, spans: int = 1)",
               "summary": "The solid vertical spans of world meshes per footprint pixel: a",
-              "line": 2992,
+              "line": 3040,
               "deprecated": false
             },
             {
@@ -12697,7 +13672,7 @@
               "kind": "classmethod",
               "signature": "(cls, meshes, light=None, ground=0.0, size=512, *, up=1, direction=None, source_size=0.0, max_stretch=None, canvas=None, contact=None, radius=None, height=None, padding=0.04, uniform_alpha=True, falloff_power=0.8, vertical_weight=0.3, blur_amount=1.0)",
               "summary": "Rasterize the shadow world-space meshes cast onto the ground plane.",
-              "line": 3215,
+              "line": 3263,
               "deprecated": false
             },
             {
@@ -12706,7 +13681,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Convert an RGB Image data array to grayscale (luma weights).",
-              "line": 3432,
+              "line": 3480,
               "deprecated": false
             },
             {
@@ -12715,7 +13690,7 @@
               "kind": "staticmethod",
               "signature": "(kelvin: float, normalize: bool = True) -> Tuple[float, float, float]",
               "summary": "Blackbody colour temperature -> LINEAR RGB, normalised to max 1.0.",
-              "line": 3448,
+              "line": 3496,
               "deprecated": false
             },
             {
@@ -12724,7 +13699,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert an RGB image to HSV mode.",
-              "line": 3508,
+              "line": 3556,
               "deprecated": false
             },
             {
@@ -12733,7 +13708,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert a high-bit-depth grayscale image to 8-bit 'L'.",
-              "line": 3523,
+              "line": 3571,
               "deprecated": false
             },
             {
@@ -12742,7 +13717,7 @@
               "kind": "classmethod",
               "signature": "(cls, image)",
               "summary": "Convert a float grayscale image to 8-bit 'L', rescaling the unit range.",
-              "line": 3554,
+              "line": 3602,
               "deprecated": false
             },
             {
@@ -12751,7 +13726,7 @@
               "kind": "classmethod",
               "signature": "(cls, channel_files: dict[str, str | Image.Image], channels: list[str] = None, out_mode: str = None, fill_values: dict[str, int] = None, output_path: str = None, output_format: str = 'PNG', grayscale_to_rgb: bool = False, invert_channels: list[str] = None, **kwargs) -> str | Image.Image",
               "summary": "Packs up to 4 grayscale images into R, G, B, A channels of a single image.",
-              "line": 3594,
+              "line": 3642,
               "deprecated": false
             },
             {
@@ -12760,7 +13735,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image",
               "summary": "Packs a channel from the alpha source image into the alpha channel of the base image.",
-              "line": 3690,
+              "line": 3738,
               "deprecated": false
             },
             {
@@ -12769,7 +13744,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 3843,
+              "line": 3891,
               "deprecated": false
             },
             {
@@ -12778,7 +13753,7 @@
               "kind": "classmethod",
               "signature": "(cls, data)",
               "summary": "Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.",
-              "line": 3855,
+              "line": 3903,
               "deprecated": false
             },
             {
@@ -12787,7 +13762,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, percentile=None)",
               "summary": "Encode a linear-float HDR image (EXR/HDR) as sRGB PNG bytes for the web.",
-              "line": 3873,
+              "line": 3921,
               "deprecated": false
             },
             {
@@ -12796,7 +13771,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, Image.Image]) -> List[Image.Image]",
               "summary": "Generate a mipmap chain for an image.",
-              "line": 3935,
+              "line": 3983,
               "deprecated": false
             },
             {
@@ -12805,7 +13780,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Image.Image) -> Image.Image",
               "summary": "Converts a paletted image (Mode P) to RGB or RGBA.",
-              "line": 3962,
+              "line": 4010,
               "deprecated": false
             },
             {
@@ -12814,7 +13789,7 @@
               "kind": "classmethod",
               "signature": "(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]",
               "summary": "Check if an image is constant color.",
-              "line": 3982,
+              "line": 4030,
               "deprecated": false
             },
             {
@@ -12823,7 +13798,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Extracts the base texture name from a filename or path,",
-              "line": 4023,
+              "line": 4071,
               "deprecated": false
             },
             {
@@ -12832,12 +13807,13 @@
               "kind": "classmethod",
               "signature": "(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]",
               "summary": "Generic channel extraction utility.",
-              "line": 4084,
+              "line": 4132,
               "deprecated": false
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "img_utils/exposure_equalizer.py",
@@ -12870,7 +13846,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "img_utils/image_curator.py",
@@ -12939,7 +13916,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "img_utils/ktx2_encoder.py",
@@ -13017,6 +13995,35 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "KTX_SOFTWARE_VERSION",
+          "qualname": "KTX_SOFTWARE_VERSION",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 55,
+          "deprecated": false
+        },
+        {
+          "name": "KTX_SOFTWARE_PLATFORMS",
+          "qualname": "KTX_SOFTWARE_PLATFORMS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 68,
+          "deprecated": false
+        },
+        {
+          "name": "KTX_SOFTWARE_SHA256",
+          "qualname": "KTX_SOFTWARE_SHA256",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 100,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -13050,7 +14057,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "img_utils/shadow_atlas.py",
@@ -13119,7 +14127,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "iter_utils/_iter_utils.py",
@@ -13271,7 +14280,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "math_utils/_math_utils.py",
@@ -13756,7 +14766,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "math_utils/noise.py",
@@ -13780,7 +14791,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "math_utils/progression.py",
@@ -13921,7 +14933,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "math_utils/weights.py",
@@ -13963,7 +14976,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "net_utils/_net_utils.py",
@@ -14014,7 +15028,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "net_utils/credentials.py",
@@ -14056,7 +15071,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "net_utils/preview/bridge.py",
@@ -14111,7 +15127,7 @@
               "name": "push",
               "qualname": "PreviewBridge.push",
               "kind": "method",
-              "signature": "(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, **params: Any) -> Optional[Dict[str, Any]]",
+              "signature": "(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, **params: Any) -> Optional[Dict[str, Any]]",
               "summary": "Export and publish, returning the deliverer's result (``None`` on failure).",
               "line": 164,
               "deprecated": false
@@ -14122,7 +15138,7 @@
               "kind": "method",
               "signature": "(self, path: Union[str, Path], open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]",
               "summary": "Publish a GLB that already exists on disk, unchanged.",
-              "line": 221,
+              "line": 229,
               "deprecated": false
             },
             {
@@ -14131,7 +15147,7 @@
               "kind": "staticmethod",
               "signature": "(result: Optional[Dict[str, Any]]) -> str",
               "summary": "One plain-text line describing what the scene sidecar did.",
-              "line": 290,
+              "line": 298,
               "deprecated": false
             },
             {
@@ -14140,7 +15156,7 @@
               "kind": "staticmethod",
               "signature": "(result: Optional[Dict[str, Any]]) -> str",
               "summary": "One plain-text line on the lightmaps: bound, or how many came back unlit.",
-              "line": 319,
+              "line": 327,
               "deprecated": false
             },
             {
@@ -14149,12 +15165,32 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Stop serving and release the port.",
-              "line": 360,
+              "line": 368,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "FilePreviewBridge",
+          "summary": "Preview bridge whose source is a file on disk rather than a host selection.",
+          "line": 375,
+          "bases": [
+            "PreviewBridge"
+          ],
+          "members": [
+            {
+              "name": "lightmap_search_dirs",
+              "qualname": "FilePreviewBridge.lightmap_search_dirs",
+              "kind": "method",
+              "signature": "(self) -> Sequence[str]",
+              "summary": "Where to look for the EXRs a lightmap manifest names.",
+              "line": 411,
               "deprecated": false
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "net_utils/preview/deliverer.py",
@@ -14198,7 +15234,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "net_utils/preview/playblast.py",
@@ -14278,7 +15315,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "net_utils/preview/server.py",
@@ -14288,7 +15326,7 @@
         {
           "name": "PreviewServer",
           "summary": "Serve a directory of preview assets on loopback, with a live manifest.",
-          "line": 487,
+          "line": 524,
           "bases": [
             "LoggingMixin",
             "_PreviewServerInternal"
@@ -14300,7 +15338,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[int]",
               "summary": "The bound port, or ``None`` before :meth:`start`.",
-              "line": 624,
+              "line": 661,
               "deprecated": false
             },
             {
@@ -14309,7 +15347,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[str]",
               "summary": "The viewer URL, or ``None`` before :meth:`start`.",
-              "line": 629,
+              "line": 666,
               "deprecated": false
             },
             {
@@ -14318,7 +15356,7 @@
               "kind": "property",
               "signature": "(self) -> int",
               "summary": "Number of published revisions;",
-              "line": 634,
+              "line": 671,
               "deprecated": false
             },
             {
@@ -14327,7 +15365,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "",
-              "line": 639,
+              "line": 676,
               "deprecated": false
             },
             {
@@ -14336,7 +15374,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "Whether a page is currently watching this server.",
-              "line": 642,
+              "line": 679,
               "deprecated": false
             },
             {
@@ -14345,7 +15383,7 @@
               "kind": "property",
               "signature": "(self) -> tuple",
               "summary": "Registered names of the viewer scripts currently active, in load order.",
-              "line": 670,
+              "line": 707,
               "deprecated": false
             },
             {
@@ -14354,7 +15392,7 @@
               "kind": "method",
               "signature": "(self, name: str, path: Optional[Union[str, Path]] = None) -> 'PreviewServer'",
               "summary": "Activate a viewer script, on disk and in the manifest at once.",
-              "line": 675,
+              "line": 712,
               "deprecated": false
             },
             {
@@ -14363,7 +15401,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> 'PreviewServer'",
               "summary": "Deactivate a viewer script (unknown names are ignored), and sweep it.",
-              "line": 705,
+              "line": 742,
               "deprecated": false
             },
             {
@@ -14372,7 +15410,7 @@
               "kind": "method",
               "signature": "(self, scripts: Optional[Union[Dict[str, Any], List[str], tuple]]) -> 'PreviewServer'",
               "summary": "Replace the whole active set (``None`` or empty clears it).",
-              "line": 715,
+              "line": 752,
               "deprecated": false
             },
             {
@@ -14381,7 +15419,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "The payload served at ``/manifest.json``.",
-              "line": 830,
+              "line": 867,
               "deprecated": false
             },
             {
@@ -14390,7 +15428,7 @@
               "kind": "method",
               "signature": "(self) -> 'PreviewServer'",
               "summary": "Bind the port and serve on a daemon thread.",
-              "line": 847,
+              "line": 892,
               "deprecated": false
             },
             {
@@ -14399,7 +15437,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Stop serving and release the port.",
-              "line": 877,
+              "line": 922,
               "deprecated": false
             },
             {
@@ -14408,7 +15446,7 @@
               "kind": "method",
               "signature": "(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int",
               "summary": "Place an asset in the serve root and bump the manifest version.",
-              "line": 894,
+              "line": 939,
               "deprecated": false
             },
             {
@@ -14417,7 +15455,7 @@
               "kind": "method",
               "signature": "(self, settings: Dict[str, Any]) -> Dict[str, Any]",
               "summary": "Write delivery dials into the published GLB, and remember them.",
-              "line": 962,
+              "line": 1007,
               "deprecated": false
             },
             {
@@ -14426,7 +15464,7 @@
               "kind": "property",
               "signature": "(self) -> 'PreviewPlayblast'",
               "summary": "The page's recorder, created on first use.",
-              "line": 1017,
+              "line": 1062,
               "deprecated": false
             },
             {
@@ -14435,7 +15473,7 @@
               "kind": "method",
               "signature": "(self, **kwargs: Any) -> Dict[str, Any]",
               "summary": "Open a recording (see :meth:`PreviewPlayblast.begin`).",
-              "line": 1044,
+              "line": 1089,
               "deprecated": false
             },
             {
@@ -14444,7 +15482,7 @@
               "kind": "method",
               "signature": "(self, token: str, target: Optional[str] = None) -> Dict[str, Any]",
               "summary": "Encode a recording and report where it went.",
-              "line": 1048,
+              "line": 1093,
               "deprecated": false
             },
             {
@@ -14453,7 +15491,16 @@
               "kind": "method",
               "signature": "(self, token: str) -> Optional[Path]",
               "summary": "The file a finished recording produced, or None.",
-              "line": 1101,
+              "line": 1146,
+              "deprecated": false
+            },
+            {
+              "name": "webxr_browser",
+              "qualname": "PreviewServer.webxr_browser",
+              "kind": "classmethod",
+              "signature": "(cls) -> Optional[str]",
+              "summary": "Which browser to open so an immersive session is POSSIBLE.",
+              "line": 1231,
               "deprecated": false
             },
             {
@@ -14461,11 +15508,49 @@
               "qualname": "PreviewServer.open_in_browser",
               "kind": "method",
               "signature": "(self) -> bool",
-              "summary": "Open the viewer in the default browser.",
-              "line": 1135,
+              "summary": "Open the viewer.",
+              "line": 1249,
               "deprecated": false
             }
           ]
+        }
+      ],
+      "constants": [
+        {
+          "name": "VIEWER_CLOSED_PATH",
+          "qualname": "VIEWER_CLOSED_PATH",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 82,
+          "deprecated": false
+        },
+        {
+          "name": "SETTINGS_PATH",
+          "qualname": "SETTINGS_PATH",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 87,
+          "deprecated": false
+        },
+        {
+          "name": "PLAYBLAST_PATH",
+          "qualname": "PLAYBLAST_PATH",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 93,
+          "deprecated": false
+        },
+        {
+          "name": "PLAYBLAST_ACTIONS",
+          "qualname": "PLAYBLAST_ACTIONS",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 98,
+          "deprecated": false
         }
       ]
     },
@@ -14529,7 +15614,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "net_utils/rpc/client.py",
@@ -14607,7 +15693,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "net_utils/rpc/installer.py",
@@ -14660,7 +15747,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "net_utils/rpc/job.py",
@@ -14698,7 +15786,8 @@
           "bases": [],
           "members": []
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "net_utils/rpc/plugin_core.py",
@@ -14870,7 +15959,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "net_utils/ssh_client.py",
@@ -14930,7 +16020,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "str_utils/_str_utils.py",
@@ -15226,6 +16317,17 @@
             }
           ]
         }
+      ],
+      "constants": [
+        {
+          "name": "ANSI_ESCAPE_RE",
+          "qualname": "ANSI_ESCAPE_RE",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 14,
+          "deprecated": false
+        }
       ]
     },
     {
@@ -15313,7 +16415,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "str_utils/hotkey_utils.py",
@@ -15364,7 +16467,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "vid_utils/_vid_utils.py",
@@ -15435,7 +16539,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "vid_utils/frame_extractor.py",
@@ -15486,7 +16591,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     },
     {
       "relpath": "vid_utils/sequence_exporter.py",
@@ -15626,7 +16732,8 @@
             }
           ]
         }
-      ]
+      ],
+      "constants": []
     }
   ]
 }

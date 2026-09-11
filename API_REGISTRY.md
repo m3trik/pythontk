@@ -4,6 +4,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 
 ## Index
 
+- [`__init__.py`](#__init__)
 - [`audio_utils/_audio_utils.py`](#audio_utils--_audio_utils)
 - [`core_utils/_core_utils.py`](#core_utils--_core_utils)
 - [`core_utils/app_handoff.py`](#core_utils--app_handoff) — Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
@@ -56,6 +57,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/naming_convention.py`](#core_utils--naming_convention) — Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 - [`core_utils/package_manager.py`](#core_utils--package_manager)
 - [`core_utils/preset_store.py`](#core_utils--preset_store) — Qt-free, zero-dependency named-preset *store* for the ecosystem.
+- [`core_utils/process_exit.py`](#core_utils--process_exit) — Exit a DCC-hosted interpreter without running ``DLL_PROCESS_DETACH``.
 - [`core_utils/process_stream.py`](#core_utils--process_stream) — App-agnostic line-stream primitives for launched processes and log files.
 - [`core_utils/qc_log.py`](#core_utils--qc_log) — Structured run logs and threshold-based acceptance gates for pipeline
 - [`core_utils/schema_spec.py`](#core_utils--schema_spec) — Declarative schema for JSON/YAML *template* files, defined as a dataclass.
@@ -126,6 +128,11 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 
 ---
 
+<a id="__init__"></a>
+### `__init__.py`
+
+- [`DEFAULT_INCLUDE`](pythontk/pythontk/__init__.py#L11) — constant
+
 <a id="audio_utils--_audio_utils"></a>
 ### `audio_utils/_audio_utils.py`
 
@@ -164,6 +171,12 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 
 Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
+- [`SEND_TO`](pythontk/pythontk/core_utils/app_handoff.py#L62) — constant
+- [`SAVE_AS`](pythontk/pythontk/core_utils/app_handoff.py#L63) — constant
+- [`ROUND_TRIP`](pythontk/pythontk/core_utils/app_handoff.py#L64) — constant
+- [`CARRIER_PARAM`](pythontk/pythontk/core_utils/app_handoff.py#L67) — constant
+- [`CARRIER_EXTENSIONS`](pythontk/pythontk/core_utils/app_handoff.py#L74) — constant
+- [`CARRIER_BY_EXTENSION`](pythontk/pythontk/core_utils/app_handoff.py#L78) — constant
 - **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L86)** — Declarative target-application executable-discovery config (data, not code).
   - `AppSpec.resolve(self) -> Optional[str]` — Resolve the executable, first hit wins (env -> find_app -> install scan).
   - `AppSpec.path(self) -> Optional[str]` *(property)* — :meth:`resolve`, memoized for this spec instance.
@@ -209,6 +222,7 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 <a id="core_utils--app_installer"></a>
 ### `core_utils/app_installer.py`
 
+- [`FFMPEG_PLATFORMS`](pythontk/pythontk/core_utils/app_installer.py#L26) — constant
 - **[`class AppInstaller`](pythontk/pythontk/core_utils/app_installer.py#L42)** — Download, extract, and manage external OS-level tool binaries.
   - `AppInstaller.ensure(cls, name: str, platforms: Dict[str, dict], executable: Optional[str] = None, version: Optional[str] = None, sha256: Optional[Dict[str, str]] = None, location: str = 'user', update: bool = False, add_to_path: bool = True, progress_callback: Optional[Callable[[int, int], None]] = None) -> str` *(class)* — Ensure a tool is available locally, downloading if necessary.
   - `AppInstaller.get_path(cls, name: str, location: str = 'user', executable: Optional[str] = None, add_to_path: bool = False) -> Optional[str]` *(class)* — Find a tool without installing.
@@ -243,6 +257,7 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
 Cooperative cancellation — one scope shared by every cancel affordance.
 
+- [`T`](pythontk/pythontk/core_utils/cancel_scope.py#L53) — constant
 - **[`class OperationCancelled(BaseException)`](pythontk/pythontk/core_utils/cancel_scope.py#L56)** — Raised at a checkpoint when the governing scope has been cancelled.
 - **[`class CancelScope`](pythontk/pythontk/core_utils/cancel_scope.py#L72)** — A cancellation flag with pull sources, ambient activation, and metrics.
   - `CancelScope.cancelled(self) -> bool` *(property)* — True when this scope (or an enclosing one) has been cancelled.
@@ -277,6 +292,11 @@ Cooperative cancellation — one scope shared by every cancel affordance.
 <a id="core_utils--cli"></a>
 ### `core_utils/cli.py`
 
+- [`ENV_HOST`](pythontk/pythontk/core_utils/cli.py#L11) — constant
+- [`ENV_USER`](pythontk/pythontk/core_utils/cli.py#L12) — constant
+- [`ENV_CRED_TARGET`](pythontk/pythontk/core_utils/cli.py#L13) — constant
+- [`DEFAULT_HOST`](pythontk/pythontk/core_utils/cli.py#L15) — constant
+- [`DEFAULT_PORT`](pythontk/pythontk/core_utils/cli.py#L16) — constant
 - **[`class CLI(_CLIInternal)`](pythontk/pythontk/core_utils/cli.py#L51)** — Utilities for standardizing Command Line Interfaces across scripts.
   - `CLI.get_parser(description: str = None) -> argparse.ArgumentParser` *(static)* — Create a standard ArgumentParser.
   - `CLI.add_connection_args(parser: argparse.ArgumentParser, default_host: Optional[str] = None, default_user: Optional[str] = None, default_target: Optional[str] = None) -> argparse.ArgumentParser` *(static)* — Add standard SSH connection arguments (host, user, password, cred-target).
@@ -339,6 +359,7 @@ Sort separated mesh parts into repeated-assembly copies.
 
 Key stash — park keyframes outside the working animation, retrieve later.
 
+- [`SCHEMA_VERSION`](pythontk/pythontk/core_utils/engines/key_stash/key_stash_model.py#L41) — constant
 - **[`class StashedClip`](pythontk/pythontk/core_utils/engines/key_stash/key_stash_model.py#L51)** — One parked set of keys.
   - `StashedClip.times(self) -> List[float]` *(property)* — Every stashed key time across all curves, sorted, de-duplicated.
   - `StashedClip.start(self) -> Optional[float]` *(property)* — Earliest stashed key time, or ``None`` for an empty clip.
@@ -392,6 +413,7 @@ Behaviors — load JSON keying recipes and resolve them to keyframe math.
 
 Schema for a *behavior* template file, defined as a dataclass.
 
+- [`KNOWN_VERIFY_MODES`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L27) — constant
 - **[`class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L74)** — Schema for one behavior template (see ``BEHAVIOR_FORMAT.md``).
   - `BehaviorSpec.format_markdown(cls) -> str` *(class)* — Generate the full ``BEHAVIOR_FORMAT.md`` reference from the schema SSoT.
   - `BehaviorSpec.validate_duration(value: Any) -> List[str]` *(static)* — ``duration`` is a frame count or the literal ``"from_source"``.
@@ -417,6 +439,9 @@ Shot Manifest engine — pure planning/orchestration core with scene hooks.
 
 Pure Shot Manifest data model + CSV parser.
 
+- [`DEFAULT_INITIAL_SHOT_LENGTH`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L445) — constant
+- [`DEFAULT_FIT_MODE`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L446) — constant
+- [`AUDIO_PLACEHOLDER_DURATION`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L452) — constant
 - **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L135)** — The shot manifest's data model and CSV parser.
   - `ManifestModel.detect_behaviors(text: str) -> List[str]` *(static)* — Return behavior names inferred from descriptive *text*.
   - `ManifestModel.parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]` *(static)* — Parse a structured CSV into a list of :class:`BuilderStep`.
@@ -439,6 +464,7 @@ Pure Shot Manifest data model + CSV parser.
 
 CSV mapping resolver — interprets JSON mapping files.
 
+- [`DEFAULT_DIR`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L75) — constant
 - **[`class Mapping(_MappingInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L275)** — Resolve a CSV's columns through a declarative JSON mapping file.
   - `Mapping.templates() -> TemplateSet` *(static)* — The shared :class:`~pythontk.TemplateSet` backing mapping discovery.
   - `Mapping.discover(directory: Optional[str] = None) -> List[str]` *(static)* — List available mapping names (without ``.json``).
@@ -450,6 +476,7 @@ CSV mapping resolver — interprets JSON mapping files.
 
 Schema for a CSV *mapping* file, defined as a dataclass.
 
+- [`AUDIO_METHODS`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L41) — constant
 - **[`class AudioMethod`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L29)** — Descriptor for one ``audio_resolve`` strategy (drives validate/docs).
 - **[`class MappingSpec(SchemaSpec, _MappingSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L112)** — Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``).
   - `MappingSpec.format_markdown(cls) -> str` *(class)* — Generate the full ``MAPPING_FORMAT.md`` reference from the schema SSoT.
@@ -478,6 +505,7 @@ Commit a resolved :class:`MovePlan` via injected writer callables.
 
 Pure shot-boundary detection math.
 
+- [`STANDARD_TRANSFORM_ATTRS`](pythontk/pythontk/core_utils/engines/shots/shot_detection.py#L21) — constant
 - **[`class ShotDetection`](pythontk/pythontk/core_utils/engines/shots/shot_detection.py#L45)** — Shot-boundary detection math over plain animation data.
   - `ShotDetection.cluster_segments_by_gap(segments: List[Dict[str, Any]], gap_threshold: float = 5.0, min_duration: float = 2.0) -> List[Dict[str, Any]]` *(static)* — Cluster per-object animation segments into shot-region candidates.
   - `ShotDetection.boundaries_from_key_entries(entries: List[Tuple[float, float, str]], gap_threshold: float = 5.0, key_filter: str = 'all') -> List[Dict[str, Any]]` *(static)* — Build shot-region candidates from ``(time, value, object)`` key entries.
@@ -487,6 +515,7 @@ Pure shot-boundary detection math.
 
 Ledger of the edits the shot system authors on a scene's animation.
 
+- [`NO_OWNER`](pythontk/pythontk/core_utils/engines/shots/shot_ledger.py#L39) — constant
 - **[`class ShotEditLedger(_ShotEditLedgerInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_ledger.py#L74)** — What the shot system wrote on scene curves, and how to take it back.
   - `ShotEditLedger.step_count(self) -> int` *(property)* — Number of stepped tangents the system currently claims.
   - `ShotEditLedger.key_count(self) -> int` *(property)* — Number of samples the system currently claims.
@@ -513,6 +542,7 @@ Ledger of the edits the shot system authors on a scene's animation.
 
 DCC-agnostic shot data model and persistent store.
 
+- [`CLIP_NAME_STRATEGIES`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L173) — constant
 - **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L66)** — Interface for saving / loading ShotStore data.
   - `ScenePersistence.save(self, data: Dict[str, Any]) -> None`
   - `ScenePersistence.load(self) -> Optional[Dict[str, Any]]`
@@ -750,7 +780,10 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
 
 ``TextureProcessor`` -- shared processing context for the MapFactory.
 
-- **[`class TextureProcessor`](pythontk/pythontk/core_utils/engines/textures/map_factory/processor.py#L63)** — Shared context and processor for all map operations.
+- [`DEFAULT_EXTENSION`](pythontk/pythontk/core_utils/engines/textures/map_factory/processor.py#L34) — constant
+- [`ALPHA_EXTENSION`](pythontk/pythontk/core_utils/engines/textures/map_factory/processor.py#L35) — constant
+- [`DERIVED_SUBDIR`](pythontk/pythontk/core_utils/engines/textures/map_factory/processor.py#L37) — constant
+- **[`class TextureProcessor`](pythontk/pythontk/core_utils/engines/textures/map_factory/processor.py#L65)** — Shared context and processor for all map operations.
   - `TextureProcessor.output_path_for(self, map_type: str, ext: Optional[str] = None) -> str` — The canonical path ``save_map`` writes ``map_type`` to.
   - `TextureProcessor.get_cached_image(self, path: str) -> 'Image.Image'` — Load an image with caching to avoid redundant disk I/O.
   - `TextureProcessor.save_map(self, image: Union[str, Any], map_type: str, suffix: str = None, optimize: bool = None, source_images: List[Union[str, Any]] = None) -> str` — Saves and optimizes a map, enforcing mode and naming conventions.
@@ -893,6 +926,10 @@ Per-map output-format templates — the "export preset" layer.
 
 Region-mask engine — named face-group masks that gate texture regions at runtime.
 
+- [`ENCODING_VERTEX_COLOR`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L58) — constant
+- [`ENCODING_CHANNELS`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L59) — constant
+- [`ENCODING_ID`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L60) — constant
+- [`SLOT_CHANNELS`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L63) — constant
 - **[`class RegionGroup`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L67)** — One named region group.
   - `RegionGroup.to_dict(self) -> dict`
   - `RegionGroup.coerce(cls, group: Union['RegionGroup', dict]) -> 'RegionGroup'` *(class)* — Accept a ``RegionGroup`` or its plain-dict form.
@@ -954,6 +991,19 @@ Sidecar processes for ``ExecutionMonitor``: indicator, dialog and watchdog.
 - [`fit_and_center(root) -> None`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L415) — Size the dialog to its content and centre it on screen.
 - [`run_dialog(title: str, message: str, force_label: str | None = None, parent_pid: int | None = None) -> int`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L428) — Show the dialog;
 - [`main(argv=None) -> int`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L456)
+- [`CHROMA_KEY`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L40) — constant
+- [`INDICATOR_SIZE`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L41) — constant
+- [`GIF_SIZE`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L42) — constant
+- [`NUM_DOTS`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L43) — constant
+- [`FRAME_MS`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L44) — constant
+- [`PARENT_POLL_MS`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L45) — constant
+- [`DIALOG_MIN_WIDTH`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L46) — constant
+- [`DIALOG_WRAP`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L47) — constant
+- [`DIALOG_KEEP_WAITING`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L49) — constant
+- [`DIALOG_FORCE`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L50) — constant
+- [`DIALOG_CLOSED`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L51) — constant
+- [`DIALOG_CANCEL`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L52) — constant
+- [`KILL_TIMEOUT`](pythontk/pythontk/core_utils/execution_monitor/_sidecar.py#L134) — constant
 
 <a id="core_utils--export_profile"></a>
 ### `core_utils/export_profile.py`
@@ -1182,6 +1232,10 @@ Reusable module attribute resolver for package-style imports.
 
 Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 
+- [`CONFIG_NAME`](pythontk/pythontk/core_utils/naming_convention.py#L50) — constant
+- [`CONFIG_PACKAGE`](pythontk/pythontk/core_utils/naming_convention.py#L51) — constant
+- [`CONFIG_ENV_VAR`](pythontk/pythontk/core_utils/naming_convention.py#L55) — constant
+- [`AFFIX_MODES`](pythontk/pythontk/core_utils/naming_convention.py#L58) — constant
 - **[`class AffixRule`](pythontk/pythontk/core_utils/naming_convention.py#L62)** — One convention entry: a spelling plus where it lands on a base name.
   - `AffixRule.parts(self, *, default: str = 'suffix') -> Tuple[str, str]` — ``(prefix, suffix)`` for this rule — at most one is non-empty.
   - `AffixRule.apply(self, name: str, *, default: str = 'suffix') -> str` — Idempotently put this rule's affix on *name* (no-op for empty text).
@@ -1236,6 +1290,8 @@ Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 
 Qt-free, zero-dependency named-preset *store* for the ecosystem.
 
+- [`JSON_CODEC`](pythontk/pythontk/core_utils/preset_store.py#L63) — constant
+- [`ACTIVE_SENTINEL`](pythontk/pythontk/core_utils/preset_store.py#L73) — constant
 - **[`class Codec`](pythontk/pythontk/core_utils/preset_store.py#L41)** — Pluggable (de)serialiser for a :class:`PresetStore`'s on-disk format.
 - **[`class PresetStore(_PresetStoreInternal)`](pythontk/pythontk/core_utils/preset_store.py#L95)** — Named-preset collection with a read-only built-in tier and a writable
   - `PresetStore.ext(self) -> str` *(property)* — File extension this store reads/writes (from its :class:`Codec`).
@@ -1251,6 +1307,14 @@ Qt-free, zero-dependency named-preset *store* for the ecosystem.
   - `PresetStore.delete(self, name: str) -> bool` — Delete the *user* preset *name*.
   - `PresetStore.rename(self, old: str, new: str) -> bool` — Rename a *user* preset.
   - `PresetStore.sanitize_preset_name(name: str) -> str` *(static)* — Filesystem-safe filename stem for a preset *name*.
+
+<a id="core_utils--process_exit"></a>
+### `core_utils/process_exit.py`
+
+Exit a DCC-hosted interpreter without running ``DLL_PROCESS_DETACH``.
+
+- **[`class ProcessExit(_ProcessExitInternal)`](pythontk/pythontk/core_utils/process_exit.py#L133)** — Process-wide exit that skips interpreter and DLL teardown.
+  - `ProcessExit.hard_exit(code: int = 0) -> NoReturn` *(static)* — Stop this process immediately with status *code*.
 
 <a id="core_utils--process_stream"></a>
 ### `core_utils/process_stream.py`
@@ -1294,6 +1358,7 @@ Structured run logs and threshold-based acceptance gates for pipeline
 
 Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 
+- [`MISSING`](pythontk/pythontk/core_utils/schema_spec.py#L47) — constant
 - **[`class SchemaError(ValueError)`](pythontk/pythontk/core_utils/schema_spec.py#L50)** — Raised by :meth:`ValidationResult.raise_if_errors` when a file is invalid.
 - **[`class FieldDoc`](pythontk/pythontk/core_utils/schema_spec.py#L55)** — One row of a schema's generated reference.
 - **[`class ValidationResult`](pythontk/pythontk/core_utils/schema_spec.py#L68)** — Outcome of :meth:`SchemaSpec.validate` — separated errors and warnings.
@@ -1315,6 +1380,8 @@ Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 
 Run a script in an external app, block until it exits, and collect an artifact.
 
+- [`CREATED`](pythontk/pythontk/core_utils/script_run.py#L38) — constant
+- [`REWRITTEN`](pythontk/pythontk/core_utils/script_run.py#L39) — constant
 - **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/script_run.py#L59)** — Run a script in an external app, block, and collect its artifact.
   - `ScriptRunner.run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None, expect: str = CREATED) -> ScriptRunResult` *(static)* — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
 - **[`class ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L193)** — What a successful :func:`run_script_to_artifact` returns.
@@ -1324,6 +1391,9 @@ Run a script in an external app, block until it exits, and collect an artifact.
 
 Generic on-disk script-template discovery + ``__KEY__`` rendering.
 
+- [`SEND_TO`](pythontk/pythontk/core_utils/script_template.py#L34) — constant
+- [`SAVE_AS`](pythontk/pythontk/core_utils/script_template.py#L40) — constant
+- [`ROUND_TRIP`](pythontk/pythontk/core_utils/script_template.py#L60) — constant
 - **[`class ScriptTemplate(_ScriptTemplateInternal)`](pythontk/pythontk/core_utils/script_template.py#L91)** — Discover on-disk script templates and render their ``__KEY__`` slots.
   - `ScriptTemplate.list_templates(template_dir, extension: str = '.py') -> List[Path]` *(static)* — Return user-visible templates in *template_dir* (skips ``_``-prefixed stems).
   - `ScriptTemplate.normalize_modes(modes: Optional[Sequence[str]]) -> Tuple[str, ...]` *(static)* — Fold legacy on-disk spellings in *modes* to the canonical values.
@@ -1362,6 +1432,8 @@ Shields.io status badges embedded in a markdown file.
 
 Timed multi-step press toggles.
 
+- [`DEFAULT_TIMEOUT`](pythontk/pythontk/core_utils/step_toggle.py#L30) — constant
+- [`STALE_POLICIES`](pythontk/pythontk/core_utils/step_toggle.py#L31) — constant
 - **[`class StepToggle`](pythontk/pythontk/core_utils/step_toggle.py#L34)** — A press stepper: ``0`` (home) -> ``1`` -> ...
   - `StepToggle.get(cls, name: str, **kwargs) -> 'StepToggle'` *(class)* — The shared toggle registered under *name*, created on first call.
   - `StepToggle.clear(cls, name: Optional[str] = None) -> None` *(class)* — Drop the shared toggle *name* (or every one when ``None``).
@@ -1422,7 +1494,7 @@ A discoverable, user-extensible collection of schema-validated template files.
 
 Process-level test isolation -- keep a test run off the developer's machine.
 
-- **[`class TestSandbox(_TestSandboxInternal)`](pythontk/pythontk/core_utils/test_sandbox.py#L79)** — Keep this process's side effects off the developer's machine.
+- **[`class TestSandbox(_TestSandboxInternal)`](pythontk/pythontk/core_utils/test_sandbox.py#L88)** — Keep this process's side effects off the developer's machine.
   - `TestSandbox.browser(cls) -> None` *(class)* — Refuse every ``webbrowser`` launch for the rest of the process.
   - `TestSandbox.temp(cls) -> str` *(class)* — Route the process's temp dir into one throwaway root;
   - `TestSandbox.activate(cls) -> str` *(class)* — Both guards; returns the temp root.
@@ -1433,6 +1505,7 @@ Process-level test isolation -- keep a test run off the developer's machine.
 
 Qt-free, zero-dependency user-config resolution for the ecosystem.
 
+- [`CONFIG_ROOT_ENV_VAR`](pythontk/pythontk/core_utils/user_config.py#L40) — constant
 - **[`class UserConfig`](pythontk/pythontk/core_utils/user_config.py#L44)** — Resolve a JSON user-config doc with discovery + deep-merge over a default.
   - `UserConfig.path_for(name: str, package: str) -> Path` *(static)* — Default on-disk location: ``<user_config_root>/<package>/<name>.json``.
   - `UserConfig.load_file(path: Union[str, os.PathLike]) -> dict` *(static)* — Load a JSON object from *path*.
@@ -1464,7 +1537,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.next_version_path(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1) -> str` *(static)* — Return the next available versioned path for `filepath`.
   - `FileUtils.get_dir_contents(dirPath, content='file', recursive=False, num_threads=1, inc_files=[], exc_files=[], inc_dirs=[], exc_dirs=[], group_by_type=False)` *(static)* — Get the contents of a directory and any of its children.
   - `FileUtils.open_explorer(path: str, create_dir: bool = False, logger=None) -> bool` *(static)* — Open the file explorer at the given path.
-  - `FileUtils.get_file_contents(filepath: str, as_list: bool = False, encoding: str = 'utf-8') -> Optional[Union[str, List[str]]]` *(static)* — Read a text file, whole or as a list of lines.
+  - `FileUtils.get_file_contents(filepath: str, as_list: bool = False, encoding: str = 'utf-8', default: Optional[Union[str, List[str]]] = None) -> Optional[Union[str, List[str]]]` *(static)* — Read a text file, whole or as a list of lines, or return *default*.
   - `FileUtils.write_to_file(filepath, lines)` *(static)* — Write the given list contents to the given file.
   - `FileUtils.read_json(filepath, default=None, encoding: str = 'utf-8')` *(static)* — Parse the JSON document at *filepath*, or return *default*.
   - `FileUtils.write_json(cls, filepath, data, *, indent=2, encoding: str = 'utf-8', sort_keys: bool = False) -> None` *(class)* — Serialise *data* to *filepath* atomically, creating parent dirs.
@@ -1502,6 +1575,8 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
+- [`FBX2GLTF_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L42) — constant
+- [`FBX2GLTF_PLATFORMS`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L43) — constant
 - **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L62)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.conversion_timeout(cls, src: str) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
   - `MeshConvert.bake_node_frames(cls, src: str) -> int` *(class)* — Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
@@ -1580,6 +1655,7 @@ Deliverable verification for exported FBX / GLB pairs.
 
 Zero-dependency binary-FBX reader: header, node records, objects, takes.
 
+- [`FBX_MAGIC`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L25) — constant
 - **[`class FbxFile(_FbxFileInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L118)** — A parsed binary FBX, held read-only.
   - `FbxFile.load(cls, path: str, decode_arrays: bool = False, raw_payloads: bool = True) -> 'FbxFile'` *(class)* — Parse *path*.
   - `FbxFile.is_fbx(path: str) -> bool` *(static)* — True when *path* starts with the binary-FBX magic.
@@ -1613,6 +1689,10 @@ Rebuild a GLB's shot clips from its one whole-timeline animation.
 
 Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
 
+- [`EXTENSION`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L53) — constant
+- [`POINTER`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L58) — constant
+- [`CHANNELS`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L160) — constant
+- [`DEFAULT_COLOR`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L183) — constant
 - **[`class PointerChannel`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L111)** — One animatable material property and how a published ramp reaches it.
   - `PointerChannel.components(self) -> int` *(property)*
   - `PointerChannel.accessor_type(self) -> str` *(property)*
@@ -1626,7 +1706,7 @@ Write authored per-object material ramps into a GLB as ``KHR_animation_pointer``
 
 FBX -> GLB: the one build every GLB deliverable goes through.
 
-- **[`class GlbPipeline(LoggingMixin)`](pythontk/pythontk/file_utils/mesh_convert/glb_pipeline.py#L49)** — FBX -> GLB, with every deliverable's passes, for every deliverable.
+- **[`class GlbPipeline(LoggingMixin)`](pythontk/pythontk/file_utils/mesh_convert/glb_pipeline.py#L51)** — FBX -> GLB, with every deliverable's passes, for every deliverable.
   - `GlbPipeline.envelope(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — The scene-sidecar envelope a build applies, from a host's reader.
   - `GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — Build the GLB for *src* and report what each stage did.
 
@@ -1661,6 +1741,10 @@ Read-only structured access to a GLB: accessors, animation sampling, worlds.
 
 File-level mesh processing via PyMeshLab (optional dependency).
 
+- [`PYMESHLAB_PYPI_URL`](pythontk/pythontk/file_utils/mesh_ops.py#L40) — constant
+- [`SUPPORTED_EXTS`](pythontk/pythontk/file_utils/mesh_ops.py#L44) — constant
+- [`SAVE_EXTS`](pythontk/pythontk/file_utils/mesh_ops.py#L53) — constant
+- [`OPS`](pythontk/pythontk/file_utils/mesh_ops.py#L75) — constant
 - **[`class OpSpec`](pythontk/pythontk/file_utils/mesh_ops.py#L57)** — One curated PyMeshLab filter: name, legal params, wrapped types.
 - **[`class MeshOps(HelpMixin, _MeshOpsInternal)`](pythontk/pythontk/file_utils/mesh_ops.py#L331)** — File-level mesh processing via PyMeshLab (path in → path out).
   - `MeshOps.resolve(cls, required: bool = True)` *(class)* — Return the ``pymeshlab`` module, or explain how to install it.
@@ -1709,6 +1793,7 @@ Prefix-scoped temp artifacts with an explicit lifetime policy.
 
 Zero-dependency USD (OpenUSD) file utilities.
 
+- [`USD_EXTENSIONS`](pythontk/pythontk/file_utils/usd.py#L36) — constant
 - **[`class UsdFile`](pythontk/pythontk/file_utils/usd.py#L47)** — Format sniffing + USDZ package inspection (pure Python, no ``pxr``).
   - `UsdFile.sniff(path: str) -> Optional[str]` *(static)* — Classify *path* as ``'usda'`` / ``'usdc'`` / ``'usdz'``, or ``None``.
   - `UsdFile.list_package(path: str) -> List[str]` *(static)* — Return the entry names of a ``.usdz`` package, in archive order.
@@ -1727,6 +1812,15 @@ Zero-dependency USD (OpenUSD) file utilities.
 <a id="file_utils--uv_unwrap--_uv_unwrap"></a>
 ### `file_utils/uv_unwrap/_uv_unwrap.py`
 
+- [`DEFAULT_TIMEOUT`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L14) — constant
+- [`MOF_DOWNLOAD_URL`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L19) — constant
+- [`MOF_EXE`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L20) — constant
+- [`BFF_VERSION`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L24) — constant
+- [`BFF_URL`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L25) — constant
+- [`BFF_PLATFORMS`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L29) — constant
+- [`BFF_SHA256`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L32) — constant
+- [`BFF_DOWNLOAD_URL`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L35) — constant
+- [`ENGINES`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L134) — constant
 - **[`class EngineSpec`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L111)** — Everything :class:`UvUnwrap` needs to drive one external unwrapper.
 - **[`class UvUnwrap(HelpMixin, _UvUnwrapInternal)`](pythontk/pythontk/file_utils/uv_unwrap/_uv_unwrap.py#L193)** — Automatic UV unwrapping via external CLI engines (OBJ in -> OBJ out).
   - `UvUnwrap.resolve_method(cls, method: str) -> str` *(class)* — Map ``"hard"`` / ``"organic"`` to an engine key (keys pass through).
@@ -1741,6 +1835,10 @@ Zero-dependency USD (OpenUSD) file utilities.
 
 Shared project-workspace model + ``workspace.mel`` codec.
 
+- [`WORKSPACE_MARKER`](pythontk/pythontk/file_utils/workspace.py#L41) — constant
+- [`DEFAULT_FILE_RULES`](pythontk/pythontk/file_utils/workspace.py#L47) — constant
+- [`RULE_NICE_NAMES`](pythontk/pythontk/file_utils/workspace.py#L69) — constant
+- [`SCENE_RULES`](pythontk/pythontk/file_utils/workspace.py#L110) — constant
 - **[`class Workspace(_WorkspaceInternal)`](pythontk/pythontk/file_utils/workspace.py#L134)** — A project workspace: root directory + named file rules.
   - `Workspace.marker_path(self) -> str` *(property)*
   - `Workspace.is_marked(self) -> bool` *(property)*
@@ -1803,6 +1901,7 @@ Pure polyline / curve geometry — generate, measure, sample, reshape.
   - `Polyline.resample(cls, points: Sequence[Sequence[float]], count: int, reverse: bool = False, interpolation: Callable[[Sequence[Sequence[float]], float], List[float]] = None, start_offset: float = 0.0, end_offset: float = 0.0) -> List[List[float]]` *(class)* — Distribute ``count`` evenly-spaced points along the polyline.
   - `Polyline.smooth(points: Sequence[Union[tuple, object]], window_size: int = 1) -> list` *(static)* — Moving-average smooth of a point sequence.
   - `Polyline.simplify(points: Sequence[Sequence[float]], tolerance: float) -> List[int]` *(static)* — Ramer-Douglas-Peucker indices: which points to keep to stay within
+  - `Polyline.transport_frames(cls, points: Sequence[Vec], up: Optional[Vec] = None) -> List[Tuple[Vec, Vec, Vec]]` *(class)* — Minimal-rotation (parallel transport) frames, one per INPUT point.
   - `Polyline.frames(cls, points: Sequence[Vec], segments: int, closed: bool, up: Vec = (0.0, 1.0, 0.0)) -> List[Tuple[Vec, Vec, Vec]]` *(class)* — Resample to ``segments + 1`` even points with a local frame at each.
 
 <a id="geo_utils--rail_surface"></a>
@@ -1818,6 +1917,9 @@ Rail-driven parametric surface — a general geometry primitive.
 
 Height-field shadow maps: a ground shadow that follows the light at runtime.
 
+- [`MAX16`](pythontk/pythontk/geo_utils/shadow_horizon.py#L64) — constant
+- [`DIST_SCALE`](pythontk/pythontk/geo_utils/shadow_horizon.py#L66) — constant
+- [`DIST_FAR`](pythontk/pythontk/geo_utils/shadow_horizon.py#L68) — constant
 - **[`class HeightFieldMap(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_horizon.py#L71)** — A baked height-field shadow map and the frame it was baked in.
   - `HeightFieldMap.levels(self) -> int` *(property)* — Pyramid levels above level 0: ``log2(S)`` (the top is one cell).
   - `HeightFieldMap.tiles(self) -> int` *(property)* — Tiles across the image: ``K`` spans, the aux tile, the pyramid.
@@ -1886,6 +1988,8 @@ UV texture-budget planning: how many maps, at what texel density (numbers in -> 
 
 UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
 
+- [`XATLAS_PYPI_URL`](pythontk/pythontk/geo_utils/uv_pack.py#L59) — constant
+- [`XATLAS_REPO_URL`](pythontk/pythontk/geo_utils/uv_pack.py#L60) — constant
 - **[`class PackIslandsResult`](pythontk/pythontk/geo_utils/uv_pack.py#L97)** — Outcome of one :meth:`UvPack.pack_islands` run.
 - **[`class UvPack(HelpMixin)`](pythontk/pythontk/geo_utils/uv_pack.py#L124)** — Pack existing UV islands with the optional ``xatlas`` engine.
   - `UvPack.resolve(cls, required: bool = True)` *(class)* — Return the ``xatlas`` module, or explain how to install it.
@@ -1920,7 +2024,8 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
 
 - **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L65)** — Helper methods for working with image file formats.
   - `ImgUtils.effective_mode(cls, mode: str, ext: str) -> str` *(class)* — The mode *ext* will actually store for an image in *mode*.
-  - `ImgUtils.dropped_channels(cls, mode: str, ext: str) -> Tuple[str, ...]` *(class)* — Band names *ext* cannot keep from an image in *mode*.
+  - `ImgUtils.dropped_channels(cls, mode: str, ext: str = '', *, target_mode: str = '') -> Tuple[str, ...]` *(class)* — Band names a write or a conversion cannot keep from *mode*.
+  - `ImgUtils.channels_carrying_data(cls, image, bands) -> Tuple[str, ...]` *(class)* — Which of *bands* actually hold varying data in *image*.
   - `ImgUtils.im_help(a=None)` *(static)* — Get help documentation on a specific PIL image attribute
   - `ImgUtils.allow_large_images(cls)` *(class)* — Context manager to safely load very large images.
   - `ImgUtils.ensure_image(cls, input_image: Union[str, Image.Image], mode: str = None, *, max_pixels: Optional[int] = 268435456) -> Image.Image` *(class)* — Ensures the input is a valid PIL Image.
@@ -2013,6 +2118,9 @@ Perceptual-hash + sharpness curation for large image sets.
 
 KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
 
+- [`KTX_SOFTWARE_VERSION`](pythontk/pythontk/img_utils/ktx2_encoder.py#L55) — constant
+- [`KTX_SOFTWARE_PLATFORMS`](pythontk/pythontk/img_utils/ktx2_encoder.py#L68) — constant
+- [`KTX_SOFTWARE_SHA256`](pythontk/pythontk/img_utils/ktx2_encoder.py#L100) — constant
 - **[`class Ktx2Encoder`](pythontk/pythontk/img_utils/ktx2_encoder.py#L106)** — Encode images to ``.ktx2`` (Basis Universal) by shelling out to ``toktx``.
   - `Ktx2Encoder.toktx(self) -> str` *(property)* — The binary this encoder will actually run — bound path, else discovery.
   - `Ktx2Encoder.not_installed_error(cls, detail: str = '') -> FileNotFoundError` *(class)* — The fix-shaped error every "no toktx" outcome raises: install
@@ -2183,11 +2291,13 @@ The hand-off bridge whose target is a live preview page.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
   - `PreviewBridge.scope_objects(self, scope: str = 'selected') -> List[Any]` — The objects *scope* resolves to, through the host hooks.
-  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
+  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
   - `PreviewBridge.publish_file(self, path: Union[str, Path], open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Publish a GLB that already exists on disk, unchanged.
   - `PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line describing what the scene sidecar did.
   - `PreviewBridge.lightmap_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line on the lightmaps: bound, or how many came back unlit.
   - `PreviewBridge.stop(self) -> None` — Stop serving and release the port.
+- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L375)** — Preview bridge whose source is a file on disk rather than a host selection.
+  - `FilePreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Where to look for the EXRs a lightmap manifest names.
 
 <a id="net_utils--preview--deliverer"></a>
 ### `net_utils/preview/deliverer.py`
@@ -2218,7 +2328,11 @@ Record a clip playing in the preview page to a movie file.
 
 Localhost static-file server for live browser / WebXR previews.
 
-- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview/server.py#L487)** — Serve a directory of preview assets on loopback, with a live manifest.
+- [`VIEWER_CLOSED_PATH`](pythontk/pythontk/net_utils/preview/server.py#L82) — constant
+- [`SETTINGS_PATH`](pythontk/pythontk/net_utils/preview/server.py#L87) — constant
+- [`PLAYBLAST_PATH`](pythontk/pythontk/net_utils/preview/server.py#L93) — constant
+- [`PLAYBLAST_ACTIONS`](pythontk/pythontk/net_utils/preview/server.py#L98) — constant
+- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview/server.py#L524)** — Serve a directory of preview assets on loopback, with a live manifest.
   - `PreviewServer.port(self) -> Optional[int]` *(property)* — The bound port, or ``None`` before :meth:`start`.
   - `PreviewServer.url(self) -> Optional[str]` *(property)* — The viewer URL, or ``None`` before :meth:`start`.
   - `PreviewServer.version(self) -> int` *(property)* — Number of published revisions;
@@ -2237,7 +2351,8 @@ Localhost static-file server for live browser / WebXR previews.
   - `PreviewServer.begin_playblast(self, **kwargs: Any) -> Dict[str, Any]` — Open a recording (see :meth:`PreviewPlayblast.begin`).
   - `PreviewServer.finish_playblast(self, token: str, target: Optional[str] = None) -> Dict[str, Any]` — Encode a recording and report where it went.
   - `PreviewServer.recording_path(self, token: str) -> Optional[Path]` — The file a finished recording produced, or None.
-  - `PreviewServer.open_in_browser(self) -> bool` — Open the viewer in the default browser.
+  - `PreviewServer.webxr_browser(cls) -> Optional[str]` *(class)* — Which browser to open so an immersive session is POSSIBLE.
+  - `PreviewServer.open_in_browser(self) -> bool` — Open the viewer.
 
 <a id="net_utils--remote_file"></a>
 ### `net_utils/remote_file.py`
@@ -2323,6 +2438,7 @@ The in-application half of the RPC pair: registry + marshaller + server.
 <a id="str_utils--_str_utils"></a>
 ### `str_utils/_str_utils.py`
 
+- [`ANSI_ESCAPE_RE`](pythontk/pythontk/str_utils/_str_utils.py#L14) — constant
 - **[`class StrUtils(CoreUtils)`](pythontk/pythontk/str_utils/_str_utils.py#L17)**
   - `StrUtils.to_legal_name(name: str) -> str` *(static)* — Every non-alphanumeric becomes ``_``: the objectName rule.
   - `StrUtils.strip_ansi(string: str) -> str` *(static)* — Remove ANSI escape sequences (color/cursor codes) from a string.

@@ -445,6 +445,139 @@ class Polyline:
     # ------------------------------------------------------------- framing
 
     @classmethod
+    def transport_frames(
+        cls,
+        points: Sequence[Vec],
+        up: Optional[Vec] = None,
+    ) -> List[Tuple[Vec, Vec, Vec]]:
+        """Minimal-rotation (parallel transport) frames, one per INPUT point.
+
+        The sibling of :meth:`frames`, and the one to use when the frame must
+        stay coherent along the WHOLE path rather than agree with a fixed
+        reference direction. :meth:`frames` builds its normal as
+        ``cross(up, tangent)`` against a constant ``up``, which is exact for a
+        path that never runs along that axis and DEGENERATE the moment it does:
+        the cross product collapses, and the fallback direction it substitutes
+        is unrelated to the neighbouring frames, so the frame snaps.
+
+        Parallel transport has no reference direction to lose. The first frame's
+        normal is seeded once, then each subsequent normal is the previous one
+        carried through the minimal rotation between consecutive tangents, so
+        consecutive frames differ by the least possible twist and a vertical run
+        is no more special than any other. The cost is that the frame is
+        path-dependent (holonomy): transporting around a closed loop generally
+        does NOT return the starting normal, so a closed path needs its residual
+        distributed by the caller rather than assumed away.
+
+        Parameters:
+            points: Ordered path points. Consecutive duplicates are ignored for
+                tangent purposes at ANY position, head included; fewer than two
+                distinct points yields an arbitrary but valid orthonormal frame.
+            up: Optional hint for the FIRST frame only. Its component
+                perpendicular to the opening tangent is used when that is
+                well-conditioned; otherwise the seed falls back to the world
+                axis least aligned with the tangent. Later frames ignore it
+                entirely -- that is the whole point.
+
+        Returns:
+            ``[(position, tangent, normal), ...]``, one per input point. Each
+            triple is orthonormal to float precision; ``cross(tangent, normal)``
+            completes the basis.
+        """
+        pts = [tuple(float(c) for c in p[:3]) for p in points]
+        if not pts:
+            return []
+        if len(pts) == 1:
+            return [(pts[0], (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))]
+
+        # Each tangent points at the next DISTINCT sample, so a duplicated point
+        # -- routine in a resampled centerline -- neither collapses the tangent
+        # nor substitutes an arbitrary one. Looking forward rather than
+        # differencing neighbours is what makes that true at the HEAD too,
+        # where there is no previous tangent to fall back on: differencing gave
+        # frame 0 of `[A, A, B, C]` a fallback direction unrelated to the path.
+        count = len(pts)
+        found: List[Optional[Vec]] = [None] * count
+        for i in range(count):
+            for m in range(i + 1, count):
+                step = MathUtils.get_vector_from_two_points(pts[i], pts[m])
+                if MathUtils.get_magnitude(step) > 1e-9:
+                    found[i] = MathUtils.normalize(step)
+                    break
+        # Trailing duplicates have no next distinct point; they hold the last
+        # real direction, which is the one they are sitting on.
+        carried: Optional[Vec] = None
+        for i in range(count):
+            if found[i] is None:
+                found[i] = carried
+            else:
+                carried = found[i]
+        # Every point coincident: no direction exists, so any unit vector is as
+        # good as another and the frame stays well-formed.
+        tangents: List[Vec] = [t or (1.0, 0.0, 0.0) for t in found]
+
+        # Seed the first normal: the caller's hint when it survives projection
+        # against the tangent, else the world axis least aligned with it. The
+        # hint is a preference, never a requirement -- a caller that passes +Y
+        # on a vertical run still gets a usable frame instead of a collapse.
+        t0 = tangents[0]
+        seed: Optional[Vec] = None
+        if up is not None:
+            hint = tuple(float(c) for c in up[:3])
+            d = MathUtils.dot_product(hint, t0)
+            projected = tuple(hint[i] - d * t0[i] for i in range(3))
+            if MathUtils.get_magnitude(projected) > 1e-6:
+                seed = MathUtils.normalize(projected)
+        if seed is None:
+            axis = min(range(3), key=lambda i: abs(t0[i]))
+            basis = [0.0, 0.0, 0.0]
+            basis[axis] = 1.0
+            d = MathUtils.dot_product(tuple(basis), t0)
+            projected = tuple(basis[i] - d * t0[i] for i in range(3))
+            seed = MathUtils.safe_normalize(projected, (0.0, 1.0, 0.0))
+
+        out: List[Tuple[Vec, Vec, Vec]] = [(pts[0], t0, seed)]
+        normal = seed
+        for i in range(1, len(pts)):
+            a, b = tangents[i - 1], tangents[i]
+            normal = cls._rotate_between(normal, a, b)
+            # Re-orthogonalise every step: the incremental rotations otherwise
+            # accumulate float drift into a frame that is no longer a basis.
+            d = MathUtils.dot_product(normal, b)
+            normal = MathUtils.safe_normalize(
+                tuple(normal[k] - d * b[k] for k in range(3)), normal
+            )
+            out.append((pts[i], b, normal))
+        return out
+
+    @staticmethod
+    def _rotate_between(vec: Vec, a: Vec, b: Vec) -> Vec:
+        """*vec* carried through the minimal rotation taking *a* onto *b*.
+
+        Rodrigues about ``a x b``. Both degenerate cases are real on a
+        centerline: parallel tangents (a straight run) rotate by nothing, and
+        ANTI-parallel tangents (a 180 degree switchback) have no unique axis --
+        the minimal rotation is genuinely ambiguous there, so the vector is
+        returned unchanged rather than flipped by an arbitrary choice.
+        """
+        axis = MathUtils.cross_product(a, b)
+        sin_t = MathUtils.get_magnitude(axis)
+        if sin_t < 1e-9:
+            return vec
+        # *a* and *b* arrive normalised, so |a x b| IS sin(theta) and a.b IS
+        # cos(theta) -- recovering the angle with atan2 only to feed it back
+        # through cos/sin would cost three transcendentals and lose precision
+        # to no purpose.
+        cos_t = max(-1.0, min(1.0, MathUtils.dot_product(a, b)))
+        axis = MathUtils.normalize(axis)
+        cross = MathUtils.cross_product(axis, vec)
+        dot = MathUtils.dot_product(axis, vec)
+        return tuple(
+            vec[i] * cos_t + cross[i] * sin_t + axis[i] * dot * (1.0 - cos_t)
+            for i in range(3)
+        )
+
+    @classmethod
     def frames(
         cls,
         points: Sequence[Vec],

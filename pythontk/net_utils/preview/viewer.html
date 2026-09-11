@@ -155,7 +155,7 @@
   setTimeout(() => {
     if (window.__viewerBooted) return;
     const status = document.getElementById('status');
-    status.textContent = 'three.js failed to load — this page needs https://unpkg.com (check network / outbound firewall)';
+    status.textContent = 'three.js failed to load — needs unpkg.com.';
     status.className = 'error';
   }, 8000);
 </script>
@@ -207,6 +207,39 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.xr.enabled = true;
 document.body.appendChild(renderer.domElement);
+
+// A lost GPU context takes every texture and buffer with it, and NOTHING on
+// this page noticed: measured against a forced loss, the canvas went blank
+// while the overlay still showed a green dot, "v4 · updated 3:04:24 PM",
+// "1500 meshes · 96,928 tris" and "Headset detected" — the page reporting
+// perfect health with nothing being drawn. That reads as "the textures went
+// missing" and is unguessable from the outside. The causes here are all
+// silent: a display-driver reset, GPU memory pressure, and a headset link
+// dropping (which renegotiates the adapter under an immersive session).
+// three.js registers its own handlers and re-uploads everything if a restore
+// arrives — measured, the compressed textures come back — but the browser is
+// under no obligation to send one, so a page can sit blank indefinitely.
+// Hence: say which it is, and say the one thing that fixes the stuck case.
+// Sticky, and it outranks every other status: the canvas stays blank until
+// the context comes back, so the NEXT push repainting the overlay green (see
+// `setStatus`) would reinstate the exact lie this exists to stop -- and
+// pushing again is the first thing anyone does when a preview looks wrong.
+let contextLost = false;
+const LOST_MESSAGE = 'graphics context lost — reload';
+
+renderer.domElement.addEventListener('webglcontextlost', () => {
+  contextLost = true;
+  setStatus(LOST_MESSAGE, 'error');
+  el.hint.textContent = 'The GPU dropped this page. Nothing is drawing — reload.';
+});
+renderer.domElement.addEventListener('webglcontextrestored', () => {
+  contextLost = false; // Cleared FIRST, or the guard below swallows this.
+  setStatus('context restored', 'live');
+  // Hand the hint back to whoever owns it, rather than leaving a stale
+  // recovery message sitting where the XR state belongs.
+  if (navigator.xr) refreshXrSupport();
+  else el.hint.textContent = '';
+});
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x15171a);
@@ -354,22 +387,122 @@ scene.add(pivot);
 
 /* ------------------------------------------------------------------- xr --- */
 
-if (navigator.xr) {
-  navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
-    if (supported) {
-      document.body.appendChild(VRButton.createButton(renderer));
-      el.hint.textContent = 'Headset detected — press Enter VR.';
-    } else {
-      el.hint.textContent = 'No immersive-vr device. Connect a headset, then reload.';
+// Support is re-checked on `devicechange`, not only at load. A headset powered
+// on, plugged in or woken AFTER the page opened is the normal case -- the page
+// is left open for the next push, and the headset is not -- and a load-time-only
+// check answers "no device" forever, curable only by a reload. Finding the tab
+// to reload it is exactly what nobody can do while wearing one.
+let vrButton = null;
+let enterTimer = null;
+const HINT_READY = 'Headset detected — press Enter VR.';
+const HINT_STARTING = 'Starting session…';
+
+// Set from the manifest, because this is the one thing the SERVER can see and
+// the page cannot: whether an OpenXR runtime is installed at all. Without the
+// distinction "no immersive device" reads as "connect a headset" to someone
+// whose headset IS connected — the cable is in, the desktop app is running,
+// and the only missing piece is a Link session, which nothing on screen names.
+// Null until the first poll answers, so the wording stays generic until known.
+let xrRuntimeInstalled = null;
+
+function noDeviceHint() {
+  if (!xrRuntimeInstalled) {
+    return 'No headset — connect one, this page will notice.';
+  }
+  return 'No headset presenting — start Link or SteamVR.';
+}
+
+function refreshXrSupport() {
+  return navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+    if (supported && !vrButton) {
+      vrButton = VRButton.createButton(renderer);
+      // CAPTURE phase, so this runs BEFORE the button's own handler: a failure
+      // message from the previous attempt has to be cleared on the way in, or a
+      // press that now succeeds leaves the page still reporting the old
+      // failure. Bubble phase would run after the throw and wipe the fresh
+      // message instead of the stale one.
+      vrButton.addEventListener('click', () => {
+        // Clears a failure message from the previous attempt, and starts the
+        // watchdog below.
+        el.hint.textContent = HINT_STARTING;
+        clearTimeout(enterTimer);
+        // A refused session rejects and is reported; a headset that is asleep
+        // or not presenting leaves `requestSession` PENDING instead, so nothing
+        // rejects, nothing starts, and the button sits there saying ENTER VR --
+        // the same dead-button symptom, with no error anywhere to explain it.
+        // Same treatment as the CDN watchdog: say so rather than hang silently.
+        enterTimer = setTimeout(() => {
+          if (renderer.xr.isPresenting) return;
+          // Only overwrite our own "starting" text: a rejection that already
+          // reported a REASON is more useful than this generic timeout.
+          if (el.hint.textContent === HINT_STARTING) {
+            el.hint.textContent = 'Headset did not answer — is Link running?';
+          }
+        }, 12000);
+      }, true);
+      document.body.appendChild(vrButton);
+    } else if (!supported && vrButton && !renderer.xr.isPresenting) {
+      // A button whose device has gone is a button that throws when pressed.
+      // NEVER while presenting, though: that same button is the only way out
+      // of the session, so removing it would strand whoever is wearing it.
+      vrButton.remove();
+      vrButton = null;
     }
+    // Not while the context is lost: this fires UNPROMPTED on `devicechange`,
+    // and "Headset detected — press Enter VR" under a red "context lost"
+    // status invites the one action that cannot work. The button itself is
+    // still kept current, so a restore needs no second device event.
+    if (contextLost) return;
+    el.hint.textContent = supported ? HINT_READY : noDeviceHint();
+  }).catch((error) => {
+    // Say which case it is in rather than rejecting into the console, where a
+    // headset user cannot see it. Same reasoning as the CDN watchdog above.
+    el.hint.textContent = 'WebXR device check failed: ' + error;
   });
+}
+
+// A refused `requestSession` rejects INSIDE VRButton's own click handler, where
+// nothing catches it, so the button just sits there saying ENTER VR -- the
+// failure reads as a dead button rather than as a refusal with a reason. The
+// commonest cause is an immersive session still held by another tab, another
+// browser or a crashed one, which is exclusive per device, invisible from this
+// page, and unguessable from inside a headset.
+// Both events, because which one fires is not ours to choose: Chromium raises
+// InvalidStateError from `requestSession` SYNCHRONOUSLY, so it surfaces as an
+// uncaught error rather than a rejected promise, while other refusals reject.
+// Listening to only one of them is how the first attempt at this failed.
+function reportXrFailure(text) {
+  if (!/XRSession|requestSession|immersive/i.test(text)) return false;
+  el.hint.textContent = 'Enter VR failed — ' + text;
+  return true;
+}
+addEventListener('unhandledrejection', (event) => {
+  const error = event.reason;
+  if (reportXrFailure(String((error && error.message) || error || ''))) {
+    event.preventDefault();
+  }
+});
+addEventListener('error', (event) => {
+  const error = event.error;
+  reportXrFailure(String((error && error.message) || event.message || ''));
+});
+
+if (navigator.xr) {
+  refreshXrSupport();
+  // Fired by the UA whenever the set of available XR devices changes. Guarded
+  // because everything below this block -- the model load, the poll loop -- is
+  // in the same module: a throw here would cost the whole page, turning "no VR
+  // button" into "nothing works", and no browser is worth that trade.
+  if (typeof navigator.xr.addEventListener === 'function') {
+    navigator.xr.addEventListener('devicechange', refreshXrSupport);
+  }
 } else {
   // Reachable when the page is opened over a plain-HTTP LAN address rather
   // than localhost: WebXR is gated on a secure context, and the failure is
   // otherwise silent (the button simply never appears).
   el.hint.textContent = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-    ? 'WebXR unavailable in this browser. Try Chrome or Edge.'
-    : 'WebXR needs localhost or HTTPS — this page was opened over plain HTTP.';
+    ? 'WebXR unavailable here — try Edge or Chrome.'
+    : 'WebXR needs localhost or HTTPS.';
 }
 
 /* ---------------------------------------------------------------- model --- */
@@ -1403,6 +1536,13 @@ async function load(url, version) {
 }
 
 function setStatus(text, cls = '') {
+  // A lost context outranks whatever else the page has to report, including a
+  // fresh publish and an unreachable server: nothing is being DRAWN, so no
+  // other status is the one to act on. The hint line still carries the detail.
+  if (contextLost) {
+    text = LOST_MESSAGE;
+    cls = 'error';
+  }
   el.status.textContent = text;
   el.status.className = cls;
 }
@@ -1563,6 +1703,14 @@ async function poll() {
       viewerStamp = manifest.viewer;
     }
     if (manifest.title) el.title.textContent = manifest.title;
+    // Ahead of the version check, so it lands on the FIRST poll rather than
+    // waiting for a publish: this is what turns "connect a headset" into
+    // "start Link" for someone who already did connect one.
+    if (manifest.xrRuntime !== undefined
+        && manifest.xrRuntime !== xrRuntimeInstalled) {
+      xrRuntimeInstalled = manifest.xrRuntime;
+      if (navigator.xr) refreshXrSupport();
+    }
     // Ahead of the version check: the active set is decided per push, and the
     // FIRST poll happens before anything is published at all — gated behind
     // the early return, a script named on a server that has yet to publish

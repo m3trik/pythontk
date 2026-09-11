@@ -41,6 +41,25 @@ class TestSandboxTestCase(unittest.TestCase):
                 self.assertIn("open_browser=False", str(caught.exception))
         self.assertEqual(TestSandbox.launches[self._launches_before :], [URL] * 3)
 
+    def test_a_browser_built_directly_is_refused_too(self):
+        """Regression: patching the module functions left a second route open.
+
+        Those functions only ever open the system DEFAULT browser, so anything
+        that needs a specific one -- as the preview does, since the default is
+        frequently a build with no WebXR backend -- constructs a browser class
+        itself and calls `open` on it. That path reached a real launch.
+        """
+        for name in ("BackgroundBrowser", "GenericBrowser"):
+            with self.subTest(browser=name):
+                # A path that cannot launch: should this guard ever regress,
+                # the test fails without also spawning a process on the way.
+                browser = getattr(webbrowser, name)(r"C:\nonexistent\nothing.exe")
+                with self.assertRaises(RuntimeError) as caught:
+                    browser.open(URL)
+                self.assertIn("open_browser=False", str(caught.exception))
+        # Recorded under the URL, not the browser object standing in front of it.
+        self.assertEqual(TestSandbox.launches[self._launches_before :], [URL] * 2)
+
     def test_a_test_that_patches_the_launcher_gets_its_mock_then_the_guard_back(self):
         with unittest.mock.patch("webbrowser.open", return_value=True) as opened:
             self.assertTrue(webbrowser.open(URL))

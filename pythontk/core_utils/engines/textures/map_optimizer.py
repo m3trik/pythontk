@@ -1067,6 +1067,8 @@ class MapOptimizer(HelpMixin):
 
         image = ImgUtils.ensure_image(texture_path)
         dims_before = image.size
+        mode_before = image.mode
+        src_ext = os.path.splitext(texture_path)[1]
 
         plan = cls.plan(
             image,
@@ -1155,6 +1157,37 @@ class MapOptimizer(HelpMixin):
         # correct backend handles each format (PIL for most, cv2 for EXR/HDR).
         # The extension on final_output_path drives format dispatch; the profile
         # template (if any) supplies bit depth / compression.
+        # A pass called "optimize" that returns a BIGGER file is wrong whichever
+        # way you read it, so a pure re-encode that inflates keeps the source
+        # bytes -- the rule `MeshConvert.optimize_glb_textures` already applies
+        # to the GLB half. Reported from a production export:
+        # `..._DIFF.png 4096x4096, 24bit, 5.98 MB -> 11.23 MB (+88%)`, while
+        # three other maps in the same set shrank correctly.
+        #
+        # PURE is the load-bearing word. Only a re-encode that changed nothing
+        # else qualifies: same pixels, same container, same mode. A resize is
+        # meant to change the bytes, a container change was asked for, and a
+        # MODE change is deliberate -- promoting palette to RGB is how PNG
+        # palette-transparency is stopped from being read as alpha, and
+        # grayscale to RGB measured +155% here, which keeping the source would
+        # silently undo. Each of those must be allowed to grow the file.
+        pure_reencode = (
+            size_before is not None
+            and image.mode == mode_before
+            and image.size == tuple(dims_before)
+            and out_ext.lower() == src_ext.lower()
+            and os.path.isfile(texture_path)
+        )
+        # Held in memory because the write may land ON the source: once
+        # save_image has run there is nothing left to fall back to.
+        original_bytes = None
+        if pure_reencode:
+            try:
+                with open(texture_path, "rb") as handle:
+                    original_bytes = handle.read()
+            except OSError:
+                original_bytes = None
+
         ImgUtils.save_image(
             image,
             final_output_path,
@@ -1165,10 +1198,53 @@ class MapOptimizer(HelpMixin):
             colorspace=target_colorspace,
         )
 
+        if original_bytes is not None:
+            try:
+                written = os.path.getsize(final_output_path)
+            except OSError:
+                written = None
+            if written is not None and written > len(original_bytes):
+                with open(final_output_path, "wb") as handle:
+                    handle.write(original_bytes)
+                print(
+                    f"# {os.path.basename(final_output_path)}: re-encode came out "
+                    f"larger ({written} > {len(original_bytes)} bytes); kept the "
+                    "original bytes."
+                )
+
         print(
             f"Saved optimized texture: {final_output_path} "
             f"({cls.format_result(final_output_path, size_before, dims_before, image)})"
         )
+
+        # A palettised source that gets upcast GROWS, and the growth reads as a
+        # bug when nothing names its cause. Two production 4K maps came out of a
+        # scene export at +88% and the reason went unexplained for weeks: both
+        # were mode "P", and upcasting them is deliberate (``allow_palette``
+        # defaults off). The keep-original-bytes rule does not step in either,
+        # because the mode changed -- also by design. Say it plainly, and say the
+        # part that outlives the file size: a palette had already cost the source
+        # its colour precision, which on a normal map is a defect in the art.
+        if mode_before in ("P", "PA") and image.mode not in ("P", "PA"):
+            # Only claim the upcast GREW the file when it did. A palettised 4K
+            # map that is also resized comes out 96% smaller, and a note
+            # explaining growth that did not happen is the same kind of
+            # misleading line this one exists to replace.
+            grew = ""
+            try:
+                if size_before is not None and (
+                    os.path.getsize(final_output_path) > size_before
+                ):
+                    grew = " -- that is what grew it, not the re-encode"
+            except OSError:
+                pass
+            print(
+                f"# {os.path.basename(final_output_path)}: the SOURCE was a "
+                f"palettised (256-colour) image, upcast to {image.mode}{grew}. "
+                "The colour precision was already lost before this ran, which "
+                "is worth checking for a normal map. Pass allow_palette=True "
+                "to keep the palette."
+            )
 
         # Reported against what was actually written, so an explicit max_size that
         # overshot the profile's budget still surfaces. An ENFORCED run is inside
@@ -1205,18 +1281,7 @@ class MapOptimizer(HelpMixin):
             str | None: The warning, or None when nothing of substance is lost.
         """
         lost = ImgUtils.dropped_channels(image.mode, ext)
-        if not lost:
-            return None
-        try:
-            extrema = dict(zip(image.getbands(), image.getextrema()))
-        except OSError:  # truncated source — the writer will surface it
-            return None
-        carrying = [
-            band
-            for band in lost
-            if isinstance(extrema.get(band), tuple)
-            and extrema[band][0] != extrema[band][1]
-        ]
+        carrying = ImgUtils.channels_carrying_data(image, lost)
         if not carrying:
             return None
         return (

@@ -40,6 +40,8 @@ policy (a bare GLB still beats no GLB) exist once.
 
 from __future__ import annotations
 
+import os
+import shutil
 from typing import Any, Callable, Dict, Optional, Sequence
 
 from pythontk.core_utils.logging_mixin import LoggingMixin
@@ -175,6 +177,28 @@ class GlbPipeline(LoggingMixin):
         def _say(message: str) -> None:
             if progress is not None:
                 progress(message)
+
+        # A GLB is already the deliverable, so the build is the identity and
+        # every stage reports honestly that it did nothing. This exists so
+        # there is ONE delivery path: without it a finished .glb has to bypass
+        # the pipeline entirely, and a bypass is where "the preview shows X but
+        # the export ships Y" comes back. Each pass below repairs something an
+        # FBX translation loses, and a GLB has already answered all of them --
+        # re-running them would re-encode textures the author chose.
+        #
+        # COPIED to *dst* rather than reported in place: the caller owns dst
+        # and may move it (the deliverer does exactly that once the server has
+        # it), and moving the user's own file out from under them is the one
+        # unrecoverable thing this function could do.
+        if os.path.splitext(src)[1].lower() == ".glb":
+            _say("GLB: already built, publishing as authored…")
+            log.info("Source is already a GLB; publishing it unchanged.")
+            if dst and os.path.abspath(dst) != os.path.abspath(src):
+                shutil.copyfile(src, dst)
+                report["glb"] = dst
+            else:
+                report["glb"] = src
+            return report
 
         own_scratch = (
             None

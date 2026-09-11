@@ -45,8 +45,13 @@ class _TestSandboxInternal:
     the base would redirect the temp dir a second time.
     """
 
-    #: The ``webbrowser`` entry points a launch can go through.
+    #: The ``webbrowser`` module functions a launch can go through.
     _LAUNCHERS = ("open", "open_new", "open_new_tab")
+    #: Browser CLASSES whose ``open`` is a second, unguarded route to the same
+    #: launch: a caller that needs a SPECIFIC browser cannot use the module
+    #: functions, which only ever open the system default, so it builds one of
+    #: these directly. Patching only the module functions left that route open.
+    _LAUNCHER_TYPES = ("BackgroundBrowser", "GenericBrowser")
     #: What a child process reads for its temp dir (``tempfile`` checks these first).
     _TEMP_ENV = ("TMPDIR", "TEMP", "TMP")
 
@@ -65,6 +70,10 @@ class _TestSandboxInternal:
         """
 
         def blocked(url, *args, **kwargs):
+            # Also serves as a method on a browser class, where the first
+            # argument is the instance and the URL is the next one.
+            if hasattr(url, "open") and args:
+                url = args[0]
             cls.launches.append(str(url))
             raise RuntimeError(
                 f"TestSandbox blocked a real browser launch for {url!r}. A test "
@@ -101,6 +110,10 @@ class TestSandbox(_TestSandboxInternal):
         guard = cls._make_guard()
         for name in cls._LAUNCHERS:
             setattr(webbrowser, name, guard)
+        for name in cls._LAUNCHER_TYPES:
+            browser_type = getattr(webbrowser, name, None)
+            if browser_type is not None:
+                browser_type.open = guard
         state["guard"] = guard
 
     @classmethod
@@ -151,6 +164,12 @@ class TestSandbox(_TestSandboxInternal):
             return False
         import webbrowser
 
+        patched = [getattr(webbrowser, name) for name in cls._LAUNCHERS]
+        patched += [
+            getattr(webbrowser, name).open
+            for name in cls._LAUNCHER_TYPES
+            if getattr(webbrowser, name, None) is not None
+        ]
         return tempfile.gettempdir() == state["temp_dir"] and all(
-            getattr(webbrowser, name) is state["guard"] for name in cls._LAUNCHERS
+            entry is state["guard"] for entry in patched
         )

@@ -33,7 +33,11 @@ from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 from pythontk.file_utils.temp_artifacts import TempArtifacts
 from pythontk.net_utils.preview.bridge import PreviewBridge
 from pythontk.net_utils.preview.deliverer import PreviewDeliverer
-from pythontk.net_utils.preview.server import VIEWER_CLOSED_PATH, PreviewServer
+from pythontk.net_utils.preview.server import (
+    SETTINGS_PATH,
+    VIEWER_CLOSED_PATH,
+    PreviewServer,
+)
 
 
 class PreviewServerTestCase(unittest.TestCase):
@@ -338,6 +342,84 @@ class PreviewServerTestCase(unittest.TestCase):
         page = (self.root / "index.html").read_text(encoding="utf-8")
         self.assertIn(f"sendBeacon('{VIEWER_CLOSED_PATH}'", page)
 
+    def test_viewer_page_explains_a_failed_enter_vr(self):
+        """ "Enter VR does nothing" is a real report, and it was accurate: the
+        session request can be REFUSED (a session held elsewhere is exclusive
+        per device, and Chromium raises that one synchronously) or simply left
+        PENDING by a headset that is not presenting. Neither path touches the
+        button, so both read as a dead control with the reason confined to a
+        console nobody in a headset can open. Static check, as above.
+        """
+        self._serve()
+        page = (self.root / "index.html").read_text(encoding="utf-8")
+        # Both events: the synchronous throw and the rejected promise.
+        self.assertIn("addEventListener('error'", page)
+        self.assertIn("addEventListener('unhandledrejection'", page)
+        self.assertIn("Enter VR failed", page)
+        # And the case where nothing is raised at all.
+        self.assertIn("did not answer", page)
+
+    def test_viewer_page_rechecks_xr_support_when_a_device_arrives(self):
+        """A headset is routinely connected AFTER the page is open -- the tab is
+        left up for the next push and the headset is not. Checking support only
+        at load answers "no device" for the life of the page, and the only cure
+        is a reload, which is precisely what someone wearing a headset cannot do.
+        Static check: this is the whole of what is verifiable without a JS
+        runtime, as with the beacon path above.
+        """
+        self._serve()
+        page = (self.root / "index.html").read_text(encoding="utf-8")
+        self.assertIn("isSessionSupported('immersive-vr')", page)
+        self.assertIn("addEventListener('devicechange'", page)
+
+    def test_viewer_page_reports_a_lost_graphics_context(self):
+        """A blank canvas under an overlay still saying everything is fine.
+
+        A lost WebGL context takes every texture and buffer with it. Measured
+        against a forced loss on a production 69 MB push: the canvas went
+        blank while the overlay still showed the live dot, the version, the
+        mesh and triangle counts and "Headset detected" -- the page reporting
+        perfect health while drawing nothing at all. That reads as "the
+        textures went missing", and every cause of it is silent: a display
+        driver reset, GPU memory pressure, or a headset link renegotiating the
+        adapter under an immersive session. three.js recovers if a restore
+        arrives, but the browser owes it none, so the stuck case needs a
+        reload and the page is the only thing that can say so.
+
+        Static check: the whole of what is verifiable without a JS runtime, as
+        with the device-arrival case above.
+        """
+        self._serve()
+        page = (self.root / "index.html").read_text(encoding="utf-8")
+        self.assertIn("'webglcontextlost'", page)
+        self.assertIn("'webglcontextrestored'", page)
+        # Through `setStatus`, so the indicator dot goes red with it: a message
+        # logged to the console is one nobody wearing a headset will ever see.
+        self.assertIn("graphics context lost", page)
+        # STICKY. Pushing again is the first thing anyone does when a preview
+        # looks wrong, and a completed load repaints the status green -- which
+        # over a canvas that is still blank restores the exact lie above.
+        self.assertIn("if (contextLost)", page)
+
+    def test_the_manifest_says_whether_an_xr_runtime_is_installed(self):
+        """ "Connect a headset" is a dead end for someone who already did.
+
+        The page sees only that `immersive-vr` is unsupported, so it asked for
+        the one thing that was already done: cable in, headset listed on the
+        machine, desktop service running. What was actually missing was a Link
+        session, which nothing on screen named. The SERVER can tell an
+        installed OpenXR runtime from none -- the same value the browser reads
+        to find one -- so the manifest carries it and the page can say "start
+        Link" instead of "connect a headset".
+        """
+        self._serve()
+        self.assertIsInstance(self.server.manifest()["xrRuntime"], bool)
+        page = (self.root / "index.html").read_text(encoding="utf-8")
+        self.assertIn("manifest.xrRuntime", page)
+        # The distinction is the whole point: a runtime present but nothing
+        # presenting has to read differently from no runtime at all.
+        self.assertIn("start Link", page)
+
     def test_a_lightmapped_model_keeps_some_environment_lighting(self):
         """Zero environment on a lightmapped model renders it dead flat.
 
@@ -600,6 +682,42 @@ class PreviewServerTestCase(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=5) as response:
             self.assertEqual(response.status, 204)
         self.assertFalse(server.has_viewer())
+
+    def test_a_rebound_host_is_rejected_even_though_it_looks_same_origin(self):
+        """Regression: the Origin/Host comparison cannot stand alone.
+
+        Under DNS rebinding a page at evil.example resolves to 127.0.0.1, and
+        the browser then sends Origin AND Host both naming evil.example -- so
+        they match, and a same-origin check passes for a server that page has
+        no business reaching. Only the Host allow-list refuses it.
+        """
+        server = self._serve()
+        origin = f"http://evil.example:{server.port}"
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.port}/{SETTINGS_PATH}",
+            data=b"{}",
+            headers={"Origin": origin, "Host": f"evil.example:{server.port}"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=5)
+        self.assertEqual(caught.exception.code, 403)
+
+    def test_a_rebound_host_cannot_READ_the_deliverable_either(self):
+        """Guarding only writes would leave the actual asset readable.
+
+        The manifest names the model and the published GLB *is* the user's
+        deliverable, so a rebound page that can GET them has read the work --
+        a worse outcome than the settings write the POST guard covers.
+        """
+        server = self._serve()
+        for route in ("manifest.json", "index.html"):
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.port}/{route}",
+                headers={"Host": f"evil.example:{server.port}"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(request, timeout=5)
+            self.assertEqual(caught.exception.code, 403, route)
 
     def test_a_cross_origin_close_beacon_is_rejected(self):
         """A beacon needs no preflight, so any site could otherwise send one.
@@ -1045,12 +1163,138 @@ class _StubPreviewBridge(PreviewBridge):
         )
 
 
+class PreviewServerBrowserChoiceTestCase(unittest.TestCase):
+    """Which browser a push opens.
+
+    The default browser is frequently one that CANNOT enter an immersive
+    session -- Vivaldi, Opera, Brave and Qt's WebEngine are all Chromium and all
+    ship without the OpenXR backend, measured. Such a browser loads the page
+    perfectly and simply never grows a VR button, with nothing on screen saying
+    why, which is a long and unpleasant thing to diagnose.
+
+    The preference is deliberately narrow: it applies only where switching
+    could change the outcome, so a machine with no XR runtime keeps the
+    browser its user picked.
+    """
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_preview_browser", policy="scoped")
+        self.server = PreviewServer(root=self.temp.dir_path(), port=0)
+        self.addCleanup(self.temp.cleanup)
+        self.addCleanup(self.server.stop)
+
+    def test_a_webxr_capable_browser_is_preferred_over_the_default(self):
+        exe = r"C:\fake\msedge.exe"
+        with (
+            unittest.mock.patch.object(
+                PreviewServer, "webxr_browser", classmethod(lambda cls: exe)
+            ),
+            unittest.mock.patch("webbrowser.BackgroundBrowser") as background,
+            unittest.mock.patch("webbrowser.open") as default,
+        ):
+            self.server.open_in_browser()
+
+        background.assert_called_once_with(exe)
+        default.assert_not_called()
+
+    def test_it_falls_back_to_the_default_when_none_is_installed(self):
+        """A machine with neither must be no worse off than before this existed."""
+        with (
+            unittest.mock.patch.object(
+                PreviewServer, "webxr_browser", classmethod(lambda cls: None)
+            ),
+            unittest.mock.patch("webbrowser.open", return_value=True) as default,
+        ):
+            self.server.open_in_browser()
+
+        default.assert_called_once()
+
+    def test_no_xr_runtime_means_no_browser_switch(self):
+        """Chromium finds its runtime through the SAME registry value.
+
+        With none registered the preferred browser could not enter VR either
+        -- so taking the tab off the browser the user chose would buy them
+        nothing, and the preference correctly declines to.
+        """
+        with unittest.mock.patch.object(
+            PreviewServer, "_xr_runtime", classmethod(lambda cls: None)
+        ):
+            self.assertIsNone(PreviewServer.webxr_browser())
+
+    def test_a_capable_build_is_found_when_a_runtime_is_registered(self):
+        """Also proves an unset variable is skipped rather than crashing."""
+        exe = Path(self.temp.path(extension=".exe"))
+        exe.write_bytes(b"")
+        with (
+            unittest.mock.patch.object(
+                PreviewServer, "_xr_runtime", classmethod(lambda cls: "runtime.json")
+            ),
+            unittest.mock.patch.object(
+                PreviewServer,
+                "WEBXR_BROWSERS",
+                (r"%PREVIEW_NO_SUCH_VAR%\chrome.exe", str(exe)),
+            ),
+        ):
+            self.assertEqual(PreviewServer.webxr_browser(), str(exe))
+
+    def test_the_runtime_probe_never_reports_a_manifest_that_is_gone(self):
+        """The registry key outlives an uninstall; a stale one must read as none."""
+        runtime = PreviewServer._xr_runtime()
+        if runtime is None:
+            self.skipTest("no OpenXR runtime registered on this machine")
+        self.assertTrue(os.path.isfile(runtime), runtime)
+
+    def test_a_preferred_browser_that_will_not_start_falls_back(self):
+        """The preference is an upgrade, never a new way to end up with nothing.
+
+        An exe that is present but refuses to launch -- a broken or half-removed
+        install -- must not cost the user the browser they would have got before
+        this existed.
+        """
+        background = unittest.mock.MagicMock()
+        background.return_value.open.return_value = False
+        with (
+            unittest.mock.patch.object(
+                PreviewServer,
+                "webxr_browser",
+                classmethod(lambda cls: r"C:\fake\x.exe"),
+            ),
+            unittest.mock.patch("webbrowser.BackgroundBrowser", background),
+            unittest.mock.patch("webbrowser.open", return_value=True) as default,
+        ):
+            self.assertTrue(self.server.open_in_browser())
+
+        background.return_value.open.assert_called_once()
+        default.assert_called_once()
+
+    def test_only_verified_builds_are_listed(self):
+        """A "is it Chromium?" test would confidently pick a browser that can
+        never show the button. The list names builds measured to carry the
+        OpenXR loader, so it stays short and deliberate.
+        """
+        listed = " ".join(PreviewServer.WEBXR_BROWSERS).lower()
+        self.assertIn("chrome.exe", listed)
+        self.assertIn("msedge.exe", listed)
+        for absent in ("vivaldi", "opera", "brave", "qt"):
+            self.assertNotIn(absent, listed)
+
+
 class PreviewDelivererTestCase(unittest.TestCase):
     def setUp(self):
         self.temp = TempArtifacts("test_preview_deliverer", policy="scoped")
         self.server = PreviewServer(root=self.temp.dir_path(), port=0).start()
         self.bridge = _StubBridge()
         self.converted = []
+        # These cases are about WHETHER a tab is opened, not which browser gets
+        # it, and the WebXR preference would otherwise make them depend on what
+        # is installed on the machine running them -- green on a box without
+        # Chrome or Edge, red on one with them. Pinned to the default-browser
+        # branch; `PreviewServerBrowserChoiceTestCase` covers the other one.
+        self._no_webxr = unittest.mock.patch.object(
+            PreviewServer, "webxr_browser", classmethod(lambda cls: None)
+        )
+        self._no_webxr.start()
+        self.addCleanup(self._no_webxr.stop)
 
     def tearDown(self):
         self.server.stop()

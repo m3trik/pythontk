@@ -868,26 +868,44 @@ class FileUtils(HelpMixin):
 
     @staticmethod
     def get_file_contents(
-        filepath: str, as_list: bool = False, encoding: str = "utf-8"
+        filepath: str,
+        as_list: bool = False,
+        encoding: str = "utf-8",
+        default: Optional[Union[str, List[str]]] = None,
     ) -> Optional[Union[str, List[str]]]:
-        """Read a text file, whole or as a list of lines.
+        """Read a text file, whole or as a list of lines, or return *default*.
+
+        Deliberately lenient -- `errors="replace"` says so -- so a read failure
+        answers *default* rather than raising. The parameter exists so that
+        contract is visible in the SIGNATURE: it used to live only in this
+        docstring, and a caller that had not read it fed the None straight on.
+        Measured 2026-08-20: `_PkgVersionUtils.update_version` handed it to
+        `enumerate` and raised `TypeError: 'NoneType' object is not iterable`
+        mid version-bump, nowhere near the read that failed.
+
+        Mirrors :meth:`read_json`'s shape, the sibling primitive for the same
+        "cannot be read" case. *default* is last rather than second so no
+        positional caller of the older signature changes meaning.
 
         Parameters:
             filepath (str): The path to an existing text based file.
             as_list (bool): Return as a list of lines rather than one string.
             encoding (str): The encoding to use when reading the file.
+            default: Returned when the read fails. Pass `[]` alongside
+                `as_list=True`, or `""`, to give a caller something it can
+                iterate without a None check.
 
         Returns:
-            (list/str/None) The lines when `as_list`, otherwise the whole text.
-            **None when the read fails**: an OSError is caught, its traceback
-            printed to stderr, and None returned. A caller that iterates or
-            indexes the result must check for None first.
+            (list/str/None) The lines when `as_list`, otherwise the whole text;
+            *default* (None unless given) when an OSError is caught, whose
+            traceback is printed to stderr either way.
         """
         try:
             with open(filepath, "r", encoding=encoding, errors="replace") as f:
                 return f.readlines() if as_list else f.read()
         except OSError:
             traceback.print_exc()
+            return default
 
     @staticmethod
     def write_to_file(filepath, lines):
