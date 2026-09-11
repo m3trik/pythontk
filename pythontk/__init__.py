@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.9.39"
+__version__ = "0.9.40"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -211,6 +211,11 @@ DEFAULT_INCLUDE = {
     "core_utils.qc_log": ["QcLog", "QcGate", "GateError"],
     "core_utils.status_badge": ["StatusBadge"],
     "core_utils.test_sandbox": ["TestSandbox"],
+    # Exit a DCC-hosted interpreter without running DLL_PROCESS_DETACH, whose
+    # static destructors fault in Maya's own teardown and file a crash report
+    # on every ordinary exit. os._exit does NOT skip it on Windows, so every
+    # entry point that exits from inside a DCC host shares this one.
+    "core_utils.process_exit": ["ProcessExit"],
     "core_utils.app_launcher": "AppLauncher",
     "core_utils.app_installer": "AppInstaller",
     "core_utils.app_handoff": [
@@ -285,7 +290,13 @@ DEFAULT_INCLUDE = {
     "net_utils.preview.server": "PreviewServer",
     # Builds the GLB through the shared GlbPipeline and publishes it.
     "net_utils.preview.deliverer": "PreviewDeliverer",
-    "net_utils.preview.bridge": "PreviewBridge",
+    # ``PreviewBridge`` is the skeleton a DCC binds its export mixin to;
+    # ``FilePreviewBridge`` is the host-free peer that previews an FBX or GLB
+    # already on disk, so a panel outside any DCC drives the same chain.
+    "net_utils.preview.bridge": [
+        "PreviewBridge",
+        "FilePreviewBridge",
+    ],
     "net_utils.rpc.installer": [
         "PluginInstaller",
     ],

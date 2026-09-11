@@ -441,6 +441,97 @@ class TestAssessPrediction(_TextureFixture):
         self.assertEqual(predicted["ext"], "tga")
 
 
+class TestPaletteUpcastIsExplained(_TextureFixture):
+    """A palettised source grows when it is upcast, and must say so.
+
+    Two production 4K maps came out of a scene export at +88%
+    (5.98 MB -> 11.23 MB and 7.40 MB -> 13.94 MB) and the cause went
+    unexplained for weeks. Both sources were mode "P": 8-bit palette PNGs.
+    Upcasting them to RGB is deliberate -- `allow_palette` defaults to False --
+    so the growth is correct behaviour, but nothing said which of resize,
+    re-encode or bit depth had tripled the file, and the keep-original-bytes
+    rule does not fire because the mode changed, by design.
+
+    The finding underneath is the one worth surfacing: the palette had already
+    cost the source its colour precision before any of this ran, which on a
+    normal map is a real defect in the art.
+    """
+
+    def palette_texture(self, name="rock_BaseColor.png", size=(256, 256)):
+        path = os.path.join(self.test_dir, name)
+        image = ImgUtils.create_image("RGB", size)
+        pixels = image.load()
+        for y in range(size[1]):
+            for x in range(size[0]):
+                value = (x * 7 + y * 13) % 256
+                pixels[x, y] = (value, (value * 3) % 256, 64)
+        ImgUtils.save_image(image.convert("P"), path)
+        return path
+
+    def test_the_upcast_out_of_a_palette_is_named_in_the_report(self):
+        import io
+        from contextlib import redirect_stdout
+
+        path = self.palette_texture()
+        self.assertEqual(
+            ImgUtils.ensure_image(path).mode, "P", "fixture must be paletted"
+        )
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            MapOptimizer.optimize_map(path)
+        printed = buffer.getvalue().lower()
+
+        self.assertIn("palett", printed, f"the upcast went unexplained:\n{printed}")
+        self.assertIn("allow_palette", printed)
+
+    def test_an_upcast_that_SHRANK_does_not_claim_it_grew(self):
+        """A palettised 4K map that is also resized comes out ~96% smaller.
+
+        Explaining growth that did not happen is the same kind of misleading
+        line the note exists to replace, so the causal clause is conditional.
+        """
+        import io
+        from contextlib import redirect_stdout
+
+        path = self.palette_texture(size=(256, 256))
+        size_before = os.path.getsize(path)
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            written = MapOptimizer.optimize_map(path, max_size=32)
+        printed = buffer.getvalue()
+
+        self.assertLess(os.path.getsize(written), size_before, "fixture must shrink")
+        self.assertIn("palett", printed.lower(), "the upcast still deserves a note")
+        self.assertNotIn(
+            "grew it", printed, f"claimed growth on a smaller file:\n{printed}"
+        )
+
+    def test_preserving_the_palette_says_nothing(self):
+        """The note is about a conversion; there is none to explain here."""
+        import io
+        from contextlib import redirect_stdout
+
+        path = self.palette_texture()
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            MapOptimizer.optimize_map(path, allow_palette=True)
+
+        self.assertNotIn("palett", buffer.getvalue().lower())
+
+    def test_a_plain_rgb_source_says_nothing(self):
+        import io
+        from contextlib import redirect_stdout
+
+        path = self.texture()
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            MapOptimizer.optimize_map(path)
+
+        self.assertNotIn("palett", buffer.getvalue().lower())
+
+
 class TestOptimizeReporting(_TextureFixture):
     def test_format_result_shows_both_transitions(self):
         path = self.texture(size=(64, 64))
@@ -1484,6 +1575,103 @@ class TestResolveSizeClamp(_TextureFixture):
             max(report["predicted"]["width"], report["predicted"]["height"]),
             getattr(OutputTemplates.budget("glTF 2.0"), "max_size", None),
         )
+
+
+class TestReEncodeNeverInflates(unittest.TestCase):
+    """A pass called "optimize" must not return a BIGGER file.
+
+    Reported from a production export: `..._DIFF.png 4096x4096, 24bit, 5.98 MB
+    -> 11.23 MB (+88%)` and `..._NRML_OGL.png 7.40 MB -> 13.94 MB (+88%)`,
+    while three other maps in the same set shrank correctly. The rule applied
+    is the one `MeshConvert.optimize_glb_textures` already uses for the GLB
+    half: a re-encode that comes out larger keeps the original bytes.
+
+    PURE is the load-bearing word, and the second test is why: only a re-encode
+    that changed nothing ELSE qualifies. A mode promotion is deliberate -- it
+    is how PNG palette-transparency is stopped from being read as alpha -- and
+    grayscale to RGB measures +155% here, which keeping the source bytes would
+    silently undo.
+    """
+
+    @staticmethod
+    def _noise(size, mode="RGB", seed=1):
+        """High-entropy pixels: the case a PNG re-encode cannot shrink."""
+        import random
+
+        from PIL import Image
+
+        random.seed(seed)
+        img = Image.new(mode, size)
+        pixels = img.load()
+        for y in range(size[1]):
+            for x in range(size[0]):
+                if mode == "RGB":
+                    pixels[x, y] = (
+                        random.randrange(256),
+                        random.randrange(256),
+                        random.randrange(256),
+                    )
+                else:
+                    pixels[x, y] = random.randrange(256)
+        return img
+
+    def test_a_pure_reencode_that_inflates_keeps_the_original_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "NOISE_Base_Color.png")
+            # compress_level=0 stores the pixels raw, so any re-encode that is
+            # not smaller is the case under test.
+            self._noise((256, 256)).save(path, compress_level=0)
+            before = os.path.getsize(path)
+            with open(path, "rb") as handle:
+                original = handle.read()
+
+            out = MapOptimizer.optimize_map(path, output_dir=tmp)
+            self.assertTrue(out and os.path.isfile(out))
+            self.assertLessEqual(
+                os.path.getsize(out),
+                before,
+                "optimize returned a larger file than it was given",
+            )
+            with open(out, "rb") as handle:
+                self.assertEqual(handle.read(), original, "bytes were not preserved")
+
+    def test_a_deliberate_mode_promotion_is_still_allowed_to_grow(self):
+        """Grayscale -> RGB must NOT be reverted by the size rule.
+
+        The promotion is a correctness step, not an optimisation, so the rule
+        has to leave it alone even though it inflates the file substantially.
+        """
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "GRAY_Base_Color.png")
+            self._noise((256, 256), mode="L").save(path, compress_level=9)
+            before = os.path.getsize(path)
+
+            out = MapOptimizer.optimize_map(path, output_dir=tmp)
+            self.assertTrue(out and os.path.isfile(out))
+            with Image.open(out) as img:
+                self.assertEqual(img.mode, "RGB", "the promotion was reverted")
+            self.assertGreater(
+                os.path.getsize(out),
+                before,
+                "a mode promotion should be free to grow the file",
+            )
+
+    def test_a_reencode_that_shrinks_is_written_normally(self):
+        """The ordinary path stays ordinary -- the guard is not a veto."""
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "FLAT_Base_Color.png")
+            Image.new("RGB", (256, 256), (10, 20, 30)).save(path, compress_level=0)
+            before = os.path.getsize(path)
+
+            out = MapOptimizer.optimize_map(path, output_dir=tmp)
+            self.assertTrue(out and os.path.isfile(out))
+            self.assertLess(
+                os.path.getsize(out), before, "a compressible map should shrink"
+            )
 
 
 if __name__ == "__main__":

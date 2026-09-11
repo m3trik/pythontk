@@ -1,32 +1,25 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ 42710a1)._
+_Diff vs the last release (origin/main @ d1a0b2b)._
 
-## Added (20)
+## Added (7)
 
-- `geo_utils/uv_budget.py::BudgetItem(class)`
-- `geo_utils/uv_budget.py::BudgetItem.demand(self, tpu: float, pad: float) -> float`
-- `geo_utils/uv_budget.py::BudgetPage(class)`
-- `geo_utils/uv_budget.py::BudgetPage.fill(self) -> float`
-- `geo_utils/uv_budget.py::BudgetPlan(class)`
-- `geo_utils/uv_budget.py::BudgetPlan.density_ratio(self) -> Optional[float]`
-- `geo_utils/uv_budget.py::BudgetPlan.rows(self) -> List[BudgetRow]`
-- `geo_utils/uv_budget.py::BudgetRow(class)`
-- `geo_utils/uv_budget.py::BudgetRow.assignment(self) -> Dict[str, int]`
-- `geo_utils/uv_budget.py::BudgetRow.texels(self) -> int`
-- `geo_utils/uv_budget.py::BudgetRow.underfilled(self, threshold: float = 0.5) -> List[int]`
-- `geo_utils/uv_budget.py::BudgetRow.utilization(self) -> float`
-- `geo_utils/uv_budget.py::BudgetRow.worst_fill(self) -> float`
-- `geo_utils/uv_budget.py::UvBudget(class)`
-- `geo_utils/uv_budget.py::UvBudget.density_at_pages(cls, items: Sequence[BudgetItem], pages: int, map_size: int, *, factor: int = 256, mip_levels: int = 0, fill: Optional[float] = None, level: bool = True) -> BudgetRow`
-- `geo_utils/uv_budget.py::UvBudget.first_fit_decreasing(sizes: Sequence[Tuple[str, float]], capacity: float) -> Optional[List[List[str]]]`
-- `geo_utils/uv_budget.py::UvBudget.padding_for(map_size: int, factor: int = 256, mip_levels: int = 0) -> Tuple[float, bool]`
-- `geo_utils/uv_budget.py::UvBudget.pages_at_density(cls, items: Sequence[BudgetItem], density: float, map_size: int, *, factor: int = 256, mip_levels: int = 0, fill: Optional[float] = None, level: bool = False) -> BudgetRow`
-- `geo_utils/uv_budget.py::UvBudget.partition_lpt(sizes: Sequence[Tuple[str, float]], pages: int) -> List[List[str]]`
-- `geo_utils/uv_budget.py::UvBudget.plan(cls, items: Sequence[BudgetItem], *, map_size: int = 4096, density: Optional[float] = None, pages: Optional[int] = None, factor: int = 256, mip_levels: int = 0, fill: Optional[float] = None, level: bool = False, alternates: bool = True, map_sizes: Optional[Iterable[int]] = None) -> BudgetPlan`
+- `core_utils/process_exit.py::ProcessExit(class)`
+- `core_utils/process_exit.py::ProcessExit.hard_exit(code: int = 0) -> NoReturn`
+- `geo_utils/polyline.py::Polyline.transport_frames(cls, points: Sequence[Vec], up: Optional[Vec] = None) -> List[Tuple[Vec, Vec, Vec]]`
+- `img_utils/_img_utils.py::ImgUtils.channels_carrying_data(cls, image, bands) -> Tuple[str, ...]`
+- `net_utils/preview/bridge.py::FilePreviewBridge(class)`
+- `net_utils/preview/bridge.py::FilePreviewBridge.lightmap_search_dirs(self) -> Sequence[str]`
+- `net_utils/preview/server.py::PreviewServer.webxr_browser(cls) -> Optional[str]`
 
-## Signature changed (1)
+## Signature changed (3)
 
-- `core_utils/engines/shots/shot_plan.py::ShotPlanner.plan_respace`
-  - was: `(store: ShotStore, gap: float, start_frame: float) -> MovePlan`
-  - now: `(store: ShotStore, gap: float, start_frame: float, respect_locks: bool = True) -> MovePlan`
+- `file_utils/_file_utils.py::FileUtils.get_file_contents`
+  - was: `(filepath: str, as_list: bool = False, encoding: str = 'utf-8') -> Optional[Union[str, List[str]]]`
+  - now: `(filepath: str, as_list: bool = False, encoding: str = 'utf-8', default: Optional[Union[str, List[str]]] = None) -> Optional[Union[str, List[str]]]`
+- `img_utils/_img_utils.py::ImgUtils.dropped_channels`
+  - was: `(cls, mode: str, ext: str) -> Tuple[str, ...]`
+  - now: `(cls, mode: str, ext: str = '', *, target_mode: str = '') -> Tuple[str, ...]`
+- `net_utils/preview/bridge.py::PreviewBridge.push`
+  - was: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, **params: Any) -> Optional[Dict[str, Any]]`
+  - now: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, **params: Any) -> Optional[Dict[str, Any]]`

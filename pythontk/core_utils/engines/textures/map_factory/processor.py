@@ -33,6 +33,8 @@ from .conversions import ConversionRegistry
 # Constants -- single source of truth for the package (imported by _map_factory).
 DEFAULT_EXTENSION = "png"  # Default extension for saved maps
 ALPHA_EXTENSION = "png"  # Default extension for maps requiring alpha channel
+# Where a derived map goes when its canonical name IS one of the inputs.
+DERIVED_SUBDIR = "derived"
 
 
 def _factory():
@@ -86,7 +88,12 @@ class TextureProcessor:
 
         Lets callers probe for an existing output (e.g. channel extraction
         reusing a real loose map instead of overwriting it) without duplicating
-        the naming convention.
+        the naming convention -- which is what this is FOR, and why it keeps
+        describing the canonical path even though a derived write that would
+        land on one of the run's inputs is redirected into ``derived/`` by
+        :meth:`_guard_input_overwrite`. A probe wants to know whether a real
+        loose map sits at the canonical name; it must not be pointed at a
+        subfolder this run may have just created.
 
         Parameters:
             map_type: Map-type suffix (leading underscores stripped).
@@ -103,6 +110,60 @@ class TextureProcessor:
             self.output_dir,
             f"{self.base_name}_{map_type.lstrip('_')}{self.tile_token}.{ext}",
         )
+
+    def _guard_input_overwrite(self, output_path: str) -> Optional[str]:
+        """Redirect a DERIVED write that would land on one of the inputs.
+
+        ``prepare_maps`` defaults ``output_dir`` to the source folder, and the
+        output name is ``<base>_<map_type>.<ext>`` -- which for an already
+        conventionally named map IS the source path. Every re-encode on that
+        path therefore rewrites the caller's own file: measured 2026-09-10, an
+        RGBA ``Base_Color.png`` came back RGB with its alpha gone, and the same
+        design destroyed a production ambient-occlusion bake.
+
+        A pipeline may legitimately re-encode; what it may not do is use the
+        inputs as its scratch space. So the derived map is written to a
+        ``derived/`` subfolder under the SAME name rather than refused: the
+        filename is what the texture manifests classify on, so keeping it
+        intact keeps every downstream consumer working, and the source survives.
+
+        Only transformed writes come through here. A passthrough copy already
+        no-ops when source and destination are the same file, and redirecting
+        it would manufacture a pointless duplicate.
+
+        Returns:
+            *output_path* unchanged when it is not an input; the redirected
+            path inside ``derived/``; or ``None`` when the redirect itself is
+            impossible (the subfolder cannot be created), which the caller
+            reports rather than writing over the source anyway.
+        """
+        sources = {
+            os.path.abspath(v)
+            for v in self.inventory.values()
+            if isinstance(v, str) and v
+        }
+        if os.path.abspath(output_path) not in sources:
+            return output_path
+
+        folder = os.path.join(os.path.dirname(output_path), DERIVED_SUBDIR)
+        redirected = os.path.join(folder, os.path.basename(output_path))
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError as error:
+            if self.logger:
+                self.logger.error(
+                    f"Refusing to overwrite the source map "
+                    f"'{os.path.basename(output_path)}' and cannot create "
+                    f"'{folder}' ({error}); skipping the write."
+                )
+            return None
+        if self.logger:
+            self.logger.warning(
+                f"'{os.path.basename(output_path)}' is one of this run's INPUTS; "
+                f"the derived map goes to '{DERIVED_SUBDIR}/' so the source is "
+                "left as authored."
+            )
+        return redirected
 
     def get_cached_image(self, path: str) -> "Image.Image":
         """Load an image with caching to avoid redundant disk I/O.
@@ -142,6 +203,34 @@ class TextureProcessor:
         if "A" in (map_def.channels or {}):
             return True
         return str(map_def.mode or "").endswith("A")
+
+    def _warn_mode_discards_data(self, image, target_mode: str, map_type: str):
+        """Name a channel the declared mode is about to throw away.
+
+        A map type's declared mode is enforced before the write, so an RGBA
+        source of a type declaring "RGB" is flattened -- a cutout packed into
+        a `Base_Color` never reaches any shader. Flattening is defensible:
+        a base-colour alpha is TRANSPARENCY in glTF/Unreal/Painter and
+        SMOOTHNESS under Unity's Standard shader, so no reclassification is
+        right for every consumer of this registry. Doing it in SILENCE is
+        not, and `ImgUtils.dropped_channels` already existed to say so.
+
+        Quiet unless the channel carries data, on the same rule the container
+        warning uses -- a fully opaque alpha costs nothing.
+        """
+        if not self.logger:
+            return
+        lost = ImgUtils.dropped_channels(image.mode, target_mode=target_mode)
+        carrying = ImgUtils.channels_carrying_data(image, lost)
+        if not carrying:
+            return
+        self.logger.warning(
+            f"{map_type}: channel {'/'.join(carrying)} carries data and is "
+            f"discarded -- {map_type} declares mode '{target_mode}' and this "
+            f"source is {image.mode}. A packed channel has no agreed meaning "
+            "across engines, so it is not reclassified automatically; extract "
+            "it as its own map if it is needed."
+        )
 
     def save_map(
         self,
@@ -387,6 +476,12 @@ class TextureProcessor:
         # IN-MEMORY OPTIMIZATION PIPELINE
         # Use image cache to avoid redundant disk I/O
         if should_optimize:
+            # Everything below TRANSFORMS the image, so this is the one place a
+            # write can land on an input. Guard once here rather than at each
+            # save_image call, so a new branch cannot miss it.
+            output_path = self._guard_input_overwrite(output_path)
+            if output_path is None:
+                return image if isinstance(image, str) else None
             if isinstance(image, str):
                 img_obj = self.get_cached_image(image)
             else:
@@ -418,6 +513,7 @@ class TextureProcessor:
                     and img_obj.mode in ("I", "I;16")
                 )
                 if not keep_high_bit_gray:
+                    self._warn_mode_discards_data(img_obj, map_def.mode, map_type)
                     img_obj = ImgUtils.enforce_mode(img_obj, map_def.mode)
 
             # 3. Resize

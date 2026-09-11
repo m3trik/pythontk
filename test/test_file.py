@@ -290,6 +290,29 @@ class FileTest(BaseTestCase):
         content = FileUtils.get_file_contents(str(self.file1_path), as_list=True)
         self.assertEqual(content, [])
 
+    def test_a_failed_read_returns_the_default(self):
+        """The failure mode belongs in the signature, not in folklore.
+
+        Measured 2026-08-20: the swallowed OSError handed None to
+        ``_PkgVersionUtils.update_version``, which fed it straight to
+        ``enumerate`` and raised ``TypeError: 'NoneType' object is not
+        iterable`` mid version-bump -- a failure reported nowhere near the
+        read that actually failed.
+        """
+        missing = os.path.join(str(self.test_files_path), "no_such_file.txt")
+        self.assertIsNone(FileUtils.get_file_contents(missing))
+        self.assertEqual(FileUtils.get_file_contents(missing, default=""), "")
+        self.assertEqual(
+            FileUtils.get_file_contents(missing, as_list=True, default=[]), []
+        )
+
+    def test_the_default_is_ignored_when_the_read_succeeds(self):
+        FileUtils.write_to_file(str(self.file1_path), "real")
+        self.assertEqual(
+            FileUtils.get_file_contents(str(self.file1_path), default="fallback"),
+            "real",
+        )
+
     def test_write_and_read_unicode(self):
         """Test write and read with unicode content."""
         unicode_content = "日本語テスト αβγδ ñoño"

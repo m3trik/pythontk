@@ -30,7 +30,8 @@ Example (publish a GLB and open it):
 
 Served surface:
     ``GET /``                -> the viewer page (materialized into the serve root)
-    ``GET /manifest.json``   -> ``{"version", "asset", "updated", "title", "scripts"}``;
+    ``GET /manifest.json``   -> ``{"version", "viewer", "asset", "updated",
+                                "title", "scripts", "xrRuntime"}``;
                                 also the heartbeat behind :meth:`PreviewServer.has_viewer`
     ``GET /scripts/<name>.js`` -> an active viewer script (see :attr:`PreviewServer.SCRIPTS`)
     ``GET /<name>``          -> any published asset, by name
@@ -171,6 +172,8 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler API)
+        if self._foreign_host():
+            return
         route = self.path.split("?", 1)[0].lstrip("/")
         if route.startswith(f"{PLAYBLAST_PATH}/"):
             # A finished recording, by token. It exists so the download works
@@ -189,6 +192,34 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
             self._send_json(self._owner.manifest() if self._owner else {})
             return
         super().do_GET()
+
+    def _allowed_hosts(self) -> tuple:
+        """Host header spellings this loopback bind answers to.
+
+        Read off the live socket rather than the owner, so it is correct before
+        the owner is attached and on an ephemeral port.
+        """
+        port = self.server.server_address[1]
+        return (f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}")
+
+    def _foreign_host(self) -> bool:
+        """Refuse, and say so, when Host is not one this server answers to.
+
+        The only defence against DNS rebinding: under it `Origin` and `Host`
+        both name the attacker's domain and therefore AGREE, so comparing them
+        proves nothing. Reads are guarded as well as writes -- the manifest and
+        the published asset ARE the user's deliverable, and a rebound page that
+        can GET them has read it.
+
+        A missing Host is allowed, matching the Origin rule below: nothing off
+        this machine reaches a loopback bind unaided, and HTTP/1.0 clients and
+        hand-rolled probes legitimately omit it.
+        """
+        host = self.headers.get("Host")
+        if host and host not in self._allowed_hosts():
+            self.send_error(403, "Unrecognized Host")
+            return True
+        return False
 
     def do_POST(self):  # noqa: N802 (BaseHTTPRequestHandler API)
         """Accept the viewer's close notice and its setting writes; 404 else."""
@@ -230,6 +261,12 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         # it is the one request that writes to a FILE, so a page the user
         # happens to have open must not be able to restyle the deliverable.
         origin, host = self.headers.get("Origin"), self.headers.get("Host")
+        # Host FIRST -- see `_foreign_host`. Deliberately AFTER the body drain
+        # above, not at the top of the method as in `do_GET`: a refused POST
+        # still arrived with a body, and leaving it in the socket desynchronises
+        # the next request on a keep-alive connection.
+        if self._foreign_host():
+            return
         if origin and host and origin.split("//", 1)[-1] != host:
             self.send_error(403, "Cross-origin post rejected")
             return
@@ -829,6 +866,9 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
 
     def manifest(self) -> Dict[str, Any]:
         """The payload served at ``/manifest.json``."""
+        # Read OUTSIDE the lock: a registry lookup has no business holding up a
+        # publish, and this is not part of the published state.
+        xr_runtime = self._xr_runtime() is not None
         with self._lock:
             return {
                 "version": self._version,
@@ -842,6 +882,11 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
                 "scripts": [
                     f"{self.SCRIPTS_ROUTE}/{name}.js" for name in self._scripts
                 ],
+                # Whether an XR runtime is INSTALLED, which the page cannot see
+                # and the machine can. It is the difference between "no headset
+                # here" and "a headset that is not presenting", and the page
+                # says something useful for each -- see the viewer's XR block.
+                "xrRuntime": xr_runtime,
             }
 
     def start(self) -> "PreviewServer":
@@ -1132,10 +1177,104 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
                 counts.setdefault(name, writer(str(path), value))
         return counts
 
+    #: Browsers known to ship Chromium's OpenXR backend, most preferred first.
+    #: The list is short ON PURPOSE: it names the two builds verified to carry
+    #: `openxr_loader`, rather than guessing from "is it Chromium?" -- Vivaldi,
+    #: Opera, Brave and Qt's WebEngine are all Chromium and all measured
+    #: WITHOUT it, so a family test would confidently pick a browser that can
+    #: never show the VR button.
+    WEBXR_BROWSERS = (
+        r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe",
+        r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe",
+        r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe",
+        r"%PROGRAMFILES(X86)%\Microsoft\Edge\Application\msedge.exe",
+        r"%PROGRAMFILES%\Microsoft\Edge\Application\msedge.exe",
+    )
+
+    #: Where every OpenXR application -- Chromium's own backend included --
+    #: looks for the installed runtime.
+    _OPENXR_RUNTIME_KEY = r"SOFTWARE\Khronos\OpenXR\1"
+
+    @classmethod
+    def _xr_runtime(cls) -> Optional[str]:
+        """Path to the installed OpenXR runtime manifest, or ``None``.
+
+        Read from the same registry value Chromium reads, so it answers the
+        one question worth asking before taking a tab off the user's default
+        browser: could ANY browser enter an immersive session on this machine?
+        """
+        try:
+            # Off Windows there is no `winreg` -- and no build that can enter
+            # VR either. The 64-bit view is named explicitly, or a 32-bit
+            # interpreter would be redirected to `WOW6432Node` and miss the
+            # value the (64-bit) browser will actually read.
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                cls._OPENXR_RUNTIME_KEY,
+                0,
+                winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
+            ) as key:
+                manifest = winreg.QueryValueEx(key, "ActiveRuntime")[0]
+        except (ImportError, OSError):  # No winreg, no key, or no value.
+            return None
+        # This sits in the path of every push and must never raise, and a
+        # registry someone else owns is not a thing to trust the shape of.
+        # The key also outlives an uninstall, and a manifest that is gone runs
+        # nothing.
+        if not isinstance(manifest, str) or not os.path.isfile(manifest):
+            return None
+        return manifest
+
+    @classmethod
+    def webxr_browser(cls) -> Optional[str]:
+        """Which browser to open so an immersive session is POSSIBLE.
+
+        ``None`` means no browser switch would help, and the caller should
+        leave the user on the one they chose: either no OpenXR runtime is
+        installed -- so nothing on this machine can enter VR and taking the
+        tab would buy the user nothing -- or none of the capable builds is.
+        """
+        if not cls._xr_runtime():
+            return None
+        for candidate in cls.WEBXR_BROWSERS:
+            # An unset variable leaves its `%NAME%` in place, which no more
+            # names a file than a missing install does.
+            path = os.path.expandvars(candidate)
+            if os.path.isfile(path):
+                return path
+        return None
+
     def open_in_browser(self) -> bool:
-        """Open the viewer in the default browser. Starts the server if needed."""
+        """Open the viewer. Starts the server if needed.
+
+        A machine with an XR runtime gets a browser that can actually enter
+        VR, because the default is frequently a Chromium fork WITHOUT the
+        OpenXR backend: it loads the page perfectly and simply never grows a
+        VR button, with nothing on screen to say why. A machine with no
+        runtime keeps whatever browser the user chose -- see
+        :meth:`webxr_browser`.
+        """
         self.start()
-        opened = webbrowser.open(self.url)
+        preferred = self.webxr_browser()
+        opened = False
+        if preferred:
+            # A specific browser cannot go through `webbrowser.open`, which
+            # only ever opens the system default.
+            opened = webbrowser.BackgroundBrowser(preferred).open(self.url)
+            if not opened:
+                # The preference is an UPGRADE, never a new way to end up with
+                # nothing: an exe that is present but will not start (a broken
+                # or half-removed install) must not cost the user the browser
+                # they would have got before this existed.
+                self.logger.warning(
+                    "%s would not launch; using the default browser, which may "
+                    "not enter VR.",
+                    preferred,
+                )
+        if not opened:
+            opened = webbrowser.open(self.url)
         if opened:
             # Count the launch itself as a viewer, ahead of its first poll. A
             # cold browser start takes seconds, and without this a second push

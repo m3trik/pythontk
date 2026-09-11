@@ -200,8 +200,10 @@ class ImgUtils(HelpMixin):
         return cls._CONTAINER_MODE_FALLBACKS.get(ext, {}).get(mode, mode)
 
     @classmethod
-    def dropped_channels(cls, mode: str, ext: str) -> Tuple[str, ...]:
-        """Band names *ext* cannot keep from an image in *mode*.
+    def dropped_channels(
+        cls, mode: str, ext: str = "", *, target_mode: str = ""
+    ) -> Tuple[str, ...]:
+        """Band names a write or a conversion cannot keep from *mode*.
 
         A widening is not automatically a loss — "L" to WebP's RGB duplicates
         the one channel it had. This names the channels that actually go away,
@@ -209,11 +211,22 @@ class ImgUtils(HelpMixin):
         destroyed data: MSAO carries Smoothness in alpha, so writing one to
         JPEG silently discards a material input rather than a transparency.
 
+        Answers for a CONTAINER (*ext*) or for an explicit *target_mode* --
+        a registry-declared mode narrows the same way a container does, and
+        the band rule below is subtle enough that asking it twice would be
+        two chances to get it wrong. Pass exactly one; *target_mode* wins.
+
+        Parameters:
+            mode: The source image mode.
+            ext: The container being written to. Resolved through
+                :meth:`effective_mode`.
+            target_mode: An explicit destination mode, used verbatim.
+
         Returns:
             tuple: Band names present in *mode* but absent from the stored
             mode, in the source's own band order. Empty when nothing is lost.
         """
-        stored = cls.effective_mode(mode, ext)
+        stored = target_mode or cls.effective_mode(mode, ext)
         if stored == mode:
             return ()
         try:
@@ -230,6 +243,41 @@ class ImgUtils(HelpMixin):
         # every entry in _CONTAINER_MODE_FALLBACKS that leaves alpha as the one
         # band a container genuinely discards.
         return tuple(b for b in have if b == "A" and b not in kept)
+
+    @classmethod
+    def channels_carrying_data(cls, image, bands) -> Tuple[str, ...]:
+        """Which of *bands* actually hold varying data in *image*.
+
+        A dropped channel is only a LOSS if something was in it. Alpha that
+        is uniformly opaque -- a lightmap, an albedo with no transparency --
+        costs nothing, and warning about it trains the reader straight past
+        the line that matters.
+
+        Parameters:
+            image: A PIL image.
+            bands: Band names to test, e.g. the result of
+                :meth:`dropped_channels`.
+
+        Returns:
+            tuple: Those of *bands* the image both HAS and varies across.
+        """
+        if not bands:
+            return ()
+        try:
+            ranges = image.getextrema()
+        except OSError:  # truncated source -- the writer will surface it
+            return ()
+        # A SINGLE-band image answers one ``(min, max)`` pair rather than a
+        # tuple of them, so zipping it raw pairs the band with the MINIMUM and
+        # the test below then reads it as "not a range" and stays quiet.
+        if ranges and not isinstance(ranges[0], tuple):
+            ranges = (ranges,)
+        extrema = dict(zip(image.getbands(), ranges))
+        return tuple(
+            b
+            for b in bands
+            if isinstance(extrema.get(b), tuple) and extrema[b][0] != extrema[b][1]
+        )
 
     # Optional external DDS codec for block formats Pillow can't write (BC7, BC6H).
     # Registered via :meth:`register_dds_codec`; ``None`` until an extension installs one.

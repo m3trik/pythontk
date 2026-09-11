@@ -127,6 +127,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "channels_carrying_data",
+    "qualname": "ImgUtils.channels_carrying_data",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.math_utils._math_utils",
     "name": "clamp",
     "qualname": "MathUtils.clamp",
@@ -1856,6 +1863,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.net_utils.preview.bridge",
+    "name": "FilePreviewBridge",
+    "qualname": "FilePreviewBridge",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.file_utils._file_utils",
     "name": "FileUtils",
     "qualname": "FileUtils",
@@ -2349,6 +2363,13 @@
     "module": "pythontk.net_utils.preview.server",
     "name": "PreviewServer",
     "qualname": "PreviewServer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.process_exit",
+    "name": "ProcessExit",
+    "qualname": "ProcessExit",
     "tier": "root"
   },
   {

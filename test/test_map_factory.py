@@ -1089,6 +1089,75 @@ class TestTextureProcessorLogic(unittest.TestCase):
             path = context.save_map(img, "Roughness")
             self.assertTrue(path.endswith("_Roughness.png"))
 
+    def test_an_rgba_base_color_names_the_channel_it_discarded(self):
+        """`Base_Color` declares ``mode="RGB"``, so a packed cutout is
+        flattened away before the write.
+
+        Flattening is defensible -- a base-colour alpha means transparency in
+        glTF/Unreal/Painter but SMOOTHNESS under Unity's Standard shader, so
+        no single reclassification is right for every consumer. Doing it in
+        SILENCE is the part nobody can defend: ``ImgUtils.dropped_channels``
+        already exists and nothing consulted it before enforcing the mode.
+        """
+        import tempfile
+
+        class _Recorder:
+            def __init__(self):
+                self.lines = []
+
+            def _record(self, msg, *args):
+                self.lines.append(str(msg) % args if args else str(msg))
+
+            info = warning = error = debug = _record
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = _Recorder()
+            context = TextureProcessor(
+                inventory={},
+                config={},
+                output_dir=tmp,
+                base_name="test",
+                ext="png",
+                conversion_registry=ConversionRegistry(),
+                logger=log,
+            )
+            img = ImgUtils.create_image("RGBA", (8, 8), (255, 0, 0, 255))
+            img.putpixel((0, 0), (255, 0, 0, 0))  # alpha VARIES, so it is data
+            context.save_map(img, "Base_Color")
+
+        said = [ln for ln in log.lines if "discard" in ln.lower()]
+        self.assertTrue(said, f"nothing named the discarded alpha: {log.lines}")
+        self.assertIn("A", said[0])
+
+    def test_a_uniformly_opaque_base_color_alpha_stays_quiet(self):
+        """Nothing was in it, so there is nothing to report."""
+        import tempfile
+
+        class _Recorder:
+            def __init__(self):
+                self.lines = []
+
+            def _record(self, msg, *args):
+                self.lines.append(str(msg) % args if args else str(msg))
+
+            info = warning = error = debug = _record
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = _Recorder()
+            context = TextureProcessor(
+                inventory={},
+                config={},
+                output_dir=tmp,
+                base_name="test",
+                ext="png",
+                conversion_registry=ConversionRegistry(),
+                logger=log,
+            )
+            img = ImgUtils.create_image("RGBA", (8, 8), (255, 0, 0, 255))
+            context.save_map(img, "Base_Color")
+
+        self.assertEqual([ln for ln in log.lines if "discard" in ln.lower()], [])
+
     def test_packed_alpha_map_never_lands_in_a_jpg_container(self):
         """A JPEG cannot carry alpha, so a packed map whose alpha IS a
         material input must escalate to PNG.
@@ -1614,6 +1683,86 @@ class TestConversionPluginSeam(unittest.TestCase):
         registry = ConversionRegistry()
         registry.add_plugin(MapFactory)
         self.assertTrue(registry.get_conversions_for("Metallic"))
+
+
+class TestPrepareMapsNeverWritesOverAnInput(unittest.TestCase):
+    """A run must never rewrite a file the caller handed it.
+
+    `prepare_maps` defaults `output_dir` to the SOURCE folder, and the output
+    name is `<base>_<map_type>.<ext>` -- which for an already-conventionally
+    named map IS the source path. Every re-encode on that path therefore lands
+    on the user's own file: measured 2026-09-10, an RGBA `Base_Color.png` came
+    back RGB, 187 -> 138 bytes, alpha gone, nothing logged. The same design
+    destroyed a production ambient-occlusion bake (see `.claude/BACKLOG.md`
+    2026-08-24).
+
+    Whether a base-colour alpha means transparency or smoothness is a product
+    question and is NOT what these pin. These pin the invariant that needs no
+    product call: the inputs are not the scratch space.
+    """
+
+    @staticmethod
+    def _digest(path):
+        import hashlib
+
+        with open(path, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+
+    @staticmethod
+    def _write_rgba(path, size=(32, 32)):
+        """An RGBA map with a VARYING alpha -- a constant one is unfalsifiable."""
+        from PIL import Image
+
+        img = Image.new("RGBA", size)
+        pixels = img.load()
+        for y in range(size[1]):
+            for x in range(size[0]):
+                pixels[x, y] = (200, 120, 60, (x * 8) % 256)
+        img.save(path)
+        return path
+
+    def test_a_full_run_leaves_every_input_byte_identical(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inputs = {
+                "Base_Color": self._write_rgba(
+                    os.path.join(tmp, "GUARD_Base_Color.png")
+                ),
+            }
+            from PIL import Image
+
+            for name, mode, fill in (
+                ("GUARD_Metallic.png", "L", 128),
+                ("GUARD_Roughness.png", "L", 200),
+                ("GUARD_Normal_OpenGL.png", "RGB", (128, 128, 255)),
+            ):
+                path = os.path.join(tmp, name)
+                Image.new(mode, (32, 32), fill).save(path)
+                inputs[name] = path
+
+            before = {p: self._digest(p) for p in inputs.values()}
+            MapFactory.prepare_maps(list(inputs.values()), group_by_set=False)
+
+            damaged = []
+            for path, digest in before.items():
+                if not os.path.exists(path):
+                    damaged.append(f"{os.path.basename(path)}: DELETED")
+                elif self._digest(path) != digest:
+                    damaged.append(f"{os.path.basename(path)}: REWRITTEN")
+            self.assertEqual(
+                damaged, [], f"prepare_maps modified its own inputs: {damaged}"
+            )
+
+    def test_the_rgba_base_colour_keeps_its_alpha_channel(self):
+        """The measured symptom, stated in the terms a user would notice."""
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = self._write_rgba(os.path.join(tmp, "GUARD_Base_Color.png"))
+            MapFactory.prepare_maps([src], group_by_set=False)
+            with Image.open(src) as img:
+                self.assertEqual(
+                    img.mode, "RGBA", "the source Base_Color lost its alpha channel"
+                )
 
 
 if __name__ == "__main__":

@@ -168,6 +168,7 @@ class PreviewBridge(HandoffBridge):
         open_browser: Union[bool, str, None] = None,
         texture_format: Optional[str] = None,
         scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None,
+        progress: Optional[Callable[[str], Any]] = None,
         **params: Any,
     ) -> Optional[Dict[str, Any]]:
         """Export and publish, returning the deliverer's result (``None`` on failure).
@@ -202,6 +203,12 @@ class PreviewBridge(HandoffBridge):
                 *texture_format*: ``**params`` is the *export* bag, and swept
                 up there it would be handed to the exporter and never reach the
                 deliverer.
+            progress: Called with a short message before each build stage, for
+                a caller that can show one (a panel's footer). Named rather
+                than left to ``**params`` for the same reason as the two knobs
+                above: that bag goes to the EXPORTER, so a callback swept up
+                there would be handed to the FBX write and never reach the
+                build. ``None`` (the default) costs nothing.
             **params: Export param overrides (see :meth:`params_defaults`).
         """
         if objects is None:
@@ -216,6 +223,7 @@ class PreviewBridge(HandoffBridge):
             open_browser=open_browser,
             texture_format=texture_format,
             scripts=scripts,
+            progress=progress,
         )
 
     def publish_file(
@@ -362,3 +370,92 @@ class PreviewBridge(HandoffBridge):
         server = getattr(self.deliverer, "server", None)
         if server is not None:
             server.stop()
+
+
+class FilePreviewBridge(PreviewBridge):
+    """Preview bridge whose source is a file on disk rather than a host selection.
+
+    The third peer of ``mayatk.WebXrPreview`` and ``blendertk.WebXrPreview``,
+    and the one that needs no host at all: :meth:`_resolve_objects` takes the
+    paths it is handed and :meth:`_produce` wraps one into a :class:`Payload`
+    without exporting anything, because the file already IS the export. Every
+    stage after that is the shared chain, so a file pushed from here and a
+    selection pushed from Maya reach the page through one code path -- the
+    same GLB build, the same texture pass, the same version bump.
+
+    Both carriers the pipeline understands are accepted. An ``.fbx`` runs the
+    full conversion; a ``.glb`` short-circuits to an identity build and is
+    published exactly as authored, which is what makes this usable as a plain
+    viewer for a vendor's asset or an exporter's own output.
+
+    The user's file is never at risk. ``_release_payload`` refuses any path
+    this bridge did not itself mint, so the deliverer's consumed-payload
+    delete and the pipeline's ``release_source`` both decline it silently.
+
+    Example:
+        >>> bridge = ptk.FilePreviewBridge()
+        >>> bridge.push(objects=["C:/assets/prop.fbx"])
+    """
+
+    payload_prefix = "file_webxr_preview"
+    deliverer = PreviewDeliverer(title="Preview")
+
+    #: Carriers the GLB pipeline can start from, lowercase with the dot.
+    SOURCE_EXTENSIONS = (".fbx", ".glb")
+
+    def __init__(self, app_path: Optional[str] = None):
+        super().__init__(app_path)
+        #: Extra folders the lightmap applier searches, set by the panel.
+        self.texture_dirs: List[str] = []
+
+    def lightmap_search_dirs(self) -> Sequence[str]:
+        """Where to look for the EXRs a lightmap manifest names.
+
+        The manifest records map BASENAMES plus the folder they were authored
+        in, and that hint goes stale the moment the project moves or the file
+        is opened on another machine. A DCC bridge answers this from the live
+        host; with no host the only honest answers are the folder the source
+        file came from and whatever the user pointed at. Without them a baked
+        asset previews UNLIT with its maps one folder away, and nothing on the
+        page says why -- which is the failure this hook exists to prevent.
+        """
+        dirs = [d for d in self.texture_dirs if d]
+        source = getattr(self, "_last_source_dir", "")
+        if source and source not in dirs:
+            dirs.append(source)
+        return tuple(dirs)
+
+    def _resolve_objects(self, objects):
+        """The paths handed in; this bridge has no host to ask."""
+        return list(objects or [])
+
+    def _produce(self, objects, request) -> Optional[Payload]:
+        """Hand the chosen file to the deliverer as the payload, unexported.
+
+        Nothing is written: the file on disk is already the artifact every
+        other producer spends an export making. Validation is here rather
+        than in the panel so a bridge driven from a script gets the same
+        fix-shaped refusals a button does.
+        """
+        if not objects:
+            self.logger.error("No file chosen to preview.")
+            return None
+
+        path = Path(str(objects[0]))
+        if not path.is_file():
+            self.logger.error(f"No such file to preview: {path}")
+            return None
+
+        extension = path.suffix.lower()
+        if extension not in self.SOURCE_EXTENSIONS:
+            self.logger.error(
+                f"The preview builds from {' or '.join(self.SOURCE_EXTENSIONS)}, "
+                f"not {extension or 'an extensionless file'}: {path.name}"
+            )
+            return None
+
+        # Remembered for `lightmap_search_dirs`, which the deliverer calls
+        # after this returns: a bake's maps most often sit beside the file
+        # that references them, so the source folder is the best free guess.
+        self._last_source_dir = str(path.parent)
+        return Payload(primary=str(path))

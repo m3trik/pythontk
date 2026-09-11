@@ -2787,5 +2787,61 @@ class OptionalPILGuardTest(unittest.TestCase):
         )
 
 
+class DroppedChannelsByModeTest(unittest.TestCase):
+    """`dropped_channels` answers for a target MODE as well as a container.
+
+    A registry-declared mode discards bands exactly the way a container does,
+    so the band rule is asked the same question from two directions rather
+    than written twice.
+    """
+
+    def test_a_narrowing_mode_drops_alpha(self):
+        self.assertEqual(ImgUtils.dropped_channels("RGBA", target_mode="RGB"), ("A",))
+
+    def test_a_widening_mode_drops_nothing(self):
+        """Widening replicates or unrolls; it never truncates."""
+        self.assertEqual(ImgUtils.dropped_channels("L", target_mode="RGB"), ())
+        self.assertEqual(ImgUtils.dropped_channels("RGB", target_mode="RGBA"), ())
+
+    def test_an_unchanged_mode_drops_nothing(self):
+        self.assertEqual(ImgUtils.dropped_channels("RGBA", target_mode="RGBA"), ())
+
+    def test_the_container_form_is_unchanged(self):
+        """The ext question still answers as it did, from the same rule."""
+        self.assertEqual(ImgUtils.dropped_channels("RGBA", "jpg"), ("A",))
+        self.assertEqual(ImgUtils.dropped_channels("RGBA", "png"), ())
+
+
+class ChannelsCarryingDataTest(unittest.TestCase):
+    """A discarded band is only a LOSS when something was in it."""
+
+    def test_a_varying_band_is_data(self):
+        img = ImgUtils.create_image("RGBA", (4, 4), (255, 0, 0, 255))
+        img.putpixel((0, 0), (255, 0, 0, 0))
+        self.assertEqual(ImgUtils.channels_carrying_data(img, ("A",)), ("A",))
+
+    def test_a_uniform_band_is_not_data(self):
+        """A fully opaque alpha costs nothing, and shouting trains the reader
+        past the line that matters."""
+        img = ImgUtils.create_image("RGBA", (4, 4), (255, 0, 0, 255))
+        self.assertEqual(ImgUtils.channels_carrying_data(img, ("A",)), ())
+
+    def test_a_SINGLE_band_image_reports_its_one_band(self):
+        """PIL answers one ``(min, max)`` pair for a single-band image rather
+        than a tuple of them, so zipping it raw pairs the band with the
+        minimum and the range test reads it as absent."""
+        img = ImgUtils.create_image("L", (4, 4), 10)
+        img.putpixel((0, 0), 200)
+        self.assertEqual(ImgUtils.channels_carrying_data(img, ("L",)), ("L",))
+
+    def test_a_SINGLE_band_image_that_does_not_vary_is_quiet(self):
+        img = ImgUtils.create_image("L", (4, 4), 10)
+        self.assertEqual(ImgUtils.channels_carrying_data(img, ("L",)), ())
+
+    def test_a_band_the_image_does_not_have_is_ignored(self):
+        img = ImgUtils.create_image("RGB", (4, 4), (255, 0, 0))
+        self.assertEqual(ImgUtils.channels_carrying_data(img, ("A",)), ())
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)
