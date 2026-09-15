@@ -48,6 +48,7 @@ def build_glb(
     nan_output: bool = False,
     drop_ibm: bool = False,
     stub_skin: bool = False,
+    bad_skeleton: bool = False,
     undeclared_basisu: bool = False,
     clip_end: float = 0.5,
     clip_name: str = "Shot_1",
@@ -155,6 +156,11 @@ def build_glb(
     if stub_skin:
         # Converter-style bookkeeping: IBM-less and referenced by nothing.
         gltf["skins"].append({"joints": [0]})
+    if bad_skeleton:
+        # A skeleton the skin's joints do not hang under: a stray root node.
+        gltf["nodes"].append({"name": "stray"})
+        gltf["scenes"][0]["nodes"].append(len(gltf["nodes"]) - 1)
+        gltf["skins"][0]["skeleton"] = len(gltf["nodes"]) - 1
 
     json_chunk = _pad4(json.dumps(gltf).encode("utf-8"), b" ")
     bin_chunk = _pad4(b"".join(bin_parts), b"\x00")
@@ -235,9 +241,17 @@ def build_fbx(path: str, takes=("Shot_1",)) -> str:
     return path
 
 
-def build_sidecar(path: str, takes, span=None, fps=30.0) -> str:
-    """*span* publishes ``clip_span["*"]`` -- the origin clips are cut against."""
+def build_sidecar(path: str, takes, span=None, fps=30.0, clip_mode=None) -> str:
+    """*span* publishes ``clip_span["*"]`` -- the origin clips are cut against.
+    *clip_mode* declares the run's Animation Clips mode on ``shot_metadata``."""
     data_export = {"fbx_takes": list(takes)}
+    if clip_mode is not None:
+        data_export["shot_metadata"] = {
+            "version": 1,
+            "fps": fps,
+            "shots": [],
+            "clip_mode": clip_mode,
+        }
     if span is not None:
         data_export["visibility_tracks"] = {
             "fps": fps,
@@ -551,6 +565,46 @@ class TestExportVerifier(_FixtureCase):
         self.assertEqual(statuses["clips_vs_takes"], PASS)
         self.assertEqual(statuses["fbx_takes"], PASS)
 
+    # ---- a declared Full Sequence Only export ------------------------------
+
+    def _full_sequence(self, clip_mode):
+        """What a Full Sequence Only export ships: ONE whole-timeline stack and
+        clip, while the takes still list every shot -- they describe the scene."""
+        glb = build_glb(self.path("asset.glb"), clip_name="Take 001")
+        fbx = build_fbx(self.path("asset.fbx"), ("Take 001",))
+        build_sidecar(
+            self.path(".asset.scene_data.json"),
+            [{"name": "Shot_1", "start": 0, "end": 15}],
+            clip_mode=clip_mode,
+        )
+        return glb, fbx
+
+    def test_a_declared_full_sequence_export_does_not_fail_its_takes(self):
+        """Measured on a real Full Sequence Only export: ``fbx_takes`` failed
+        "declared but absent" on every shot of a deliverable that was exactly
+        what was asked for. The takes describe the scene in every mode, so the
+        gates read the DECLARED mode instead of calling the shots missing."""
+        glb, fbx = self._full_sequence("full")
+        statuses = {}
+        for row in ExportVerifier(glb=glb, fbx=fbx).run().rows:
+            statuses.setdefault(row.check, []).append(row.status)
+        self.assertEqual(statuses["fbx_takes"], [SKIP])
+        self.assertNotIn(FAIL, statuses["clips_vs_takes"])
+
+    def test_an_undeclared_single_stack_still_fails_its_takes(self):
+        """Inferred from "only one stack", the gate would pass a split that
+        silently failed -- the defect it was written for -- so a file that does
+        not declare the mode, or declares a shot-bearing one, still fails."""
+        for mode in (None, "both"):
+            glb, fbx = self._full_sequence(mode)
+            rows = ExportVerifier(glb=glb, fbx=fbx).run().rows
+            self.assertEqual(
+                [r.status for r in rows if r.check == "fbx_takes"], [FAIL], mode
+            )
+            self.assertIn(
+                FAIL, [r.status for r in rows if r.check == "clips_vs_takes"], mode
+            )
+
     # ---- clip origin ------------------------------------------------------
     #
     # The defect these cover shipped a production assembly: the exporter
@@ -606,6 +660,26 @@ class TestExportVerifier(_FixtureCase):
         glb = build_glb(self.path("asset.glb"))
         self.assertEqual(ExportVerifier(glb=glb, sidecar=None).fps, 30.0)
 
+    def test_a_versioned_deliverable_finds_the_manifest_its_series_shares(self):
+        """The exporters key a versioned export's sidecar to the BASE stem, so a
+        series diffs against one baseline. Discovery looked for
+        '.asset_v003.scene_data.json' alone, so the gates that catch a dropped
+        take SKIPped for every versioned deliverable checked from disk."""
+        glb = build_glb(self.path("asset_v003.glb"))
+        shared = build_sidecar(self.path(".asset.scene_data.json"), [])
+        self.assertEqual(ExportVerifier(glb=glb).sidecar_path, shared)
+
+    def test_a_deliverable_s_own_sidecar_wins_over_its_series(self):
+        glb = build_glb(self.path("asset_v003.glb"))
+        build_sidecar(self.path(".asset.scene_data.json"), [])
+        own = build_sidecar(self.path(".asset_v003.scene_data.json"), [])
+        self.assertEqual(ExportVerifier(glb=glb).sidecar_path, own)
+
+    def test_the_series_fallback_strips_only_a_trailing_version(self):
+        glb = build_glb(self.path("arch_v2_proxy.glb"))
+        build_sidecar(self.path(".arch.scene_data.json"), [])
+        self.assertIsNone(ExportVerifier(glb=glb).sidecar_path)
+
     def test_clip_origin_skips_without_a_published_span(self):
         """An older sidecar publishes no span; there is nothing to check against."""
         glb = build_glb(self.path("asset.glb"))
@@ -650,10 +724,48 @@ class TestExportVerifier(_FixtureCase):
         self.assertTrue(report.ok, report.summary())
         self.assertIn("WARN", [row.status for row in report.rows])
 
+    def test_a_skeleton_that_is_not_its_joints_root_fails_skins_gate(self):
+        """glTF requires ``skin.skeleton`` to be a common root of the joints.
+
+        three.js never reads the field, so no viewer shows a bad one: a
+        production assembly shipped 7 skins naming a joint their other joints
+        do not hang under, caught only by the Khronos validator
+        (SKIN_SKELETON_INVALID x7, 2026-09-14).
+        """
+        glb = build_glb(self.path("asset.glb"), bad_skeleton=True)
+        report = ExportVerifier(glb=glb, sidecar=None).run(["check_glb_skins"])
+        self.assertFalse(report.ok, report.summary())
+        failed = [row.detail for row in report.rows if row.status == FAIL]
+        self.assertTrue(any("skeleton" in detail for detail in failed), failed)
+
     def test_undeclared_basisu_fails_images_gate(self):
         glb = build_glb(self.path("asset.glb"), undeclared_basisu=True)
         report = ExportVerifier(glb=glb, sidecar=None).run(["check_glb_images"])
         self.assertFalse(report.ok)
+
+    def test_image_bytes_are_reported_and_warned_past_a_limit(self):
+        """The GLB's own image bytes are what a web deliverable ships.
+
+        A scene exporter's per-map size check failed a production export on a
+        57 MB source PNG that the GLB carried as a 3.12 MB KTX2 -- only the
+        written file can say what an image costs. The gate reports the bytes
+        and never fails: the file already shipped.
+        Added: 2026-09-13
+        """
+        glb = build_glb(self.path("asset.glb"))  # a 16-byte PNG, a 20-byte KTX2
+        report = ExportVerifier(glb=glb, sidecar=None).run(["check_glb_image_bytes"])
+        self.assertEqual([row.status for row in report.rows], [PASS], report.summary())
+        self.assertIn("2 image(s)", report.rows[0].detail)
+        self.assertIn("image 1", report.rows[0].detail, "the largest is named")
+
+        report = ExportVerifier(glb=glb, sidecar=None, max_image_bytes=16).run(
+            ["check_glb_image_bytes"]
+        )
+        self.assertTrue(report.ok, report.summary())
+        warned = [row for row in report.rows if row.status == WARN]
+        self.assertEqual(len(warned), 1, report.summary())
+        self.assertIn("image 1", warned[0].detail)
+        self.assertNotIn("image 0", warned[0].detail, "16 bytes is not past 16")
 
     def _drop_png_fallback(self, glb: str, *, require: bool) -> str:
         """Strip the texture's PNG twin, as drop_glb_texture_fallbacks does.
@@ -692,6 +804,42 @@ class TestExportVerifier(_FixtureCase):
         self.assertNotIn(WARN, [row.status for row in report.rows], report.summary())
         self.assertIn(PASS, [row.status for row in report.rows])
 
+    def test_a_declared_requirement_is_stated_not_warned(self):
+        """The envelope gate restated ``verify_glb``'s extension prerequisite
+        as a WARN -- on every WebP deliverable, and on every KTX2 one once the
+        web policy stopped writing fallback twins -- while ``glb_images``
+        PASSes the same fact as the declared contract. The prerequisite is the
+        extension gates' to state; the envelope's own notes still warn.
+        """
+        from unittest.mock import patch
+
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        glb = self._drop_png_fallback(build_glb(self.path("asset.glb")), require=True)
+        verified = MeshConvert.verify_glb(glb)
+        self.assertTrue(
+            any("KHR_texture_basisu" in note for note in verified["notes"]),
+            f"precondition: verify_glb states the prerequisite: {verified['notes']}",
+        )
+        verified["notes"].append("a note the envelope owns")
+        with MeshConvert.open_glb(glb) as edit:  # the gate skips a GLB with none
+            edit.gltf.setdefault("extras", {})["scene_sidecar"] = {"version": 1}
+            edit.dirty = True
+
+        with patch.object(MeshConvert, "verify_glb", return_value=verified):
+            report = ExportVerifier(glb=glb, sidecar=None).run(
+                ["check_glb_envelope", "check_glb_extensions"]
+            )
+
+        warned = [row.detail for row in report.rows if row.status == WARN]
+        self.assertIn("a note the envelope owns", warned)
+        self.assertFalse(
+            any("KHR_texture_basisu" in detail for detail in warned), warned
+        )
+        extensions = [row for row in report.rows if row.check == "glb_extensions"]
+        self.assertEqual([row.status for row in extensions], [PASS])
+        self.assertIn("required=['KHR_texture_basisu']", extensions[0].detail)
+
     def test_take_length_mismatch_fails(self):
         glb = build_glb(self.path("asset.glb"), clip_end=1.0)  # 30 frames
         build_sidecar(
@@ -708,7 +856,7 @@ class TestExportVerifier(_FixtureCase):
         content starts at authoring frame 33 ends 33 frames short of the
         takes' declared end while being perfectly correct. Reading its raw
         end frame called that a failure -- the same blind spot that, on the
-        producer side, slid every shot by 33 frames on the VDATS assembly.
+        producer side, slid every shot by 33 frames on the PROPS assembly.
         The clip publishes its origin in ``extras.zero_frame``; the gate has
         to use it.
         """
@@ -762,7 +910,7 @@ class TestExportVerifier(_FixtureCase):
         The bake range is handed to the exporter, and it writes keys across
         all of it -- so the full-timeline clip routinely ends on a held pose
         some frames past the last take. Judging it on key occupancy called
-        that a failure on a correct file (VDATS: 48 inert frames, 1109 of
+        that a failure on a correct file (PROPS: 48 inert frames, 1109 of
         1185 channels flat, the other 76 moving by 3e-4), and a gate that is
         permanently red is a gate nobody reads. Only motion out there counts.
         """
@@ -809,7 +957,7 @@ class TestExportVerifier(_FixtureCase):
 
         Shots routinely finish their action and hold for a beat. Judging the
         clip on where motion STOPS would call every one of those truncated --
-        the real VDATS assembly stops moving 79 frames before its last take
+        the real PROPS assembly stops moving 79 frames before its last take
         ends. Only the KEYS falling short means content is missing.
         """
         glb = build_glb(

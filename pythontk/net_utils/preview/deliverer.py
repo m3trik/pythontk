@@ -211,24 +211,20 @@ class PreviewDeliverer(Deliverer):
                 # made afterwards would land only on the original and every
                 # fade clone would keep the converter's packing (measured).
                 sidecar=extras.get("scene_sidecar"),
+                # Request-scoped: a preview's overlay describes THIS push (an
+                # effect at the panel's current settings), never the next one.
+                data_export=request.get("data_export"),
                 lightmap_dirs=lightmap_dirs,
                 # The shared web-delivery policy, named rather than inherited:
                 # the resolution the preview approves used to be set by a
                 # signature default two packages away, where the exporters
                 # could not see it to agree with it (8.71 MB here against
-                # 280.13 MB from the exporter, same scene, same session).
-                # `ktx2_fallback=False`: this GLB is streamed to the viewer
-                # page, never re-imported, so the core-readable fallback twins
-                # would spend the very bytes the texture pass exists to reclaim
-                # (the bundled page wires KTX2Loader, so basisu-only is safe). A
-                # property of the consumer, so it stays out of the shared policy
-                # -- an exporter's deliverable must stay importable.
-                texture_params={
-                    **MeshConvert.web_delivery_texture_params(
-                        image_format=texture_format
-                    ),
-                    "ktx2_fallback": False,
-                },
+                # 280.13 MB from the exporter, same scene, same session). Its
+                # KTX2 carries no fallback twins, which this GLB never needs:
+                # it is streamed to a page that wires KTX2Loader.
+                texture_params=MeshConvert.web_delivery_texture_params(
+                    image_format=texture_format
+                ),
                 downsize=bool(request.params.get("EMBED_TEXTURES", True)),
                 # Scratch through the bridge's own payload store (swept after a
                 # crash), and the superseded payload released as soon as the
@@ -307,4 +303,13 @@ class PreviewDeliverer(Deliverer):
             # Whether one was *offered* -- the caller cannot infer it from an
             # empty summary, which also means "switched off".
             "sidecar_requested": "scene_sidecar" in extras,
+            # The in-band channels the request's ``data_export`` overlay
+            # replaced in the published GLB, ``[]`` when none did. A caller
+            # previewing an effect the scene does not carry checks its channel
+            # is HERE before telling anyone the page shows it: a bridge that
+            # never learned the knob (an older pythontk still imported in the
+            # session) sweeps it into the export bag and publishes the scene
+            # as it stands, with no error anywhere -- measured 2026-09-13 as a
+            # preview that looked the same whatever the panel was set to.
+            "data_export": list(built.get("data_export") or []),
         }

@@ -136,6 +136,9 @@ export default function probe(viewer) {
         return {
           y: Number(cube.position.y.toFixed(4)),
           readout: document.getElementById('clipTime').textContent,
+          // Read AFTER the pose, which is the contract: it answers for where
+          // the model is now, not for where it is about to be.
+          description: viewer.descriptionAt(),
         };
       };
       report.start = at(0);
@@ -163,6 +166,9 @@ export default function probe(viewer) {
     const ok = viewer.playClip(name);
     return { ok, clip: viewer.clip };
   };
+  // Read before and after a recording: a preset larger than the view raises
+  // the pixel ratio for the capture, and it has to be back afterwards.
+  window.__pixelRatio = () => viewer.renderer.getPixelRatio();
   viewer.on('load', () => {
     report.buttons = [...document.querySelectorAll('#controls button')]
       .map((b) => b.textContent);
@@ -270,11 +276,37 @@ class TestPreviewViewerLive(unittest.TestCase):
         ptk.MeshConvert.apply_glb_animations(path)
         return path
 
-    def _shots_only_glb(self, empty_tail=False, with_sequence=False, half_take=False):
+    #: The note the DCC's Shots panel carries for SHOT_B, long enough that a
+    #: burn-in of it cannot be mistaken for the shot's name.
+    SHOT_B_DESCRIPTION = "hero turns to camera and holds"
+
+    #: A description WIDER than the recorded frame. Prose is what a shot
+    #: description is, so this is a shape the burn-in has to survive rather
+    #: than an abuse of it: the text scales with the frame, so a line holds
+    #: roughly 90 characters of monospace at any preset (2560px at 46px, 1280px
+    #: at 23px), and this is well past that.
+    LONG_DESCRIPTION = (
+        "hero turns to camera, holds for the reaction, then walks out of "
+        "frame left while the crowd behind him keeps moving — note the "
+        "hand-off on the last eight frames, it is still the old timing"
+    )
+
+    def _shots_only_glb(
+        self,
+        empty_tail=False,
+        with_sequence=False,
+        half_take=False,
+        described=False,
+    ):
         """A deliverable that ships ONLY shots, with a GAP between them.
 
         *empty_tail* adds a third declared shot that bakes no curve -- the
         production shape for a range in which nothing moves.
+
+        *described* gives SHOT_B the description a shot record carries and
+        leaves SHOT_A without one -- the mixed case, which is the only one that
+        can show a burn-in skipping the shots that state nothing. Pass a string
+        to choose the note rather than take the default one.
 
         What ``Animation Clips: Shots Only`` writes. The two shots sit 30
         frames apart, so a sequence that concatenated them would run 4s where
@@ -323,6 +355,14 @@ class TestPreviewViewerLive(unittest.TestCase):
                 }
             )
             takes.append({"name": "SHOT_D", "start": 210})
+        metadata = {"version": 1, "fps": self.FPS}
+        if described:
+            # Keyed by CLIP, which is how `apply_glb_animations` joins a shot
+            # record to the animation it became. SHOT_A is left out: a shot
+            # with no note is the common case, and the burn-in has to record it
+            # without holding an empty line open for one.
+            note = described if isinstance(described, str) else self.SHOT_B_DESCRIPTION
+            metadata["shots"] = [{"clip": "SHOT_B", "description": note}]
         if with_sequence:
             # An UNDECLARED clip: the whole-timeline stack "Shots + Full
             # Sequence" keeps beside the shots.
@@ -341,7 +381,7 @@ class TestPreviewViewerLive(unittest.TestCase):
                     "fbx_takes": {"type": "eFbxString", "value": json.dumps(takes)},
                     "shot_metadata": {
                         "type": "eFbxString",
-                        "value": json.dumps({"version": 1, "fps": self.FPS}),
+                        "value": json.dumps(metadata),
                     },
                 }
             }
@@ -463,6 +503,26 @@ class TestPreviewViewerLive(unittest.TestCase):
         self.assertIn("SHOT_A", found["start"]["readout"])
         self.assertIn("SHOT_B", found["inShotB"]["readout"])
 
+    def test_the_description_follows_the_playhead_across_the_sequence(self):
+        """A shot's description is read off the SEGMENT the sequence is
+        standing in, not off the picker's row -- the picker is on FULL
+        SEQUENCE throughout, so a reading taken from it would give every shot
+        the same note (or none at all).
+
+        Only SHOT_B states one, so the two readings differ, which is what makes
+        this an assertion about the segment rather than about the manifest.
+        """
+        found = self._load(
+            self._shots_only_glb(described=True), probe=self._sequence_probe()
+        )
+
+        self.assertEqual(found["errors"], [])
+        self.assertIsNone(found["start"]["description"], "SHOT_A states none")
+        self.assertEqual(found["inShotB"]["description"], self.SHOT_B_DESCRIPTION)
+        # A gap holds the previous shot's pose, so it holds its note too -- the
+        # same rule the readout's '(hold)' follows.
+        self.assertIsNone(found["gap"]["description"])
+
     def test_a_gap_is_labelled_as_a_hold_of_the_shot_before_it(self):
         """The pose on screen in a gap is the previous shot's last frame, held.
 
@@ -582,8 +642,215 @@ class TestPreviewViewerLive(unittest.TestCase):
             "advancing per frame, so frames share a stale annotation",
         )
 
-    def _bottom_strips(self, movie, count):
+    @unittest.skipUnless(
+        ptk.VidUtils.resolve_ffmpeg(required=False), "needs ffmpeg on PATH"
+    )
+    def test_burn_in_draws_the_shot_description_into_the_movie(self):
+        """The note the DCC's Shots panel carries is the half of a shot record
+        a reviewer watching the movie cannot otherwise see -- so it has to
+        reach the PIXELS, not merely the page."""
+        _, plain = self._record("SHOT_B", described=True)
+        _, noted = self._record("SHOT_B", describe=True, described=True)
+
+        before = self._bottom_strips(plain, 1)[0]
+        after = self._bottom_strips(noted, 1)[0]
+        self.assertEqual(len(before), len(after), "frames differ in size")
+        changed = sum(1 for a, b in zip(before, after) if abs(a - b) > 40)
+        self.assertGreater(
+            changed,
+            200,
+            "the described run is indistinguishable from the plain one at the "
+            "foot of the frame -- the shot description was not drawn",
+        )
+
+    @unittest.skipUnless(
+        ptk.VidUtils.resolve_ffmpeg(required=False), "needs ffmpeg on PATH"
+    )
+    def test_a_shot_with_no_description_records_without_one(self):
+        """Most shots carry no note, and asking for the description on one that
+        has none must leave the frame alone rather than draw a blank line or a
+        placeholder into it.
+
+        The pair with the test above is what makes either meaningful: the same
+        option, the same fixture, and the only difference is whether the shot
+        the page is on states a description. SHOT_A states none.
+        """
+        _, plain = self._record("SHOT_A", described=True)
+        _, asked = self._record("SHOT_A", describe=True, described=True)
+
+        before = self._bottom_strips(plain, 1)[0]
+        after = self._bottom_strips(asked, 1)[0]
+        changed = sum(1 for a, b in zip(before, after) if abs(a - b) > 40)
+        self.assertLess(
+            changed,
+            50,
+            "asking for a description on a shot that states none drew "
+            "something into the frame anyway",
+        )
+
+    @unittest.skipUnless(
+        ptk.VidUtils.resolve_ffmpeg(required=False), "needs ffmpeg on PATH"
+    )
+    def test_a_description_wider_than_the_frame_is_elided(self):
+        """A shot description is prose, so it can be longer than the frame --
+        and a canvas CLIPS text rather than refusing it, so an untrimmed one
+        runs to the last column and reads as a corrupted burn-in.
+
+        Measured at the far right of the strip, past the inset every burn-in
+        line is drawn within: ink there is text that overran.
+        """
+        _, plain = self._record("SHOT_B", described=True)
+        _, long = self._record("SHOT_B", describe=True, described=self.LONG_DESCRIPTION)
+
+        before = self._bottom_strips(plain, 1, crop=self.FAR_RIGHT_CROP)[0]
+        after = self._bottom_strips(long, 1, crop=self.FAR_RIGHT_CROP)[0]
+        self.assertEqual(len(before), len(after), "frames differ in size")
+        changed = sum(1 for a, b in zip(before, after) if abs(a - b) > 40)
+        self.assertLess(
+            changed,
+            30,
+            "the description reached the far edge of the frame -- it was "
+            "clipped by the canvas rather than elided",
+        )
+
+    def test_the_export_prompt_can_be_cancelled_without_recording(self):
+        """Pressing the button asks before it writes, and the answer 'no' has
+        to be a real one: a prompt that records anyway is worse than no prompt,
+        because the burn-in it was asked about is already in the file."""
+        glb = self._shots_only_glb()
+        beside = os.path.dirname(glb)
+        before = set(os.listdir(beside))
+
+        def drive(server, page):
+            page.click("#controls button:has-text('Export Playblast')")
+            page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
+            page.click("#dialogCancel")
+            page.wait_for_selector("#dialog", state="hidden", timeout=30_000)
+            return {
+                "button": page.eval_on_selector(
+                    "#controls button:has-text('Export Playblast')",
+                    "el => el.textContent",
+                ),
+            }
+
+        found = self._load(glb, probe=self._record_probe(), then=drive)
+
+        self.assertEqual(found["errors"], [])
+        # The button is the recording's own progress readout, so it saying
+        # anything else is this having started one.
+        self.assertEqual(found["button"], "Export Playblast")
+        self.assertEqual(
+            [n for n in set(os.listdir(beside)) - before if n.endswith(".mp4")],
+            [],
+            "a cancelled prompt wrote a movie anyway",
+        )
+
+    def test_the_prompt_keeps_the_keyboard_off_the_page_behind_it(self):
+        """Blocking the page's shortcuts did not take the keyboard whole: Tab
+        still walked focus out of the prompt to the controls behind it, which
+        precede it in the document -- and an arrow key on the clip picker
+        changed the clip the recording takes, not the one the prompt names.
+        The page behind is inert while the prompt is up, and live once it
+        closes."""
+        glb = self._shots_only_glb()
+        picker = "() => document.getElementById('clipSelect').selectedIndex"
+        outside = (
+            "() => { const a = document.activeElement;"
+            " return a && a !== document.body"
+            " && !document.getElementById('dialog').contains(a)"
+            " ? a.id || a.tagName : null; }"
+        )
+
+        def drive(server, page):
+            before = page.evaluate(picker)
+            page.click("#controls button:has-text('Export Playblast')")
+            page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
+            escaped = []
+            # Backwards, past the prompt's own controls and twice over the bar
+            # and the transport, pressing the key that moves a picker each time.
+            for _ in range(24):
+                page.keyboard.press("Shift+Tab")
+                where = page.evaluate(outside)
+                if where:
+                    escaped.append(where)
+                page.keyboard.press("ArrowDown")
+            after = page.evaluate(picker)
+            page.keyboard.press("Escape")
+            page.wait_for_selector("#dialog", state="hidden", timeout=30_000)
+            live = page.eval_on_selector(
+                "#clipSelect", "s => { s.focus(); return document.activeElement === s; }"
+            )
+            return {"escaped": escaped, "before": before, "after": after, "live": live}
+
+        found = self._load(glb, probe=self._record_probe(), then=drive)
+
+        self.assertEqual(found["errors"], [])
+        self.assertEqual(
+            found["escaped"], [], "focus left the prompt for the page behind it"
+        )
+        self.assertEqual(
+            found["after"],
+            found["before"],
+            "a key pressed in the prompt changed the clip behind it",
+        )
+        self.assertTrue(found["live"], "the page stayed inert after the prompt closed")
+
+    @unittest.skipUnless(
+        ptk.VidUtils.resolve_ffmpeg(required=False), "needs ffmpeg on PATH"
+    )
+    def test_the_quality_preset_sets_the_size_the_shot_is_rendered_at(self):
+        """Draft keeps the old 1280 px frame; the default (High) is a 2560 px
+        RENDER -- the headless view is smaller than that, so an upscaled
+        capture would pass a size check while adding no detail. The pixel
+        ratio the recording raised has to be back once it is done."""
+        import cv2
+
+        def long_edge(movie):
+            capture = cv2.VideoCapture(str(movie))
+            try:
+                return max(
+                    int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                    int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                )
+            finally:
+                capture.release()
+
+        draft_found, draft = self._record("SHOT_B", preset="draft")
+        high_found, high = self._record("SHOT_B")
+
+        self.assertLess(
+            high_found["viewEdge"], 2560, "the view must be smaller than High"
+        )
+        self.assertEqual(long_edge(draft), 1280)
+        self.assertEqual(long_edge(high), 2560)
+        for found in (draft_found, high_found):
+            self.assertEqual(
+                found["pixelRatio"],
+                found["pagePixelRatio"],
+                "the raised ratio was kept",
+            )
+        # The status names what was written, so a reviewer can see the size
+        # without opening the file.
+        self.assertIn("2560×", high_found["status"])
+        self._assert_not_blank(high)
+
+    #: The bottom 15% of the frame, full width -- where the burn-in is drawn.
+    BOTTOM_CROP = "crop=iw:trunc(ih*0.15):0:ih-trunc(ih*0.15)"
+
+    #: The last 1% of that strip: OUTSIDE the burn-in's own inset, which is
+    #: 0.75 of the text size -- and the text scales with the frame, so the
+    #: inset holds its share of the width at every preset (35px of 2560 at the
+    #: default High preset's 1440p capture, 17px of 1280 at Draft's 720p) and
+    #: text reaches ~98.6% at the most. Nothing the burn-in draws may light this
+    #: band up -- text that lands here ran off the frame instead of being elided.
+    FAR_RIGHT_CROP = (
+        "crop=trunc(iw*0.01):trunc(ih*0.15):iw-trunc(iw*0.01):ih-trunc(ih*0.15)"
+    )
+
+    def _bottom_strips(self, movie, count, crop=None):
         """The bottom 15% of the first *count* frames, as 8-bit luminance.
+
+        *crop* narrows that to a band (see the CROP constants above).
 
         Decoded in ONE pass and split, rather than seeking per frame: adjacent
         frames are the interesting pair here, and `-ss` cannot address them
@@ -603,7 +870,7 @@ class TestPreviewViewerLive(unittest.TestCase):
                 "-frames:v",
                 str(count),
                 "-vf",
-                "crop=iw:trunc(ih*0.15):0:ih-trunc(ih*0.15)",
+                crop or self.BOTTOM_CROP,
                 "-pix_fmt",
                 "gray",
                 "-f",
@@ -617,10 +884,30 @@ class TestPreviewViewerLive(unittest.TestCase):
         size = len(data) // count
         return [data[i * size : (i + 1) * size] for i in range(count)]
 
-    def _record(self, clip_name, probe=None, burn_in=False):
-        """Select *clip_name* in the real page, press Export Playblast, and
-        return the page's findings plus the movie it wrote."""
-        glb = self._shots_only_glb()
+    def _record(
+        self,
+        clip_name,
+        probe=None,
+        burn_in=False,
+        describe=False,
+        described=False,
+        preset=None,
+    ):
+        """Select *clip_name* in the real page, press Export Playblast, answer
+        the options prompt, and return the findings plus the movie it wrote.
+
+        *burn_in* and *describe* tick the prompt's two boxes -- driven as a user
+        drives them (a click on the label), not by reaching into the script's
+        state, so the prompt itself is under test on every recording run.
+        *described* builds the fixture with a shot description to burn in.
+        *preset* picks a Quality preset by key; None leaves the default.
+
+        A FRESH fixture per call, so two recordings of the same clip land in
+        different directories: the movie is named after the clip, and a second
+        one beside the first would overwrite it and leave this looking for a
+        file that was never new.
+        """
+        glb = self._shots_only_glb(described=described)
         # The movie lands beside the file that was published; the test looks for
         # it the way its user would, rather than being handed the path.
         beside = os.path.dirname(glb)
@@ -628,9 +915,21 @@ class TestPreviewViewerLive(unittest.TestCase):
 
         def drive(server, page):
             selection = page.evaluate("(name) => window.__select(name)", clip_name)
-            if burn_in:
-                page.click("#controls button:has-text('Burn-in')")
+            # The page's OWN ratio, read before a recording can raise it rather
+            # than re-derived from how the page happens to set it, so the
+            # restore check holds whatever the runner's display and clamp.
+            page_ratio = page.evaluate("() => window.__pixelRatio()")
             page.click("#controls button:has-text('Export Playblast')")
+            page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
+            if burn_in:
+                page.click("#dialogFields label:has-text('shot name')")
+            if describe:
+                page.click("#dialogFields label:has-text('shot description')")
+            if preset is not None:
+                page.select_option(
+                    "#dialogFields label:has-text('Quality') select", preset
+                )
+            page.click("#dialogConfirm")
             # The status line is the page's own completion signal, and waiting
             # on it rather than on a file appearing is what makes a failure read
             # as "the page said why" instead of as a timeout.
@@ -643,6 +942,11 @@ class TestPreviewViewerLive(unittest.TestCase):
                 "clip": selection["clip"],
                 "selected": selection["ok"],
                 "status": page.eval_on_selector("#status", "el => el.textContent"),
+                "pixelRatio": page.evaluate("() => window.__pixelRatio()"),
+                "pagePixelRatio": page_ratio,
+                "viewEdge": page.evaluate(
+                    "(ratio) => Math.max(innerWidth, innerHeight) * ratio", page_ratio
+                ),
             }
 
         found = self._load(glb, probe=probe or self._record_probe(), then=drive)
@@ -1186,7 +1490,7 @@ class TestPreviewViewerLive(unittest.TestCase):
                 {"name": "FADER_GEO", "mesh": 0},
                 # A SECOND node of the same name. glTF does not require unique
                 # names and production scenes do not have them (the assembly
-                # this was written against ships two `vdat533`), so a reader
+                # this was written against ships two `prop533`), so a reader
                 # that takes the first match fades one and leaves the other.
                 {"name": "FADER", "children": [5]},
                 {"name": "FADER_GEO_TWIN", "mesh": 0},

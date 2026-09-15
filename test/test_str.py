@@ -433,7 +433,7 @@ class StrTest(BaseTestCase):
     def test_collapse_delimiter_runs_basic(self):
         """Test runs of the delimiter collapse to a single one."""
         self.assertEqual(
-            StrUtils.collapse_delimiter_runs("vdat____Shape702"), "vdat_Shape702"
+            StrUtils.collapse_delimiter_runs("prop____Shape702"), "prop_Shape702"
         )
 
     def test_collapse_delimiter_runs_trailing(self):
@@ -475,16 +475,16 @@ class StrTest(BaseTestCase):
 
     def test_truncate_path_keeps_root_dir_and_filename(self):
         """'path' mode opens on drive + first dir and closes on the filename."""
-        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        p = "O:/Cloud/Projects/jets/plane/sourceimages/textures/plane_body_DIFF.png"
         result = StrUtils.truncate(p, 48, "path", "…")
-        self.assertEqual(result, "O:/Cloud/Projects/…/textures/c130j_body_DIFF.png")
+        self.assertEqual(result, "O:/Cloud/Projects/…/textures/plane_body_DIFF.png")
         self.assertLessEqual(len(result), 48)
 
     def test_truncate_path_matches_the_documented_example(self):
         """Pin the docstring example — a wrong example is a wrong contract."""
         self.assertEqual(
             StrUtils.truncate(
-                "O:/Cloud/jets/c130j/sourceimages/tex/x_DIFF.png", 36, "path"
+                "O:/Cloud/jets/plane/sourceimages/tex/x_DIFF.png", 36, "path"
             ),
             "O:/Cloud/jets/../tex/x_DIFF.png",
         )
@@ -499,17 +499,17 @@ class StrTest(BaseTestCase):
 
     def test_truncate_path_head_cap_widens_the_tail(self):
         """``head`` pins the front so the budget lands on the filename end."""
-        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        p = "O:/Cloud/Projects/jets/plane/sourceimages/textures/plane_body_DIFF.png"
         capped = StrUtils.truncate(p, 48, "path", "…", head=1)
-        self.assertEqual(capped, "O:/…/sourceimages/textures/c130j_body_DIFF.png")
+        self.assertEqual(capped, "O:/…/sourceimages/textures/plane_body_DIFF.png")
         self.assertLessEqual(len(capped), 48)
         # Same budget, uncapped: the head takes what the tail could not use.
         uncapped = StrUtils.truncate(p, 48, "path", "…")
-        self.assertEqual(uncapped, "O:/Cloud/Projects/…/textures/c130j_body_DIFF.png")
+        self.assertEqual(uncapped, "O:/Cloud/Projects/…/textures/plane_body_DIFF.png")
 
     def test_truncate_path_head_cap_never_narrows_the_tail(self):
         """The tail is grown first, so a lower cap can only widen it."""
-        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        p = "O:/Cloud/Projects/jets/plane/sourceimages/textures/plane_body_DIFF.png"
 
         def tail_len(result):
             return len(result.split("…", 1)[1])
@@ -521,7 +521,7 @@ class StrTest(BaseTestCase):
                 self.assertGreaterEqual(tail_len(narrow), tail_len(wide), length)
 
     def test_truncate_path_head_none_is_the_previous_behavior(self):
-        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        p = "O:/Cloud/Projects/jets/plane/sourceimages/textures/plane_body_DIFF.png"
         self.assertEqual(
             StrUtils.truncate(p, 48, "path", "…", head=None),
             StrUtils.truncate(p, 48, "path", "…"),
@@ -529,14 +529,14 @@ class StrTest(BaseTestCase):
 
     def test_truncate_path_head_below_one_is_clamped(self):
         """A head of 0 would leave no anchor at all; 1 is the floor."""
-        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        p = "O:/Cloud/Projects/jets/plane/sourceimages/textures/plane_body_DIFF.png"
         self.assertEqual(
             StrUtils.truncate(p, 48, "path", "…", head=0),
             StrUtils.truncate(p, 48, "path", "…", head=1),
         )
 
     def test_truncate_path_head_cap_ignored_by_other_modes(self):
-        p = "O:/Cloud/Projects/jets/sourceimages/c130j_body_DIFF.png"
+        p = "O:/Cloud/Projects/jets/sourceimages/plane_body_DIFF.png"
         for mode in ("start", "end", "middle"):
             self.assertEqual(
                 StrUtils.truncate(p, 30, mode, "…", head=1),
@@ -553,7 +553,7 @@ class StrTest(BaseTestCase):
 
     def test_truncate_path_cuts_only_at_separators(self):
         """The point of 'path' over 'middle': no half-component at the seam."""
-        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        p = "O:/Cloud/Projects/jets/plane/sourceimages/textures/plane_body_DIFF.png"
         path_mode = StrUtils.truncate(p, 48, "path", "…")
         middle_mode = StrUtils.truncate(p, 48, "middle", "…")
         for segment in path_mode.split("/"):
@@ -561,7 +561,7 @@ class StrTest(BaseTestCase):
         self.assertNotEqual(path_mode, middle_mode)
 
     def test_truncate_path_preserves_separator_style(self):
-        p = "D:\\Art\\Projects\\jets\\c130j\\sourceimages\\tex\\body_DIFF.png"
+        p = "D:\\Art\\Projects\\jets\\plane\\sourceimages\\tex\\body_DIFF.png"
         result = StrUtils.truncate(p, 48, "path")
         self.assertNotIn("/", result)
         self.assertTrue(result.startswith("D:\\Art\\"))
@@ -606,7 +606,7 @@ class StrTest(BaseTestCase):
         self.assertEqual(StrUtils.truncate(p, 48, "path"), p)
 
     def test_truncate_path_never_exceeds_length(self):
-        p = "O:/Cloud/Projects/jets/c130j/sourceimages/textures/c130j_body_DIFF.png"
+        p = "O:/Cloud/Projects/jets/plane/sourceimages/textures/plane_body_DIFF.png"
         for n in range(8, 80):
             self.assertLessEqual(len(StrUtils.truncate(p, n, "path", "…")), n)
 
@@ -1468,6 +1468,17 @@ class StrTest(BaseTestCase):
         self.assertEqual(StrUtils.replace_placeholders("{key:>10}"), "{key:>10}")
         self.assertEqual(StrUtils.replace_placeholders("{key:.4f}"), "{key:.4f}")
 
+    def test_replace_placeholders_preserves_a_positional_field(self):
+        """This takes keywords only, so a positional field has no value — it is
+        preserved like any other missing key rather than raising IndexError out
+        of the formatter. Every caller resolves text a USER typed into a pattern
+        field, where a stray brace pair is a typo, not a reason to abort a run."""
+        self.assertEqual(StrUtils.replace_placeholders("{}", name="x"), "{0}")
+        self.assertEqual(StrUtils.replace_placeholders("{0}_v", name="x"), "{0}_v")
+        # It must not swallow a real keyword sitting beside it.
+        self.assertEqual(StrUtils.replace_placeholders("{}{n}", n="7"), "{0}7")
+        self.assertEqual(StrUtils.resolve_placeholders("{}")["result"], "{0}")
+
     # -------------------------------------------------------------------------
     # resolve_placeholders Tests
     # -------------------------------------------------------------------------
@@ -1513,6 +1524,158 @@ class StrTest(BaseTestCase):
         self.assertEqual(info["fields"], [])
         self.assertEqual(info["unresolved"], [])
         self.assertEqual(info["result"], "no placeholders here")
+
+    # -------------------------------------------------------------------------
+    # Name patterns: one wildcard for the default, {tokens} for the rest
+    # -------------------------------------------------------------------------
+
+    def test_expand_wildcard_is_positional_so_affixes_compose(self):
+        """Unlike find_str_and_format's mode-flag asterisk, this one is a slot:
+        a prefix and a suffix land in a single pass, and a blank is the bare
+        default."""
+        for text, expected in (
+            ("", "{name}"),
+            ("   ", "{name}"),
+            ("*", "{name}"),
+            ("*_export", "{name}_export"),
+            ("WIP_*", "WIP_{name}"),
+            ("WIP_*_export", "WIP_{name}_export"),
+            ("asset", "asset"),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(StrUtils.expand_wildcard(text), expected)
+
+    def test_expand_wildcard_honors_a_custom_key_and_token(self):
+        self.assertEqual(
+            StrUtils.expand_wildcard("v_%", key="stem", wildcard="%"), "v_{stem}"
+        )
+
+    def test_to_legal_filename_removes_only_what_an_os_rejects(self):
+        """The permissive counterpart to to_legal_name: a dash, a dot and a
+        version token all survive."""
+        self.assertEqual(StrUtils.to_legal_filename("asset-v2.hero"), "asset-v2.hero")
+        self.assertEqual(StrUtils.to_legal_filename("a:b?.fbx"), "ab.fbx")
+        self.assertEqual(StrUtils.to_legal_filename("a|b", replacement="_"), "a_b")
+
+    def test_to_legal_filename_reports_each_illegal_char_once(self):
+        legal, found = StrUtils.to_legal_filename("a:b:c?d", report=True)
+        self.assertEqual(legal, "abcd")
+        self.assertEqual(found, [":", "?"])
+
+    def test_name_pattern_context_supplies_the_universal_tokens(self):
+        ctx = StrUtils.name_pattern_context(name="myScene")
+        self.assertEqual(set(StrUtils.NAME_PATTERN_TOKENS) - set(ctx), set())
+        self.assertRegex(ctx["date"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertRegex(ctx["time"], r"^\d{2}-\d{2}-\d{2}$")
+        self.assertEqual(ctx["name"], "myScene")
+
+    def test_name_pattern_context_lets_the_caller_override_a_token(self):
+        self.assertEqual(StrUtils.name_pattern_context(date="fixed")["date"], "fixed")
+
+    def test_resolve_name_pattern_composes_wildcard_and_placeholders(self):
+        ctx = {"name": "myScene", "folder": "hero"}
+        for pattern, expected in (
+            ("", "myScene"),
+            ("*", "myScene"),
+            ("WIP_*_export", "WIP_myScene_export"),
+            ("{folder}_*", "hero_myScene"),
+            ("asset", "asset"),
+        ):
+            with self.subTest(pattern=pattern):
+                self.assertEqual(
+                    StrUtils.resolve_name_pattern(pattern, ctx)["name"], expected
+                )
+
+    def test_resolve_name_pattern_reports_rather_than_logs(self):
+        """Diagnostics come back as data so each caller reports at its own
+        severity, through its own logger."""
+        result = StrUtils.resolve_name_pattern("{nope}_a?b", {"name": "x"})
+        self.assertEqual(result["name"], "{nope}_ab")
+        self.assertEqual(result["unresolved"], ["nope"])
+        self.assertEqual(result["dropped"], ["?"])
+        self.assertIsNone(result["error"])
+
+    def test_resolve_name_pattern_falls_back_when_nothing_survives(self):
+        """A pattern that resolves to NOTHING is not a name — a lone '?' drops to
+        empty, and a caller joining that onto a directory would write a file that
+        is only an extension."""
+        result = StrUtils.resolve_name_pattern("?", {"name": "myScene"})
+        self.assertEqual(result["name"], "myScene")
+        self.assertEqual(result["dropped"], ["?"])
+
+    def test_resolve_name_pattern_survives_a_positional_field(self):
+        """A stray brace pair is a typo in a filename field, not a crash."""
+        self.assertEqual(
+            StrUtils.resolve_name_pattern("{}", {"name": "myScene"})["name"], "{0}"
+        )
+
+    def test_resolve_name_pattern_survives_a_malformed_pattern(self):
+        result = StrUtils.resolve_name_pattern("{bad", {"name": "x"})
+        self.assertEqual(result["name"], "{bad")
+        self.assertTrue(result["error"])
+
+    def test_resolve_name_pattern_legalizes_a_malformed_pattern_too(self):
+        """A stray brace does not exempt the rest of the pattern: ``{bad?`` came
+        back unsanitized with nothing reported dropped, and Windows refused the
+        file at the write."""
+        result = StrUtils.resolve_name_pattern("{bad?", {"name": "x"})
+        self.assertTrue(result["error"])
+        self.assertEqual(result["name"], "{bad")
+        self.assertEqual(result["dropped"], ["?"])
+        self.assertEqual(result["template"].format(), result["name"])
+
+    def test_resolve_name_pattern_hands_back_the_form_a_preview_resolves(self):
+        """'expanded' is what a tooltip renders, so the preview and the export
+        resolve the same string."""
+        result = StrUtils.resolve_name_pattern("WIP_*", {"name": "myScene"})
+        self.assertEqual(result["expanded"], "WIP_{name}")
+
+    def test_resolve_name_pattern_keeps_a_later_stage_s_placeholder_intact(self):
+        """A version counter resolves against a folder AFTER the name is known, so
+        it has to come through verbatim -- format spec and all (the ':' in
+        {n:03d} is illegal in a filename and used to be dropped) -- and must not
+        read as an unresolved token."""
+        result = StrUtils.resolve_name_pattern(
+            "*_v{n:03d}", {"name": "myScene"}, keep=("n",)
+        )
+        self.assertEqual(result["name"], "myScene_v{n:03d}")
+        self.assertEqual(result["kept"], ["n"])
+        self.assertEqual(result["unresolved"], [])
+        self.assertEqual(result["dropped"], [])
+        self.assertEqual(result["template"].format(n=4), "myScene_v004")
+
+    def test_resolve_name_pattern_still_legalizes_around_a_kept_placeholder(self):
+        result = StrUtils.resolve_name_pattern(
+            "a?{n}:b{nope}", {"name": "x"}, keep=("n",)
+        )
+        self.assertEqual(result["name"], "a{n}b{nope}")
+        self.assertEqual(result["dropped"], ["?", ":"])
+        self.assertEqual(result["unresolved"], ["nope"])
+
+    def test_resolve_name_pattern_template_escapes_a_brace_a_value_carries(self):
+        """A scene named 'a{b}' must not turn into a format field downstream."""
+        result = StrUtils.resolve_name_pattern("*_{n}", {"name": "a{b}"}, keep=("n",))
+        self.assertEqual(result["template"], "a{{b}}_{n}")
+        self.assertEqual(result["template"].format(n=7), "a{b}_7")
+
+    def test_resolve_name_pattern_without_a_kept_field_is_unchanged(self):
+        """keep is opt-in: a pattern naming no kept field resolves exactly as
+        before, and its template formats straight back to the name."""
+        for keep in ((), ("n",)):
+            with self.subTest(keep=keep):
+                result = StrUtils.resolve_name_pattern(
+                    "WIP_*_{nope}", {"name": "s"}, keep=keep
+                )
+                self.assertEqual(result["name"], "WIP_s_{nope}")
+                self.assertEqual(result["kept"], [])
+                self.assertEqual(result["unresolved"], ["nope"])
+                self.assertEqual(result["template"].format(), "WIP_s_{nope}")
+
+    def test_resolve_name_pattern_malformed_template_formats_back_verbatim(self):
+        result = StrUtils.resolve_name_pattern("{bad_{n}", {"name": "x"}, keep=("n",))
+        self.assertTrue(result["error"])
+        self.assertEqual(result["kept"], [])
+        self.assertEqual(result["template"].format(), result["name"])
 
     # -------------------------------------------------------------------------
     # Regression tests (audit fixes)
@@ -1564,6 +1727,17 @@ class StrTest(BaseTestCase):
                 ["oldSuffix"], to="new*", fltr="old*", ignore_case=True
             ),
             ["newSuffix"],
+        )
+
+    def test_find_str_and_format_no_filter_prepends_like_it_appends(self):
+        """With no filter text to drop, replace_prefix falls back to a plain
+        prepend -- the mirror of replace_suffix, as this method's Note promises.
+        It used to return the string untouched on that side only."""
+        self.assertEqual(
+            StrUtils.find_str_and_format(["body"], to="GEO_*"), ["GEO_body"]
+        )
+        self.assertEqual(
+            StrUtils.find_str_and_format(["body"], to="*_GEO"), ["body_GEO"]
         )
 
     def test_get_matching_hierarchy_items_multichar_string_delimiter(self):

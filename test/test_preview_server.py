@@ -1068,6 +1068,118 @@ class PreviewScriptsTestCase(unittest.TestCase):
                         f"{name} uses viewer.{member}, which the page does not expose",
                     )
 
+    def test_no_two_handlers_claim_the_same_shortcut(self):
+        """One key press must mean one thing.
+
+        The page acts on a key first and then hands the SAME event to every
+        script (``emit('key', event)``, last on purpose so a script can never
+        shadow a page shortcut). A script binding a letter the page -- or
+        another script -- already binds therefore does not replace that
+        action: both fire. That shipped once: ``r`` toggled real scale AND
+        opened the Export Playblast prompt. Checked as text, for the reason
+        the test above gives, through every keyboard handler's own comparisons
+        (:meth:`_shortcuts`): a ``code`` counts as the key it presses --
+        ``code === 'Space'`` and ``key === ' '`` are one press -- and a handler
+        the reader gets no key out of fails, rather than passing as one that
+        binds nothing.
+        """
+        self._serve()
+        sources = {"page": (self.root / "index.html").read_text(encoding="utf-8")}
+        for name, filename in PreviewServer.SCRIPTS.items():
+            sources[name] = (PreviewServer.SCRIPTS_DIR / filename).read_text(
+                encoding="utf-8"
+            )
+        owners, handling = {}, []
+        for name, source in sources.items():
+            handlers, keys = self._shortcuts(source)
+            if handlers:
+                handling.append(name)
+                # A handler this cannot read into would pass vacuously.
+                self.assertTrue(keys, f"{name} handles keys, but no shortcut was read")
+            for key in keys:
+                owners.setdefault(key, []).append(name)
+        self.assertIn("page", handling, "the page's key handler was not found")
+        self.assertGreater(len(handling), 1, "no script's key handler was found")
+        self.assertIn(" ", owners, "the page's Space was not read as a key press")
+        shared = {key: who for key, who in owners.items() if len(who) > 1}
+        self.assertEqual(shared, {}, "one key press fires several actions")
+
+    #: A ``KeyboardEvent.code`` as the ``key`` values the same press reports,
+    #: where the two are spelled differently. A letter's code covers both cases
+    #: (``code`` ignores Shift) and a digit's is the digit; Escape, Enter and
+    #: the arrows read the same in both properties.
+    CODE_AS_KEYS = {"Space": (" ",), "BracketLeft": ("[",), "BracketRight": ("]",)}
+
+    @classmethod
+    def _shortcuts(cls, source):
+        """``(handlers, keys)``: how many keyboard handlers *source* registers,
+        and every key press they compare against, as ``key`` values.
+
+        Read through each handler's OWN event parameter -- ``viewer.on('key',
+        (e) =>`` or ``addEventListener('keydown', (event) =>`` -- so either
+        quote and any parameter name count, and so does a ``switch`` over the
+        key, while an unrelated ``preset.key === key`` does not.
+        """
+        handler = re.compile(
+            r"(?:\.on|addEventListener)\(\s*(['\"])(?:key|keydown)\1\s*,\s*"
+            r"(?:async\s+)?(?:function\s*\w*\s*)?\(?\s*(\w+)"
+        )
+        params = [name for _quote, name in handler.findall(source)]
+        pairs = []
+        for param in set(params):
+            prop = rf"\b{param}\.(key|code)\b"
+            pairs += [
+                (kind, value)
+                for kind, _quote, value in re.findall(
+                    prop + r"\s*===?\s*(['\"])(.*?)\2", source
+                )
+            ]
+            for switch in re.finditer(r"switch\s*\(\s*" + prop + r"\s*\)\s*\{", source):
+                depth, end = 1, switch.end()
+                while depth and end < len(source):
+                    depth += {"{": 1, "}": -1}.get(source[end], 0)
+                    end += 1
+                cases = re.findall(
+                    r"case\s+(['\"])(.*?)\1\s*:", source[switch.end() : end]
+                )
+                pairs += [(switch.group(1), value) for _quote, value in cases]
+        keys = set()
+        for kind, value in pairs:
+            if kind == "key":
+                keys.add(value)
+            elif len(value) == 4 and value.startswith("Key"):
+                keys.update((value[3].lower(), value[3].upper()))
+            elif len(value) == 6 and value.startswith("Digit"):
+                keys.add(value[5])
+            else:
+                keys.update(cls.CODE_AS_KEYS.get(value, (value,)))
+        return len(params), keys
+
+    def test_the_shortcut_reader_sees_every_spelling(self):
+        """The reader the test above relies on, pinned on each spelling it
+        claims: a pattern gone blind to one passes the conflict check for a
+        handler it no longer reads."""
+        for source, expected in (
+            ("viewer.on('key', (event) => { if (event.key === 'i') go(); });", {"i"}),
+            ('viewer.on("key", (e) => { if (e.key == "f") go(); });', {"f"}),
+            ("viewer.on('key', e => e.code === 'Space' && go());", {" "}),
+            (
+                "viewer.on('key', function (ev) { if (ev.code === 'KeyR') go(); });",
+                {"r", "R"},
+            ),
+            (
+                "addEventListener('keydown', (event) => { switch (event.key) {"
+                " case '[': back(); break; case \"]\": next(); } });",
+                {"[", "]"},
+            ),
+            (
+                "viewer.on('key', (event) => { if (preset.key === 'high') go(); });",
+                set(),
+            ),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(self._shortcuts(source), (1, expected))
+
     def test_the_viewer_imports_what_the_manifest_names(self):
         """The page half of the contract, pinned to the field name it reads."""
         self._serve()
@@ -1344,6 +1456,8 @@ class PreviewDelivererTestCase(unittest.TestCase):
         report = kwargs.get("report")
         if report is not None and kwargs.get("sidecar"):
             report["sidecar"] = MeshConvert.apply_scene_sidecar(dst, kwargs["sidecar"])
+        if report is not None and kwargs.get("data_export"):
+            report["data_export"] = sorted(kwargs["data_export"])
         return dst
 
     def _deliver(self, **kwargs):
@@ -1457,10 +1571,12 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.assertEqual(seen["lightmap_dirs"], ["D:/maps"])
         self.assertEqual(
             seen["texture_params"],
-            {
-                **MeshConvert.web_delivery_texture_params(image_format="KTX2"),
-                "ktx2_fallback": False,  # streamed to the page, never imported
-            },
+            MeshConvert.web_delivery_texture_params(image_format="KTX2"),
+        )
+        self.assertIs(
+            seen["texture_params"]["ktx2_fallback"],
+            False,
+            "streamed to the page, never imported",
         )
         self.assertIs(seen["downsize"], False, "EMBED_TEXTURES off")
         self.assertTrue(Path(seen["dst"]).name.startswith(_StubBridge.payload_prefix))
@@ -1829,6 +1945,30 @@ class PreviewDelivererTestCase(unittest.TestCase):
                 HandoffRequest(),
             )
         self.assertEqual(self.converted[-1].get("sidecar"), envelope)
+
+    def test_a_data_export_overlay_reaches_the_conversion_for_that_push_only(self):
+        """Request-scoped like the other knobs: the overlay a panel names for
+        one push (an effect preview) reaches `fbx_to_glb`, and the next push
+        that says nothing builds from the scene again."""
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        overlay = {"fbx_takes": None}
+        result = self._push(data_export=overlay)
+        self.assertEqual(self.converted[-1].get("data_export"), overlay)
+        # The result names what landed: the one way a panel can tell its
+        # effect is in the published file without reading the GLB back.
+        self.assertEqual(result["data_export"], ["fbx_takes"])
+        result = self._push()
+        self.assertIsNone(self.converted[-1].get("data_export"))
+        self.assertEqual(result["data_export"], [])
+
+    def test_push_names_the_overlay_as_a_request_knob_not_an_export_param(self):
+        bridge = _StubPreviewBridge()
+        overlay = {"fbx_takes": None}
+        with unittest.mock.patch.object(bridge, "send", return_value={}) as send:
+            bridge.push(objects=["a"], data_export=overlay)
+        kwargs = send.call_args.kwargs
+        self.assertIs(kwargs["data_export"], overlay)
+        self.assertNotIn("data_export", kwargs["params"])
 
     def test_absent_sidecar_leaves_the_glb_untouched(self):
         """Sidecar off must be a true passthrough — that is what makes it a probe.

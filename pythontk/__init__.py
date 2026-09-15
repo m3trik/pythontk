@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.9.40"
+__version__ = "0.10.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -72,6 +72,7 @@ DEFAULT_INCLUDE = {
     "math_utils.progression": "ProgressionCurves",
     "math_utils.noise": "BandLimitedNoise",
     "math_utils.weights": "Weights",
+    "math_utils.ramp_keys": "RampKeys",
     "geo_utils.polyline": "Polyline",
     "geo_utils.pointcloud": "PointCloud",
     "geo_utils.rail_surface": "RailSurface",
@@ -90,7 +91,7 @@ DEFAULT_INCLUDE = {
     "geo_utils.uv_transfer": ["UvTransfer", "TransferTable"],
     # Declarative widget definitions -> run configuration (the two Scene
     # Exporter panels' export button, once).
-    "core_utils.export_profile": ["ExportProfile"],
+    "core_utils.export_profile": ["ExportProfile", "ExportRun"],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [
         "ShotStore",
@@ -201,7 +202,7 @@ DEFAULT_INCLUDE = {
     ],
     "core_utils.namespace_handler": "NamespaceHandler",
     "core_utils.namedtuple_container": "NamedTupleContainer",
-    "core_utils.color": ["Color", "ColorPair", "Palette"],
+    "core_utils.color": ["Color", "ColorPair", "ColorStops", "Palette"],
     "core_utils.hierarchy_utils.hierarchy_diff": "HierarchyDiff",
     "core_utils.singleton_mixin": "SingletonMixin",
     "core_utils.step_toggle": ["StepToggle"],

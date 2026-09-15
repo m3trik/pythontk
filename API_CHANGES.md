@@ -1,25 +1,110 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ d1a0b2b)._
+_Diff vs the last release (origin/main @ 33aff91)._
 
-## Added (7)
+## Added (65)
 
-- `core_utils/process_exit.py::ProcessExit(class)`
-- `core_utils/process_exit.py::ProcessExit.hard_exit(code: int = 0) -> NoReturn`
-- `geo_utils/polyline.py::Polyline.transport_frames(cls, points: Sequence[Vec], up: Optional[Vec] = None) -> List[Tuple[Vec, Vec, Vec]]`
-- `img_utils/_img_utils.py::ImgUtils.channels_carrying_data(cls, image, bands) -> Tuple[str, ...]`
-- `net_utils/preview/bridge.py::FilePreviewBridge(class)`
-- `net_utils/preview/bridge.py::FilePreviewBridge.lightmap_search_dirs(self) -> Sequence[str]`
-- `net_utils/preview/server.py::PreviewServer.webxr_browser(cls) -> Optional[str]`
+- `core_utils/color.py::Color.from_hsvf(cls, h: float, s: float, v: float, a: float = 1.0) -> 'Color'`
+- `core_utils/color.py::Color.hsv(self) -> Tuple[float, float, float]`
+- `core_utils/color.py::Color.linear_from_srgb(rgb: Sequence[float]) -> Tuple[float, ...]`
+- `core_utils/color.py::Color.srgb_from_linear(rgb: Sequence[float]) -> Tuple[float, ...]`
+- `core_utils/color.py::ColorStops(class)`
+- `core_utils/color.py::ColorStops.defaults(self) -> Tuple[Tuple[float, float, float], ...]`
+- `core_utils/color.py::ColorStops.keys(self) -> Tuple[str, ...]`
+- `core_utils/color.py::ColorStops.resolve(self, value: object = None) -> Tuple[Tuple[float, float, float], ...]`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.is_previewing(self, clip_id: Optional[int] = None) -> bool`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.collapse_tile_sets(cls, texture_sets: Dict[str, List[str]]) -> Dict[str, List[str]]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.get_tile_paths(cls, filepath: str) -> List[str]`
+- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.is_recompressible(cls, path: str) -> bool`
+- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.optimize_maps(cls, requests: Sequence[Dict[str, Any]], workers: Optional[int] = None) -> List[Tuple[Optional[str], Optional[Exception]]]`
+- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.stage_maps(cls, sources: Mapping[str, Mapping[str, Any]], assess: Callable[[str], Optional[Mapping[str, Any]]], *, output_profile: Optional[str] = None, clamp: Optional[Mapping[str, Any]] = None, staging_dir: Union[str, Callable[[], Tuple[str, bool]], None] = None, temp_staging: bool = False, write_back: bool = False, recompress: bool = True, old_files_folder: str = 'original_textures', pass_desc: str = '', logger: Optional[logging.Logger] = None, workers: Optional[int] = None) -> Dict[str, Any]`
+- `core_utils/export_profile.py::ExportProfile.fold_legacy_naming(cls, pattern: Optional[str], version_format: str = '', timestamp: bool = False) -> Optional[str]`
+- `core_utils/export_profile.py::ExportProfile.frame_rate_options(cls) -> Dict[str, Optional[str]]`
+- `core_utils/export_profile.py::ExportProfile.naming_report(cls, resolved: Mapping[str, Any], tokens: Mapping[str, str], version_suffix=None) -> List[Tuple[str, str]]`
+- `core_utils/export_profile.py::ExportProfile.optimize_textures_options(cls) -> Dict[str, Any]`
+- `core_utils/export_profile.py::ExportProfile.resolve_output_path(cls, pattern: Optional[str], context: Mapping[str, Any], export_dir: str = '', output_format: str = 'fbx', version_format: str = '', timestamp: bool = False) -> Dict[str, Any]`
+- `core_utils/export_profile.py::ExportProfile.scoped_tables(cls, manager: type) -> type`
+- `core_utils/export_profile.py::ExportProfile.strip_deliverable_extension(name: Optional[str]) -> str`
+- `core_utils/export_profile.py::ExportProfile.task_order(cls, manager: Any) -> List[str]`
+- `core_utils/export_profile.py::ExportProfile.texture_file_type_options(cls) -> Dict[str, Any]`
+- `core_utils/export_profile.py::ExportProfile.texture_size_limit_bytes(max_size_mb: Any) -> Optional[int]`
+- `core_utils/export_profile.py::ExportProfile.unimplemented(cls, manager: Any) -> Dict[str, List[str]]`
+- `core_utils/export_profile.py::ExportRun(class)`
+- `core_utils/export_profile.py::ExportRun.create_glb(self) -> bool`
+- `core_utils/export_profile.py::ExportRun.from_tasks(cls, tasks: Optional[Mapping[str, Any]], texture_file_types: Iterable[Any] = ()) -> Tuple['ExportRun', Dict[str, Any], List[Tuple[str, str]]]`
+- `core_utils/export_profile.py::ExportRun.glb_only(self) -> bool`
+- `core_utils/export_profile.py::ExportRun.replace(self, **changes: Any) -> 'ExportRun'`
+- `core_utils/export_profile.py::ExportRun.usd(self) -> bool`
+- `core_utils/export_profile.py::ExportRun.with_tasks(self, tasks: Mapping[str, Any]) -> 'ExportRun'`
+- `core_utils/task_factory.py::TaskFactory.kept_edits(self) -> List[str]`
+- `core_utils/task_factory.py::TaskFactory.record_kept_edit(self, label: str) -> None`
+- `file_utils/_file_utils.py::FileUtils.atomic_write(target: str, write: Callable[[str], Any], promote: bool = True) -> str`
+- `file_utils/_file_utils.py::FileUtils.next_version_number(directory: str, format: str = '{stem}_v{n:03d}{ext}', stem: str = '', ext: str = '', start: int = 1, extensions: Iterable[str] = ()) -> int`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.OPTIMIZE_WORKERS(cls) -> int`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.effect_preview_channels(cls, nodes: Sequence[str], channel: str, keys: Sequence[Sequence[float]], colors: Optional[Sequence[Optional[Sequence[float]]]] = None, fps: float = 30.0) -> Dict[str, Any]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fix_glb_lightmap_metadata(cls, glb: GlbTarget) -> int`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fix_glb_skin_skeletons(cls, glb: GlbTarget) -> List[str]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.overlay_data_export(cls, gltf: dict, channels: Dict[str, Any]) -> List[str]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.prune_glb_unused_skins(cls, glb: GlbTarget) -> Dict[str, int]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.reduce_glb_animations(cls, glb: GlbTarget, tolerance: float, rotation_tolerance: Optional[float] = None) -> Dict[str, int]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_glb_image_bytes(self) -> List[Finding]`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.user_properties(self, name: str, kind: str = 'Model') -> List[Any]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.drop_takes(cls, src: str, dst: Optional[str] = None, *, names: Iterable[str]) -> Dict[str, Any]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.expand_grayscale(cls, src: str, dst: Optional[str] = None, *, png_compress_level: int = 1, jpeg_quality: int = 95, workers: Optional[int] = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/glb_fades.py::PointerChannel.color_key(self) -> Optional[str]`
+- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction(class)`
+- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction.deviation(cls, reference: Sampler, candidate: Sampler, quaternion: bool = False) -> float`
+- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction.evaluate(times: Sequence[float], values: Sequence[Sequence[float]], at: float, interpolation: str = 'LINEAR', quaternion: bool = False) -> Tuple[float, ...]`
+- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction.read_sampler(gltf: Dict[str, Any], blob: Optional[bytes], sampler: Dict[str, Any]) -> Optional[Sampler]`
+- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction.reduce(cls, glb: Any, tolerance: float, rotation_tolerance: Optional[float] = None) -> Dict[str, int]`
+- `img_utils/_img_utils.py::ImgUtils.encode_workers(cls, requested: Optional[int] = None) -> int`
+- `img_utils/ktx2_encoder.py::Ktx2Encoder.encode_timeout(cls, width: int, height: int) -> float`
+- `math_utils/ramp_keys.py::RampKeys(class)`
+- `math_utils/ramp_keys.py::RampKeys.fade(cls, start: float, end: float, direction: str = 'in', whole_frames: bool = True) -> List[Key]`
+- `math_utils/ramp_keys.py::RampKeys.fade_loop(cls, duration: float, hold: float = 0.0, direction: str = 'in') -> List[Key]`
+- `math_utils/ramp_keys.py::RampKeys.frames(whole: bool, *times: float) -> Tuple[float, ...]`
+- `math_utils/ramp_keys.py::RampKeys.pulse(cls, start: float, end: float, period: float, bright_fraction: float = 0.59, ramp_fraction: float = 0.25, lead_in: Optional[float] = None, lead_out: Optional[float] = None, whole_frames: bool = True) -> List[Key]`
+- `math_utils/ramp_keys.py::RampKeys.pulse_gaps(cls, start: float, end: float, ramp: float, lead_in: Optional[float] = None, lead_out: Optional[float] = None, gap_min: Optional[float] = None) -> Tuple[float, float]`
+- `str_utils/_str_utils.py::StrUtils.expand_wildcard(text: str, key: str = 'name', wildcard: str = '*') -> str`
+- `str_utils/_str_utils.py::StrUtils.name_pattern_context(**values) -> dict`
+- `str_utils/_str_utils.py::StrUtils.resolve_name_pattern(cls, pattern: str, context: dict = None, wildcard: str = '*', key: str = 'name', keep: Iterable[str] = ()) -> dict`
+- `str_utils/_str_utils.py::StrUtils.to_legal_filename(cls, name: str, replacement: str = '', report: bool = False)`
 
-## Signature changed (3)
+## Signature changed (12)
 
-- `file_utils/_file_utils.py::FileUtils.get_file_contents`
-  - was: `(filepath: str, as_list: bool = False, encoding: str = 'utf-8') -> Optional[Union[str, List[str]]]`
-  - now: `(filepath: str, as_list: bool = False, encoding: str = 'utf-8', default: Optional[Union[str, List[str]]] = None) -> Optional[Union[str, List[str]]]`
-- `img_utils/_img_utils.py::ImgUtils.dropped_channels`
-  - was: `(cls, mode: str, ext: str) -> Tuple[str, ...]`
-  - now: `(cls, mode: str, ext: str = '', *, target_mode: str = '') -> Tuple[str, ...]`
+- `file_utils/_file_utils.py::FileUtils.next_version_path`
+  - was: `(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1) -> str`
+  - now: `(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1, extensions: Iterable[str] = ()) -> str`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.clip_spans`
+  - was: `(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None) -> Dict[str, List[float]]`
+  - now: `(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None, key_spans: Optional[Callable[[List[Tuple[Optional[float], Optional[float]]]], Sequence[Optional[Sequence[float]]]]] = None) -> Dict[str, List[float]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.describe_texture_pass`
+  - was: `(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0) -> str`
+  - now: `(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0, secondary_max_size: int = 0, uastc_rdo: Optional[float] = None) -> str`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fbx_to_glb`
+  - was: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str`
+  - now: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.optimize_glb_textures`
+  - was: `(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]`
+  - now: `(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = WEB_DELIVERY_KTX2_FALLBACK, secondary_max_size: int = WEB_DELIVERY_SECONDARY_MAX_SIZE, uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO) -> Dict[str, Any]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.web_delivery_texture_params`
+  - was: `(cls, image_format: Optional[str] = None, max_size: Optional[int] = None) -> Dict[str, Any]`
+  - now: `(cls, image_format: Optional[str] = None, max_size: Optional[int] = None, ktx2_fallback: Optional[bool] = None, secondary_max_size: Optional[int] = None, uastc_rdo: Optional[float] = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/glb_fades.py::GlbFades.apply_channels`
+  - was: `(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Rgb]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]`
+  - now: `(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Any]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/glb_pipeline.py::GlbPipeline.build`
+  - was: `(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]`
+  - now: `(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]`
+- `img_utils/ktx2_encoder.py::Ktx2Encoder.args_for`
+  - was: `(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None) -> List[str]`
+  - now: `(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None) -> List[str]`
+- `img_utils/ktx2_encoder.py::Ktx2Encoder.encode`
+  - was: `(self, source: Union[str, 'Image.Image'], output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None) -> str`
+  - now: `(self, source: Union[str, 'Image.Image'], output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None) -> str`
 - `net_utils/preview/bridge.py::PreviewBridge.push`
-  - was: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, **params: Any) -> Optional[Dict[str, Any]]`
-  - now: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, **params: Any) -> Optional[Dict[str, Any]]`
+  - was: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, **params: Any) -> Optional[Dict[str, Any]]`
+  - now: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, data_export: Optional[Dict[str, Any]] = None, **params: Any) -> Optional[Dict[str, Any]]`
+- `net_utils/preview/playblast.py::PreviewPlayblast.begin`
+  - was: `(self, name: str, fps: float, start_frame: int = 1, frames: int = 0, content_type: str = 'image/png') -> Dict[str, Any]`
+  - now: `(self, name: str, fps: float, start_frame: int = 1, frames: int = 0, content_type: str = 'image/png', quality: Optional[int] = None) -> Dict[str, Any]`

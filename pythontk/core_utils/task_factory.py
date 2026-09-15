@@ -4,10 +4,13 @@
 
 A reflection-based task runner: :class:`TaskFactory` discovers the ``task_*`` /
 ``check_*`` methods a subclass supplies (``getattr`` + :func:`inspect.signature`),
-orders them by a declared ``TASK_ORDER``, runs each with LIFO set/revert state
-management, and processes check results. It knows nothing about any DCC -- the
-scene-exporter ``TaskManager`` in mayatk and blendertk each subclass it and
-supply the host-specific task/check methods it discovers by name.
+orders them by a declared ``TASK_ORDER``, hoists each check to the earliest
+point its declared dependencies allow, and processes check results. State a
+task changes for the work the run prepares is undone through the deferred-
+restore registry (:meth:`TaskFactory.stage_deferred_restore`), which the
+caller unwinds LIFO once that work is done. It knows nothing about any DCC --
+the scene-exporter ``TaskManager`` in mayatk and blendertk each subclass it
+and supply the host-specific task/check methods it discovers by name.
 
 Like :mod:`pythontk.core_utils.app_handoff`, this is a *general* orchestration
 base (no domain model or planner), so it lives in ``core_utils`` beside the other
@@ -42,6 +45,12 @@ class TaskFactory:
     #: :meth:`_report_progress` for the stream and its cancel contract.
     progress_callback: Optional[Callable[..., Any]] = None
 
+    #: What the current run left in the host for good (:meth:`record_kept_edit`).
+    #: An empty tuple on the class, rebound per instance on each record, so a
+    #: manager built without ``__init__`` (a ``__new__`` test fixture) records
+    #: too, and no two instances ever share one list.
+    _kept_edits: Tuple[str, ...] = ()
+
     def __init__(self, logger):
         self.logger = logger
         self._method_cache = {}
@@ -51,21 +60,23 @@ class TaskFactory:
         self._deferred_restores: Dict[str, Callable] = {}
 
     # ------------------------------------------------------------------
-    # Deferred restores — the counterpart to the set_/revert_ pair
+    # Deferred restores — how a task's mutation is undone
     # ------------------------------------------------------------------
 
     def stage_deferred_restore(self, key: str, restore: Callable) -> bool:
         """Register *restore* to run **after** the caller's real work — once per *key*.
 
-        The ``set_<x>``/``revert_<x>`` pair runs its revert when
-        :meth:`run_tasks` returns (see :meth:`_get_revert_method`), i.e. *before*
-        the caller does whatever the tasks were preparing for. That is correct
-        only for mutations the real work does not read. Anything the work reads
-        as it runs — an exporter's working unit, its frame range, transient
-        scene objects that must ship and then vanish — cannot use that pair
-        without becoming inert, and stages here instead: the caller runs
-        :meth:`run_deferred_restores` once the work is done (typically from a
-        ``finally``, so every exit path is covered).
+        The ONE undo mechanism. A task that mutates the host for the work the
+        run prepares — an exporter's working unit, its frame range, transient
+        scene objects that must ship and then vanish, a bake session — stages
+        its restore here, and the caller runs :meth:`run_deferred_restores`
+        once the work is done (typically from a ``finally``, so every exit
+        path is covered). Restores unwind LIFO in staging order, so a task
+        that builds on another's mutation is undone before it. (The former
+        ``set_<x>``/``revert_<x>`` pairing, which reverted when
+        :meth:`run_tasks` returned — BEFORE the work the tasks prepared for —
+        was retired 2026-09-13: nothing used it, and a revert that runs too
+        early is a trap for the next ``set_`` task written.)
 
         Keying makes staging idempotent and gives the *first* stager priority,
         so a later task that builds on an already-staged mutation (widening a
@@ -109,18 +120,43 @@ class TaskFactory:
     def run_deferred_restores(self) -> None:
         """Run + clear every restore staged by :meth:`stage_deferred_restore`.
 
-        LIFO, matching :meth:`_revert_states`. Each restore is isolated — a
+        LIFO. Each restore is isolated — a
         failure is logged, never re-raised, since this normally runs from a
         ``finally`` where raising would mask the original error. The registry is
         cleared regardless, so a failed restore cannot make the next run treat
-        its stale key as already staged.
+        its stale key as already staged. This closes the run, so its
+        :attr:`kept_edits` record is cleared too.
         """
         restores, self._deferred_restores = self._deferred_restores, {}
+        self._kept_edits = ()
         for key, restore in reversed(restores.items()):
             try:
                 restore()
             except Exception as e:
                 self.logger.warning(f"Deferred restore {key!r} failed: {e}")
+
+    def record_kept_edit(self, label: str) -> None:
+        """Record that this run left *label* in the host for good.
+
+        The other half of :meth:`stage_deferred_restore`: a task whose edit no
+        restore unwinds -- a repair the user keeps, or an edit a write-back mode
+        leaves in place -- names it here, where it knows the edit was made. A
+        run that stops before its work can then say exactly what it left behind
+        (:attr:`kept_edits`) rather than recite a fixed list. Named once,
+        however often it is recorded.
+        """
+        if label not in self._kept_edits:
+            self._kept_edits = (*self._kept_edits, label)
+
+    @property
+    def kept_edits(self) -> List[str]:
+        """What this run has left in the host for good, in the order it was left.
+
+        A copy. :meth:`run_deferred_restores` closes the run and clears it, so a
+        caller reports it before that -- the scene exporters, from a run that
+        stopped before its write.
+        """
+        return list(self._kept_edits)
 
     def _get_cached_method(self, method_name: str):
         """Get method with caching to avoid repeated getattr calls."""
@@ -168,7 +204,7 @@ class TaskFactory:
         tasks: Dict[str, Any],
         gate: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
     ) -> Dict[str, Any]:
-        """Manage task states by setting them once and reverting after, returning task results.
+        """Run the entries of *tasks* in order, yielding their results.
 
         Parameters:
             tasks: The run list, in execution order.  Tasks and checks may be
@@ -181,7 +217,6 @@ class TaskFactory:
                 Used by :meth:`_execute_tasks_and_checks` to drop the work that
                 a failed check has already made pointless.
         """
-        original_states = {}
         task_results = {}
 
         # Pre-validate and cache all methods
@@ -199,9 +234,6 @@ class TaskFactory:
 
         # self.logger.info(f"Running {len(valid_tasks)} tasks")
 
-        # Revert in a finally: a task raising mid-loop, or an exception thrown
-        # into the generator at the yield (from the with-body), must not leave
-        # set_* state applied to the host scene.
         # Number tasks and checks in their own sequences: an interleaved run
         # list would otherwise report "Task #7/12" over a check.
         totals = {True: 0, False: 0}
@@ -209,89 +241,67 @@ class TaskFactory:
             totals[name.startswith("check_")] += 1
         counters = {True: 0, False: 0}
 
-        try:
-            for position, (task_name, value) in enumerate(valid_tasks.items()):
-                method = self._method_cache[task_name]  # Already cached
-                is_check = task_name.startswith("check_")
-                counters[is_check] += 1
-                label = "Check" if is_check else "Task"
-                index, total = counters[is_check], totals[is_check]
+        for position, (task_name, value) in enumerate(valid_tasks.items()):
+            method = self._method_cache[task_name]  # Already cached
+            is_check = task_name.startswith("check_")
+            counters[is_check] += 1
+            label = "Check" if is_check else "Task"
+            index, total = counters[is_check], totals[is_check]
 
-                # An unchecked toggle is not a task that ran. Reported before
-                # the call, because the log is what a user (and anyone
-                # diagnosing a deliverable from it) reads to know what the
-                # export DID: "Executing apply_declared_takes" followed by
-                # "Completed in 0.000s" over a task that was switched off cost
-                # real time during a 2026-08-30 production investigation, since
-                # it reads as a task that ran and did nothing rather than one
-                # that never ran.
-                #
-                # Ahead of the gate deliberately: a task that was switched off
-                # can change no verdict, so counting it among the work an abort
-                # skipped would hold back checks that are still decidable.
-                if self._task_is_disabled(method, value):
-                    self.logger.info(
-                        f"Skipping {label} #{index}/{total}: {task_name} (disabled)"
-                    )
-                    # The value the executor would have returned, so callers
-                    # reading the results see no change in shape.
-                    task_results[task_name] = True
-                    # Deliberately NO revert staged: the task never ran, so
-                    # there is no mutation to undo, and the `True` above is not
-                    # a captured original state -- pairing them would hand
-                    # ``revert_<x>(True)`` to a task that was switched off.
-                    continue
-
-                if gate is not None and not gate(task_name, task_results):
-                    self.logger.info(
-                        f"Skipping {label} #{index}/{total}: {task_name} "
-                        "(a check has already failed)"
-                    )
-                    continue
-
-                # Reported before the call, so whoever is watching sees what is
-                # running NOW -- and can cancel before it starts.
-                self._report_progress(
-                    position, len(valid_tasks), f"{label} {index}/{total}: {task_name}"
+            # An unchecked toggle is not a task that ran. Reported before
+            # the call, because the log is what a user (and anyone
+            # diagnosing a deliverable from it) reads to know what the
+            # export DID: "Executing apply_declared_takes" followed by
+            # "Completed in 0.000s" over a task that was switched off cost
+            # real time during a 2026-08-30 production investigation, since
+            # it reads as a task that ran and did nothing rather than one
+            # that never ran.
+            #
+            # Ahead of the gate deliberately: a task that was switched off
+            # can change no verdict, so counting it among the work an abort
+            # skipped would hold back checks that are still decidable.
+            if self._task_is_disabled(method, value):
+                self.logger.info(
+                    f"Skipping {label} #{index}/{total}: {task_name} (disabled)"
                 )
-                self.logger.info(f"Executing {label} #{index}/{total}: {task_name}")
+                # The value the executor would have returned, so callers
+                # reading the results see no change in shape.
+                task_results[task_name] = True
+                continue
 
-                # Get revert method BEFORE executing the task
-                revert_method = self._get_revert_method(task_name)
+            if gate is not None and not gate(task_name, task_results):
+                self.logger.info(
+                    f"Skipping {label} #{index}/{total}: {task_name} "
+                    "(a check has already failed)"
+                )
+                continue
 
-                try:
-                    t0 = time.perf_counter()
-                    result = self._execute_task_method(method, value)
-                    elapsed = time.perf_counter() - t0
-                    self.logger.success(f"  Completed {task_name} in {elapsed:.3f}s")
-                    task_results[task_name] = result
+            # Reported before the call, so whoever is watching sees what is
+            # running NOW -- and can cancel before it starts.
+            self._report_progress(
+                position, len(valid_tasks), f"{label} {index}/{total}: {task_name}"
+            )
+            self.logger.info(f"Executing {label} #{index}/{total}: {task_name}")
 
-                    # Store original state for reversion if this is a "set_" task
-                    if revert_method and result is not None:
-                        original_states[task_name] = {
-                            "revert_method": revert_method,
-                            "original_value": result,
-                        }
-                        self.logger.debug(
-                            f"Stored original state for {task_name}: {result}"
-                        )
+            try:
+                t0 = time.perf_counter()
+                result = self._execute_task_method(method, value)
+                elapsed = time.perf_counter() - t0
+                self.logger.success(f"  Completed {task_name} in {elapsed:.3f}s")
+                task_results[task_name] = result
 
-                    # Handle check failures efficiently
-                    if is_check and not self._is_success(result):
-                        self._log_check_failed(
-                            task_name, self._get_log_messages(result)
-                        )
+                # Handle check failures efficiently
+                if is_check and not self._is_success(result):
+                    self._log_check_failed(task_name, self._get_log_messages(result))
 
-                except Exception as e:
-                    self.logger.error(f"Error during task {task_name}: {e}")
-                    raise
+            except Exception as e:
+                self.logger.error(f"Error during task {task_name}: {e}")
+                raise
 
-            # The list is exhausted: whatever a failed check dropped was
-            # skipped, and a skipped entry is a done entry.
-            self._report_progress(len(valid_tasks), len(valid_tasks), None)
-            yield task_results
-        finally:
-            self._revert_states(original_states)
+        # The list is exhausted: whatever a failed check dropped was
+        # skipped, and a skipped entry is a done entry.
+        self._report_progress(len(valid_tasks), len(valid_tasks), None)
+        yield task_results
 
     def _positional_count(self, method) -> int:
         """How many positional parameters *method* takes.
@@ -495,9 +505,6 @@ class TaskFactory:
                 f"Running {len(ordered_tasks)} export task(s) and "
                 f"{len(ordered_checks)} validation check(s)..."
             )
-            # ONE context over the merged list: the set_/revert_ pairing still
-            # unwinds when run_tasks returns (its documented contract), and a
-            # check hoisted above a set_ task must not see it already reverted.
             with self._manage_context(schedule, gate=gate) as results:
                 all_checks_passed = self._process_check_results(
                     {k: v for k, v in results.items() if k.startswith("check_")},
@@ -524,6 +531,9 @@ class TaskFactory:
         # list again -- the ones above them already ran, and re-running them
         # would repeat their mutation.
         self._last_skipped_tasks = list(skipped_tasks)
+        # ...and the checks it dropped with them, which a proceed-anyway caller
+        # must not count as passed: they were never made.
+        self._last_skipped_checks = list(skipped_checks)
 
         if skipped_tasks or skipped_checks:
             # Name what the abort bought, and what it cost: an unexplained
@@ -638,20 +648,6 @@ class TaskFactory:
         for message in log_messages:
             self.logger.error(message)
 
-    def _get_revert_method(self, task_name: str):
-        """Get revert method for a task if it exists.
-
-        Only ``set_<x>`` tasks pair with a ``revert_<x>``.  Note the timing:
-        reverts run when ``run_tasks`` returns — BEFORE the actual export
-        write — so only mutations the export itself doesn't depend on may be
-        reverted this way. A task whose mutation the export *does* read must
-        return ``None`` (which disarms this pairing) and register its restore
-        with :meth:`stage_deferred_restore` instead.
-        """
-        if task_name.startswith("set_"):
-            return getattr(self, f"revert_{task_name[4:]}", None)
-        return None
-
     def _is_success(self, result) -> bool:
         """Check if a task result indicates success."""
         if isinstance(result, (tuple, list)):
@@ -663,27 +659,6 @@ class TaskFactory:
         return (
             result[1] if isinstance(result, (tuple, list)) and len(result) > 1 else []
         )
-
-    def _revert_states(self, original_states: Dict[str, Any]) -> None:
-        """Revert all stored states."""
-        if not original_states:
-            self.logger.debug("No states to revert.")
-            return
-
-        self.logger.info("Reverting temporary states...")
-
-        # Revert in reverse order (LIFO)
-        for task_name, state_info in reversed(original_states.items()):
-            revert_method = state_info["revert_method"]
-            original_value = state_info["original_value"]
-
-            try:
-                revert_method(original_value)
-                self.logger.debug(f"Reverted {task_name} to: {original_value}")
-            except Exception as e:
-                self.logger.error(f"Error reverting {task_name}: {e}")
-
-        self.logger.info("State reversion completed.")
 
 
 # -----------------------------------------------------------------------------

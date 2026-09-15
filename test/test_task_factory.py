@@ -3,8 +3,8 @@
 """Tests for pythontk.core_utils.task_factory (TaskFactory) — the generic,
 host-free task/check pipeline primitive shared by mayatk's and blendertk's
 scene exporters (their ``TaskManager`` subclasses it). The dispatch / ordering /
-revert / check contract is pinned here once, DCC-free; the DCC suites cover the
-concrete ``task_*`` / ``check_*`` methods each supplies.
+deferred-restore / check contract is pinned here once, DCC-free; the DCC suites
+cover the concrete ``task_*`` / ``check_*`` methods each supplies.
 """
 
 import unittest
@@ -34,25 +34,13 @@ class _Recorder(TaskFactory):
         self.calls.append(("task_two", a, b))
 
     def set_flag(self, value):
+        """A ``set_`` task is an ordinary task: its result is just its result."""
         self.calls.append(("set_flag", value))
-        return "ORIGINAL"  # non-None result -> revertible
+        return "ORIGINAL"
 
     def revert_flag(self, original):
+        """The retired pairing's other half -- never called by the runner."""
         self.calls.append(("revert_flag", original))
-
-    def set_a(self, value):
-        self.calls.append(("set_a", value))
-        return "A"
-
-    def revert_a(self, original):
-        self.calls.append(("revert_a", original))
-
-    def set_b(self, value):
-        self.calls.append(("set_b", value))
-        return "B"
-
-    def revert_b(self, original):
-        self.calls.append(("revert_b", original))
 
     def check_ok(self, value):
         self.calls.append(("check_ok", value))
@@ -83,16 +71,12 @@ class _Recorder(TaskFactory):
         self.calls.append(("set_switch",))
         return "ORIGINAL_SWITCH"
 
-    def revert_switch(self, original):
-        self.calls.append(("revert_switch", original))
-
     def set_deferred(self, value):
         """A task whose mutation the real work READS: it must survive run_tasks."""
         self.calls.append(("set_deferred", value))
         self.stage_deferred_restore(
             "deferred", lambda: self.calls.append(("restore_deferred",))
         )
-        return None  # disarms the too-early set_/revert_ pairing
 
 
 class TaskFactoryTest(unittest.TestCase):
@@ -130,6 +114,36 @@ class TaskFactoryTest(unittest.TestCase):
         self.assertNotIn("task_noargs", [c[0] for c in r.calls])
         self.assertEqual(r._last_skipped_tasks, ["task_noargs"])
 
+    def test_checks_the_abort_dropped_are_recorded_for_the_caller(self):
+        """A check that reads a dropped task is dropped with it. A caller that
+        proceeds anyway must not report it as passed -- it never ran -- so its
+        name is recorded beside the skipped tasks, and a clean run clears it.
+        Added: 2026-09-12
+        """
+
+        class _Gated(_Recorder):
+            TASK_ORDER = ["task_plain", "task_noargs"]
+            CHECK_DEPENDENCIES = {
+                "check_bad": ("task_plain",),
+                "check_ok": ("task_noargs",),
+            }
+
+        r = _Gated()
+        self.assertFalse(
+            r.run_tasks(
+                {
+                    "task_plain": "x",
+                    "task_noargs": True,
+                    "check_bad": True,
+                    "check_ok": True,
+                }
+            )
+        )
+        self.assertNotIn("check_ok", [c[0] for c in r.calls])
+        self.assertEqual(r._last_skipped_checks, ["check_ok"])
+        self.assertTrue(r.run_tasks({"task_plain": "x", "check_ok": True}))
+        self.assertEqual(r._last_skipped_checks, [])
+
     def test_failed_check_names_are_recorded_for_the_caller(self):
         """The bool verdict names nothing a caller can act on, so a consumer
         that wants to report (or ask about) the failure had to re-derive it
@@ -143,34 +157,63 @@ class TaskFactoryTest(unittest.TestCase):
         self.assertTrue(r.run_tasks({"check_ok": True}))
         self.assertEqual(r._last_failed_checks, [])
 
-    def test_set_task_is_reverted_with_its_return_value(self):
+    def test_what_a_run_keeps_is_named_once_and_closed_with_the_run(self):
+        """A task whose edit no restore unwinds -- a repair, a write-back edit --
+        records it where it makes it, so a run that stops before its write can
+        name exactly what it left in the host. A hardcoded list said key
+        snapping and tying remained after a blocked export whose key edits had
+        all been restored. Each edit is named once, in the order it was made,
+        and ``run_deferred_restores`` -- which closes the run -- clears the
+        record along with the restores.
+        Added: 2026-09-15
+        """
+
+        class _Keeper(_Recorder):
+            def task_merge(self, value):
+                self.record_kept_edit("merged duplicate materials")
+
+            def task_repair(self, value):
+                self.record_kept_edit("repaired node and shape names")
+                self.record_kept_edit("repaired node and shape names")
+
+        r = _Keeper()
+        self.assertFalse(
+            r.run_tasks({"task_repair": 1, "task_merge": 1, "check_bad": True})
+        )
+        self.assertEqual(
+            r.kept_edits,
+            ["merged duplicate materials", "repaired node and shape names"],
+        )
+        r.kept_edits.append("not a record")  # a copy: a reader cannot edit it
+        self.assertEqual(len(r.kept_edits), 2)
+        r.run_deferred_restores()
+        self.assertEqual(r.kept_edits, [])
+
+    def test_a_set_task_has_no_revert_pairing(self):
+        """``set_<x>`` / ``revert_<x>`` was retired (2026-09-13): the revert ran
+        when ``run_tasks`` returned, BEFORE the work the tasks prepared for, so
+        every shipped ``set_`` task had to disarm it. A ``revert_`` method is
+        just a method now; the deferred registry is the one undo mechanism."""
         r = _Recorder()
         r.run_tasks({"set_flag": True})
         self.assertIn(("set_flag", True), r.calls)
-        # revert runs (LIFO) after the task pass, fed the set task's return value
-        self.assertIn(("revert_flag", "ORIGINAL"), r.calls)
+        self.assertNotIn(("revert_flag", "ORIGINAL"), r.calls)
+        self.assertFalse([c for c in r.calls if c[0].startswith("revert_")])
 
     def test_missing_method_is_skipped_not_crashed(self):
         # An unknown task name is warned + skipped; with no failing checks -> True.
         self.assertTrue(_Recorder().run_tasks({"task_absent": True}))
 
-    def test_revert_runs_when_a_later_task_raises(self):
-        # set_flag runs first (alphabetical), then task_boom raises: the set
-        # state must still be reverted, or a failed export leaves the host
-        # scene permanently mutated.
+    def test_a_staged_restore_survives_a_later_task_raising(self):
+        # set_deferred runs first (alphabetical), then task_boom raises: the
+        # staged restore must still be there for the caller's ``finally`` --
+        # or a failed export leaves the host scene permanently mutated.
         r = _Recorder()
         with self.assertRaises(RuntimeError):
-            r.run_tasks({"set_flag": True, "task_boom": True})
-        self.assertIn(("revert_flag", "ORIGINAL"), r.calls)
-
-    def test_revert_runs_when_the_with_body_raises(self):
-        # An exception thrown into the generator at the yield point (e.g. from
-        # check-result processing) must not skip reversion.
-        r = _Recorder()
-        with self.assertRaises(RuntimeError):
-            with r._manage_context({"set_flag": True}):
-                raise RuntimeError("body boom")
-        self.assertIn(("revert_flag", "ORIGINAL"), r.calls)
+            r.run_tasks({"set_deferred": True, "task_boom": True})
+        self.assertNotIn(("restore_deferred",), r.calls)
+        r.run_deferred_restores()
+        self.assertIn(("restore_deferred",), r.calls)
 
     def test_empty_sequence_check_result_is_failure_not_crash(self):
         # An empty tuple/list result is falsy -> failed check, never IndexError.
@@ -183,13 +226,11 @@ class TaskFactoryTest(unittest.TestCase):
     def test_raising_check_aborts_the_run_but_cleanup_still_happens(self):
         # Fail-closed by design: a check that RAISES propagates (aborting the
         # whole run) rather than being recorded as a failed check -- pinned so
-        # a refactor can't silently soften it. Cleanup must still hold: set_
-        # state from the task pass is reverted, and staged deferred restores
-        # survive for the caller's finally.
+        # a refactor can't silently soften it. Cleanup must still hold: the
+        # staged deferred restores survive for the caller's finally.
         r = _Recorder()
         with self.assertRaises(RuntimeError):
             r.run_tasks({"set_flag": True, "set_deferred": True, "check_boom": True})
-        self.assertIn(("revert_flag", "ORIGINAL"), r.calls)
         self.assertIn("deferred", r._deferred_restores)
         r.run_deferred_restores()  # the caller's finally
         self.assertIn(("restore_deferred",), r.calls)
@@ -213,12 +254,6 @@ class TaskFactoryTest(unittest.TestCase):
         r.run_tasks({"check_ok": True, "check_bad": True})
         warnings = [str(c.args[0]) for c in r.logger.warning.call_args_list]
         self.assertFalse([w for w in warnings if "malformed" in w], warnings)
-
-    def test_reverts_run_lifo(self):
-        r = _Recorder()
-        r.run_tasks({"set_a": True, "set_b": True})
-        reverts = [c for c in r.calls if c[0].startswith("revert_")]
-        self.assertEqual(reverts, [("revert_b", "B"), ("revert_a", "A")])
 
     def test_task_order_controls_execution_sequence(self):
         class _Ordered(_Recorder):
@@ -261,32 +296,17 @@ class TaskFactoryTest(unittest.TestCase):
             any("Executing" in line and "task_noargs" in line for line in lines), lines
         )
 
-    def test_a_disabled_set_task_stages_no_revert(self):
-        """It never ran, so there is no mutation to undo.
-
-        The executor answers ``True`` for a skipped zero-arg task, and that
-        ``True`` used to be stored as the captured original state -- so a
-        switched-off ``set_x`` handed ``revert_x(True)`` a value that was never
-        a state of anything. Latent today (no shipped ``set_``/``revert_`` pair
-        takes zero arguments) and one line away from not being.
-        """
+    def test_a_zero_arg_set_task_is_a_checkbox_like_any_other(self):
+        """Its value switches it off; enabled, it runs once and that is all."""
         r = _Recorder()
         r.run_tasks({"set_switch": False})
-
         self.assertNotIn(("set_switch",), r.calls, "a disabled task must not run")
-        self.assertEqual(
-            [c for c in r.calls if c[0] == "revert_switch"],
-            [],
-            "revert ran for a task that never mutated anything",
-        )
 
-    def test_an_enabled_zero_arg_set_task_still_reverts(self):
-        """The guard above must not cost the real pairing."""
         r = _Recorder()
         r.run_tasks({"set_switch": True})
-
-        self.assertIn(("set_switch",), r.calls)
-        self.assertIn(("revert_switch", "ORIGINAL_SWITCH"), r.calls)
+        self.assertEqual(
+            [c for c in r.calls if c[0] == "set_switch"], [("set_switch",)]
+        )
 
     def test_multi_param_task_splats_list_and_dict_values(self):
         r = _Recorder()
@@ -515,9 +535,7 @@ class CheckSchedulingTest(unittest.TestCase):
         self.assertNotIn("task_costly", names)  # pointless -> skipped
         self.assertNotIn("check_none", names)  # needs the skipped task
 
-    def test_a_hoisted_check_sees_set_state_before_it_is_reverted(self):
-        # A check hoisted above a set_ task must not observe the reverted
-        # state: one merged context keeps the revert at run_tasks' return.
+    def test_a_hoisted_check_runs_before_the_task_it_does_not_read(self):
         class _WithSet(_Recorder):
             TASK_ORDER = ["set_flag"]
             CHECK_DEPENDENCIES = {"check_ok": ()}
@@ -525,7 +543,7 @@ class CheckSchedulingTest(unittest.TestCase):
         r = _WithSet()
         r.run_tasks({"set_flag": True, "check_ok": True})
         names = [c[0] for c in r.calls]
-        self.assertEqual(names, ["check_ok", "set_flag", "revert_flag"])
+        self.assertEqual(names, ["check_ok", "set_flag"])
 
     def test_scheduling_survives_a_run_with_no_tasks_at_all(self):
         r = _Scheduled()
@@ -581,7 +599,6 @@ class ProgressReportingTest(unittest.TestCase):
         names = [c[0] for c in r.calls]
         self.assertIn("set_flag", names)
         self.assertNotIn("task_boom", names, "the refused entry must not run")
-        self.assertIn("revert_flag", names, "cleanup still runs on a cancel")
 
     def test_none_from_the_callback_is_not_a_cancel(self):
         r = _Recorder()

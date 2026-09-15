@@ -41,7 +41,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/engines/textures/region_masks.py`](#core_utils--engines--textures--region_masks) — Region-mask engine — named face-group masks that gate texture regions at runtime.
 - [`core_utils/execution_monitor/_execution_monitor.py`](#core_utils--execution_monitor--_execution_monitor)
 - [`core_utils/execution_monitor/_sidecar.py`](#core_utils--execution_monitor--_sidecar) — Sidecar processes for ``ExecutionMonitor``: indicator, dialog and watchdog.
-- [`core_utils/export_profile.py`](#core_utils--export_profile) — The Scene Exporter panels' export-button contract, written once.
+- [`core_utils/export_profile.py`](#core_utils--export_profile) — The Scene Exporter panels' shared contract, written once.
 - [`core_utils/git.py`](#core_utils--git)
 - [`core_utils/help_mixin.py`](#core_utils--help_mixin) — HelpMixin - Enhanced help system leveraging Python's built-in help infrastructure.
 - [`core_utils/hierarchy_utils/hierarchy_analyzer.py`](#core_utils--hierarchy_utils--hierarchy_analyzer)
@@ -76,9 +76,10 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert)
 - [`file_utils/mesh_convert/export_verify.py`](#file_utils--mesh_convert--export_verify) — Deliverable verification for exported FBX / GLB pairs.
 - [`file_utils/mesh_convert/fbx_file.py`](#file_utils--mesh_convert--fbx_file) — Zero-dependency binary-FBX reader: header, node records, objects, takes.
-- [`file_utils/mesh_convert/fbx_media.py`](#file_utils--mesh_convert--fbx_media) — Rewrite the embedded media of a binary FBX -- no DCC, no FBX SDK.
+- [`file_utils/mesh_convert/fbx_media.py`](#file_utils--mesh_convert--fbx_media) — Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 - [`file_utils/mesh_convert/glb_clips.py`](#file_utils--mesh_convert--glb_clips) — Rebuild a GLB's shot clips from its one whole-timeline animation.
 - [`file_utils/mesh_convert/glb_fades.py`](#file_utils--mesh_convert--glb_fades) — Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
+- [`file_utils/mesh_convert/glb_key_reduction.py`](#file_utils--mesh_convert--glb_key_reduction) — Reduce a GLB's animation keys to what its interpolation needs.
 - [`file_utils/mesh_convert/glb_pipeline.py`](#file_utils--mesh_convert--glb_pipeline) — FBX -> GLB: the one build every GLB deliverable goes through.
 - [`file_utils/mesh_convert/glb_reader.py`](#file_utils--mesh_convert--glb_reader) — Read-only structured access to a GLB: accessors, animation sampling, worlds.
 - [`file_utils/mesh_ops.py`](#file_utils--mesh_ops) — File-level mesh processing via PyMeshLab (optional dependency).
@@ -106,6 +107,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`math_utils/_math_utils.py`](#math_utils--_math_utils)
 - [`math_utils/noise.py`](#math_utils--noise)
 - [`math_utils/progression.py`](#math_utils--progression)
+- [`math_utils/ramp_keys.py`](#math_utils--ramp_keys) — Render-effect key timelines -- the pulse and fade shapes, as ``(frame, value)`` pairs.
 - [`math_utils/weights.py`](#math_utils--weights) — Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 - [`net_utils/_net_utils.py`](#net_utils--_net_utils)
 - [`net_utils/credentials.py`](#net_utils--credentials)
@@ -199,17 +201,17 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `HandoffBridge.carrier_of(path: str) -> str` *(static)* — The carrier a payload *path* names, by extension (``"fbx"`` / ``"usd"``).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
   - `HandoffBridge.import_roots(*packages: str) -> List[str]` *(static)* — ``sys.path`` entries that make *packages* importable in a launched child app.
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L715)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L740)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L719)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L744)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L889)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
+- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L893)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
   - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L1041)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L1045)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
   - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1124)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1128)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
   - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app work on them, and re-ingest the result.
@@ -307,23 +309,31 @@ Cooperative cancellation — one scope shared by every cancel affordance.
 
 Lightweight, DCC-agnostic color primitives.
 
-- **[`class Color`](pythontk/pythontk/core_utils/color.py#L18)** — Immutable RGBA color stored as 0–255 integers.
+- **[`class Color`](pythontk/pythontk/core_utils/color.py#L19)** — Immutable RGBA color stored as 0–255 integers.
   - `Color.from_hex(cls, hex_str: str) -> 'Color'` *(class)* — Parse ``#RGB``, ``#RRGGBB``, or ``#RRGGBBAA``.
   - `Color.from_rgbf(cls, r: float, g: float, b: float, a: float = 1.0) -> 'Color'` *(class)* — Create from 0.0–1.0 float components (Maya API convention).
+  - `Color.from_hsvf(cls, h: float, s: float, v: float, a: float = 1.0) -> 'Color'` *(class)* — Create from 0.0–1.0 HSV floats (hue wraps;
+  - `Color.linear_from_srgb(rgb: Sequence[float]) -> Tuple[float, ...]` *(static)* — Display-encoded components (0-1) to linear light (IEC 61966-2-1).
+  - `Color.srgb_from_linear(rgb: Sequence[float]) -> Tuple[float, ...]` *(static)* — Linear light to display-encoded components;
   - `Color.hex(self) -> str` *(property)* — ``'#RRGGBB'`` (or ``'#RRGGBBAA'`` when alpha < 255).
   - `Color.rgb(self) -> Tuple[int, int, int]` *(property)* — ``(r, g, b)`` in 0–255.
   - `Color.rgba(self) -> Tuple[int, int, int, int]` *(property)* — ``(r, g, b, a)`` in 0–255.
   - `Color.rgbf(self) -> Tuple[float, float, float]` *(property)* — ``(r, g, b)`` in 0.0–1.0 (Maya API format).
   - `Color.rgbaf(self) -> Tuple[float, float, float, float]` *(property)* — ``(r, g, b, a)`` in 0.0–1.0.
+  - `Color.hsv(self) -> Tuple[float, float, float]` *(property)* — ``(h, s, v)`` in 0.0–1.0.
   - `Color.luminance(self) -> float` *(property)* — Perceived luminance (ITU-R BT.709, linear approximation).
   - `Color.lighter(self, factor: float = 0.2) -> 'Color'` — Return a lighter colour.
   - `Color.darker(self, factor: float = 0.2) -> 'Color'` — Return a darker colour.
   - `Color.with_alpha(self, a: Union[int, float]) -> 'Color'` — Return a copy with a new alpha (int 0–255 or float 0.0–1.0).
   - `Color.blend(self, other: 'Color', t: float = 0.5) -> 'Color'` — Linear interpolation towards *other* by *t* (0.0 = self, 1.0 = other).
   - `Color.subtle_bg(self, value: float = 0.24, sat_factor: float = 1.0) -> 'Color'` — Derive a tinted dark-theme background from this colour.
-- **[`class ColorPair`](pythontk/pythontk/core_utils/color.py#L176)** — Foreground / background pair for themed UIs.
+- **[`class ColorPair`](pythontk/pythontk/core_utils/color.py#L243)** — Foreground / background pair for themed UIs.
   - `ColorPair.auto(cls, fg: Union[str, 'Color'], value: float = 0.24, sat_factor: float = 1.0) -> 'ColorPair'` *(class)* — Derive background automatically from foreground for dark themes.
-- **[`class Palette(dict)`](pythontk/pythontk/core_utils/color.py#L253)** — Named color collection with auto-wrapping and alias support.
+- **[`class ColorStops`](pythontk/pythontk/core_utils/color.py#L320)** — The endpoints of the ramp a 0–1 channel drives, and their defaults.
+  - `ColorStops.keys(self) -> Tuple[str, ...]` *(property)* — The stop names that exist, high first.
+  - `ColorStops.defaults(self) -> Tuple[Tuple[float, float, float], ...]` *(property)* — Each stop's own fallback, in :attr:`keys` order.
+  - `ColorStops.resolve(self, value: object = None) -> Tuple[Tuple[float, float, float], ...]` — Read a published colour into one rgb triple per stop.
+- **[`class Palette(dict)`](pythontk/pythontk/core_utils/color.py#L450)** — Named color collection with auto-wrapping and alias support.
   - `Palette.update(self, mapping=None, **kwargs: object) -> None` — Wrap on update, as ``__setitem__`` does.
   - `Palette.setdefault(self, key: str, default: object = None) -> object` — Wrap the inserted default, and return the WRAPPED value -- callers
   - `Palette.copy(self) -> 'Palette'` — A Palette, not a plain dict: ``dict.copy`` drops the subclass, and
@@ -359,8 +369,8 @@ Sort separated mesh parts into repeated-assembly copies.
 
 Key stash — park keyframes outside the working animation, retrieve later.
 
-- [`SCHEMA_VERSION`](pythontk/pythontk/core_utils/engines/key_stash/key_stash_model.py#L41) — constant
-- **[`class StashedClip`](pythontk/pythontk/core_utils/engines/key_stash/key_stash_model.py#L51)** — One parked set of keys.
+- [`SCHEMA_VERSION`](pythontk/pythontk/core_utils/engines/key_stash/key_stash_model.py#L44) — constant
+- **[`class StashedClip`](pythontk/pythontk/core_utils/engines/key_stash/key_stash_model.py#L54)** — One parked set of keys.
   - `StashedClip.times(self) -> List[float]` *(property)* — Every stashed key time across all curves, sorted, de-duplicated.
   - `StashedClip.start(self) -> Optional[float]` *(property)* — Earliest stashed key time, or ``None`` for an empty clip.
   - `StashedClip.end(self) -> Optional[float]` *(property)* — Latest stashed key time, or ``None`` for an empty clip.
@@ -369,8 +379,8 @@ Key stash — park keyframes outside the working animation, retrieve later.
   - `StashedClip.rescale(self, ratio: float) -> None` — Multiply every recorded key time by *ratio* (frame-rate change).
   - `StashedClip.to_dict(self) -> Dict[str, Any]`
   - `StashedClip.from_dict(cls, data: Dict[str, Any]) -> 'StashedClip'` *(class)*
-- **[`class StashChanged`](pythontk/pythontk/core_utils/engines/key_stash/key_stash_model.py#L142)** — Fired on every store mutation.
-- **[`class KeyStash(_KeyStashInternal)`](pythontk/pythontk/core_utils/engines/key_stash/key_stash_model.py#L191)** — Store of parked key clips with pluggable persistence.
+- **[`class StashChanged`](pythontk/pythontk/core_utils/engines/key_stash/key_stash_model.py#L145)** — Fired on every store mutation.
+- **[`class KeyStash(_KeyStashInternal)`](pythontk/pythontk/core_utils/engines/key_stash/key_stash_model.py#L194)** — Store of parked key clips with pluggable persistence.
   - `KeyStash.add_clip(self, objects: List[str], curves: List[Dict[str, Any]], label: Optional[str] = None, source_shot_id: Optional[int] = None, metadata: Optional[Dict[str, Any]] = None) -> StashedClip` — Record a new clip and return it.
   - `KeyStash.get_clip(self, clip_id: int) -> Optional[StashedClip]` — The clip with *clip_id*, or ``None``.
   - `KeyStash.remove_clip(self, clip_id: int, kind: str = 'dropped') -> Optional[StashedClip]` — Forget *clip_id* and return the removed record (``None`` if absent).
@@ -379,6 +389,7 @@ Key stash — park keyframes outside the working animation, retrieve later.
   - `KeyStash.is_empty(self) -> bool` — ``True`` when the store holds no clips and no preview.
   - `KeyStash.set_preview(self, clip_id: int, payload: Optional[Dict[str, Any]] = None) -> None` — Record that *clip_id* is being previewed (adapter *payload* rides along).
   - `KeyStash.clear_preview(self) -> Optional[Dict[str, Any]]` — Forget the preview record;
+  - `KeyStash.is_previewing(self, clip_id: Optional[int] = None) -> bool` — Whether a preview is active (for *clip_id*, when given).
   - `KeyStash.add_listener(self, callback: Callable[[StashChanged], None]) -> None` — Register *callback* for :class:`StashChanged` events.
   - `KeyStash.remove_listener(self, callback: Callable[[StashChanged], None]) -> None` — Remove a previously registered listener.
   - `KeyStash.batch_update(self)` — Defer notifications and the flush until the block exits.
@@ -669,7 +680,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
 
 ``MapFactory`` -- the texture-map workflow orchestrator.
 
-- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_factory/_map_factory.py#L68)** — Refactored factory with pluggable workflow system.
+- **[`class MapFactory(LoggingMixin)`](pythontk/pythontk/core_utils/engines/textures/map_factory/_map_factory.py#L69)** — Refactored factory with pluggable workflow system.
   - `MapFactory.map_types(cls) -> Dict[str, Tuple[str, ...]]` — ``{canonical_key: (canonical, *aliases)}`` for every registered map.
   - `MapFactory.passthrough_maps(cls) -> List[str]` — Maps passed through to the output when no handler consumes them.
   - `MapFactory.packed_grayscale_maps(cls) -> List[str]` — Maps that scale down by ``mask_map_scale`` (packed/mask data).
@@ -680,7 +691,9 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapFactory.resolve_texture_filename(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str` *(class)* — Generates a correctly formatted filename while preserving the original suffix and file extension.
   - `MapFactory.get_base_texture_name(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str` *(class)* — Extracts the base texture name from a filename or path,
   - `MapFactory.get_tile_token(cls, filepath_or_filename: str) -> str` *(class)* — The UDIM / UV-tile token on a texture filename, or ``""``.
+  - `MapFactory.get_tile_paths(cls, filepath: str) -> List[str]` *(class)* — Every tile on disk of the tile set a texture path names, sorted.
   - `MapFactory.group_textures_by_set(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]` *(class)* — Groups texture maps into sets based on matching base names.
+  - `MapFactory.collapse_tile_sets(cls, texture_sets: Dict[str, List[str]]) -> Dict[str, List[str]]` *(class)* — One set per MATERIAL from per-tile sets: each map once, as its lowest tile.
   - `MapFactory.filter_images_by_type(cls, files, types='')` *(class)* — Parameters:
   - `MapFactory.sort_images_by_type(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]` *(class)* — Sort image files by map type based on the input format.
   - `MapFactory.contains_map_types(cls, files, map_types)` *(class)* — Check if the given images contain the given map types.
@@ -832,8 +845,8 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
 
 Plan, assess, and apply map (texture) optimizations.
 
-- **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L135)** — One operation in an optimization plan.
-- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L148)** — Plan, assess, and apply map (texture) optimizations.
+- **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L146)** — One operation in an optimization plan.
+- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L159)** — Plan, assess, and apply map (texture) optimizations.
   - `MapOptimizer.resolve_size_clamp(cls, max_size: Any, template: Optional[str] = None, logger: Optional[Any] = None) -> Dict[str, Any]` *(class)* — Turn a user-facing "max size" mode into :meth:`assess` / :meth:`optimize_map` kwargs.
   - `MapOptimizer.describe_size_clamp(cls, max_size: Any, template: Optional[str] = None, logger: Optional[Any] = None) -> str` *(class)* — Human-readable form of :meth:`resolve_size_clamp`, for log lines.
   - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, pot_mode: str = 'nearest', output_profile: Optional[str] = None, output_type: Optional[str] = None) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
@@ -845,6 +858,9 @@ Plan, assess, and apply map (texture) optimizations.
   - `MapOptimizer.channel_loss_warning(image: 'Image.Image', ext: str) -> Optional[str]` *(static)* — Warn when *ext* would discard a channel of *image* that holds data.
   - `MapOptimizer.format_result(output_path: str, size_before: Optional[int], dims_before: Optional[Tuple[int, int]], image: 'Image.Image') -> str` *(static)* — Render the one-line result summary for an optimized map.
   - `MapOptimizer.batch_optimize_maps(cls, directory: str, **kwargs)` *(class)* — Batch optimizes all maps in a directory.
+  - `MapOptimizer.is_recompressible(cls, path: str) -> bool` *(class)* — Is *path* in a container a plain re-encode can shrink
+  - `MapOptimizer.optimize_maps(cls, requests: Sequence[Dict[str, Any]], workers: Optional[int] = None) -> List[Tuple[Optional[str], Optional[Exception]]]` *(class)* — :meth:`optimize_map` over many maps, in threads.
+  - `MapOptimizer.stage_maps(cls, sources: Mapping[str, Mapping[str, Any]], assess: Callable[[str], Optional[Mapping[str, Any]]], *, output_profile: Optional[str] = None, clamp: Optional[Mapping[str, Any]] = None, staging_dir: Union[str, Callable[[], Tuple[str, bool]], None] = None, temp_staging: bool = False, write_back: bool = False, recompress: bool = True, old_files_folder: str = 'original_textures', pass_desc: str = '', logger: Optional[logging.Logger] = None, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Optimize the maps an export ships: judge, claim, encode, verify.
   - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: Optional[bool] = None, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False, enforce_budget: bool = False, lossy_quality: int = None, pot_mode: Optional[str] = None) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
 
 <a id="core_utils--engines--textures--map_registry"></a>
@@ -1008,14 +1024,32 @@ Sidecar processes for ``ExecutionMonitor``: indicator, dialog and watchdog.
 <a id="core_utils--export_profile"></a>
 ### `core_utils/export_profile.py`
 
-The Scene Exporter panels' export-button contract, written once.
+The Scene Exporter panels' shared contract, written once.
 
-- **[`class ExportProfile`](pythontk/pythontk/core_utils/export_profile.py#L22)** — Pure helpers over Scene Exporter task / check definitions.
+- **[`class ExportProfile`](pythontk/pythontk/core_utils/export_profile.py#L32)** — Pure helpers over Scene Exporter task / check definitions.
   - `ExportProfile.legal_name(name: str) -> str` *(static)* — The switchboard's objectName rule, from its owner.
   - `ExportProfile.widget_key(cls, name: str, spec: Mapping[str, Any]) -> str` *(class)* — The objectName the panel gives *name*'s widget (and the preset stores).
   - `ExportProfile.value_method(cls, spec: Mapping[str, Any]) -> str` *(class)* — The read the export button performs on the widget (``b000``'s rule).
   - `ExportProfile.run_config(cls, values: Mapping[str, Any], task_definitions: Mapping[str, Mapping[str, Any]], check_definitions: Mapping[str, Mapping[str, Any]], override_checks: bool = False, ignore_groups_case_sensitive: bool = False, default_export_mode: str = 'visible') -> Dict[str, Any]` *(class)* — The export button's contract: widget values -> ``perform_export`` inputs.
   - `ExportProfile.read_values(cls, widgets: Mapping[str, Any], *tables: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]` *(class)* — Read the panel's live widgets into ``{objectName: value}``.
+  - `ExportProfile.texture_size_limit_bytes(max_size_mb: Any) -> Optional[int]` *(static)* — The Max Texture Size row's value as bytes;
+  - `ExportProfile.strip_deliverable_extension(name: Optional[str]) -> str` *(static)* — *name* trimmed, without a trailing deliverable extension -- a whitelist
+  - `ExportProfile.fold_legacy_naming(cls, pattern: Optional[str], version_format: str = '', timestamp: bool = False) -> Optional[str]` *(class)* — Fold the retired Version pattern and Timestamp flag into a name pattern.
+  - `ExportProfile.resolve_output_path(cls, pattern: Optional[str], context: Mapping[str, Any], export_dir: str = '', output_format: str = 'fbx', version_format: str = '', timestamp: bool = False) -> Dict[str, Any]` *(class)* — Resolve the Output Filename field into the file(s) an export writes.
+  - `ExportProfile.naming_report(cls, resolved: Mapping[str, Any], tokens: Mapping[str, str], version_suffix=None) -> List[Tuple[str, str]]` *(class)* — ``[(level, message), ...]`` for what :meth:`resolve_output_path` hit.
+  - `ExportProfile.scoped_tables(cls, manager: type) -> type` *(class)* — Class decorator: give *manager* the shared tables, scoped to it.
+  - `ExportProfile.task_order(cls, manager: Any) -> List[str]` *(class)* — :attr:`TASK_ORDER` scoped to the tasks *manager* implements.
+  - `ExportProfile.unimplemented(cls, manager: Any) -> Dict[str, List[str]]` *(class)* — The shared tables' names *manager* has no method for.
+  - `ExportProfile.optimize_textures_options(cls) -> Dict[str, Any]` *(class)* — Optimize Textures -- the pass switch and its size dial in ONE combo.
+  - `ExportProfile.texture_file_type_options(cls) -> Dict[str, Any]` *(class)* — Texture File Type -- the container dial for EVERY texture the export
+  - `ExportProfile.frame_rate_options(cls) -> Dict[str, Optional[str]]` *(class)* — Frame Rate check -- every ``VidUtils.FRAME_RATES`` entry labelled
+- **[`class ExportRun`](pythontk/pythontk/core_utils/export_profile.py#L770)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
+  - `ExportRun.glb_only(self) -> bool` *(property)* — The GLB is the deliverable;
+  - `ExportRun.create_glb(self) -> bool` *(property)* — A ``.glb`` is written this run (alone, or beside the FBX).
+  - `ExportRun.usd(self) -> bool` *(property)* — The deliverable is a USD layer.
+  - `ExportRun.replace(self, **changes: Any) -> 'ExportRun'` — A copy with *changes* applied (``dataclasses.replace``).
+  - `ExportRun.with_tasks(self, tasks: Mapping[str, Any]) -> 'ExportRun'` — A copy carrying the modes derived from the dispatched *tasks*.
+  - `ExportRun.from_tasks(cls, tasks: Optional[Mapping[str, Any]], texture_file_types: Iterable[Any] = ()) -> Tuple['ExportRun', Dict[str, Any], List[Tuple[str, str]]]` *(class)* — Pop the per-run modes out of a ``perform_export`` *tasks* dict.
 
 <a id="core_utils--git"></a>
 ### `core_utils/git.py`
@@ -1459,10 +1493,12 @@ SymbolRecord - the shared public-API symbol shape.
 
 Generic task/check pipeline primitive -- host- and Qt-free.
 
-- **[`class TaskFactory`](pythontk/pythontk/core_utils/task_factory.py#L26)** — A factory class for managing and executing tasks in a scene export pipeline.
+- **[`class TaskFactory`](pythontk/pythontk/core_utils/task_factory.py#L29)** — A factory class for managing and executing tasks in a scene export pipeline.
   - `TaskFactory.stage_deferred_restore(self, key: str, restore: Callable) -> bool` — Register *restore* to run **after** the caller's real work — once per *key*.
   - `TaskFactory.stage_deferred_context(self, key: str, cm) -> bool` — Enter context manager *cm* now and stage its exit as the deferred restore.
   - `TaskFactory.run_deferred_restores(self) -> None` — Run + clear every restore staged by :meth:`stage_deferred_restore`.
+  - `TaskFactory.record_kept_edit(self, label: str) -> None` — Record that this run left *label* in the host for good.
+  - `TaskFactory.kept_edits(self) -> List[str]` *(property)* — What this run has left in the host for good, in the order it was left.
   - `TaskFactory.run_tasks(self, tasks: Dict[str, Any]) -> bool` — Run tasks and checks, returning True if all checks pass, False if any fail.
   - `TaskFactory.run_tasks_by_category(self, task_definitions: Dict[str, Any], check_definitions: Dict[str, Any]) -> bool` — Alternative method to run tasks and checks separately with better organization.
 
@@ -1534,7 +1570,8 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.format_bytes(size_bytes, unknown: str = '(unknown)') -> str` *(static)* — Render a byte count using the largest unit that keeps the number small.
   - `FileUtils.format_bytes_delta(cls, before, after, unknown: str = '(unknown)') -> str` *(class)* — Render a ``before -> after`` size transition with a percent delta.
   - `FileUtils.create_dir(filepath: str) -> None` *(static)* — Create a directory if one doesn't already exist.
-  - `FileUtils.next_version_path(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1) -> str` *(static)* — Return the next available versioned path for `filepath`.
+  - `FileUtils.next_version_path(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1, extensions: Iterable[str] = ()) -> str` *(static)* — Return the next available versioned path for `filepath`.
+  - `FileUtils.next_version_number(directory: str, format: str = '{stem}_v{n:03d}{ext}', stem: str = '', ext: str = '', start: int = 1, extensions: Iterable[str] = ()) -> int` *(static)* — Return one past the highest version `format` already holds in `directory`.
   - `FileUtils.get_dir_contents(dirPath, content='file', recursive=False, num_threads=1, inc_files=[], exc_files=[], inc_dirs=[], exc_dirs=[], group_by_type=False)` *(static)* — Get the contents of a directory and any of its children.
   - `FileUtils.open_explorer(path: str, create_dir: bool = False, logger=None) -> bool` *(static)* — Open the file explorer at the given path.
   - `FileUtils.get_file_contents(filepath: str, as_list: bool = False, encoding: str = 'utf-8', default: Optional[Union[str, List[str]]] = None) -> Optional[Union[str, List[str]]]` *(static)* — Read a text file, whole or as a list of lines, or return *default*.
@@ -1542,6 +1579,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.read_json(filepath, default=None, encoding: str = 'utf-8')` *(static)* — Parse the JSON document at *filepath*, or return *default*.
   - `FileUtils.write_json(cls, filepath, data, *, indent=2, encoding: str = 'utf-8', sort_keys: bool = False) -> None` *(class)* — Serialise *data* to *filepath* atomically, creating parent dirs.
   - `FileUtils.atomic_write_text(filepath: str, content: str, encoding: str = 'utf-8') -> None` *(static)* — Write text to a file atomically.
+  - `FileUtils.atomic_write(target: str, write: Callable[[str], Any], promote: bool = True) -> str` *(static)* — Produce *target* through *write*, so no reader meets a partial file.
   - `FileUtils.copy_file(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str` *(static)* — Copies a file to a specified folder, ensuring the folder exists.
   - `FileUtils.move_file(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]` *(class)* — Moves one or more files to a specified folder.
   - `FileUtils.reveal_in_file_manager(cls, path, _runner=None)` *(class)* — Open the OS file manager showing ``path`` (selecting the file when supported, else
@@ -1575,13 +1613,14 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
-- [`FBX2GLTF_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L42) — constant
-- [`FBX2GLTF_PLATFORMS`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L43) — constant
-- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L62)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+- [`FBX2GLTF_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L44) — constant
+- [`FBX2GLTF_PLATFORMS`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L45) — constant
+- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L64)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.conversion_timeout(cls, src: str) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
   - `MeshConvert.bake_node_frames(cls, src: str) -> int` *(class)* — Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
+  - `MeshConvert.OPTIMIZE_WORKERS(cls) -> int` — Deprecated alias of :attr:`ImgUtils.ENCODE_WORKERS`, for one release.
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
-  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
+  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
   - `MeshConvert.strip_fbx_handoff(cls, gltf: dict) -> int` *(class)* — Drop the FBX's handoff block from a converted glTF's node extras.
   - `MeshConvert.build_fbx_handoff(cls, channels: Iterable[str], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]` *(class)* — The standalone-reader contract for an FBX, ready to publish.
@@ -1590,28 +1629,34 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
   - `MeshConvert.read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The scene-sidecar envelope embedded in a GLB, or ``None``.
   - `MeshConvert.verify_glb(cls, glb: GlbTarget) -> Dict[str, Any]` *(class)* — Check a delivered GLB against the envelope it carries.
   - `MeshConvert.data_export_channel(cls, gltf: dict, key: str) -> Optional[Any]` *(class)* — Decoded value of one ``data_export`` channel in a parsed glTF, or ``None``.
+  - `MeshConvert.overlay_data_export(cls, gltf: dict, channels: Dict[str, Any]) -> List[str]` *(class)* — Replace ``data_export`` channels in a parsed glTF, ahead of every reader.
+  - `MeshConvert.effect_preview_channels(cls, nodes: Sequence[str], channel: str, keys: Sequence[Sequence[float]], colors: Optional[Sequence[Optional[Sequence[float]]]] = None, fps: float = 30.0) -> Dict[str, Any]` *(class)* — The :meth:`overlay_data_export` channels that preview ONE render effect.
   - `MeshConvert.without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]` *(class)* — Copy of a ``data_export`` snapshot with build-time locate hints removed.
   - `MeshConvert.read_glb_lightmap_manifest(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The ``lightmap_metadata`` manifest riding a GLB's node extras, or ``None``.
+  - `MeshConvert.fix_glb_lightmap_metadata(cls, glb: GlbTarget) -> int` *(class)* — Make every lightmap copy inside a GLB say what the GLB ships.
   - `MeshConvert.lightmap_manifest_coverage(cls, glb: GlbTarget) -> Dict[str, List[str]]` *(class)* — Split a GLB's bake manifest by whether this GLB actually carries each object.
   - `MeshConvert.lightmap_report(coverage: Dict[str, List[str]], bound: Sequence[Dict[str, Any]]) -> Dict[str, Any]` *(static)* — ``{"expected", "bound", "unbound", "out_of_scope"}`` for one bind.
   - `MeshConvert.apply_glb_lightmaps(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True) -> List[Dict[str, Any]]` *(class)* — Wire a host DCC's committed lightmaps into a GLB for the web viewer.
   - `MeshConvert.apply_glb_shadows(cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()) -> Optional[Dict[str, Any]]` *(class)* — Bind a scene's shadow-rig maps into a GLB;
   - `MeshConvert.apply_glb_clips(cls, glb: GlbTarget, *, mode: str = 'both') -> Optional[Dict[str, Any]]` *(class)* — Rebuild the declared shot clips as exact slices of the whole timeline.
   - `MeshConvert.apply_glb_visibility(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Realize keyed visibility as STEP ``scale`` channels the file can play.
-  - `MeshConvert.clip_spans(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None) -> Dict[str, List[float]]` *(class)* — Per take, the first and last authored frame inside its window.
+  - `MeshConvert.clip_spans(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None, key_spans: Optional[Callable[[List[Tuple[Optional[float], Optional[float]]]], Sequence[Optional[Sequence[float]]]]] = None) -> Dict[str, List[float]]` *(class)* — Per take, the first and last authored frame inside its window.
   - `MeshConvert.build_visibility_tracks(cls, tracks: Sequence[Dict[str, Any]], fps: Optional[float] = None, clip_spans: Optional[Dict[str, List[float]]] = None) -> Optional[Dict[str, Any]]` *(class)* — Wrap *tracks* in the versioned ``visibility_tracks`` envelope.
   - `MeshConvert.strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]` *(class)* — Remove every curve-proxy node (and its channels) from a GLB.
+  - `MeshConvert.prune_glb_unused_skins(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Drop the skinning data no node binds.
+  - `MeshConvert.fix_glb_skin_skeletons(cls, glb: GlbTarget) -> List[str]` *(class)* — Point every ``skin.skeleton`` at a common root of the skin's joints.
   - `MeshConvert.apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Realize authored opacity ramps as animated material alpha.
   - `MeshConvert.prune_glb_animations(cls, glb: GlbTarget) -> List[str]` *(class)* — Drop every animation that carries no channels or no samplers.
   - `MeshConvert.compact_glb_animations(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Collapse every animation channel that never moves to two keys.
+  - `MeshConvert.reduce_glb_animations(cls, glb: GlbTarget, tolerance: float, rotation_tolerance: Optional[float] = None) -> Dict[str, int]` *(class)* — Drop the keys a GLB's samplers do not need to reproduce their motion.
   - `MeshConvert.drop_glb_texture_fallbacks(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Drop the PNG/JPEG twin of every texture that also ships KTX2.
   - `MeshConvert.apply_glb_animations(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Publish the GLB's clips as ``extras.animation_web``, joined to the shots.
   - `MeshConvert.check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
   - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb: GlbTarget) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
   - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
-  - `MeshConvert.describe_texture_pass(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0) -> str` *(class)* — Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.
-  - `MeshConvert.web_delivery_texture_params(cls, image_format: Optional[str] = None, max_size: Optional[int] = None) -> Dict[str, Any]` *(class)* — :meth:`optimize_glb_textures` kwargs for a WEB deliverable.
-  - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
+  - `MeshConvert.describe_texture_pass(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0, secondary_max_size: int = 0, uastc_rdo: Optional[float] = None) -> str` *(class)* — Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.
+  - `MeshConvert.web_delivery_texture_params(cls, image_format: Optional[str] = None, max_size: Optional[int] = None, ktx2_fallback: Optional[bool] = None, secondary_max_size: Optional[int] = None, uastc_rdo: Optional[float] = None) -> Dict[str, Any]` *(class)* — :meth:`optimize_glb_textures` kwargs for a WEB deliverable.
+  - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = WEB_DELIVERY_KTX2_FALLBACK, secondary_max_size: int = WEB_DELIVERY_SECONDARY_MAX_SIZE, uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
   - `MeshConvert.set_glb_metallic_roughness(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
   - `MeshConvert.suspect_orm_materials(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]` *(class)* — Materials whose delivered ORM binding this pipeline never validated.
   - `MeshConvert.set_glb_emissive(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
@@ -1626,13 +1671,13 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
 
 Deliverable verification for exported FBX / GLB pairs.
 
-- **[`class Finding`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L37)** — One verification outcome row.
-- **[`class VerificationReport`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L46)** — Every finding from one :meth:`ExportVerifier.run`.
+- **[`class Finding`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L39)** — One verification outcome row.
+- **[`class VerificationReport`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L48)** — Every finding from one :meth:`ExportVerifier.run`.
   - `VerificationReport.ok(self) -> bool` *(property)* — True when no finding FAILed (WARN and SKIP do not fail a report).
   - `VerificationReport.counts(self) -> Dict[str, int]`
   - `VerificationReport.summary(self) -> str` — Human-readable table plus a one-line verdict.
   - `VerificationReport.to_json(self) -> str`
-- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L143)** — Run file-level gates over an exported GLB and/or FBX.
+- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L169)** — Run file-level gates over an exported GLB and/or FBX.
   - `ExportVerifier.reader(self) -> Optional[GlbReader]` *(property)*
   - `ExportVerifier.fbx(self) -> Optional[FbxFile]` *(property)*
   - `ExportVerifier.gate_names(self) -> List[str]` — Every registered gate, in run order.
@@ -1640,7 +1685,8 @@ Deliverable verification for exported FBX / GLB pairs.
   - `ExportVerifier.check_glb_container(self) -> List[Finding]` — The GLB parses and carries a scene graph.
   - `ExportVerifier.check_glb_extensions(self) -> List[Finding]` — ``extensionsRequired`` must be a subset of ``extensionsUsed``.
   - `ExportVerifier.check_glb_images(self) -> List[Finding]` — Texture sources resolve;
-  - `ExportVerifier.check_glb_skins(self) -> List[Finding]` — Referenced skins must carry inverseBindMatrices;
+  - `ExportVerifier.check_glb_image_bytes(self) -> List[Finding]` — What each embedded image costs, largest first;
+  - `ExportVerifier.check_glb_skins(self) -> List[Finding]` — Referenced skins need inverseBindMatrices and a real skeleton root.
   - `ExportVerifier.check_glb_animation_integrity(self) -> List[Finding]` — Channels resolve to real nodes/samplers;
   - `ExportVerifier.check_glb_envelope(self) -> List[Finding]` — Delegate to :meth:`MeshConvert.verify_glb` when an envelope rides.
   - `ExportVerifier.check_clips_vs_takes(self) -> List[Finding]` — Each GLB clip's length matches its declared take (±1 frame).
@@ -1664,16 +1710,19 @@ Zero-dependency binary-FBX reader: header, node records, objects, takes.
   - `FbxFile.objects_census(self) -> Dict[str, int]` — ``{record name: count}`` over the Objects section.
   - `FbxFile.object_names(self, kind: str) -> List[str]` — Display names of every Objects child whose record name is *kind*.
   - `FbxFile.take_names(self) -> List[str]` — Animation take names — the ``AnimationStack`` display names.
+  - `FbxFile.user_properties(self, name: str, kind: str = 'Model') -> List[Any]` — Every value a *kind* object carries for the user property *name*.
   - `FbxFile.connections(self) -> List[Tuple[str, Any, Any, Optional[str]]]` — Every ``C`` record as ``(kind, child_id, parent_id, property)``.
 
 <a id="file_utils--mesh_convert--fbx_media"></a>
 ### `file_utils/mesh_convert/fbx_media.py`
 
-Rewrite the embedded media of a binary FBX -- no DCC, no FBX SDK.
+Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 
-- **[`class FbxMedia(_FbxMediaInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_media.py#L219)** — Read and rewrite the media a binary FBX embeds.
+- **[`class FbxMedia(_FbxMediaInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_media.py#L364)** — Read and rewrite the media a binary FBX embeds.
   - `FbxMedia.embedded(cls, path: str) -> List[Dict[str, Any]]` *(class)* — Every embedded image: ``{"name", "format", "size", "bytes"}``.
   - `FbxMedia.downsize(cls, src: str, dst: Optional[str] = None, *, max_size: int, exempt: Iterable[str] = (), png_compress_level: int = 1, jpeg_quality: int = 90, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Resize every embedded PNG/JPEG whose longest edge exceeds *max_size*.
+  - `FbxMedia.expand_grayscale(cls, src: str, dst: Optional[str] = None, *, png_compress_level: int = 1, jpeg_quality: int = 95, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Re-encode every embedded grayscale PNG/JPEG with colour channels.
+  - `FbxMedia.drop_takes(cls, src: str, dst: Optional[str] = None, *, names: Iterable[str]) -> Dict[str, Any]` *(class)* — Remove the named animation takes, and everything only they own.
   - `FbxMedia.rewrite(cls, src: str, dst: str) -> None` *(class)* — Re-serialise *src* to *dst* unchanged -- the writer's own round trip.
 
 <a id="file_utils--mesh_convert--glb_clips"></a>
@@ -1681,7 +1730,7 @@ Rewrite the embedded media of a binary FBX -- no DCC, no FBX SDK.
 
 Rebuild a GLB's shot clips from its one whole-timeline animation.
 
-- **[`class GlbClips(_GlbClipsInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_clips.py#L279)** — Build a GLB's declared shot clips from its whole-timeline animation.
+- **[`class GlbClips(_GlbClipsInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_clips.py#L284)** — Build a GLB's declared shot clips from its whole-timeline animation.
   - `GlbClips.rebuild(cls, edit: Any, takes: Sequence[Dict[str, Any]], fps: float, source_zero: float = 0.0, *, cut_shots: bool = True, keep_sequence: bool = True) -> Optional[Dict[str, Any]]` *(class)* — Replace the declared clips with exact slices of the source stack.
 
 <a id="file_utils--mesh_convert--glb_fades"></a>
@@ -1689,26 +1738,38 @@ Rebuild a GLB's shot clips from its one whole-timeline animation.
 
 Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
 
-- [`EXTENSION`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L53) — constant
-- [`POINTER`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L58) — constant
-- [`CHANNELS`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L160) — constant
-- [`DEFAULT_COLOR`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L183) — constant
-- **[`class PointerChannel`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L111)** — One animatable material property and how a published ramp reaches it.
+- [`EXTENSION`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L55) — constant
+- [`POINTER`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L60) — constant
+- [`CHANNELS`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L186) — constant
+- [`DEFAULT_COLOR`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L211) — constant
+- **[`class PointerChannel`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L125)** — One animatable material property and how a published ramp reaches it.
+  - `PointerChannel.color_key(self) -> Optional[str]` *(property)* — The HIGH stop's track key.
   - `PointerChannel.components(self) -> int` *(property)*
   - `PointerChannel.accessor_type(self) -> str` *(property)*
   - `PointerChannel.base(self, gltf: Dict[str, Any], index: int) -> List[float]` — The material's own value for this property, defaulted per spec.
-- **[`class GlbFades(_GlbFadesInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L373)** — Publish authored material ramps as animated material channels.
+- **[`class GlbFades(_GlbFadesInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_fades.py#L401)** — Publish authored material ramps as animated material channels.
   - `GlbFades.apply(cls, edit: Any, fades: Dict[str, Sequence[Sequence[float]]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]` *(class)* — Write one alpha channel per faded node per clip.
-  - `GlbFades.apply_channels(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Rgb]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]` *(class)* — Write every channel of every node, per clip, in one pass.
+  - `GlbFades.apply_channels(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Any]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]` *(class)* — Write every channel of every node, per clip, in one pass.
+
+<a id="file_utils--mesh_convert--glb_key_reduction"></a>
+### `file_utils/mesh_convert/glb_key_reduction.py`
+
+Reduce a GLB's animation keys to what its interpolation needs.
+
+- **[`class GlbKeyReduction(_GlbKeyReductionInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb_key_reduction.py#L164)** — Tolerance-bound key reduction for a GLB's animation samplers.
+  - `GlbKeyReduction.read_sampler(gltf: Dict[str, Any], blob: Optional[bytes], sampler: Dict[str, Any]) -> Optional[Sampler]` *(static)* — ``(times, values, interpolation)`` for one sampler, or ``None``.
+  - `GlbKeyReduction.evaluate(times: Sequence[float], values: Sequence[Sequence[float]], at: float, interpolation: str = 'LINEAR', quaternion: bool = False) -> Tuple[float, ...]` *(static)* — The sampler's value at *at* under glTF's rules, held outside its range.
+  - `GlbKeyReduction.deviation(cls, reference: Sampler, candidate: Sampler, quaternion: bool = False) -> float` *(class)* — Worst component error of *candidate* against *reference*, sampled at
+  - `GlbKeyReduction.reduce(cls, glb: Any, tolerance: float, rotation_tolerance: Optional[float] = None) -> Dict[str, int]` *(class)* — Rewrite every reducible sampler of *glb* with the keys it needs.
 
 <a id="file_utils--mesh_convert--glb_pipeline"></a>
 ### `file_utils/mesh_convert/glb_pipeline.py`
 
 FBX -> GLB: the one build every GLB deliverable goes through.
 
-- **[`class GlbPipeline(LoggingMixin)`](pythontk/pythontk/file_utils/mesh_convert/glb_pipeline.py#L51)** — FBX -> GLB, with every deliverable's passes, for every deliverable.
+- **[`class GlbPipeline(LoggingMixin)`](pythontk/pythontk/file_utils/mesh_convert/glb_pipeline.py#L63)** — FBX -> GLB, with every deliverable's passes, for every deliverable.
   - `GlbPipeline.envelope(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — The scene-sidecar envelope a build applies, from a host's reader.
-  - `GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — Build the GLB for *src* and report what each stage did.
+  - `GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — Build the GLB for *src* and report what each stage did.
 
 <a id="file_utils--mesh_convert--glb_reader"></a>
 ### `file_utils/mesh_convert/glb_reader.py`
@@ -2023,6 +2084,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
 ### `img_utils/_img_utils.py`
 
 - **[`class ImgUtils(HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L65)** — Helper methods for working with image file formats.
+  - `ImgUtils.encode_workers(cls, requested: Optional[int] = None) -> int` *(class)* — Threads for a batch of encodes: *requested* as given (at least 1),
   - `ImgUtils.effective_mode(cls, mode: str, ext: str) -> str` *(class)* — The mode *ext* will actually store for an image in *mode*.
   - `ImgUtils.dropped_channels(cls, mode: str, ext: str = '', *, target_mode: str = '') -> Tuple[str, ...]` *(class)* — Band names a write or a conversion cannot keep from *mode*.
   - `ImgUtils.channels_carrying_data(cls, image, bands) -> Tuple[str, ...]` *(class)* — Which of *bands* actually hold varying data in *image*.
@@ -2122,13 +2184,14 @@ KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
 - [`KTX_SOFTWARE_PLATFORMS`](pythontk/pythontk/img_utils/ktx2_encoder.py#L68) — constant
 - [`KTX_SOFTWARE_SHA256`](pythontk/pythontk/img_utils/ktx2_encoder.py#L100) — constant
 - **[`class Ktx2Encoder`](pythontk/pythontk/img_utils/ktx2_encoder.py#L106)** — Encode images to ``.ktx2`` (Basis Universal) by shelling out to ``toktx``.
+  - `Ktx2Encoder.encode_timeout(cls, width: int, height: int) -> float` *(class)* — Seconds to allow one encode of a *width* x *height* image:
   - `Ktx2Encoder.toktx(self) -> str` *(property)* — The binary this encoder will actually run — bound path, else discovery.
   - `Ktx2Encoder.not_installed_error(cls, detail: str = '') -> FileNotFoundError` *(class)* — The fix-shaped error every "no toktx" outcome raises: install
   - `Ktx2Encoder.resolve_toktx(cls, required: bool = False, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the ``toktx`` executable: PATH, conventional install
   - `Ktx2Encoder.available(cls) -> bool` *(class)* — True when a ``toktx`` binary is discoverable.
   - `Ktx2Encoder.read_header(cls, path: str) -> Dict[str, int]` *(class)* — Read the fixed-layout KTX 2.0 header of *path* — no transcoder needed.
-  - `Ktx2Encoder.args_for(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None) -> List[str]` — Assemble the full ``toktx`` command for one encode.
-  - `Ktx2Encoder.encode(self, source: Union[str, 'Image.Image'], output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None) -> str` — Encode *source* to *output* (``.ktx2``).
+  - `Ktx2Encoder.args_for(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None) -> List[str]` — Assemble the full ``toktx`` command for one encode.
+  - `Ktx2Encoder.encode(self, source: Union[str, 'Image.Image'], output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None) -> str` — Encode *source* to *output* (``.ktx2``).
 
 <a id="img_utils--mask_generator"></a>
 ### `img_utils/mask_generator.py`
@@ -2254,6 +2317,18 @@ One atlas per shadow-rig type: equal cells, a tile rewritten in place.
   - `ProgressionCurves.get_curve_function(cls, calculation_mode: str)` *(class)* — Get the curve function by name.
   - `ProgressionCurves.generate_curve_samples(cls, calculation_mode: str, num_samples: int = 100, weight_bias: float = 0.5, weight_curve: float = 1.0) -> List[float]` *(class)* — Generate a list of samples from a curve for visualization or analysis.
 
+<a id="math_utils--ramp_keys"></a>
+### `math_utils/ramp_keys.py`
+
+Render-effect key timelines -- the pulse and fade shapes, as ``(frame, value)`` pairs.
+
+- **[`class RampKeys`](pythontk/pythontk/math_utils/ramp_keys.py#L21)** — Plan the linear keys of a render-effect ramp.
+  - `RampKeys.frames(whole: bool, *times: float) -> Tuple[float, ...]` *(static)* — *times* as floats, snapped to whole frames when *whole*.
+  - `RampKeys.pulse_gaps(cls, start: float, end: float, ramp: float, lead_in: Optional[float] = None, lead_out: Optional[float] = None, gap_min: Optional[float] = None) -> Tuple[float, float]` *(class)* — ``(head, tail)`` frames for a pulse's dim brackets, fitted to the window.
+  - `RampKeys.pulse(cls, start: float, end: float, period: float, bright_fraction: float = 0.59, ramp_fraction: float = 0.25, lead_in: Optional[float] = None, lead_out: Optional[float] = None, whole_frames: bool = True) -> List[Key]` *(class)* — A repeating bright/dim pulse over ``start..end``, bracketed dim at both ends.
+  - `RampKeys.fade(cls, start: float, end: float, direction: str = 'in', whole_frames: bool = True) -> List[Key]` *(class)* — A two-key ramp: ``"in"`` is 0 -> 1, ``"out"`` is 1 -> 0.
+  - `RampKeys.fade_loop(cls, duration: float, hold: float = 0.0, direction: str = 'in') -> List[Key]` *(class)* — One fade framed by the holds either side of it, from frame 0.
+
 <a id="math_utils--weights"></a>
 ### `math_utils/weights.py`
 
@@ -2291,12 +2366,12 @@ The hand-off bridge whose target is a live preview page.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
   - `PreviewBridge.scope_objects(self, scope: str = 'selected') -> List[Any]` — The objects *scope* resolves to, through the host hooks.
-  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
+  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, data_export: Optional[Dict[str, Any]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
   - `PreviewBridge.publish_file(self, path: Union[str, Path], open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Publish a GLB that already exists on disk, unchanged.
   - `PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line describing what the scene sidecar did.
   - `PreviewBridge.lightmap_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line on the lightmaps: bound, or how many came back unlit.
   - `PreviewBridge.stop(self) -> None` — Stop serving and release the port.
-- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L375)** — Preview bridge whose source is a file on disk rather than a host selection.
+- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L384)** — Preview bridge whose source is a file on disk rather than a host selection.
   - `FilePreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Where to look for the EXRs a lightmap manifest names.
 
 <a id="net_utils--preview--deliverer"></a>
@@ -2314,8 +2389,8 @@ FBX -> GLB -> publish: the hand-off strategy behind every live preview.
 
 Record a clip playing in the preview page to a movie file.
 
-- **[`class PreviewPlayblast(SequenceEncoder)`](pythontk/pythontk/net_utils/preview/playblast.py#L70)** — Frames pushed in by the viewer page, encoded by the shared core.
-  - `PreviewPlayblast.begin(self, name: str, fps: float, start_frame: int = 1, frames: int = 0, content_type: str = 'image/png') -> Dict[str, Any]` — Open a recording and return ``{"token", "name", "frames"}``.
+- **[`class PreviewPlayblast(SequenceEncoder)`](pythontk/pythontk/net_utils/preview/playblast.py#L72)** — Frames pushed in by the viewer page, encoded by the shared core.
+  - `PreviewPlayblast.begin(self, name: str, fps: float, start_frame: int = 1, frames: int = 0, content_type: str = 'image/png', quality: Optional[int] = None) -> Dict[str, Any]` — Open a recording and return ``{"token", "name", "frames"}``.
   - `PreviewPlayblast.add_frame(self, token: str, index: int, data: bytes) -> Dict[str, Any]` — Store one rendered frame;
   - `PreviewPlayblast.finish(self, token: str, output_dir: str, target: Optional[str] = None, stem: Optional[str] = None) -> Dict[str, Any]` — Encode the recording and drop its scratch frames.
   - `PreviewPlayblast.cancel(self, token: str) -> bool` — Drop a recording and its frames;
@@ -2441,10 +2516,14 @@ The in-application half of the RPC pair: registry + marshaller + server.
 - [`ANSI_ESCAPE_RE`](pythontk/pythontk/str_utils/_str_utils.py#L14) — constant
 - **[`class StrUtils(CoreUtils)`](pythontk/pythontk/str_utils/_str_utils.py#L17)**
   - `StrUtils.to_legal_name(name: str) -> str` *(static)* — Every non-alphanumeric becomes ``_``: the objectName rule.
+  - `StrUtils.to_legal_filename(cls, name: str, replacement: str = '', report: bool = False)` *(class)* — *name* with every character illegal in a file name removed.
   - `StrUtils.strip_ansi(string: str) -> str` *(static)* — Remove ANSI escape sequences (color/cursor codes) from a string.
   - `StrUtils.sanitize(text: Union[str, List[str]], replacement_char: str = '_', char_map: Optional[Dict[str, str]] = None, preserve_trailing: bool = False, preserve_case: bool = False, allow_consecutive: bool = False, return_original: bool = False) -> Union[str, Tuple[str, str], List[str], List[Tuple[str, str]]]` *(static)* — Sanitizes a string or a list of strings by replacing invalid characters.
+  - `StrUtils.expand_wildcard(text: str, key: str = 'name', wildcard: str = '*') -> str` *(static)* — Rewrite a bare-wildcard template into pure placeholder form.
   - `StrUtils.replace_placeholders(text: str, **kwargs) -> str` *(static)* — Replace placeholders in a string with provided values.
   - `StrUtils.resolve_placeholders(text: str, **kwargs) -> dict` *(static)* — Resolve placeholders and report what was substituted vs.
+  - `StrUtils.name_pattern_context(**values) -> dict` *(static)* — Live values for :attr:`NAME_PATTERN_TOKENS`, plus the caller's own.
+  - `StrUtils.resolve_name_pattern(cls, pattern: str, context: dict = None, wildcard: str = '*', key: str = 'name', keep: Iterable[str] = ()) -> dict` *(class)* — Resolve a user-typed name pattern into a file-name-legal name.
   - `StrUtils.replace_delimited(text: str, context: dict, prefix: str = '__', suffix: str = '__') -> str` *(static)* — Replace delimited placeholders in *text* using *context*.
   - `StrUtils.set_case(string, case='title') -> Union[str, List[str]]` *(static)* — Format the given string(s) in the given case.
   - `StrUtils.get_mangled_name(class_input, attribute_name)` *(static)* — Returns the mangled name for a private attribute of a class.

@@ -412,6 +412,44 @@ class FileTest(BaseTestCase):
         )
         self.assertEqual(os.path.basename(result), "shot_v001.ma")
 
+    def test_next_version_path_counts_every_sibling_extension(self):
+        """One deliverable written as several files versions as ONE: a GLB-only
+        export leaves no .fbx behind, so scanning its own extension alone numbered
+        every export v001 and overwrote the last one."""
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, "shot_v004.glb"), "w").close()
+            result = FileUtils.next_version_path(
+                os.path.join(d, "shot.fbx"), extensions=(".glb",)
+            )
+            self.assertEqual(os.path.basename(result), "shot_v005.fbx")
+
+    def test_next_version_number_scans_a_folder_for_a_whole_name(self):
+        """No stem to split off: the resolved name IS the template, counter anywhere."""
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("v002_hero.fbx", "v007_hero.glb", "v009_other.fbx"):
+                open(os.path.join(d, name), "w").close()
+            self.assertEqual(
+                FileUtils.next_version_number(d, "v{n:03d}_hero{ext}", ext=".fbx"), 3
+            )
+            self.assertEqual(
+                FileUtils.next_version_number(
+                    d, "v{n:03d}_hero{ext}", ext=".fbx", extensions=(".glb",)
+                ),
+                8,
+            )
+
+    def test_next_version_number_starts_at_start_and_reads_escaped_braces(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(
+                FileUtils.next_version_number(d, "a_v{n}{ext}", ext=".ma", start=5), 5
+            )
+            open(os.path.join(d, "a{b}_v7.ma"), "w").close()
+            self.assertEqual(
+                FileUtils.next_version_number(d, "a{{b}}_v{n}{ext}", ext=".ma"), 8
+            )
+        missing = os.path.join(tempfile.gettempdir(), "no_such_dir_xyz")
+        self.assertEqual(FileUtils.next_version_number(missing, "x_v{n}{ext}"), 1)
+
     # -------------------------------------------------------------------------
     # get_file_info Tests
     # -------------------------------------------------------------------------
@@ -710,6 +748,29 @@ class FileTest(BaseTestCase):
             # Class loaded via synthetic loader; its module name is unique
             # and has been cleaned from sys.modules so it does not pollute.
             self.assertNotIn(match[0].__module__, sys.modules)
+
+    def test_a_file_defining_no_class_is_never_executed(self):
+        """Scanning must not run a module that cannot yield a class.
+
+        Switchboard slot discovery scans a whole package tree with this, so a
+        class-less script there ran at every DCC start: a scratch probe left
+        inside mayatk launched a fresh Maya on import, whose own startup scan
+        imported it again -- a new instance every ~20 s, each one hung.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / "executed.txt"
+            script = Path(tmp) / "run_probe.py"
+            script.write_text(f"open(r'{marker}', 'w').close()\n", encoding="utf-8")
+            (Path(tmp) / "widget.py").write_text(
+                "class Widget: pass\n", encoding="utf-8"
+            )
+
+            by_file = FileUtils.get_classes_from_path(str(script), "classname")
+            by_dir = FileUtils.get_classes_from_path(tmp, "classname")
+
+            self.assertEqual(by_file, [])
+            self.assertEqual(by_dir, ["Widget"])
+            self.assertFalse(marker.exists(), "the class-less script was executed")
 
     # -------------------------------------------------------------------------
     # Version Management Tests
@@ -1697,6 +1758,74 @@ class AtomicJsonWriterAdoptionTest(unittest.TestCase):
             "was deleted (then this expectation drops to []). Use "
             "FileUtils.write_json.",
         )
+
+
+class AtomicWriteTest(unittest.TestCase):
+    """``FileUtils.atomic_write``: a replacement lands whole or not at all."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="ptk_atomic_write_test_")
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.target = os.path.join(self.dir, "deliverable.glb")
+        with open(self.target, "wb") as fh:
+            fh.write(b"previous")
+
+    @staticmethod
+    def _read(path):
+        with open(path, "rb") as fh:
+            return fh.read()
+
+    @staticmethod
+    def _writer(data):
+        def write(part):
+            with open(part, "wb") as fh:
+                fh.write(data)
+
+        return write
+
+    def test_a_finished_write_replaces_the_target_leaving_nothing_beside_it(self):
+        written = FileUtils.atomic_write(self.target, self._writer(b"new"))
+        self.assertEqual(written, self.target)
+        self.assertEqual(self._read(self.target), b"new")
+        self.assertEqual(os.listdir(self.dir), ["deliverable.glb"])
+
+    def test_a_write_that_fails_part_way_leaves_the_target_whole(self):
+        """Disk full as the writer meets it: part of the file lands first."""
+
+        def disk_full(part):
+            self._writer(b"ne")(part)
+            raise OSError("No space left on device")
+
+        with self.assertRaises(OSError):
+            FileUtils.atomic_write(self.target, disk_full)
+        self.assertEqual(self._read(self.target), b"previous")
+        self.assertEqual(
+            os.listdir(self.dir), ["deliverable.glb"], "a partial file was left"
+        )
+
+    def test_a_refused_promotion_leaves_the_target_whole(self):
+        """Windows refuses to replace a file another process holds open."""
+        from unittest import mock
+
+        with mock.patch("os.replace", side_effect=PermissionError("held open")):
+            with self.assertRaises(PermissionError):
+                FileUtils.atomic_write(self.target, self._writer(b"new"))
+        self.assertEqual(self._read(self.target), b"previous")
+        self.assertEqual(
+            os.listdir(self.dir), ["deliverable.glb"], "the written part was left"
+        )
+
+    def test_unpromoted_the_part_waits_beside_the_target_for_its_caller(self):
+        """For a caller that must close a handle on the target first."""
+        part = FileUtils.atomic_write(self.target, self._writer(b"new"), promote=False)
+        self.assertTrue(part.endswith(".part"), part)
+        self.assertTrue(
+            os.path.samefile(os.path.dirname(part), self.dir),
+            "beside the target, or the caller's replace is not atomic",
+        )
+        self.assertEqual(self._read(self.target), b"previous")
+        os.replace(part, self.target)
+        self.assertEqual(self._read(self.target), b"new")
 
 
 if __name__ == "__main__":

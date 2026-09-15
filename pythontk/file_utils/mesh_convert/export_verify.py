@@ -26,6 +26,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Union
 
+from pythontk.core_utils.export_profile import ExportProfile
+from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 from pythontk.file_utils.mesh_convert.glb_reader import GlbReader
@@ -85,16 +87,25 @@ class VerificationReport:
 class _ExportVerifierInternal:
     """Input resolution and small shared predicates."""
 
-    @staticmethod
-    def _sidecar_beside(path: Optional[str]) -> Optional[str]:
-        """The exporter's ``.{stem}.scene_data.json`` beside *path*, if any."""
+    @classmethod
+    def _sidecar_beside(cls, path: Optional[str]) -> Optional[str]:
+        """The exporter's ``.{stem}.scene_data.json`` beside *path*, if any.
+
+        The deliverable's own first; failing that, a versioned deliverable's
+        SERIES manifest -- the exporters key that one to the stem without its
+        trailing ``_v<N>``, so every version diffs against one baseline, and a
+        lookup by the file's own stem found nothing for any of them.
+        """
         if not path:
             return None
+        folder = os.path.dirname(os.path.abspath(path))
         stem = os.path.splitext(os.path.basename(path))[0]
-        candidate = os.path.join(
-            os.path.dirname(os.path.abspath(path)), f".{stem}.scene_data.json"
-        )
-        return candidate if os.path.isfile(candidate) else None
+        series = ExportProfile.VERSION_SUFFIX_RE.sub("", stem)
+        for candidate in dict.fromkeys((stem, series)):
+            sidecar = os.path.join(folder, f".{candidate}.scene_data.json")
+            if os.path.isfile(sidecar):
+                return sidecar
+        return None
 
     @staticmethod
     def _declared_takes(sidecar: Optional[dict]) -> List[dict]:
@@ -125,6 +136,21 @@ class _ExportVerifierInternal:
             except (TypeError, ValueError):
                 continue
         return None
+
+    @staticmethod
+    def _published_clip_mode(sidecar: Optional[dict]) -> Optional[str]:
+        """The Animation Clips mode the exporter DECLARED, or ``None``.
+
+        Read, never inferred: a Full Sequence Only file carries one stack while
+        its takes list every shot, and that is also exactly what a split that
+        silently failed leaves.
+        """
+        export = (sidecar or {}).get("data_export") or {}
+        meta = export.get(MeshConvert.SHOT_METADATA_KEY)
+        mode = (
+            meta.get(MeshConvert.SHOT_CLIP_MODE_KEY) if isinstance(meta, dict) else None
+        )
+        return mode if isinstance(mode, str) else None
 
     @staticmethod
     def _published_span(sidecar: Optional[dict]) -> Optional[List[float]]:
@@ -158,6 +184,8 @@ class ExportVerifier(_ExportVerifierInternal):
             ratio. Pass a number only to override a sidecar that is itself
             suspect.
         huge: World-unit bound for the NaN/garbage scan.
+        max_image_bytes: Size past which :meth:`check_glb_image_bytes` warns
+            about an embedded image. ``None`` (default) only reports.
 
     Example:
         >>> report = ExportVerifier(glb="asset.glb", fbx="asset.fbx").run()
@@ -174,6 +202,7 @@ class ExportVerifier(_ExportVerifierInternal):
         baseline_glb: Optional[str] = None,
         fps: Optional[float] = None,
         huge: float = 1e7,
+        max_image_bytes: Optional[int] = None,
     ):
         if not glb and not fbx:
             raise ValueError("ExportVerifier needs a glb and/or an fbx path.")
@@ -181,6 +210,7 @@ class ExportVerifier(_ExportVerifierInternal):
         self.fbx_path = fbx
         self.baseline_glb = baseline_glb
         self.huge = huge
+        self.max_image_bytes = max_image_bytes
 
         if sidecar == "auto":
             sidecar = self._sidecar_beside(glb) or self._sidecar_beside(fbx)
@@ -278,7 +308,11 @@ class ExportVerifier(_ExportVerifierInternal):
         ]
 
     def check_glb_extensions(self) -> List[Finding]:
-        """``extensionsRequired`` must be a subset of ``extensionsUsed``."""
+        """``extensionsRequired`` must be a subset of ``extensionsUsed``.
+
+        A PASS also names what is required -- a reader without it must refuse
+        the file -- which is why :meth:`check_glb_envelope` does not warn on it.
+        """
         if self.reader is None:
             return [Finding(SKIP, "glb_extensions", "no readable GLB")]
         used, required = self.reader.extensions()
@@ -287,7 +321,10 @@ class ExportVerifier(_ExportVerifierInternal):
             return [
                 Finding(FAIL, "glb_extensions", f"required but not used: {missing}")
             ]
-        return [Finding(PASS, "glb_extensions", f"used={used or 'none'}")]
+        detail = f"used={used or 'none'}"
+        if required:
+            detail += f"; required={sorted(required)}"
+        return [Finding(PASS, "glb_extensions", detail)]
 
     def check_glb_images(self) -> List[Finding]:
         """Texture sources resolve; basisu usage is declared, and falls back
@@ -325,10 +362,10 @@ class ExportVerifier(_ExportVerifierInternal):
         if fallbackless:
             # Missing a fallback is only a defect while the file still claims a
             # reader without the extension can open it. Once basisu is
-            # REQUIRED, shipping no PNG twin is the declared contract --
-            # ``MeshConvert.drop_glb_texture_fallbacks`` produces exactly this
-            # shape on purpose, and it is what makes the KTX2 pass a saving
-            # rather than a second copy. Warning on a deliberate delivery mode
+            # REQUIRED, shipping no PNG twin is the declared contract -- the
+            # web-delivery policy writes exactly this shape on purpose
+            # (``MeshConvert.drop_glb_texture_fallbacks`` retrofits it), and it
+            # is what makes the KTX2 pass a saving rather than a second copy. Warning on a deliberate delivery mode
             # every run trains the reader past the gate that would name a real
             # one; the declaration is what tells the two apart.
             deliberate = "KHR_texture_basisu" in (required or [])
@@ -351,14 +388,63 @@ class ExportVerifier(_ExportVerifierInternal):
             )
         return rows
 
+    def check_glb_image_bytes(self) -> List[Finding]:
+        """What each embedded image costs, largest first; WARN past
+        ``max_image_bytes``.
+
+        The GLB's own bytes, after every resize and re-encode the build
+        applied -- the number a source-texture size limit only stands in for:
+        a production 57 MB source PNG shipped as a 3.12 MB KTX2. Read from the
+        ``bufferViews`` in the JSON chunk, so nothing is decoded; an image
+        referenced by ``uri`` is not embedded and is not counted. Never FAILs:
+        the file already shipped, and a large image is a cost, not a defect.
+        """
+        if self.reader is None:
+            return [Finding(SKIP, "glb_image_bytes", "no readable GLB")]
+        views = self.reader.gltf.get("bufferViews") or []
+        sized = []
+        for i, image in enumerate(self.reader.gltf.get("images") or []):
+            view = image.get("bufferView")
+            if not isinstance(view, int) or not 0 <= view < len(views):
+                continue
+            kind = (image.get("mimeType") or "?").split("/")[-1]
+            label = f"{image.get('name') or f'image {i}'} ({kind})"
+            sized.append((int((views[view] or {}).get("byteLength") or 0), label))
+        if not sized:
+            return [Finding(SKIP, "glb_image_bytes", "no embedded images")]
+        sized.sort(reverse=True)
+
+        def listing(entries) -> str:
+            shown = ", ".join(
+                f"{label} {FileUtils.format_bytes(size)}" for size, label in entries[:3]
+            )
+            return shown + (f" (+{len(entries) - 3} more)" if len(entries) > 3 else "")
+
+        total = f"{FileUtils.format_bytes(sum(size for size, _ in sized))} total"
+        limit = self.max_image_bytes
+        over = [entry for entry in sized if limit and entry[0] > limit]
+        if over:
+            detail = (
+                f"{len(over)} of {len(sized)} image(s) past "
+                f"{FileUtils.format_bytes(limit)}: {listing(over)}; {total}"
+            )
+            return [Finding(WARN, "glb_image_bytes", detail)]
+        detail = f"{len(sized)} image(s), {total}; largest: {listing(sized)}"
+        return [Finding(PASS, "glb_image_bytes", detail)]
+
     def check_glb_skins(self) -> List[Finding]:
-        """Referenced skins must carry inverseBindMatrices; stubs only WARN.
+        """Referenced skins need inverseBindMatrices and a real skeleton root.
 
         Converters mint bookkeeping skins nothing references — FBX2glTF
         wrote 56–93 IBM-less stubs on measured production files — and no
         viewer reads a skin no node points at. Failing on those buries the
         real invariant: every skin a mesh node ACTUALLY references resolves
         and carries inverseBindMatrices.
+
+        A referenced skin's ``skeleton``, when present, must be a common root
+        of its joints (glTF: the closest one or an ancestor of it). three.js
+        never reads the field, so only a validator notices a wrong one: a
+        production assembly shipped 7 (2026-09-14).
         """
         if self.reader is None:
             return [Finding(SKIP, "glb_skins", "no readable GLB")]
@@ -375,7 +461,35 @@ class ExportVerifier(_ExportVerifierInternal):
             if not (isinstance(i, int) and 0 <= i < len(skins))
             or "inverseBindMatrices" not in skins[i]
         ]
+
+        def rooted(skin: dict) -> bool:
+            skeleton = skin.get("skeleton")
+            if not isinstance(skeleton, int):
+                return True  # optional: a reader finds the root itself
+            for joint in skin.get("joints") or []:
+                node, seen = joint, set()
+                while node is not None and node != skeleton and node not in seen:
+                    seen.add(node)
+                    node = self.reader.parent_of(node)
+                if node != skeleton:
+                    return False
+            return True
+
+        misrooted = [
+            i
+            for i in referenced
+            if isinstance(i, int) and 0 <= i < len(skins) and not rooted(skins[i])
+        ]
         rows: List[Finding] = []
+        if misrooted:
+            rows.append(
+                Finding(
+                    FAIL,
+                    "glb_skins",
+                    f"{len(misrooted)} referenced skin(s) name a skeleton their "
+                    f"joints do not all hang under: {misrooted[:5]}",
+                )
+            )
         if bad:
             rows.append(
                 Finding(
@@ -400,7 +514,7 @@ class ExportVerifier(_ExportVerifierInternal):
                     "inverseBindMatrices (converter bookkeeping; harmless)",
                 )
             )
-        if not bad:
+        if not bad and not misrooted:
             rows.append(
                 Finding(
                     PASS,
@@ -449,7 +563,11 @@ class ExportVerifier(_ExportVerifierInternal):
         return rows
 
     def check_glb_envelope(self) -> List[Finding]:
-        """Delegate to :meth:`MeshConvert.verify_glb` when an envelope rides."""
+        """Delegate to :meth:`MeshConvert.verify_glb` when an envelope rides.
+
+        Its notes WARN, except the extension prerequisite, which
+        :meth:`check_glb_extensions` states.
+        """
         if self.reader is None:
             return [Finding(SKIP, "glb_envelope", "no readable GLB")]
         if not (self.reader.gltf.get("extras") or {}).get("scene_sidecar"):
@@ -459,8 +577,15 @@ class ExportVerifier(_ExportVerifierInternal):
             Finding(FAIL, "glb_envelope", problem)
             for problem in result.get("problems") or []
         ]
+        # A declared requirement is the extension gate's fact, PASSed there as
+        # the delivery contract it is; restated here it warned on every WebP
+        # and every fallback-free KTX2 deliverable.
+        required = (result.get("extensions") or {}).get("required")
+        stated = MeshConvert._requirement_note(required) if required else None
         rows.extend(
-            Finding(WARN, "glb_envelope", note) for note in result.get("notes") or []
+            Finding(WARN, "glb_envelope", note)
+            for note in result.get("notes") or []
+            if note != stated
         )
         if not rows:
             rows.append(Finding(PASS, "glb_envelope", "envelope verified"))
@@ -508,7 +633,7 @@ class ExportVerifier(_ExportVerifierInternal):
             # first key at t=0, so its raw end frame is short of the takes'
             # end by however late the export starts. The clip publishes the
             # authoring frame it sits on; measure from there, or a correct
-            # file reads as a failure (33 frames on the VDATS assembly).
+            # file reads as a failure (33 frames on the PROPS assembly).
             zero = 0.0
             for anim in self.reader.gltf.get("animations") or []:
                 if anim.get("name") == clip:
@@ -525,7 +650,7 @@ class ExportVerifier(_ExportVerifierInternal):
             # it is handed, so a whole-timeline clip routinely ends on a held
             # pose past the last take -- inert padding, not an overrun. Only
             # motion out there is content no shot will ever play. Measured on
-            # the VDATS assembly: 48 padded frames moving 76 of 1185 channels
+            # the PROPS assembly: 48 padded frames moving 76 of 1185 channels
             # by at most 3e-4, against a body moving 1183 of them by up to
             # 3.5. Motion that stops EARLY is never a fault -- a clip closing
             # on a deliberate hold is ordinary animation, not truncation.
@@ -570,7 +695,9 @@ class ExportVerifier(_ExportVerifierInternal):
                 Finding(WARN, "clips_vs_takes", f"undeclared clips: {unmatched}")
             )
         missing = sorted(set(by_name) - set(spans))
-        if missing:
+        # A declared Full Sequence Only file keeps the shots as metadata; its
+        # whole-timeline clip is still judged against their range above.
+        if missing and self._published_clip_mode(self.sidecar) != "full":
             rows.append(
                 Finding(FAIL, "clips_vs_takes", f"declared but absent: {missing}")
             )
@@ -673,6 +800,14 @@ class ExportVerifier(_ExportVerifierInternal):
         takes = {t.get("name") for t in self._declared_takes(self.sidecar)}
         if not takes:
             detail = self.sidecar_error or "no sidecar takes"
+            return [Finding(SKIP, "fbx_takes", detail)]
+        if self._published_clip_mode(self.sidecar) == "full":
+            # The takes describe the SCENE's shots in every mode; this file was
+            # declared to carry them as metadata inside its one sequence.
+            detail = (
+                f"Full Sequence Only: the {len(takes)} declared shot(s) ride as "
+                "metadata, not as takes"
+            )
             return [Finding(SKIP, "fbx_takes", detail)]
         stacks = set(self.fbx.take_names())
         missing = sorted(takes - stacks)

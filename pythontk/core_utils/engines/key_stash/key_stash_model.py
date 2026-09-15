@@ -23,13 +23,16 @@ Design constraints the adapters honour:
 * The **preview** (a transient override that lets the user scrub the stored
   range without retrieving it) is recorded here too, so a scene reopened
   mid-preview can be cleaned up rather than left silently overridden.
+* **Undo.**  Each scene operation is ONE undo step whose record rides
+  inside it (:meth:`KeyStash._undo_step`), and :meth:`KeyStash.active`
+  re-reads a record an undo or redo moved under the loaded store.
 """
 
 from __future__ import annotations
 
 import copy
 import logging
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, ClassVar, Dict, List, Optional, Tuple
@@ -194,7 +197,8 @@ class KeyStash(_KeyStashInternal):
     Pure core: CRUD, observer, serialization, the preview record and the
     class-level active-store singleton.  Scene-reaching behaviour is left to
     the DCC subclasses (``stash`` / ``retrieve`` / ``drop`` / ``preview`` /
-    ``end_preview``), each of which calls back into these primitives.
+    ``end_preview``), each of which calls back into these primitives and
+    runs as ONE :meth:`_undo_step`.
 
     Parameters:
         clips: Initial clip list.  Copied on construction.
@@ -335,6 +339,12 @@ class KeyStash(_KeyStashInternal):
             self._notify(StashChanged("preview", prev.get("clip_id")))
         return prev
 
+    def is_previewing(self, clip_id: Optional[int] = None) -> bool:
+        """Whether a preview is active (for *clip_id*, when given)."""
+        if not self.active_preview:
+            return False
+        return clip_id is None or self.active_preview.get("clip_id") == clip_id
+
     # ---- observer --------------------------------------------------------
 
     def add_listener(self, callback: Callable[[StashChanged], None]) -> None:
@@ -459,6 +469,63 @@ class KeyStash(_KeyStashInternal):
             pass
         return store
 
+    # ---- undo ------------------------------------------------------------
+
+    @contextmanager
+    def _undo_step(self, name: str):
+        """Run a scene operation as ONE undo step that carries its record.
+
+        The store's mutations inside the block are batched, and the record is
+        written inside the step on the way out (:meth:`_save_in_step`), so an
+        undo or redo moves the record with the scene edit it describes and
+        :meth:`active` re-reads it.  Nothing may flush mid-step: a host that
+        runs deferred work at once (mayapy's ``evalDeferred``, background
+        Blender) wrote the new record outside the step first, where no undo
+        could take it back (measured 2026-09-15 in both adapters).
+
+        Parameters:
+            name: The undo step's label.
+        """
+        with self._undo_chunk(name), self.batch_update():
+            try:
+                yield
+            finally:
+                # Also when the block raises: the batch's exit flush would
+                # write through save(), outside an adapter's undo queue.
+                if self._dirty:
+                    self._save_in_step()
+
+    def _undo_chunk(self, name: str):
+        """DCC hook: a context manager making its block ONE undo step.
+
+        Pure default: no undo system, so a no-op context.
+        """
+        return nullcontext()
+
+    def _save_in_step(self) -> None:
+        """DCC hook: write the record so the open undo step records it.
+
+        Pure default: :meth:`save`.  An adapter whose persistence writes
+        outside the undo queue overrides it.
+        """
+        self.save()
+
+    def _reread_record(self) -> None:
+        """Load the backend's record into THIS store and tell its listeners.
+
+        In place rather than by replacing the active store: activation runs
+        :meth:`_on_activated`, where the adapters tear down a recorded preview
+        -- right for a scene just opened, wrong here, where it would end the
+        very preview a redo restored.
+        """
+        fresh = type(self)._load_record()
+        self.clips = fresh.clips
+        self.active_preview = fresh.active_preview
+        self.scene_fps = fresh.scene_fps
+        self._next_id = fresh._next_id
+        self._dirty = False
+        self._notify(StashChanged("reloaded"))
+
     # ---- singleton -------------------------------------------------------
 
     @classmethod
@@ -471,21 +538,35 @@ class KeyStash(_KeyStashInternal):
         """The active store, loaded from the backend on first access.
 
         Reconciles frame rate the way the shot store does: a store saved at a
-        different frame rate is rescaled to the current one on load.
+        different frame rate is rescaled to the current one on load.  A
+        backend that can tell its record moved under the loaded store (an
+        optional ``record_changed()``: an undo or redo of a scene operation)
+        has it re-read in place (:meth:`_reread_record`).
         """
         if cls._active is None:
-            backend = cls._persistence
-            data = backend.load() if backend is not None else None
-            if data:
-                store = cls.from_dict(data)
+            store = cls._load_record()
+            if store.clips:
                 current = store._scene_fps()
-                if store.clips and abs(store.scene_fps - current) > 0.01:
+                if abs(store.scene_fps - current) > 0.01:
                     store.rescale_to_fps(current)
-            else:
-                store = cls()
             cls._active = store
             store._on_activated()
+        else:
+            record_changed = getattr(cls._persistence, "record_changed", None)
+            if record_changed is not None and record_changed():
+                cls._active._reread_record()
         return cls._active
+
+    @classmethod
+    def _load_record(cls) -> "KeyStash":
+        """A store holding the backend's record, or an empty one without it.
+
+        Activation rescales what this returns; the in-place re-read does not,
+        since a rescaled throwaway store would queue a flush of its own.
+        """
+        backend = cls._persistence
+        data = backend.load() if backend is not None else None
+        return cls.from_dict(data) if data else cls()
 
     def _on_activated(self) -> None:
         """DCC hook: run once when this instance becomes the active store.

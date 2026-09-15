@@ -44,10 +44,15 @@ format: a third-party glTF tool opens it and gets a sane, if plainer, result.
         |  GlbPipeline.build  --  the SAME build TaskManager.create_glb runs for the
         |  Scene Exporter's GLB deliverable; the two callers hand it dials only:
         |    downsize   FbxMedia.downsize the embedded textures to the texture ceiling
-        |    convert    MeshConvert.fbx_to_glb: alpha repair, image dedupe, scene sidecar,
-        |               dead-texture sweep, lightmaps (the host's live map folders),
+        |    convert    MeshConvert.fbx_to_glb: FBX2glTF reads the FBX with its grayscale
+        |               embeds expanded (FbxMedia.expand_grayscale -- it packs a gray
+        |               roughness/metallic map as white); then alpha repair, image
+        |               dedupe, scene sidecar, dead-texture sweep, lightmaps (the host's
+        |               live map folders),
         |               shadow rigs, curve-proxy strip, clips, visibility gates, fades,
         |               animation manifest -- one edit session, and a report back
+        |    reduce     MeshConvert.reduce_glb_animations when a key tolerance is
+        |               named: each clip keeps only the keys its interpolation needs
         |    optimize   MeshConvert.optimize_glb_textures, last, on the closed file
         v
   GLB   (deliverable)  --  PreviewServer.publish()  ->  version += 1
@@ -180,6 +185,18 @@ session for anything that reads the JSON chunk, the pipeline's stages for anythi
 container), and the preview shows it on the next push because it never had a chain of its own. The
 rule of thumb: if a fix would need to be made twice, it is in the wrong place.
 
+A build can also be shown something the scene does not carry. `push(data_export={...})` overlays
+the GLB's in-band channels for that push only (`MeshConvert.overlay_data_export`, applied ahead of
+every pass that reads one; `None` clears a channel), so the passes build as if the FBX had carried
+it and nothing upstream -- scene or exported file -- is written. `MeshConvert.effect_preview_channels`
+states one render effect that way: the Render Effects option boxes' **Preview in WebXR** button
+pushes the selection with the fade or pulse at the box's settings -- keys planned by `RampKeys`, the
+same plan the key tools write -- with the objects' own tracks replaced and the take list and shot
+record cleared, so the effect plays alone on one clip over its own extent. The push's result lists
+the channels the overlay replaced under `data_export` (`[]` when none landed -- a finished-GLB
+source, or a bridge that predates the knob and swept it into the export bag), and the panel reads
+that before telling anyone the page shows the effect.
+
 The three stages have three failure policies, and they are the exporters' policies: the downsize is
 a speed win the texture ceiling re-applies anyway, so its failure is a warning; a failed conversion
 or texture pass raises and the push reports it, rather than publishing a GLB that quietly skipped
@@ -207,9 +224,19 @@ default* — the server outlives every push, so a script registered once must no
 next push that simply says nothing about scripts. An explicit `[]` is still an instruction.
 
 A module's default export receives the viewer API: `THREE`, `scene`, `renderer`, `camera`,
-`controls`, `pivot`, `model`, `bounds`, `policy`, `setStatus`, `addButton(label, onClick)`, and
-`on(event, fn)` for `'load'` / `'frame'` / `'key'`. The transport is on it too: `mixer`,
-`playClip(name)`, `playing` / `setPlaying(state)`, `poseAt(seconds)` and `clip` — the selection as
+`controls`, `pivot`, `model`, `bounds`, `policy`, `setStatus`, `addButton(label, onClick)`,
+`showDialog({title, fields, confirm})`, and `on(event, fn)` for `'load'` / `'frame'` / `'key'`.
+`showDialog` is the page's one modal — a script asks for options through it rather than through
+`window.confirm` for the reason it adds buttons through `addButton` rather than `createElement`:
+one look, one place. Its `fields` are `{key, label, type, value, title}` — `'check'` by default,
+`'choice'` for a picker over `choices: [{value, label, title}]`, `'note'` for a read-only line —
+and it resolves to `{key: answer}` on confirm (`checked` for a check, the chosen `value` for a
+choice) and to **null** on cancel, so a caller branches on the answer rather than on a flag inside
+it. While it is up the page behind it is inert: no shortcut fires, and focus cannot leave the
+prompt. The transport is on it too: `mixer`, `playClip(name)`, `playing` / `setPlaying(state)`,
+`poseAt(seconds)`,
+`shotAt(seconds)`, `descriptionAt()` — the shot record's own note for whatever the model is posed
+at — and `clip`, the selection as
 `{name, duration, fps, startFrame, endFrame, sequence}`, which is what lets a script address a clip
 in the AUTHORING frames the DCC and the picker quote rather than in seconds. A script that throws is
 logged and contained —
@@ -558,10 +585,11 @@ names a configuration (factory is instancing OFF, smoothing groups OFF, embedded
 clean session would have shipped an untextured, de-instanced GLB), and cameras, which the preview
 mixin drops and the factory keeps.
 
-One property is deliberately **not** shared: `ktx2_fallback` answers "must this open in a stock glTF
-importer?", which is a property of the consumer. The preview streams to a page that wires
-`KTX2Loader` and says `False`; an exporter handing over an asset that must also open in Blender or
-Unreal says `True`.
+The policy also ships KTX2 **without fallback twins** (`ktx2_fallback=False`). A twin is a PNG/JPEG
+copy of a KTX2 image that only a stock glTF importer reads. It used to be each producer's call, the
+exporters kept the twins, and a production 4K assembly shipped 145.8 MB of them beside 123.1 MB of
+KTX2 — 48% of the GLB. A GLB that must also open in Blender or Unreal asks for the twins
+(`ktx2_fallback=True`), which the scene exporters offer as the **KTX2 + PNG/JPEG** Texture File Type.
 
 The other axis to check on a handoff is the **take split**. A scene that declares shots must have
 them realized into FBX AnimStacks before conversion, or the deliverable carries one continuous clip
@@ -649,23 +677,52 @@ Details worth knowing:
   so most of the win is simply not blocking the render loop. The pool is half the machine's cores,
   clamped to 2–8; past 4 the curve is flat (2 workers 4.4x, 4 workers 5.2x, 8 workers 5.8x).
   A browser without `Worker` or `OffscreenCanvas` falls back to compressing on the main thread.
-- **It records at preview resolution, not delivery resolution**: the canvas's drawing buffer capped
-  to a **1280** long edge. This *used* to be the wall-clock dial — one frame at a time on the main
-  thread, the cost tracked pixel count almost exactly, and 1920 → 1280 measured 2.1x faster for
-  2.25x fewer pixels. With the pool it no longer is: **1920 and 1280 now cost the same** (46.7ms and
-  45.1ms per frame), because the compression happens behind the render instead of in front of it.
-  What the cap still buys is file size and wire time — which is what a reviewer on a headset over
-  Wi-Fi actually waits for — so raising it is now a question about bytes, not minutes. A canvas
-  smaller than the cap is captured as it is; the cap never upscales. `MAX_EDGE` in
-  `scripts/playblast.js` is the knob.
-- **Burn-in** (`Burn-in: off/on`, beside the record button) draws the **shot name, the DCC frame
-  number and the clip time** into the recorded frames — the shot the playhead is inside on the
-  whole-timeline clip, `'<name> (hold)'` through a gap, and the clip's own name on a single shot, so
-  the movie says the same thing the transport readout did. The frame number is the **authoring**
-  one — the clip's start frame plus the offset — so a note about "frame 112" names the frame an
-  animator will open. Opt-in and off by default: it is drawn into the pixels and cannot be taken
-  out again, so a recording is what the reviewer saw unless someone asked for the annotation. It
-  cannot be toggled mid-recording, which would annotate half the frames.
+- **Quality is a preset chosen in the prompt** — `QUALITY_PRESETS` in `scripts/playblast.js`:
+
+  | Preset | Long edge | CRF (`quality`) |
+  |---|---|---|
+  | Draft — 720p | 1280 | 23 (70) |
+  | Standard — 1080p | 1920 | 20 (85) |
+  | **High — 1440p** (default) | 2560 | 16 (100) |
+  | Maximum — 4K | 3840 | 16 (100) |
+
+  Before presets every recording was 1280 px at CRF 16. The preset's `quality` travels with
+  `POST /playblast/begin` — it describes the recording, as the rate does — and reaches
+  `SequenceEncoder.encode_sequence`; a `begin` naming none encodes at the recorder's own `quality`,
+  and one outside 0–100 is refused before a frame is sent rather than clamped at the encode. The
+  frame is **rendered** at the preset's size, not upscaled to it: a view whose drawing buffer is
+  smaller has its pixel ratio raised for the recording and put back as soon as the last frame is
+  in, so High from a 1280-wide window is a real 2560-wide render. A larger view is downsampled by
+  the capture. The GPU's `MAX_RENDERBUFFER_SIZE` / `MAX_VIEWPORT_DIMS` cap it: a canvas asked for
+  more silently allocates less, and the capture would read that stretched. Size is no longer the
+  wall-clock dial it was when frames compressed on the main thread (1920 → 1280 then measured 2.1x
+  faster); with the pool **1920 and 1280 cost the same** (46.7ms and 45.1ms per frame). What a
+  bigger preset still costs is file size and wire time — what a reviewer on a headset over Wi-Fi
+  waits for, and what Draft is for. The saved status line states the size that was written.
+- **Pressing the button opens an export prompt** rather than recording at once. It states what is
+  about to be written (clip, frame count, rate — the clip is the picker's to choose and the rate is
+  the deliverable's, so the prompt only shows them) and offers the quality preset and the two
+  burn-ins below. Cancel,
+  Escape or a click on the backdrop writes nothing. The answers are remembered for the tab, so a
+  second recording re-offers them rather than the defaults, and they are snapshotted when the
+  recording starts — a file is annotated the way the prompt that started it was answered, never
+  half of it. A push landing while the prompt is up **dismisses** it: what it was asking about is
+  no longer on screen, and a stale summary over a different scene is worse than asking again.
+- **Burn-in: shot name and frame** draws the **shot name, the DCC frame number and the clip time**
+  into the recorded frames — the shot the playhead is inside on the whole-timeline clip,
+  `'<name> (hold)'` through a gap, and the clip's own name on a single shot, so the movie says the
+  same thing the transport readout did. The frame number is the **authoring** one — the clip's
+  start frame plus the offset — so a note about "frame 112" names the frame an animator will open.
+- **Burn-in: shot description** draws the note the DCC's Shots panel carries for that shot
+  (`extras.animation_web`'s `description`) on the line above the name — the half of a shot record a
+  reviewer watching the movie cannot otherwise see. It follows the playhead across the sequence, and
+  a shot that states no description records without one rather than holding a blank line open for
+  it. The two burn-ins are independent: with only the description ticked the note lands alone on
+  the foot of the frame.
+- Both are opt-in and off by default: a burn-in is drawn into the pixels and cannot be taken out
+  again, so a recording is what the reviewer saw unless someone asked for the annotation. Left
+  text is elided with an ellipsis rather than run under the frame counter, because a description is
+  prose and can be longer than the frame.
 - A push landing mid-recording **drops** it. Every frame after the swap would be of a different
   scene, and the file would silently be a cut between two versions.
 - The frame size is fixed when the recording starts, so resizing the window part way through cannot
@@ -746,8 +803,14 @@ transcodes it to ASTC on a standalone headset, BC7 on desktop. It needs KTX-Soft
 the authoring machine (the push raises with the install URL when it is missing, never silently
 ships WebP). Codecs are chosen per glTF slot — UASTC for normals and ORM/occlusion data, ETC1S for
 base color and emissive — and baked lightmaps deliberately stay on the lossless-WebP path; the
-details live on `MeshConvert.optimize_glb_textures`. Per-slot resolution ceilings (a normal map
-needs 2048 far more than a mask does) remain the cheaper complementary lever and are still open.
+details live on `MeshConvert.optimize_glb_textures`. Two complementary levers ride the same call:
+a **secondary ceiling** (`secondary_max_size`) for the packed data maps alone -- a mask reads the
+same at half the resolution a normal map needs, so the Scene Exporter's *Secondary Map Size* row
+caps metallic-roughness / occlusion below the primary ceiling while color and normals keep it --
+and **UASTC RDO** (`uastc_rdo`, the exporter's *KTX2 RDO* row), which steers the UASTC blocks
+toward what Zstandard compresses at a measured quality cost (ORM packs -30% at lambda 1; normals
+are capped at 0.75). The deliverable's per-frame animation keys are the third lever
+(`GlbPipeline.build(key_tolerance=...)`, the exporter's *GLB Key Tolerance* row).
 
 ## Gotchas worth knowing
 

@@ -2,17 +2,18 @@
 # coding=utf-8
 """Lightweight, DCC-agnostic color primitives.
 
-Provides three building blocks for consistent color handling across tools:
+Provides four building blocks for consistent color handling across tools:
 
     Color      – Immutable RGBA value with format conversions and basic math.
     ColorPair  – Foreground/background pair (iterable as ``(fg_hex, bg_hex)``).
+    ColorStops – Named endpoints of a 0–1 ramp, each with its own default.
     Palette    – Named color collection with alias support.
 
 Only depends on the standard library (``colorsys``).
 """
 
 import colorsys
-from typing import Dict, Iterator, Optional, Tuple, Union
+from typing import Dict, Iterator, Optional, Tuple, Union, Sequence
 
 
 class Color:
@@ -60,6 +61,61 @@ class Color:
         """Create from 0.0–1.0 float components (Maya API convention)."""
         return cls(round(r * 255), round(g * 255), round(b * 255), round(a * 255))
 
+    @classmethod
+    def from_hsvf(cls, h: float, s: float, v: float, a: float = 1.0) -> "Color":
+        """Create from 0.0–1.0 HSV floats (hue wraps; s/v clamp).
+
+        Not a faithful inverse of :attr:`hsv`: the 8-bit store quantises, and
+        hue is undefined at ``s == 0`` or ``v == 0``. Anything that EDITS a
+        colour (a picker, a slider) must keep its own float HSV state and use
+        this only to hand the result out -- round-tripping a drag through
+        ``hsv``/``from_hsvf`` walks the hue off and collapses it to grey at the
+        black end.
+        """
+        r, g, b = colorsys.hsv_to_rgb(
+            h % 1.0, max(0.0, min(1.0, s)), max(0.0, min(1.0, v))
+        )
+        return cls(round(r * 255), round(g * 255), round(b * 255), round(a * 255))
+
+    # ---- Colour space -----------------------------------------------------
+
+    @staticmethod
+    def linear_from_srgb(rgb: Sequence[float]) -> Tuple[float, ...]:
+        """Display-encoded components (0-1) to linear light (IEC 61966-2-1).
+
+        The scalar twin of ``ImgUtils.srgb_to_linear``, which takes images and
+        arrays. A picker's swatch is display-encoded; a DCC colour attribute
+        and a glTF factor are linear. A widget that shows one as the other
+        reads a mid value as a bright one -- and a page rendering the same
+        number correctly then shows it brighter than the widget did. The first
+        three components are converted; any alpha passes through.
+        """
+        return tuple(
+            (
+                (c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4)
+                if i < 3
+                else c
+            )
+            for i, c in enumerate(max(0.0, float(v)) for v in rgb)
+        )
+
+    @staticmethod
+    def srgb_from_linear(rgb: Sequence[float]) -> Tuple[float, ...]:
+        """Linear light to display-encoded components; :meth:`linear_from_srgb`'s inverse.
+
+        A value past 1.0 (HDR emission) encodes past 1.0 too: the caller
+        clamps for an 8-bit display, so the clamp is not silently applied to
+        a value it may want to read.
+        """
+        return tuple(
+            (
+                (c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055)
+                if i < 3
+                else c
+            )
+            for i, c in enumerate(max(0.0, float(v)) for v in rgb)
+        )
+
     # ---- Format properties ------------------------------------------------
 
     @property
@@ -88,6 +144,17 @@ class Color:
     def rgbaf(self) -> Tuple[float, float, float, float]:
         """``(r, g, b, a)`` in 0.0–1.0."""
         return (self._r / 255.0, self._g / 255.0, self._b / 255.0, self._a / 255.0)
+
+    @property
+    def hsv(self) -> Tuple[float, float, float]:
+        """``(h, s, v)`` in 0.0–1.0.
+
+        A read-out, not a working representation: hue and saturation are
+        undefined as value approaches zero, so a slider that stores its result
+        here and reads it back on the next drag loses what the artist set.
+        See :meth:`from_hsvf`.
+        """
+        return colorsys.rgb_to_hsv(self._r / 255.0, self._g / 255.0, self._b / 255.0)
 
     @property
     def luminance(self) -> float:
@@ -243,6 +310,136 @@ class ColorPair:
 
     def __hash__(self) -> int:
         return hash((self.fg, self.bg))
+
+
+# -----------------------------------------------------------------------
+# ColorStops
+# -----------------------------------------------------------------------
+
+
+class ColorStops:
+    """The endpoints of the ramp a 0–1 channel drives, and their defaults.
+
+    A render-effect channel is one keyable float; what it MEANS is a colour
+    ramp that float indexes. ``hi`` names where a sample of 1.0 lands and the
+    optional ``lo`` where 0.0 lands -- as attribute names, published track
+    keys, or whatever string a consumer addresses a colour by, since the two
+    sides of the glTF join spell the same concept differently.
+
+    One object rather than two loose fields, because the stops are not
+    independent: a ``lo`` without a ``hi`` is meaningless, and each stop needs
+    its OWN fallback. A channel that publishes no colour reads WHITE so the
+    ramp still shows; a missing LOW stop must read BLACK. Hand the low stop the
+    high default and every asset authored before the low stop existed inverts
+    on its next export -- which is why the defaults live here, beside the stops
+    they belong to, instead of as one module constant a caller picks.
+    """
+
+    __slots__ = ("hi", "lo", "hi_default", "lo_default")
+
+    #: A stop naming no colour still has to read: an unstated HIGH is white.
+    WHITE: Tuple[float, float, float] = (1.0, 1.0, 1.0)
+    #: An unstated LOW is unlit. See the class docstring for why it differs.
+    BLACK: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    def __init__(
+        self,
+        hi: str,
+        lo: Optional[str] = None,
+        hi_default: Tuple[float, float, float] = WHITE,
+        lo_default: Tuple[float, float, float] = BLACK,
+    ) -> None:
+        object.__setattr__(self, "hi", hi)
+        object.__setattr__(self, "lo", lo)
+        object.__setattr__(self, "hi_default", tuple(hi_default))
+        object.__setattr__(self, "lo_default", tuple(lo_default))
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("ColorStops is immutable")
+
+    @property
+    def keys(self) -> Tuple[str, ...]:
+        """The stop names that exist, high first."""
+        return (self.hi,) if self.lo is None else (self.hi, self.lo)
+
+    @property
+    def defaults(self) -> Tuple[Tuple[float, float, float], ...]:
+        """Each stop's own fallback, in :attr:`keys` order."""
+        return (
+            (self.hi_default,)
+            if self.lo is None
+            else (self.hi_default, self.lo_default)
+        )
+
+    def resolve(self, value: object = None) -> Tuple[Tuple[float, float, float], ...]:
+        """Read a published colour into one rgb triple per stop.
+
+        Accepts the shapes producers actually hold, so one written before the
+        low stop existed stays correct with no alias and no version check::
+
+            None                    -> every stop takes its default
+            (r, g, b)               -> the HIGH stop; low takes its default
+            ((r, g, b), (r, g, b))  -> both stops, in :attr:`keys` order
+
+        An entry that is absent or malformed falls back rather than raising: a
+        colour is lookdev, and refusing to publish a whole scene over one bad
+        triple trades a wrong tint for no deliverable.
+        """
+        defaults = self.defaults
+        if value is None:
+            return defaults
+        # A flat triple is three NUMBERS; anything else sequence-shaped is one
+        # entry per stop. Sniffing ``value[0]`` alone would misread a pair
+        # whose high stop was never published (``[None, (r, g, b)]``) as a
+        # flat triple and hand the low colour to the high stop.
+        numeric = (int, float)
+        flat = (
+            isinstance(value, (list, tuple))
+            and len(value) >= 3
+            and all(
+                isinstance(c, numeric) and not isinstance(c, bool) for c in value[:3]
+            )
+        )
+        if flat or not isinstance(value, (list, tuple)):
+            items: Tuple[object, ...] = (value,)
+        else:
+            items = tuple(value)
+        out = []
+        for index, fallback in enumerate(defaults):
+            out.append(
+                self._triple(items[index] if index < len(items) else None, fallback)
+            )
+        return tuple(out)
+
+    @staticmethod
+    def _triple(value: object, fallback: Tuple[float, float, float]):
+        if not isinstance(value, (list, tuple)) or len(value) < 3:
+            return fallback
+        try:
+            return (float(value[0]), float(value[1]), float(value[2]))
+        except (TypeError, ValueError):
+            return fallback
+
+    def __iter__(self) -> Iterator[Optional[str]]:
+        """Yield ``(hi, lo)`` -- ``lo`` is ``None`` for a one-stop channel."""
+        yield self.hi
+        yield self.lo
+
+    def __repr__(self) -> str:
+        return f"ColorStops({self.hi!r}, {self.lo!r})"
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, ColorStops):
+            return (self.hi, self.lo, self.hi_default, self.lo_default) == (
+                other.hi,
+                other.lo,
+                other.hi_default,
+                other.lo_default,
+            )
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash((self.hi, self.lo, self.hi_default, self.lo_default))
 
 
 # -----------------------------------------------------------------------

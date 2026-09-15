@@ -1013,6 +1013,120 @@ class UdimGroupingTest(BaseTestCase):
         self.assertNotEqual(a, b)
         self.assertTrue(a.endswith("rock_Normal_OpenGL.1001.png"), a)
 
+    def test_collapse_joins_a_materials_tiles_into_one_set(self):
+        """The shader builder's view: one set per MATERIAL, each map once.
+
+        The factory keeps a set per tile; a 10-tile material built one shader
+        per tile. Each map stays a real tile file -- the host tiles from it.
+        """
+        sets = MapFactory.group_textures_by_set(self.FILES + ["/x/wall_BaseColor.png"])
+        self.assertEqual(
+            MapFactory.collapse_tile_sets(sets),
+            {
+                "rock": [
+                    "/x/rock_BaseColor.1001.png",
+                    "/x/rock_Normal.1001.png",
+                    "/x/rock_Roughness.1001.png",
+                ],
+                "wall": ["/x/wall_BaseColor.png"],
+            },
+        )
+
+    def test_a_named_asset_still_converts_every_tile(self):
+        """``group_by_set=False`` is ONE asset, yet each tile converts on its own.
+
+        The inventory holds one path per map type, so a named 2-tile set used to
+        convert tile 1001 alone and drop 1002 without a word -- and a network that
+        tiles from 1001 would then find no 1002 to tile to.
+        """
+        import shutil
+        import tempfile
+
+        from PIL import Image
+
+        from pythontk import MapRegistry
+
+        root = tempfile.mkdtemp(prefix="named_tiles_")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        files = []
+        for kind in ("BaseColor", "Roughness"):
+            for tile in (1001, 1002):
+                path = os.path.join(root, f"rock_{kind}.{tile}.png")
+                Image.new("RGBA", (8, 8), (128, 128, 128, 255)).save(path)
+                files.append(path)
+
+        out = MapFactory.prepare_maps(
+            files,
+            group_by_set=False,
+            max_workers=1,
+            **MapRegistry().resolve_config(None),
+        )
+
+        self.assertIsInstance(out, list, "a named asset comes back as one list")
+        self.assertEqual(
+            sorted({MapFactory.get_tile_token(path) for path in out}),
+            [".1001", ".1002"],
+            f"{out}",
+        )
+
+    def test_collapse_keeps_the_lowest_tile_and_the_materials_untiled_maps(self):
+        sets = {
+            "rock.1002": ["/x/rock_BaseColor.1002.png"],
+            "rock.1001": ["/x/rock_BaseColor.1001.png"],
+            "rock": ["/x/rock_Normal.png"],
+        }
+        self.assertEqual(
+            MapFactory.collapse_tile_sets(sets),
+            {"rock": ["/x/rock_BaseColor.1001.png", "/x/rock_Normal.png"]},
+        )
+
+    def test_tile_paths_are_the_sets_tiles_on_disk(self):
+        """What a host asks before it tiles: a lone tile-numbered file is no set.
+
+        Tiled, ``wall_BaseColor.1024.png`` leaves 0-1 UVs for tile 1024 and
+        renders black; read as one image it renders wherever the UVs sit.
+        """
+        import shutil
+        import tempfile
+
+        root = tempfile.mkdtemp(prefix="tile_paths_")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        for name in (
+            "rock_BaseColor.1001.png",
+            "rock_BaseColor.1002.png",
+            "rock_BaseColor.1003.jpg",  # another container
+            "rock_BaseColor_1004.png",  # a resolution tag, not a tile
+            "rock_BaseColor.u1_v1.png",  # another scheme
+            "rock_Normal.1001.png",  # another map
+            "mud_BaseColor.u1_v1.png",
+            "mud_BaseColor.u2_v1.png",
+            "mud_BaseColor.u1_v1.old_v2.png",  # no tile name at all
+            "wall_BaseColor.1024.png",
+        ):
+            open(os.path.join(root, name), "wb").close()
+
+        def tiles(name):
+            return [
+                os.path.basename(path)
+                for path in MapFactory.get_tile_paths(os.path.join(root, name))
+            ]
+
+        rock = ["rock_BaseColor.1001.png", "rock_BaseColor.1002.png"]
+        self.assertEqual(tiles("rock_BaseColor.1001.png"), rock)
+        self.assertEqual(tiles("rock_BaseColor.<UDIM>.png"), rock)
+        mud = ["mud_BaseColor.u1_v1.png", "mud_BaseColor.u2_v1.png"]
+        self.assertEqual(tiles("mud_BaseColor.u2_v1.png"), mud)
+        self.assertEqual(tiles("mud_BaseColor.<UVTILE>.png"), mud)
+        self.assertEqual(tiles("wall_BaseColor.1024.png"), ["wall_BaseColor.1024.png"])
+        self.assertEqual(tiles("rock_BaseColor.png"), [], "no tile token")
+        self.assertEqual(tiles(os.path.join("gone", "rock_BaseColor.1001.png")), [])
+        self.assertTrue(
+            MapFactory.get_tile_paths(os.path.join(root, "rock_BaseColor.1001.png"))[
+                0
+            ].startswith(root),
+            "the tiles keep the caller's directory spelling",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

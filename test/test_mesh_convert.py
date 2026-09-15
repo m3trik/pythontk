@@ -4,13 +4,16 @@
 
 Network-free — FBX2glTF resolution and subprocess invocation are mocked.
 An opt-in integration test triggers a real install when
-``PYTHONTK_INTEGRATION_TESTS=1``.
+``PYTHONTK_INTEGRATION_TESTS=1``; ``TestGrayscaleMapsThroughTheConverter``
+runs an FBX2glTF that is already installed (it downloads nothing) and skips
+otherwise.
 
 Run with:
     python -m pytest test_mesh_convert.py -v
     python test_mesh_convert.py
 """
 
+import errno
 import hashlib
 import io
 import json
@@ -28,8 +31,11 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from pythontk import ImgUtils, MeshConvert
+from pythontk import FileUtils, ImgUtils, MeshConvert
+from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
+from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
 from pythontk.file_utils.mesh_convert.glb_clips import GlbClips
+from test_fbx_media import build_stingray_fbx, encoded
 
 
 class TestResolveBinary(unittest.TestCase):
@@ -212,6 +218,207 @@ class TestFbxToGlb(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 
         return _run
+
+    def test_a_failed_conversion_keeps_the_glb_it_would_replace(self):
+        """The previous GLB survives a conversion that never finished.
+
+        ``overwrite`` deleted it BEFORE FBX2glTF ran -- 13 minutes on a
+        production assembly -- so a conversion that failed or timed out also
+        cost the file it was to replace, and in a synced export folder the
+        deletion reached every copy. Seen 2026-09-14: a re-export's GLB left
+        the folder the moment its conversion began.
+        """
+        dst = os.path.join(self.tmp, "model.glb")
+
+        def failed(cmd, **kw):
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="boom")
+
+        def timed_out(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd, 5)
+
+        for outcome in (failed, timed_out):
+            with self.subTest(outcome=outcome.__name__):
+                with open(dst, "wb") as fh:
+                    fh.write(b"previous")
+                with (
+                    patch.object(
+                        MeshConvert, "resolve_binary", return_value=self.fake_bin
+                    ),
+                    patch("subprocess.run", side_effect=outcome),
+                    self.assertRaises(RuntimeError),
+                ):
+                    MeshConvert.fbx_to_glb(
+                        self.src, dst, overwrite=True, auto_install=False
+                    )
+                with open(dst, "rb") as fh:
+                    self.assertEqual(fh.read(), b"previous")
+        captured = {}
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch("subprocess.run", side_effect=self._run_simulator(captured)),
+        ):
+            MeshConvert.fbx_to_glb(self.src, dst, overwrite=True, auto_install=False)
+        with open(dst, "rb") as fh:
+            self.assertEqual(fh.read(), b"glb-bytes", "a finished one replaces it")
+        store = os.path.dirname(captured["cmd"][captured["cmd"].index("-o") + 1])
+        self.assertFalse(os.path.exists(store), "the conversion's store outlived it")
+
+    def test_a_locked_destination_fails_before_the_conversion(self):
+        """A GLB another process holds open cannot be replaced (Windows refuses
+        while a viewer or a sync client has it), so that is found out BEFORE
+        the conversion -- 13 minutes on a production assembly -- rather than
+        at the move that ends it and would throw its output away."""
+        dst = os.path.join(self.tmp, "model.glb")
+        with open(dst, "wb") as fh:
+            fh.write(b"previous")
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch.object(FileUtils, "is_locked", return_value=True),
+            patch("subprocess.run") as run,
+            self.assertRaises(PermissionError),
+        ):
+            MeshConvert.fbx_to_glb(self.src, dst, overwrite=True, auto_install=False)
+        run.assert_not_called()
+        with open(dst, "rb") as fh:
+            self.assertEqual(fh.read(), b"previous")
+
+    def test_a_failed_copy_keeps_the_glb_it_would_replace(self):
+        """A copy that fails part way leaves the previous GLB whole.
+
+        The conversion's store sits in the system temp dir -- usually another
+        volume, where a move is a copy -- and on Windows a rename refuses an
+        existing destination on any volume, so the move that ends a conversion
+        copied straight over *dst*: a disk-full or I/O error part way through a
+        multi-hundred-MB GLB left a truncated deliverable where the previous one
+        had been. Pinned to the cross-volume branch (the rename refused with
+        EXDEV), so the test means the same on every machine.
+        Added: 2026-09-15
+        """
+        dst = os.path.join(self.tmp, "model.glb")
+        with open(dst, "wb") as fh:
+            fh.write(b"previous")
+
+        def disk_full(src, target, *args, **kwargs):
+            # ENOSPC as the writer meets it: part of the file lands, then the
+            # write fails.
+            with open(src, "rb") as reader, open(target, "wb") as writer:
+                writer.write(reader.read(3))
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch("subprocess.run", side_effect=self._run_simulator({})),
+            patch("os.rename", side_effect=OSError(errno.EXDEV, "Cross-device link")),
+            patch("shutil.copyfile", side_effect=disk_full),
+            self.assertRaises(OSError),
+        ):
+            MeshConvert.fbx_to_glb(self.src, dst, overwrite=True, auto_install=False)
+        with open(dst, "rb") as fh:
+            self.assertEqual(fh.read(), b"previous")
+        self.assertEqual(
+            sorted(os.listdir(self.tmp)),
+            ["model.fbx", "model.glb"],
+            "the failed copy left a partial file beside the GLB",
+        )
+
+    def test_the_sdk_extracts_embedded_media_into_a_store_of_its_own(self):
+        """FBX2glTF's SDK import extracts every embedded texture into
+        ``<stem>.fbm`` BESIDE the FBX it reads, and nothing removes it.
+
+        Measured on a production assembly: 311 MB in the synced export folder,
+        and 311 MB per export in the temp dir once the GLB pipeline converted a
+        scratch copy. ``--fbx-temp-dir`` sends the extraction elsewhere (probed
+        on v0.13.1 with a Maya-written textured FBX: nothing beside the input,
+        the image still embedded), and the conversion owns that directory.
+        Added: 2026-09-12
+        """
+        captured = {}
+        simulate = self._run_simulator(captured)
+
+        def _run(cmd, **kw):
+            if "--fbx-temp-dir" in cmd:  # the SDK's extraction, as probed
+                media = os.path.join(cmd[cmd.index("--fbx-temp-dir") + 1], "2DC020BA")
+                os.makedirs(os.path.join(media, "model.fbm"))
+                with open(os.path.join(media, "model.fbm", "wall.png"), "wb") as fh:
+                    fh.write(b"png")
+            return simulate(cmd, **kw)
+
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch("subprocess.run", side_effect=_run),
+        ):
+            MeshConvert.fbx_to_glb(self.src, auto_install=False)
+        cmd = captured["cmd"]
+        self.assertIn("--fbx-temp-dir", cmd)
+        media = cmd[cmd.index("--fbx-temp-dir") + 1]
+        self.assertFalse(os.path.exists(media), "the extraction outlived the call")
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "model.fbm")))
+
+    def test_the_converter_reads_grayscale_embeds_expanded(self):
+        """FBX2glTF reads a copy whose grayscale embeds were expanded
+        (``FbxMedia.expand_grayscale``), minted for the call and gone after it;
+        an expansion that fails costs a warning, never the conversion. What the
+        expansion buys is measured in ``TestGrayscaleMapsThroughTheConverter``.
+        """
+        copies = []
+
+        def expand(src, dst, **_kwargs):
+            copies.append(dst)
+            with open(dst, "wb") as fh:
+                fh.write(b"expanded")
+            return {"images": 2, "expanded": 1, "before": 8, "after": 8}
+
+        captured = {}
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch.object(FbxFile, "is_fbx", return_value=True),
+            patch.object(FbxMedia, "expand_grayscale", side_effect=expand),
+            patch("subprocess.run", side_effect=self._run_simulator(captured)),
+        ):
+            MeshConvert.fbx_to_glb(self.src, overwrite=True, auto_install=False)
+        read = captured["cmd"][captured["cmd"].index("-i") + 1]
+        self.assertEqual(read, copies[-1])
+        self.assertFalse(os.path.exists(read), "the expanded copy outlived the call")
+
+        captured = {}
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch.object(FbxFile, "is_fbx", return_value=True),
+            patch.object(
+                FbxMedia,
+                "expand_grayscale",
+                side_effect=ValueError("unrecognised FBX footer"),
+            ),
+            patch("subprocess.run", side_effect=self._run_simulator(captured)),
+            self.assertLogs(
+                "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+            ) as logs,
+        ):
+            MeshConvert.fbx_to_glb(self.src, overwrite=True, auto_install=False)
+        read = captured["cmd"][captured["cmd"].index("-i") + 1]
+        self.assertEqual(read, os.path.abspath(self.src))
+        self.assertTrue(any("unrecognised FBX footer" in line for line in logs.output))
+
+    def test_a_callers_own_fbx_temp_dir_is_used_and_left_alone(self):
+        own = os.path.join(self.tmp, "sdk")
+        os.makedirs(own)
+        # Both spellings the CLI accepts: a second option beside the caller's
+        # `--fbx-temp-dir=DIR` is a duplicate the parser can refuse.
+        for extra in (["--fbx-temp-dir", own], [f"--fbx-temp-dir={own}"]):
+            with self.subTest(extra=extra):
+                captured = {}
+                with (
+                    patch.object(
+                        MeshConvert, "resolve_binary", return_value=self.fake_bin
+                    ),
+                    patch("subprocess.run", side_effect=self._run_simulator(captured)),
+                ):
+                    MeshConvert.fbx_to_glb(
+                        self.src, overwrite=True, auto_install=False, extra_args=extra
+                    )
+                named = [a for a in captured["cmd"] if a.startswith("--fbx-temp-dir")]
+                self.assertEqual(named, extra[:1], "one temp dir, the caller's")
+                self.assertTrue(os.path.isdir(own), "a caller's directory is theirs")
 
     def test_lightmap_dirs_reach_the_applier(self):
         """The conversion must be able to say where the maps live NOW.
@@ -954,6 +1161,61 @@ def _write_glb_file(path, gltf, bin_chunk=b""):
         f.write(struct.pack("<I4s", len(payload), b"JSON") + payload)
         f.write(rest)
     return path
+
+
+def _convert_prebuilt(tmp, converted, **kwargs):
+    """`fbx_to_glb` with FBX2glTF stubbed by *converted*, a pre-built GLB.
+
+    Everything after the converter is real: the one edit session the preview
+    and the Scene Exporters both run.
+    """
+
+    def _run(cmd, **kw):
+        shutil.copyfile(converted, cmd[cmd.index("-o") + 1] + ".glb")
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    src = os.path.join(tmp, "in.fbx")
+    with open(src, "wb") as fh:
+        fh.write(b"fbx")
+    with (
+        unittest.mock.patch.object(
+            MeshConvert, "resolve_binary", return_value="FBX2glTF"
+        ),
+        unittest.mock.patch("subprocess.run", side_effect=_run),
+    ):
+        return MeshConvert.fbx_to_glb(src, overwrite=True, prompt=False, **kwargs)
+
+
+def _glb_pointer_channels(path):
+    """``{clip: [(pointer, times, values)]}`` for every animation in *path*.
+
+    Every clip is listed, those without a pointer channel as ``[]``, so a
+    lookup of a clip the file lacks raises instead of reading as empty. Values
+    are sized by the output accessor's type (VEC3 emissive, VEC4 base colour).
+    """
+    with MeshConvert.open_glb(path) as edit:
+        gltf, blob = edit.gltf, edit.bin_data
+
+    def read(index):
+        acc = gltf["accessors"][index]
+        per = {"SCALAR": 1, "VEC3": 3, "VEC4": 4}[acc["type"]]
+        view = gltf["bufferViews"][acc["bufferView"]]
+        off = view.get("byteOffset", 0) + acc.get("byteOffset", 0)
+        flat = struct.unpack_from(f"<{acc['count'] * per}f", blob, off)
+        return [flat[i : i + per] for i in range(0, len(flat), per)]
+
+    out = {}
+    for animation in gltf.get("animations") or []:
+        channels = out.setdefault(animation.get("name"), [])
+        for channel in animation.get("channels") or []:
+            target = channel.get("target") or {}
+            if target.get("path") != "pointer":
+                continue
+            pointer = target["extensions"]["KHR_animation_pointer"]["pointer"]
+            sampler = animation["samplers"][channel["sampler"]]
+            times = [t[0] for t in read(sampler["input"])]
+            channels.append((pointer, times, read(sampler["output"])))
+    return out
 
 
 def _converted_orm_glb(tmp, name="converted.glb"):
@@ -2426,6 +2688,81 @@ class TestGlbEditSession(unittest.TestCase):
         with open(path, "rb") as f:
             self.assertEqual(f.read(), before, "clean file must not be rewritten")
 
+    def test_prune_unreferenced_textures_keeps_the_sidecar_texture_map_honest(self):
+        """The embedded envelope names images by INDEX, and a prune after it
+        was built renumbered them out from under it.
+
+        The highlight pass drops emissive maps and prunes AFTER the envelope's
+        texture map is recorded, so every later reference named its neighbour
+        -- measured on a production GLB: 28 of 35 references pointed at the
+        wrong image, their digests stamped against those wrong bytes so the
+        verifier passed them. A reference whose image left the file goes, and
+        the envelope's own count follows it; one that named no image before the
+        prune is left as found, for the verifier to report.
+        Added: 2026-09-12
+        """
+        import base64
+        import io as iolib
+
+        from PIL import Image
+
+        def _image(name, color):
+            buf = iolib.BytesIO()
+            Image.new("RGB", (4, 4), color).save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            return {
+                "name": name,
+                "uri": f"data:image/png;base64,{b64}",
+                "mimeType": "image/png",
+            }
+
+        gltf = {
+            "asset": {"version": "2.0"},
+            # 1 = the emissive map a later applier unbound (forces the renumber)
+            "images": [
+                _image("base", (255, 0, 0)),
+                _image("emissive", (0, 255, 0)),
+                _image("normal", (0, 0, 255)),
+            ],
+            "textures": [{"source": 0}, {"source": 1}, {"source": 2}],
+            "materials": [
+                {
+                    "name": "Mat",
+                    "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+                    "normalTexture": {"index": 2},
+                }
+            ],
+            "extras": {
+                "scene_sidecar": {
+                    "textures": {
+                        "base.png": {"image": 0},
+                        "emissive.png": {"image": 1},
+                        "normal.png": {"image": 2},
+                        "stale.png": {"image": 7},
+                    },
+                    "validate": {"sections": {}, "textures": 4},
+                }
+            },
+        }
+        path = _write_glb_file(os.path.join(self.tmp, "sidecar_prune.glb"), gltf)
+        with MeshConvert.open_glb(path) as session:
+            MeshConvert.prune_glb_unreferenced_textures(session)
+
+        with MeshConvert.open_glb(path) as session:
+            out = session.gltf
+        envelope = out["extras"]["scene_sidecar"]
+        names = [image["name"] for image in out["images"]]
+        refs = envelope["textures"]
+        self.assertEqual(
+            {path: names[refs[path]["image"]] for path in ("base.png", "normal.png")},
+            {"base.png": "base", "normal.png": "normal"},
+        )
+        self.assertNotIn("emissive.png", refs, "its image left the file")
+        self.assertEqual(
+            refs.get("stale.png"), {"image": 7}, "not the prune's to erase"
+        )
+        self.assertEqual(envelope["validate"]["textures"], 3)
+
     def test_prune_unreferenced_textures_honours_the_shadow_web_manifest(self):
         """``extras.shadow_web`` binds textures by INDEX, and no material
         samples the horizon map -- so the prune both deleted it and renumbered
@@ -2628,6 +2965,24 @@ class TestGlbEditSession(unittest.TestCase):
         self.assertEqual(open(path, "rb").read(), before)
 
 
+class TestEncodeOrder(unittest.TestCase):
+    """The GLB texture pass starts its longest encode first (2026-09-14): a
+    pool fed in insertion order ran a 260 s UASTC+RDO encode alone at the
+    tail of a 302 s pass."""
+
+    def test_jobs_are_ordered_largest_source_first(self):
+        jobs = {
+            ("a", False, None): b"x" * 10,
+            ("b", False, None): b"x" * 300,
+            ("c", True, None): b"x" * 20,
+        }
+        self.assertEqual(
+            MeshConvert._largest_first(jobs),
+            [("b", False, None), ("c", True, None), ("a", False, None)],
+        )
+        self.assertEqual(MeshConvert._largest_first({}), [])
+
+
 class TestDedupeGlbImages(unittest.TestCase):
     """One copy per distinct payload, however many materials wired the file.
 
@@ -2698,6 +3053,27 @@ class TestDedupeGlbImages(unittest.TestCase):
         dropped = MeshConvert.dedupe_glb_images(path)
         self.assertGreater(dropped["bytes"], 0)
         self.assertLess(os.path.getsize(path), before)
+
+    def test_the_sidecar_texture_map_follows_the_survivor(self):
+        """A reference to the dropped twin names bytes the survivor still
+        holds, so it follows the survivor instead of leaving with the copy.
+        Added: 2026-09-12
+        """
+        path = self._twinned()
+        with MeshConvert.open_glb(path) as session:
+            session.gltf["extras"] = {
+                "scene_sidecar": {
+                    "textures": {"a.png": {"image": 0}, "b.png": {"image": 1}},
+                    "validate": {"sections": {}, "textures": 2},
+                }
+            }
+            session.dirty = True
+        MeshConvert.dedupe_glb_images(path)
+        envelope = MeshConvert._read_glb(path).gltf["extras"]["scene_sidecar"]
+        self.assertEqual(
+            envelope["textures"], {"a.png": {"image": 0}, "b.png": {"image": 0}}
+        )
+        self.assertEqual(envelope["validate"]["textures"], 2)
 
     def test_images_that_merely_share_a_name_are_left_alone(self):
         """Content-addressed, never name-addressed: two DIFFERENT maps exported
@@ -3233,7 +3609,12 @@ class TestSceneSidecar(unittest.TestCase):
         envelope = self._envelope({"emissive": {"m": {"color": [0, 1, 0]}}})
 
         def fake_run(cmd, **kwargs):
-            self._write_glb("model.glb", materials=[{"name": "m"}])
+            # FBX2glTF writes where `-o` points; fbx_to_glb moves it onto dst.
+            self._write_glb("converted.glb", materials=[{"name": "m"}])
+            shutil.copyfile(
+                os.path.join(self.tmp, "converted.glb"),
+                cmd[cmd.index("-o") + 1] + ".glb",
+            )
 
             class R:
                 returncode = 0
@@ -3450,7 +3831,7 @@ class TestVerifyGlb(unittest.TestCase):
     def test_declared_takes_with_no_animations_fail_verification(self):
         """The handoff promising clips the file cannot play is a defect.
 
-        Measured on a production deliverable (VDATS_ASSEMBLY, 2026-08-30):
+        Measured on a production deliverable (PROPS_ASSEMBLY, 2026-08-30):
         ``data_export.fbx_takes`` named 12 shots, the animations array was
         EMPTY -- the FBX had been written with bake/takes disarmed -- and
         every check here passed, because textures, sections and envelope were
@@ -4273,6 +4654,60 @@ class TestGlbLightmaps(unittest.TestCase):
             "objects": entries,
         }
 
+    def _native_export(self, web_holder="scene"):
+        """A GLB shaped like blendertk's native glTF export of one baked floor.
+
+        Every copy is the scene's: the ``floor`` marker and the data_export
+        manifest name the EXR at 1.0 with the authoring folder as ``dir``.
+        *web_holder* is where ``lightmap_web`` rides: ``"scene"`` (a native
+        export's first scene extras, as a JSON string), ``"root"`` (as the
+        appliers write it) or ``None``.
+        """
+        web = {
+            "version": 1,
+            "carrier": "occlusion",
+            "materials": {
+                "floor_mat": {"map": "floor_mat_Lightmap.png", "intensity": 3.191705}
+            },
+        }
+        marker = {
+            "map": "floor_mat_Lightmap.exr",
+            "dir": self.tmp,
+            "uv_set": "lightmap",
+            "intensity": 1.0,
+        }
+        manifest = {
+            "version": 1,
+            "dir": self.tmp,
+            "objects": [
+                {"name": "floor", "map": "floor_mat_Lightmap.exr", "intensity": 1.0}
+            ],
+        }
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scenes": [{"nodes": [0, 1]}],
+            "nodes": [
+                {
+                    "name": "floor",
+                    "mesh": 0,
+                    "extras": {"lightmapInfo": json.dumps(marker)},
+                },
+                {
+                    "name": "data_export",
+                    "extras": {"lightmap_metadata": json.dumps(manifest)},
+                },
+            ],
+            "meshes": [
+                {"primitives": [{"attributes": {"POSITION": 0}, "material": 0}]}
+            ],
+            "materials": [{"name": "floor_mat"}],
+        }
+        if web_holder == "scene":
+            gltf["scenes"][0]["extras"] = {"lightmap_web": json.dumps(web)}
+        elif web_holder == "root":
+            gltf["extras"] = {"lightmap_web": web}
+        return self._glb(gltf, name="native.glb")
+
     # ------------------------------------------------------------------ encode
     def test_encode_golden_constant(self):
         """The cross-implementation pin: constant 0.5 -> scalar 0.5, texel 255."""
@@ -4421,7 +4856,7 @@ class TestGlbLightmaps(unittest.TestCase):
         ``fromFBX.userProperties.lightmapInfo`` markers and the data_export
         node are written EARLIER, by the Maya bake pass, before normalisation
         exists. Measured on a client hand-off: lightmap_web said
-        ``OFFICE_ENV_LightMap.png`` @ 13.65625 while all the others still said
+        ``ROOM_ENV_LightMap.png`` @ 13.65625 while all the others still said
         ``.exr`` @ 1.0 -- so a consumer trusting one of them rendered the bake
         ~13.7x too dark, and the wrong copies are the ones found FIRST (the
         per-node markers sit next to the mesh).
@@ -4538,13 +4973,136 @@ class TestGlbLightmaps(unittest.TestCase):
         )
         self.assertEqual(marker["map"], authoritative["map"])
 
+    def test_the_data_export_manifest_says_what_shipped_too(self):
+        """The scene-wide manifest is corrected like the per-node markers.
+
+        It is the copy a reader holding only the manifest acts on, and it was
+        left naming the ``.exr`` at the pre-normalisation intensity: the
+        correction was keyed by node name, and no node is named after an entry
+        of the carrier's manifest. An entry this GLB does not bind is left as
+        found -- a selection export still carries the whole scene's manifest.
+        """
+        exr = self._exr()
+        bound = {
+            "name": "room",
+            "map": os.path.basename(exr),
+            "uvIndex": 1,
+            "intensity": 1.0,
+        }
+        unbound = {"name": "not_exported", "map": "other.exr", "intensity": 1.0}
+        glb = self._glb(self._scene(self._manifest([dict(bound), dict(unbound)])))
+
+        self.assertEqual(len(MeshConvert.apply_glb_lightmaps(glb)), 1)
+        with MeshConvert.open_glb(glb) as edit:
+            web = edit.gltf["extras"]["lightmap_web"]["materials"]
+            authoritative = next(iter(web.values()))
+        self.assertNotEqual(
+            authoritative["intensity"],
+            bound["intensity"],
+            "fixture is inert -- seed an intensity the encode will not reproduce",
+        )
+        manifest = MeshConvert.read_glb_lightmap_manifest(glb)
+        entries = {e["name"]: e for e in manifest["objects"]}
+        self.assertEqual(entries["room"]["map"], authoritative["map"])
+        self.assertEqual(entries["room"]["intensity"], authoritative["intensity"])
+        self.assertEqual(entries["room"]["uvIndex"], 1, "the rest of the record")
+        self.assertEqual(entries["not_exported"], unbound, "never guessed at")
+
+    def test_a_manifest_entry_is_matched_to_its_node_namespace_tolerantly(self):
+        """An entry is corrected through the binder's own match rule.
+
+        A manifest naming "room" binds the GLB node "NS:room"; comparing names
+        would miss on exactly the namespaced scenes that tolerance exists for,
+        and miss silently.
+        """
+        exr = self._exr()
+        entry = {"name": "room", "map": os.path.basename(exr), "intensity": 1.0}
+        scene = self._scene(self._manifest([entry]))
+        scene["nodes"][0]["name"] = "NS:room"
+        glb = self._glb(scene)
+
+        self.assertEqual(len(MeshConvert.apply_glb_lightmaps(glb)), 1)
+        with MeshConvert.open_glb(glb) as edit:
+            web = edit.gltf["extras"]["lightmap_web"]["materials"]
+            authoritative = next(iter(web.values()))
+        (shipped,) = MeshConvert.read_glb_lightmap_manifest(glb)["objects"]
+        self.assertEqual(shipped["name"], "room", "published names are kept")
+        self.assertEqual(shipped["map"], authoritative["map"])
+        self.assertEqual(shipped["intensity"], authoritative["intensity"])
+
+    def test_a_native_export_is_fixed_from_its_own_lightmap_web(self):
+        """blendertk's native glTF export never runs the applier, so every copy
+        it ships is the scene's -- measured in Blender 5.1: ``floor`` said
+        ``floor_mat_Lightmap.exr`` @ 1.0 with the absolute authoring folder as
+        ``dir``, against ``lightmap_web``'s ``floor_mat_Lightmap.png`` @
+        3.191705. The file holds all the fix needs -- the material each node
+        wears, and that material's lightmap -- so it feeds itself.
+        """
+        glb = self._native_export()
+        self.assertEqual(MeshConvert.fix_glb_lightmap_metadata(glb), 2)
+        with MeshConvert.open_glb(glb) as edit:
+            marker = json.loads(edit.gltf["nodes"][0]["extras"]["lightmapInfo"])
+            raw = json.dumps(edit.gltf)
+        self.assertEqual(marker["map"], "floor_mat_Lightmap.png")
+        self.assertEqual(marker["intensity"], 3.191705)
+        self.assertEqual(marker["uv_set"], "lightmap")
+        self.assertNotIn("dir", marker)
+        manifest = MeshConvert.read_glb_lightmap_manifest(glb)
+        self.assertNotIn("dir", manifest)
+        (entry,) = manifest["objects"]
+        self.assertEqual(
+            (entry["map"], entry["intensity"]), ("floor_mat_Lightmap.png", 3.191705)
+        )
+        self.assertNotIn(
+            self.tmp.replace("\\", ""),
+            raw.replace("\\", ""),
+            "the authoring directory shipped inside the GLB",
+        )
+        self.assertEqual(MeshConvert.fix_glb_lightmap_metadata(glb), 0)
+        # Every reader probes where the viewer does, not only the root.
+        self.assertTrue(MeshConvert.verify_glb(glb)["lightmap"])
+
+    def test_with_no_lightmap_web_there_is_nothing_to_fix_against(self):
+        """No embedded lightmap, no authority: the file is left as found, hints
+        included -- the applier's own gate (a run that bound nothing keeps the
+        hints that locate the maps)."""
+        glb = self._native_export(web_holder=None)
+        with MeshConvert.open_glb(glb) as edit:
+            before = json.dumps(edit.gltf, sort_keys=True)
+        self.assertEqual(MeshConvert.fix_glb_lightmap_metadata(glb), 0)
+        with MeshConvert.open_glb(glb) as edit:
+            self.assertEqual(json.dumps(edit.gltf, sort_keys=True), before)
+
+    def test_a_node_wearing_two_different_lightmaps_is_not_guessed_at(self):
+        """Two primitives, two materials, two maps: the node's marker can name
+        one, and naming either puts the other's lighting on record. Its values
+        are left as found; its authoring path still goes."""
+        glb = self._native_export(web_holder="root")
+        with MeshConvert.open_glb(glb) as edit:
+            gltf = edit.gltf
+            gltf["materials"].append({"name": "trim_mat"})
+            prims = gltf["meshes"][0]["primitives"]
+            prims.append({"attributes": {"POSITION": 0}, "material": 1})
+            gltf["extras"]["lightmap_web"]["materials"]["trim_mat"] = {
+                "map": "trim_Lightmap.png",
+                "intensity": 2.0,
+            }
+            edit.dirty = True
+        MeshConvert.fix_glb_lightmap_metadata(glb)
+        with MeshConvert.open_glb(glb) as edit:
+            marker = json.loads(edit.gltf["nodes"][0]["extras"]["lightmapInfo"])
+        self.assertEqual(
+            (marker["map"], marker["intensity"]), ("floor_mat_Lightmap.exr", 1.0)
+        )
+        self.assertNotIn("dir", marker)
+
     def test_top_level_extras_marker_shape_is_also_corrected(self):
         """There are TWO on-disk shapes of the per-node marker, both real.
 
         FBX2glTF nests user properties under
         ``extras.fromFBX.userProperties`` (the Maya route). blendertk's NATIVE
         glTF export writes the same marker as a TOP-LEVEL node extra -- verified
-        on a real deliverable, ``OFFICE_ENV_both.glb``, whose nodes carry
+        on a real deliverable, ``ROOM_ENV_both.glb``, whose nodes carry
         ``extras: {currentUVSet, lightmapInfo}`` with the same stale
         ``.exr`` @ ``intensity 1.0``. Walking only the nested shape skipped every
         Blender-authored GLB silently, and this is public API the preview server
@@ -4627,7 +5185,7 @@ class TestGlbLightmaps(unittest.TestCase):
 
         A deliverable can arrive carrying per-node markers and NO manifest at
         all -- blendertk's native glTF export writes exactly that today (checked
-        on ``OFFICE_ENV_both.glb``: 7 nodes with a top-level ``lightmapInfo``,
+        on ``ROOM_ENV_both.glb``: 7 nodes with a top-level ``lightmapInfo``,
         no ``lightmap_metadata`` anywhere). There is nothing to bind and nothing
         authoritative to correct the markers AGAINST, so they are left as found
         rather than guessed at or stripped, and the repair belongs in the
@@ -4804,7 +5362,7 @@ class TestGlbLightmaps(unittest.TestCase):
         glb = self._glb(
             self._scene(
                 self._manifest([{"name": "room", "map": os.path.basename(exr)}]),
-                objects=("VDATS_DA:room",),
+                objects=("PROPS_DA:room",),
             )
         )
         records = MeshConvert.apply_glb_lightmaps(glb)
@@ -4818,7 +5376,7 @@ class TestGlbLightmaps(unittest.TestCase):
         glb = self._glb(
             self._scene(
                 self._manifest(
-                    [{"name": "VDATS_DA:room", "map": os.path.basename(exr)}]
+                    [{"name": "PROPS_DA:room", "map": os.path.basename(exr)}]
                 ),
                 objects=("room",),
             )
@@ -5029,7 +5587,7 @@ class TestGlbLightmaps(unittest.TestCase):
         displacing it is worth saying -- but the warning is per SOURCE material,
         so a room whose pieces share one material cannot bury every other line in
         the log under N copies of the same sentence (46 of them, measured on the
-        OFFICE_ENV module).
+        ROOM_ENV module).
         """
         self._exr("atlas.exr")
         gltf = self._scene(
@@ -5256,7 +5814,14 @@ class _FakeKtx2Encoder:
         self.calls = []
 
     def encode(
-        self, source, output, codec="UASTC", srgb=True, mipmaps=True, quality=None
+        self,
+        source,
+        output,
+        codec="UASTC",
+        srgb=True,
+        mipmaps=True,
+        quality=None,
+        uastc_rdo=None,
     ):
         self.calls.append(
             {
@@ -5264,11 +5829,47 @@ class _FakeKtx2Encoder:
                 "srgb": srgb,
                 "quality": quality,
                 "size": getattr(source, "size", None),
+                "rdo": uastc_rdo,
             }
         )
         with open(output, "wb") as fh:
             fh.write(self.MAGIC + codec.encode("ascii"))
         return output
+
+
+class TestWebDeliveryDials(unittest.TestCase):
+    """The secondary ceiling and the UASTC RDO lambda are policy keys too:
+    unspecified takes the policy (off), a value is the caller's decision, and
+    ``0`` on the lambda is off rather than a lambda. Added: 2026-09-13"""
+
+    def test_defaults_and_overrides(self):
+        policy = MeshConvert.web_delivery_texture_params()
+        self.assertEqual(policy["secondary_max_size"], 0)
+        self.assertIsNone(policy["uastc_rdo"])
+        chosen = MeshConvert.web_delivery_texture_params(
+            secondary_max_size=2048, uastc_rdo=1.0
+        )
+        self.assertEqual(
+            (chosen["secondary_max_size"], chosen["uastc_rdo"]), (2048, 1.0)
+        )
+        self.assertIsNone(
+            MeshConvert.web_delivery_texture_params(uastc_rdo=0)["uastc_rdo"]
+        )
+        self.assertIsNone(MeshConvert._uastc_rdo_for("data", None))
+        self.assertEqual(MeshConvert._uastc_rdo_for("data", 2.0), 2.0)
+        self.assertEqual(MeshConvert._uastc_rdo_for("normal", 2.0), 0.75)
+        self.assertEqual(MeshConvert._uastc_rdo_for("normal", 0.5), 0.5)
+
+    def test_the_pass_description_names_the_dials(self):
+        summary = {"images": 3, "bytes_before": 3e6, "bytes_after": 1e6, "resized": 1}
+        text = MeshConvert.describe_texture_pass(
+            summary, "KTX2", 4096, secondary_max_size=2048, uastc_rdo=1.0
+        )
+        self.assertIn("data maps capped at 2048px", text)
+        self.assertIn("UASTC RDO lambda 1", text)
+        self.assertNotIn(
+            "capped", MeshConvert.describe_texture_pass(summary, "KTX2", 4096)
+        )
 
 
 class TestWebDeliveryTexturePolicy(unittest.TestCase):
@@ -5292,7 +5893,37 @@ class TestWebDeliveryTexturePolicy(unittest.TestCase):
         params = MeshConvert.web_delivery_texture_params(
             image_format="KTX2", max_size=1024
         )
-        self.assertEqual(params, {"image_format": "KTX2", "max_size": 1024})
+        self.assertEqual(
+            params,
+            {
+                "image_format": "KTX2",
+                "max_size": 1024,
+                "ktx2_fallback": False,
+                "secondary_max_size": 0,
+                "uastc_rdo": None,
+            },
+        )
+
+    def test_ktx2_ships_without_core_readable_twins(self):
+        """A web deliverable carries no PNG/JPEG copy beside each KTX2 image.
+
+        The twin exists for stock importers, and a web deliverable's consumer is
+        a basisu-capable viewer. Measured on the production 4K assembly: 145.8 MB
+        of fallbacks beside 123.1 MB of KTX2 -- 48% of a 302.6 MB GLB spent on a
+        second copy of every map nobody loads.
+        """
+        self.assertIs(MeshConvert.web_delivery_texture_params()["ktx2_fallback"], False)
+
+    def test_a_caller_may_still_ask_for_the_twins(self):
+        """The third part overrides like the other two: an exporter whose GLB
+        must also open in Blender or Unreal passes True, and None stays the
+        policy."""
+        asked = MeshConvert.web_delivery_texture_params(ktx2_fallback=True)
+        unspecified = MeshConvert.web_delivery_texture_params(ktx2_fallback=None)
+        self.assertIs(asked["ktx2_fallback"], True)
+        self.assertIs(
+            unspecified["ktx2_fallback"], MeshConvert.WEB_DELIVERY_KTX2_FALLBACK
+        )
 
     def test_an_unspecified_half_falls_back_to_the_policy_not_to_nothing(self):
         """`None` means "unspecified" on both halves. The trap this pins: an
@@ -5303,6 +5934,9 @@ class TestWebDeliveryTexturePolicy(unittest.TestCase):
             {
                 "image_format": MeshConvert.WEB_DELIVERY_FORMAT,
                 "max_size": MeshConvert.WEB_DELIVERY_MAX_SIZE,
+                "ktx2_fallback": MeshConvert.WEB_DELIVERY_KTX2_FALLBACK,
+                "secondary_max_size": MeshConvert.WEB_DELIVERY_SECONDARY_MAX_SIZE,
+                "uastc_rdo": MeshConvert.WEB_DELIVERY_UASTC_RDO,
             },
         )
 
@@ -5313,16 +5947,23 @@ class TestWebDeliveryTexturePolicy(unittest.TestCase):
             MeshConvert.web_delivery_texture_params(max_size=0)["max_size"], 0
         )
 
-    def test_the_ceiling_is_what_the_optimizer_itself_defaults_to(self):
+    def test_the_policy_is_what_the_optimizer_itself_defaults_to(self):
         """Belt and braces on the seam that made this necessary: the preview
         used to inherit `optimize_glb_textures`' own default, so a change there
         silently changed the deliverable. They must agree while both exist."""
         import inspect
 
         signature = inspect.signature(MeshConvert.optimize_glb_textures)
-        self.assertEqual(
-            signature.parameters["max_size"].default, MeshConvert.WEB_DELIVERY_MAX_SIZE
-        )
+        for name, value in MeshConvert.web_delivery_texture_params().items():
+            with self.subTest(name=name):
+                self.assertEqual(signature.parameters[name].default, value)
+
+    def test_the_retired_worker_cap_reads_the_shared_encode_policy(self):
+        """``OPTIMIZE_WORKERS`` stays one release as an alias of the cap that
+        replaced it, and follows that cap rather than a copy of its value."""
+        self.assertEqual(MeshConvert.OPTIMIZE_WORKERS, ImgUtils.ENCODE_WORKERS)
+        with patch.object(ImgUtils, "ENCODE_WORKERS", 3):
+            self.assertEqual(MeshConvert.OPTIMIZE_WORKERS, 3)
 
 
 class TestOptimizeGlbKtx2(unittest.TestCase):
@@ -5366,12 +6007,69 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
             edit.bin_data[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
         )
 
+    def _pbr_glb(self, size=(256, 256)):
+        """Color + normal + metallic-roughness on one material, each its own image."""
+        return self._glb(
+            {
+                "asset": {"version": "2.0"},
+                "images": [
+                    {"name": "color", "uri": self._png_uri(size, (200, 60, 40))},
+                    {"name": "normal", "uri": self._png_uri(size, (127, 127, 255))},
+                    {"name": "orm", "uri": self._png_uri(size, (255, 128, 0))},
+                ],
+                "textures": [{"source": 0}, {"source": 1}, {"source": 2}],
+                "materials": [
+                    {
+                        "pbrMetallicRoughness": {
+                            "baseColorTexture": {"index": 0},
+                            "metallicRoughnessTexture": {"index": 2},
+                        },
+                        "normalTexture": {"index": 1},
+                    }
+                ],
+            }
+        )
+
     # -------------------------------------------------------------------- tests
+    def test_the_secondary_ceiling_resizes_the_data_maps_only(self):
+        """A lower ceiling for the packed data maps: the ORM takes it, color and
+        normal keep the primary -- and the primary still bounds it.
+        Added: 2026-09-13"""
+        MeshConvert.optimize_glb_textures(
+            self._pbr_glb(), max_size=256, image_format="KTX2", secondary_max_size=128
+        )
+        self.assertEqual(
+            sorted((c["size"], c["codec"]) for c in self.fake.calls),
+            [((128, 128), "UASTC"), ((256, 256), "ETC1S"), ((256, 256), "UASTC")],
+        )
+        self.fake.calls.clear()
+        MeshConvert.optimize_glb_textures(
+            self._pbr_glb(), max_size=128, image_format="KTX2", secondary_max_size=512
+        )
+        self.assertEqual({c["size"] for c in self.fake.calls}, {(128, 128)})
+
+    def test_uastc_rdo_reaches_the_data_maps_and_is_capped_for_normals(self):
+        """The dial's lambda rides every UASTC encode -- a normal map capped at
+        UASTC_RDO_NORMAL_MAX (toktx's own guidance) -- and never an ETC1S one.
+        Off, the keyword is not even passed. Added: 2026-09-13"""
+        MeshConvert.optimize_glb_textures(
+            self._pbr_glb(), max_size=256, image_format="KTX2", uastc_rdo=2.0
+        )
+        self.assertEqual(
+            sorted({(c["codec"], c["srgb"], c["rdo"]) for c in self.fake.calls}),
+            [("ETC1S", True, None), ("UASTC", False, 0.75), ("UASTC", False, 2.0)],
+        )
+        self.fake.calls.clear()
+        MeshConvert.optimize_glb_textures(
+            self._pbr_glb(), max_size=256, image_format="KTX2"
+        )
+        self.assertEqual({c["rdo"] for c in self.fake.calls}, {None})
+
     def test_per_slot_codecs_and_fallback_binding(self):
-        """Color -> ETC1S/sRGB, normal -> UASTC/linear; each texture keeps a
-        core-readable fallback ``source`` (JPEG for color, PNG for normal), so
-        KHR_texture_basisu stays out of extensionsRequired and the GLB is no
-        terminal delivery artifact — a stock importer reads the fallbacks."""
+        """Color -> ETC1S/sRGB, normal -> UASTC/linear; with fallbacks asked
+        for, each texture keeps a core-readable ``source`` (JPEG for color, PNG
+        for normal), so KHR_texture_basisu stays out of extensionsRequired and
+        a stock importer reads the fallbacks."""
         path = self._glb(
             {
                 "asset": {"version": "2.0"},
@@ -5392,7 +6090,7 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
             }
         )
         summary = MeshConvert.optimize_glb_textures(
-            path, max_size=64, image_format="KTX2", quality=60
+            path, max_size=64, image_format="KTX2", quality=60, ktx2_fallback=True
         )
         self.assertEqual(summary["images"], 2)
 
@@ -5435,9 +6133,10 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
             "every binding has a core-readable fallback",
         )
 
-    def test_pure_delivery_mode_requires_basisu(self):
-        """ktx2_fallback=False is the old contract: no fallback source, and the
-        extension hard-requires a basisu-capable viewer (extensionsRequired)."""
+    def test_pure_delivery_is_the_default_and_requires_basisu(self):
+        """No ``ktx2_fallback`` argument = the web-delivery policy: no fallback
+        source, and the extension hard-requires a basisu-capable viewer
+        (extensionsRequired)."""
         path = self._glb(
             {
                 "asset": {"version": "2.0"},
@@ -5448,9 +6147,7 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
                 ],
             }
         )
-        MeshConvert.optimize_glb_textures(
-            path, max_size=64, image_format="KTX2", ktx2_fallback=False
-        )
+        MeshConvert.optimize_glb_textures(path, max_size=64, image_format="KTX2")
         gltf = MeshConvert._read_glb(path).gltf
         self.assertEqual(len(gltf["images"]), 1, "no fallback appended")
         texture = gltf["textures"][0]
@@ -5480,7 +6177,9 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
                 ],
             }
         )
-        MeshConvert.optimize_glb_textures(path, max_size=0, image_format="KTX2")
+        MeshConvert.optimize_glb_textures(
+            path, max_size=0, image_format="KTX2", ktx2_fallback=True
+        )
         gltf = MeshConvert._read_glb(path).gltf
         self.assertEqual(self.fake.calls[0]["codec"], "ETC1S")
         fallback = gltf["images"][gltf["textures"][0]["source"]]
@@ -5558,7 +6257,9 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         the lightmap on the core path and declares no extension for it at all.
         """
         path = self._ktx2_lightmap_glb()
-        MeshConvert.optimize_glb_textures(path, max_size=64, image_format="KTX2")
+        MeshConvert.optimize_glb_textures(
+            path, max_size=64, image_format="KTX2", ktx2_fallback=True
+        )
 
         gltf = MeshConvert._read_glb(path).gltf
         self.assertEqual(gltf["images"][0]["mimeType"], "image/ktx2")
@@ -5626,7 +6327,9 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         gltf = MeshConvert._read_glb(path).gltf
         self.assertIn("EXT_texture_webp", gltf["extensionsUsed"])
 
-        MeshConvert.optimize_glb_textures(path, max_size=64, image_format="KTX2")
+        MeshConvert.optimize_glb_textures(
+            path, max_size=64, image_format="KTX2", ktx2_fallback=True
+        )
         gltf = MeshConvert._read_glb(path).gltf
         texture = gltf["textures"][0]
         self.assertNotIn("EXT_texture_webp", texture["extensions"])
@@ -5762,7 +6465,7 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
             }
         )
         summary = MeshConvert.optimize_glb_textures(
-            path, max_size=64, image_format="KTX2"
+            path, max_size=64, image_format="KTX2", ktx2_fallback=True
         )
         self.assertEqual(summary["images"], 1)
         self.assertEqual(len(self.fake.calls), 1)
@@ -6320,7 +7023,7 @@ class TestApplyGlbVisibility(unittest.TestCase):
             bin_chunk=b"\x00" * 16,
         )
 
-    def _scene(self, fade=True, **kw):
+    def _scene(self, fade=True, mirror=True, **kw):
         """The reported scene, trimmed to the two shots that show the bug.
 
         ``fade=False`` drops the opacity ramp, leaving a plain keyed-visibility
@@ -6329,9 +7032,13 @@ class TestApplyGlbVisibility(unittest.TestCase):
         DIFFERENTLY on purpose: a node with a ramp has to be PRESENT for its
         fade (see ``_presence_keys``), so its gate does not switch where the
         mirrored boolean would. Tests about the switch use the plain shape;
-        tests about the fade use this one.
+        tests about the fade use this one. ``mirror=False`` drops the mirrored
+        visibility instead, leaving the ramp as the only presence channel -- a
+        hand-keyed opacity that no producer mirrored.
         """
-        track = {"node": "FAILED_CMPT_LOC", "visibility": self.FAILED}
+        track = {"node": "FAILED_CMPT_LOC"}
+        if mirror:
+            track["visibility"] = self.FAILED
         if fade:
             track["opacity"] = [[8, 0.0], [23, 1.0], [1000, 1.0], [1015, 0.0]]
         return self._glb(
@@ -6604,6 +7311,25 @@ class TestApplyGlbVisibility(unittest.TestCase):
         self.assertEqual(values[0], (1.0, 1.0, 1.0))
         self.assertEqual(values[-1], (0.0, 0.0, 0.0))
 
+    def test_a_step_sampler_reads_its_own_key_at_the_key_time(self):
+        """glTF STEP: constant from a key UNTIL the next one, so at exactly the
+        change point the value is the new key's, not the previous key's. The
+        upper-key search used bisect_left, which at an exact interior key time
+        paired the key with its predecessor and read the hold one key late --
+        a false 1.0 deviation on every gate a production accuracy check
+        evaluated at its own change points. Added: 2026-09-13"""
+        times = [0.0, 1.0, 2.0]
+        values = [(0.0,), (1.0,), (1.0,)]
+
+        def evaluate(at, interpolation):
+            return GlbClips._evaluate(times, values, at, interpolation, False)
+
+        self.assertEqual(evaluate(0.999, "STEP"), (0.0,))
+        self.assertEqual(evaluate(1.0, "STEP"), (1.0,))
+        self.assertEqual(evaluate(1.5, "STEP"), (1.0,))
+        self.assertEqual(evaluate(1.0, "LINEAR"), (1.0,))
+        self.assertEqual(evaluate(0.5, "LINEAR"), (0.5,))
+
     def test_a_clip_the_object_is_visible_through_costs_no_channel(self):
         path = self._glb(
             tracks={
@@ -6681,6 +7407,82 @@ class TestApplyGlbVisibility(unittest.TestCase):
         summary = MeshConvert.apply_glb_visibility(path)
 
         self.assertEqual(summary["nodes"], 1)
+        _n, _p, times, values, _i = self._channels(path, "Take 001")[0]
+        self.assertEqual(values, [(1.0, 1.0, 1.0), (0.0, 0.0, 0.0)])
+        self.assertEqual(times, [0.0, (40 - 10) / self.FPS])
+
+    def test_a_fade_nobody_mirrored_gates_exactly_like_its_mirrored_twin(self):
+        """Presence is a property of the AUTHORED channels, not a producer's chore.
+
+        A hand-keyed opacity carries no mirrored visibility unless an export
+        repair wrote one first, and whether one had depended on which producer
+        ran before the track walk. The ramp already decides where a fading node
+        is present (``_presence_keys``), so the mirror is not what the gate may
+        hinge on: both files must gate the same, clip for clip.
+        """
+        mirrored = self._scene(fade=True)
+        bare = self._scene(fade=True, mirror=False, name="bare.glb")
+        self.assertIsNotNone(MeshConvert.apply_glb_visibility(mirrored))
+        self.assertIsNotNone(
+            MeshConvert.apply_glb_visibility(bare), "an unmirrored fade was not gated"
+        )
+        # Shot_1 opens on the ramp, so a fading node is present from that clip's
+        # zero and gets no gate there; the fade-out in Shot_5 is where one switches.
+        self.assertTrue(self._channels(bare, "Shot_5"), "a vacuous comparison")
+        for clip in ("Shot_1", "Shot_5", "Shot_7"):
+            with self.subTest(clip=clip):
+                self.assertEqual(
+                    self._channels(bare, clip), self._channels(mirrored, clip)
+                )
+
+    def test_keys_sharing_a_frame_resolve_in_authored_order(self):
+        """A cut authored as two keys on one frame: the later key is the state
+        from that frame on, whichever way it switches -- the rule
+        ``_strictly_increasing`` already applies to a tie. Sorting by value as
+        well made every one-frame cut to hidden read as visible."""
+        cut_out = MeshConvert._visibility_runs(
+            [[10, 1.0], [40, 1.0], [40, 0.0]], (0.0, 60.0)
+        )
+        self.assertEqual(cut_out, [(0.0, 1.0), (40.0, 0.0)])
+        cut_in = MeshConvert._visibility_runs(
+            [[10, 0.0], [40, 0.0], [40, 1.0]], (0.0, 60.0)
+        )
+        self.assertEqual(cut_in, [(0.0, 0.0), (40.0, 1.0)])
+
+    def test_a_fade_that_cuts_to_zero_on_one_frame_is_absent_from_the_cut(self):
+        """A ramp can drop to zero on a single frame. Its presence runs then put
+        the pre-cut and post-cut states on that frame, and only their authored
+        order says the node is gone from it -- resolved by value, it stayed
+        present (at zero alpha) until the next key."""
+        track = {
+            "node": "FADER",
+            "opacity": [[0, 0.0], [10, 1.0], [20, 1.0], [20, 0.0], [30, 0.0]],
+        }
+        runs = MeshConvert._visibility_runs(
+            MeshConvert._presence_keys(track), (0.0, 40.0)
+        )
+        self.assertEqual(runs, [(0.0, 1.0), (20.0, 0.0)])
+
+    def test_a_stepped_opacity_with_no_mirror_gates_where_a_mirror_would(self):
+        """Not every opacity is a fade: a cut is a boolean in float clothing, and
+        with no visibility beside it the opacity keys ARE the presence channel,
+        read by the rule every mirror writer applies (``> 0``). Run on the
+        no-takes path, whose window is the presence keys' own extent."""
+        path = self._glb(
+            tracks={
+                "version": 1,
+                "fps": self.FPS,
+                "tracks": [
+                    {"node": "GATE", "opacity": [[10, 1.0], [40, 1.0], [40, 0.0]]}
+                ],
+            },
+            takes=[],
+            animations=[("Take 001", 1.0)],
+            nodes=[{"name": "GATE"}],
+        )
+        summary = MeshConvert.apply_glb_visibility(path)
+
+        self.assertIsNotNone(summary, "an opacity-only cut was not gated")
         _n, _p, times, values, _i = self._channels(path, "Take 001")[0]
         self.assertEqual(values, [(1.0, 1.0, 1.0), (0.0, 0.0, 0.0)])
         self.assertEqual(times, [0.0, (40 - 10) / self.FPS])
@@ -6766,6 +7568,48 @@ class TestApplyGlbVisibility(unittest.TestCase):
         # bogus one -- the reader falls back to the window start.
         self.assertNotIn("Quiet", spans)
         self.assertEqual(MeshConvert.clip_spans([], []), {})
+
+    def test_clip_spans_can_ask_each_window_instead_of_listing_keys(self):
+        """A DCC that can seek its curves answers per window (``key_spans``)
+        rather than handing over every key -- a production bake is millions of
+        them, 10 s a pass to list. Same answer, same take parsing; the whole
+        timeline is the unbounded window."""
+        frames = [0, 8, 23, 1000, 1015, 2575]
+        takes = [
+            {"name": "Shot_1", "start": 7, "end": 100},
+            {"name": "Shot_5", "start": 915, "end": 1015},
+            {"name": "Quiet", "start": 1200, "end": 1300},
+            {"name": "Broken"},
+        ]
+        asked = []
+
+        def key_spans(windows):
+            asked.extend(windows)
+            out = []
+            for start, end in windows:
+                inside = [
+                    f
+                    for f in frames
+                    if (start is None or f >= start) and (end is None or f <= end)
+                ]
+                out.append((min(inside), max(inside)) if inside else None)
+            return out
+
+        self.assertEqual(
+            MeshConvert.clip_spans((), takes, key_spans=key_spans),
+            MeshConvert.clip_spans(frames, takes),
+        )
+        self.assertEqual(
+            asked, [(None, None), (7.0, 100.0), (915.0, 1015.0), (1200.0, 1300.0)]
+        )
+        pinned = MeshConvert.clip_spans(
+            (), takes, stack_range=(33, 1989), key_spans=key_spans
+        )
+        self.assertEqual(pinned[MeshConvert.DEFAULT_CLIP_SPAN], [33.0, 1989.0])
+        self.assertEqual(pinned["Shot_1"], [8.0, 23.0])
+        self.assertEqual(
+            MeshConvert.clip_spans((), [], key_spans=lambda w: [None] * len(w)), {}
+        )
 
     def test_the_whole_timeline_span_follows_the_exported_range(self):
         """``*`` is the SOURCE STACK's zero, and the stack ships only the
@@ -6979,20 +7823,7 @@ class TestFbxToGlbReport(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
     def _convert(self, converted, **kwargs):
-        def _run(cmd, **kw):
-            shutil.copyfile(converted, cmd[cmd.index("-o") + 1] + ".glb")
-            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
-
-        src = os.path.join(self.tmp, "in.fbx")
-        with open(src, "wb") as fh:
-            fh.write(b"fbx")
-        with (
-            unittest.mock.patch.object(
-                MeshConvert, "resolve_binary", return_value="FBX2glTF"
-            ),
-            unittest.mock.patch("subprocess.run", side_effect=_run),
-        ):
-            return MeshConvert.fbx_to_glb(src, overwrite=True, prompt=False, **kwargs)
+        return _convert_prebuilt(self.tmp, converted, **kwargs)
 
     def _lit_glb(self, manifest, name="lit.glb"):
         """A one-mesh GLB carrying *manifest* the way FBX2glTF transcribes it."""
@@ -7316,32 +8147,7 @@ class TestApplyGlbFades(unittest.TestCase):
 
     def _pointer_channels(self, path, clip):
         """``[(pointer, times, alphas)]`` for one clip's alpha channels."""
-        with MeshConvert.open_glb(path) as edit:
-            gltf, blob = edit.gltf, edit.bin_data
-            animation = next(a for a in gltf["animations"] if a["name"] == clip)
-            out = []
-            for channel in animation.get("channels") or []:
-                target = channel.get("target") or {}
-                if target.get("path") != "pointer":
-                    continue
-                pointer = target["extensions"]["KHR_animation_pointer"]["pointer"]
-                sampler = animation["samplers"][channel["sampler"]]
-
-                def read(index, per):
-                    acc = gltf["accessors"][index]
-                    view = gltf["bufferViews"][acc["bufferView"]]
-                    off = view.get("byteOffset", 0) + acc.get("byteOffset", 0)
-                    flat = struct.unpack_from(f"<{acc['count'] * per}f", blob, off)
-                    return [flat[i : i + per] for i in range(0, len(flat), per)]
-
-                out.append(
-                    (
-                        pointer,
-                        [t[0] for t in read(sampler["input"], 1)],
-                        read(sampler["output"], 4),
-                    )
-                )
-            return out
+        return _glb_pointer_channels(path)[clip]
 
     # ------------------------------------------------------------------ tests
     def test_the_ramp_becomes_an_animated_base_colour_factor(self):
@@ -7561,6 +8367,249 @@ class TestApplyGlbFades(unittest.TestCase):
         track = {"node": "GATE", "visibility": [[8, 0], [23, 1]]}
         self.assertEqual(MeshConvert._presence_keys(track), [[8, 0], [23, 1]])
 
+    def test_unmirrored_opacity_is_its_own_presence_channel(self):
+        """Nothing mirrored this opacity, so its keys ARE the presence channel,
+        read by the rule every mirror writer applies (``> 0``). An authored
+        visibility still wins beside a non-fading opacity, and a track with
+        neither (a highlight alone) is not gated at all."""
+        cut = [[23, 0.0], [23, 1.0]]
+        self.assertEqual(
+            MeshConvert._presence_keys({"node": "GATE", "opacity": cut}),
+            [[23.0, 0.0], [23.0, 1.0]],
+        )
+        authored = [[8, 0], [23, 1]]
+        self.assertEqual(
+            MeshConvert._presence_keys(
+                {"node": "GATE", "visibility": authored, "opacity": cut}
+            ),
+            authored,
+        )
+        highlight_only = {"node": "HL", "highlight": cut}
+        self.assertEqual(MeshConvert._presence_keys(highlight_only), [])
+
+
+class TestDataExportOverlay(unittest.TestCase):
+    """A build can show an effect the scene does not carry.
+
+    ``overlay_data_export`` replaces in-band channels ahead of every reader and
+    ``effect_preview_channels`` states one render effect as those channels --
+    together, what a panel's "preview at these settings" pushes. Nothing
+    upstream of the GLB is involved, which is the point.
+    """
+
+    FPS = 30.0
+    RED = [1.0, 0.0, 0.0]
+    BLUE = [0.2, 0.5, 1.0]
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_overlay_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _carrier(**props):
+        return {
+            "name": "data_export",
+            "extras": {
+                "fromFBX": {
+                    "userProperties": {
+                        k: {"type": "eFbxString", "value": json.dumps(v)}
+                        for k, v in props.items()
+                    }
+                }
+            },
+        }
+
+    def test_a_channel_is_replaced_in_both_shapes_and_read_back(self):
+        gltf = {
+            "nodes": [
+                self._carrier(visibility_tracks={"version": 1, "tracks": ["scene"]}),
+                {"name": "native", "extras": {"visibility_tracks": '{"stale": 1}'}},
+            ]
+        }
+        changed = MeshConvert.overlay_data_export(
+            gltf, {"visibility_tracks": {"tracks": ["preview"]}}
+        )
+        self.assertEqual(changed, ["visibility_tracks"])
+        self.assertEqual(
+            MeshConvert.data_export_channel(gltf, "visibility_tracks"),
+            {"tracks": ["preview"]},
+        )
+        self.assertNotIn("visibility_tracks", gltf["nodes"][1]["extras"])
+        self.assertNotIn(
+            "visibility_tracks",
+            gltf["nodes"][0]["extras"]["fromFBX"]["userProperties"],
+        )
+
+    def test_none_clears_a_channel_and_leaves_the_rest(self):
+        gltf = {
+            "nodes": [
+                self._carrier(
+                    fbx_takes=[{"name": "Shot_1"}], lightmap_metadata={"version": 1}
+                )
+            ]
+        }
+        self.assertEqual(
+            MeshConvert.overlay_data_export(gltf, {"fbx_takes": None}), ["fbx_takes"]
+        )
+        self.assertIsNone(MeshConvert.data_export_channel(gltf, "fbx_takes"))
+        self.assertEqual(
+            MeshConvert.data_export_channel(gltf, "lightmap_metadata"), {"version": 1}
+        )
+        empty = {"nodes": []}
+        self.assertEqual(
+            MeshConvert.overlay_data_export(empty, {"fbx_takes": None}), []
+        )
+        self.assertEqual(empty["nodes"], [], "clearing makes no carrier")
+
+    def test_a_file_with_no_carrier_gets_one_in_its_scene(self):
+        gltf = {
+            "nodes": [{"name": "cube", "mesh": 0}],
+            "scenes": [{"nodes": [0]}],
+            "scene": 0,
+        }
+        MeshConvert.overlay_data_export(gltf, {"visibility_tracks": {"tracks": []}})
+        self.assertEqual(gltf["nodes"][1]["name"], MeshConvert.DATA_EXPORT_NODE)
+        self.assertEqual(gltf["scenes"][0]["nodes"], [0, 1])
+        self.assertEqual(
+            MeshConvert.data_export_channel(gltf, "visibility_tracks"), {"tracks": []}
+        )
+
+    def test_the_preview_channels_describe_one_effect_on_one_clip(self):
+        keys = [(0, 0.0), (10, 1.0), (20, 0.0)]
+        out = MeshConvert.effect_preview_channels(
+            ["HL", "HL", "B"], "highlight", keys, colors=(self.RED, None), fps=24
+        )
+        self.assertIsNone(out[MeshConvert.FBX_TAKES_KEY])
+        self.assertIsNone(out[MeshConvert.SHOT_METADATA_KEY])
+        envelope = out[MeshConvert.VISIBILITY_TRACKS_KEY]
+        self.assertEqual(envelope["fps"], 24.0)
+        self.assertEqual(
+            envelope["clip_span"], {MeshConvert.DEFAULT_CLIP_SPAN: [0.0, 20.0]}
+        )
+        self.assertEqual([t["node"] for t in envelope["tracks"]], ["HL", "B"])
+        track = envelope["tracks"][0]
+        self.assertEqual(track["highlight"], [[0.0, 0.0], [10.0, 1.0], [20.0, 0.0]])
+        self.assertEqual(track["highlight_color"], self.RED)
+        self.assertNotIn("highlight_color_dim", track, "an unstated stop defaults")
+        self.assertNotIn("visibility", track, "only the presence channel gates")
+
+    def test_an_opacity_preview_carries_only_its_ramp(self):
+        """The ramp IS the presence channel (``_presence_keys``); a synthesized
+        visibility beside it was a second copy of the same fact."""
+        out = MeshConvert.effect_preview_channels(["F"], "opacity", [(0, 0), (15, 1)])
+        track = out[MeshConvert.VISIBILITY_TRACKS_KEY]["tracks"][0]
+        self.assertEqual(track["opacity"], [[0.0, 0.0], [15.0, 1.0]])
+        self.assertNotIn("visibility", track)
+
+    def test_an_opacity_overlay_gates_the_node_it_fades(self):
+        """End to end through `fbx_to_glb`: with no mirror in the overlay, the
+        ramp alone still decides where HL is present, so the preview gates it."""
+        overlay = MeshConvert.effect_preview_channels(
+            ["HL"], "opacity", [(0, 0.0), (10, 1.0), (20, 0.0)], fps=self.FPS
+        )
+        out = self._convert(self._scene_glb(), data_export=overlay)
+        with MeshConvert.open_glb(out) as edit:
+            gltf = edit.gltf
+        hl = next(i for i, n in enumerate(gltf["nodes"]) if n.get("name") == "HL")
+        gates = [
+            channel["target"]
+            for animation in gltf.get("animations") or []
+            for channel in animation.get("channels") or []
+            if channel["target"] == {"node": hl, "path": "scale"}
+        ]
+        self.assertTrue(gates, "the faded node was not gated")
+
+    def test_an_effect_preview_refuses_what_it_cannot_describe(self):
+        ramp = [(0, 0.0), (1, 1.0)]
+        with self.assertRaises(KeyError):
+            MeshConvert.effect_preview_channels(["A"], "glow", ramp)
+        with self.assertRaises(ValueError):
+            MeshConvert.effect_preview_channels([], "opacity", ramp)
+        with self.assertRaises(ValueError):
+            MeshConvert.effect_preview_channels(["A"], "opacity", ramp[:1])
+
+    def _convert(self, converted, **kwargs):
+        return _convert_prebuilt(self.tmp, converted, **kwargs)
+
+    def _scene_glb(self):
+        """HL, highlighted BLUE over a declared shot, as the scene exported it."""
+        tracks = {
+            "version": 1,
+            "fps": self.FPS,
+            "clip_span": {"Shot_1": [8, 23], "*": [8, 100]},
+            "tracks": [
+                {
+                    "node": "HL",
+                    "highlight": [[8, 0.0], [23, 1.0]],
+                    "highlight_color": self.BLUE,
+                }
+            ],
+        }
+        carrier = self._carrier(
+            fbx_takes=[{"name": "Shot_1", "start": 7, "end": 100}],
+            shot_metadata={"version": 1, "fps": self.FPS},
+            visibility_tracks=tracks,
+        )
+        return _write_glb_file(
+            os.path.join(self.tmp, "scene.glb"),
+            {
+                "asset": {"version": "2.0"},
+                "scenes": [{"nodes": [0, 1]}],
+                "scene": 0,
+                "nodes": [{"name": "HL", "mesh": 0}, carrier],
+                "meshes": [{"primitives": [{"attributes": {}, "material": 0}]}],
+                "materials": [{"name": "GLOW", "pbrMetallicRoughness": {}}],
+                "accessors": [],
+                "buffers": [{"byteLength": 4}],
+            },
+            bin_chunk=b"\x00" * 4,
+        )
+
+    @staticmethod
+    def _emissive_channels(path):
+        """``{clip: [(times, rgb values)]}`` for the clips animating an emissive."""
+        out = {}
+        for clip, channels in _glb_pointer_channels(path).items():
+            emissive = [(t, v) for p, t, v in channels if p.endswith("/emissiveFactor")]
+            if emissive:
+                out[clip] = emissive
+        return out
+
+    def test_the_conversion_builds_the_overlay_rather_than_the_scene(self):
+        """End to end through `fbx_to_glb`: the scene carries a take and a BLUE
+        highlight on HL; the overlay's RED ramp is what animates, on one clip
+        over the ramp's own extent from t=0, and the take's clip is never cut."""
+        keys = [(0, 0.0), (10, 1.0), (20, 0.0)]
+        overlay = MeshConvert.effect_preview_channels(
+            ["HL"], "highlight", keys, colors=(self.RED, None), fps=self.FPS
+        )
+        report = {}
+        out = self._convert(self._scene_glb(), data_export=overlay, report=report)
+
+        # The report names the channels the overlay replaced -- how a caller
+        # tells an applied overlay from one a stale bridge never forwarded.
+        self.assertIn(MeshConvert.VISIBILITY_TRACKS_KEY, report["data_export"])
+        channels = self._emissive_channels(out)
+        self.assertEqual(list(channels), [MeshConvert.DEFAULT_CLIP_NAME])
+        ((times, values),) = channels[MeshConvert.DEFAULT_CLIP_NAME]
+        self.assertAlmostEqual(times[0], 0.0, places=5)
+        self.assertAlmostEqual(times[-1], 20 / self.FPS, places=5)
+        peak = max(values, key=lambda rgb: sum(rgb))
+        self.assertEqual([round(c, 5) for c in peak], self.RED)
+        self.assertTrue(all(rgb[2] == 0.0 for rgb in values), "no trace of BLUE")
+
+    def test_without_an_overlay_the_scene_is_what_builds(self):
+        """The control: the same file converted with no overlay animates the
+        scene's own BLUE highlight on its declared shot."""
+        report = {}
+        channels = self._emissive_channels(
+            self._convert(self._scene_glb(), report=report)
+        )
+        self.assertNotIn("data_export", report, "no overlay, no claim of one")
+        self.assertIn("Shot_1", channels)
+        ((_times, values),) = channels["Shot_1"]
+        self.assertEqual([round(c, 5) for c in values[-1]], self.BLUE)
+
 
 class TestApplyGlbHighlight(unittest.TestCase):
     """A second per-object channel on the same pointer pass as the fade.
@@ -7648,9 +8697,12 @@ class TestApplyGlbHighlight(unittest.TestCase):
         hl_emissive_map=False,
         animations=None,
         takes=None,
+        hl_dim=None,
     ):
         """FADER (fades) and HL (highlights), each on its own material."""
         hl = {"node": "HL", "highlight": self.PULSE, "highlight_color": self.BLUE}
+        if hl_dim is not None:
+            hl["highlight_color_dim"] = hl_dim
         if hl_visibility:
             hl["visibility"] = [[8, 0], [23, 1]]
         glow = {"name": "GLOW", "pbrMetallicRoughness": {}}
@@ -7692,33 +8744,7 @@ class TestApplyGlbHighlight(unittest.TestCase):
 
     def _pointer_channels(self, path, clip="Shot_1"):
         """``[(pointer, times, values)]`` with values sized by the accessor type."""
-        with MeshConvert.open_glb(path) as edit:
-            gltf, blob = edit.gltf, edit.bin_data
-            animation = next(a for a in gltf["animations"] if a["name"] == clip)
-            out = []
-            for channel in animation.get("channels") or []:
-                target = channel.get("target") or {}
-                if target.get("path") != "pointer":
-                    continue
-                pointer = target["extensions"]["KHR_animation_pointer"]["pointer"]
-                sampler = animation["samplers"][channel["sampler"]]
-
-                def read(index):
-                    acc = gltf["accessors"][index]
-                    per = {"SCALAR": 1, "VEC3": 3, "VEC4": 4}[acc["type"]]
-                    view = gltf["bufferViews"][acc["bufferView"]]
-                    off = view.get("byteOffset", 0) + acc.get("byteOffset", 0)
-                    flat = struct.unpack_from(f"<{acc['count'] * per}f", blob, off)
-                    return [flat[i : i + per] for i in range(0, len(flat), per)]
-
-                out.append(
-                    (
-                        pointer,
-                        [t[0] for t in read(sampler["input"])],
-                        read(sampler["output"]),
-                    )
-                )
-            return out
+        return _glb_pointer_channels(path)[clip]
 
     @staticmethod
     def _by_kind(channels):
@@ -7781,6 +8807,40 @@ class TestApplyGlbHighlight(unittest.TestCase):
         # Intensity 0 -> the material's own (absent) emissive; 1 -> the colour.
         self.assertEqual([round(c, 6) for c in values[1]], [0.0, 0.0, 0.0])
         self.assertEqual([round(c, 6) for c in values[-1]], self.BLUE)
+
+    def test_a_published_dim_stop_colours_the_low_half_of_the_pulse(self):
+        """The ramp rides BETWEEN two authored colours. At intensity 0 the
+        object reads the dim colour instead of going dark, so the opposing
+        half of a pulse is something the artist chose."""
+        path = self._two_objects(hl_dim=[0.4, 0.0, 0.0])
+        MeshConvert.apply_glb_fades(path)
+        _alpha, emissive = self._by_kind(self._pointer_channels(path))
+        _p, _t, values = emissive[0]
+        self.assertEqual([round(c, 6) for c in values[1]], [0.4, 0.0, 0.0])
+        self.assertEqual([round(c, 6) for c in values[-1]], self.BLUE)
+
+    def test_a_track_with_no_dim_stop_ships_exactly_as_before(self):
+        """The compatibility contract: an unstated low stop is BLACK, which
+        makes the two-stop lerp collapse to the legacy ``base + hi * sample``.
+        Give it the HIGH default instead and every asset authored before the
+        dim stop existed inverts on its next export."""
+        legacy = self._two_objects()
+        MeshConvert.apply_glb_fades(legacy)
+        _a, legacy_em = self._by_kind(self._pointer_channels(legacy))
+        explicit = self._two_objects(hl_dim=[0.0, 0.0, 0.0])
+        MeshConvert.apply_glb_fades(explicit)
+        _a2, explicit_em = self._by_kind(self._pointer_channels(explicit))
+        self.assertEqual(legacy_em[0][2], explicit_em[0][2])
+
+    def test_the_dim_stop_composes_over_the_materials_own_emissive_too(self):
+        """Additive composition is the channel's contract at BOTH ends: an LED
+        panel with a dim stop glows its own emissive plus that stop."""
+        path = self._two_objects(hl_emissive=[0.1, 0.0, 0.0], hl_dim=[0.0, 0.2, 0.0])
+        MeshConvert.apply_glb_fades(path)
+        _alpha, emissive = self._by_kind(self._pointer_channels(path))
+        _p, _t, values = emissive[0]
+        self.assertEqual([round(c, 6) for c in values[1]], [0.1, 0.2, 0.0])
+        self.assertEqual([round(c, 6) for c in values[-1]], [0.3, 0.5, 1.0])
 
     def test_the_highlight_composes_over_the_materials_own_emissive(self):
         """An LED panel that is also highlighted keeps glowing at intensity 0."""
@@ -8019,7 +9079,7 @@ class TestApplyGlbHighlight(unittest.TestCase):
 class TestApplyGlbClips(unittest.TestCase):
     """Shot clips cut from the whole-timeline stack instead of by Maya's split.
 
-    The numbers are the production failure this pass exists for (VDATS_ASSEMBLY,
+    The numbers are the production failure this pass exists for (PROPS_ASSEMBLY,
     Maya 2025 -> FBX2glTF 0.13.1, 30fps, 358 keys over 2635 frames): the split
     restricts each curve to the take's window BEFORE baking, so a curve with no
     key inside a shot contributes no channel to it and the node plays its rest
@@ -8136,7 +9196,7 @@ class TestApplyGlbClips(unittest.TestCase):
     def test_a_file_with_takes_and_no_animations_says_so_out_loud(self):
         """The one place that knows both halves must not stay quiet.
 
-        Measured on a production assembly (VDATS_ASSEMBLY, 2026-08-30): the
+        Measured on a production assembly (PROPS_ASSEMBLY, 2026-08-30): the
         FBX was written with bake/takes disarmed, so the conversion arrived
         with ``fbx_takes`` naming 12 shots and NO animations array at all --
         and this pass returned ``None`` without a word, shipping a deliverable
@@ -8587,6 +9647,26 @@ class TestOptimizeGlbWebpSemantics(unittest.TestCase):
         MeshConvert.optimize_glb_textures(path, max_size=0, image_format="WEBP")
         self.assertEqual(raw, self._pixels(path)[0])
 
+    def test_a_lightmap_named_in_the_first_scenes_extras_is_exempt_too(self):
+        """A native DCC export writes `lightmap_web` into the first scene's
+        extras, as a JSON string -- the viewer's first probe. The name half of
+        the exemption read only the root's, so such a file's lightmap, sampled
+        anywhere but texCoord 1, was re-encoded lossily."""
+        uri, raw = self._noise(4)
+        web = {"version": 1, "materials": {"room": {"map": "bake.png"}}}
+        path = self._glb(
+            {
+                "asset": {"version": "2.0"},
+                "scenes": [{"extras": {"lightmap_web": json.dumps(web)}}],
+                "images": [{"name": "bake.png", "uri": uri}],
+                "textures": [{"source": 0}],
+                # Colour on texCoord 0: only the NAME can exempt it.
+                "materials": [{"name": "room", "emissiveTexture": {"index": 0}}],
+            }
+        )
+        MeshConvert.optimize_glb_textures(path, max_size=0, image_format="WEBP")
+        self.assertEqual(raw, self._pixels(path)[0])
+
 
 class TestSetGlbNormalScale(unittest.TestCase):
     """`normalTexture.scale`, written where glTF already keeps it."""
@@ -8595,8 +9675,12 @@ class TestSetGlbNormalScale(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="meshconvert_normalscale_")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
-    def _glb(self, manifest=True):
-        """Three materials: baked+normal, baked without one, unbaked+normal."""
+    def _glb(self, manifest=True, in_scene=False):
+        """Three materials: baked+normal, baked without one, unbaked+normal.
+
+        *in_scene* writes the manifest where a native DCC export does: the
+        first scene's extras, as a JSON string.
+        """
         gltf = {
             "asset": {"version": "2.0"},
             "materials": [
@@ -8608,12 +9692,14 @@ class TestSetGlbNormalScale(unittest.TestCase):
             "images": [{"name": "n", "uri": "data:image/png;base64,"}],
         }
         if manifest:
-            gltf["extras"] = {
-                "lightmap_web": {
-                    "version": 1,
-                    "materials": {"baked": {"intensity": 1.0}, "baked_flat": {}},
-                }
+            web = {
+                "version": 1,
+                "materials": {"baked": {"intensity": 1.0}, "baked_flat": {}},
             }
+            if in_scene:
+                gltf["scenes"] = [{"extras": {"lightmap_web": json.dumps(web)}}]
+            else:
+                gltf["extras"] = {"lightmap_web": web}
         json_bytes = json.dumps(gltf).encode("utf-8")
         json_bytes += b" " * ((4 - len(json_bytes) % 4) % 4)
         path = os.path.join(self.tmp, "scene.glb")
@@ -8663,6 +9749,13 @@ class TestSetGlbNormalScale(unittest.TestCase):
         """`lightmapped_only` means what it says: no manifest, no baked set."""
         path = self._glb(manifest=False)
         self.assertEqual(MeshConvert.set_glb_normal_scale(path, 1.8), 0)
+
+    def test_a_manifest_in_the_first_scenes_extras_counts_too(self):
+        """A native DCC export writes `lightmap_web` into the first scene's
+        extras -- the viewer's first probe -- so a baked set read from the root
+        alone matched nothing on such a file."""
+        path = self._glb(in_scene=True)
+        self.assertEqual(MeshConvert.set_glb_normal_scale(path, 1.8), 1)
 
 
 class TestPruneGlbAnimations(unittest.TestCase):
@@ -8791,6 +9884,219 @@ class TestPruneGlbAnimations(unittest.TestCase):
         )
 
 
+class TestGlbSkins(unittest.TestCase):
+    """A GLB's skinning data: what glTF requires of it, and what anything binds."""
+
+    #: A rigid mesh's positions, a kept skin's bind matrix and a clip's output:
+    #: distinct values, so a renumber that re-points one at another accessor's
+    #: bytes reads back wrong.
+    RIGID = [5.0, 0.0, 0.0, 6.0, 0.0, 0.0, 5.0, 1.0, 0.0]
+    IBM = [float(i) for i in range(16)]
+    OUTPUT = [0.0, 0.0, 0.0, 2.0, 0.0, 0.0]
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="glb_skins_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _flattened_glb(self):
+        """A rig whose chain was re-anchored: jnt_2 beside jnt_1 under RIG_GRP."""
+        return _write_glb_file(
+            os.path.join(self.tmp, "skeleton.glb"),
+            {
+                "asset": {"version": "2.0"},
+                "scenes": [{"nodes": [0, 5, 7]}],
+                "nodes": [
+                    {"name": "LOOMS", "children": [1, 4]},
+                    {"name": "RIG_GRP", "children": [2, 3]},
+                    {"name": "jnt_1"},
+                    {"name": "jnt_2"},
+                    {"name": "LOOM", "mesh": 0, "skin": 0},
+                    {"name": "OTHER", "children": [6]},
+                    {"name": "jnt_a"},
+                    {"name": "SOLO"},
+                ],
+                "meshes": [{"primitives": [{"attributes": {}}]}],
+                "skins": [
+                    {"name": "loom", "joints": [2, 3], "skeleton": 2},
+                    {"name": "above", "joints": [2, 3], "skeleton": 0},
+                    {"name": "rootless", "joints": [6, 7], "skeleton": 6},
+                    {"name": "bare", "joints": [3]},
+                ],
+            },
+        )
+
+    def _bound_glb(self, skeleton=None, name="bound.glb"):
+        """One skinned and one rigid mesh, both carrying JOINTS_0/WEIGHTS_0 the
+        way FBX2glTF writes them, and two skins no node binds beside the real one.
+        """
+        parts, views, accessors = [], [], []
+
+        def pack(values, fmt, type_, component=5126):
+            payload = struct.pack(f"<{len(values)}{fmt}", *values)
+            payload += b"\x00" * ((4 - len(payload) % 4) % 4)
+            offset = sum(len(part) for part in parts)
+            views.append(
+                {"buffer": 0, "byteOffset": offset, "byteLength": len(payload)}
+            )
+            parts.append(payload)
+            width = {"SCALAR": 1, "VEC3": 3, "VEC4": 4, "MAT4": 16}[type_]
+            accessors.append(
+                {
+                    "bufferView": len(views) - 1,
+                    "componentType": component,
+                    "count": len(values) // width,
+                    "type": type_,
+                }
+            )
+            return len(accessors) - 1
+
+        joints, weights = [0] * 12, [1.0, 0.0, 0.0, 0.0] * 3
+        skinned = {
+            "POSITION": pack(
+                [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0], "f", "VEC3"
+            ),
+            "JOINTS_0": pack(joints, "B", "VEC4", 5121),
+            "WEIGHTS_0": pack(weights, "f", "VEC4"),
+        }
+        rigid = {
+            "POSITION": pack(self.RIGID, "f", "VEC3"),
+            "JOINTS_0": pack(joints, "B", "VEC4", 5121),
+            "WEIGHTS_0": pack(weights, "f", "VEC4"),
+        }
+        skin = {"joints": [1], "inverseBindMatrices": pack(self.IBM, "f", "MAT4")}
+        if skeleton is not None:
+            skin["skeleton"] = skeleton
+        stray = {"joints": [1], "inverseBindMatrices": pack([1.0] * 16, "f", "MAT4")}
+        sampler = {
+            "input": pack([0.0, 1.0], "f", "SCALAR"),
+            "output": pack(self.OUTPUT, "f", "VEC3"),
+        }
+        bin_chunk = b"".join(parts)
+        return _write_glb_file(
+            os.path.join(self.tmp, name),
+            {
+                "asset": {"version": "2.0"},
+                "scenes": [{"nodes": [0]}],
+                "nodes": [
+                    {"name": "rig", "children": [1, 2, 3]},
+                    {"name": "jnt"},
+                    {"name": "skinned", "mesh": 0, "skin": 1},
+                    {"name": "rigid", "mesh": 1},
+                ],
+                "meshes": [
+                    {"primitives": [{"attributes": skinned}]},
+                    {"primitives": [{"attributes": rigid}]},
+                ],
+                "skins": [{"joints": [0]}, skin, stray],
+                "animations": [
+                    {
+                        "name": "Take 001",
+                        "samplers": [sampler],
+                        "channels": [
+                            {"sampler": 0, "target": {"node": 1, "path": "translation"}}
+                        ],
+                    }
+                ],
+                "accessors": accessors,
+                "bufferViews": views,
+                "buffers": [{"byteLength": len(bin_chunk)}],
+            },
+            bin_chunk=bin_chunk,
+        )
+
+    @staticmethod
+    def _floats(edit, accessor):
+        view = edit.gltf["bufferViews"][edit.gltf["accessors"][accessor]["bufferView"]]
+        start = view.get("byteOffset", 0)
+        data = bytes(edit.bin_data[start : start + view["byteLength"]])
+        return list(struct.unpack(f"<{len(data) // 4}f", data))
+
+    def test_a_skeleton_that_is_not_its_joints_root_is_repointed(self):
+        """glTF requires ``skin.skeleton`` to be a common root of the joints.
+
+        FBX2glTF names a skin's first joint, which holds only while the joints
+        hang in one chain under it. Measured on a production assembly
+        (2026-09-14): the export's sheared-chain flatten re-anchors a rig's
+        joints under its group, all 7 skins went invalid, and the Khronos
+        validator rejected the file (SKIN_SKELETON_INVALID x7). three.js never
+        reads the field, so no viewer showed it.
+        """
+        path = self._flattened_glb()
+        self.assertEqual(MeshConvert.fix_glb_skin_skeletons(path), ["loom", "rootless"])
+        with MeshConvert.open_glb(path) as edit:
+            skins = edit.gltf["skins"]
+        self.assertEqual(skins[0]["skeleton"], 1, "the joints' closest common root")
+        self.assertEqual(skins[1]["skeleton"], 0, "an ancestor of that root is valid")
+        self.assertNotIn("skeleton", skins[2], "no shared root: the field is optional")
+        self.assertNotIn("skeleton", skins[3])
+        self.assertEqual(MeshConvert.fix_glb_skin_skeletons(path), [])
+
+    def test_skinning_data_no_node_binds_is_dropped(self):
+        """Skins no node references, and JOINTS/WEIGHTS on a mesh no skinned
+        node instantiates, mean nothing in glTF.
+
+        Measured on a production assembly (2026-09-14): FBX2glTF wrote 255 of
+        its 262 skins for no node, and JOINTS_0/WEIGHTS_0 on 836 meshes no
+        skinned node instantiates -- 0.49 MB of vertex data, and a Khronos
+        validator warning per node (NODE_SKINNED_MESH_WITHOUT_SKIN x1493).
+        """
+        path = self._bound_glb()
+        with MeshConvert.open_glb(path) as edit:
+            before = edit.gltf["buffers"][0]["byteLength"]
+        self.assertEqual(
+            MeshConvert.prune_glb_unused_skins(path),
+            {"skins": 2, "attributes": 2, "bytes": 124},
+        )
+        with MeshConvert.open_glb(path) as edit:
+            gltf = edit.gltf
+            self.assertEqual(len(gltf["skins"]), 1)
+            self.assertEqual(gltf["nodes"][2]["skin"], 0, "renumbered to the survivor")
+            skinned, rigid = (m["primitives"][0]["attributes"] for m in gltf["meshes"])
+            self.assertEqual(sorted(skinned), ["JOINTS_0", "POSITION", "WEIGHTS_0"])
+            self.assertEqual(sorted(rigid), ["POSITION"])
+            self.assertEqual(len(gltf["accessors"]), 7)
+            self.assertEqual(gltf["buffers"][0]["byteLength"], before - 124)
+            # What survived still reads its own bytes after the renumber + repack.
+            self.assertEqual(self._floats(edit, rigid["POSITION"]), self.RIGID)
+            ibm = gltf["skins"][0]["inverseBindMatrices"]
+            self.assertEqual(self._floats(edit, ibm), self.IBM)
+            output = gltf["animations"][0]["samplers"][0]["output"]
+            self.assertEqual(self._floats(edit, output), self.OUTPUT)
+        self.assertEqual(
+            MeshConvert.prune_glb_unused_skins(path),
+            {"skins": 0, "attributes": 0, "bytes": 0},
+        )
+
+    def test_a_draco_primitive_keeps_its_skin_attributes(self):
+        """``KHR_draco_mesh_compression`` names a primitive's attributes a second
+        time, inside the extension: dropping them from ``attributes`` alone
+        would leave the extension naming attributes the primitive no longer has
+        (``fbx_to_glb`` takes ``--draco`` through *extra_args*)."""
+        path = self._bound_glb()
+        with MeshConvert.open_glb(path) as edit:
+            edit.gltf["meshes"][1]["primitives"][0]["extensions"] = {
+                "KHR_draco_mesh_compression": {
+                    "bufferView": 0,
+                    "attributes": {"POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2},
+                }
+            }
+            edit.dirty = True
+        self.assertEqual(MeshConvert.prune_glb_unused_skins(path)["attributes"], 0)
+        with MeshConvert.open_glb(path) as edit:
+            rigid = edit.gltf["meshes"][1]["primitives"][0]["attributes"]
+        self.assertEqual(sorted(rigid), ["JOINTS_0", "POSITION", "WEIGHTS_0"])
+
+    def test_the_conversion_repairs_and_prunes_skins(self):
+        converted = self._bound_glb(skeleton=2, name="converted.glb")
+        dst = _convert_prebuilt(self.tmp, converted)
+        with MeshConvert.open_glb(dst) as edit:
+            skins = edit.gltf["skins"]
+            rigid = edit.gltf["meshes"][1]["primitives"][0]["attributes"]
+        self.assertEqual(len(skins), 1)
+        self.assertEqual(skins[0]["skeleton"], 1, "a lone joint is its own root")
+        self.assertEqual(sorted(rigid), ["POSITION"])
+
+
 class TestCompactGlbAnimations(unittest.TestCase):
     """A clip pins the pose of what it does not animate; two keys say it."""
 
@@ -8799,11 +10105,13 @@ class TestCompactGlbAnimations(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
     # ------------------------------------------------------------------ fixture
-    def _scene(self, *, share_output=False, image=True):
+    def _scene(self, *, share_output=False, image=True, own_input=False):
         """One clip: a moving VEC3, a constant VEC3, and (optionally) an image.
 
         The two channels SHARE their time input, as a converter writes them,
-        so collapsing one must not disturb the other.
+        so collapsing one must not disturb the other. *own_input* gives the
+        constant scale channel a time accessor of its own over the SAME view,
+        the shape a clip rebuild writes (one input per channel).
         """
         times = struct.pack("<4f", 0.0, 1.0, 2.0, 3.0)
         moving = struct.pack("<12f", *[float(i) for i in range(12)])
@@ -8843,7 +10151,11 @@ class TestCompactGlbAnimations(unittest.TestCase):
                             "output": 2 if not share_output else 1,
                             "interpolation": "LINEAR",
                         },
-                        {"input": 0, "output": 2, "interpolation": "LINEAR"},
+                        {
+                            "input": 3 if own_input else 0,
+                            "output": 2,
+                            "interpolation": "LINEAR",
+                        },
                     ],
                     "channels": [
                         {"sampler": 0, "target": {"node": 0, "path": "translation"}},
@@ -8854,6 +10166,8 @@ class TestCompactGlbAnimations(unittest.TestCase):
             ],
             "nodes": [{"name": "a"}, {"name": "b"}, {"name": "c"}],
         }
+        if own_input:
+            gltf["accessors"].append(dict(gltf["accessors"][0]))
         if image:
             gltf["images"] = [{"mimeType": "image/png", "bufferView": 3}]
             gltf["textures"] = [{"source": 0}]
@@ -8885,6 +10199,33 @@ class TestCompactGlbAnimations(unittest.TestCase):
         # grows by more than a 48-byte curve is worth. The saving is a BIN
         # property, and that is what the pass reports.
         self.assertGreater(result["bytes"], 0)
+
+    def test_a_collapsed_channel_leaves_no_accessor_nothing_reads(self):
+        """The time input a collapsed channel stops reading goes with it.
+
+        A clip rebuild gives every channel a time accessor of its own over one
+        shared view, so rewiring a collapsed channel to the clip's two-key input
+        strands the old accessor. Its view stays alive through the siblings, so
+        no BIN byte leaks -- the JSON does: 15,843 dead accessors (1.59 MB) on
+        the production 4K assembly, each one a validator UNUSED_OBJECT.
+        """
+        path, _ = self._scene(own_input=True)
+
+        MeshConvert.compact_glb_animations(path)
+
+        edit = self._open(path)
+        gltf = edit.gltf
+        self.assertEqual(
+            MeshConvert._referenced_accessors(gltf),
+            set(range(len(gltf["accessors"]))),
+            "every accessor left in the file is read by something",
+        )
+        # Renumbered, not re-pointed: the collapsed channel still reads its two
+        # keys and the value it held on every frame.
+        sampler = gltf["animations"][0]["samplers"][2]
+        self.assertEqual(len(MeshConvert._accessor_elements(edit, sampler["input"])), 2)
+        values = MeshConvert._accessor_elements(edit, sampler["output"])
+        self.assertEqual(struct.unpack("<3f", values[0]), (1.0, 2.0, 3.0))
 
     def test_a_moving_channel_is_left_byte_identical(self):
         path, _ = self._scene()
@@ -8945,6 +10286,27 @@ class TestCompactGlbAnimations(unittest.TestCase):
             blob,
             "the image payload must survive, and at its new offset",
         )
+
+    def test_a_collapsed_accessor_with_a_byte_offset_reads_its_new_view(self):
+        """REGRESSION: an output accessor that starts INSIDE its view (a
+        non-zero accessor byteOffset -- legal glTF, what a packer sharing one
+        view between accessors writes) was re-pointed to its fresh two-key
+        view with the offset left in place, so the collapsed channel read past
+        the payload it had just been given. Added: 2026-09-13"""
+        path, _blob = self._scene(image=False)
+        with MeshConvert.open_glb(path) as edit:
+            view = edit.gltf["bufferViews"][2]
+            start = view["byteOffset"]
+            payload = bytes(edit.bin_data[start : start + view["byteLength"]])
+            new_view = MeshConvert._append_bin_views(edit, [bytes(8) + payload])[0]
+            accessor = edit.gltf["accessors"][2]
+            accessor["bufferView"] = new_view
+            accessor["byteOffset"] = 8
+            edit.dirty = True
+        summary = MeshConvert.compact_glb_animations(path)
+        self.assertGreaterEqual(summary["channels"], 1)
+        elements = MeshConvert._accessor_elements(self._open(path), 2)
+        self.assertEqual(elements, [struct.pack("<3f", 1.0, 2.0, 3.0)] * 2)
 
     def test_a_file_with_nothing_to_collapse_is_left_alone(self):
         path, _ = self._scene()
@@ -9280,6 +10642,81 @@ class TestDropGlbTextureFallbacks(unittest.TestCase):
             MeshConvert.drop_glb_texture_fallbacks(path),
             {"textures": 0, "images": 0, "bytes": 0},
         )
+
+
+_FBX2GLTF = MeshConvert.resolve_binary(required=False, auto_install=False)
+
+
+@unittest.skipUnless(
+    _FBX2GLTF, "FBX2glTF is not installed; this test downloads nothing"
+)
+class TestGrayscaleMapsThroughTheConverter(unittest.TestCase):
+    """A grayscale roughness or metallic map reaches the GLB with its values.
+
+    FBX2glTF 0.13.1 packs a material's occlusion-roughness-metallic texture
+    from each map's red, green and blue, and reads a channel the decoded image
+    lacks as white. Measured on this Stingray PBS quad (roughness a 60..220
+    ramp, metallic 8): stored RGB the packing carries both; stored grayscale --
+    ``L``, ``LA``, 16-bit, a grayscale JPEG -- green and blue read 255 on every
+    texel, roughness 1 and metallic 1, which renders black under a lightmap.
+    Maya writes exactly that input: ``GameShader`` splits an ORM into ``L`` maps.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_gray_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _fbx(self, mode):
+        """The same roughness and metallic values, stored as *mode*."""
+        from PIL import Image
+
+        rough = Image.new("L", (32, 32))
+        rough.putdata([60 + (160 * x) // 31 for _y in range(32) for x in range(32)])
+        metal = Image.new("L", (32, 32), 8)
+        color = Image.new("RGB", (32, 32), (200, 150, 100))
+        return build_stingray_fbx(
+            os.path.join(self.tmp, f"orm_{mode}.fbx"),
+            {
+                "color": ("t_Base_Color.png", encoded(color)),
+                "roughness": ("t_Roughness.png", encoded(rough.convert(mode))),
+                "metallic": ("t_Metallic.png", encoded(metal.convert(mode))),
+            },
+        )
+
+    @staticmethod
+    def _orm(glb):
+        """``{channel: (min, max)}`` of green and blue in the packed texture."""
+        with MeshConvert.open_glb(glb) as edit:
+            (material,) = edit.materials
+            pbr = material["pbrMetallicRoughness"]
+            image = edit.image_for_texture(pbr["metallicRoughnessTexture"]["index"])
+            return {channel: edit.channel_extrema(image, channel) for channel in "GB"}
+
+    def test_a_grayscale_map_packs_like_its_rgb_twin(self):
+        options = dict(auto_install=False, prompt=False, lightmaps=False)
+        reference = self._orm(MeshConvert.fbx_to_glb(self._fbx("RGB"), **options))
+        self.assertEqual(reference, {"G": (60, 220), "B": (8, 8)}, "the RGB twin")
+        self.assertEqual(
+            self._orm(MeshConvert.fbx_to_glb(self._fbx("L"), **options)), reference
+        )
+
+    def test_the_converter_alone_still_packs_grayscale_as_white(self):
+        """The premise, pinned against the binary with none of the passes.
+
+        Red after a converter upgrade means the expansion ``fbx_to_glb`` runs
+        first may be retired.
+        """
+        base = os.path.join(self.tmp, "direct")
+        media = os.path.join(self.tmp, "media")
+        os.makedirs(media)
+        subprocess.run(
+            [_FBX2GLTF, "-i", self._fbx("L"), "-o", base, "--binary"]
+            + ["--fbx-temp-dir", media],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(self._orm(base + ".glb"), {"G": (255, 255), "B": (255, 255)})
 
 
 if __name__ == "__main__":

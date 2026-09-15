@@ -7,7 +7,7 @@ import json
 import warnings
 import functools
 import traceback
-from typing import Union, List, Tuple, Optional
+from typing import Any, Callable, Iterable, Union, List, Tuple, Optional
 
 # From this package:
 from pythontk.core_utils._core_utils import CoreUtils
@@ -556,6 +556,7 @@ class FileUtils(HelpMixin):
         filepath: str,
         format: str = "{stem}_v{n:03d}{ext}",
         start: int = 1,
+        extensions: Iterable[str] = (),
     ) -> str:
         """Return the next available versioned path for `filepath`.
 
@@ -573,9 +574,95 @@ class FileUtils(HelpMixin):
                 (e.g. "{stem}_v{n:03d}{ext}"). The `n` width controls output
                 zero-padding only — matching is width-agnostic.
             start (int): Version returned when no existing match is found.
+            extensions (Iterable[str]): Sibling extensions whose versions are
+                taken too (see :meth:`next_version_number`); the result keeps
+                `filepath`'s own.
 
         Returns:
             str: The next versioned path (not created on disk).
+        """
+        fp = os.path.expandvars(filepath)
+        directory = os.path.dirname(fp) or "."
+        basename = os.path.basename(fp)
+
+        m = FileUtils._version_pattern(
+            format, r"(?P<stem>.+?)", r"(?P<ext>\.[^.]+)"
+        ).match(basename)
+        if m:
+            root, real_ext = os.path.splitext(basename)
+            stem = m.group("stem") if "stem" in m.re.groupindex else root
+            ext = m.group("ext") if "ext" in m.re.groupindex else real_ext
+            input_n = int(m.group("n"))
+        else:
+            stem, ext = os.path.splitext(basename)
+            input_n = 0
+
+        highest = (
+            FileUtils.next_version_number(
+                directory, format, stem=stem, ext=ext, extensions=extensions
+            )
+            - 1
+        )
+        floor = max(input_n, highest)
+        next_n = floor + 1 if floor else start
+        return os.path.join(directory, format.format(stem=stem, ext=ext, n=next_n))
+
+    @staticmethod
+    def next_version_number(
+        directory: str,
+        format: str = "{stem}_v{n:03d}{ext}",
+        stem: str = "",
+        ext: str = "",
+        start: int = 1,
+        extensions: Iterable[str] = (),
+    ) -> int:
+        """Return one past the highest version `format` already holds in `directory`.
+
+        The scan half of :meth:`next_version_path`, for a caller whose name is a
+        whole template rather than a stem to decorate -- a counter anywhere in a
+        user-typed pattern (``v{n:03d}_hero{ext}``). Files only; matching is
+        width-agnostic, so ``{n:03d}`` finds ``v7`` and ``v007`` alike.
+
+        Parameters:
+            directory (str): The folder to scan; a missing one holds nothing.
+            format (str): A ``str.format`` template with an ``{n}`` field and
+                optionally ``{stem}`` / ``{ext}``. Literal braces are doubled.
+            stem (str): The value ``{stem}`` matches.
+            ext (str): The value ``{ext}`` matches.
+            start (int): Returned when nothing matches.
+            extensions (Iterable[str]): More values ``{ext}`` matches. A
+                deliverable written as several files at once (an ``.fbx`` and
+                its ``.glb``) versions as ONE: a number any of them holds is
+                taken, so the set stays paired -- and a GLB-only export, which
+                leaves no ``.fbx`` behind, still finds its own.
+
+        Returns:
+            int: The next free version number.
+
+        Raises:
+            ValueError: `format` has no ``{n}`` field, or a field other than
+                ``n`` / ``stem`` / ``ext``.
+        """
+        exts = "|".join(re.escape(e) for e in dict.fromkeys([ext, *extensions]))
+        sibling = FileUtils._version_pattern(format, re.escape(stem), f"(?:{exts})")
+        highest = 0
+        try:
+            with os.scandir(os.path.expandvars(directory) or ".") as entries:
+                for entry in entries:
+                    match = entry.is_file() and sibling.match(entry.name)
+                    if match:
+                        highest = max(highest, int(match.group("n")))
+        except (FileNotFoundError, NotADirectoryError):
+            pass
+        return highest + 1 if highest else start
+
+    @staticmethod
+    def _version_pattern(format: str, stem: str, ext: str) -> "re.Pattern":
+        """A regex matching every name `format` renders, ``{n}`` a digit run.
+
+        *stem* / *ext* are regex fragments: a literal value escaped, or a named
+        group when the name is being parsed. A second ``{n}`` repeats the first
+        (a backreference) rather than opening a second group of the same name.
         """
         import string
 
@@ -587,51 +674,17 @@ class FileUtils(HelpMixin):
         if unknown:
             raise ValueError(f"unsupported field(s) in format: {sorted(unknown)}")
 
-        fp = os.path.expandvars(filepath)
-        directory = os.path.dirname(fp) or "."
-        basename = os.path.basename(fp)
-
-        def build_regex(stem_pat: str, ext_pat: str):
-            parts = []
-            for literal, field, _spec, _conv in parsed:
-                parts.append(re.escape(literal))
-                if field is None:
-                    continue
-                if field == "n":
-                    parts.append(r"(?P<n>\d+)")
-                elif field == "stem":
-                    parts.append(stem_pat)
-                elif field == "ext":
-                    parts.append(ext_pat)
-            return re.compile("^" + "".join(parts) + "$")
-
-        m = build_regex(r"(?P<stem>.+?)", r"(?P<ext>\.[^.]+)").match(basename)
-        if m:
-            gd = m.groupdict()
-            root, real_ext = os.path.splitext(basename)
-            stem = gd.get("stem") if "stem" in fields else root
-            ext = gd.get("ext") if "ext" in fields else real_ext
-            input_n = int(m.group("n"))
-        else:
-            stem, ext = os.path.splitext(basename)
-            input_n = 0
-
-        sibling_regex = build_regex(re.escape(stem), re.escape(ext))
-        highest = 0
-        try:
-            with os.scandir(directory) as entries:
-                for entry in entries:
-                    if not entry.is_file():
-                        continue
-                    sm = sibling_regex.match(entry.name)
-                    if sm:
-                        highest = max(highest, int(sm.group("n")))
-        except FileNotFoundError:
-            pass
-
-        floor = max(input_n, highest)
-        next_n = floor + 1 if floor else start
-        return os.path.join(directory, format.format(stem=stem, ext=ext, n=next_n))
+        parts, counted = [], False
+        for literal, field, _spec, _conv in parsed:
+            parts.append(re.escape(literal))
+            if field == "n":
+                parts.append(r"(?P=n)" if counted else r"(?P<n>\d+)")
+                counted = True
+            elif field == "stem":
+                parts.append(stem)
+            elif field == "ext":
+                parts.append(ext)
+        return re.compile("^" + "".join(parts) + "$")
 
     @staticmethod
     def get_dir_contents(
@@ -1032,6 +1085,64 @@ class FileUtils(HelpMixin):
             except OSError:
                 pass
             raise
+
+    @staticmethod
+    def atomic_write(
+        target: str, write: Callable[[str], Any], promote: bool = True
+    ) -> str:
+        """Produce *target* through *write*, so no reader meets a partial file.
+
+        *write* is handed a sibling ``.part`` path and leaves the whole file
+        there however it likes -- a stream, a copy, a subprocess. Beside the
+        target, so the ``os.replace`` that promotes it is a rename within one
+        volume, atomic on POSIX and Windows: a reader sees the previous file or
+        the complete new one. A raise inside *write* (disk full is the realistic
+        case for a multi-hundred-MB payload) removes the partial file and leaves
+        *target* as it was, and so does a promotion that fails.
+
+        Why a copy needs this: ``shutil.move`` renames only within one volume
+        -- on Windows not even then, over an existing file -- and otherwise
+        copies straight onto the destination, which truncates it before a byte
+        of the new file is written.
+
+        The ``.part`` is a :class:`TempArtifacts` allocation, so one stranded by
+        a process that dies mid-write is swept, once stale, by a later write
+        into the same directory. That sweep scans the directory on every call,
+        which is why small text keeps its own writer, :meth:`atomic_write_text`:
+        a batch of sidecars saved into one folder would rescan it per file.
+
+        Parameters:
+            target: The file to produce or replace; its directory must exist.
+            write: Called with the ``.part`` path; leaves the complete file there.
+            promote: ``False`` returns the written ``.part`` unpromoted, for a
+                caller that must release a handle on *target* first (Windows
+                refuses to replace a file that is open or memory-mapped); that
+                caller owns the ``os.replace``.
+
+        Returns:
+            *target*, or the ``.part`` path when *promote* is ``False``.
+
+        Raises:
+            Whatever *write* raises, and ``OSError`` from the promotion --
+            *target* unchanged either way.
+        """
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        target = os.fspath(target)
+        scratch = TempArtifacts(
+            "atomic_write",
+            policy="scoped",
+            dir=os.path.dirname(os.path.abspath(target)),
+        )
+        part = scratch.path(extension=".part")
+        try:
+            write(part)
+            if promote:
+                os.replace(part, target)
+        except BaseException:
+            scratch.cleanup()
+            raise
+        return target if promote else part
 
     @staticmethod
     def copy_file(
@@ -1592,6 +1703,10 @@ class FileUtils(HelpMixin):
         package, a synthetic module name (``<stem>_ptk_loader_<id>``) is
         used and removed from ``sys.modules`` after loading.
 
+        Importing runs a module, so a file whose source defines no class is
+        never imported -- it could contribute no row. Callers that scan whole
+        package trees (Switchboard slot discovery) rely on this.
+
         Parameters:
             path (str): The path to the directory or Python file to scan for classes.
             returned_type (str/list): A single string or a list of strings representing the type of information to return.
@@ -1662,6 +1777,14 @@ class FileUtils(HelpMixin):
                         for node in ast.walk(module_ast)
                         if isinstance(node, ast.ClassDef)
                     ]
+
+            # A file with no class definition can contribute no row, so it is
+            # never imported: importing RUNS it. Slot discovery scans whole
+            # package trees with this, and a class-less scratch script there
+            # executed at every DCC start (a probe that launched Maya did so
+            # recursively -- a new hung instance every ~20 s).
+            if not classes:
+                continue
 
             module_name = Path(filename).stem
 

@@ -59,9 +59,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/color.py` — Lightweight, DCC-agnostic color primitives.
 - `class Color`
-  - methods: from_hex, from_rgbf, hex, rgb, rgba, rgbf, rgbaf, luminance, lighter, darker, with_alpha, blend, subtle_bg
+  - methods: from_hex, from_rgbf, from_hsvf, linear_from_srgb, srgb_from_linear, hex, rgb, rgba, rgbf, rgbaf, hsv, luminance, lighter, darker, with_alpha, blend, subtle_bg
 - `class ColorPair`
   - methods: auto
+- `class ColorStops`
+  - methods: keys, defaults, resolve
 - `class Palette(dict)`
   - methods: update, setdefault, copy, alias, override, status, axes, channels, ui, diff
 
@@ -79,7 +81,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: times, start, end, duration, key_count, rescale, to_dict, from_dict
 - `class StashChanged`
 - `class KeyStash(_KeyStashInternal)`
-  - methods: add_clip, get_clip, remove_clip, clips_for_object, clips_for_shot, is_empty, set_preview, clear_preview, add_listener, remove_listener, batch_update, rescale_to_fps, mark_dirty, save, to_dict, from_dict, set_persistence, active, invalidate, add_invalidation_listener, remove_invalidation_listener, offset_for, gate_range
+  - methods: add_clip, get_clip, remove_clip, clips_for_object, clips_for_shot, is_empty, set_preview, clear_preview, is_previewing, add_listener, remove_listener, batch_update, rescale_to_fps, mark_dirty, save, to_dict, from_dict, set_persistence, active, invalidate, add_invalidation_listener, remove_invalidation_listener, offset_for, gate_range
 
 ### `core_utils/engines/shots/manifest/behaviors/_behaviors.py` — Behaviors — load JSON keying recipes and resolve them to keyframe math.
 - `class Behaviors(_BehaviorsInternal)`
@@ -172,7 +174,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/textures/map_factory/_map_factory.py` — ``MapFactory`` -- the texture-map workflow orchestrator.
 - `class MapFactory(LoggingMixin)`
-  - methods: map_types, passthrough_maps, packed_grayscale_maps, map_fallbacks, register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, get_tile_token, group_textures_by_set, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, resolve_normal_maps, filter_redundant_maps, extract_channels, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, foreign_packings, unpack_to_channels, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
+  - methods: map_types, passthrough_maps, packed_grayscale_maps, map_fallbacks, register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, get_tile_token, get_tile_paths, group_textures_by_set, collapse_tile_sets, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, resolve_normal_maps, filter_redundant_maps, extract_channels, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, foreign_packings, unpack_to_channels, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
 
 ### `core_utils/engines/textures/map_factory/conversions.py` — Map-conversion registry primitives for the texture MapFactory.
 - `class MapConversion`
@@ -207,7 +209,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/textures/map_optimizer.py` — Plan, assess, and apply map (texture) optimizations.
 - `class Op`
 - `class MapOptimizer(HelpMixin)`
-  - methods: resolve_size_clamp, describe_size_clamp, plan, project, apply, resolve_quality, resolve_compression, optimize_map, channel_loss_warning, format_result, batch_optimize_maps, assess
+  - methods: resolve_size_clamp, describe_size_clamp, plan, project, apply, resolve_quality, resolve_compression, optimize_map, channel_loss_warning, format_result, batch_optimize_maps, is_recompressible, optimize_maps, stage_maps, assess
 
 ### `core_utils/engines/textures/map_registry.py`
 - `class WF`
@@ -257,9 +259,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `main(argv=None) -> int`
 - constants: CHROMA_KEY, INDICATOR_SIZE, GIF_SIZE, NUM_DOTS, FRAME_MS, PARENT_POLL_MS, DIALOG_MIN_WIDTH, DIALOG_WRAP, DIALOG_KEEP_WAITING, DIALOG_FORCE, DIALOG_CLOSED, DIALOG_CANCEL, KILL_TIMEOUT
 
-### `core_utils/export_profile.py` — The Scene Exporter panels' export-button contract, written once.
+### `core_utils/export_profile.py` — The Scene Exporter panels' shared contract, written once.
 - `class ExportProfile`
-  - methods: legal_name, widget_key, value_method, run_config, read_values
+  - methods: legal_name, widget_key, value_method, run_config, read_values, texture_size_limit_bytes, strip_deliverable_extension, fold_legacy_naming, resolve_output_path, naming_report, scoped_tables, task_order, unimplemented, optimize_textures_options, texture_file_type_options, frame_rate_options
+- `class ExportRun`
+  - methods: glb_only, create_glb, usd, replace, with_tasks, from_tasks
 
 ### `core_utils/git.py`
 - `class Git`
@@ -409,7 +413,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/task_factory.py` — Generic task/check pipeline primitive -- host- and Qt-free.
 - `class TaskFactory`
-  - methods: stage_deferred_restore, stage_deferred_context, run_deferred_restores, run_tasks, run_tasks_by_category
+  - methods: stage_deferred_restore, stage_deferred_context, run_deferred_restores, record_kept_edit, kept_edits, run_tasks, run_tasks_by_category
 
 ### `core_utils/template_set.py` — A discoverable, user-extensible collection of schema-validated template files.
 - `class TemplateSet`
@@ -426,7 +430,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/_file_utils.py`
 - `class FileUtils(HelpMixin)`
-  - methods: is_valid, is_cloud_placeholder, is_under, is_rooted_path, resolve_output_dir, relativize_output_dir, path_length_limit, exceeds_path_length, free_space, is_locked, locking_processes, describe_lock, format_bytes, format_bytes_delta, create_dir, next_version_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, read_json, write_json, atomic_write_text, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
+  - methods: is_valid, is_cloud_placeholder, is_under, is_rooted_path, resolve_output_dir, relativize_output_dir, path_length_limit, exceeds_path_length, free_space, is_locked, locking_processes, describe_lock, format_bytes, format_bytes_delta, create_dir, next_version_path, next_version_number, get_dir_contents, open_explorer, get_file_contents, write_to_file, read_json, write_json, atomic_write_text, atomic_write, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
 
 ### `file_utils/file_naming.py` — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - `class RenamePlan(LoggingMixin)`
@@ -437,23 +441,23 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - constants: FBX2GLTF_VERSION, FBX2GLTF_PLATFORMS
 - `class MeshConvert(HelpMixin)`
-  - methods: conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, without_locate_hints, read_glb_lightmap_manifest, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, apply_glb_fades, prune_glb_animations, compact_glb_animations, drop_glb_texture_fallbacks, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
+  - methods: conversion_timeout, bake_node_frames, OPTIMIZE_WORKERS, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, effect_preview_channels, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, apply_glb_fades, prune_glb_animations, compact_glb_animations, reduce_glb_animations, drop_glb_texture_fallbacks, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
 
 ### `file_utils/mesh_convert/export_verify.py` — Deliverable verification for exported FBX / GLB pairs.
 - `class Finding`
 - `class VerificationReport`
   - methods: ok, counts, summary, to_json
 - `class ExportVerifier(_ExportVerifierInternal)`
-  - methods: reader, fbx, gate_names, run, check_glb_container, check_glb_extensions, check_glb_images, check_glb_skins, check_glb_animation_integrity, check_glb_envelope, check_clips_vs_takes, check_clip_origin, check_fbx_container, check_fbx_takes, check_cross_clips, check_baseline_diff
+  - methods: reader, fbx, gate_names, run, check_glb_container, check_glb_extensions, check_glb_images, check_glb_image_bytes, check_glb_skins, check_glb_animation_integrity, check_glb_envelope, check_clips_vs_takes, check_clip_origin, check_fbx_container, check_fbx_takes, check_cross_clips, check_baseline_diff
 
 ### `file_utils/mesh_convert/fbx_file.py` — Zero-dependency binary-FBX reader: header, node records, objects, takes.
 - constants: FBX_MAGIC
 - `class FbxFile(_FbxFileInternal)`
-  - methods: load, is_fbx, section, iter_objects, objects_census, object_names, take_names, connections
+  - methods: load, is_fbx, section, iter_objects, objects_census, object_names, take_names, user_properties, connections
 
-### `file_utils/mesh_convert/fbx_media.py` — Rewrite the embedded media of a binary FBX -- no DCC, no FBX SDK.
+### `file_utils/mesh_convert/fbx_media.py` — Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 - `class FbxMedia(_FbxMediaInternal)`
-  - methods: embedded, downsize, rewrite
+  - methods: embedded, downsize, expand_grayscale, drop_takes, rewrite
 
 ### `file_utils/mesh_convert/glb_clips.py` — Rebuild a GLB's shot clips from its one whole-timeline animation.
 - `class GlbClips(_GlbClipsInternal)`
@@ -462,9 +466,13 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `file_utils/mesh_convert/glb_fades.py` — Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
 - constants: EXTENSION, POINTER, CHANNELS, DEFAULT_COLOR
 - `class PointerChannel`
-  - methods: components, accessor_type, base
+  - methods: color_key, components, accessor_type, base
 - `class GlbFades(_GlbFadesInternal)`
   - methods: apply, apply_channels
+
+### `file_utils/mesh_convert/glb_key_reduction.py` — Reduce a GLB's animation keys to what its interpolation needs.
+- `class GlbKeyReduction(_GlbKeyReductionInternal)`
+  - methods: read_sampler, evaluate, deviation, reduce
 
 ### `file_utils/mesh_convert/glb_pipeline.py` — FBX -> GLB: the one build every GLB deliverable goes through.
 - `class GlbPipeline(LoggingMixin)`
@@ -571,7 +579,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
-  - methods: effective_mode, dropped_channels, channels_carrying_data, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, ensure_ktx2_encoder, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, rasterize_height_fields, rasterize_height_spans, rasterize_shadow, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
+  - methods: encode_workers, effective_mode, dropped_channels, channels_carrying_data, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, ensure_ktx2_encoder, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, rasterize_height_fields, rasterize_height_spans, rasterize_shadow, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
 
 ### `img_utils/exposure_equalizer.py` — Cross-set exposure / white-balance equalization.
 - `class ExposureEqualizer`
@@ -584,7 +592,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `img_utils/ktx2_encoder.py` — KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
 - constants: KTX_SOFTWARE_VERSION, KTX_SOFTWARE_PLATFORMS, KTX_SOFTWARE_SHA256
 - `class Ktx2Encoder`
-  - methods: toktx, not_installed_error, resolve_toktx, available, read_header, args_for, encode
+  - methods: encode_timeout, toktx, not_installed_error, resolve_toktx, available, read_header, args_for, encode
 
 ### `img_utils/mask_generator.py` — Background mask generation via rembg (optional dependency).
 - `class MaskGenerator`
@@ -609,6 +617,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `math_utils/progression.py`
 - `class ProgressionCurves`
   - methods: linear, exponential, logarithmic, sine, ease_in, ease_out, ease_in_out, smooth_step, bounce, elastic, weighted, calculate_progression_factor, get_curve_function, generate_curve_samples
+
+### `math_utils/ramp_keys.py` — Render-effect key timelines -- the pulse and fade shapes, as ``(frame, value)`` pairs.
+- `class RampKeys`
+  - methods: frames, pulse_gaps, pulse, fade, fade_loop
 
 ### `math_utils/weights.py` — Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 - `class Weights`
@@ -674,7 +686,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `str_utils/_str_utils.py`
 - constants: ANSI_ESCAPE_RE
 - `class StrUtils(CoreUtils)`
-  - methods: to_legal_name, strip_ansi, sanitize, replace_placeholders, resolve_placeholders, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
+  - methods: to_legal_name, to_legal_filename, strip_ansi, sanitize, expand_wildcard, replace_placeholders, resolve_placeholders, name_pattern_context, resolve_name_pattern, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
 
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`

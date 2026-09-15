@@ -18,9 +18,20 @@ from __future__ import annotations
 
 import os
 import math
+import logging
 
 from dataclasses import dataclass, field
-from typing import List, Tuple, Dict, Any, Optional
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 
 try:
     from PIL import Image
@@ -1340,6 +1351,344 @@ class MapOptimizer(HelpMixin):
         for texture_path in textures.keys():
             cls.optimize_map(texture_path, **kwargs)
         print(f"{len(textures)} maps optimized.")
+
+    #: Containers a plain re-encode can shrink without touching a pixel:
+    #: lossless, with a compression level the writer chooses. :meth:`plan`
+    #: never judges how well a file is compressed -- a production 57.34 MB
+    #: normal map with nothing else to change re-encoded to 24.10 MB -- so a
+    #: batch caller re-encodes these on spec and ships the result only when it
+    #: saves :attr:`RECOMPRESS_MIN_SAVING` of the source's bytes.
+    RECOMPRESSIBLE_FORMATS = ("png",)
+    RECOMPRESS_MIN_SAVING = 0.05
+
+    @classmethod
+    def is_recompressible(cls, path: str) -> bool:
+        """Is *path* in a container a plain re-encode can shrink
+        (:attr:`RECOMPRESSIBLE_FORMATS`)?"""
+        ext = FileUtils.format_path(path, "ext").lower().lstrip(".")
+        return ext in cls.RECOMPRESSIBLE_FORMATS
+
+    @classmethod
+    def optimize_maps(
+        cls, requests: Sequence[Dict[str, Any]], workers: Optional[int] = None
+    ) -> List[Tuple[Optional[str], Optional[Exception]]]:
+        """:meth:`optimize_map` over many maps, in threads.
+
+        A 4K PNG re-encode is 1.6-7 s on its own, and an export ships dozens;
+        the thread count is :meth:`ImgUtils.encode_workers`' policy, shared
+        with the GLB texture pass.
+
+        Parameters:
+            requests: One ``optimize_map`` keyword set per map --
+                ``texture_path`` plus any of its options. Two requests that
+                would write the same file are the caller's to prevent; nothing
+                here serializes them.
+            workers: Thread count; ``None`` takes the shared policy (memory-
+                capped, since each worker holds a decoded map). Always capped
+                by the request count.
+
+        Returns:
+            list: One ``(written_path, error)`` per request, in request order;
+            exactly one of the pair is None. A map that raises costs no other
+            map its result -- what a failure means is the caller's call.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _one(request: Dict[str, Any]):
+            try:
+                return cls.optimize_map(**request), None
+            except Exception as e:  # noqa: BLE001 -- reported per map
+                return None, e
+
+        requests = list(requests)
+        count = max(1, min(ImgUtils.encode_workers(workers), len(requests)))
+        if count > 1:
+            with ThreadPoolExecutor(
+                max_workers=count, thread_name_prefix="ptk-map-optimize"
+            ) as pool:
+                return list(pool.map(_one, requests))
+        return [_one(request) for request in requests]
+
+    # ------------------------------------------------------------------
+    # Export staging -- the claim -> encode -> verify pass an exporter runs
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def stage_maps(
+        cls,
+        sources: Mapping[str, Mapping[str, Any]],
+        assess: Callable[[str], Optional[Mapping[str, Any]]],
+        *,
+        output_profile: Optional[str] = None,
+        clamp: Optional[Mapping[str, Any]] = None,
+        staging_dir: Union[str, Callable[[], Tuple[str, bool]], None] = None,
+        temp_staging: bool = False,
+        write_back: bool = False,
+        recompress: bool = True,
+        old_files_folder: str = "original_textures",
+        pass_desc: str = "",
+        logger: Optional[logging.Logger] = None,
+        workers: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Optimize the maps an export ships: judge, claim, encode, verify.
+
+        The file half of both DCC Scene Exporters' ``optimize_textures`` task,
+        written once; the scene half (pointing each consumer at its written
+        copy, and restoring it after the write) stays with the DCC, which reads
+        this pass's report. Three phases:
+
+        1. **Judge** each source through *assess* (the exporter's memoised
+           :meth:`assess` wrapper, which resolves the run's container and size
+           clamp). A map the pass would change is pending; an already-optimal
+           map in a container a plain re-encode can shrink
+           (:attr:`RECOMPRESSIBLE_FORMATS`) is pending too when *recompress*
+           is set -- ``assess`` never judges how well a file is compressed.
+        2. **Claim** every output name serially, BEFORE any encode: two source
+           basenames can collapse onto one output name (suffix normalisation,
+           or a container change the template picked), and staging into a
+           flat directory would collapse same-named maps from different
+           folders -- the second+ claimant of a name stages into an ``altN``
+           subdirectory; in write-back mode (which writes beside the source
+           by design) a collision skips the loser outright, unmodified.
+        3. **Encode** in parallel (:meth:`optimize_maps`), then **verify**
+           each write in claim order: a durable staged file reused from an
+           earlier run (``check_existing``) is re-judged against THIS run's
+           pass and re-encoded when stale; a re-encode that saved less than
+           :attr:`RECOMPRESS_MIN_SAVING` is discarded (unless the file existed
+           before this run) and the source ships as it is.
+
+        Parameters:
+            sources: ``{key: entry}`` where each entry has ``"path"`` (the
+                source file) and whatever the exporter needs to find the
+                map's consumers -- carried through to the report untouched.
+                Judged in key order, so the ``altN`` assignment is
+                deterministic run to run.
+            assess: ``assess(path) -> verdict | None`` -- a dict with
+                ``needed`` (bool), ``output_type`` and ``predicted_name``
+                (see the exporters' ``_assess_optimization``); None skips
+                the source (an unreadable file is another gate's domain).
+            output_profile: The workflow template the pass converts to (the
+                ``optimize_map`` ``output_profile``), None for generic.
+            clamp: ``optimize_map`` size-rule kwargs (``max_size``,
+                ``enforce_budget``, ...), from :meth:`resolve_size_clamp`.
+            staging_dir: Where staged copies land; required unless
+                *write_back*. A zero-arg callable returning
+                ``(staging_dir, temp_staging)`` is called only once something
+                is pending, so a pass with nothing to stage creates no
+                directory (an exporter's ``_texture_staging_dir``).
+            temp_staging: The staging dir is a throwaway (the deliverable
+                carries its own copies): nothing is reused from it, so every
+                map is encoded fresh. Ignored when *staging_dir* is a callable.
+            write_back: Write over the scene's own files, archiving each
+                original under *old_files_folder* beside it.
+            recompress: Re-encode already-optimal maps in a recompressible
+                container (see phase 1). An exporter turns it off where the
+                scene's own maps do not ship, or where a write-back re-run
+                would archive the re-encode over the true original.
+            old_files_folder: The archive folder name in write-back mode.
+            pass_desc: How the exporter names the pass in its log lines
+                ("the 'glTF 2.0' template, clamped to 4096 px").
+            logger: Where the pass's progress lines go; a module logger by
+                default.
+            workers: Thread count for the encodes (:meth:`optimize_maps`).
+
+        Returns:
+            dict: ``sources`` / ``pending`` / ``reencodes`` (counts judged),
+            ``optimized`` / ``kept`` / ``failed`` (outcomes), ``bytes_before``
+            / ``bytes_after`` (over the optimized maps), ``staging_dir`` /
+            ``temp_staging`` (where the copies went) and ``results`` -- one
+            record per pending source, in judged order: ``key``, ``entry``
+            (the caller's), ``path``, ``written`` (the file to point consumers
+            at, None unless ``status`` is ``"optimized"``), ``size_before``,
+            ``size_after``, ``recompress`` (a re-encode candidate),
+            ``status`` (``"optimized"`` -- point the consumers at ``written``;
+            ``"kept"`` -- the source ships; ``"failed"`` -- the source ships,
+            ``error`` says why; ``"collision"`` -- the source ships, another
+            source claimed its name) and ``error``.
+
+        Raises:
+            ValueError: No *staging_dir* for a staged (non-write-back) pass.
+        """
+        log = logger or logging.getLogger(__name__)
+        clamp = dict(clamp or {})
+        report: Dict[str, Any] = {
+            "sources": len(sources),
+            "pending": 0,
+            "reencodes": 0,
+            "optimized": 0,
+            "kept": 0,
+            "failed": 0,
+            "bytes_before": 0,
+            "bytes_after": 0,
+            "staging_dir": None if callable(staging_dir) else staging_dir,
+            "temp_staging": temp_staging,
+            "results": [],
+        }
+
+        # Phase 1: judge. Sorted so the altN assignment below is deterministic
+        # across runs; an unreadable source (None verdict) drops out here.
+        pending = []
+        for key, entry in sorted(sources.items()):
+            verdict = assess(entry["path"])
+            if not verdict:
+                continue
+            if verdict["needed"]:
+                pending.append((key, entry, verdict, False))
+            elif recompress and cls.is_recompressible(entry["path"]):
+                pending.append((key, entry, verdict, True))
+        if not pending:
+            log.info(
+                f"Texture optimization: all {len(sources)} shipping texture(s) "
+                "already optimal" + (f" for {pass_desc}." if pass_desc else ".")
+            )
+            return report
+        if not write_back and callable(staging_dir):
+            staging_dir, temp_staging = staging_dir()
+            report["staging_dir"], report["temp_staging"] = staging_dir, temp_staging
+        if not write_back and not staging_dir:
+            raise ValueError("stage_maps: a staged pass needs a staging_dir.")
+
+        report["pending"] = len(pending)
+        report["reencodes"] = sum(1 for *_x, is_recompress in pending if is_recompress)
+        log.info(
+            f"Optimizing {len(pending)} of {len(sources)} texture(s)"
+            + (
+                f" ({report['reencodes']} to re-encode only)"
+                if report["reencodes"]
+                else ""
+            )
+            + (f" for {pass_desc}" if pass_desc else "")
+            + (
+                " — writing back to the scene's texture files..."
+                if write_back
+                else " — staging for export only (scene untouched)..."
+            )
+        )
+
+        # Phase 2: claim every output name before any encode runs, so the
+        # parallel phase can never have two jobs writing one file.
+        claimed: Dict[str, str] = {}  # predicted-output key -> claiming source
+        used_names: Dict[str, int] = {}
+        jobs = []
+        for key, entry, verdict, is_recompress in pending:
+            src = entry["path"]
+            predicted_name = verdict.get("predicted_name") or os.path.basename(src)
+            record = {
+                "key": key,
+                "entry": entry,
+                "path": src,
+                "written": None,
+                "size_before": os.path.getsize(src) if os.path.isfile(src) else 0,
+                "size_after": 0,
+                "recompress": is_recompress,
+                "status": "failed",
+                "error": None,
+            }
+            report["results"].append(record)
+            if write_back:
+                out_dir = os.path.dirname(src) or "."
+            else:
+                base = predicted_name.lower()
+                nth = used_names.get(base, 0)
+                used_names[base] = nth + 1
+                out_dir = (
+                    staging_dir if nth == 0 else os.path.join(staging_dir, f"alt{nth}")
+                )
+            claim_key = os.path.normcase(os.path.join(out_dir, predicted_name))
+            prior_src = claimed.get(claim_key)
+            if prior_src and prior_src != src:
+                record["status"] = "collision"
+                report["failed"] += 1
+                log.warning(
+                    f"Optimized name collision: {os.path.basename(src)} "
+                    f"would write as {predicted_name!r}, already claimed by "
+                    f"{os.path.basename(prior_src)} for this pass — "
+                    f"{os.path.basename(src)} ships unmodified to avoid "
+                    "overwriting the survivor."
+                )
+                continue
+            claimed[claim_key] = src
+            request = {
+                "texture_path": src,
+                "output_profile": output_profile,
+                "output_type": verdict.get("output_type"),
+                **clamp,
+            }
+            if write_back:
+                request["old_files_folder"] = old_files_folder
+            else:
+                request.update(output_dir=out_dir, check_existing=not temp_staging)
+            jobs.append(
+                {
+                    "record": record,
+                    "request": request,
+                    # A durable staged file from an earlier export may be what
+                    # that export's FBX references: never delete one.
+                    "existed": os.path.exists(os.path.join(out_dir, predicted_name)),
+                }
+            )
+
+        # Phase 3: the encodes (files only), then verify each in claim order.
+        results = cls.optimize_maps([job["request"] for job in jobs], workers=workers)
+        for job, (written, error) in zip(jobs, results):
+            record = job["record"]
+            src, size_before = record["path"], record["size_before"]
+            if error is None and not write_back and not temp_staging:
+                # check_existing keys reuse on mtime alone, so a staged file
+                # from an earlier run under DIFFERENT settings (another
+                # template, or none) is "newer than the source" and gets
+                # reused while still needing work — the task would report
+                # success and its paired check would name the residual with
+                # no UI way out. Re-judge the reused file against THIS pass.
+                try:
+                    stale = assess(written)
+                    if stale and stale["needed"]:
+                        written = cls.optimize_map(
+                            **dict(job["request"], check_existing=False)
+                        )
+                except Exception as e:  # noqa: BLE001 — per-map fallback
+                    error = e
+            if error is not None:
+                record["error"] = error
+                report["failed"] += 1
+                log.warning(
+                    f"Texture optimization failed for {os.path.basename(src)} "
+                    f"— the original ships instead: {error}"
+                )
+                continue
+
+            size_after = os.path.getsize(written) if os.path.isfile(written) else 0
+            record["size_after"] = size_after
+            if record["recompress"] and size_after > size_before * (
+                1 - cls.RECOMPRESS_MIN_SAVING
+            ):
+                # Too little saved to ship a second copy of the same pixels:
+                # the source ships, and a copy this run wrote goes.
+                record["status"] = "kept"
+                report["kept"] += 1
+                if not job["existed"]:
+                    try:
+                        os.remove(written)
+                    except OSError:
+                        pass
+                continue
+
+            record["status"], record["written"] = "optimized", written
+            report["optimized"] += 1
+            report["bytes_before"] += size_before
+            report["bytes_after"] += size_after
+
+        if report["kept"]:
+            log.info(
+                f"{report['kept']} re-encode(s) saved under "
+                f"{cls.RECOMPRESS_MIN_SAVING:.0%} and were discarded; those "
+                "sources ship as they are."
+            )
+        if report["failed"]:
+            log.warning(
+                f"{report['failed']} texture(s) could not be optimized and ship as-is."
+            )
+        return report
 
     @classmethod
     def assess(

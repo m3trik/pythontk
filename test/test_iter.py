@@ -31,7 +31,7 @@ class FlatInteriorContractTest(BaseTestCase):
     value ("values all fall within value_tolerance"), not an adjacent-diff
     test. Adjacent-diff creep let a slow excursion that returns to its start
     read as one flat run -- interior deleted -- which shipped as unit-
-    independent cm-scale joint drift in exported animation (VDATS looms)."""
+    independent cm-scale joint drift in exported animation (PROPS looms)."""
 
     TOL = 0.001
 
@@ -582,31 +582,31 @@ class IterTest(BaseTestCase):
     def test_filter_list_match_all_and_logic(self):
         """Test filter_list with match_all=True for AND logic."""
         files = [
-            "C130_cockpit_module.ma",
-            "C130_wing_module.ma",
+            "JET_cockpit_module.ma",
+            "JET_wing_module.ma",
             "A320_cockpit_module.ma",
-            "C130_engine.ma",
+            "JET_engine.ma",
             "random_file.ma",
         ]
         result = IterUtils.filter_list(
             files,
-            inc="*_module.ma;C130*",
+            inc="*_module.ma;JET*",
             delimiter=(",", ";"),
             match_all=True,
         )
-        self.assertEqual(result, ["C130_cockpit_module.ma", "C130_wing_module.ma"])
+        self.assertEqual(result, ["JET_cockpit_module.ma", "JET_wing_module.ma"])
 
     def test_filter_list_match_all_false_or_logic(self):
         """Test filter_list with match_all=False (default) for OR logic."""
         files = [
-            "C130_cockpit_module.ma",
-            "C130_wing_module.ma",
+            "JET_cockpit_module.ma",
+            "JET_wing_module.ma",
             "A320_cockpit_module.ma",
-            "C130_engine.ma",
+            "JET_engine.ma",
         ]
         result = IterUtils.filter_list(
             files,
-            inc="*_module.ma;C130*",
+            inc="*_module.ma;JET*",
             delimiter=(",", ";"),
             match_all=False,
         )
@@ -614,10 +614,10 @@ class IterTest(BaseTestCase):
         self.assertEqual(
             result,
             [
-                "C130_cockpit_module.ma",
-                "C130_wing_module.ma",
+                "JET_cockpit_module.ma",
+                "JET_wing_module.ma",
                 "A320_cockpit_module.ma",
-                "C130_engine.ma",
+                "JET_engine.ma",
             ],
         )
 
@@ -678,18 +678,18 @@ class IterTest(BaseTestCase):
     def test_filter_list_match_all_with_exclusion(self):
         """Test filter_list with match_all=True combined with exclusion."""
         files = [
-            "C130_cockpit_module.ma",
-            "C130_wing_module.ma",
-            "C130_backup_module.ma",
+            "JET_cockpit_module.ma",
+            "JET_wing_module.ma",
+            "JET_backup_module.ma",
         ]
         result = IterUtils.filter_list(
             files,
-            inc="*_module.ma;C130*",
+            inc="*_module.ma;JET*",
             exc="*backup*",
             delimiter=(",", ";"),
             match_all=True,
         )
-        self.assertEqual(result, ["C130_cockpit_module.ma", "C130_wing_module.ma"])
+        self.assertEqual(result, ["JET_cockpit_module.ma", "JET_wing_module.ma"])
 
     # -------------------------------------------------------------------------
     # filter_dict Tests
