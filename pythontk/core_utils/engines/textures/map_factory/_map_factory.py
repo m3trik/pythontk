@@ -12,6 +12,7 @@ live in sibling modules.
 """
 
 import os
+import re
 from typing import (
     Any,
     Callable,
@@ -724,6 +725,52 @@ class MapFactory(LoggingMixin):
         return cls._map_registry.split_tile_token(name_only)[1]
 
     @classmethod
+    def get_tile_paths(cls, filepath: str) -> List[str]:
+        """Every tile on disk of the tile set a texture path names, sorted.
+
+        *filepath* is one tile (``rock.1001.png``) or the set's pattern
+        (``rock.<UDIM>.png``). Its tiles are the files beside it whose names
+        differ from it only in the tile, spelled in its scheme: four digits for
+        a UDIM, ``u#_v#`` for a UV tile. The question a host asks before it
+        TILES an image, since a lone tile-numbered file is not a set: tiled,
+        ``wall.1024.png`` leaves 0-1 UVs for tile 1024 and renders black, while
+        read as one image it renders wherever the UVs sit, by wrapping.
+
+        Parameters:
+            filepath (str): A texture path.
+
+        Returns:
+            List[str]: The tiles' paths, spelled with *filepath*'s own
+            directory; empty when the name carries no tile token or its
+            directory does not exist.
+        """
+        ImgUtils.assert_pathlike(filepath, "filepath")
+
+        filepath = str(filepath)
+        filename = os.path.basename(filepath)
+        folder = filepath[: len(filepath) - len(filename)]
+        stem, ext = os.path.splitext(filename)
+        head, token = cls._map_registry.split_tile_token(stem)
+        if not token:
+            return []
+        spelled = token[1:].lower()
+        tile = (
+            "u[0-9]+_v[0-9]+"
+            if spelled.startswith("u") or spelled == "<uvtile>"
+            else "1[0-9]{3}"
+        )
+        # Names compare the way the filesystem compares them: case-blind on Windows.
+        fold = os.path.normcase
+        sibling = re.compile(
+            re.escape(fold(head + token[0])) + tile + re.escape(fold(ext)) + r"\Z"
+        )
+        try:
+            names = os.listdir(folder or ".")
+        except OSError:
+            return []
+        return sorted(folder + name for name in names if sibling.match(fold(name)))
+
+    @classmethod
     def group_textures_by_set(
         cls,
         image_paths: List[str],
@@ -761,6 +808,41 @@ class MapFactory(LoggingMixin):
             texture_sets[key].append(path)
 
         return texture_sets
+
+    @classmethod
+    def collapse_tile_sets(
+        cls, texture_sets: Dict[str, List[str]]
+    ) -> Dict[str, List[str]]:
+        """One set per MATERIAL from per-tile sets: each map once, as its lowest tile.
+
+        The shader builder's view over :meth:`group_textures_by_set`, which keeps
+        a set per tile because the factory converts each tile's images on their
+        own. A material is ONE shader however many tiles it spans, so its tiles
+        merge here under the tokenless base (``rock.1001`` and ``rock.1002`` ->
+        ``rock``), and each map keeps a single path -- a real tile rather than a
+        ``<UDIM>`` pattern, because the hosts tile from one: Maya's
+        ``uvTilingMode`` and Blender's ``TILED`` image source both find every
+        sibling tile from the file they are given, while Blender loads a literal
+        ``<UDIM>`` path as a one-tile image (measured, 5.1). The lowest tile is
+        kept, so the choice is stable. An untiled set passes through unchanged,
+        and an untiled map of a tiled material joins it.
+
+        Parameters:
+            texture_sets: ``{set key: paths}`` as :meth:`group_textures_by_set`
+                or :meth:`prepare_maps` return them.
+
+        Returns:
+            Dict[str, List[str]]: ``{material base: sorted paths}``.
+        """
+        merged: Dict[str, Dict[str, str]] = {}
+        for key, paths in texture_sets.items():
+            maps = merged.setdefault(cls._map_registry.split_tile_token(key)[0], {})
+            for path in paths:
+                stem, ext = os.path.splitext(os.path.basename(str(path)))
+                map_name = cls._map_registry.split_tile_token(stem)[0] + ext.lower()
+                if map_name not in maps or str(path) < maps[map_name]:
+                    maps[map_name] = str(path)
+        return {base: sorted(maps.values()) for base, maps in merged.items()}
 
     @classmethod
     def _supplement_sets_from_dir(
@@ -1572,7 +1654,9 @@ class MapFactory(LoggingMixin):
             source: A directory path (str), a single file path (str), or a list of file paths.
             output_dir: Optional output directory.
             group_by_set: Whether to automatically group textures into sets (default: True).
-                          If False, all input files are treated as a single set.
+                          If False, all input files are treated as a single set --
+                          one ASSET, whose UDIM tiles still convert a tile at a
+                          time and come back together as one list.
             discover_dir: Optional directory tree to scan for same-base-name
                           sibling textures that aren't in ``source``. Scanned
                           RECURSIVELY, so a per-asset subfolder layout is
@@ -1597,8 +1681,11 @@ class MapFactory(LoggingMixin):
                       - force_packed_maps (bool): Legacy alias for missing_map_rule="force".
 
         Returns:
-            List[str] if a single asset was processed.
-            Dict[str, List[str]] if multiple assets were processed (keyed by asset name).
+            List[str] if a single set was processed -- and always for
+            ``group_by_set=False``, whose tiles' maps come back as one list.
+            Dict[str, List[str]] if several were, keyed as
+            :meth:`group_textures_by_set` keys them (each tile of a UDIM
+            material is a set of its own).
 
         Raises:
             OperationCancelled: The ambient :class:`~pythontk.CancelScope` was
@@ -1662,14 +1749,19 @@ class MapFactory(LoggingMixin):
                 files, prefix=prefix, suffix=suffix
             )
         else:
-            # Treat all files as a single set
-            # Use the common prefix or just the first file's base name as the key
+            # All files are ONE asset, keyed by the first file's base name -- but
+            # its UDIM tiles still split: an inventory holds one path per map
+            # type, so a merged 2-tile set converted tile 1001 alone and dropped
+            # 1002 without a word. The tiles rejoin as one list below. (Fresh
+            # lists, so the working set never aliases the caller's input list.)
             base_name = cls.get_base_texture_name(
                 files[0], prefix=prefix, suffix=suffix
             )
-            # Copy so the working set never aliases the caller's input list
-            # (discovery and downstream steps append/edit it).
-            texture_sets = {base_name: list(files)}
+            texture_sets = {}
+            for path in files:
+                texture_sets.setdefault(
+                    f"{base_name}{cls.get_tile_token(path)}", []
+                ).append(path)
 
         # Gap-fill each set with same-base-name siblings found on disk.
         if discover_dir:
@@ -1728,6 +1820,7 @@ class MapFactory(LoggingMixin):
                 }
 
                 completed_count = 0
+                finished = {}
                 for future in concurrent.futures.as_completed(future_to_set):
                     completed_count += 1
                     # Retrieve the original task arguments
@@ -1751,8 +1844,13 @@ class MapFactory(LoggingMixin):
                         raise
 
                     base_name, generated = future.result()
-                    if generated:
-                        results[base_name] = generated
+                    finished[base_name] = generated
+            # In the sets' own order, not completion order: the serial branch
+            # returns that order, and a caller iterating the batch must not get
+            # a different one, run to run, because some worker finished first.
+            for base_name in texture_sets:
+                if finished.get(base_name):
+                    results[base_name] = finished[base_name]
         else:
             for i, (base_name, textures) in enumerate(texture_sets.items(), 1):
                 reported = (
@@ -1780,6 +1878,9 @@ class MapFactory(LoggingMixin):
 
                     traceback.print_exc()
 
+        # A named asset is one list, however many tiles it spans.
+        if not group_by_set:
+            return [path for generated in results.values() for path in generated]
         # Smart return: if single set, return list directly
         if len(results) == 1:
             return next(iter(results.values()))

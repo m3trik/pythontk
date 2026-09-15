@@ -360,6 +360,37 @@ class PlayblastRoutesTestCase(unittest.TestCase):
                 self._json("finish", {"token": token})
         self.assertFalse(os.path.exists(directory))
 
+    def test_the_quality_the_page_chose_reaches_the_encode(self):
+        """The export prompt's preset is stated when the recording OPENS, like
+        its rate, and the encode is what honours it."""
+        self._publish()
+        token = self._begin(frames=1, quality=60)["token"]
+        self._frame(token, 0)
+        self._json("finish", {"token": token})
+
+        self.assertEqual(self.encoded.call_args.kwargs["quality"], 60)
+
+    def test_a_recording_that_names_no_quality_uses_the_recorders_own(self):
+        """None hands the choice to ``SequenceEncoder.quality`` -- a page that
+        predates the prompt still records, at the recorder's default."""
+        self._publish()
+        token = self._begin(frames=1)["token"]
+        self._frame(token, 0)
+        self._json("finish", {"token": token})
+
+        self.assertIsNone(self.encoded.call_args.kwargs["quality"])
+
+    def test_an_unusable_quality_is_refused_before_any_frame(self):
+        """Refused at ``begin``, not clamped at the encode: a page asking for
+        quality 250 has a bug, and a full capture is too much to pay to find
+        out."""
+        for bad in (101, -1, "high", True, 12.5):
+            with self.subTest(quality=bad):
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    self._begin(quality=bad)
+                self.assertEqual(caught.exception.code, 400)
+        self.assertEqual(self.server.playblast.active(), [])
+
     def test_only_movie_targets_can_be_recorded(self):
         """The page already HAS the frames; posting them here to be handed back
         as a PNG sequence is a round trip with no purpose."""

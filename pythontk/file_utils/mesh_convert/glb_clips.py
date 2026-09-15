@@ -157,10 +157,15 @@ class _GlbClipsInternal:
     def _upper(times: Sequence[float], at: float) -> int:
         """Index of the key *at* interpolates toward -- always a valid pair.
 
-        Clamped into ``[1, len - 1]`` so the caller can read ``lo = hi - 1``
+        ``bisect_right``, so a time that IS a key pairs that key with its
+        successor (``u == 0``): LINEAR reads the key either way, but STEP holds
+        ``values[lo]`` and glTF says a STEP value holds FROM its key until the
+        next -- ``bisect_left`` paired the key with its predecessor and read a
+        gate one key late at its own change point. Clamped into
+        ``[1, len - 1]`` so the caller can read ``lo = hi - 1``
         unconditionally; the out-of-range cases are handled before this runs.
         """
-        return max(1, min(len(times) - 1, bisect.bisect_left(times, at)))
+        return max(1, min(len(times) - 1, bisect.bisect_right(times, at)))
 
     @classmethod
     def _evaluate(

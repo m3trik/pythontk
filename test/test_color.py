@@ -155,6 +155,46 @@ class TestColor(unittest.TestCase):
         self.assertEqual((r, g, b, a), (10, 20, 30, 40))
 
 
+class TestColorSpace(unittest.TestCase):
+    """The scalar sRGB <-> linear twins of ImgUtils' array conversions."""
+
+    def _cls(self):
+        from pythontk import Color
+
+        return Color
+
+    def test_mid_grey_is_a_fifth_of_the_light(self):
+        Color = self._cls()
+        linear = Color.linear_from_srgb((0.5, 0.5, 0.5))
+        self.assertEqual([round(c, 3) for c in linear], [0.214, 0.214, 0.214])
+        back = Color.srgb_from_linear(linear)
+        self.assertEqual([round(c, 6) for c in back], [0.5, 0.5, 0.5])
+
+    def test_the_toe_is_linear_and_the_ends_are_fixed(self):
+        Color = self._cls()
+        self.assertEqual(Color.linear_from_srgb((0.0, 1.0, 0.5))[:2], (0.0, 1.0))
+        self.assertAlmostEqual(
+            Color.linear_from_srgb((0.02, 0.0, 0.0))[0], 0.02 / 12.92, places=9
+        )
+        self.assertAlmostEqual(
+            Color.srgb_from_linear((0.002, 0.0, 0.0))[0], 0.002 * 12.92, places=9
+        )
+
+    def test_alpha_passes_and_hdr_is_not_clamped(self):
+        Color = self._cls()
+        self.assertEqual(Color.linear_from_srgb((1.0, 1.0, 1.0, 0.3))[3], 0.3)
+        self.assertGreater(Color.srgb_from_linear((2.0, 0.0, 0.0))[0], 1.0)
+        self.assertEqual(Color.linear_from_srgb((-1.0, 0.0, 0.0))[0], 0.0)
+
+    def test_matches_the_array_conversion(self):
+        from pythontk import ImgUtils
+
+        Color = self._cls()
+        rgb = (0.1, 0.5, 0.9)
+        expected = [round(float(c), 5) for c in ImgUtils.srgb_to_linear(list(rgb))]
+        self.assertEqual([round(c, 5) for c in Color.linear_from_srgb(rgb)], expected)
+
+
 class TestColorPair(unittest.TestCase):
     """Tests for the ColorPair container."""
 
@@ -467,6 +507,122 @@ class TestPaletteWritePaths(unittest.TestCase):
         ``__setitem__``, so this one always wrapped. It is here so a later
         override of the write paths does not accidentally break it."""
         self._assert_wrapped(Palette.fromkeys(["a"], self.HEX), "a", "fromkeys")
+
+
+class TestColorStops(unittest.TestCase):
+    """Tests for the ColorStops ramp-endpoint value type."""
+
+    def _cls(self):
+        from pythontk import ColorStops
+
+        return ColorStops
+
+    # -- Shape --------------------------------------------------------------
+
+    def test_one_stop_has_no_low(self):
+        s = self._cls()("highlight_color")
+        self.assertEqual(s.keys, ("highlight_color",))
+        self.assertEqual(tuple(s), ("highlight_color", None))
+
+    def test_two_stops_are_ordered_high_first(self):
+        s = self._cls()("hi", "lo")
+        self.assertEqual(s.keys, ("hi", "lo"))
+
+    def test_is_immutable(self):
+        s = self._cls()("hi", "lo")
+        with self.assertRaises(AttributeError):
+            s.hi = "other"
+
+    # -- Defaults -----------------------------------------------------------
+
+    def test_the_two_stops_default_differently(self):
+        """The inversion trap: an unstated HIGH reads white so the ramp still
+        shows, but an unstated LOW must read BLACK. One shared default would
+        make every asset authored before the low stop existed invert."""
+        s = self._cls()("hi", "lo")
+        self.assertEqual(s.defaults, ((1.0, 1.0, 1.0), (0.0, 0.0, 0.0)))
+
+    def test_resolve_none_gives_each_stop_its_own_default(self):
+        s = self._cls()("hi", "lo")
+        self.assertEqual(s.resolve(None), ((1.0, 1.0, 1.0), (0.0, 0.0, 0.0)))
+
+    # -- resolve ------------------------------------------------------------
+
+    def test_a_bare_triple_is_the_high_stop(self):
+        """The legacy producer shape: one colour, meaning the bright end."""
+        s = self._cls()("hi", "lo")
+        self.assertEqual(s.resolve((0.2, 0.5, 1.0)), ((0.2, 0.5, 1.0), (0.0, 0.0, 0.0)))
+
+    def test_a_pair_fills_both_stops(self):
+        s = self._cls()("hi", "lo")
+        self.assertEqual(
+            s.resolve(((0.2, 0.5, 1.0), (0.4, 0.0, 0.0))),
+            ((0.2, 0.5, 1.0), (0.4, 0.0, 0.0)),
+        )
+
+    def test_an_unpublished_high_stop_does_not_shift_the_low_one(self):
+        """``[None, rgb]`` is a pair with a hole, not a flat triple. Sniffing
+        only the first element would read the LOW colour as the HIGH one."""
+        s = self._cls()("hi", "lo")
+        self.assertEqual(
+            s.resolve([None, (0.0, 0.0, 0.1)]), ((1.0, 1.0, 1.0), (0.0, 0.0, 0.1))
+        )
+
+    def test_malformed_entries_fall_back_rather_than_raise(self):
+        """A colour is lookdev: one bad triple must not cost the deliverable."""
+        s = self._cls()("hi", "lo")
+        for bad in ("nonsense", 7, (1, 2), (("a", "b", "c"), None), [None, None]):
+            with self.subTest(bad=bad):
+                self.assertEqual(s.resolve(bad), s.defaults)
+
+    def test_resolve_is_idempotent(self):
+        """Its own output must read back unchanged -- the collector resolves,
+        and the writer resolves again on the way out."""
+        s = self._cls()("hi", "lo")
+        once = s.resolve(((0.2, 0.5, 1.0), (0.4, 0.0, 0.0)))
+        self.assertEqual(s.resolve(once), once)
+
+    def test_one_stop_resolves_to_one_triple(self):
+        s = self._cls()("only")
+        self.assertEqual(s.resolve((0.2, 0.5, 1.0)), ((0.2, 0.5, 1.0),))
+
+    # -- Value semantics ----------------------------------------------------
+
+    def test_equality_and_hash_cover_the_defaults(self):
+        cls = self._cls()
+        self.assertEqual(cls("hi", "lo"), cls("hi", "lo"))
+        self.assertNotEqual(
+            cls("hi", "lo"), cls("hi", "lo", lo_default=(1.0, 0.0, 0.0))
+        )
+        self.assertEqual(len({cls("hi", "lo"), cls("hi", "lo")}), 1)
+
+
+class TestColorHsv(unittest.TestCase):
+    """HSV accessors, and the lossiness they are documented to have."""
+
+    def _cls(self):
+        from pythontk import Color
+
+        return Color
+
+    def test_hsv_round_trips_where_the_colour_is_representable(self):
+        c = self._cls().from_hsvf(0.58, 0.8, 1.0)
+        h, s, v = c.hsv
+        self.assertAlmostEqual(h, 0.58, places=2)
+        self.assertAlmostEqual(s, 0.8, places=2)
+        self.assertAlmostEqual(v, 1.0, places=2)
+
+    def test_hue_is_lost_at_black(self):
+        """Pinned, not a defect: this is exactly why an EDITING widget must
+        keep float HSV state instead of storing through Color."""
+        black = self._cls().from_hsvf(0.58, 0.8, 0.0)
+        self.assertEqual(black.rgb, (0, 0, 0))
+        self.assertEqual(black.hsv, (0.0, 0.0, 0.0))
+
+    def test_hue_wraps_and_sv_clamp(self):
+        cls = self._cls()
+        self.assertEqual(cls.from_hsvf(1.25, 0.5, 0.5), cls.from_hsvf(0.25, 0.5, 0.5))
+        self.assertEqual(cls.from_hsvf(0.5, 9.0, 9.0), cls.from_hsvf(0.5, 1.0, 1.0))
 
 
 if __name__ == "__main__":

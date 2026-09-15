@@ -65,6 +65,13 @@
   {
     "kind": "function",
     "module": "pythontk.file_utils._file_utils",
+    "name": "atomic_write",
+    "qualname": "FileUtils.atomic_write",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
     "name": "atomic_write_text",
     "qualname": "FileUtils.atomic_write_text",
     "tier": "bare"
@@ -324,6 +331,13 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "encode_workers",
+    "qualname": "ImgUtils.encode_workers",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "enforce_mode",
     "qualname": "ImgUtils.enforce_mode",
     "tier": "bare"
@@ -382,6 +396,13 @@
     "module": "pythontk.file_utils._file_utils",
     "name": "exceeds_path_length",
     "qualname": "FileUtils.exceeds_path_length",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "expand_wildcard",
+    "qualname": "StrUtils.expand_wildcard",
     "tier": "bare"
   },
   {
@@ -1002,6 +1023,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "name_pattern_context",
+    "qualname": "StrUtils.name_pattern_context",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.math_utils._math_utils",
     "name": "nearest_power_of_two",
     "qualname": "MathUtils.nearest_power_of_two",
@@ -1019,6 +1047,13 @@
     "module": "pythontk.math_utils._math_utils",
     "name": "next_clear_offset",
     "qualname": "MathUtils.next_clear_offset",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "next_version_number",
+    "qualname": "FileUtils.next_version_number",
     "tier": "bare"
   },
   {
@@ -1236,6 +1271,13 @@
     "module": "pythontk.str_utils._str_utils",
     "name": "resolve_name_collisions",
     "qualname": "StrUtils.resolve_name_collisions",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "resolve_name_pattern",
+    "qualname": "StrUtils.resolve_name_pattern",
     "tier": "bare"
   },
   {
@@ -1474,6 +1516,13 @@
     "module": "pythontk.str_utils._str_utils",
     "name": "time_stamp",
     "qualname": "StrUtils.time_stamp",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "to_legal_filename",
+    "qualname": "StrUtils.to_legal_filename",
     "tier": "bare"
   },
   {
@@ -1737,6 +1786,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.color",
+    "name": "ColorStops",
+    "qualname": "ColorStops",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
     "name": "ColumnMap",
     "qualname": "ColumnMap",
@@ -1810,6 +1866,13 @@
     "module": "pythontk.vid_utils.sequence_exporter",
     "name": "ExportResult",
     "qualname": "ExportResult",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.export_profile",
+    "name": "ExportRun",
+    "qualname": "ExportRun",
     "tier": "root"
   },
   {
@@ -2419,6 +2482,13 @@
     "module": "pythontk.geo_utils.rail_surface",
     "name": "RailSurface",
     "qualname": "RailSurface",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.math_utils.ramp_keys",
+    "name": "RampKeys",
+    "qualname": "RampKeys",
     "tier": "root"
   },
   {

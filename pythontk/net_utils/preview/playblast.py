@@ -55,6 +55,8 @@ class _Recording:
     fps: float
     start_frame: int
     expected: int
+    #: 0-100 for the encode, or None for the recorder's own ``quality``.
+    quality: Optional[int] = None
     started: float = field(default_factory=time.time)
     received: Dict[int, str] = field(default_factory=dict)
 
@@ -130,6 +132,7 @@ class PreviewPlayblast(SequenceEncoder):
         start_frame: int = 1,
         frames: int = 0,
         content_type: str = "image/png",
+        quality: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Open a recording and return ``{"token", "name", "frames"}``.
 
@@ -146,9 +149,13 @@ class PreviewPlayblast(SequenceEncoder):
                 :attr:`max_frames` up front, so a mistake costs one request
                 instead of a full capture.
             content_type: MIME type of the frames to follow.
+            quality: 0-100 for the encode (mapped onto the H.264 CRF), chosen
+                by the page's export preset. Stated here rather than at
+                :meth:`finish` because it describes the recording, as the rate
+                does. None encodes at this recorder's own ``quality``.
 
         Raises:
-            ValueError: An unusable frame count, rate or content type.
+            ValueError: An unusable frame count, rate, content type or quality.
         """
         image_format = self.IMAGE_FORMATS.get(str(content_type).split(";", 1)[0])
         if image_format is None:
@@ -167,6 +174,17 @@ class PreviewPlayblast(SequenceEncoder):
         fps = float(fps)
         if not fps > 0:
             raise ValueError(f"A recording needs a positive frame rate; got {fps}.")
+        # Refused, not clamped: ``_quality_to_crf`` would clamp 250 to 100, but a
+        # page asking for 250 has a bug, and a whole capture is too much to pay
+        # before the encode quietly papers over it. ``bool`` is an ``int``.
+        if quality is not None and (
+            isinstance(quality, bool)
+            or not isinstance(quality, int)
+            or not 0 <= quality <= 100
+        ):
+            raise ValueError(
+                f"A recording's quality is an integer from 0 to 100; got {quality!r}."
+            )
 
         # ``to_legal_name`` and not a bespoke regex: this is the same rule every
         # other filename this toolkit derives from user text goes through, and a
@@ -183,6 +201,7 @@ class PreviewPlayblast(SequenceEncoder):
             fps=fps,
             start_frame=int(start_frame),
             expected=frames,
+            quality=quality,
         )
         with self._lock:
             self._recordings[token] = recording
@@ -287,7 +306,10 @@ class PreviewPlayblast(SequenceEncoder):
                 f"{safe_stem or recording.name}.{spec.extension}",
             )
             encoded = self.encode_sequence(
-                capture, output, **dict(spec.encoder_options)
+                capture,
+                output,
+                quality=recording.quality,
+                **dict(spec.encoder_options),
             )
         finally:
             self._discard(recording)

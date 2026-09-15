@@ -219,6 +219,29 @@ class FbxFile(_FbxFileInternal):
         """Animation take names — the ``AnimationStack`` display names."""
         return self.object_names("AnimationStack")
 
+    def user_properties(self, name: str, kind: str = "Model") -> List[Any]:
+        """Every value a *kind* object carries for the user property *name*.
+
+        User properties live in each object's ``Properties70`` as ``P``
+        records -- ``(name, type, label, flags, value...)`` -- which is where a
+        DCC's custom attributes (the ``data_export`` channels among them) land.
+        Values come back as stored: ``bytes`` for a string property, numbers
+        for a numeric one, in file order.
+        """
+        found: List[Any] = []
+        wanted = name.encode("utf-8")
+        for record in self.iter_objects():
+            if record["name"] != kind:
+                continue
+            for child in record["children"]:
+                if child["name"] != "Properties70":
+                    continue
+                for prop in child["children"]:
+                    props = prop["props"]
+                    if len(props) >= 5 and props[0] == wanted:
+                        found.append(props[4] if len(props) == 5 else props[4:])
+        return found
+
     def connections(self) -> List[Tuple[str, Any, Any, Optional[str]]]:
         """Every ``C`` record as ``(kind, child_id, parent_id, property)``.
 

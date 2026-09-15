@@ -25,25 +25,92 @@
   WORKER THREADS while the main thread gets on with rendering the next frame.
   See `createEncoder`.
 
+  Pressing the button opens an options prompt rather than recording at once:
+  the burn-in is drawn into the file and cannot be taken out of it again, so it
+  is asked at the moment the file is written rather than armed by a toggle
+  sitting beside the button, where it is left on and found in the movie later.
+
   Activated by the deliverable (`PreviewServer.AUTO_SCRIPTS`) whenever it ships
   an animation manifest — the button appears exactly when the clip picker does.
 */
 
-//: Long edge of the recorded frame. This is a PREVIEW: the point is to send
-//: someone what the shot looks like while they still care, so the default is
-//: 720p-class rather than whatever delivery resolution the canvas happens to
-//: be at. A canvas SMALLER than the cap is captured as it is; it never upscales.
+//: What the export prompt offers, lowest to highest. `maxEdge` is the recorded
+//: frame's long edge; `quality` is the 0-100 the server maps onto the H.264 CRF
+//: (`SequenceEncoder._quality_to_crf`: 100 -> 16, 85 -> 20, 70 -> 23). Before
+//: presets every recording was 1280 px at quality 100 -- Draft's size.
 //:
-//: This USED to be the wall-clock dial -- at one frame at a time on the main
-//: thread the cost was all PNG compression, so it tracked pixel count almost
-//: exactly (1920 -> 1280 cut 2.25x the pixels and measured 2.1x faster). With
-//: the worker pool below it no longer is: 1920 and 1280 measured 46.7ms and
-//: 45.1ms per frame, because the compression now happens behind the render
-//: rather than in front of it. What this number still buys is file size and
-//: wire time -- which is what a reviewer on a headset over Wi-Fi actually
-//: waits for -- so it stays at 720p-class by default. Raising it is now a
-//: question about bytes, not about minutes.
-const MAX_EDGE = 1280;
+//: The frame is RENDERED at the preset's size, never upscaled to it: a view
+//: whose drawing buffer is smaller has its pixel ratio raised for the recording
+//: and put back afterwards (see `captureSize`), so High from a 1280-wide window
+//: is a real 2560-wide render. A larger view is downsampled by the capture,
+//: which antialiases for free.
+//:
+//: Size is no longer the wall-clock dial it was when frames compressed on the
+//: main thread (1920 -> 1280 then measured 2.1x faster); with the worker pool
+//: below, 1920 and 1280 measured 46.7ms and 45.1ms per frame. What a bigger
+//: preset still costs is file size and wire time -- what a reviewer on a
+//: headset over Wi-Fi actually waits for, and what Draft is for.
+//:
+//: `key` is what the tab remembers between prompts; the order is the menu's.
+const QUALITY_PRESETS = [
+  {
+    key: 'draft',
+    label: 'Draft — 720p',
+    maxEdge: 1280,
+    quality: 70,
+    title: '1280 px long edge, CRF 23. Smallest file: for sending over a slow link.',
+  },
+  {
+    key: 'standard',
+    label: 'Standard — 1080p',
+    maxEdge: 1920,
+    quality: 85,
+    title: '1920 px long edge, CRF 20.',
+  },
+  {
+    key: 'high',
+    label: 'High — 1440p',
+    maxEdge: 2560,
+    quality: 100,
+    title: '2560 px long edge, CRF 16.',
+  },
+  {
+    key: 'maximum',
+    label: 'Maximum — 4K',
+    maxEdge: 3840,
+    quality: 100,
+    title: '3840 px long edge, CRF 16. Largest file; the GPU\'s own limit can cap it lower.',
+  },
+];
+
+//: High, not Draft: a playblast is most often looked at on the screen it was
+//: made on, where a 720p-class file reads as soft next to the page itself.
+const DEFAULT_PRESET = 'high';
+
+function presetFor(key) {
+  return QUALITY_PRESETS.find((preset) => preset.key === key)
+    || QUALITY_PRESETS.find((preset) => preset.key === DEFAULT_PRESET);
+}
+
+//: `{width, height, pixelRatio}` for a recording whose long edge is *maxEdge*:
+//: the size every frame is resized to, and the pixel ratio to render at while
+//: recording -- null when the view is already at least that large.
+//:
+//: Clamped to what the GPU will allocate. A canvas asked for a buffer past
+//: MAX_RENDERBUFFER_SIZE does not fail; it silently allocates a smaller one,
+//: and the capture would then read that stretched across the frame.
+function captureSize(renderer, maxEdge) {
+  const canvas = renderer.domElement;
+  const gl = renderer.getContext();
+  const [viewportWidth, viewportHeight] = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+  const limit = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), viewportWidth, viewportHeight);
+  const scale = Math.min(maxEdge, limit) / Math.max(canvas.width, canvas.height);
+  return {
+    width: Math.max(1, Math.round(canvas.width * scale)),
+    height: Math.max(1, Math.round(canvas.height * scale)),
+    pixelRatio: scale > 1 ? renderer.getPixelRatio() * scale : null,
+  };
+}
 
 //: Frames are sent as PNG -- lossless, and NOT the slow choice, which is the
 //: opposite of how it looks. JPEG frames do compress faster, but a JPEG decodes
@@ -128,33 +195,83 @@ export default function playblast(viewer) {
     if (job) {
       if (!job.done) abort();
     } else {
-      start();
+      openOptions();
     }
   });
-  button.title = 'Record the selected clip to a movie file (r)';
+  button.title = 'Record the selected clip to a movie file — asks for export '
+    + 'options first';
 
   let job = null;
-  let burnIn = false;
 
-  //: Opt-in, and OFF by default: a burn-in is drawn into the movie and cannot
-  //: be taken out again, so the recording is what the reviewer saw unless
-  //: someone asks for the annotation. It is also the only thing this tool draws
-  //: that the scene did not -- hence a control of its own rather than a mode of
-  //: the record button.
-  const stampButton = viewer.addButton('Burn-in: off', () => {
-    // Mid-recording it would annotate half the frames and not the others.
-    if (job) {
-      viewer.setStatus('finish or cancel the recording before changing burn-in', 'error');
-      return;
-    }
-    burnIn = !burnIn;
-    stampButton.textContent = `Burn-in: ${burnIn ? 'on' : 'off'}`;
-  });
-  stampButton.title = 'Draw the shot name, frame and time into the recorded movie';
+  //: What the last prompt was answered with, so a second recording re-offers
+  //: the choices rather than the defaults -- a reviewer annotating one shot is
+  //: about to annotate the next one the same way. Session-lived on purpose:
+  //: nothing here is worth persisting past the tab, and a burn-in silently
+  //: remembered from last week is a surprise baked into a deliverable.
+  //:
+  //: Both burn-ins OFF by default, because a burn-in is drawn into the movie and
+  //: cannot be taken out again: unless someone asks for the annotation, the
+  //: recording is what the reviewer saw.
+  let options = { stamp: false, describe: false, preset: DEFAULT_PRESET };
 
-  viewer.on('key', (event) => {
-    if (event.key === 'r') button.click();
-  });
+  //: Asked BEFORE the recording rather than armed by a toggle beside the
+  //: button. A burn-in is a property of the file about to be written, so the
+  //: moment to decide it is the moment it is written -- and a mode carried on
+  //: a button is exactly the kind of state that gets left on and discovered in
+  //: the movie afterwards.
+  async function openOptions() {
+    // Refused before the prompt, never after: these are the reasons a
+    // recording cannot happen at all, and asking how to annotate a movie that
+    // will not be written is a worse answer than saying why.
+    const clip = recordable();
+    if (!clip) return;
+    const answer = await viewer.showDialog({
+      title: 'Export Playblast',
+      fields: [
+        // What is about to be written, stated rather than offered: the clip is
+        // the picker's to choose and the rate is the deliverable's, so the one
+        // thing this prompt can usefully do about them is show them.
+        {
+          key: 'summary',
+          type: 'note',
+          label: `${clip.name} · ${frameCount(clip)} frames · ${clip.fps} fps`,
+        },
+        {
+          key: 'preset',
+          type: 'choice',
+          label: 'Quality',
+          value: options.preset,
+          choices: QUALITY_PRESETS.map(({ key, label, title }) => ({ value: key, label, title })),
+          title: 'Resolution and compression of the movie. The shot is rendered '
+            + 'at the chosen size, so a small window still records a full-size '
+            + 'frame.',
+        },
+        {
+          key: 'stamp',
+          label: 'Burn in shot name and frame',
+          value: options.stamp,
+          title: 'Draw the shot name, the DCC frame number and the time into '
+            + 'the movie itself. On FULL SEQUENCE the name follows the '
+            + 'playhead across shots, marking a gap as a hold.',
+        },
+        {
+          key: 'describe',
+          label: 'Burn in shot description',
+          value: options.describe,
+          title: "Draw the shot's description -- the note the DCC's Shots "
+            + 'panel carries -- above the name. Shots with no description '
+            + 'record without one.',
+        },
+      ],
+      confirm: 'Record',
+    });
+    if (!answer) return;   // cancelled
+    options = { stamp: answer.stamp, describe: answer.describe, preset: answer.preset };
+    // Re-resolved from scratch by `start`, never carried from the prompt: a
+    // push can land while the dialog is open, and recording the clip object
+    // that check produced would record a model the page no longer has.
+    start();
+  }
 
   // A push landing mid-recording swaps the model under the capture: every frame
   // after it would be of a different scene, and the file would silently be a
@@ -180,36 +297,53 @@ export default function playblast(viewer) {
 
   /* ------------------------------------------------------------- capture --- */
 
-  function start() {
+  //: The selected clip if it can be recorded, else null with the status line
+  //: already saying why. Two callers: the options prompt, which will not ask
+  //: about a movie that cannot be written, and `start`, which re-asks because
+  //: the page can change between the two.
+  function recordable() {
     // The XR framebuffer is not the canvas: in an immersive session
     // `renderer.render` targets the device, and reading the canvas back would
     // capture whatever was last drawn to the mirror -- a file that looks broken
     // with nothing to say why. Refused rather than recorded wrong.
     if (viewer.renderer.xr?.isPresenting) {
       viewer.setStatus('exit VR to record a playblast', 'error');
-      return;
+      return null;
     }
     const clip = viewer.clip;
     if (!clip) {
       viewer.setStatus('nothing to record — this model has no clips', 'error');
-      return;
+      return null;
     }
-    const fps = clip.fps;
-    if (!fps) {
+    if (!clip.fps) {
       // The manifest is where the authoring rate lives; without it the frames
       // could still be captured but not placed in time, and a movie at a guessed
       // rate is worse than none — it plays at the wrong speed and looks correct.
       viewer.setStatus('cannot record — the deliverable states no frame rate', 'error');
-      return;
+      return null;
     }
-    const frames = Math.max(1, Math.round(clip.endFrame - clip.startFrame) + 1);
+    return clip;
+  }
+
+  //: Frames INCLUSIVE of both bounds, which is the count `clipInfo` builds its
+  //: two frame numbers to satisfy -- the same arithmetic for a single shot and
+  //: for the reconstructed sequence.
+  function frameCount(clip) {
+    return Math.max(1, Math.round(clip.endFrame - clip.startFrame) + 1);
+  }
+
+  function start() {
+    const clip = recordable();
+    if (!clip) return;
+    const fps = clip.fps;
+    const frames = frameCount(clip);
 
     // Measured ONCE, here. Every frame of a movie must be the same size, and
     // the canvas is not: resizing the window mid-recording (or rotating a
     // phone) would otherwise change the frame size part way through, which
     // ffmpeg answers with a garbled encode rather than an error.
-    const source = viewer.renderer.domElement;
-    const scale = Math.min(1, MAX_EDGE / Math.max(source.width, source.height));
+    const preset = presetFor(options.preset);
+    const size = captureSize(viewer.renderer, preset.maxEdge);
 
     job = {
       clip,
@@ -220,13 +354,22 @@ export default function playblast(viewer) {
       done: false,
       token: null,
       encoder: null,
-      width: Math.max(1, Math.round(source.width * scale)),
-      height: Math.max(1, Math.round(source.height * scale)),
+      width: size.width,
+      height: size.height,
+      quality: preset.quality,
+      // The ratio to put back, set only when this recording raised it.
+      restorePixelRatio: null,
       pad: null,
       padContext: null,
+      // Snapshotted onto the job rather than read from `options` per frame, so
+      // the whole file is annotated the way the prompt that started it was
+      // answered -- a recording is one thing, and half of it stamped is not a
+      // state this can produce.
+      stamp: options.stamp,
+      describe: options.describe,
       wasPlaying: viewer.playing,
     };
-    if (burnIn) {
+    if (job.stamp || job.describe) {
       // ONE pad for the whole recording, reused every frame -- and it is worth
       // saying why that is safe, because the capture loop issues several frames
       // per tick and this canvas is redrawn under each of them. `submit`
@@ -244,6 +387,13 @@ export default function playblast(viewer) {
       job.padContext = job.pad.getContext('2d');
       job.padContext.imageSmoothingQuality = 'high';
     }
+    if (size.pixelRatio) {
+      // Raised before the first frame is issued (that waits on `begin`), and
+      // not touched again until `releaseResolution`. Only the drawing buffer
+      // grows: the canvas keeps its size on the page.
+      job.restorePixelRatio = viewer.renderer.getPixelRatio();
+      viewer.renderer.setPixelRatio(size.pixelRatio);
+    }
     // Paused for the whole recording: the clock is this script's, and a playing
     // transport would advance the clip between the pose and the render.
     viewer.setPlaying(false);
@@ -255,6 +405,7 @@ export default function playblast(viewer) {
       start_frame: Math.round(clip.startFrame),
       frames,
       content_type: FRAME_TYPE,
+      quality: job.quality,
     })
       .then((reply) => {
         if (!job) {
@@ -300,8 +451,8 @@ export default function playblast(viewer) {
         context,
         job.width,
         job.height,
-        shotName(seconds),
-        stamp(index, seconds),
+        leftLines(seconds),
+        job.stamp ? stamp(index, seconds) : null,
       );
       source = job.pad;
     }
@@ -338,10 +489,39 @@ export default function playblast(viewer) {
     return `${padded}  ${seconds.toFixed(2)}s`;
   }
 
-  function drawOverlay(context, width, height, left, right) {
+  //: The left-hand column, BOTTOM-UP: the name sits on the frame's foot beside
+  //: the counter, and the description stacks above it. Built per frame because
+  //: both answers move with the playhead -- across the sequence each shot
+  //: brings its own name and its own note.
+  //:
+  //: The two options are independent rather than nested, which is what lets the
+  //: prompt ask them as two plain checkboxes: with neither there is no pad and
+  //: nothing is drawn, and with only the description the note lands alone on
+  //: the foot of the frame. A shot with no description simply records without
+  //: one -- the deliverable states it or it does not, and an empty line held
+  //: open for it would be a burn-in that says nothing.
+  function leftLines(seconds) {
+    const lines = [];
+    if (job.stamp) lines.push(shotName(seconds));
+    if (job.describe) {
+      // No argument, unlike `shotAt`: a description is a property of the shot
+      // the page is POSED at, and `poseAt` above has already put it there.
+      const text = viewer.descriptionAt();
+      if (text) lines.push(text);
+    }
+    return lines;
+  }
+
+  function drawOverlay(context, width, height, lines, right) {
+    if (!lines.length && !right) return;
     const size = Math.max(OVERLAY_MIN_SIZE, Math.round(height * OVERLAY_SCALE));
     const inset = Math.round(size * 0.75);
     const baseline = height - inset;
+    // Stacked upward from the foot, so a description pushes the NAME up rather
+    // than moving the counter off the edge it is measured against: the two
+    // corners have to stay on one line for the right-hand column to read as
+    // the left one's counterpart.
+    const leading = Math.round(size * 1.35);
     context.save();
     context.font = `600 ${size}px ${OVERLAY_FONT}`;
     context.textBaseline = 'alphabetic';
@@ -349,17 +529,43 @@ export default function playblast(viewer) {
     context.lineWidth = Math.max(2, size / 6);
     context.strokeStyle = 'rgba(0, 0, 0, 0.75)';
     context.fillStyle = 'rgba(255, 255, 255, 0.96)';
-    for (const [text, align, x] of [
-      [left, 'left', inset],
-      [right, 'right', width - inset],
-    ]) {
+    // The counter is fixed-width and never elided; the left column yields to
+    // it. A description is prose written by whoever authored the shot, so it
+    // is the one string here that can be longer than the frame.
+    const reserved = right ? context.measureText(right).width + size : 0;
+    const draws = lines.map((text, row) => [
+      elide(context, text, width - inset * 2 - (row ? 0 : reserved)),
+      'left',
+      inset,
+      baseline - row * leading,
+    ]);
+    if (right) draws.push([right, 'right', width - inset, baseline]);
+    for (const [text, align, x, y] of draws) {
       context.textAlign = align;
       // Stroke then fill: the outline is what keeps the text legible over a
       // blown-out sky as well as over a dark background.
-      context.strokeText(text, x, baseline);
-      context.fillText(text, x, baseline);
+      context.strokeText(text, x, y);
+      context.fillText(text, x, y);
     }
     context.restore();
+  }
+
+  //: *text* trimmed to *maxWidth*, with an ellipsis when it had to give. Text
+  //: that overran used to run under the counter and off the frame, which reads
+  //: as a corrupted burn-in rather than as a long description.
+  //:
+  //: Proportional estimate first, then a character at a time: the font is
+  //: monospaced, so the estimate is usually exact and the loop runs once or
+  //: not at all -- rather than the couple of hundred `measureText` calls a
+  //: trim from full length would cost on every frame of a recording.
+  function elide(context, text, maxWidth) {
+    if (maxWidth <= 0) return '';
+    const full = context.measureText(text).width;
+    if (full <= maxWidth) return text;
+    let cut = Math.max(0, Math.min(text.length - 1, Math.floor(text.length * (maxWidth / full)) - 1));
+    while (cut > 0 && context.measureText(`${text.slice(0, cut)}…`).width > maxWidth) cut -= 1;
+    while (cut < text.length - 1 && context.measureText(`${text.slice(0, cut + 1)}…`).width <= maxWidth) cut += 1;
+    return cut > 0 ? `${text.slice(0, cut)}…` : '';
   }
 
   function onFrameDone() {
@@ -372,12 +578,20 @@ export default function playblast(viewer) {
   async function finish() {
     job.done = true;
     if (job.encoder) job.encoder.close();
+    // Now rather than after the encode: every frame is in, and the page should
+    // not go on rendering at export size for however long ffmpeg takes.
+    releaseResolution();
+    // Read before the await: a push landing during the encode resets the job.
+    const { width, height } = job;
     // No ✕: see the button handler -- there is nothing left to cancel.
     button.textContent = 'Encoding…';
     try {
       const report = await post('finish', { token: job.token });
       const seconds = Number(report.duration || 0).toFixed(1);
-      viewer.setStatus(`playblast saved · ${report.frames} frames · ${seconds}s`, 'live');
+      viewer.setStatus(
+        `playblast saved · ${report.frames} frames · ${seconds}s · ${width}×${height}`,
+        'live',
+      );
       // Offered rather than forced when the file has a durable home: a movie
       // written beside the GLB it was recorded from is already where its owner
       // wants it, and a second copy in Downloads is noise. When the deliverable
@@ -554,7 +768,18 @@ export default function playblast(viewer) {
     if (token) post('cancel', { token }).catch(() => {});
   }
 
+  //: Put back the pixel ratio a recording raised. Idempotent: `finish` calls it
+  //: as soon as the last frame is in, and `reset` -- which every ending goes
+  //: through, cancels and failures included -- calls it again.
+  function releaseResolution() {
+    if (job && job.restorePixelRatio) {
+      viewer.renderer.setPixelRatio(job.restorePixelRatio);
+      job.restorePixelRatio = null;
+    }
+  }
+
   function reset() {
+    releaseResolution();
     if (job && job.encoder) job.encoder.close();
     if (job && job.wasPlaying) viewer.setPlaying(true);
     job = null;

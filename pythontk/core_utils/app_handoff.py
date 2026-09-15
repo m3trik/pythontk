@@ -269,11 +269,12 @@ class HandoffBridge(LoggingMixin):
     # same run inheriting a durable Output Dir it would then delete.
     scoped_scratch_modes: Tuple[str, ...] = ()
 
-    # Files/folders an EXPORTER writes beside the payload, named from its stem,
-    # that :meth:`_release_payload` must take with it. ``.fbm`` is Maya's FBX
-    # embedded-media folder -- the textures the FBX embedded, extracted again,
-    # so roughly payload-sized. Declared as data because the set is a property
-    # of the carrier rather than of any one bridge.
+    # Files/folders written beside the payload, named from its stem, that
+    # :meth:`_release_payload` must take with it. ``.fbm`` is the FBX SDK's
+    # embedded-media folder -- the textures the FBX embedded, extracted again
+    # by whatever imports it through the SDK, so roughly payload-sized.
+    # Declared as data because the set is a property of the carrier rather than
+    # of any one bridge.
     PAYLOAD_SIDECARS: Tuple[str, ...] = (".fbm",)
 
     # ``HandoffRequest.extras`` keys the run scratch rides on. Underscored and
@@ -484,11 +485,14 @@ class HandoffBridge(LoggingMixin):
         differently overrides both halves together.
 
         Takes the carrier's own sidecars with it (:attr:`PAYLOAD_SIDECARS`).
-        Maya's FBX plugin writes ``<stem>.fbm`` beside an embedded-media
-        export, holding the textures the FBX embedded EXTRACTED AGAIN -- so it
-        is roughly the size of the payload, and releasing only the ``.fbx``
-        reclaims about half of what the push cost. Measured on a production
-        assembly: the 324 MB payload went and a 314 MB ``.fbm`` stayed. Each is
+        An FBX SDK import writes ``<stem>.fbm`` beside the embedded-media FBX
+        it reads (measured: Maya's own export writes none, FBX2glTF's import
+        did), holding the textures the FBX embedded EXTRACTED AGAIN -- so it is
+        roughly the size of the payload, and releasing only the ``.fbx``
+        reclaimed about half of what the push cost. Measured on a production
+        assembly: the 324 MB payload went and a 314 MB ``.fbm`` stayed.
+        :meth:`MeshConvert.fbx_to_glb` extracts into a store of its own, so this
+        is for any other SDK reader. Each is
         adopted into the store before removal, so the ownership rule still
         holds -- the path is derived from one this bridge minted, and nothing
         else can be reached through it.

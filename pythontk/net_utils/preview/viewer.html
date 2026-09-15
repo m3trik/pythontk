@@ -98,6 +98,38 @@
   #normalValue { font-variant-numeric: tabular-nums; color: #e8eaed; min-width: 3ch; }
   #normalSave { padding: 4px 10px; }
   #normalSave:disabled { opacity: .45; cursor: default; border-color: rgba(255, 255, 255, .16); }
+  /* The page's ONE modal, handed to scripts as `viewer.showDialog` for the
+     same reason `addButton` exists: a script that asked for options with
+     `window.confirm` would wear the browser's chrome over a dark preview, and
+     one that built its own box would drift from this page's. Dark backdrop
+     rather than a bare panel — it says the page behind it is not taking input,
+     which matters because the transport keeps rendering underneath. */
+  #dialog {
+    /* Above VRButton, which sets z-index 999 inline: a control floating
+       over the backdrop is one the modal did not actually take. */
+    position: fixed; inset: 0; z-index: 1000; display: flex;
+    align-items: center; justify-content: center; padding: 16px;
+    background: rgba(10, 11, 13, .55); backdrop-filter: blur(3px);
+  }
+  #dialog[hidden] { display: none; }
+  #dialog form {
+    display: flex; flex-direction: column; gap: 14px;
+    width: min(46ch, 100%);
+    padding: 16px 18px; border-radius: 10px;
+    background: rgba(20, 22, 26, .96); border: 1px solid rgba(255, 255, 255, .16);
+  }
+  #dialogTitle { font-weight: 600; }
+  #dialogFields { display: flex; flex-direction: column; gap: 9px; }
+  /* align-items: flex-start so a label that wraps keeps its box on the first
+     line rather than centring it against three lines of text. */
+  #dialogFields label { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; }
+  #dialogFields input { margin: 3px 0 0; accent-color: #6fb3ff; cursor: pointer; }
+  #dialogFields .note { color: #9aa0a6; font-size: 12px; }
+  /* A choice row reads as "Label ........ [picker]": centred, because the
+     picker is taller than a line of text, and not a pointer -- the label is
+     not a toggle the way a checkbox row's is. */
+  #dialogFields label.choice { align-items: center; justify-content: space-between; cursor: default; }
+  #dialogButtons { display: flex; gap: 8px; justify-content: flex-end; }
   /* VRButton positions itself bottom-center with inline styles; leave it be. */
 </style>
 <script type="importmap">
@@ -142,6 +174,17 @@
               title="Write this strength into the GLB as normalTexture.scale, so it ships with the file">Save</button>
     </span>
   </div>
+</div>
+
+<div id="dialog" hidden>
+  <form id="dialogForm">
+    <div id="dialogTitle"></div>
+    <div id="dialogFields"></div>
+    <div id="dialogButtons">
+      <button class="ui" type="button" id="dialogCancel">Cancel</button>
+      <button class="ui" type="submit" id="dialogConfirm">OK</button>
+    </div>
+  </form>
 </div>
 
 <script>
@@ -197,6 +240,12 @@ const el = {
   normalScale: document.getElementById('normalScale'),
   normalValue: document.getElementById('normalValue'),
   normalSave: document.getElementById('normalSave'),
+  dialog: document.getElementById('dialog'),
+  dialogForm: document.getElementById('dialogForm'),
+  dialogTitle: document.getElementById('dialogTitle'),
+  dialogFields: document.getElementById('dialogFields'),
+  dialogCancel: document.getElementById('dialogCancel'),
+  dialogConfirm: document.getElementById('dialogConfirm'),
 };
 
 /* ---------------------------------------------------------------- scene --- */
@@ -440,6 +489,8 @@ function refreshXrSupport() {
           }
         }, 12000);
       }, true);
+      // Born inert under an open prompt, like everything else behind it.
+      vrButton.inert = !el.dialog.hidden;
       document.body.appendChild(vrButton);
     } else if (!supported && vrButton && !renderer.xr.isPresenting) {
       // A button whose device has gone is a button that throws when pressed.
@@ -1132,7 +1183,7 @@ async function wirePointerTracks(gltf) {
       const times = Array.from(input.array);
       for (const [material, mesh] of owners) {
         // Bound by uuid rather than name: glTF names are not unique (the
-        // production assembly ships two `vdat533`), and a name binding would
+        // production assembly ships two `prop533`), and a name binding would
         // drive the first match and leave the rest at full alpha.
         clip.tracks.push(binding.track(mesh, material, times, output, input.count));
         if (binding.blended) {
@@ -1459,6 +1510,23 @@ function shotLabel(seconds) {
   return held ? `${name} (hold)` : name;
 }
 
+// The note the DCC's Shots panel carries for whatever the page is posed at —
+// the segment's on the sequence, the selected clip's on a single shot. Unlike
+// `shotLabel` it answers on BOTH, because its one reader is a burn-in rather
+// than the readout: the picker naming a clip does not put its description in
+// the movie, and a description is the half of a shot record a reviewer
+// watching the file cannot otherwise see.
+//
+// Empty is null, not '': `extras.animation_web` omits the key on a shot with
+// no note (MeshConvert.apply_glb_animations writes only truthy fields), and a
+// caller should not have to tell "no description" from "an empty one".
+function shotDescription() {
+  const entry = activeSequence && sequenceSegment
+    ? sequenceSegment.entry
+    : clips[clipIndex];
+  return entry?.meta?.description || null;
+}
+
 // Loads can outlive the poll interval — a multi-megabyte GLB takes seconds to
 // fetch and parse — and setInterval keeps polling meanwhile, so two loads can
 // be in flight at once after a quick pair of pushes. Completion order is not
@@ -1481,6 +1549,13 @@ async function load(url, version) {
     disposeModel(gltf.scene); // parsed but never shown; free it rather than leak it
     return null;
   }
+  // A prompt is ALWAYS about the deliverable on screen — what to record, what
+  // to write into it — so a push that replaces the model invalidates whatever
+  // it was asking. Dismissed rather than left standing with a stale summary
+  // over a different scene; it resolves as a cancel, which is the safe answer
+  // to a question whose subject has gone. (A recording already RUNNING is
+  // dropped by the same event, in `playblast.js`.)
+  closeDialog(false);
   if (current) {
     pivot.remove(current);
     disposeModel(current);
@@ -1616,6 +1691,15 @@ const viewer = {
    */
   shotAt(seconds) { return shotLabel(seconds); },
   /**
+   * The description the DCC's Shots panel recorded for whatever the model is
+   * posed at, or null when the deliverable states none. Reads the last pose,
+   * so — like `shotAt` — call it after `poseAt`, not before.
+   *
+   * Answers on a single clip as well as on the sequence: it is written for a
+   * burn-in, where the picker naming the clip on screen is no help.
+   */
+  descriptionAt() { return shotDescription(); },
+  /**
    * Play a clip by name (the names `extras.animation_web` lists, which are the
    * DCC's shot names on a shot-split deliverable). Returns whether it matched.
    */
@@ -1651,6 +1735,25 @@ const viewer = {
     document.getElementById('controls').appendChild(button);
     return button;
   },
+  /**
+   * Ask for options before an action, in a modal wearing the page's chrome.
+   *
+   * `fields` are `{key, label, type, value, title}` — `'check'` (the default)
+   * is a checkbox, `'choice'` a picker over `choices: [{value, label, title}]`
+   * (an unknown `value` opens on the first), and `'note'` a read-only line,
+   * which is how a prompt states what it is about to do without offering it
+   * as a choice. Resolves to `{key: answer}` on confirm — `checked` for a
+   * check, the chosen `value` for a choice — and to **null** on cancel (the
+   * Cancel button, Escape, or the backdrop), so a caller branches on the
+   * answer rather than on a flag inside it.
+   *
+   * While it is up the page behind it is inert — no shortcut fires, and focus
+   * cannot leave the prompt.
+   *
+   * Scripts get this rather than `window.confirm` for the reason they get
+   * `addButton` rather than `createElement`: one look, one place.
+   */
+  showDialog,
 };
 
 function emit(event, detail) {
@@ -1767,6 +1870,107 @@ setInterval(poll, POLL_MS);
 // A page restored from bfcache simply polls again and re-arms the server.
 addEventListener('pagehide', () => { navigator.sendBeacon('viewer-closed', ''); });
 
+/* -------------------------------------------------------------- dialog --- */
+
+// Resolver of the prompt currently on screen, and the flag for "a dialog is
+// open" — the page's keyboard shortcuts read it, because Space toggling a
+// checkbox must not also pause the transport behind the modal.
+let dialogResolve = null;
+
+// The page behind a prompt is INERT while it is up, not merely unbound:
+// swallowing its shortcuts left Tab free to walk focus out of the modal to the
+// controls it covers, the clip picker among them -- where an arrow key changes
+// the clip the prompt names. Every top-level node but the dialog, so the
+// transport, the bar, the canvas and the VR button go together.
+function setPageInert(inert) {
+  for (const node of document.body.children) {
+    if (node !== el.dialog) node.inert = inert;
+  }
+}
+
+function closeDialog(confirmed) {
+  if (!dialogResolve) return;
+  const resolve = dialogResolve;
+  dialogResolve = null;
+  el.dialog.hidden = true;
+  setPageInert(false);
+  resolve(confirmed);
+}
+
+// See `viewer.showDialog` for the contract this implements.
+function showDialog({ title = '', fields = [], confirm = 'OK' } = {}) {
+  // A second prompt REPLACES the first rather than stacking: there is one
+  // modal, and leaving an orphaned promise unresolved would hang whichever
+  // script is waiting on it.
+  closeDialog(false);
+  el.dialogTitle.textContent = title;
+  //: key -> a reader for that field's answer, so the resolve below needs no
+  //: idea which kind of control each one is.
+  const answers = new Map();
+  el.dialogFields.replaceChildren(...fields.map((field) => {
+    if (field.type === 'note') {
+      const note = document.createElement('div');
+      note.className = 'note';
+      note.textContent = field.label;
+      return note;
+    }
+    const label = document.createElement('label');
+    if (field.title) label.title = field.title;
+    if (field.type === 'choice') {
+      label.className = 'choice';
+      const select = document.createElement('select');
+      select.className = 'ui';
+      for (const choice of field.choices || []) {
+        const option = document.createElement('option');
+        option.value = choice.value;
+        option.textContent = choice.label;
+        if (choice.title) option.title = choice.title;
+        select.append(option);
+      }
+      select.value = field.value ?? '';
+      // Assigning a value no option carries leaves NOTHING selected, and a
+      // prompt that confirms an empty answer hands the caller a value it never
+      // offered -- a remembered choice the page has since dropped, say.
+      if (select.selectedIndex < 0 && select.options.length) select.selectedIndex = 0;
+      label.append(document.createTextNode(field.label), select);
+      answers.set(field.key, () => select.value);
+      return label;
+    }
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !!field.value;
+    // A text NODE rather than innerHTML: a field label can carry a shot name
+    // or a description straight out of the deliverable.
+    label.append(input, document.createTextNode(field.label));
+    answers.set(field.key, () => input.checked);
+    return label;
+  }));
+  el.dialogConfirm.textContent = confirm;
+  el.dialog.hidden = false;
+  setPageInert(true);
+  // The confirm button, not the first field: Enter then does the obvious
+  // thing, and the common answer to an options prompt is "yes, as they are".
+  el.dialogConfirm.focus();
+  return new Promise((resolve) => {
+    dialogResolve = (confirmed) => resolve(
+      confirmed
+        ? Object.fromEntries([...answers].map(([key, read]) => [key, read()]))
+        : null
+    );
+  });
+}
+
+el.dialogForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  closeDialog(true);
+});
+el.dialogCancel.addEventListener('click', () => closeDialog(false));
+// The backdrop only — a click that started inside the panel and drifted out
+// (selecting a label's text) lands on the form, not on this.
+el.dialog.addEventListener('mousedown', (event) => {
+  if (event.target === el.dialog) closeDialog(false);
+});
+
 /* ------------------------------------------------------------------ ui  --- */
 
 el.scaleToggle.addEventListener('click', () => { realScale = !realScale; layout(); });
@@ -1781,6 +1985,13 @@ el.playToggle.addEventListener('click', togglePlay);
 el.scrub.addEventListener('input', () => { scrubbing = true; seek(Number(el.scrub.value) / 1000); });
 el.scrub.addEventListener('change', () => { scrubbing = false; });
 addEventListener('keydown', (event) => {
+  // A modal takes the keyboard whole, scripts included: Space is a checkbox in
+  // there and would otherwise also pause the transport, and a script's own
+  // shortcut would act behind the prompt. Escape dismisses it.
+  if (dialogResolve) {
+    if (event.key === 'Escape') closeDialog(false);
+    return;
+  }
   // A letter typed into the clip picker is that control's own type-ahead, so
   // the page's single-letter shortcuts must not fire on top of it -- reaching
   // for "(full range)" would otherwise re-frame the camera on the way. Only

@@ -44,6 +44,8 @@ import struct
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
+from pythontk.core_utils.color import ColorStops
+
 __all__ = ["GlbFades", "PointerChannel", "CHANNELS"]
 
 logger = logging.getLogger(__name__)
@@ -58,20 +60,32 @@ EXTENSION = "KHR_animation_pointer"
 POINTER = "/materials/{index}/pbrMetallicRoughness/baseColorFactor"
 
 Rgb = Sequence[float]
+#: One resolved ``(r, g, b)`` per stop, in ``ColorStops.keys`` order.
+Stops = Tuple[Rgb, ...]
 
 
-def _opacity_values(base: List[float], sample: float, _color: Rgb) -> List[float]:
+def _opacity_values(base: List[float], sample: float, _stops: Stops) -> List[float]:
     """Alpha rides the fourth lane; the material's own RGB is carried through."""
     return [base[0], base[1], base[2], sample]
 
 
-def _highlight_values(base: List[float], sample: float, color: Rgb) -> List[float]:
+def _highlight_values(base: List[float], sample: float, stops: Stops) -> List[float]:
     """Additive over the material's own emissive, clamped to glTF's LDR factor.
 
     An LED panel that is also highlighted keeps glowing at intensity 0, and a
     white surface highlighted blue reads blue rather than replacing its albedo.
+
+    The sample rides BETWEEN the channel's two stops rather than scaling one,
+    so the dim half of a pulse is an authored colour instead of the absence of
+    one. A low stop of black is the legacy shape -- ``base + hi * sample``
+    exactly -- which is why it is :attr:`ColorStops.BLACK` that an unstated low
+    stop falls back to.
     """
-    return [min(1.0, max(0.0, base[i] + color[i] * sample)) for i in range(3)]
+    hi = stops[0]
+    lo = stops[1] if len(stops) > 1 else ColorStops.BLACK
+    return [
+        min(1.0, max(0.0, base[i] + lo[i] + (hi[i] - lo[i]) * sample)) for i in range(3)
+    ]
 
 
 def _uncover_emissive(material: Dict[str, Any]) -> Optional[str]:
@@ -118,8 +132,10 @@ class PointerChannel:
             ``("pbrMetallicRoughness", "baseColorFactor")`` or ``("emissiveFactor",)``.
         default: The property's per-spec default when the material omits it.
         blend: Whether an animated clone must switch to ``alphaMode BLEND``.
-        color_key: Optional sibling track key carrying a per-node RGB.
-        values: ``(base, sample, color) -> components`` for one key.
+        color_stops: Optional :class:`ColorStops` naming the sibling track
+            key(s) that carry this channel's per-node colour(s).
+        values: ``(base, sample, stops) -> components`` for one key, where
+            *stops* is one resolved ``(r, g, b)`` per stop.
         prepare: Readies an isolated material for the channel, before its base
             is read -- returns a note naming what it changed, or ``None``.
             Runs once per pointer target, guarded by the same "already
@@ -131,9 +147,19 @@ class PointerChannel:
     property: Tuple[str, ...]
     default: Tuple[float, ...]
     blend: bool
-    color_key: Optional[str]
-    values: Callable[[List[float], float, Rgb], List[float]]
+    color_stops: Optional[ColorStops]
+    values: Callable[[List[float], float, Stops], List[float]]
     prepare: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None
+
+    @property
+    def color_key(self) -> Optional[str]:
+        """The HIGH stop's track key.
+
+        Deprecated read-through kept for one release: the channel carries a
+        :class:`ColorStops` now, and a caller that wants every key wants
+        ``color_stops.keys``.
+        """
+        return self.color_stops.hi if self.color_stops else None
 
     @property
     def components(self) -> int:
@@ -164,7 +190,7 @@ CHANNELS: Dict[str, PointerChannel] = {
         property=("pbrMetallicRoughness", "baseColorFactor"),
         default=(1.0, 1.0, 1.0, 1.0),
         blend=True,
-        color_key=None,
+        color_stops=None,
         values=_opacity_values,
     ),
     "highlight": PointerChannel(
@@ -173,14 +199,16 @@ CHANNELS: Dict[str, PointerChannel] = {
         property=("emissiveFactor",),
         default=(0.0, 0.0, 0.0),
         blend=False,
-        color_key="highlight_color",
+        color_stops=ColorStops("highlight_color", "highlight_color_dim"),
         values=_highlight_values,
         prepare=_uncover_emissive,
     ),
 }
 
-#: A highlight with no published colour is white: the ramp still reads.
-DEFAULT_COLOR: Tuple[float, float, float] = (1.0, 1.0, 1.0)
+#: Deprecated: each stop now carries its own fallback (an unstated HIGH is
+#: white so the ramp still reads, an unstated LOW is black so a legacy asset
+#: does not invert). Kept for one release; read ``spec.color_stops`` instead.
+DEFAULT_COLOR: Tuple[float, float, float] = ColorStops.WHITE
 
 
 class _GlbFadesInternal:
@@ -407,7 +435,7 @@ class GlbFades(_GlbFadesInternal):
         cls,
         edit: Any,
         ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]],
-        colors: Dict[str, Dict[str, Rgb]],
+        colors: Dict[str, Dict[str, Any]],
         windows: Dict[str, Tuple[float, float]],
         zeros: Dict[str, float],
         fps: float,
@@ -419,8 +447,11 @@ class GlbFades(_GlbFadesInternal):
             ramps: ``{channel name: {node name: [[frame, value], ...]}}`` --
                 channel names are :data:`CHANNELS` keys; unknown ones are skipped
                 with a warning.
-            colors: ``{channel name: {node name: (r, g, b)}}`` for channels
-                whose row names a ``color_key``.
+            colors: ``{channel name: {node name: colour}}`` for channels whose
+                row names ``color_stops``. The colour is one ``(r, g, b)`` per
+                stop, high first; a bare ``(r, g, b)`` is read as the HIGH stop
+                alone, so a producer written before a channel grew a second
+                stop stays correct. Missing stops take their own defaults.
             windows: ``{clip name: (start frame, end frame)}``.
             zeros: ``{clip name: authoring frame the clip puts at t=0}``.
             fps: The rate the frame numbers are quoted in.
@@ -507,7 +538,11 @@ class GlbFades(_GlbFadesInternal):
                 # nothing under it renders, so there is nothing to animate.
                 continue
             for spec, per_clip in entries:
-                color = (colors.get(spec.name) or {}).get(name) or DEFAULT_COLOR
+                stops = (
+                    spec.color_stops.resolve((colors.get(spec.name) or {}).get(name))
+                    if spec.color_stops is not None
+                    else ()
+                )
                 for material in materials:
                     pointer = spec.pointer.format(index=material)
                     if pointer in existing:
@@ -524,7 +559,7 @@ class GlbFades(_GlbFadesInternal):
                         flat = [
                             c
                             for s in samples
-                            for c in spec.values(base, float(s[0]), color)
+                            for c in spec.values(base, float(s[0]), stops)
                         ]
                         by_clip.setdefault(clip, []).append(
                             {

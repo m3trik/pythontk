@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 import base64
+import bisect
 import copy
 import hashlib
 import io
@@ -27,6 +28,7 @@ from typing import (
     Union,
 )
 
+from pythontk.core_utils.class_property import ClassProperty
 from pythontk.core_utils.help_mixin import HelpMixin
 
 logger = logging.getLogger(__name__)
@@ -391,18 +393,35 @@ class MeshConvert(HelpMixin):
         },
     }
 
-    #: Default worker cap for :meth:`optimize_glb_textures`' encode pass, capped
-    #: again by the core count at call time. Deliberately well below a modern
-    #: core count -- see the phase-B comment there: the ceiling is host memory
-    #: (each worker holds a fully decoded 4K source), not cores, because this
-    #: routinely runs inside a DCC already holding the exported scene.
-    OPTIMIZE_WORKERS = 8
+    @ClassProperty
+    def OPTIMIZE_WORKERS(cls) -> int:
+        """Deprecated alias of :attr:`ImgUtils.ENCODE_WORKERS`, for one release.
 
-    #: Longest edge a web deliverable's textures keep, and the container they
-    #: are re-encoded to. See :meth:`web_delivery_texture_params` for why these
-    #: are named constants rather than each producer's own literal.
+        The encode pass's worker cap moved to :meth:`ImgUtils.encode_workers`,
+        the one policy every texture pass shares, and this reads it. Read-only:
+        assigning it no longer changes the pass -- set
+        ``ImgUtils.ENCODE_WORKERS``, or pass ``workers=``.
+        """
+        from pythontk.img_utils._img_utils import ImgUtils
+
+        return ImgUtils.ENCODE_WORKERS
+
+    #: Longest edge a web deliverable's textures keep, the container they are
+    #: re-encoded to, and whether a KTX2 image also carries a PNG/JPEG twin
+    #: (no). See :meth:`web_delivery_texture_params` for why each is a named
+    #: constant rather than each producer's own literal.
     WEB_DELIVERY_MAX_SIZE = 2048
     WEB_DELIVERY_FORMAT = "WEBP"
+    WEB_DELIVERY_KTX2_FALLBACK = False
+    #: A LOWER ceiling for the packed data maps (:attr:`SECONDARY_SEMANTICS`);
+    #: 0 = the same ceiling as everything else. Off by policy: which maps may
+    #: lose resolution is a lookdev call the producer makes per deliverable.
+    WEB_DELIVERY_SECONDARY_MAX_SIZE = 0
+    #: UASTC RDO lambda (``--uastc_rdo_l``) for the KTX2 encodes; None = off.
+    #: Off by policy: it trades a measured quality cost for bytes (ORM packs
+    #: -30% at 1.0 at PSNR 50/44/48 dB, a noisy normal map only -3.5%) at 3-4x
+    #: the encode time -- the producer's call, not the container's.
+    WEB_DELIVERY_UASTC_RDO: Optional[float] = None
 
     #: Slot semantic -> (Basis codec, sRGB transfer) for KTX2 mode. The glTF
     #: structural twin of ``MapOptimizer.resolve_compression``'s registry rule:
@@ -419,6 +438,16 @@ class MeshConvert(HelpMixin):
     #: Semantic precedence when one image is sampled by several slots: the
     #: quality/correctness-critical use wins the encode.
     _SEMANTIC_RANK: Dict[str, int] = {"color": 0, "data": 1, "normal": 2}
+
+    #: The semantics a secondary (lower) size ceiling applies to: the packed
+    #: data maps -- metallic-roughness and occlusion -- smooth masks that read
+    #: the same at half the resolution. NOT normals, which carry the surface
+    #: detail a resample visibly softens (toktx caps their RDO for the same
+    #: reason), and not color, the perceptual detail.
+    SECONDARY_SEMANTICS: Tuple[str, ...] = ("data",)
+    #: The RDO lambda a normal map is capped at whatever the caller asks --
+    #: toktx: "for normal maps a good range is [.25,.75]".
+    UASTC_RDO_NORMAL_MAX: float = 0.75
 
     #: Slot semantics a chroma-subsampled codec may be used on. The WebP twin of
     #: :attr:`BASIS_BY_SEMANTIC`'s ETC1S row, and deliberately the same rule --
@@ -713,10 +742,10 @@ class MeshConvert(HelpMixin):
             The inverse of :meth:`texture_for_image`, and the one place that
             knows an extension binding shadows the plain ``source``: after
             :meth:`optimize_glb_textures` a texture carries
-            ``EXT_texture_webp`` beside its fallback ``source``, or (KTX2
-            mode) ``KHR_texture_basisu`` beside a core-readable fallback
-            twin (none in pure-delivery mode) -- either
-            way the extension is what a capable loader reads. Bounds-checked
+            ``EXT_texture_webp`` or ``KHR_texture_basisu``, beside a plain
+            ``source`` only when the KTX2 pass wrote a core-readable fallback
+            twin -- either way the extension is what a capable loader reads.
+            Bounds-checked
             like :meth:`base_color_image` -- a negative index is malformed,
             not a reference to the last texture.
             """
@@ -962,6 +991,40 @@ class MeshConvert(HelpMixin):
             return None
 
     @classmethod
+    def _expand_grayscale_embeds(cls, src: str, store: Any) -> str:
+        """The FBX that FBX2glTF reads: *src*, or its copy in *store* with every
+        grayscale embed expanded (:meth:`FbxMedia.expand_grayscale`).
+
+        A failure costs a warning, never the conversion: the file converts as
+        it did before. A source that is not a binary FBX (an ASCII export) is
+        read as it is, since the payload writer cannot re-emit one.
+        """
+        from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        if not FbxFile.is_fbx(src):
+            return src
+        copy = store.path(extension=".fbx")
+        try:
+            outcome = FbxMedia.expand_grayscale(src, copy)
+        except Exception as exc:  # noqa: BLE001 -- the conversion still runs
+            logger.warning(
+                "Grayscale texture expansion skipped (%s): FBX2glTF packs a "
+                "grayscale roughness or metallic map as white.",
+                exc,
+            )
+            return src
+        if not outcome["expanded"]:
+            return src
+        logger.info(
+            "FBX2glTF input: %d of %d embedded image(s) grayscale, expanded to "
+            "RGB so the packed ORM texture keeps their values.",
+            outcome["expanded"],
+            outcome["images"],
+        )
+        return copy
+
+    @classmethod
     def fbx_to_glb(
         cls,
         src: str,
@@ -973,6 +1036,7 @@ class MeshConvert(HelpMixin):
         timeout: Optional[float] = AUTO_TIMEOUT,
         extra_args: Optional[List[str]] = None,
         sidecar: Optional[Dict[str, Any]] = None,
+        data_export: Optional[Dict[str, Any]] = None,
         lightmaps: bool = True,
         lightmap_dirs: Sequence[str] = (),
         shadow_dirs: Sequence[str] = (),
@@ -981,11 +1045,17 @@ class MeshConvert(HelpMixin):
     ) -> str:
         """Convert an FBX file to a binary glTF 2.0 (GLB) file.
 
+        FBX2glTF reads a copy whose grayscale embedded textures carry every
+        colour channel (:meth:`FbxMedia.expand_grayscale`): it packs roughness
+        and metallic from their maps' green and blue, so a grayscale map read
+        as it is ships as 1.0. A file with no grayscale embed is read as is.
+
         Parameters:
             src:           Input FBX path.
             dst:           Output GLB path. Defaults to src with .glb extension.
                            ``.glb`` is appended if absent.
-            overwrite:     Replace existing destination.
+            overwrite:     Replace existing destination -- once FBX2glTF has
+                           succeeded; a failed conversion leaves it in place.
             auto_install:  Download FBX2glTF if missing.
             prompt:        Consent policy for that download (see
                            :meth:`resolve_binary`).
@@ -995,7 +1065,10 @@ class MeshConvert(HelpMixin):
                 assembly's finished deliverable. An explicit number is used
                 as given; ``None`` disables the limit.
             extra_args:    Extra CLI flags forwarded to FBX2glTF
-                           (e.g. ``["--draco"]``, ``["-v"]``).
+                           (e.g. ``["--draco"]``, ``["-v"]``). The SDK's
+                           embedded-media extraction goes to a temp store
+                           removed when the call returns, unless these name
+                           ``--fbx-temp-dir`` themselves.
             sidecar:       A scene-sidecar envelope (:meth:`build_scene_sidecar`)
                            to apply to and embed in the converted GLB — the one
                            parameter that turns a bare conversion into a
@@ -1004,6 +1077,13 @@ class MeshConvert(HelpMixin):
                            it costs no extra file pass. Callers that need the
                            per-section outcome summary call
                            :meth:`apply_scene_sidecar` separately instead.
+            data_export:   ``{channel key: value or None}`` overlaid on the
+                           file's in-band channels (:meth:`overlay_data_export`)
+                           BEFORE any pass reads them, so every pass builds from
+                           the overlay as if the FBX had carried it. How a
+                           preview shows an effect the scene does not carry
+                           (:meth:`effect_preview_channels`); ``None`` builds
+                           from the FBX alone.
             lightmaps:     Wire the host scene's committed lightmaps into the
                            GLB (:meth:`apply_glb_lightmaps`). Default on and
                            self-feeding -- the manifest travels inside the FBX,
@@ -1044,11 +1124,21 @@ class MeshConvert(HelpMixin):
                            :meth:`apply_scene_sidecar` returns) and
                            ``"lightmaps"`` (:meth:`lightmap_report`
                            -- what the manifest wanted of THIS file against
-                           what bound). The return value stays the path, so
+                           what bound) and ``"data_export"`` (the channel keys
+                           the overlay replaced; set when one was given).
+                           The return value stays the path, so
                            every existing caller is unchanged.
 
         Returns:
             Absolute path to the written GLB file.
+
+        Raises:
+            FileNotFoundError: *src* does not exist.
+            ValueError: *src* is not an ``.fbx``, or *clip_mode* is unknown.
+            FileExistsError: *dst* exists and *overwrite* is False.
+            PermissionError: *dst* is held open by another process (asked
+                before converting).
+            RuntimeError: FBX2glTF failed, timed out, or wrote no GLB.
         """
         if clip_mode not in cls.ANIMATION_CLIP_MODES:
             raise ValueError(
@@ -1067,13 +1157,20 @@ class MeshConvert(HelpMixin):
             dst = dst + ".glb"
         dst_abs = os.path.abspath(dst)
 
-        if os.path.exists(dst_abs):
-            if not overwrite:
-                raise FileExistsError(
-                    f"GLB output already exists: {dst_abs}. "
-                    "Pass overwrite=True to replace."
-                )
-            os.remove(dst_abs)
+        if os.path.exists(dst_abs) and not overwrite:
+            raise FileExistsError(
+                f"GLB output already exists: {dst_abs}. Pass overwrite=True to replace."
+            )
+        from pythontk.file_utils._file_utils import FileUtils
+
+        if FileUtils.is_locked(dst_abs):
+            # Asked BEFORE the conversion: Windows refuses to replace a file a
+            # viewer or a sync client holds open, and the move that ends a
+            # conversion -- minutes in -- is the costliest place to learn it.
+            raise PermissionError(
+                FileUtils.describe_lock(dst_abs)
+                or f"GLB output is held open by another process: {dst_abs}"
+            )
 
         os.makedirs(os.path.dirname(dst_abs) or ".", exist_ok=True)
 
@@ -1087,7 +1184,17 @@ class MeshConvert(HelpMixin):
         # ``data_export`` channels arrive with it and are silently dropped
         # without). A carrier must not drop data another carrier deliberately
         # embedded, and the flag is a no-op on an FBX with no user properties.
-        output_base = os.path.splitext(dst_abs)[0]
+        # FBX2glTF writes into a store of this call's own, and its GLB replaces
+        # *dst* only once the converter has succeeded: deleting *dst* up front
+        # meant a conversion that failed or timed out -- minutes in, on a
+        # production assembly -- also cost the file it was to replace, and in a
+        # synced export folder that deletion reached every copy.
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        converted = TempArtifacts("fbx2gltf_output", policy="scoped")
+        output_base = os.path.join(
+            converted.dir_path(), os.path.splitext(os.path.basename(dst_abs))[0]
+        )
         cmd = [
             binary,
             "-i",
@@ -1105,33 +1212,68 @@ class MeshConvert(HelpMixin):
             # 60 means 60) and ``None`` still means no limit.
             timeout = cls.conversion_timeout(src_abs)
 
-        logger.debug("FBX2glTF: %s", shlex.join(cmd))
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                errors="replace",
-                check=False,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(
-                f"FBX2glTF timed out after {timeout}s converting {src_abs}"
-            ) from exc
+        # The SDK's import EXTRACTS every embedded texture into `<stem>.fbm`
+        # beside the FBX it reads -- payload-sized (311 MB on a production
+        # assembly), never read again once the GLB holds the images, and left
+        # in whatever folder the input sits in: a synced export folder, or the
+        # temp dir beside a pipeline's scratch copy. A store of this call's own
+        # keeps it here; a caller naming its own directory keeps that one.
+        media = TempArtifacts("fbx2gltf_media", policy="scoped")
+        # Either CLI spelling counts: a second option beside the caller's
+        # `--fbx-temp-dir=DIR` is a duplicate the parser can refuse.
+        if not any(arg.split("=", 1)[0] == "--fbx-temp-dir" for arg in cmd):
+            cmd += ["--fbx-temp-dir", media.dir_path()]
 
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"FBX2glTF failed (exit={result.returncode}):\n"
-                f"  cmd: {shlex.join(cmd)}\n"
-                f"  stdout: {result.stdout}\n"
-                f"  stderr: {result.stderr}"
+        # The converter reads a copy with its grayscale embeds expanded, released
+        # as soon as it is done reading. Expanded inside the try: an interrupted
+        # expansion must not strand a full-size copy, or the stores above.
+        staged = TempArtifacts("fbx2gltf_input", policy="scoped")
+        try:
+            cmd[cmd.index("-i") + 1] = cls._expand_grayscale_embeds(src_abs, staged)
+            logger.debug("FBX2glTF: %s", shlex.join(cmd))
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    check=False,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(
+                    f"FBX2glTF timed out after {timeout}s converting {src_abs}"
+                ) from exc
+            finally:
+                media.cleanup()
+                staged.cleanup()
+
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"FBX2glTF failed converting {src_abs} (exit={result.returncode}):\n"
+                    f"  cmd: {shlex.join(cmd)}\n"
+                    f"  stdout: {result.stdout}\n"
+                    f"  stderr: {result.stderr}"
+                )
+            produced = output_base + ".glb"
+            if not os.path.isfile(produced):
+                raise RuntimeError(
+                    f"FBX2glTF exited 0 but its GLB was not created ({produced}); {dst_abs} is unchanged.\n"
+                    f"  stdout: {result.stdout}"
+                )
+            # Copied to a sibling of dst and swapped in by one atomic replace. A
+            # move is not that: the store is in the system temp dir, usually on
+            # another volume, where a move copies straight over dst -- as it
+            # does on any volume on Windows, whose rename refuses an existing
+            # file -- so a disk-full or I/O error part way through a
+            # multi-hundred-MB GLB left the deliverable truncated.
+            FileUtils.atomic_write(
+                dst_abs, lambda part: shutil.copyfile(produced, part)
             )
-        if not os.path.isfile(dst_abs):
-            raise RuntimeError(
-                f"FBX2glTF exited 0 but {dst_abs} was not created.\n"
-                f"  stdout: {result.stdout}"
-            )
+        finally:
+            converted.cleanup()
+            media.cleanup()
+            staged.cleanup()
 
         # One post-conversion edit session for everything that touches the
         # JSON chunk: the alpha repair and (when given) the scene sidecar.
@@ -1176,6 +1318,30 @@ class MeshConvert(HelpMixin):
                             "GLB carries its own.",
                             dropped,
                         )
+                # Ahead of EVERY pass that reads an in-band channel (sidecar,
+                # lightmaps, clips, gate, fades): each reads "out of the
+                # deliverable itself", so an overlay placed after any one of
+                # them would build that pass from the scene and the rest from
+                # the overlay.
+                if data_export:
+                    try:
+                        overlaid = cls.overlay_data_export(edit.gltf, data_export)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("data_export overlay skipped: %s", exc)
+                    else:
+                        if overlaid:
+                            edit.dirty = True
+                            logger.info(
+                                "data_export overlay: %s stated for this build "
+                                "(not what the FBX carried).",
+                                ", ".join(overlaid),
+                            )
+                        # Reported, not just logged: a caller that asked for
+                        # an overlay can only tell it landed by reading the
+                        # file back, and the one that asks -- a panel's
+                        # preview -- has to say so in ITS result instead.
+                        if report is not None:
+                            report["data_export"] = list(overlaid)
                 if sidecar:
                     # Guarded like every other pass in this chain: the apply
                     # handles its own per-section and container failures, and
@@ -1324,6 +1490,19 @@ class MeshConvert(HelpMixin):
                     cls.compact_glb_animations(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB animation compaction skipped: %s", exc)
+                # Skinning data no node binds, then the skeleton roots of the
+                # skins that remain. Structural, so correct anywhere after the
+                # proxy strip (the last pass that removes nodes); here so the
+                # prune's repack copies the smallest BIN this session holds,
+                # after the animation passes have released what they drop.
+                try:
+                    cls.prune_glb_unused_skins(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB skin prune skipped: %s", exc)
+                try:
+                    cls.fix_glb_skin_skeletons(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB skin skeleton repair skipped: %s", exc)
                 # Unconditional and self-feeding, like the lightmap pass: it
                 # reads the take list out of the file and no-ops on a GLB with
                 # no animation, so there is no flag for a caller to forget.
@@ -1957,9 +2136,10 @@ class MeshConvert(HelpMixin):
         """Refresh the embedded envelope's content addresses; return how many.
 
         Split from :meth:`_sidecar_texture_map` because the two answer questions
-        with different lifetimes. *Which* image carries a path is decided once,
-        when the sidecar is applied, and never changes -- image indices are
-        stable. *What those bytes are* changes afterwards:
+        with different lifetimes. *Which* image carries a path is decided when
+        the sidecar is applied; a later pass that renumbers images carries the
+        reference along (:meth:`_map_sidecar_image_refs`) without touching its
+        bytes. *What those bytes are* changes afterwards:
         :meth:`optimize_glb_textures` resizes and re-encodes every image it
         touches, so a digest taken at apply time describes bytes the delivered
         file no longer contains. So the digest is stamped by whoever last wrote
@@ -2057,6 +2237,20 @@ class MeshConvert(HelpMixin):
         with cls.open_glb(glb) as edit:
             return (edit.gltf.get("extras") or {}).get("scene_sidecar")
 
+    @staticmethod
+    def _requirement_note(required: Sequence[str]) -> str:
+        """:meth:`verify_glb`'s note naming a file's ``extensionsRequired``.
+
+        One definition, because :class:`ExportVerifier` recognises it by value:
+        its extension gate states a declared requirement, so its envelope gate
+        must not restate the same fact as a warning.
+        """
+        return (
+            "requires a reader supporting "
+            + ", ".join(required)
+            + " -- a viewer without it must refuse this file"
+        )
+
     @classmethod
     def verify_glb(cls, glb: GlbTarget) -> Dict[str, Any]:
         """Check a delivered GLB against the envelope it carries.
@@ -2104,7 +2298,7 @@ class MeshConvert(HelpMixin):
             extras = edit.gltf.get("extras") or {}
             envelope = extras.get("scene_sidecar")
             report["generator"] = (edit.gltf.get("asset") or {}).get("generator")
-            report["lightmap"] = bool(extras.get(cls.LIGHTMAP_WEB_KEY))
+            report["lightmap"] = bool(cls._lightmap_web_manifest(edit.gltf))
             # What a reader must SUPPORT to open this at all. `extensionsRequired`
             # is not advice: the spec says a reader that does not implement one
             # of these must refuse the file. A web-delivery GLB requires
@@ -2121,11 +2315,7 @@ class MeshConvert(HelpMixin):
                 "used": sorted(edit.gltf.get("extensionsUsed") or []),
             }
             if required:
-                report["notes"].append(
-                    "requires a reader supporting "
-                    + ", ".join(required)
-                    + " -- a viewer without it must refuse this file"
-                )
+                report["notes"].append(cls._requirement_note(required))
             # The spec's own subset rule, and a real failure rather than a note:
             # a file demanding a capability it never declares is invalid glTF
             # and stock validators reject it outright.
@@ -2365,7 +2555,8 @@ class MeshConvert(HelpMixin):
     LIGHTMAP_METADATA_KEY = "lightmap_metadata"
     #: Highest ``lightmap_metadata`` schema this applier knows how to read.
     LIGHTMAP_METADATA_VERSION = 1
-    #: Root-extras key the web viewer reads (``preview/viewer.html``).
+    #: Extras key the web viewer reads (``preview/viewer.html``): the first
+    #: scene's extras, then the root's (:meth:`_lightmap_web_manifest`).
     LIGHTMAP_WEB_KEY = "lightmap_web"
     #: Per-object bake marker, riding the same FBX user-property channel as the
     #: manifest (mayatk/blendertk ``LightmapBaker.LIGHTMAP_INFO_ATTR``). Carries
@@ -2463,6 +2654,151 @@ class MeshConvert(HelpMixin):
                     return None
         return None
 
+    #: What a converted ``data_export`` carrier node is called, and what
+    #: :meth:`overlay_data_export` names one it has to create.
+    DATA_EXPORT_NODE = "data_export"
+
+    @classmethod
+    def overlay_data_export(cls, gltf: dict, channels: Dict[str, Any]) -> List[str]:
+        """Replace ``data_export`` channels in a parsed glTF, ahead of every reader.
+
+        The in-band channels are the passes' only input -- the gate, the fades,
+        the clips all read "out of the deliverable itself" -- which is what
+        makes them self-feeding, and also what left a build no way to show
+        anything but the scene as exported. An overlay is that way: a caller
+        states a channel for THIS build (a preview of an effect at a panel's
+        settings, say), the passes read it exactly as if the FBX had carried
+        it, and nothing upstream -- the scene, the exported file -- is touched.
+
+        Each named channel is removed from every node in BOTH on-disk shapes
+        :meth:`data_export_channel` reads (a file may carry several carriers,
+        one per referenced module), then written once as top-level node extras.
+        ``None`` clears a channel: absent, not empty, so a reader falls back
+        exactly as it does for a scene that never published one.
+
+        Parameters:
+            gltf: The parsed glTF, edited in place.
+            channels: ``{channel key: decoded value or None}``.
+
+        Returns:
+            The channel keys that changed, sorted; the caller marks its edit
+            session dirty when this is non-empty.
+        """
+        changed = set()
+        carrier = None
+        nodes = gltf.get("nodes") or []
+        for key in channels or {}:
+            for node in nodes:
+                extras = node.get("extras") if isinstance(node, dict) else None
+                if not isinstance(extras, dict):
+                    continue
+                props = (extras.get("fromFBX") or {}).get("userProperties")
+                for holder in (props, extras):
+                    if isinstance(holder, dict) and key in holder:
+                        del holder[key]
+                        changed.add(key)
+                        carrier = carrier or node
+
+        written = {k: v for k, v in (channels or {}).items() if v is not None}
+        if written:
+            if carrier is None:
+                carrier = next(
+                    (
+                        node
+                        for node in nodes
+                        if isinstance(node, dict)
+                        and str(node.get("name") or "").split("|")[-1].split(":")[-1]
+                        == cls.DATA_EXPORT_NODE
+                    ),
+                    None,
+                )
+            if carrier is None:
+                # A selection export ships no carrier when the scene has none;
+                # the overlay still has to land where the readers look.
+                carrier = {"name": cls.DATA_EXPORT_NODE}
+                gltf.setdefault("nodes", []).append(carrier)
+                scenes = gltf.get("scenes") or []
+                index = gltf.get("scene", 0)
+                if isinstance(index, int) and 0 <= index < len(scenes):
+                    scenes[index].setdefault("nodes", []).append(len(gltf["nodes"]) - 1)
+            extras = carrier.setdefault("extras", {})
+            for key, value in written.items():
+                # JSON text, the shape every producer publishes and the reader
+                # decodes.
+                extras[key] = value if isinstance(value, str) else json.dumps(value)
+                changed.add(key)
+        return sorted(changed)
+
+    @classmethod
+    def effect_preview_channels(
+        cls,
+        nodes: Sequence[str],
+        channel: str,
+        keys: Sequence[Sequence[float]],
+        colors: Optional[Sequence[Optional[Sequence[float]]]] = None,
+        fps: float = 30.0,
+    ) -> Dict[str, Any]:
+        """The :meth:`overlay_data_export` channels that preview ONE render effect.
+
+        What a panel pushes to show an effect at its current settings on the
+        objects it names, whatever they carry already: every node gets the same
+        *keys* on *channel*, the scene's own tracks are replaced rather than
+        merged (an object's existing fade would otherwise play over the
+        highlight being judged), and the take list and shot record are cleared
+        so the ramp rides one clip over its own extent instead of being cut to
+        shots it has nothing to do with. The passes then build exactly what the
+        writers would have produced had the keys been authored.
+
+        Parameters:
+            nodes: The GLB node names (the DCC's leaf names), deduplicated.
+            channel: A :data:`glb_fades.CHANNELS` key (``"opacity"``, ``"highlight"``).
+            keys: ``[(frame, value), ...]`` -- a :class:`RampKeys` plan.
+            colors: One ``(r, g, b)`` or ``None`` per colour stop of the
+                channel, high first; ``None`` leaves that stop to its default.
+            fps: The rate *keys* are quoted in.
+
+        Returns:
+            ``{visibility_tracks: envelope, fbx_takes: None, shot_metadata: None}``.
+
+        Raises:
+            KeyError: For a channel with no pointer row.
+            ValueError: When there are no nodes, or fewer than two keys.
+        """
+        from pythontk.file_utils.mesh_convert.glb_fades import CHANNELS
+
+        if channel not in CHANNELS:
+            raise KeyError(
+                f"Unknown render-effect channel {channel!r}; expected one of "
+                f"{', '.join(CHANNELS)}."
+            )
+        names = list(dict.fromkeys(str(n) for n in nodes or () if n))
+        if not names:
+            raise ValueError("An effect preview needs at least one node.")
+        ramp = [[float(frame), float(value)] for frame, value in keys]
+        if len(ramp) < 2:
+            raise ValueError("An effect preview needs a ramp of at least two keys.")
+        spec = CHANNELS[channel]
+
+        tracks = []
+        for name in names:
+            # No visibility beside an opacity ramp: the ramp IS the presence
+            # channel, and the gate reads it directly (_presence_keys).
+            track: Dict[str, Any] = {"node": name, channel: ramp}
+            if spec.color_stops is not None:
+                for key, rgb in zip(spec.color_stops.keys, colors or ()):
+                    if rgb is not None:
+                        track[key] = [float(c) for c in list(rgb)[:3]]
+            tracks.append(track)
+        return {
+            cls.VISIBILITY_TRACKS_KEY: cls.build_visibility_tracks(
+                tracks,
+                fps=fps,
+                clip_spans={cls.DEFAULT_CLIP_SPAN: [ramp[0][0], ramp[-1][0]]},
+            ),
+            cls.FBX_TAKES_KEY: None,
+            cls.SHOT_METADATA_KEY: None,
+        }
+
     @classmethod
     def _lightmap_manifest(cls, gltf: dict) -> Optional[Dict[str, Any]]:
         """The ``lightmap_metadata`` manifest in a parsed glTF, or ``None``.
@@ -2474,6 +2810,124 @@ class MeshConvert(HelpMixin):
         """
         data = cls.data_export_channel(gltf, cls.LIGHTMAP_METADATA_KEY)
         return data if isinstance(data, dict) else None
+
+    @classmethod
+    def _lightmap_web_manifest(cls, gltf: dict) -> Optional[Dict[str, Any]]:
+        """The ``lightmap_web`` manifest in a parsed glTF, or ``None``.
+
+        Probed where the viewer probes (``readExtras`` in
+        ``preview/viewer.html``), in its order: the first scene's extras --
+        where a native DCC export writes it, as a JSON string -- then the
+        root's, where the appliers here write an object. Read from the root
+        alone, a natively exported deliverable looked unlit to every reader but
+        the viewer.
+        """
+        scenes = gltf.get("scenes") or []
+        first = scenes[0] if scenes and isinstance(scenes[0], dict) else {}
+        for holder in (first.get("extras"), gltf.get("extras")):
+            raw = holder.get(cls.LIGHTMAP_WEB_KEY) if isinstance(holder, dict) else None
+            if isinstance(raw, str):
+                try:
+                    raw = json.loads(raw)
+                except ValueError:
+                    continue  # the viewer keeps looking too
+            if isinstance(raw, dict):
+                return raw
+        return None
+
+    @classmethod
+    def _lightmap_final_values(
+        cls, gltf: dict, web: Optional[Dict[str, Any]]
+    ) -> Dict[str, Dict[str, Any]]:
+        """``{node name: {"map", "intensity"}}``: each node's lightmap in this file.
+
+        Read off the file itself -- the materials a node's primitives wear,
+        looked up in *web* (the ``lightmap_web`` manifest, keyed by material) --
+        because that is what the viewer binds: a copy corrected to it says what
+        the deliverable renders, whoever produced the file. A node wearing two
+        different lightmaps, and a name two nodes disagree about, are left out:
+        a marker names one map, and picking one would put the other's lighting
+        on record.
+        """
+        published = (web or {}).get("materials")
+        if not isinstance(published, dict) or not published:
+            return {}
+        materials = gltf.get("materials") or []
+        meshes = gltf.get("meshes") or []
+        final: Dict[str, Dict[str, Any]] = {}
+        conflicted: Set[str] = set()
+        for node in gltf.get("nodes") or []:
+            name, mesh = node.get("name"), node.get("mesh")
+            if not name or not isinstance(mesh, int) or not 0 <= mesh < len(meshes):
+                continue
+            worn: List[Dict[str, Any]] = []
+            for prim in meshes[mesh].get("primitives") or []:
+                index = prim.get("material")
+                if not isinstance(index, int) or not 0 <= index < len(materials):
+                    continue
+                entry = published.get(materials[index].get("name"))
+                if not isinstance(entry, dict):
+                    continue
+                pair = {k: entry[k] for k in ("map", "intensity") if k in entry}
+                if pair and pair not in worn:
+                    worn.append(pair)
+            if not worn:
+                continue
+            if len(worn) > 1 or final.get(name, worn[0]) != worn[0]:
+                conflicted.add(name)
+            final[name] = worn[0]
+        for name in conflicted:
+            del final[name]
+        return final
+
+    @staticmethod
+    def _correct_lightmap_record(record: dict, committed: Optional[dict]) -> bool:
+        """Give *record* the ``map`` and ``intensity`` *committed* carries.
+
+        Returns True when either value changed.
+        """
+        changed = False
+        for field in ("map", "intensity"):
+            if not committed or field not in committed:
+                continue
+            if record.get(field) != committed[field]:
+                record[field] = committed[field]
+                changed = True
+        return changed
+
+    @classmethod
+    def _correct_manifest_entries(
+        cls, gltf: dict, manifest: dict, final: Optional[Dict[str, Dict[str, Any]]]
+    ) -> bool:
+        """Correct a manifest's entries from *final*; True when one changed.
+
+        Each entry is matched to its nodes by the binder's own rule
+        (:meth:`_resolve_lightmap_node`: exact, then namespace-tolerant), so an
+        entry is corrected where the applier would bind it, and only when every
+        node it resolves to ships the same lightmap. A manifest newer than this
+        reader is left alone: its fields may no longer mean the same.
+        """
+        entries = manifest.get("objects")
+        if not final or not isinstance(entries, list):
+            return False
+        try:
+            version = int(manifest.get("version", -1))
+        except (TypeError, ValueError):
+            return False
+        if not 0 < version <= cls.LIGHTMAP_METADATA_VERSION:
+            return False
+        nodes_by_name, leaf_index, _users = cls._lightmap_node_index(gltf)
+        changed = False
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            nodes, _status, _leaves = cls._resolve_lightmap_node(
+                entry.get("name"), nodes_by_name, leaf_index
+            )
+            shipped = [final.get(node.get("name") or "") for node in nodes or ()]
+            if shipped and all(v and v == shipped[0] for v in shipped):
+                changed |= cls._correct_lightmap_record(entry, shipped[0])
+        return changed
 
     @classmethod
     def without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]:
@@ -2521,7 +2975,7 @@ class MeshConvert(HelpMixin):
 
     @classmethod
     def _reconcile_node_markers(cls, gltf: dict, final: dict = None) -> int:
-        """Correct the per-node lightmap markers and drop their build-time hints.
+        """Correct the lightmap markers and manifest, and drop their build-time hints.
 
         Call once the maps are embedded: the hint's only reader is the applier's
         own EXR lookup, so after that it is dead weight that ships an absolute
@@ -2535,7 +2989,7 @@ class MeshConvert(HelpMixin):
         against ``search_dirs`` or the GLB's own directory.
 
         Those KEPT values are also corrected here, from *final* — the map name
-        and intensity this run actually committed, keyed by object name. They are
+        and intensity each node ships in this file, keyed by node name. They are
         written by the DCC bake pass BEFORE the web encode exists, so they name an
         ``.exr`` that ships nowhere and an intensity of 1.0 that predates
         normalisation, while ``extras.lightmap_web`` carries the embedded PNG and
@@ -2552,8 +3006,11 @@ class MeshConvert(HelpMixin):
 
         Args:
             gltf: Parsed glTF, mutated in place.
-            final: Optional ``{object_name: {"map": str, "intensity": float}}`` — the
-                values this run committed. Omitted, the markers are only stripped.
+            final: Optional ``{node_name: {"map": str, "intensity": float}}`` -- what
+                each node's lightmap is in this file (:meth:`_lightmap_final_values`).
+                A marker takes its node's values, a manifest entry those of the
+                nodes it resolves to (:meth:`_correct_manifest_entries`). Omitted,
+                the carriers are only stripped.
 
         Returns:
             int: number of carriers changed (0 when there was nothing to do).
@@ -2586,24 +3043,20 @@ class MeshConvert(HelpMixin):
                         continue
                     if not isinstance(data, dict):
                         continue
-                    # Correct the stale values first, then drop the hint. Keyed by the
-                    # NODE name because that is what the records carry; a marker on a
-                    # node this run did not bind is left exactly as found rather than
-                    # guessed at.
-                    corrected = False
-                    # Guarded on a truthy name: several nodes can be nameless, and
-                    # None == None would then apply one binding's values to every
-                    # nameless marker in the file.
-                    node_name = node.get("name")
-                    committed = (final or {}).get(node_name) if node_name else None
-                    if committed:
-                        for field in ("map", "intensity"):
-                            if (
-                                field in committed
-                                and data.get(field) != committed[field]
-                            ):
-                                data[field] = committed[field]
-                                corrected = True
+                    # Correct the stale values first, then drop the hint. A marker
+                    # is keyed by its NODE's name, a manifest entry by the nodes it
+                    # resolves to; either way a record this file does not bind is
+                    # left exactly as found rather than guessed at.
+                    if key == cls.LIGHTMAP_METADATA_KEY:
+                        corrected = cls._correct_manifest_entries(gltf, data, final)
+                    else:
+                        # Guarded on a truthy name: several nodes can be nameless,
+                        # and None == None would then apply one binding's values
+                        # to every nameless marker in the file.
+                        node_name = node.get("name")
+                        corrected = cls._correct_lightmap_record(
+                            data, (final or {}).get(node_name) if node_name else None
+                        )
                     had_hint = any(k in data for k in cls.LOCATE_HINT_KEYS)
                     if not had_hint and not corrected:
                         continue
@@ -2639,6 +3092,45 @@ class MeshConvert(HelpMixin):
         """
         with cls.open_glb(glb) as edit:
             return cls._lightmap_manifest(edit.gltf)
+
+    @classmethod
+    def fix_glb_lightmap_metadata(cls, glb: GlbTarget) -> int:
+        """Make every lightmap copy inside a GLB say what the GLB ships.
+
+        A GLB carries its lightmap facts three times: ``lightmap_web`` -- what
+        the viewer binds, and the authority -- the per-node ``lightmapInfo``
+        markers, and the ``lightmap_metadata`` manifest on the data_export
+        carrier. The bake writes the last two BEFORE the web encode exists, so
+        they name an ``.exr`` that ships nowhere at the pre-normalisation
+        intensity, with the absolute authoring folder as a locate hint.
+        :meth:`apply_glb_lightmaps` corrects them as it binds; this is the same
+        repair for a GLB it never touched -- blendertk's native glTF export,
+        whose ``floor`` shipped ``.exr`` @ 1.0 beside a ``.png`` @ 3.19
+        (measured in Blender 5.1).
+
+        Self-feeding, like the applier: the file names the material each node
+        wears and each material's lightmap, so no caller passes anything. A
+        record is corrected only where the file says unambiguously what it
+        ships (:meth:`_lightmap_final_values`), and the hints leave every
+        carrier. A GLB with no ``lightmap_web`` is left as found: nothing is
+        embedded, so nothing is authoritative and the hints may still be needed.
+
+        Parameters:
+            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
+
+        Returns:
+            How many carriers changed; 0 when the file already agrees.
+        """
+        with cls.open_glb(glb) as edit:
+            web = cls._lightmap_web_manifest(edit.gltf)
+            if not web:
+                return 0
+            changed = cls._reconcile_node_markers(
+                edit.gltf, cls._lightmap_final_values(edit.gltf, web)
+            )
+            if changed:
+                edit.dirty = True
+            return changed
 
     @classmethod
     def _lightmap_node_index(cls, gltf: dict):
@@ -2939,13 +3431,6 @@ class MeshConvert(HelpMixin):
             # warning fires once however many instances or primitives share it.
             dropped_authored: Set[int] = set()
             web_materials: Dict[str, Dict[str, Any]] = {}
-            # Keyed by the RESOLVED node rather than by the manifest entry:
-            # node lookup is namespace-tolerant (a manifest "room" can bind a
-            # GLB node "NS:room"), so keying the marker corrections off the
-            # manifest name would miss on exactly the scenes that tolerance
-            # exists for -- silently, since the markers would simply keep their
-            # stale values.
-            marker_updates: Dict[str, Dict[str, Any]] = {}
             used_transform = False
             for entry in entries:
                 name, basename = entry.get("name"), entry.get("map")
@@ -3116,10 +3601,6 @@ class MeshConvert(HelpMixin):
                                 "map": png_name,
                                 "intensity": round(scalar, 6),
                             }
-                            if node.get("name"):
-                                marker_updates[node["name"]] = web_materials[
-                                    clone["name"]
-                                ]
                             records.append(
                                 {
                                     "material": clone["name"],
@@ -3194,8 +3675,6 @@ class MeshConvert(HelpMixin):
                             "map": png_name,
                             "intensity": round(scalar, 6),
                         }
-                        if node.get("name"):
-                            marker_updates[node["name"]] = web_materials[mat_name]
                         records.append(
                             {
                                 "material": mat_name,
@@ -3238,13 +3717,14 @@ class MeshConvert(HelpMixin):
                     ext_used.append("KHR_texture_transform")
             if web_materials:
                 # The exact shape the viewer parses (root extras is its 2nd probe).
-                edit.gltf.setdefault("extras", {})[cls.LIGHTMAP_WEB_KEY] = {
+                web_manifest = {
                     "version": 1,
                     "carrier": carrier,
                     "uv": 1,
                     "encoding": "srgb",
                     "materials": web_materials,
                 }
+                edit.gltf.setdefault("extras", {})[cls.LIGHTMAP_WEB_KEY] = web_manifest
                 # The maps are in the file now, so the authoring-path hints that
                 # found them have no reader left -- drop them here, where that is
                 # provably true, rather than at export (where the applier still
@@ -3252,14 +3732,17 @@ class MeshConvert(HelpMixin):
                 # successful embed: a run that bound nothing leaves them intact so
                 # a retry -- after fixing a name mismatch, say -- can still locate
                 # the EXRs.
-                # Same walk corrects the superseded copies: every marker this run
-                # bound still names the .exr at the pre-normalisation intensity.
-                # Fed the PUBLISHED values (the same dicts that went into
+                # Same walk corrects the superseded copies: every marker and
+                # manifest entry this run bound still names the .exr at the
+                # pre-normalisation intensity. Fed the PUBLISHED values, read
+                # back through each node's materials (the dicts that went into
                 # lightmap_web), so the copies come out identical rather than
-                # merely close: a record's "map" is the SOURCE .exr basename —
-                # which is what a caller wants to know — and its "intensity" is
+                # merely close: a record's "map" is the SOURCE .exr basename --
+                # which is what a caller wants to know -- and its "intensity" is
                 # unrounded where the published one is round(., 6).
-                cls._reconcile_node_markers(edit.gltf, marker_updates)
+                cls._reconcile_node_markers(
+                    edit.gltf, cls._lightmap_final_values(edit.gltf, web_manifest)
+                )
                 edit.dirty = True
             elif len(entries) > len(out_of_scope):
                 # The one outcome silence gets wrong. Every miss above is warned
@@ -3810,6 +4293,13 @@ class MeshConvert(HelpMixin):
     #: its AnimStacks by, and the per-shot extras a take NAME cannot carry.
     FBX_TAKES_KEY = "fbx_takes"
     SHOT_METADATA_KEY = "shot_metadata"
+    #: The run's Animation Clips mode (``ExportProfile.ANIMATION_CLIPS_OPTIONS``:
+    #: ``full`` / ``shots`` / ``both``), DECLARED by the exporter on the
+    #: ``shot_metadata`` envelope beside ``fps``. ``fbx_takes`` lists the
+    #: scene's shots in every mode, so only this says whether the file was
+    #: meant to carry them as clips; one stack alone is also what a split that
+    #: silently failed leaves.
+    SHOT_CLIP_MODE_KEY = "clip_mode"
     #: Root-extras key the web viewer reads to choose and place clips
     #: (``preview/viewer.html``) -- the animation twin of
     #: :attr:`LIGHTMAP_WEB_KEY`, and written by the same kind of applier:
@@ -3882,7 +4372,7 @@ class MeshConvert(HelpMixin):
 
     @classmethod
     def _presence_keys(cls, track: Dict[str, Any]) -> List[Sequence[float]]:
-        """The on/off timeline to GATE this track on -- the fade's, when it has one.
+        """The on/off timeline to GATE this track on: the one definition of presence.
 
         A DCC that keys opacity as a custom attribute (mayatk's ``RenderOpacity``
         in its recommended "attribute" mode is one) drives nothing with it: the
@@ -3900,14 +4390,25 @@ class MeshConvert(HelpMixin):
         then there to BE faded, and the ``KHR_animation_pointer`` channels
         :meth:`apply_glb_fades` writes supply the alpha.
 
-        A track whose "ramp" only ever holds 0 or 1 is not a fade and keeps the
-        mirrored boolean exactly as before -- same predicate as
-        :meth:`_authored_fades`, so the two cannot disagree about what a fade is.
+        A track whose "ramp" only ever holds 0 or 1 is not a fade and keeps its
+        authored ``visibility`` exactly as before -- same predicate as
+        :meth:`_authored_fades`, so the two cannot disagree about what a fade
+        is. With no visibility beside it (a hand-keyed opacity nothing
+        mirrored), the opacity keys ARE the presence channel, read by the rule
+        every mirror writer applies: ``> 0`` is present. A track carrying
+        neither -- a highlight alone -- is not gated.
+
+        Presence is therefore a property of the authored channels alone: no
+        producer has to write a mirror, or run before anything, for a node to
+        be gated where it is present.
         """
         keys = cls._numeric_pairs(track.get("opacity") or [])
         pairs = [(float(k[0]), float(k[1])) for k in keys]
         if len(pairs) < 2 or not cls._is_fade(pairs):
-            return track.get("visibility") or []
+            authored = track.get("visibility")
+            if authored:
+                return authored
+            return [[t, 1.0 if v > 0.0 else 0.0] for t, v in pairs]
         runs: List[Sequence[float]] = []
         for (t0, v0), (_t1, v1) in zip(pairs, pairs[1:]):
             # A segment is PRESENT when either end is non-zero: that covers the
@@ -3958,8 +4459,16 @@ class MeshConvert(HelpMixin):
         reappearing in shot 7: shot 7's window contains no key at all, and the
         naive reading of "no keys here" is "nothing to write", which leaves the
         node at its full authored scale for the whole clip.
+
+        Keys sharing a frame keep their authored order, so the later one is the
+        state from that frame on -- a one-frame cut, whichever way it switches
+        (the tie rule :meth:`_strictly_increasing` applies too). Sorting on the
+        value as well resolved every such tie to "visible".
         """
-        ordered = sorted((float(k[0]), float(k[1])) for k in cls._numeric_pairs(keys))
+        ordered = sorted(
+            ((float(k[0]), float(k[1])) for k in cls._numeric_pairs(keys)),
+            key=lambda key: key[0],
+        )
         if not ordered:
             return []
         start, end = window
@@ -4073,6 +4582,60 @@ class MeshConvert(HelpMixin):
         return live
 
     @classmethod
+    def _drop_orphaned_accessors(
+        cls, edit: "MeshConvert.GlbEdit", candidates: Set[int]
+    ) -> int:
+        """Delete the *candidates* nothing reads any more; renumber the rest.
+
+        Deleted, not merely unbound. An unbound accessor is valid glTF and
+        costs only its JSON, but it keeps its bufferView alive for
+        :meth:`_compact_bin`, the numbering drifts further from the file a
+        reader sees, and a pass that runs on every rebuild accumulates a dead
+        accessor per channel per run (measured on the clip fixture: +272 bytes
+        a run). The constant-channel collapse left 15,843 of them (1.59 MB of
+        JSON) on a production 4K assembly.
+
+        Parameters:
+            edit: An open session, already rewired: what is still referenced
+                is read off the file rather than passed in.
+            candidates: Accessor indices the caller stopped reading; only the
+                ones nothing else references are deleted.
+
+        Returns:
+            How many were deleted. 0 when none is orphaned, or when the file
+            uses an extension that may hold accessor indices of its own
+            (:attr:`_ACCESSOR_REFERRING_EXTENSIONS`): renumbering under one of
+            those would silently re-point it at the wrong data, so the pass
+            declines rather than guess.
+        """
+        gltf = edit.gltf
+        accessors = gltf.get("accessors") or []
+        orphaned = {
+            index
+            for index in candidates
+            if isinstance(index, int) and 0 <= index < len(accessors)
+        } - cls._referenced_accessors(gltf)
+        if not orphaned:
+            return 0
+        foreign = cls._ACCESSOR_REFERRING_EXTENSIONS & set(
+            gltf.get("extensionsUsed") or []
+        )
+        if foreign:
+            logger.info(
+                "Accessors: kept %d unreferenced accessor(s) -- %s may hold "
+                "accessor indices this pass cannot see.",
+                len(orphaned),
+                ", ".join(sorted(foreign)),
+            )
+            return 0
+        keep = [i for i in range(len(accessors)) if i not in orphaned]
+        remap = {old: new for new, old in enumerate(keep)}
+        gltf["accessors"] = [accessors[i] for i in keep]
+        cls._map_accessor_refs(gltf, lambda index: remap.get(index))
+        edit.dirty = True
+        return len(orphaned)
+
+    @classmethod
     def _release_animation_payload(
         cls,
         edit: "MeshConvert.GlbEdit",
@@ -4102,46 +4665,15 @@ class MeshConvert(HelpMixin):
             rather than guess -- renumbering under one of those would silently
             re-point it at the wrong data.
         """
-        gltf = edit.gltf
         if isinstance(animations, dict):
             animations = [animations]
-        foreign = cls._ACCESSOR_REFERRING_EXTENSIONS & set(
-            gltf.get("extensionsUsed") or []
-        )
-        if foreign:
-            logger.info(
-                "Clips: kept the dropped clips' payload -- %s may hold "
-                "accessor indices this pass cannot see.",
-                ", ".join(sorted(foreign)),
-            )
-            return 0
-
         mine = set()
         for animation in animations:
             for sampler in (animation or {}).get("samplers") or []:
                 for key in ("input", "output"):
-                    index = (sampler or {}).get(key)
-                    if isinstance(index, int):
-                        mine.add(index)
-        if not mine:
+                    mine.add((sampler or {}).get(key))
+        if not cls._drop_orphaned_accessors(edit, mine):
             return 0
-
-        accessors = gltf.get("accessors") or []
-        orphaned = mine - cls._referenced_accessors(gltf)
-        if not orphaned:
-            return 0
-
-        # Deleted, not merely unbound. An unbound accessor is valid glTF and
-        # costs only its JSON, but this pass runs again every time the clips
-        # are rebuilt -- and a file that accumulates a dead accessor per
-        # channel per run grows on every pass, which is the leak this method
-        # exists to close (measured on the fixture: +272 bytes a run, and the
-        # numbering drifts further from the file a reader sees each time).
-        keep = [i for i in range(len(accessors)) if i not in orphaned]
-        remap = {old: new for new, old in enumerate(keep)}
-        gltf["accessors"] = [accessors[i] for i in keep]
-        cls._map_accessor_refs(gltf, lambda index: remap.get(index))
-        edit.dirty = True
         return cls._compact_bin(edit)
 
     @classmethod
@@ -4335,12 +4867,17 @@ class MeshConvert(HelpMixin):
                     cls.VISIBILITY_TRACKS_VERSION,
                 )
                 return None
-            tracks = [
-                t
-                for t in (channel.get("tracks") or [])
-                if isinstance(t, dict) and t.get("node") and t.get("visibility")
-            ]
-            if not tracks:
+            # Each track paired with what it is GATED on, resolved once: the one
+            # definition of presence (:meth:`_presence_keys`). A track qualifies
+            # by what its authored channels say, never by whether some producer
+            # wrote a visibility mirror beside them first.
+            to_gate = []
+            for t in channel.get("tracks") or []:
+                if isinstance(t, dict) and t.get("node"):
+                    presence = cls._presence_keys(t)
+                    if presence:
+                        to_gate.append((t, presence))
+            if not to_gate:
                 return None
 
             metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
@@ -4361,7 +4898,7 @@ class MeshConvert(HelpMixin):
                 logger.warning(
                     "Visibility: %d track(s) carry no frame rate, so their frame "
                     "numbers cannot be placed in time -- visibility not applied.",
-                    len(tracks),
+                    len(to_gate),
                 )
                 return None
 
@@ -4379,8 +4916,8 @@ class MeshConvert(HelpMixin):
             else:
                 frames = [
                     float(key[0])
-                    for track in tracks
-                    for key in cls._numeric_pairs(track["visibility"])
+                    for _track, presence in to_gate
+                    for key in cls._numeric_pairs(presence)
                 ]
                 union = (min(frames), max(frames)) if frames else None
 
@@ -4399,7 +4936,7 @@ class MeshConvert(HelpMixin):
             spans = channel.get("clip_span")
             return cls._write_visibility_channels(
                 edit,
-                tracks,
+                to_gate,
                 animations,
                 windows,
                 union,
@@ -4462,6 +4999,12 @@ class MeshConvert(HelpMixin):
         frames: Iterable[float],
         takes: Iterable[Any],
         stack_range: Optional[Sequence[float]] = None,
+        key_spans: Optional[
+            Callable[
+                [List[Tuple[Optional[float], Optional[float]]]],
+                Sequence[Optional[Sequence[float]]],
+            ]
+        ] = None,
     ) -> Dict[str, List[float]]:
         """Per take, the first and last authored frame inside its window.
 
@@ -4492,33 +5035,57 @@ class MeshConvert(HelpMixin):
                 every frame of the range, so the stack's first key IS the
                 range start even when the pre-bake scene had none there.
 
+            key_spans: The same question asked per window instead of by listing
+                keys -- *frames* is then ignored. Called once with
+                ``[(start, end), ...]`` (inclusive frames, ``None`` =
+                unbounded: the whole timeline first, then one window per valid
+                take) and returns each window's ``(first, last)`` key, or
+                ``None`` where no key falls. A DCC that can seek its curves
+                passes this: a production bake is millions of keys, and
+                listing them cost 10 s a pass.
+
         Returns:
             ``{take name: [first, last]}``, empty when nothing is animated.
         """
-        every = sorted(float(f) for f in frames if isinstance(f, (int, float)))
-        bounds = None
-        if stack_range is not None:
-            try:
-                lo, hi = float(stack_range[0]), float(stack_range[1])
-                bounds = [lo, hi]
-            except (TypeError, ValueError, IndexError):
-                bounds = None
-        if not every:
-            return {cls.DEFAULT_CLIP_SPAN: bounds} if bounds else {}
-        spans: Dict[str, List[float]] = {
-            cls.DEFAULT_CLIP_SPAN: bounds if bounds else [every[0], every[-1]]
-        }
+        named: List[Tuple[str, float, float]] = []
         for take in takes or ():
             if not isinstance(take, dict):
                 continue
             try:
-                name = str(take["name"])
-                start, end = float(take["start"]), float(take["end"])
+                named.append(
+                    (str(take["name"]), float(take["start"]), float(take["end"]))
+                )
             except (KeyError, TypeError, ValueError):
                 continue
-            inside = [t for t in every if start <= t <= end]
-            if inside:
-                spans[name] = [inside[0], inside[-1]]
+        windows: List[Tuple[Optional[float], Optional[float]]] = [(None, None)]
+        windows += [(start, end) for _name, start, end in named]
+        if key_spans is not None:
+            found = list(key_spans(windows))
+        else:
+            # Bisect the sorted key times rather than filter them: a
+            # production bake is millions of keys, and a scan per take was
+            # 23 s of every export (measured on an 18-take assembly).
+            every = sorted(float(f) for f in frames if isinstance(f, (int, float)))
+            found = []
+            for start, end in windows:
+                lo = 0 if start is None else bisect.bisect_left(every, start)
+                hi = len(every) if end is None else bisect.bisect_right(every, end)
+                found.append((every[lo], every[hi - 1]) if lo < hi else None)
+        bounds = None
+        if stack_range is not None:
+            try:
+                bounds = [float(stack_range[0]), float(stack_range[1])]
+            except (TypeError, ValueError, IndexError):
+                bounds = None
+        whole = found[0] if found else None
+        if whole is None:
+            return {cls.DEFAULT_CLIP_SPAN: bounds} if bounds else {}
+        spans: Dict[str, List[float]] = {
+            cls.DEFAULT_CLIP_SPAN: bounds or [float(whole[0]), float(whole[1])]
+        }
+        for (name, _start, _end), hit in zip(named, found[1:]):
+            if hit is not None:
+                spans[name] = [float(hit[0]), float(hit[1])]
         return spans
 
     @classmethod
@@ -4671,7 +5238,7 @@ class MeshConvert(HelpMixin):
     def _write_visibility_channels(
         cls,
         edit: "MeshConvert.GlbEdit",
-        tracks: List[Dict[str, Any]],
+        to_gate: List[Tuple[Dict[str, Any], List[Sequence[float]]]],
         animations: List[Dict[str, Any]],
         windows: Dict[str, Tuple[float, float]],
         union: Optional[Tuple[float, float]],
@@ -4686,14 +5253,13 @@ class MeshConvert(HelpMixin):
         writing of it, and because the write is the half with the ordering
         constraint: the samples for EVERY clip are computed first, so the
         buffer grows once rather than once per clip.
+
+        *to_gate* pairs each track with what it is GATED on -- its presence
+        keys (:meth:`_presence_keys`), resolved once by the caller rather than
+        per clip: the answer is a property of the track, and deriving it inside
+        the clip loop would redo the same work once per clip per node.
         """
         nodes = edit.gltf.get("nodes") or []
-        # What each track is GATED on -- its fade's timeline where it has one,
-        # its mirrored boolean where it does not (see :meth:`_presence_keys`).
-        # Paired with the track and resolved once, rather than per clip: the
-        # answer is a property of the track, and deriving it inside the clip
-        # loop would redo the same work once per clip per node.
-        to_gate = [(track, cls._presence_keys(track)) for track in tracks]
         # (times, values) -> payload slot, so the three nodes that switch on the
         # same frame with the same authored scale share one accessor pair.
         payloads: List[bytes] = []
@@ -4907,9 +5473,7 @@ class MeshConvert(HelpMixin):
     @classmethod
     def _authored_ramps(
         cls, gltf: Dict[str, Any]
-    ) -> Tuple[
-        Dict[str, Dict[str, List[List[float]]]], Dict[str, Dict[str, List[float]]]
-    ]:
+    ) -> Tuple[Dict[str, Dict[str, List[List[float]]]], Dict[str, Dict[str, Any]]]:
         """Every published per-node ramp, by channel, plus each channel's colours.
 
         Reads the ``visibility_tracks`` carrier once for every row of the
@@ -4926,13 +5490,15 @@ class MeshConvert(HelpMixin):
         by contrast, is a real on/off highlight and ships.
 
         Returns:
-            ``({channel: {node: [[frame, value], ...]}}, {channel: {node: [r, g, b]}})``.
+            ``({channel: {node: [[frame, value], ...]}},
+            {channel: {node: ((r, g, b), ...)}})`` -- one resolved triple per
+            stop of that channel, high first.
         """
         from pythontk.file_utils.mesh_convert.glb_fades import CHANNELS
 
         channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
         ramps: Dict[str, Dict[str, List[List[float]]]] = {}
-        colors: Dict[str, Dict[str, List[float]]] = {}
+        colors: Dict[str, Dict[str, Any]] = {}
         if not isinstance(channel, dict):
             return ramps, colors
         for track in channel.get("tracks") or []:
@@ -4949,12 +5515,17 @@ class MeshConvert(HelpMixin):
                 if name == "opacity" and not cls._is_fade(keys):
                     continue
                 ramps.setdefault(name, {})[node] = keys
-                rgb = track.get(spec.color_key) if spec.color_key else None
-                if isinstance(rgb, (list, tuple)) and len(rgb) >= 3:
-                    try:
-                        colors.setdefault(name, {})[node] = [float(c) for c in rgb[:3]]
-                    except (TypeError, ValueError):
-                        pass
+                if spec.color_stops is None:
+                    continue
+                # One sibling key per stop, read positionally. A track that
+                # states only the high stop -- every track authored before the
+                # channel grew a low one -- leaves the rest to their own
+                # defaults rather than to the high colour.
+                published = [track.get(k) for k in spec.color_stops.keys]
+                if any(v is not None for v in published):
+                    colors.setdefault(name, {})[node] = spec.color_stops.resolve(
+                        published
+                    )
         return ramps, colors
 
     #: FBX user property that marks a transient curve-proxy node: the per-object
@@ -5056,6 +5627,158 @@ class MeshConvert(HelpMixin):
         if nested is not None:
             return nested
         return extras.get(key)
+
+    #: Primitive extensions that name the primitive's attributes a second
+    #: time -- Draco maps each to its compressed stream -- so an attribute
+    #: dropped from ``attributes`` alone would leave the extension naming one
+    #: that is gone. Same "bail rather than guess" contract as
+    #: :attr:`_ACCESSOR_REFERRING_EXTENSIONS`.
+    _ATTRIBUTE_REFERRING_EXTENSIONS = frozenset({"KHR_draco_mesh_compression"})
+
+    @classmethod
+    def prune_glb_unused_skins(cls, glb: GlbTarget) -> Dict[str, int]:
+        """Drop the skinning data no node binds.
+
+        glTF gives a skin meaning only through a node's ``skin``, and
+        ``JOINTS_n``/``WEIGHTS_n`` only on a mesh a skinned node instantiates;
+        FBX2glTF writes both regardless. Measured on a production assembly
+        (2026-09-14): 255 of its 262 skins bound by no node, and JOINTS_0/
+        WEIGHTS_0 on 836 meshes no skinned node instantiates -- 0.49 MB of
+        vertex data, and a Khronos validator warning per node
+        (NODE_SKINNED_MESH_WITHOUT_SKIN x1493).
+
+        Removes every skin no node references (renumbering ``node.skin``) and
+        those attributes from each primitive of a mesh no skinned node
+        instantiates -- a mesh a skinned node shares keeps them, and so does a
+        primitive whose extension names its attributes again
+        (:attr:`_ATTRIBUTE_REFERRING_EXTENSIONS`) -- then deletes the accessors
+        that leaves unread and repacks the BIN.
+
+        Returns:
+            ``{"skins": removed, "attributes": stripped, "bytes": reclaimed}``.
+            ``bytes`` stays 0 when the file uses an extension that may hold
+            accessor indices of its own (:meth:`_drop_orphaned_accessors`).
+        """
+        counts = {"skins": 0, "attributes": 0, "bytes": 0}
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            nodes = gltf.get("nodes") or []
+            skins = gltf.get("skins") or []
+            bound = {node.get("skin") for node in nodes if "skin" in node}
+            released: Set[Any] = set()
+            remap: Dict[int, int] = {}
+            kept: List[Dict[str, Any]] = []
+            for index, skin in enumerate(skins):
+                if index in bound:
+                    remap[index] = len(kept)
+                    kept.append(skin)
+                else:
+                    released.add((skin or {}).get("inverseBindMatrices"))
+            counts["skins"] = len(skins) - len(kept)
+            if counts["skins"]:
+                for node in nodes:
+                    if node.get("skin") in remap:
+                        node["skin"] = remap[node["skin"]]
+                if kept:
+                    gltf["skins"] = kept
+                else:
+                    del gltf["skins"]  # the schema's minItems is 1
+            skinned = {node.get("mesh") for node in nodes if "skin" in node}
+            for index, mesh in enumerate(gltf.get("meshes") or []):
+                if index in skinned:
+                    continue
+                for primitive in (mesh or {}).get("primitives") or []:
+                    if cls._ATTRIBUTE_REFERRING_EXTENSIONS & set(
+                        primitive.get("extensions") or ()
+                    ):
+                        continue
+                    attributes = primitive.get("attributes") or {}
+                    for name in list(attributes):
+                        prefix, _, set_index = name.partition("_")
+                        if prefix in ("JOINTS", "WEIGHTS") and set_index.isdigit():
+                            released.add(attributes.pop(name))
+                            counts["attributes"] += 1
+            if not (counts["skins"] or counts["attributes"]):
+                return counts
+            edit.dirty = True
+            if cls._drop_orphaned_accessors(edit, released):
+                counts["bytes"] = cls._compact_bin(edit)
+            logger.info(
+                "Skins: dropped %d skin(s) no node binds and %d JOINTS/WEIGHTS "
+                "attribute(s) from meshes no skinned node instantiates (%.2f MB).",
+                counts["skins"],
+                counts["attributes"],
+                counts["bytes"] / 1048576,
+            )
+        return counts
+
+    @classmethod
+    def fix_glb_skin_skeletons(cls, glb: GlbTarget) -> List[str]:
+        """Point every ``skin.skeleton`` at a common root of the skin's joints.
+
+        glTF requires the skeleton node to be the joints' closest common root
+        or an ancestor of it. FBX2glTF names a skin's first joint, which holds
+        only while the other joints hang below it; an export that re-parents a
+        chain's joints side by side under their group (a sheared-chain flatten
+        does) breaks it. Measured on a production assembly (2026-09-14): all 7
+        skins invalid, rejected by the Khronos validator
+        (SKIN_SKELETON_INVALID x7) -- three.js never reads the field, so no
+        viewer showed it.
+
+        A valid skeleton is left alone; an invalid one becomes the joints'
+        closest common root, or is removed -- the field is optional -- when the
+        joints share no root.
+
+        Returns:
+            The repaired skins' names (``skin <index>`` when unnamed), in file
+            order.
+        """
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            nodes = gltf.get("nodes") or []
+            parents: Dict[int, int] = {}
+            for index, node in enumerate(nodes):
+                for child in (node or {}).get("children") or []:
+                    parents.setdefault(child, index)
+
+            def lineage(index: int) -> List[int]:
+                """*index* and its ancestors, nearest first; a cycle ends it."""
+                chain, seen = [index], {index}
+                while chain[-1] in parents and parents[chain[-1]] not in seen:
+                    chain.append(parents[chain[-1]])
+                    seen.add(chain[-1])
+                return chain
+
+            repaired: List[str] = []
+            outcomes: List[str] = []
+            for index, skin in enumerate(gltf.get("skins") or []):
+                if not isinstance(skin, dict) or not isinstance(
+                    skin.get("skeleton"), int
+                ):
+                    continue
+                joints = [j for j in skin.get("joints") or [] if isinstance(j, int)]
+                chains = [lineage(joint) for joint in joints]
+                if not chains or all(skin["skeleton"] in chain for chain in chains):
+                    continue
+                shared = set(chains[0]).intersection(*chains[1:])
+                root = next((node for node in chains[0] if node in shared), None)
+                if root is None:
+                    del skin["skeleton"]
+                    outcomes.append("removed: no common root")
+                else:
+                    skin["skeleton"] = root
+                    named = 0 <= root < len(nodes) and nodes[root].get("name")
+                    outcomes.append(str(named or root))
+                repaired.append(str(skin.get("name") or f"skin {index}"))
+            if repaired:
+                edit.dirty = True
+                logger.info(
+                    "Skins: %d skeleton(s) were not a common root of their "
+                    "joints; re-pointed (%s).",
+                    len(repaired),
+                    ", ".join(outcomes),
+                )
+            return repaired
 
     @classmethod
     def apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
@@ -5307,7 +6030,7 @@ class MeshConvert(HelpMixin):
         animate: a viewer playing clip B after clip A leaves any node B omits
         wherever A left it. That pinning is the reason the channels exist, and
         it needs exactly two keys -- one at each end of the clip -- not one per
-        frame. Measured on the VDATS assembly: 13,187 of 22,654 channels (58%)
+        frame. Measured on the PROPS assembly: 13,187 of 22,654 channels (58%)
         carry a value that never changes, costing 16.6 MB of a 215 MB
         deliverable to say a node stood still.
 
@@ -5320,7 +6043,9 @@ class MeshConvert(HelpMixin):
         Wired into :meth:`fbx_to_glb`'s session after every pass that ADDS
         channels (clips, visibility, fades) and after
         :meth:`prune_glb_animations` -- it can only shrink what is already
-        there -- and the orphaned payload is reclaimed by :meth:`_compact_bin`.
+        there. The time inputs the collapsed channels stop reading are deleted
+        (:meth:`_drop_orphaned_accessors`), and the orphaned payload is
+        reclaimed by :meth:`_compact_bin`.
         Also safe to run standalone on any finished GLB.
 
         Parameters:
@@ -5448,11 +6173,16 @@ class MeshConvert(HelpMixin):
             for output, slot in output_slot.items():
                 accessor = accessors[output]
                 accessor["bufferView"] = added_views[slot]
+                # The new view starts at the data: an offset INTO the old view
+                # (a packer sharing one view between accessors) would read
+                # past the two keys it was just given.
+                accessor.pop("byteOffset", None)
                 accessor["count"] = 2
                 accessor.pop("min", None)
                 accessor.pop("max", None)
 
             channels = 0
+            replaced_inputs: Set[int] = set()
             for position, animation in enumerate(animations):
                 if position not in new_input:
                     continue
@@ -5461,10 +6191,15 @@ class MeshConvert(HelpMixin):
                     if output not in output_slot:
                         continue
                     sampler = samplers[sampler_index]
+                    replaced_inputs.add(sampler.get("input"))
                     sampler["input"] = new_input[position]
                     channels += 1
 
             edit.dirty = True
+            # A converter shares one time input across a clip, which its moving
+            # channels keep alive; a clip rebuild writes one PER CHANNEL, and
+            # each collapsed channel's would stay behind as a dead accessor.
+            cls._drop_orphaned_accessors(edit, replaced_inputs)
             reclaimed = cls._compact_bin(edit)
             logger.info(
                 "Animation: collapsed %d constant channel(s) across %d clip(s) "
@@ -5480,6 +6215,39 @@ class MeshConvert(HelpMixin):
                 "accessors": len(output_slot),
                 "bytes": reclaimed,
             }
+
+    @classmethod
+    def reduce_glb_animations(
+        cls,
+        glb: GlbTarget,
+        tolerance: float,
+        rotation_tolerance: Optional[float] = None,
+    ) -> Dict[str, int]:
+        """Drop the keys a GLB's samplers do not need to reproduce their motion.
+
+        :mod:`~pythontk.file_utils.mesh_convert.glb_key_reduction` does the
+        work -- why, and what "need" means, are its docstring; this is the
+        session-aware entry the pipeline and a caller with an open edit use.
+        Runs after the clips are rebuilt and the constant channels collapsed:
+        it can only shrink what is already there.
+
+        Parameters:
+            glb: Path to a ``.glb``, modified in place, or an open session.
+            tolerance: The deviation any original sample may show under the
+                viewer's interpolation, in the sampler's own units (meters for
+                translation / scale, quaternion components for rotation; 1e-4
+                is 0.1 mm / 0.006 degrees).
+            rotation_tolerance: A separate bound for rotations; None takes
+                *tolerance*.
+
+        Returns:
+            ``{"samplers": n, "keys_before": n, "keys_after": n, "bytes": n}``.
+        """
+        from pythontk.file_utils.mesh_convert.glb_key_reduction import (
+            GlbKeyReduction,
+        )
+
+        return GlbKeyReduction.reduce(glb, tolerance, rotation_tolerance)
 
     @classmethod
     def _animation_time_span(
@@ -5519,7 +6287,7 @@ class MeshConvert(HelpMixin):
         names a supercompressed image through the extension and an ordinary one
         through ``source``, so a reader without the extension still has a
         picture. The cost is that the deliverable carries both encodings of
-        every map -- on the VDATS assembly, 40.66 MB of PNG beside 34.71 MB of
+        every map -- on the PROPS assembly, 40.66 MB of PNG beside 34.71 MB of
         KTX2, so the KTX2 pass more than doubled the texture budget it was
         meant to cut.
 
@@ -5532,15 +6300,11 @@ class MeshConvert(HelpMixin):
 
         Deliberately NOT wired into :meth:`fbx_to_glb` -- unlike
         :meth:`compact_glb_animations`, which is byte-exact and therefore
-        unconditional. The pipeline already owns this decision one step
-        earlier: ``optimize_glb_textures(ktx2_fallback=False)`` never writes the
-        twin in the first place, and :meth:`web_delivery_texture_params` spells
-        out why it is left to the caller ("a property of the CONSUMER rather
-        than of the delivery" -- the preview page wires a ``KTX2Loader`` and
-        says ``False``, an exporter handing over an asset that must also open in
-        Blender or Unreal says ``True``). This is the RETROFIT: the same
-        decision made after the fact, for a finished deliverable whose consumer
-        turned out to be known. A pipeline that can choose up front should.
+        unconditional. The pipeline owns this decision one step earlier:
+        :meth:`web_delivery_texture_params` builds with ``ktx2_fallback=False``,
+        so ``optimize_glb_textures`` never writes the twin in the first place.
+        This is the RETROFIT, for a finished GLB that already carries twins --
+        one built before that policy, or by a caller that asked for them.
 
         Only a texture that HAS a KTX2 twin loses its fallback -- a texture
         shipping a lone PNG keeps it -- and the orphaned images are collected
@@ -6451,11 +7215,24 @@ class MeshConvert(HelpMixin):
         return semantics
 
     @classmethod
+    def _uastc_rdo_for(
+        cls, semantic: Optional[str], uastc_rdo: Optional[float]
+    ) -> Optional[float]:
+        """The RDO lambda a UASTC encode of *semantic* takes: the caller's,
+        capped at :attr:`UASTC_RDO_NORMAL_MAX` for a normal map; None = off."""
+        if not uastc_rdo:
+            return None
+        value = float(uastc_rdo)
+        return min(value, cls.UASTC_RDO_NORMAL_MAX) if semantic == "normal" else value
+
+    @classmethod
     def describe_texture_pass(
         cls,
         summary: Dict[str, Any],
         image_format: str,
         max_size: int = 0,
+        secondary_max_size: int = 0,
+        uastc_rdo: Optional[float] = None,
     ) -> str:
         """Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.
 
@@ -6478,6 +7255,8 @@ class MeshConvert(HelpMixin):
                 -- "asked for and got nothing" must not read like "never ran".
             image_format: The carrier the pass was asked for (``"KTX2"``, ...).
             max_size: The ceiling that was in force; ``0`` = never resample.
+            secondary_max_size: The data-map ceiling in force, if any.
+            uastc_rdo: The UASTC RDO lambda in force, if any.
 
         Returns:
             One complete sentence, ready to log.
@@ -6504,6 +7283,13 @@ class MeshConvert(HelpMixin):
             did = f"{resized} resampled down to fit {max_size}px"
         else:
             did = f"none resampled - all were already within {max_size}px"
+        dials = []
+        if secondary_max_size:
+            dials.append(f"data maps capped at {secondary_max_size}px")
+        if uastc_rdo:
+            dials.append(f"UASTC RDO lambda {uastc_rdo:g}")
+        if dials:
+            did += "; " + ", ".join(dials)
         return (
             f"GLB textures delivered as {image_format}: "
             f"{summary['images']} image(s), "
@@ -6580,6 +7366,9 @@ class MeshConvert(HelpMixin):
         cls,
         image_format: Optional[str] = None,
         max_size: Optional[int] = None,
+        ktx2_fallback: Optional[bool] = None,
+        secondary_max_size: Optional[int] = None,
+        uastc_rdo: Optional[float] = None,
     ) -> Dict[str, Any]:
         """:meth:`optimize_glb_textures` kwargs for a WEB deliverable.
 
@@ -6593,35 +7382,76 @@ class MeshConvert(HelpMixin):
         resample". An artist approves the first and hands a developer the
         second; nothing in either log says they differ.
 
-        Both parameters distinguish *unspecified* from *chosen*: ``None`` takes
-        the policy, and any other value -- ``0`` for "keep every pixel"
+        Every parameter distinguishes *unspecified* from *chosen*: ``None``
+        takes the policy, and any other value -- ``0`` for "keep every pixel"
         included -- is the caller's decision. That matters because the callers
         pass values resolved from UI dials whose own "unset" is falsy, and a
         falsy default reaching :meth:`optimize_glb_textures` as an explicit
         argument stops inheriting anything and starts meaning something.
 
-        Deliberately NOT covering ``ktx2_fallback``: it answers "must this open
-        in a stock glTF importer?", which is a property of the CONSUMER rather
-        than of the delivery. The preview streams to a page that wires
-        ``KTX2Loader`` and says ``False``; an exporter handing a developer an
-        asset that must also open in Blender or Unreal says ``True``. A shared
-        default there would silently make one of them wrong.
+        ``ktx2_fallback`` is policy too, and off: the PNG/JPEG twin a KTX2 image
+        can carry serves only a stock glTF importer, and a web deliverable is
+        read by a basisu-capable viewer. Leaving it to each producer ("a
+        property of the consumer") let the exporters keep the twins -- a
+        production 4K assembly shipped 145.8 MB of them beside 123.1 MB of KTX2,
+        48% of the GLB. A caller whose GLB must also open in Blender or Unreal
+        asks for the twins here -- the scene exporters' ``KTX2 + PNG/JPEG``
+        Texture File Type does.
 
         Parameters:
             image_format: Container override; ``None``/empty takes
                 :attr:`WEB_DELIVERY_FORMAT`.
             max_size: Longest-edge ceiling in pixels; ``None`` takes
                 :attr:`WEB_DELIVERY_MAX_SIZE`, ``0`` skips resizing.
+            ktx2_fallback: Whether each KTX2 image also carries a PNG/JPEG
+                twin (KTX2 mode only); ``None`` takes
+                :attr:`WEB_DELIVERY_KTX2_FALLBACK` (no twins).
+            secondary_max_size: A lower ceiling for the packed data maps
+                (:attr:`SECONDARY_SEMANTICS`); ``None`` takes
+                :attr:`WEB_DELIVERY_SECONDARY_MAX_SIZE`, ``0`` follows
+                ``max_size``.
+            uastc_rdo: UASTC RDO lambda for the KTX2 encodes; ``None`` takes
+                :attr:`WEB_DELIVERY_UASTC_RDO`, ``0`` is off.
 
         Returns:
-            ``{"image_format": str, "max_size": int}``.
+            ``{"image_format": str, "max_size": int, "ktx2_fallback": bool,
+            "secondary_max_size": int, "uastc_rdo": float | None}``.
         """
         return {
             "image_format": image_format or cls.WEB_DELIVERY_FORMAT,
             "max_size": (
                 cls.WEB_DELIVERY_MAX_SIZE if max_size is None else int(max_size)
             ),
+            "ktx2_fallback": (
+                cls.WEB_DELIVERY_KTX2_FALLBACK
+                if ktx2_fallback is None
+                else bool(ktx2_fallback)
+            ),
+            "secondary_max_size": (
+                cls.WEB_DELIVERY_SECONDARY_MAX_SIZE
+                if secondary_max_size is None
+                else int(secondary_max_size)
+            ),
+            "uastc_rdo": (
+                cls.WEB_DELIVERY_UASTC_RDO
+                if uastc_rdo is None
+                else (float(uastc_rdo) or None)
+            ),
         }
+
+    @staticmethod
+    def _largest_first(jobs: Dict[Any, bytes]) -> List[Any]:
+        """The encode jobs, biggest source first -- the order a pool should
+        start them in.
+
+        A pool that starts jobs in insertion order can pick up the one
+        4096 UASTC encode with RDO last and run it alone after every worker
+        has gone idle: on a production GLB the longest single encode was 260 s
+        of the pass's 302 s wall. Longest-first is the classic makespan fix,
+        and the source payload's size is the cost proxy on hand (pixels and
+        codec decide the time; both scale with it).
+        """
+        return sorted(jobs, key=lambda key: len(jobs[key]), reverse=True)
 
     @classmethod
     def optimize_glb_textures(
@@ -6631,7 +7461,9 @@ class MeshConvert(HelpMixin):
         image_format: str = WEB_DELIVERY_FORMAT,
         quality: int = 85,
         workers: Optional[int] = None,
-        ktx2_fallback: bool = True,
+        ktx2_fallback: bool = WEB_DELIVERY_KTX2_FALLBACK,
+        secondary_max_size: int = WEB_DELIVERY_SECONDARY_MAX_SIZE,
+        uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO,
     ) -> Dict[str, Any]:
         """Downsize and re-encode a GLB's embedded images for web delivery.
 
@@ -6703,25 +7535,23 @@ class MeshConvert(HelpMixin):
           when the texture carries a PNG/JPEG twin, and WebP + twin costs more
           than the PNG alone (measured: 103 KB + 209 KB vs 209 KB). Pure
           delivery takes lossless WebP and requires the extension.
-        * **A core-readable fallback rides along by default**
-          (*ktx2_fallback*): each converted image also embeds a resized
-          PNG/JPEG twin bound as the texture's plain ``source`` -- the
-          escape hatch the ``KHR_texture_basisu`` spec defines -- so the
-          extension stays in ``extensionsUsed`` and the GLB still opens in
-          any stock glTF importer (Blender, Unreal, Unity) instead of being
-          a terminal delivery artifact only a basisu viewer can read.
-          UASTC-class images (normals, metallic-roughness/occlusion) fall
-          back to PNG, ETC1S color to JPEG at *quality* (PNG when it
-          carries alpha), so the premium over the KTX2 payload stays modest.
-          ``ktx2_fallback=False`` is the pure-delivery mode: no fallback,
-          the extension lands in ``extensionsRequired``, and the
-          deliverable needs a ``KHR_texture_basisu``-capable viewer
-          (three.js ``KTX2Loader``; the bundled preview page wires it) --
-          the right trade when every byte is budget, as the WebXR preview
-          push chooses. A fallback whose own encode fails is logged and
-          dropped, and that image's binding re-tips the extension into
-          ``extensionsRequired`` -- never an unreadable texture with a
-          declaration claiming otherwise.
+        * **No core-readable fallback by default** (*ktx2_fallback*, the
+          web-delivery policy): the extension lands in
+          ``extensionsRequired`` and the deliverable needs a
+          ``KHR_texture_basisu``-capable viewer (three.js ``KTX2Loader``; the
+          bundled preview page wires it). ``ktx2_fallback=True`` embeds a
+          resized PNG/JPEG twin per converted image, bound as the texture's
+          plain ``source`` -- the escape hatch the spec defines -- so the
+          extension stays in ``extensionsUsed`` and a stock glTF importer
+          (Blender, Unreal, Unity) still opens the file. That premium is a
+          second copy, not a modest one: UASTC-class images (normals,
+          metallic-roughness/occlusion) fall back to PNG, about the size of
+          their KTX2, and ETC1S color to JPEG at *quality* (PNG when it
+          carries alpha) -- measured on a production 4K assembly, 145.8 MB
+          of twins beside 123.1 MB of KTX2. A fallback whose own encode
+          fails is logged and dropped, and that image's binding re-tips the
+          extension into ``extensionsRequired`` -- never an unreadable
+          texture with a declaration claiming otherwise.
         * **Dimensions snap down to power-of-two** -- ``KHR_texture_basisu``
           requires multiple-of-4 dimensions and full mip pyramids (generated at
           encode time; a GPU-compressed texture cannot mip itself), and POT is
@@ -6740,14 +7570,24 @@ class MeshConvert(HelpMixin):
                 KTX2 mode (UASTC's tier is fixed by the encoder). Also the
                 JPEG quality of KTX2-mode fallback images.
             workers: Concurrent encode threads. Defaults to
-                :attr:`OPTIMIZE_WORKERS` capped by the core count; 1 forces the
-                serial path.
-            ktx2_fallback: KTX2 mode only. ``True`` (default) embeds a
-                core-readable PNG/JPEG twin per converted image and binds it
-                as the texture's plain ``source``, keeping the GLB importable
-                everywhere (extension in ``extensionsUsed``). ``False`` ships
-                KTX2 alone and hard-requires a basisu-capable viewer
-                (``extensionsRequired``).
+                :meth:`ImgUtils.encode_workers` (a memory-capped count shared
+                with every other texture pass); 1 forces the serial path.
+            ktx2_fallback: KTX2 mode only. ``False`` (default,
+                :attr:`WEB_DELIVERY_KTX2_FALLBACK`) ships KTX2 alone and
+                hard-requires a basisu-capable viewer
+                (``extensionsRequired``). ``True`` embeds a core-readable
+                PNG/JPEG twin per converted image and binds it as the
+                texture's plain ``source``, keeping the GLB importable
+                everywhere (extension in ``extensionsUsed``).
+            secondary_max_size: A lower longest-edge ceiling for the packed
+                data maps alone (:attr:`SECONDARY_SEMANTICS`: metallic-
+                roughness / occlusion), never above *max_size*; ``0`` follows
+                *max_size*. Color and normal maps keep the primary ceiling.
+            uastc_rdo: KTX2 mode only. UASTC rate-distortion lambda for the
+                normal / data encodes (``toktx --uastc_rdo_l``); a normal map
+                is capped at :attr:`UASTC_RDO_NORMAL_MAX`. ``None`` is off.
+                Measured on a 4K production set: ORM packs -30% at 1.0 (PSNR
+                50/44/48 dB), a noisy normal map -3.5%, encode 3-4x slower.
 
         Returns:
             Summary dict: ``images`` (converted count), ``bytes_before`` /
@@ -6785,18 +7625,13 @@ class MeshConvert(HelpMixin):
 
             # The bake sized the lightmaps deliberately; never resize them.
             exempt: Set[str] = set()
-            raw_manifest = (gltf.get("extras") or {}).get("lightmap_web")
-            try:
-                manifest = (
-                    json.loads(raw_manifest)
-                    if isinstance(raw_manifest, str)
-                    else (raw_manifest or {})
-                )
-                for entry in (manifest.get("materials") or {}).values():
-                    if entry.get("map"):
-                        exempt.add(os.path.basename(entry["map"]))
-            except (ValueError, AttributeError):
-                pass
+            # Read where the viewer reads it: a native DCC export writes the
+            # first scene's extras, which the root alone never saw.
+            published = (cls._lightmap_web_manifest(gltf) or {}).get("materials")
+            if isinstance(published, dict):
+                for entry in published.values():
+                    if isinstance(entry, dict) and entry.get("map"):
+                        exempt.add(os.path.basename(str(entry["map"])))
             # Structural exemption alongside the name set: an image bound as a
             # texCoord-1 occlusion/emissive map IS a lightmap however it is
             # named -- the digest dedupe can hand a lightmap payload the name
@@ -6918,8 +7753,18 @@ class MeshConvert(HelpMixin):
                     )
                     return None
                 target = pil.size
-                if max_size and max(target) > max_size and not is_exempt:
-                    scale = max_size / float(max(target))
+                # The packed data maps may take a LOWER ceiling than the rest
+                # (the primary still bounds it); color and normals keep the
+                # primary -- SECONDARY_SEMANTICS says why.
+                ceiling = max_size
+                if secondary_max_size and semantic in cls.SECONDARY_SEMANTICS:
+                    ceiling = (
+                        min(secondary_max_size, max_size)
+                        if max_size
+                        else secondary_max_size
+                    )
+                if ceiling and max(target) > ceiling and not is_exempt:
+                    scale = ceiling / float(max(target))
                     target = (
                         max(1, round(target[0] * scale)),
                         max(1, round(target[1] * scale)),
@@ -6949,12 +7794,21 @@ class MeshConvert(HelpMixin):
                     try:
                         with TempArtifacts("glb_ktx2", policy="scoped") as tmp:
                             out = tmp.path(extension=".ktx2")
+                            # RDO rides only when asked: an encoder registered
+                            # through ImgUtils.register_ktx2_encoder need not
+                            # model the keyword, and it is a UASTC-only stage.
+                            rdo = (
+                                cls._uastc_rdo_for(semantic, uastc_rdo)
+                                if codec == "UASTC"
+                                else None
+                            )
                             encoder.encode(
                                 pil,
                                 out,
                                 codec=codec,
                                 srgb=srgb,
                                 quality=quality if codec == "ETC1S" else None,
+                                **({"uastc_rdo": rdo} if rdo else {}),
                             )
                             with open(out, "rb") as fh:
                                 encoded = fh.read()
@@ -7068,27 +7922,19 @@ class MeshConvert(HelpMixin):
             # measured on a production room GLB (27 images, 239 MB of source
             # PNG): 31.8s serial. Threads, not processes: the payloads are
             # already in this process's memory, and pickling hundreds of MB out
-            # to workers would cost more than the encode saves.
-            #
-            # Capped well below the core count on purpose. Each worker holds a
-            # fully decoded source (a 4096 RGBA is 67 MB) plus its resize and
-            # encode buffers, and this routinely runs inside a DCC that is
-            # already holding the scene the export came from -- so the ceiling
-            # is host memory, not cores.
-            count = max(
-                1,
-                min(
-                    workers or min(cls.OPTIMIZE_WORKERS, os.cpu_count() or 1),
-                    len(jobs),
-                ),
-            )
+            # to workers would cost more than the encode saves. The count is
+            # the shared encode policy (memory-capped: ImgUtils.encode_workers).
+            from pythontk.img_utils._img_utils import ImgUtils
+
+            count = max(1, min(ImgUtils.encode_workers(workers), len(jobs)))
+            order = cls._largest_first(jobs)
             if count > 1:
                 with ThreadPoolExecutor(
                     max_workers=count, thread_name_prefix="ptk-glb-optimize"
                 ) as pool:
-                    encoded_by_key = dict(zip(jobs, pool.map(_encode, list(jobs))))
+                    encoded_by_key = dict(zip(order, pool.map(_encode, order)))
             else:
-                encoded_by_key = {key: _encode(key) for key in jobs}
+                encoded_by_key = {key: _encode(key) for key in order}
 
             # Phase C (serial): fan the per-job results back out to the image
             # indices that share them. ``replacements`` keys the image INDEX to
@@ -7756,6 +8602,40 @@ class MeshConvert(HelpMixin):
             return "the file has bufferViews outside the embedded BIN (buffer 0)."
         return None
 
+    @staticmethod
+    def _map_sidecar_image_refs(gltf: Dict[str, Any], visit) -> None:
+        """Apply *visit* to every image index the embedded scene sidecar names.
+
+        ``visit(index)`` returns where those bytes live now, or ``None`` when
+        they left the file -- that reference is dropped, and the envelope's own
+        ``validate`` count drops with it so a verifying reader still finds the
+        envelope consistent with itself. Digests stay valid: a renumber moves
+        bytes, never changes them. The one definition of where the sidecar
+        names images, shared by the passes that renumber them
+        (:meth:`dedupe_glb_images`, :meth:`prune_glb_unreferenced_textures`).
+        """
+        extras = gltf.get("extras")
+        sidecar = extras.get("scene_sidecar") if isinstance(extras, dict) else None
+        entries = sidecar.get("textures") if isinstance(sidecar, dict) else None
+        if not isinstance(entries, dict):
+            return
+        dropped = 0
+        for path in list(entries):
+            ref = entries[path]
+            index = ref.get("image") if isinstance(ref, dict) else None
+            if not isinstance(index, int):
+                continue
+            moved = visit(index)
+            if moved is None:
+                del entries[path]
+                dropped += 1
+            else:
+                ref["image"] = moved
+        claims = sidecar.get("validate")
+        if dropped and isinstance(claims, dict):
+            if isinstance(claims.get("textures"), int):
+                claims["textures"] -= dropped
+
     @classmethod
     def dedupe_glb_images(cls, glb: GlbTarget) -> Dict[str, int]:
         """Collapse byte-identical embedded images onto one copy.
@@ -7778,8 +8658,9 @@ class MeshConvert(HelpMixin):
 
         Every texture pointing at a dropped image is rebound to the survivor
         (``source`` and every entry of :attr:`TEXTURE_CONTAINER_EXTENSIONS`,
-        the same set `image_for_texture` resolves a binding through), then
-        the orphaned images and their exclusive bufferViews are reclaimed by
+        the same set `image_for_texture` resolves a binding through), as is
+        every scene-sidecar reference to it; then the orphaned images and their
+        exclusive bufferViews are reclaimed by
         :meth:`prune_glb_unreferenced_textures` -- which already owns index
         remapping and BIN repacking, so this pass only has to decide WHAT is
         redundant. Textures themselves are kept: two textures sampling one
@@ -7838,6 +8719,11 @@ class MeshConvert(HelpMixin):
                         and binding.get("source") in replacement
                     ):
                         binding["source"] = replacement[binding["source"]]
+            # The sidecar names the same bytes by image index: its references
+            # follow the survivor rather than leaving with the duplicate.
+            cls._map_sidecar_image_refs(
+                gltf, lambda index: replacement.get(index, index)
+            )
             edit.dirty = True
             # The duplicates are now unreferenced; the prune owns dropping them
             # (and their exclusive views), remapping every surviving index and
@@ -7884,9 +8770,12 @@ class MeshConvert(HelpMixin):
         repack here.
 
         Runs at the tail of :meth:`apply_scene_sidecar`, BEFORE the embedded
-        texture map is built, so the indices that map records describe the
-        delivered file. Safe to run standalone on any GLB; a file with nothing
-        to drop is not rewritten.
+        texture map is built, and again wherever a later applier unbinds an
+        image -- so that map is renumbered here as well
+        (:meth:`_map_sidecar_image_refs`): a reference follows its image, one
+        whose image was dropped goes, and one that named no image is left for
+        :meth:`verify_glb` to report. Safe to run standalone on any GLB; a file
+        with nothing to drop is not rewritten.
 
         Returns:
             ``{"textures": n, "images": n, "bytes": n}`` -- what was dropped;
@@ -8013,6 +8902,17 @@ class MeshConvert(HelpMixin):
                 # Carried as JSON text: the in-place rewrite above landed on the
                 # decoded copy, so it has to be re-serialised to reach the file.
                 gltf_extras[cls.SHADOW_WEB_KEY] = json.dumps(shadow_doc)
+            # The scene sidecar's texture map names IMAGES by index too, and is
+            # recorded before later appliers run -- the highlight pass unbinds
+            # emissive maps and prunes after it -- so without this every later
+            # reference named its neighbour (28 of 35 on a production GLB).
+            before = len(image_map) + dropped_images
+            cls._map_sidecar_image_refs(
+                gltf,
+                # One that named no image BEFORE this prune is not the prune's
+                # to erase: left as found, verify_glb still reports it.
+                lambda index: image_map.get(index) if 0 <= index < before else index,
+            )
             edit.embedded = {
                 key: texture_map[index]
                 for key, index in edit.embedded.items()
@@ -8316,7 +9216,7 @@ class MeshConvert(HelpMixin):
         with cls.open_glb(glb) as edit:
             named = None
             if lightmapped_only:
-                manifest = (edit.gltf.get("extras") or {}).get(cls.LIGHTMAP_WEB_KEY)
+                manifest = cls._lightmap_web_manifest(edit.gltf)
                 named = set((manifest or {}).get("materials") or ())
             for material in edit.materials:
                 if named is not None and material.get("name") not in named:

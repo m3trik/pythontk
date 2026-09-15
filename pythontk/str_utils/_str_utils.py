@@ -47,6 +47,43 @@ class StrUtils(CoreUtils):
         """
         return re.sub(r"[^0-9a-zA-Z]", "_", name)
 
+    #: Characters no file name may carry on Windows, and the ones a POSIX tool
+    #: is happiest without. Path separators are NOT here: a caller that joins a
+    #: name into a directory owns that question, and one that does not has
+    #: already decided a slash is legal input.
+    ILLEGAL_FILENAME_CHARS = '<>:"|?*'
+
+    @classmethod
+    def to_legal_filename(cls, name: str, replacement: str = "", report: bool = False):
+        """*name* with every character illegal in a file name removed.
+
+        The permissive counterpart to :meth:`to_legal_name`: that one is an
+        identity rule (every non-alphanumeric becomes ``_``, so two sides
+        deriving a key agree), this one only removes what an OS will reject --
+        a version token, a dash and a dot all survive, because a deliverable
+        named ``asset-v2.hero`` is a legitimate file and a mangled one is not.
+
+        Parameters:
+            name (str): The candidate file name (no directory part).
+            replacement (str): What each illegal character becomes. Empty drops it.
+            report (bool): Also return the distinct illegal characters found, in
+                the order they appear -- what a caller warns the user about.
+
+        Returns:
+            (str) the legal name, or ``(str, list)`` when *report*.
+
+        Example:
+            to_legal_filename('a:b?.fbx') --> 'ab.fbx'
+        """
+        found = []
+        for char in name:
+            if char in cls.ILLEGAL_FILENAME_CHARS and char not in found:
+                found.append(char)
+        legal = "".join(
+            replacement if c in cls.ILLEGAL_FILENAME_CHARS else c for c in name
+        )
+        return (legal, found) if report else legal
+
     @staticmethod
     def strip_ansi(string: str) -> str:
         """Remove ANSI escape sequences (color/cursor codes) from a string.
@@ -126,11 +163,53 @@ class StrUtils(CoreUtils):
         return CoreUtils.format_return(sanitized_list, orig=text)
 
     @staticmethod
+    def expand_wildcard(text: str, key: str = "name", wildcard: str = "*") -> str:
+        """Rewrite a bare-wildcard template into pure placeholder form.
+
+        Sugar for the one wildcard a single-value template can mean: *stands in
+        for the default value*. A blank template is the bare default, so both
+        collapse to ``"{key}"`` and the caller is left with a single vocabulary
+        -- ``{placeholders}`` -- to resolve (:meth:`replace_placeholders`) and to
+        document (uitk's ``TooltipFormat.placeholder_preview``).
+
+        Unlike :meth:`find_str_and_format`'s asterisk, this one is positional
+        rather than a mode flag, so a prefix and a suffix compose in one pass.
+
+        Parameters:
+            text (str): The user-typed template.
+            key (str): The placeholder name the wildcard stands for.
+            wildcard (str): The token treated as the default-value marker.
+
+        Returns:
+            str: *text* with every *wildcard* replaced by ``"{key}"``; ``"{key}"``
+            when *text* is empty or whitespace.
+
+        Example:
+            >>> StrUtils.expand_wildcard("")             # -> '{name}'
+            >>> StrUtils.expand_wildcard("*_export")     # -> '{name}_export'
+            >>> StrUtils.expand_wildcard("WIP_*")        # -> 'WIP_{name}'
+            >>> StrUtils.expand_wildcard("WIP_*_export") # -> 'WIP_{name}_export'
+            >>> StrUtils.expand_wildcard("asset")        # -> 'asset'
+        """
+        token = "{" + key + "}"
+        text = (text or "").strip()
+        if not text:
+            return token
+        return text.replace(wildcard, token)
+
+    @staticmethod
     def replace_placeholders(text: str, **kwargs) -> str:
         """Replace placeholders in a string with provided values.
 
         Supports standard Python string formatting syntax (e.g. {value:03d}).
-        Missing keys are preserved as placeholders.
+        Missing keys are preserved as placeholders -- **including a POSITIONAL
+        one** (``{}`` / ``{0}``), which has no value here because this takes only
+        keywords. That used to raise ``IndexError`` out of the formatter, which
+        is the wrong answer for the callers this exists for: every one of them
+        resolves text a USER typed into a pattern field, where a stray brace pair
+        is a typo, not a reason to abort an export. A positional field comes back
+        as ``{N}`` (auto-numbered ``{}`` included -- Python resolves both to the
+        same index before this sees them), so it stays visible in the result.
 
         Args:
             text (str): The string containing placeholders.
@@ -151,7 +230,7 @@ class StrUtils(CoreUtils):
             def get_value(self, key, args, kwargs):
                 if isinstance(key, str):
                     return kwargs.get(key, "{" + key + "}")
-                return super().get_value(key, args, kwargs)
+                return "{" + str(key) + "}"
 
             def format_field(self, value, format_spec):
                 # Preserve unresolved placeholders verbatim, including their
@@ -222,6 +301,182 @@ class StrUtils(CoreUtils):
             "fields": fields,
             "resolved": resolved,
             "unresolved": unresolved,
+        }
+
+    #: The tokens every name pattern gets for free -- token -> meaning, in the
+    #: order a tooltip should list them. Universal by construction: nothing here
+    #: needs a host, a scene or a file on disk, so a tool adds only the tokens it
+    #: alone can value (see :meth:`name_pattern_context`).
+    NAME_PATTERN_TOKENS = {
+        "date": "YYYY-MM-DD",
+        "time": "HH-MM-SS",
+        "user": "OS username &mdash; embeds dev identity, so beware on shared output",
+    }
+
+    @staticmethod
+    def name_pattern_context(**values) -> dict:
+        """Live values for :attr:`NAME_PATTERN_TOKENS`, plus the caller's own.
+
+        Sampled once per call so every token a single name resolves against
+        reads the same instant -- a pattern using both ``{date}`` and ``{time}``
+        cannot straddle midnight.
+
+        Parameters:
+            **values: The caller's host-specific tokens. A key given here wins,
+                so a tool may override a universal token's value.
+
+        Returns:
+            (dict) token -> value, ready for :meth:`resolve_name_pattern`.
+        """
+        import getpass
+        from datetime import datetime
+
+        now = datetime.now()
+        return {
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H-%M-%S"),
+            "user": getpass.getuser(),
+            **values,
+        }
+
+    @classmethod
+    def resolve_name_pattern(
+        cls,
+        pattern: str,
+        context: dict = None,
+        wildcard: str = "*",
+        key: str = "name",
+        keep: Iterable[str] = (),
+    ) -> dict:
+        """Resolve a user-typed name pattern into a file-name-legal name.
+
+        The one grammar a *single output name* can carry, composed from this
+        class's primitives: :meth:`expand_wildcard` (the bare wildcard, and a
+        blank pattern, stand for the default value), :meth:`resolve_placeholders`
+        (``{token}`` substitution + what it could not fill) and
+        :meth:`to_legal_filename`. Anything else in the pattern is literal.
+
+        Diagnostics are *returned*, not logged, so the caller reports them
+        through its own logger / UI at its own severity.
+
+        Parameters:
+            pattern (str): The user's text. Blank resolves to ``{key}``.
+            context (dict): token -> value. ``None`` uses
+                :meth:`name_pattern_context` (the universal tokens alone).
+            wildcard (str): The bare token standing for *key*.
+            key (str): The placeholder the wildcard stands for.
+            keep (Iterable[str]): Placeholders a LATER stage owns -- a version
+                counter resolved against a folder once the name is known, say.
+                They are neither filled from *context* nor reported unresolved,
+                and they survive the legalization verbatim, format spec
+                included (the ``:`` in ``{n:03d}`` is illegal in a file name).
+
+        Returns:
+            (dict) with keys:
+                - ``"name"`` (str): the resolved, file-name-legal result, with
+                  any kept placeholder left in it verbatim.
+                - ``"template"`` (str): ``name`` as a :meth:`str.format`
+                  template -- literal braces doubled, kept placeholders intact
+                  -- for the stage that owns them (``template.format(n=4)``),
+                  where a brace a context value carries cannot read as a field.
+                - ``"kept"`` (list): the *keep* placeholders the pattern uses,
+                  in first-seen order.
+                - ``"expanded"`` (str): *pattern* in pure placeholder form --
+                  hand this to a tooltip preview so it resolves what the caller
+                  resolved.
+                - ``"unresolved"`` (list): tokens the context could not fill;
+                  they are left in ``name`` verbatim, as typed.
+                - ``"dropped"`` (list): characters removed as illegal in a file
+                  name.
+                - ``"error"`` (str | None): set when *pattern* is not a valid
+                  format string, in which case ``name`` is the pattern with its
+                  braces taken literally -- still legalized, ``dropped`` saying
+                  what went -- and nothing is kept.
+
+        Example:
+            >>> StrUtils.resolve_name_pattern("WIP_*", {"name": "myScene"})["name"]
+            'WIP_myScene'
+            >>> StrUtils.resolve_name_pattern("*_v{n:03d}", {"name": "s"}, keep=["n"])["template"]
+            's_v{n:03d}'
+        """
+        import string
+
+        context = cls.name_pattern_context() if context is None else context
+        expanded = cls.expand_wildcard(pattern, key=key, wildcard=wildcard)
+        keep = set(keep or ())
+
+        def escape(text: str) -> str:
+            return text.replace("{", "{{").replace("}", "}}")
+
+        # Split at the kept placeholders so each run between them resolves and
+        # legalizes on its own while the kept ones pass through untouched. A run
+        # is rebuilt as format source (literal braces re-doubled, fields as
+        # written), so it resolves exactly as it would inside the whole pattern.
+        runs, source, kept = [], [], []
+        try:
+            for literal, field, spec, conversion in string.Formatter().parse(expanded):
+                source.append(escape(literal))
+                if field is None:
+                    continue
+                text = (
+                    "{"
+                    + field
+                    + (f"!{conversion}" if conversion else "")
+                    + (f":{spec}" if spec else "")
+                    + "}"
+                )
+                base = field.split(".")[0].split("[")[0]
+                if base in keep:
+                    runs.extend((("".join(source), None), (text, text)))
+                    source = []
+                    if base not in kept:
+                        kept.append(base)
+                else:
+                    source.append(text)
+            runs.append(("".join(source), None))
+            runs = [
+                (text, verbatim or cls.resolve_placeholders(text, **context))
+                for text, verbatim in runs
+            ]
+        except ValueError as e:  # a malformed format string (a lone brace)
+            # Its braces read as literal text, but its illegal characters are
+            # still illegal: a name the OS refuses fails only at the write.
+            legal, dropped = cls.to_legal_filename(name=expanded, report=True)
+            return {
+                "name": legal,
+                "template": escape(legal),
+                "kept": [],
+                "expanded": expanded,
+                "unresolved": [],
+                "dropped": dropped,
+                "error": str(e),
+            }
+        name, template, unresolved, dropped = "", "", [], []
+        for text, resolved in runs:
+            if isinstance(resolved, str):  # a kept placeholder, verbatim
+                name += resolved
+                template += resolved
+                continue
+            legal, bad = cls.to_legal_filename(name=resolved["result"], report=True)
+            name += legal
+            template += escape(legal)
+            unresolved += [n for n in resolved["unresolved"] if n not in unresolved]
+            dropped += [c for c in bad if c not in dropped]
+        # A pattern that resolves to NOTHING is not a name -- a lone "?" drops to
+        # empty, and the caller would join it onto a directory and write a file
+        # that is only an extension. Fall back to the default the wildcard stands
+        # for; `dropped` / `unresolved` already say why the typed one vanished.
+        if not name:
+            name = str(context.get(key, ""))
+            template = escape(name)
+        return {
+            "name": name,
+            "template": template,
+            "kept": kept,
+            "expanded": expanded,
+            "unresolved": unresolved,
+            "dropped": dropped,
+            "error": None,
         }
 
     @staticmethod
@@ -638,7 +893,7 @@ class StrUtils(CoreUtils):
             (str)
 
         Example:
-            collapse_delimiter_runs('vdat____Shape702') #returns: 'vdat_Shape702'
+            collapse_delimiter_runs('prop____Shape702') #returns: 'prop_Shape702'
             collapse_delimiter_runs('Crate__') #returns: 'Crate'
             collapse_delimiter_runs('_LeadingKept__x') #returns: '_LeadingKept_x'
         """
@@ -1189,6 +1444,11 @@ class StrUtils(CoreUtils):
                         parts = orig_str.split(frm_, 1)
                         # Drop the matched prefix, mirroring the ignore_case branch.
                         s = to_ + parts[1] if len(parts) > 1 else to_ + orig_str
+                else:
+                    # No filter text to drop -- plain prepend, mirroring
+                    # 'replace_suffix' above (the Note in this docstring
+                    # promises the fallback for both sides).
+                    s = to_ + orig_str
 
             elif mode == "strip":
                 if regex:

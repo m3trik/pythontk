@@ -25,7 +25,7 @@ class TestPathLink(unittest.TestCase):
         self.assertEqual(MatReport._path_as_link(""), "")
 
     def test_special_chars_escaped_and_encoded(self):
-        link = MatReport._path_as_link(r"C:\Dropbox (M+F)\a & b.png")
+        link = MatReport._path_as_link(r"C:\Dropbox (A+B)\a & b.png")
         self.assertIn("file:///", link)
         self.assertIn(
             "a &amp; b.png", link

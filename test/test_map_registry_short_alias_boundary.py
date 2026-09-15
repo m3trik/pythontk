@@ -2,7 +2,7 @@
 # coding=utf-8
 """Short map-type aliases must not match glued onto a model/part number.
 
-Regression: a real production scene (VDATS) carries reference textures named
+Regression: a real production scene (PROPS) carries reference textures named
 after instrument model numbers -- ``Agilent_E4419B.png``, ``Agilent_PSG.png``,
 ``Agilent_8757D.png``. ``resolve_type_from_path`` matched the trailing ``B`` /
 ``G`` / ``D`` as the short aliases for Bump / Glossiness / Diffuse, so a plain
@@ -118,7 +118,7 @@ class ShortAliasBoundaryTest(_RegistryTestCase):
             "Agilent_PNA.png",
             "rockN.png",
             "rock_AO.png",
-            "VDATS_cabinet_MSAO.png",
+            "PROPS_cabinet_MSAO.png",
             # Lowercase separator-delimited: the strip pattern always took
             # these, so the resolver has to agree.
             "rock_nrm.png",

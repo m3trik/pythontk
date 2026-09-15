@@ -1600,7 +1600,7 @@ class AtlasLayoutTest(unittest.TestCase):
             if sx > 1e-9 and sy > 1e-9
         )
 
-    #: The OFFICE_ENV production room's own weight spread, recovered from the
+    #: The ROOM_ENV production room's own weight spread, recovered from the
     #: cell areas of a delivered atlas (46 objects, ~50:1 range). A synthetic
     #: "one dominant item + N small ones" does NOT stand in for it: the packers
     #: separate by only 2.09 vs 1.91 there, so a test built on one would have

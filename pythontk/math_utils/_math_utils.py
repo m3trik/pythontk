@@ -2149,11 +2149,33 @@ class MathUtils(HelpMixin):
         # its pull is ~1e-6 relative.
         prior = np.gradient(v, t)[keep]
 
-        segments = list(zip(keep[:-1], keep[1:]))
-        flat = [
-            bool(np.all(np.abs(v[i0 : i1 + 1] - v[i0]) <= flat_tolerance))
-            for i0, i1 in segments
-        ]
+        # Everything per SEGMENT is computed over the samples at once: a
+        # numpy call per segment (the hold test alone) was 130 s of a
+        # production extremes pass over ~2,500 baked curves.
+        seg_count = k_count - 1
+        lengths = np.diff(keep)
+        if np.any(lengths < 0):
+            raise ValueError("keep_indices must be ascending.")
+        # Sample j in (keep[k], keep[k+1]] belongs to segment k -- the spans
+        # tile keep[0]+1 .. keep[-1] exactly (a zero-length segment covers
+        # nothing).
+        seg_of = np.repeat(np.arange(seg_count), lengths)
+        j = np.arange(keep[0] + 1, keep[-1] + 1)
+        i0 = keep[:-1][seg_of]
+        i1 = keep[1:][seg_of]
+
+        # A hold: every sample of the segment within flat_tolerance of its
+        # start value (the start itself deviates by 0). A zero-length
+        # segment is trivially one.
+        worst = np.zeros(seg_count)
+        spans = lengths > 0
+        if spans.any():
+            # Non-empty spans are contiguous in ``j``: one reduceat, each
+            # starting at its segment's first sample (keep[k] + 1).
+            worst[spans] = np.maximum.reduceat(
+                np.abs(v[j] - v[i0]), keep[:-1][spans] - keep[0]
+            )
+        flat = worst <= flat_tolerance
 
         # Each dropped sample couples only the two keys bounding its segment,
         # so the normal equations (A^T A + lam^2 I) m = A^T b + lam^2 prior
@@ -2162,50 +2184,48 @@ class MathUtils(HelpMixin):
         # bake is tens of thousands of samples by thousands of extrema).
         lam2 = 1e-6
         diag = np.full(k_count, lam2)
-        off = np.zeros(k_count - 1)
+        off = np.zeros(seg_count)
         rhs = lam2 * prior
-        for k, (i0, i1) in enumerate(segments):
-            if flat[k] or i1 - i0 < 2:
-                continue
-            t0, t1 = t[i0], t[i1]
-            dt = t1 - t0
-            if dt <= 0:
-                continue
-            p0, p1 = v[i0], v[i1]
-            s = (t[i0 + 1 : i1] - t0) / dt
+        dt_all = t[i1] - t[i0]
+        use = (j < i1) & ~flat[seg_of] & (i1 - i0 >= 2) & (dt_all > 0)
+        if use.any():
+            seg = seg_of[use]
+            left, right = i0[use], i1[use]
+            dt = dt_all[use]
+            s = (t[j[use]] - t[left]) / dt
             h00 = 2 * s**3 - 3 * s**2 + 1
             h01 = -2 * s**3 + 3 * s**2
             a = (s**3 - 2 * s**2 + s) * dt  # weight on the left key's out slope
             c = (s**3 - s**2) * dt  # weight on the right key's in slope
-            r = v[i0 + 1 : i1] - h00 * p0 - h01 * p1
-            diag[k] += a @ a
-            diag[k + 1] += c @ c
-            off[k] += a @ c
-            rhs[k] += a @ r
-            rhs[k + 1] += c @ r
+            r = v[j[use]] - h00 * v[left] - h01 * v[right]
+            diag[:-1] += np.bincount(seg, a * a, seg_count)
+            diag[1:] += np.bincount(seg, c * c, seg_count)
+            off += np.bincount(seg, a * c, seg_count)
+            rhs[:-1] += np.bincount(seg, a * r, seg_count)
+            rhs[1:] += np.bincount(seg, c * r, seg_count)
 
-        # Thomas sweep (the system is symmetric positive definite).
-        slopes = np.empty(k_count)
-        c_prime = np.empty(k_count)
-        d_prime = np.empty(k_count)
-        c_prime[0] = off[0] / diag[0]
-        d_prime[0] = rhs[0] / diag[0]
+        # Thomas sweep (the system is symmetric positive definite), on plain
+        # floats: the same IEEE arithmetic without a numpy scalar per step.
+        d, o, b = diag.tolist(), off.tolist(), rhs.tolist()
+        c_prime = [0.0] * k_count
+        d_prime = [0.0] * k_count
+        c_prime[0] = o[0] / d[0]
+        d_prime[0] = b[0] / d[0]
         for k in range(1, k_count):
-            denom = diag[k] - off[k - 1] * c_prime[k - 1]
-            c_prime[k] = off[k] / denom if k < k_count - 1 else 0.0
-            d_prime[k] = (rhs[k] - off[k - 1] * d_prime[k - 1]) / denom
+            denom = d[k] - o[k - 1] * c_prime[k - 1]
+            c_prime[k] = o[k] / denom if k < k_count - 1 else 0.0
+            d_prime[k] = (b[k] - o[k - 1] * d_prime[k - 1]) / denom
+        slopes = [0.0] * k_count
         slopes[-1] = d_prime[-1]
         for k in range(k_count - 2, -1, -1):
             slopes[k] = d_prime[k] - c_prime[k] * slopes[k + 1]
 
         # A hold pins the slopes facing into it; the key's other side keeps
         # its fitted slope (a broken tangent).
-        in_slopes = slopes.copy()
-        out_slopes = slopes.copy()
-        for k, is_flat in enumerate(flat):
-            if is_flat:
-                out_slopes[k] = 0.0
-                in_slopes[k + 1] = 0.0
+        in_slopes = np.asarray(slopes)
+        out_slopes = in_slopes.copy()
+        out_slopes[:-1][flat] = 0.0
+        in_slopes[1:][flat] = 0.0
         # An endpoint has one facing side; its outward side mirrors it so the
         # key reads as unified rather than broken.
         in_slopes[0] = out_slopes[0]
@@ -2330,17 +2350,21 @@ class MathUtils(HelpMixin):
             error = np.abs(
                 MathUtils.evaluate_hermite(t, v, keep, in_slopes, out_slopes) - v
             )
-            added = False
-            for a, b in zip(keep[:-1], keep[1:]):
-                if b - a < 2:
-                    continue
-                inner = error[a + 1 : b]
-                worst = int(np.argmax(inner))
-                if inner[worst] > max_error:
-                    keep_set.add(a + 1 + worst)
-                    added = True
-            if not added:
+            # The worst sample strictly inside every segment with an interior,
+            # found in one reduceat rather than a numpy call per segment; only
+            # the (few) segments over the bound need their argmax.
+            kept = np.asarray(keep)
+            gaps = np.nonzero(np.diff(kept) >= 2)[0]
+            if not len(gaps):
                 break
+            lo, hi = kept[:-1][gaps] + 1, kept[1:][gaps]
+            bounds = np.empty(2 * len(gaps), dtype=int)
+            bounds[0::2], bounds[1::2] = lo, hi
+            over = np.maximum.reduceat(error, bounds)[0::2] > max_error
+            if not over.any():
+                break
+            for a, b in zip(lo[over].tolist(), hi[over].tolist()):
+                keep_set.add(a + int(np.argmax(error[a:b])))
             keep = sorted(keep_set)
         return keep, list(in_slopes), list(out_slopes)
 

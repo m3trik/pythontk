@@ -13,6 +13,7 @@ import shutil
 import struct
 import tempfile
 import unittest
+from unittest.mock import MagicMock
 
 import numpy as np
 from PIL import Image
@@ -595,6 +596,232 @@ class TestOptimizeReporting(_TextureFixture):
         self.assertTrue(
             os.path.isfile(os.path.join(self.test_dir, "old", os.path.basename(path)))
         )
+
+
+class TestOptimizeMaps(_TextureFixture):
+    """``optimize_maps``: ``optimize_map`` over many maps in threads.
+
+    The scene exporters' Optimize Textures pass re-encodes every shipping PNG
+    (a 4K map is 1.6-7 s serially), so the batch runs in threads; results keep
+    request order and one unreadable map never costs the others theirs.
+    Added: 2026-09-13
+    """
+
+    def test_results_keep_order_and_a_failure_stays_in_its_slot(self):
+        out = os.path.join(self.test_dir, "out")
+        first = self.texture("first_BaseColor.png")
+        second = self.texture("second_BaseColor.png", size=(64, 64))
+        missing = os.path.join(self.test_dir, "missing_BaseColor.png")
+        results = MapOptimizer.optimize_maps(
+            [
+                {"texture_path": first, "output_dir": out},
+                {"texture_path": missing, "output_dir": out},
+                {"texture_path": second, "output_dir": out},
+            ],
+            workers=3,
+        )
+        self.assertEqual(len(results), 3)
+        for (written, error), stem in zip(results[::2], ("first", "second")):
+            self.assertIsNone(error)
+            self.assertTrue(os.path.isfile(written), written)
+            self.assertTrue(os.path.basename(written).startswith(stem), written)
+        self.assertIsNone(results[1][0])
+        self.assertIsInstance(results[1][1], Exception)
+
+    def test_threads_write_what_one_thread_writes(self):
+        sources = [self.texture(f"map{i}_BaseColor.png") for i in range(4)]
+
+        def run(folder, workers):
+            requests = [
+                {"texture_path": s, "output_dir": os.path.join(self.test_dir, folder)}
+                for s in sources
+            ]
+            return MapOptimizer.optimize_maps(requests, workers=workers)
+
+        for (serial, _), (threaded, _) in zip(run("serial", 1), run("threaded", 4)):
+            with open(serial, "rb") as a, open(threaded, "rb") as b:
+                self.assertEqual(a.read(), b.read(), os.path.basename(serial))
+
+
+class TestStageMaps(_TextureFixture):
+    """``stage_maps``: the exporters' judge -> claim -> encode -> verify pass.
+    The DCC only points its consumers at what the report says was written.
+    Added: 2026-09-13
+    """
+
+    @staticmethod
+    def _assess(max_size=None):
+        def assess(path):
+            result = MapOptimizer.assess(
+                path, max_size=max_size, optimize_bit_depth=True
+            )
+            if result.get("error"):
+                return None
+            predicted = result["predicted"].get("path") or path
+            return {
+                "needed": bool(result["reasons"]),
+                "output_type": None,
+                "predicted_name": os.path.basename(predicted),
+            }
+
+        return assess
+
+    def _bloated(self, name, size=(64, 64)):
+        """A PNG saved uncompressed: optimal by every rule but its byte count."""
+        from PIL import Image
+
+        path = os.path.join(self.test_dir, name)
+        Image.new("RGB", size, (128, 128, 128)).save(path, compress_level=0)
+        return path
+
+    def test_needed_maps_are_written_and_recompressible_ones_re_encoded(self):
+        big = self.texture("big_BaseColor.png", size=(256, 256))
+        bloated = self._bloated("flat_BaseColor.png")
+        staging = os.path.join(self.test_dir, "staged")
+        report = MapOptimizer.stage_maps(
+            {
+                "a": {"path": big, "nodes": ["n1"]},
+                "b": {"path": bloated, "nodes": ["n2"]},
+            },
+            self._assess(max_size=64),
+            clamp={"max_size": 64},
+            staging_dir=staging,
+            temp_staging=True,
+            logger=MagicMock(),
+        )
+        self.assertEqual(
+            (report["sources"], report["pending"], report["reencodes"]), (2, 2, 1)
+        )
+        self.assertEqual(
+            (report["optimized"], report["kept"], report["failed"]), (2, 0, 0)
+        )
+        by_key = {r["key"]: r for r in report["results"]}
+        self.assertEqual(by_key["a"]["status"], "optimized")
+        self.assertFalse(by_key["a"]["recompress"])
+        self.assertTrue(by_key["b"]["recompress"])
+        for record in report["results"]:
+            self.assertTrue(os.path.isfile(record["written"]), record)
+            self.assertTrue(record["written"].startswith(staging))
+            self.assertEqual(
+                record["entry"]["nodes"], [f"n{'ab'.index(record['key']) + 1}"]
+            )
+        self.assertLess(by_key["b"]["size_after"], by_key["b"]["size_before"] / 2)
+        self.assertEqual(
+            report["bytes_before"], sum(r["size_before"] for r in report["results"])
+        )
+
+    def test_nothing_pending_writes_nothing_and_says_so(self):
+        tight = self.texture("tight_BaseColor.png", size=(32, 32))
+        log = MagicMock()
+        never = MagicMock(side_effect=AssertionError("no staging dir needed"))
+        report = MapOptimizer.stage_maps(
+            {"a": {"path": tight}},
+            self._assess(),
+            staging_dir=never,
+            recompress=False,
+            logger=log,
+        )
+        self.assertEqual(report["pending"], 0)
+        self.assertEqual(report["results"], [])
+        self.assertIsNone(report["staging_dir"])
+        self.assertIn("already optimal", log.info.call_args[0][0])
+        # A pass with something pending resolves the callable once.
+        resolve = MagicMock(return_value=(os.path.join(self.test_dir, "lazy"), True))
+        os.makedirs(os.path.join(self.test_dir, "lazy"))
+        report = MapOptimizer.stage_maps(
+            {"a": {"path": self._bloated("lazy_BaseColor.png")}},
+            self._assess(),
+            staging_dir=resolve,
+            logger=log,
+        )
+        self.assertEqual(resolve.call_count, 1)
+        self.assertEqual(report["staging_dir"], os.path.join(self.test_dir, "lazy"))
+        self.assertTrue(report["temp_staging"])
+        self.assertEqual(report["optimized"], 1)
+        with self.assertRaises(ValueError):
+            MapOptimizer.stage_maps(
+                {"a": {"path": self._bloated("b.png")}}, self._assess(), logger=log
+            )
+
+    def test_same_named_sources_from_two_folders_stage_apart(self):
+        sub = os.path.join(self.test_dir, "other")
+        os.makedirs(sub)
+        first = self._bloated("wood_BaseColor.png")
+        second = self._bloated(os.path.join("other", "wood_BaseColor.png"))
+        staging = os.path.join(self.test_dir, "staged")
+        report = MapOptimizer.stage_maps(
+            {"a": {"path": first}, "b": {"path": second}},
+            self._assess(),
+            staging_dir=staging,
+            temp_staging=True,
+            logger=MagicMock(),
+        )
+        self.assertEqual(report["optimized"], 2)
+        written = [r["written"] for r in report["results"]]
+        self.assertEqual(len(set(map(os.path.normcase, written))), 2)
+        self.assertTrue(any(os.sep + "alt1" + os.sep in w for w in written), written)
+
+    def test_a_failing_map_ships_as_is_and_costs_no_other_map(self):
+        good = self._bloated("good_BaseColor.png")
+        missing = os.path.join(self.test_dir, "missing_BaseColor.png")
+
+        def assess(path):
+            return {
+                "needed": True,
+                "output_type": None,
+                "predicted_name": os.path.basename(path),
+            }
+
+        log = MagicMock()
+        report = MapOptimizer.stage_maps(
+            {"a": {"path": good}, "b": {"path": missing}},
+            assess,
+            staging_dir=os.path.join(self.test_dir, "staged"),
+            temp_staging=True,
+            logger=log,
+        )
+        by_key = {r["key"]: r for r in report["results"]}
+        self.assertEqual(by_key["a"]["status"], "optimized")
+        self.assertEqual(by_key["b"]["status"], "failed")
+        self.assertIsInstance(by_key["b"]["error"], Exception)
+        self.assertIsNone(by_key["b"]["written"])
+        self.assertEqual((report["optimized"], report["failed"]), (1, 1))
+        self.assertTrue(
+            any("could not be optimized" in str(c) for c in log.warning.call_args_list)
+        )
+
+    def test_a_durable_staged_copy_is_reused_and_a_stale_one_redone(self):
+        src = self.texture("reuse_BaseColor.png", size=(256, 256))
+        staging = os.path.join(self.test_dir, "textures")
+        os.makedirs(staging)
+        first = MapOptimizer.stage_maps(
+            {"a": {"path": src}},
+            self._assess(max_size=128),
+            clamp={"max_size": 128},
+            staging_dir=staging,
+            logger=MagicMock(),
+        )
+        written = first["results"][0]["written"]
+        stamp = os.path.getmtime(written)
+        again = MapOptimizer.stage_maps(
+            {"a": {"path": src}},
+            self._assess(max_size=128),
+            clamp={"max_size": 128},
+            staging_dir=staging,
+            logger=MagicMock(),
+        )
+        self.assertEqual(again["results"][0]["written"], written)
+        self.assertEqual(os.path.getmtime(written), stamp, "reused, not rewritten")
+        # The same staged name under a TIGHTER pass is stale: re-judged, redone.
+        tighter = MapOptimizer.stage_maps(
+            {"a": {"path": src}},
+            self._assess(max_size=64),
+            clamp={"max_size": 64},
+            staging_dir=staging,
+            logger=MagicMock(),
+        )
+        self.assertEqual(tighter["results"][0]["status"], "optimized")
+        self.assertEqual(ImgUtils.get_image_size(written)[0], 64)
 
 
 class TestDeliveryBudget(_TextureFixture):

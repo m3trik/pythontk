@@ -107,6 +107,24 @@ class Ktx2EncoderArgsTest(BaseTestCase):
         # File order is toktx's contract: output first, then input.
         self.assertEqual(args[-2:], ["out.ktx2", "in.png"])
 
+    def test_uastc_rdo(self):
+        """``--uastc_rdo_l`` rides a UASTC encode when a lambda is set -- by the
+        constructor or per call (a per-call 0 switches it off); ETC1S has no
+        RDO stage; toktx's range is enforced. Added: 2026-09-13"""
+        args = self._encoder(uastc_rdo=1.0).args_for("in.png", "out.ktx2")
+        self.assertEqual(args[args.index("--uastc_rdo_l") + 1], "1")
+        args = self._encoder().args_for("in.png", "out.ktx2", uastc_rdo=0.5)
+        self.assertEqual(args[args.index("--uastc_rdo_l") + 1], "0.5")
+        args = self._encoder(uastc_rdo=1.0).args_for("in.png", "out.ktx2", uastc_rdo=0)
+        self.assertNotIn("--uastc_rdo_l", args)
+        args = self._encoder(uastc_rdo=1.0).args_for(
+            "in.png", "out.ktx2", codec="ETC1S"
+        )
+        self.assertNotIn("--uastc_rdo_l", args)
+        self.assertNotIn("--uastc_rdo_l", self._encoder().args_for("in.png", "o.ktx2"))
+        with self.assertRaises(ValueError):
+            self._encoder().args_for("in.png", "out.ktx2", uastc_rdo=11)
+
     def test_etc1s_defaults(self):
         args = self._encoder().args_for("in.png", "out.ktx2", codec="ETC1S")
         self.assertEqual(args[args.index("--encode") + 1], "etc1s")
@@ -192,6 +210,26 @@ class Ktx2EncoderRunTest(_TempDirTestCase):
         with self._run_capture() as run:
             enc.encode("src.png", os.path.join(self.out_dir, "map.ktx2"))
         self.assertEqual(run.call_args.kwargs.get("timeout"), 300)
+
+    def test_the_default_budget_grows_with_the_image(self):
+        """A flat 300 s shipped two 4K normal maps as PNG: UASTC + RDO took
+        260 s with eight encodes sharing the host, and past 300 s with a test
+        run on top (production export, 2026-09-14). The default derives the
+        budget from the pixels -- the 300 s floor for anything small, a
+        per-megapixel allowance above it -- and an explicit number still
+        wins (``test_hung_toktx_times_out_instead_of_blocking_forever``)."""
+        enc = Ktx2Encoder(toktx="toktx-test-bin")
+        budgets = {}
+        for edge in (1024, 4096):
+            with self._run_capture() as run:
+                enc.encode(
+                    Image.new("L", (edge, edge)),
+                    os.path.join(self.out_dir, f"map_{edge}.ktx2"),
+                )
+            budgets[edge] = run.call_args.kwargs.get("timeout")
+        self.assertEqual(budgets[1024], Ktx2Encoder.DEFAULT_TIMEOUT)
+        self.assertEqual(budgets[4096], Ktx2Encoder.encode_timeout(4096, 4096))
+        self.assertGreaterEqual(budgets[4096], 3 * Ktx2Encoder.DEFAULT_TIMEOUT)
 
     def test_staged_modes_match_the_fallback_table(self):
         """Every ktx2 row of ``_CONTAINER_MODE_FALLBACKS``, measured where it

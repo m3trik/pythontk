@@ -1618,6 +1618,34 @@ class TestMapFactoryCancellation(unittest.TestCase):
         self.assertEqual(len(seen), self.SETS)
 
 
+class TestMapFactoryParallelBatch(unittest.TestCase):
+    """The parallel branch collected sets in COMPLETION order.
+
+    So a caller iterating the batch got whatever order the workers happened to
+    finish in -- different from the serial branch, and from run to run. The
+    serial branch's order, the sets' own, is the one both branches return.
+    Added: 2026-09-12
+    """
+
+    SETS = 6
+
+    def test_parallel_results_keep_the_serial_order(self):
+        import time
+
+        files = [f"asset_{i}_Base_color.png" for i in range(self.SETS)]
+
+        def fake(textures, config, output_dir=None, logger=None):
+            index = int(os.path.basename(textures[0]).split("_")[1])
+            time.sleep(0.03 * (self.SETS - index))  # the first set finishes last
+            return list(textures)
+
+        with patch.object(MapFactory, "_process_map_set", side_effect=fake):
+            serial = MapFactory.prepare_maps(files)
+            parallel = MapFactory.prepare_maps(files, max_workers=self.SETS)
+        self.assertEqual(list(parallel), list(serial))
+        self.assertEqual(parallel, serial)
+
+
 class TestConversionPluginSeam(unittest.TestCase):
     """``ConversionRegistry`` carried two registration protocols, and only one
     of them could ever run.

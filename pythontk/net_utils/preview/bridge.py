@@ -169,6 +169,7 @@ class PreviewBridge(HandoffBridge):
         texture_format: Optional[str] = None,
         scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None,
         progress: Optional[Callable[[str], Any]] = None,
+        data_export: Optional[Dict[str, Any]] = None,
         **params: Any,
     ) -> Optional[Dict[str, Any]]:
         """Export and publish, returning the deliverer's result (``None`` on failure).
@@ -209,6 +210,13 @@ class PreviewBridge(HandoffBridge):
                 above: that bag goes to the EXPORTER, so a callback swept up
                 there would be handed to the FBX write and never reach the
                 build. ``None`` (the default) costs nothing.
+            data_export: ``{channel key: value or None}`` to overlay on the
+                GLB's in-band channels for THIS push only
+                (:meth:`MeshConvert.overlay_data_export`) -- how a panel previews
+                something the scene does not carry, such as a render effect at
+                its current settings (:meth:`MeshConvert.effect_preview_channels`),
+                without writing it into the scene first. Named for the same
+                reason as the knobs above: ``**params`` is the EXPORT bag.
             **params: Export param overrides (see :meth:`params_defaults`).
         """
         if objects is None:
@@ -224,6 +232,7 @@ class PreviewBridge(HandoffBridge):
             texture_format=texture_format,
             scripts=scripts,
             progress=progress,
+            data_export=data_export,
         )
 
     def publish_file(

@@ -122,19 +122,44 @@ class Ktx2Encoder:
             size the way delivery pipelines usually want.
         uastc_quality: UASTC encode quality (0-4). 2 is the documented
             quality/speed balance.
+        uastc_rdo: UASTC rate-distortion optimisation lambda
+            (``--uastc_rdo_l``), or None for off: the blocks are steered toward
+            what the Zstandard stage compresses, at a controlled quality cost.
+            Measured on a 4K production set: ORM packs -30% at 1.0 (PSNR
+            50/44/48 dB), a noisy normal map only -3.5%, encode 3-4x slower.
+            toktx's range is 0.001-10 (0.25-0.75 for normal maps -- the
+            per-map policy is the caller's, see
+            ``MeshConvert.UASTC_RDO_NORMAL_MAX``); a per-call value overrides.
         extra_args: Additional ``toktx`` arguments appended verbatim before the
             file arguments — the escape hatch for flags this class does not
             model (``--uastc_rdo_l``, ``--normalize``, …).
         timeout: Seconds before a ``toktx`` subprocess is killed and treated
             as a failure. A hung encoder (bad/corrupt input, a stuck child
             process) would otherwise block the calling thread forever — fatal
-            for a DCC's single-threaded UI. 300s (5 min) comfortably covers a
-            large texture at the slowest quality tier.
+            for a DCC's single-threaded UI. The default (:attr:`AUTO_TIMEOUT`)
+            sizes it per encode from the image (:meth:`encode_timeout`); a
+            number is used as given, and ``None`` waits forever.
     """
 
     #: Codec vocabulary accepted by :meth:`encode` (and by
     #: ``OutputSpec.compression`` for ``ktx2`` targets).
     CODECS = ("ETC1S", "UASTC")
+
+    #: FLOOR for one encode, in seconds: the historical flat budget, so no small
+    #: map encodes on a shorter leash than it did.
+    DEFAULT_TIMEOUT = 300
+    #: Budget per megapixel of the source above that floor. The flat 300 s
+    #: shipped two 4096 normal maps as PNG (2026-09-14): UASTC quality 2 + RDO
+    #: 0.75 took 260 s with eight encodes sharing a 20-core host, and past 300 s
+    #: with a test run on top -- ~15.5 s/MP under that contention. This is that
+    #: with a ~4x margin, the asymmetry ``MeshConvert.conversion_timeout``
+    #: settled on: a hung encode costs minutes, a spurious timeout ships the
+    #: wrong deliverable.
+    SECONDS_PER_MEGAPIXEL = 60.0
+    #: ``timeout=AUTO_TIMEOUT`` (the default) derives each encode's budget from
+    #: its pixels. Negative so it cannot collide with a real value, and unlike
+    #: ``None`` it does not already mean "wait forever".
+    AUTO_TIMEOUT = -1.0
 
     #: :class:`AppInstaller` catalog key of the managed install.
     TOOL_NAME = "ktx-software"
@@ -162,16 +187,42 @@ class Ktx2Encoder:
         etc1s_qlevel: int = 128,
         etc1s_clevel: int = 2,
         uastc_quality: int = 2,
+        uastc_rdo: Optional[float] = None,
         extra_args: tuple = (),
-        timeout: Optional[float] = 300,
+        timeout: Optional[float] = AUTO_TIMEOUT,
     ) -> None:
         self._toktx = toktx
         self.zstd_level = int(zstd_level)
         self.etc1s_qlevel = int(etc1s_qlevel)
         self.etc1s_clevel = int(etc1s_clevel)
         self.uastc_quality = int(uastc_quality)
+        self.uastc_rdo = self._rdo_lambda(uastc_rdo)
         self.extra_args = tuple(extra_args)
         self.timeout = timeout
+
+    @classmethod
+    def encode_timeout(cls, width: int, height: int) -> float:
+        """Seconds to allow one encode of a *width* x *height* image:
+        :attr:`DEFAULT_TIMEOUT`, or :attr:`SECONDS_PER_MEGAPIXEL` per megapixel
+        when that is more."""
+        return max(
+            float(cls.DEFAULT_TIMEOUT),
+            width * height / 1e6 * cls.SECONDS_PER_MEGAPIXEL,
+        )
+
+    def _timeout_for(self, source: str) -> Optional[float]:
+        """:attr:`timeout`, or under :attr:`AUTO_TIMEOUT` the budget for the
+        file toktx is handed (its size read from the header; an unreadable one
+        gets the floor and toktx reports what is wrong with it)."""
+        if self.timeout is None or self.timeout >= 0:
+            return self.timeout
+        if Image is None:
+            return float(self.DEFAULT_TIMEOUT)
+        try:
+            with Image.open(source) as im:
+                return self.encode_timeout(*im.size)
+        except Exception:  # noqa: BLE001 -- toktx's error is the useful one
+            return float(self.DEFAULT_TIMEOUT)
 
     # ------------------------------------------------------------------
     # Discovery
@@ -349,6 +400,22 @@ class Ktx2Encoder:
     # Encoding
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _rdo_lambda(value: Optional[float]) -> Optional[float]:
+        """*value* as an RDO lambda, None for off (``None`` / ``0``).
+
+        Raises:
+            ValueError: outside toktx's ``[0.001, 10]``.
+        """
+        if not value:
+            return None
+        rdo = float(value)
+        if not 0.001 <= rdo <= 10.0:
+            raise ValueError(
+                f"uastc_rdo must be within 0.001-10 (toktx's range), got {value!r}."
+            )
+        return rdo
+
     def args_for(
         self,
         source: str,
@@ -357,6 +424,7 @@ class Ktx2Encoder:
         srgb: bool = True,
         mipmaps: bool = True,
         quality: Optional[int] = None,
+        uastc_rdo: Optional[float] = None,
     ) -> List[str]:
         """Assemble the full ``toktx`` command for one encode.
 
@@ -377,6 +445,8 @@ class Ktx2Encoder:
             quality: Optional 1-100 quality mapped onto ETC1S ``--qlevel``
                 (1-255). Ignored for UASTC, whose quality is the constructor's
                 ``uastc_quality`` tier.
+            uastc_rdo: UASTC RDO lambda for THIS encode; None takes the
+                constructor's, ``0`` switches it off. Ignored for ETC1S.
 
         Returns:
             list[str]: The complete argv, binary first.
@@ -407,6 +477,9 @@ class Ktx2Encoder:
             args += ["--qlevel", str(qlevel), "--clevel", str(self.etc1s_clevel)]
         else:  # UASTC — fixed quality tier + Zstandard supercompression.
             args += ["--uastc_quality", str(self.uastc_quality)]
+            rdo = self._rdo_lambda(self.uastc_rdo if uastc_rdo is None else uastc_rdo)
+            if rdo:
+                args += ["--uastc_rdo_l", f"{rdo:g}"]
             if self.zstd_level:
                 args += ["--zcmp", str(self.zstd_level)]
         args += list(self.extra_args)
@@ -421,6 +494,7 @@ class Ktx2Encoder:
         srgb: bool = True,
         mipmaps: bool = True,
         quality: Optional[int] = None,
+        uastc_rdo: Optional[float] = None,
     ) -> str:
         """Encode *source* to *output* (``.ktx2``).
 
@@ -428,7 +502,7 @@ class Ktx2Encoder:
             source: Image file path, or a ``PIL.Image.Image`` (staged to a
                 scratch PNG for the encoder — toktx reads files, not pipes).
             output: Destination path; parent directories are created.
-            codec, srgb, mipmaps, quality: See :meth:`args_for`.
+            codec, srgb, mipmaps, quality, uastc_rdo: See :meth:`args_for`.
 
         Returns:
             str: *output*, for chaining.
@@ -458,8 +532,10 @@ class Ktx2Encoder:
             with TempArtifacts("ktx2_encode", policy="scoped") as tmp:
                 staged = tmp.path(extension=".png")
                 self._stage_image(source, staged)
-                return self._run(staged, output, codec, srgb, mipmaps, quality)
-        return self._run(str(source), output, codec, srgb, mipmaps, quality)
+                return self._run(
+                    staged, output, codec, srgb, mipmaps, quality, uastc_rdo
+                )
+        return self._run(str(source), output, codec, srgb, mipmaps, quality, uastc_rdo)
 
     def _stage_image(self, im: "Image.Image", path: str) -> None:
         """Write *im* to *path* as the 8-bit PNG toktx will read.
@@ -535,20 +611,24 @@ class Ktx2Encoder:
         srgb: bool,
         mipmaps: bool,
         quality: Optional[int],
+        uastc_rdo: Optional[float] = None,
     ) -> str:
-        args = self.args_for(source, output, codec, srgb, mipmaps, quality)
+        args = self.args_for(
+            source, output, codec, srgb, mipmaps, quality, uastc_rdo=uastc_rdo
+        )
+        timeout = self._timeout_for(source)
         try:
             result = subprocess.run(
                 args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=self.timeout,
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
                 f"toktx timed out for '{source}' -> '{output}' after "
-                f"{self.timeout}s (killed)."
+                f"{timeout}s (killed)."
             ) from exc
         if result.returncode != 0:
             tail = (result.stderr or result.stdout or "").strip().splitlines()

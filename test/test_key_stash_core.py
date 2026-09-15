@@ -10,6 +10,7 @@ singleton behaviour, the preview record, and the frame-rate rescale.
 import os
 import sys
 import unittest
+from contextlib import contextmanager
 
 _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
@@ -290,6 +291,123 @@ class KeyStashPersistenceTest(unittest.TestCase):
         store.rescale_to_fps(24.004)
         self.assertEqual(events, [])
         self.assertEqual(store.clips[0].times, [24])
+
+
+class KeyStashUndoStepTest(unittest.TestCase):
+    """The template both DCC adapters run their scene operations through."""
+
+    def setUp(self):
+        KeyStash._active = None
+        KeyStash.set_persistence(None)
+
+    def tearDown(self):
+        KeyStash._active = None
+        KeyStash.set_persistence(None)
+
+    def test_an_undo_step_writes_the_record_once_inside_its_chunk(self):
+        """The pure default flushes every mutation at once, and so do mayapy's
+        ``evalDeferred`` and background Blender. Inside an undo step that flush
+        must wait: it would write the new record outside the step, where no
+        undo can take it back (measured 2026-09-15 in both adapters).
+        Added: 2026-09-15
+        """
+        events = []
+
+        class _Recording(_MemoryBackend):
+            def save(self, data):
+                events.append("save")
+                super().save(data)
+
+        class Adapter(KeyStash):
+            @contextmanager
+            def _undo_chunk(self, name):
+                events.append(f"open {name}")
+                yield
+                events.append("close")
+
+        KeyStash.set_persistence(_Recording())
+        store = Adapter()
+        with store._undo_step("Store Keys"):
+            clip = store.add_clip(["|a"], _curves(("|a", "tx", [1, 2])))
+            store.set_preview(clip.clip_id)
+        self.assertEqual(events, ["open Store Keys", "save", "close"])
+        self.assertFalse(store._dirty)
+
+    def test_an_undo_step_that_raises_still_writes_its_record_inside(self):
+        """A block that raises after a mutation must still leave its record in
+        the step. Otherwise the batch's own exit flush writes it through
+        ``save``, which the Maya adapter keeps outside the undo queue, and an
+        undo would revert the scene edits while the record still describes them.
+        Added: 2026-09-15
+        """
+        events = []
+
+        class _Recording(_MemoryBackend):
+            def save(self, data):
+                events.append("save")
+                super().save(data)
+
+        class Adapter(KeyStash):
+            @contextmanager
+            def _undo_chunk(self, name):
+                events.append("open")
+                try:
+                    yield
+                finally:
+                    events.append("close")
+
+            def _save_in_step(self):
+                events.append("in-step write")
+                super()._save_in_step()
+
+        KeyStash.set_persistence(_Recording())
+        store = Adapter()
+        with self.assertRaises(RuntimeError):
+            with store._undo_step("Retrieve Stored Keys"):
+                store.add_clip(["|a"], _curves(("|a", "tx", [1, 2])))
+                raise RuntimeError("paste refused")
+        self.assertEqual(events, ["open", "in-step write", "save", "close"])
+
+    def test_active_rereads_a_record_an_undo_moved(self):
+        """An undo or redo moves the record under the loaded store. Asking for
+        the store re-reads it in place: a new store's activation would tear
+        down the very preview a redo restored.
+        Added: 2026-09-15
+        """
+        activations = []
+
+        class _Movable(_MemoryBackend):
+            moved = False
+
+            def record_changed(self):
+                return self.moved
+
+            def load(self):
+                self.moved = False
+                return super().load()
+
+        class Adapter(KeyStash):
+            def _on_activated(self):
+                activations.append(self)
+
+        backend = _Movable()
+        Adapter.set_persistence(backend)
+        try:
+            store = Adapter.active()
+            events = []
+            store.add_listener(events.append)
+            seed = KeyStash()
+            clip = seed.add_clip(["|a"], _curves(("|a", "tx", [1, 2])))
+            seed.active_preview = {"clip_id": clip.clip_id, "layer": "L"}
+            backend.data, backend.moved = seed.to_dict(), True  # the undo
+            self.assertIs(Adapter.active(), store)
+            self.assertEqual([c.clip_id for c in store.clips], [clip.clip_id])
+            self.assertTrue(store.is_previewing(clip.clip_id))
+            self.assertEqual([e.kind for e in events], ["reloaded"])
+            self.assertEqual(activations, [store])
+        finally:
+            Adapter._active = None
+            Adapter.set_persistence(None)
 
 
 if __name__ == "__main__":

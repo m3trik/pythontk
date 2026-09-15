@@ -1,12 +1,16 @@
 # !/usr/bin/python
 # coding=utf-8
-"""Rewrite the embedded media of a binary FBX -- no DCC, no FBX SDK.
+"""Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 
 :class:`FbxMedia` is the writer :mod:`fbx_file` deliberately is not, scoped to
-the one edit a hand-off pipeline needs: replacing the ``Video`` objects'
-``Content`` payloads -- the textures ``FBXExportEmbeddedTextures`` copies into
-the file at full authoring resolution. Everything else is copied byte for
-byte. Only the record headers are re-serialised, because binary FBX stores
+the edits a hand-off pipeline needs on its scratch copy: replacing the
+``Video`` objects' ``Content`` payloads -- the textures
+``FBXExportEmbeddedTextures`` copies into the file at full authoring
+resolution (:meth:`FbxMedia.downsize`), and the grayscale ones FBX2glTF would
+pack as white (:meth:`FbxMedia.expand_grayscale`) -- and dropping animation
+takes the converter would bake for nothing (:meth:`FbxMedia.drop_takes`).
+Everything else is copied byte for byte. Only the record headers are
+re-serialised, because binary FBX stores
 every record's end as an *absolute* offset, so one payload that changes size
 moves every header after it.
 
@@ -39,10 +43,10 @@ import os
 import struct
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.mesh_convert.fbx_file import FBX_MAGIC
-from pythontk.file_utils.temp_artifacts import TempArtifacts
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +84,11 @@ class _FbxMediaInternal:
     #: or RGBA first (palette, bilevel), or skipped (16-bit, float) so a depth
     #: the FBX carried is never silently halved here.
     RESIZABLE_MODES = ("L", "LA", "RGB", "RGBA")
+
+    #: Pixel modes a PNG or JPEG decodes to with no green or blue channel --
+    #: what :meth:`FbxMedia.expand_grayscale` rewrites. A palette image is not
+    #: one: it decodes to RGB(A).
+    GRAYSCALE_MODES = ("1", "L", "LA", "I;16", "I;16B", "I;16L")
 
     _FOOTER_TAIL = 4 + 4 + 120 + 16  # zeros, version, zeros, magic
 
@@ -215,6 +224,142 @@ class _FbxMediaInternal:
     def _pack_raw(data: bytes) -> bytes:
         return b"R" + struct.pack("<I", len(data)) + data
 
+    @staticmethod
+    def _scalars(record: _Record) -> List[Any]:
+        """The record's leading ``L``/``I``/``S`` properties, decoded.
+
+        Stops at the first property of any other type: the callers read object
+        ids, display names and connection rows, which are all at the head.
+        """
+        raw = bytes(record.payload)
+        out: List[Any] = []
+        pos = 0
+        while pos < len(raw):
+            kind = raw[pos : pos + 1]
+            if kind == b"L":
+                out.append(struct.unpack_from("<q", raw, pos + 1)[0])
+                pos += 9
+            elif kind == b"I":
+                out.append(struct.unpack_from("<i", raw, pos + 1)[0])
+                pos += 5
+            elif kind == b"S":
+                length = struct.unpack_from("<I", raw, pos + 1)[0]
+                out.append(raw[pos + 5 : pos + 5 + length])
+                pos += 5 + length
+            else:
+                break
+        return out
+
+    @classmethod
+    def _write_part(cls, target: str, version, roots, footer_id, magic):
+        """Serialise into a tracked ``.part`` beside *target*; return its path.
+
+        :meth:`FileUtils.atomic_write` with the promotion left to the caller:
+        the replace has to wait until its mmap closes, because Windows refuses
+        to replace a mapped file. A raise inside :meth:`_write` (disk full is
+        realistic for a multi-hundred-MB payload) removes the partial file; a
+        process that dies first leaves it to the store's age-gated sweep.
+        """
+
+        def write(part: str) -> None:
+            with open(part, "wb") as out:
+                cls._write(out, version, roots, footer_id, magic)
+
+        return FileUtils.atomic_write(target, write, promote=False)
+
+    @classmethod
+    def _rewrite_images(
+        cls,
+        src: str,
+        dst: Optional[str],
+        edit: Callable[[str, Any], Any],
+        *,
+        count_key: str,
+        workers: Optional[int],
+        png_compress_level: int,
+        jpeg_quality: int,
+        smaller_only: bool = False,
+    ) -> Dict[str, Any]:
+        """Re-encode each embedded PNG/JPEG that *edit* returns a new image for.
+
+        *edit* gets the image's basename and its opened Pillow image (header
+        read, pixels not yet loaded) and returns the replacement, or ``None``
+        to keep the embedded bytes. A replacement keeps its container, so the
+        ``Filename`` the SDK extracts it under still describes the bytes; one
+        that fails to decode or encode keeps its bytes, with a warning.
+        *smaller_only* keeps them too when the re-encode is not smaller.
+
+        Returns:
+            ``{"images", <count_key>, "before", "after"}`` -- embedded image
+            count, how many were replaced, and the embedded bytes before and
+            after. When nothing was replaced the file is not written at all.
+        """
+        from PIL import Image
+
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            videos = cls._video_records(roots)
+            report = {
+                "images": len(videos),
+                count_key: 0,
+                # The record length, not a copy of every payload just to size it.
+                "before": sum(len(r.props) - 5 for _n, r in videos),
+                "after": 0,
+            }
+
+            def rewrite(item: Tuple[str, _Record]) -> Optional[bytes]:
+                name, record = item
+                data = cls._raw(record)
+                try:
+                    with Image.open(io.BytesIO(data)) as image:
+                        fmt = image.format
+                        if fmt not in cls.REWRITABLE_FORMATS:
+                            return None
+                        replacement = edit(name, image)
+                        if replacement is None:
+                            return None
+                        out = io.BytesIO()
+                        if fmt == "PNG":
+                            replacement.save(
+                                out, format="PNG", compress_level=png_compress_level
+                            )
+                        else:
+                            if replacement.mode == "RGBA":
+                                replacement = replacement.convert("RGB")
+                            replacement.save(out, format="JPEG", quality=jpeg_quality)
+                except Exception as error:  # noqa: BLE001 -- keep the authored bytes
+                    logger.warning("FbxMedia: %s left as found: %s", name, error)
+                    return None
+                encoded = out.getvalue()
+                if smaller_only and len(encoded) >= len(data):
+                    return None
+                return encoded
+
+            from pythontk.img_utils._img_utils import ImgUtils
+
+            count = max(1, min(ImgUtils.encode_workers(workers), len(videos) or 1))
+            with ThreadPoolExecutor(
+                max_workers=count, thread_name_prefix="ptk-fbx-media"
+            ) as pool:
+                results = list(pool.map(rewrite, videos))
+            for (_name, record), encoded in zip(videos, results):
+                if encoded is not None:
+                    record.replaced = cls._pack_raw(encoded)
+                    report[count_key] += 1
+            report["after"] = sum(len(r.payload) - 5 for _n, r in videos)
+            if not report[count_key]:
+                return report
+
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        # After the mmap closes: Windows refuses to replace a mapped file, and
+        # `target` is `src` for an in-place run.
+        os.replace(part, target)
+        return report
+
 
 class FbxMedia(_FbxMediaInternal):
     """Read and rewrite the media a binary FBX embeds."""
@@ -282,7 +427,8 @@ class FbxMedia(_FbxMediaInternal):
             exempt: Image basenames to leave at their authored size.
             png_compress_level: zlib level for re-encoded PNGs (0-9).
             jpeg_quality: Quality for re-encoded JPEGs.
-            workers: Decode/encode threads; ``None`` picks from the core count.
+            workers: Decode/encode threads; ``None`` takes the shared encode cap
+                (:meth:`ImgUtils.encode_workers`).
 
         Returns:
             ``{"images", "resized", "before", "after"}`` -- embedded image
@@ -295,101 +441,283 @@ class FbxMedia(_FbxMediaInternal):
         from PIL import Image
 
         exempt = {os.path.basename(str(name)) for name in exempt}
+
+        def shrink(name: str, image: Any) -> Any:
+            if not max_size or name in exempt or max(image.size) <= max_size:
+                return None
+            image.load()
+            if image.mode in ("P", "1"):
+                image = image.convert("RGBA" if "transparency" in image.info else "RGB")
+            if image.mode not in cls.RESIZABLE_MODES:
+                logger.debug(
+                    "FbxMedia: %s left at %s (mode %s)", name, image.size, image.mode
+                )
+                return None
+            scale = max_size / float(max(image.size))
+            target = tuple(max(1, round(edge * scale)) for edge in image.size)
+            return image.resize(target, Image.LANCZOS)
+
+        return cls._rewrite_images(
+            src,
+            dst,
+            shrink,
+            count_key="resized",
+            workers=workers,
+            png_compress_level=png_compress_level,
+            jpeg_quality=jpeg_quality,
+            smaller_only=True,
+        )
+
+    @classmethod
+    def expand_grayscale(
+        cls,
+        src: str,
+        dst: Optional[str] = None,
+        *,
+        png_compress_level: int = 1,
+        jpeg_quality: int = 95,
+        workers: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Re-encode every embedded grayscale PNG/JPEG with colour channels.
+
+        Each channel of the result carries the image's own gray value, and an
+        alpha channel is kept, so a reader of red, green or blue reads what the
+        map meant. A 16-bit map is rescaled over its full range: Pillow's own
+        conversion clips everything above 255 to white.
+
+        Why it exists: FBX2glTF 0.13.1 packs a material's occlusion-roughness-
+        metallic texture from each map's red, green and blue, and reads a
+        channel the decoded image lacks as white. Measured on a Stingray PBS
+        quad (roughness a 60..220 ramp, metallic 8): stored as RGB the packed
+        texture carries both; stored grayscale -- L, LA, 16-bit or a grayscale
+        JPEG -- green and blue are 255 on every texel, roughness 1 and metallic
+        1, which renders black under a lightmap. The fault is per map (a
+        grayscale roughness beside an RGB metallic whitens roughness alone),
+        and it is the common case: Maya's ``GameShader`` splits a packed ORM
+        into grayscale maps. The converter reads the embedded copies its SDK
+        extracts, so rewriting the payload fixes an FBX from any producer.
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+            png_compress_level: zlib level for re-encoded PNGs (0-9), low for
+                the reason :meth:`downsize` gives.
+            jpeg_quality: Quality for re-encoded JPEGs -- high, since nothing
+                is resized to hide the extra generation.
+            workers: Decode/encode threads; ``None`` takes the shared encode cap
+                (:meth:`ImgUtils.encode_workers`).
+
+        Returns:
+            ``{"images", "expanded", "before", "after"}`` -- embedded image
+            count, how many were rewritten, and the embedded bytes before and
+            after. When none is grayscale the file is not written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+        """
+
+        def expand(_name: str, image: Any) -> Any:
+            if image.mode not in cls.GRAYSCALE_MODES:
+                return None
+            image.load()
+            if image.mode.startswith("I;16"):
+                image = image.convert("I").point(lambda v: v / 257 + 0.5).convert("L")
+            return image.convert("RGBA" if image.mode == "LA" else "RGB")
+
+        return cls._rewrite_images(
+            src,
+            dst,
+            expand,
+            count_key="expanded",
+            workers=workers,
+            png_compress_level=png_compress_level,
+            jpeg_quality=jpeg_quality,
+        )
+
+    #: The objects an animation take owns, owner first: a stack holds layers,
+    #: a layer holds curve nodes, a curve node holds curves.
+    TAKE_CHAIN = (
+        b"AnimationStack",
+        b"AnimationLayer",
+        b"AnimationCurveNode",
+        b"AnimationCurve",
+    )
+
+    @classmethod
+    def drop_takes(
+        cls, src: str, dst: Optional[str] = None, *, names: Iterable[str]
+    ) -> Dict[str, Any]:
+        """Remove the named animation takes, and everything only they own.
+
+        Each named ``AnimationStack`` goes with every layer, curve node and
+        curve reachable ONLY through dropped owners (an object another take
+        still reaches is kept), every connection naming a removed object, its
+        ``Takes`` entry, and the removed objects' ``Definitions`` counts. A
+        ``Takes/Current`` that named a dropped take points at the first take
+        left. Geometry, materials, media and the surviving takes are copied
+        byte for byte.
+
+        Why it exists: FBX2glTF bakes EVERY node at EVERY frame of EVERY take.
+        A Maya take split writes each shot as its own stack beside the
+        whole-timeline one, and the GLB's clips are then cut from that
+        whole-timeline stack -- so the converter was baking the entire
+        performance a second time, shot by shot, for animations the clip
+        rebuild throws away. Measured on a production assembly (18 shots, 3723
+        exported nodes): 1377 s -> 537 s of conversion, 491 MB -> 385 MB of
+        converter input.
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+            names: Take (``AnimationStack`` display) names to drop. Names the
+                file does not carry are ignored.
+
+        Returns:
+            ``{"takes", "objects", "connections"}`` -- the take names dropped
+            (file order), ``{record name: count}`` removed, and the number of
+            connections removed. When no named take is present the file is not
+            written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+        """
+        wanted = {str(name) for name in names}
+        report: Dict[str, Any] = {"takes": [], "objects": {}, "connections": 0}
         with (
             open(src, "rb") as fh,
             mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
         ):
             version, roots, footer_id, magic = cls._load(buf)
-            videos = cls._video_records(roots)
-            report = {
-                "images": len(videos),
-                "resized": 0,
-                "before": sum(len(cls._raw(r)) for _n, r in videos),
-                "after": 0,
-            }
-
-            def shrink(item: Tuple[str, _Record]) -> Optional[bytes]:
-                name, record = item
-                data = cls._raw(record)
-                if not max_size or name in exempt:
-                    return None
-                try:
-                    with Image.open(io.BytesIO(data)) as image:
-                        fmt = image.format
-                        if (
-                            fmt not in cls.REWRITABLE_FORMATS
-                            or max(image.size) <= max_size
-                        ):
-                            return None
-                        image.load()
-                        if image.mode in ("P", "1"):
-                            image = image.convert(
-                                "RGBA" if "transparency" in image.info else "RGB"
-                            )
-                        if image.mode not in cls.RESIZABLE_MODES:
-                            logger.debug(
-                                "FbxMedia: %s left at %s (mode %s)",
-                                name,
-                                image.size,
-                                image.mode,
-                            )
-                            return None
-                        scale = max_size / float(max(image.size))
-                        target = tuple(
-                            max(1, round(edge * scale)) for edge in image.size
-                        )
-                        resized = image.resize(target, Image.LANCZOS)
-                        out = io.BytesIO()
-                        if fmt == "PNG":
-                            resized.save(
-                                out, format="PNG", compress_level=png_compress_level
-                            )
-                        else:
-                            if resized.mode == "RGBA":
-                                resized = resized.convert("RGB")
-                            resized.save(out, format="JPEG", quality=jpeg_quality)
-                except Exception as error:  # noqa: BLE001 -- keep the authored bytes
-                    logger.warning("FbxMedia: %s left as found: %s", name, error)
-                    return None
-                encoded = out.getvalue()
-                return encoded if len(encoded) < len(data) else None
-
-            count = max(
-                1, min(workers or min(8, os.cpu_count() or 1), len(videos) or 1)
-            )
-            with ThreadPoolExecutor(
-                max_workers=count, thread_name_prefix="ptk-fbx-media"
-            ) as pool:
-                results = list(pool.map(shrink, videos))
-            for (_name, record), encoded in zip(videos, results):
-                if encoded is not None:
-                    record.replaced = cls._pack_raw(encoded)
-                    report["resized"] += 1
-            report["after"] = sum(len(r.payload) - 5 for _n, r in videos)
-            if not report["resized"]:
+            sections = {record.name: record for record in roots}
+            objects = sections.get(b"Objects")
+            if objects is None:
                 return report
 
+            kind_of: Dict[int, bytes] = {}
+            id_of_record: Dict[int, int] = {}
+            stacks: Dict[int, str] = {}
+            for record in objects.children:
+                if record.name not in cls.TAKE_CHAIN:
+                    continue
+                head = cls._scalars(record)
+                if not head or not isinstance(head[0], int):
+                    continue
+                kind_of[head[0]] = record.name
+                id_of_record[id(record)] = head[0]
+                if record.name == b"AnimationStack" and len(head) > 1:
+                    display = cls._display(head[1])
+                    if display in wanted:
+                        stacks[head[0]] = display
+            if not stacks:
+                return report
+
+            connections = sections.get(b"Connections")
+            rows = [
+                (record, cls._scalars(record))
+                for record in (connections.children if connections else [])
+            ]
+            parents: Dict[int, List[int]] = {}
+            for _record, row in rows:
+                if len(row) >= 3 and row[1] in kind_of:
+                    parents.setdefault(row[1], []).append(row[2])
+
+            # Owner-first, so every owner's verdict is settled before its
+            # members are judged.
+            dropped = set(stacks)
+            for level in range(1, len(cls.TAKE_CHAIN)):
+                owner, member = cls.TAKE_CHAIN[level - 1], cls.TAKE_CHAIN[level]
+                for oid, kind in kind_of.items():
+                    if kind != member:
+                        continue
+                    owners = [
+                        p for p in parents.get(oid, ()) if kind_of.get(p) == owner
+                    ]
+                    if owners and all(p in dropped for p in owners):
+                        dropped.add(oid)
+
+            removed: Dict[bytes, int] = {}
+            survivors = []
+            for record in objects.children:
+                oid = id_of_record.get(id(record))
+                if oid in dropped:
+                    removed[record.name] = removed.get(record.name, 0) + 1
+                else:
+                    survivors.append(record)
+            objects.children = survivors
+
+            if connections is not None:
+                connections.children = [
+                    record
+                    for record, row in rows
+                    if not (len(row) >= 3 and (row[1] in dropped or row[2] in dropped))
+                ]
+                report["connections"] = len(rows) - len(connections.children)
+
+            takes = sections.get(b"Takes")
+            if takes is not None:
+                takes.children = [
+                    child
+                    for child in takes.children
+                    if not (
+                        child.name == b"Take" and cls._first_string(child) in wanted
+                    )
+                ]
+                left = [
+                    cls._first_string(c) for c in takes.children if c.name == b"Take"
+                ]
+                for child in takes.children:
+                    if child.name == b"Current" and cls._first_string(child) in wanted:
+                        if left:
+                            child.replaced = cls._pack_string(left[0].encode("utf-8"))
+
+            definitions = sections.get(b"Definitions")
+            if definitions is not None:
+                total = 0
+                for object_type in definitions.children:
+                    if object_type.name != b"ObjectType":
+                        continue
+                    head = cls._scalars(object_type)
+                    count = removed.get(head[0], 0) if head else 0
+                    if count:
+                        cls._subtract_count(object_type, count)
+                        total += count
+                if total:
+                    cls._subtract_count(definitions, total)
+
+            report["takes"] = list(stacks.values())
+            report["objects"] = {k.decode(): v for k, v in removed.items()}
             target = dst or src
-            # Beside the target, so the replace below stays atomic -- but
-            # TRACKED, not a raw allocation: a raise inside _write (disk full
-            # is realistic for a multi-hundred-MB payload) used to strand a
-            # partial file with nothing to sweep it. The except arm clears it
-            # now; the store's age-gated sweep clears it when the process dies
-            # before any finally can run.
-            scratch = TempArtifacts(
-                "fbx_downsize", policy="scoped", dir=os.path.dirname(target) or "."
-            )
-            part = scratch.path(extension=".part")
-            try:
-                with open(part, "wb") as out:
-                    cls._write(out, version, roots, footer_id, magic)
-            except BaseException:
-                scratch.cleanup()
-                raise
-        # After the mmap closes: Windows refuses to replace a mapped file, and
-        # `target` is `src` for an in-place run.
+            part = cls._write_part(target, version, roots, footer_id, magic)
         os.replace(part, target)
         return report
+
+    @staticmethod
+    def _display(raw: bytes) -> str:
+        """The human half of an ``name\\x00\\x01Class`` object name."""
+        return bytes(raw).split(b"\x00\x01", 1)[0].decode("utf-8", "replace")
+
+    @classmethod
+    def _first_string(cls, record: _Record) -> Optional[str]:
+        head = cls._scalars(record)
+        return (
+            head[0].decode("utf-8", "replace")
+            if head and isinstance(head[0], bytes)
+            else None
+        )
+
+    @staticmethod
+    def _pack_string(data: bytes) -> bytes:
+        return b"S" + struct.pack("<I", len(data)) + data
+
+    @classmethod
+    def _subtract_count(cls, record: _Record, count: int) -> None:
+        """Lower *record*'s ``Count`` child by *count* (never below zero)."""
+        for child in record.children:
+            if child.name != b"Count":
+                continue
+            head = cls._scalars(child)
+            if head and isinstance(head[0], int):
+                child.replaced = b"I" + struct.pack("<i", max(0, head[0] - count))
 
     @classmethod
     def rewrite(cls, src: str, dst: str) -> None:
