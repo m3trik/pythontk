@@ -1671,6 +1671,100 @@ class StrTest(BaseTestCase):
                 self.assertEqual(result["unresolved"], ["nope"])
                 self.assertEqual(result["template"].format(), "WIP_s_{nope}")
 
+    # -------------------------------------------------------------------------
+    # Inline regex modifier -- {token:PATTERN->REPLACEMENT}
+    # -------------------------------------------------------------------------
+
+    def test_split_regex_modifier_only_claims_a_spec_with_a_delimiter(self):
+        """A modifier and an ordinary format spec share the spec slot, so the
+        delimiter is what tells them apart -- otherwise {n:03d} would be read as
+        a regex and every counter would break."""
+        self.assertEqual(StrUtils.split_regex_modifier("_bar.*->"), ("_bar.*", ""))
+        self.assertEqual(StrUtils.split_regex_modifier("a=>b"), ("a", "b"))
+        self.assertIsNone(StrUtils.split_regex_modifier("03d"))
+        self.assertIsNone(StrUtils.split_regex_modifier(""))
+
+    def test_split_regex_modifier_does_not_split_on_alternation(self):
+        """`|` is regex ALTERNATION, not a delimiter: the retired RegEx field
+        split on it, which made `(foo|bar)->baz` unwritable."""
+        self.assertEqual(
+            StrUtils.split_regex_modifier("(foo|bar)->baz"), ("(foo|bar)", "baz")
+        )
+
+    def test_apply_regex_modifier_returns_the_error_rather_than_raising(self):
+        """The text is typed by a user mid-edit, where half a regex is a
+        keystroke -- not a reason to abort an export."""
+        value, error = StrUtils.apply_regex_modifier("asset", "(->")
+        self.assertEqual(value, "asset")
+        self.assertIn("invalid regex", error)
+
+    def test_resolve_name_pattern_applies_an_inline_regex_modifier(self):
+        ctx = {"name": "test_scene_bar_old", "folder": "assets"}
+        for pattern, expected in (
+            ("{name:_bar.*->}", "test_scene"),
+            ("{name:(foo|scene)->asset}", "test_asset_bar_old"),
+            ("WIP_{name:^test_->}", "WIP_scene_bar_old"),
+            ("{folder:^a->A}", "Assets"),
+        ):
+            with self.subTest(pattern=pattern):
+                self.assertEqual(
+                    StrUtils.resolve_name_pattern(pattern, ctx)["name"], expected
+                )
+
+    def test_resolve_name_pattern_modifier_composes_with_a_kept_counter(self):
+        """The two spec grammars must coexist in ONE pattern: a modifier on the
+        name, a format spec on the counter a later stage fills."""
+        result = StrUtils.resolve_name_pattern(
+            "{name:_bar.*->}_v{n:03d}", {"name": "test_scene_bar_old"}, keep=("n",)
+        )
+        self.assertEqual(result["name"], "test_scene_v{n:03d}")
+        self.assertEqual(result["template"].format(n=4), "test_scene_v004")
+
+    def test_resolve_name_pattern_reports_an_invalid_modifier(self):
+        result = StrUtils.resolve_name_pattern("{name:(->}", {"name": "asset"})
+        self.assertEqual(result["name"], "asset")
+        self.assertEqual(len(result["regex_errors"]), 1)
+        self.assertIn("invalid regex", result["regex_errors"][0][1])
+
+    def test_attach_modifier_gives_a_bare_token_the_spec(self):
+        self.assertEqual(
+            StrUtils.attach_modifier("WIP_{scene}_v{n:03d}", "scene", "_bar.*->"),
+            "WIP_{scene:_bar.*->}_v{n:03d}",
+        )
+
+    def test_attach_modifier_leaves_an_explicit_spec_alone(self):
+        """What the user wrote inline outranks a folded default -- otherwise a
+        migration would overwrite the rule it is meant to preserve."""
+        self.assertEqual(
+            StrUtils.attach_modifier("{scene:^a->b}", "scene", "_bar.*->"),
+            "{scene:^a->b}",
+        )
+
+    def test_attach_modifier_touches_no_other_token(self):
+        self.assertEqual(
+            StrUtils.attach_modifier("{folder}_{scene}", "scene", "x->y"),
+            "{folder}_{scene:x->y}",
+        )
+
+    def test_attach_modifier_preserves_escaped_braces(self):
+        self.assertEqual(
+            StrUtils.attach_modifier("{{lit}}_{scene}", "scene", "x->y"),
+            "{{lit}}_{scene:x->y}",
+        )
+
+    def test_expand_wildcard_leaves_a_star_inside_a_token_alone(self):
+        r"""REGRESSION: the wildcard is literal-text sugar. Expanding a `*` inside
+        a token rewrote the regex quantifier in an inline modifier --
+        `{name:_bar.*->}` became `{name:_bar.{name}->}` -- silently breaking
+        every pattern using `.*`, `\d*` or `[a-z]*`."""
+        self.assertEqual(StrUtils.expand_wildcard("{name:_bar.*->}"), "{name:_bar.*->}")
+        self.assertEqual(
+            StrUtils.expand_wildcard(r"WIP_*_{name:_v\d*->}"),
+            r"WIP_{name}_{name:_v\d*->}",
+        )
+        # the literal-text wildcard still expands, and escaped braces survive
+        self.assertEqual(StrUtils.expand_wildcard("{{lit}}_*"), "{{lit}}_{name}")
+
     def test_resolve_name_pattern_malformed_template_formats_back_verbatim(self):
         result = StrUtils.resolve_name_pattern("{bad_{n}", {"name": "x"}, keep=("n",))
         self.assertTrue(result["error"])

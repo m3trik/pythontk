@@ -18,9 +18,10 @@ import os
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Sequence, Tuple
 
 from pythontk.core_utils.app_launcher import AppLauncher
+from pythontk.core_utils.cancel_scope import OperationCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ class ScriptRunner(_ScriptRunnerInternal):
         cwd: Optional[str] = None,
         env: Optional[dict] = None,
         expect: str = CREATED,
+        on_output: Optional[Callable[[Optional[str]], Optional[bool]]] = None,
     ) -> ScriptRunResult:
         """Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
 
@@ -99,6 +101,14 @@ class ScriptRunner(_ScriptRunnerInternal):
                 propagates with ``script_path`` attached, script kept). ``None`` = no limit.
             script_suffix / script_prefix: Naming for the temp script file.
             cwd / env: Forwarded to the child process.
+            on_output: Stream the child's output while it runs instead of only
+                collecting it at exit (:meth:`pythontk.AppLauncher.run`): called with
+                each line as it arrives and with ``None`` on quiet ticks; return
+                ``False`` to stop the run. :meth:`ProgressRelay.reader` builds one that
+                turns a template's ``::progress::`` markers into a progress bar. A
+                stopped run removes its script and, under :data:`CREATED`, any partial
+                artifact -- the caller asked for it to end, so nothing is kept for
+                debugging.
 
         Returns:
             ScriptRunResult: on success (the temp script is removed).
@@ -109,6 +119,8 @@ class ScriptRunner(_ScriptRunnerInternal):
                 output tail, and the exception carries ``script_path`` (the script is
                 kept for debugging).
             FileNotFoundError / subprocess.TimeoutExpired: from the launch itself.
+            pythontk.OperationCancelled: when *on_output* returned ``False`` (or an
+                ambient :class:`pythontk.CancelScope` was cancelled).
         """
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
@@ -139,12 +151,26 @@ class ScriptRunner(_ScriptRunnerInternal):
         # the parent is a GUI app) serves nothing.
         try:
             proc = AppLauncher.run(
-                app_exe, args=args, cwd=cwd, timeout=timeout, env=env, hide_window=True
+                app_exe,
+                args=args,
+                cwd=cwd,
+                timeout=timeout,
+                env=env,
+                hide_window=True,
+                on_output=on_output,
             )
         except subprocess.TimeoutExpired as error:
             # Same debuggability contract as the missing-artifact RuntimeError: the
             # script is kept, and the exception says where.
             error.script_path = script_path
+            raise
+        except OperationCancelled:
+            tmp.cleanup()
+            if expect == CREATED:
+                try:
+                    os.remove(artifact)
+                except OSError:
+                    pass
             raise
         duration = time.time() - start
         output = (proc.stdout or "") + (proc.stderr or "")
@@ -205,4 +231,110 @@ class ScriptRunResult:
     script_path: str
 
 
-__all__ = ["ScriptRunner", "ScriptRunResult", "CREATED", "REWRITTEN"]
+class ProgressRelay:
+    """One progress callback fed by staged work: child-script markers and in-process steps.
+
+    A blocking multi-stage run (convert in one app, bake in another, finish here) has
+    several producers of progress and one bar. Each stage owns an equal slice of
+    ``[0, total]`` and reports ``step`` of ``steps`` inside it, either in-process
+    (:meth:`report`) or from a child script printing marker lines (:meth:`line`), read
+    back through :meth:`reader` -- the ``on_output`` for
+    :meth:`ScriptRunner.run_script_to_artifact`.
+
+    *progress* has the ecosystem's ``progress(current, total, message) -> bool`` shape,
+    the one uitk's ``Switchboard.progress_adapter`` adapts a footer bar to; ``current``
+    is ``None`` on a keep-alive tick, which only pumps the receiver. A callback that
+    returns ``False`` cancels: :meth:`report`, :meth:`tick` and the reader return
+    ``False``, and the runner stops the child.
+
+    The marker is one plain line, so a template that imports nothing can print it::
+
+        print("::progress:: 3/7 Baking animation", flush=True)
+
+    Parameters:
+        progress: The receiver, or ``None`` (every report then just continues).
+        stages: How many stages share the bar.
+        total: The bar's maximum.
+        throttle: Minimum seconds between keep-alive ticks. Markers always pass.
+    """
+
+    PREFIX = "::progress::"
+
+    def __init__(
+        self,
+        progress: Optional[Callable[..., Optional[bool]]] = None,
+        stages: int = 1,
+        total: int = 100,
+        throttle: float = 0.1,
+    ):
+        self.progress = progress
+        self.stages = max(1, int(stages))
+        self.total = int(total)
+        self.throttle = float(throttle)
+        self._value = 0
+        self._last_emit = None
+
+    @classmethod
+    def line(cls, step: int, steps: int, text: str = "") -> str:
+        """The marker line a child prints for *step* of *steps*."""
+        return f"{cls.PREFIX} {int(step)}/{int(steps)} {text}".rstrip()
+
+    @classmethod
+    def parse(cls, line: Optional[str]) -> Optional[Tuple[int, int, str]]:
+        """``(step, steps, text)`` from a marker anywhere in *line*, else ``None``."""
+        index = line.find(cls.PREFIX) if line else -1
+        if index < 0:
+            return None
+        head, _, text = line[index + len(cls.PREFIX) :].strip().partition(" ")
+        step, _, steps = head.partition("/")
+        try:
+            return int(step), int(steps), text.strip()
+        except ValueError:
+            return None
+
+    @property
+    def value(self) -> int:
+        """The bar position last reported."""
+        return self._value
+
+    def report(
+        self, stage: int, step: float, steps: float, text: Optional[str] = None
+    ) -> bool:
+        """Report *step* of *steps* inside *stage* (0-based); ``False`` = cancel."""
+        stage = min(max(int(stage), 0), self.stages - 1)
+        fraction = min(max(float(step) / steps, 0.0), 1.0) if steps else 0.0
+        value = int(round((stage + fraction) * self.total / self.stages))
+        # Monotonic: a stage re-reporting an earlier step never moves the bar back.
+        self._value = max(self._value, value)
+        return self._emit(self._value, text)
+
+    def tick(self) -> bool:
+        """Keep the receiver alive between reports (throttled); ``False`` = cancel."""
+        now = time.monotonic()
+        if self._last_emit is not None and now - self._last_emit < self.throttle:
+            return True
+        return self._emit(None, None)
+
+    def reader(self, stage: int, label: str = "") -> Callable[[Optional[str]], bool]:
+        """An ``on_output`` for :meth:`ScriptRunner.run_script_to_artifact` scoped to
+        *stage*: markers report (their text prefixed with *label*), every other line
+        and every quiet poll ticks."""
+
+        def on_output(line: Optional[str]) -> bool:
+            marker = self.parse(line)
+            if marker is None:
+                return self.tick()
+            step, steps, text = marker
+            message = ": ".join(part for part in (label, text) if part) or None
+            return self.report(stage, step, steps, message)
+
+        return on_output
+
+    def _emit(self, value: Optional[int], text: Optional[str]) -> bool:
+        self._last_emit = time.monotonic()
+        if self.progress is None:
+            return True
+        return self.progress(value, self.total, text) is not False
+
+
+__all__ = ["ScriptRunner", "ScriptRunResult", "ProgressRelay", "CREATED", "REWRITTEN"]

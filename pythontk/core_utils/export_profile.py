@@ -182,6 +182,19 @@ class ExportProfile:
     #: on Windows anyway.
     NAME_WILDCARD = "*"
 
+    #: The token the wildcard (and a blank field) stands for -- the ONE spelling
+    #: of the exported name. It is the scene's own name, so it is called that:
+    #: a second token meaning "the scene name, with the RegEx already applied"
+    #: existed only while the RegEx lived in its own field, and an inline
+    #: ``{scene:PATTERN->REPLACEMENT}`` says that explicitly.
+    NAME_KEY = "scene"
+
+    #: Retired spellings of :attr:`NAME_KEY`, honoured for one release. A
+    #: consumer keeps them resolvable in its context; they are listed here so a
+    #: folded modifier reaches a pattern that still uses one -- a saved
+    #: ``{name}_x`` must keep getting the RegEx it has always had.
+    NAME_KEY_ALIASES = ("name",)
+
     #: The Output Filename's version counter: ``{n}`` is the next version the
     #: name has in the output folder, so ``*_v{n:03d}`` versions every export.
     VERSION_TOKEN = "n"
@@ -213,25 +226,69 @@ class ExportProfile:
         return StrUtils.strip_suffix((name or "").strip(), tuple(CARRIER_BY_EXTENSION))
 
     @classmethod
+    def fold_legacy_regex(cls, name_regex: Optional[str]) -> Optional[str]:
+        """The retired free-standing RegEx field's text as an inline modifier spec.
+
+        DEPRECATED input, honoured so a saved field keeps shaping the name it
+        always did. The field grew its own three-delimiter grammar; the token
+        system's modifier (:meth:`StrUtils.split_regex_modifier`) takes ``->`` /
+        ``=>`` only, because ``|`` is regex ALTERNATION -- splitting on it makes
+        ``(foo|bar)->baz`` unwritable. This folds the two legacy spellings the
+        modifier does not accept into ones it does, so ONE regex implementation
+        serves both:
+
+        - ``A|B``      -> ``A->B``  (the old "replace A with B" shorthand)
+        - ``PATTERN``  -> ``PATTERN->``  (a bare pattern deletes its match)
+
+        Returns:
+            (str | None) A spec :meth:`StrUtils.apply_regex_modifier` accepts;
+            ``None`` when *name_regex* is blank.
+        """
+        spec = (name_regex or "").strip()
+        if not spec:
+            return None
+        if StrUtils.split_regex_modifier(spec) is not None:
+            return spec
+        if "|" in spec:
+            pattern, replacement = spec.split("|", 1)
+            return f"{pattern.strip()}->{replacement.strip()}"
+        return f"{spec}->"
+
+    @classmethod
     def fold_legacy_naming(
         cls,
         pattern: Optional[str],
         version_format: str = "",
         timestamp: bool = False,
+        name_regex: Optional[str] = None,
     ) -> Optional[str]:
         """Fold the retired Version pattern and Timestamp flag into a name pattern.
 
-        DEPRECATED inputs, honoured for one release. Both decorated the name the
-        Output Filename produced -- the timestamp appended, then the Version
+        DEPRECATED inputs, honoured for one release. *name_regex* is the retired
+        free-standing RegEx field, which shaped the name token wherever the
+        pattern used it; it folds to an inline modifier on that token
+        (:meth:`StrUtils.attach_modifier`), so the rule survives the field and
+        becomes visible in the field that states the name. The other two
+        decorated the name the Output Filename produced -- the timestamp appended, then the Version
         pattern wrapping the result as ``{stem}`` -- and the field spells both
         itself now, so substituting its own placeholder form lands the same file.
         *pattern* comes back untouched when neither is given.
         """
-        if not (version_format or timestamp):
+        spec = cls.fold_legacy_regex(name_regex)
+        if not (version_format or timestamp or spec):
             return pattern
         folded = StrUtils.expand_wildcard(
-            cls.strip_deliverable_extension(pattern), wildcard=cls.NAME_WILDCARD
+            cls.strip_deliverable_extension(pattern),
+            key=cls.NAME_KEY,
+            wildcard=cls.NAME_WILDCARD,
         )
+        if spec:
+            # Into the pattern, not onto the value: retiring the field must not
+            # drop the rule, and the user can now SEE what it does. Every
+            # spelling of the name token gets it, retired ones included --
+            # the field shaped the NAME, not one way of writing it.
+            for token in (cls.NAME_KEY, *cls.NAME_KEY_ALIASES):
+                folded = StrUtils.attach_modifier(folded, token, spec)
         if timestamp:
             folded += "_{date}_{time}"
         if version_format:
@@ -247,6 +304,7 @@ class ExportProfile:
         output_format: str = "fbx",
         version_format: str = "",
         timestamp: bool = False,
+        name_regex: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Resolve the Output Filename field into the file(s) an export writes.
 
@@ -266,6 +324,8 @@ class ExportProfile:
             output_format: An :attr:`OUTPUT_EXTENSIONS` key.
             version_format: DEPRECATED -- see :meth:`fold_legacy_naming`.
             timestamp: DEPRECATED -- see :meth:`fold_legacy_naming`.
+            name_regex: DEPRECATED -- the retired free-standing RegEx field;
+                write ``{scene:PATTERN->REPLACEMENT}`` into the pattern instead.
 
         Returns:
             ``resolve_name_pattern``'s dict plus ``"stem"`` (the final name),
@@ -277,11 +337,12 @@ class ExportProfile:
         """
         from pythontk.file_utils._file_utils import FileUtils
 
-        folded = cls.fold_legacy_naming(pattern, version_format, timestamp)
+        folded = cls.fold_legacy_naming(pattern, version_format, timestamp, name_regex)
         result = StrUtils.resolve_name_pattern(
             cls.strip_deliverable_extension(folded),
             context,
             wildcard=cls.NAME_WILDCARD,
+            key=cls.NAME_KEY,
             keep=(cls.VERSION_TOKEN,),
         )
         template, counter_error = result["template"], None
@@ -330,9 +391,15 @@ class ExportProfile:
 
         *level* is a logger method name (``"error"`` / ``"warning"``), so a panel
         reports through its own logger at the severity given. *tokens* is the
-        vocabulary named when a token had no value; *version_suffix* (a compiled
-        regex) warns when a versioned name does not end the way the caller's
-        sidecar pairing needs.
+        vocabulary named when a token had no value.
+
+        *version_suffix* is DEPRECATED and ignored. It used to warn that a
+        versioned name not ending in ``_v<N>`` would lose its hierarchy diff
+        baseline across versions -- true while that baseline was keyed by the
+        output file's stem, which is exactly the coupling that made renaming an
+        export reset its history. The baseline is per-SCENE now
+        (``HierarchyBaseline``), so no filename can carry or lose it and the
+        warning has nothing left to warn about.
         """
         report = []
         if resolved.get("folded"):
@@ -376,18 +443,6 @@ class ExportProfile:
                     "warning",
                     f"Output filename dropped {' '.join(resolved['dropped'])} — "
                     "not valid in a filename.",
-                )
-            )
-        if (
-            version_suffix is not None
-            and resolved.get("n") is not None
-            and not version_suffix.search(resolved["stem"])
-        ):
-            report.append(
-                (
-                    "warning",
-                    f"Versioned name {resolved['stem']!r} does not end in '_v<N>' — "
-                    "the hierarchy diff baseline will not carry across versions.",
                 )
             )
         return report

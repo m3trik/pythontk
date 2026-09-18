@@ -8,26 +8,20 @@ always been on the root (``ptk.PreviewServer`` / ``ptk.PreviewDeliverer`` /
 ``ptk.PreviewBridge``) and are unaffected.
 """
 
-import importlib
-import warnings
+from pythontk.core_utils.deprecation import Deprecation
 
-_HOMES = {
-    "PreviewServer": "server",
-    "VIEWER_CLOSED_PATH": "server",
-    "SETTINGS_PATH": "server",
-    "PreviewDeliverer": "deliverer",
-    "PreviewBridge": "bridge",
-}
-
-
-def __getattr__(name):
-    home = _HOMES.get(name)
-    if home is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    warnings.warn(
-        f"pythontk.net_utils.preview_server.{name} moved to "
-        f"pythontk.net_utils.preview.{home}.{name}; this alias goes next release.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return getattr(importlib.import_module(f"pythontk.net_utils.preview.{home}"), name)
+#: The hand-rolled ``__getattr__`` this replaces got the warning right and the
+#: deadline wrong -- "goes next release" named no release, so nothing could
+#: check it. ``Deprecation.attributes`` also chains onto any ``__getattr__``
+#: already on the module, which matters wherever a lazy loader owns one.
+Deprecation.attributes(
+    globals(),
+    {
+        "PreviewServer": "pythontk.net_utils.preview.server.PreviewServer",
+        "VIEWER_CLOSED_PATH": "pythontk.net_utils.preview.server.VIEWER_CLOSED_PATH",
+        "SETTINGS_PATH": "pythontk.net_utils.preview.server.SETTINGS_PATH",
+        "PreviewDeliverer": "pythontk.net_utils.preview.deliverer.PreviewDeliverer",
+        "PreviewBridge": "pythontk.net_utils.preview.bridge.PreviewBridge",
+    },
+    remove_in="0.11.0",
+)

@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Union
 from collections import defaultdict
 import inspect
-import warnings
+
+from pythontk.core_utils.deprecation import Deprecation
 
 
 @dataclass
@@ -105,24 +106,26 @@ class ConversionRegistry:
             key=lambda c: c.priority, reverse=True
         )
 
+    @Deprecation.symbol(
+        "ConversionRegistry.add_plugin with a register_conversions(registry) "
+        "method on the class",
+        remove_in="0.11.0",
+        reason=(
+            "Nothing in the ecosystem sets the _conversion_info attribute it "
+            "scans for, so it has never registered anything."
+        ),
+    )
     def register_from_class(self, cls):
         """Register all decorated conversion methods from a class.
 
-        .. deprecated::
+        .. deprecated:: 0.11.0
             Define ``register_conversions(registry)`` on the class and hand it
             to :meth:`add_plugin` instead. Nothing in the ecosystem sets the
             ``_conversion_info`` attribute this scans for -- no decorator
             produces it -- so this has never registered anything; it was
             reachable only as ``_scan_pending``'s fallback, measured at zero
-            invocations. Slated for removal next release.
+            invocations.
         """
-        warnings.warn(
-            "ConversionRegistry.register_from_class is deprecated and will be "
-            "removed in the next release; define register_conversions(registry) "
-            "on the class and pass it to add_plugin instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         if cls in self._registered_classes:
             return
 

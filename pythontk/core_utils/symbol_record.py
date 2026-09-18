@@ -22,12 +22,19 @@ Consumers
       records by :meth:`key` - ``(qualname, kind)``, deliberately NOT the
       signature string, which the two engines render differently.
 
-The field set is intentionally frozen to the seven attributes the static
-registry sidecar (``API_REGISTRY.json``) already serialises, so promoting the
-generator's former private ``SymbolEntry`` onto this shared type does not change
-a single committed byte. Runtime-only enrichments (async/abstract flags, the
-defining class, a resolved source location) are layered on by ``HelpMixin`` at
-the dict level, not added as fields here.
+The field set is deliberately minimal and its ORDER is a hard contract: the
+static registry sidecar (``API_REGISTRY.json``) is ``json.dumps(asdict(...))``,
+so reordering churns every committed registry in the ecosystem. Runtime-only
+enrichments (async/abstract flags, the defining class, a resolved source
+location) are layered on by ``HelpMixin`` at the dict level, not added here.
+
+``remove_in`` is the one field added since the set was first frozen, and it
+pays for its churn: ``deprecated`` alone records THAT a name is retired, which
+is what let ``flip_uvs`` ship in 50 releases after its notice. Both producers
+now carry the release it stops working in -- the static one reads it off the
+``Deprecation`` decorator with ``ast``, the dynamic one off the record the
+decorator stamped -- so an alias that outlived its window is a comparison
+rather than an act of memory.
 """
 
 from __future__ import annotations
@@ -52,6 +59,10 @@ class SymbolRecord:
     summary: str
     line: int
     deprecated: bool = False
+    #: Release the symbol stops working in, e.g. ``"0.11.0"``. Empty when the
+    #: symbol is live, or when it is deprecated by a bare marker that named no
+    #: removal version.
+    remove_in: str = ""
 
     def as_dict(self) -> Dict[str, Any]:
         """Plain ``dict`` of the fields (matches the ``hierarchy_diff`` convention)."""
@@ -75,6 +86,9 @@ class SymbolRecord:
             "property": " *(property)*",
         }.get(self.kind, "")
         if self.deprecated:
-            decoration += " **DEPRECATED**"
+            # The removal version rides in the row itself so a reviewer reading
+            # the registry sees the deadline without opening the source.
+            due = f" (remove in {self.remove_in})" if self.remove_in else ""
+            decoration += f" **DEPRECATED{due}**"
         summary = f" — {self.summary}" if self.summary else ""
         return f"  - `{self.qualname}{self.signature}`{decoration}{summary}"

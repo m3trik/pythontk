@@ -461,6 +461,7 @@ class HelpMixin:
             summary=cls._get_summary(doc) if doc else "",
             line=cls._safe_line(member),
             deprecated=cls._is_deprecated(member),
+            remove_in=cls._deprecation_remove_in(member),
         )
 
     @classmethod
@@ -507,13 +508,51 @@ class HelpMixin:
             return 0
 
     @staticmethod
-    def _is_deprecated(member: Any) -> bool:
-        """True if the callable carries a ``__deprecated__`` marker."""
+    def _deprecation_marker(member: Any) -> Any:
+        """The member itself, or what it unwraps to, whichever carries a marker.
+
+        ``Deprecation`` stamps both the wrapper and the function it wraps, but
+        a member may be wrapped again by something else (``CoreUtils.undoable``
+        and friends), so try the outer object first and fall back to the
+        unwrapped one rather than assuming either.
+        """
+        if getattr(member, "__deprecated__", False):
+            return member
+        if isinstance(member, property):
+            # The descriptor takes no attributes, so the marker lives on
+            # whichever accessor was decorated.
+            for accessor in (member.fget, member.fset, member.fdel):
+                if accessor is not None and getattr(accessor, "__deprecated__", False):
+                    return accessor
+            return member
         try:
-            target = inspect.unwrap(member) if callable(member) else member
+            return inspect.unwrap(member) if callable(member) else member
         except Exception:
-            target = member
+            return member
+
+    @classmethod
+    def _is_deprecated(cls, member: Any) -> bool:
+        """True if the callable carries a ``__deprecated__`` marker.
+
+        The marker is PEP 702's: ``pythontk.Deprecation`` sets it to the warning
+        message, and :func:`warnings.deprecated` on 3.13+ sets the same thing,
+        so both read as deprecated here without a second code path.
+        """
+        target = cls._deprecation_marker(member)
         return bool(getattr(target, "__deprecated__", False))
+
+    @classmethod
+    def _deprecation_remove_in(cls, member: Any) -> str:
+        """Release the member stops working in, or ``""`` if it names none.
+
+        Read off the ``DeprecationRecord`` that ``Deprecation`` stamps
+        alongside the PEP 702 marker, duck-typed rather than imported: this
+        module is below ``deprecation`` in the import order, and a bare
+        ``__deprecated__`` (the stdlib's, or a hand-written one) legitimately
+        carries no version.
+        """
+        record = getattr(cls._deprecation_marker(member), "__deprecated_record__", None)
+        return str(getattr(record, "remove_in", "") or "")
 
     # -------------------------------------------------------------------------
     # Source Code Methods

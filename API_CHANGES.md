@@ -1,110 +1,177 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ 33aff91)._
+_Diff vs the last release (origin/main @ d35df09)._
 
-## Added (65)
+## Added (139)
 
-- `core_utils/color.py::Color.from_hsvf(cls, h: float, s: float, v: float, a: float = 1.0) -> 'Color'`
-- `core_utils/color.py::Color.hsv(self) -> Tuple[float, float, float]`
-- `core_utils/color.py::Color.linear_from_srgb(rgb: Sequence[float]) -> Tuple[float, ...]`
-- `core_utils/color.py::Color.srgb_from_linear(rgb: Sequence[float]) -> Tuple[float, ...]`
-- `core_utils/color.py::ColorStops(class)`
-- `core_utils/color.py::ColorStops.defaults(self) -> Tuple[Tuple[float, float, float], ...]`
-- `core_utils/color.py::ColorStops.keys(self) -> Tuple[str, ...]`
-- `core_utils/color.py::ColorStops.resolve(self, value: object = None) -> Tuple[Tuple[float, float, float], ...]`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.is_previewing(self, clip_id: Optional[int] = None) -> bool`
-- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.collapse_tile_sets(cls, texture_sets: Dict[str, List[str]]) -> Dict[str, List[str]]`
-- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.get_tile_paths(cls, filepath: str) -> List[str]`
-- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.is_recompressible(cls, path: str) -> bool`
-- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.optimize_maps(cls, requests: Sequence[Dict[str, Any]], workers: Optional[int] = None) -> List[Tuple[Optional[str], Optional[Exception]]]`
-- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.stage_maps(cls, sources: Mapping[str, Mapping[str, Any]], assess: Callable[[str], Optional[Mapping[str, Any]]], *, output_profile: Optional[str] = None, clamp: Optional[Mapping[str, Any]] = None, staging_dir: Union[str, Callable[[], Tuple[str, bool]], None] = None, temp_staging: bool = False, write_back: bool = False, recompress: bool = True, old_files_folder: str = 'original_textures', pass_desc: str = '', logger: Optional[logging.Logger] = None, workers: Optional[int] = None) -> Dict[str, Any]`
-- `core_utils/export_profile.py::ExportProfile.fold_legacy_naming(cls, pattern: Optional[str], version_format: str = '', timestamp: bool = False) -> Optional[str]`
-- `core_utils/export_profile.py::ExportProfile.frame_rate_options(cls) -> Dict[str, Optional[str]]`
-- `core_utils/export_profile.py::ExportProfile.naming_report(cls, resolved: Mapping[str, Any], tokens: Mapping[str, str], version_suffix=None) -> List[Tuple[str, str]]`
-- `core_utils/export_profile.py::ExportProfile.optimize_textures_options(cls) -> Dict[str, Any]`
-- `core_utils/export_profile.py::ExportProfile.resolve_output_path(cls, pattern: Optional[str], context: Mapping[str, Any], export_dir: str = '', output_format: str = 'fbx', version_format: str = '', timestamp: bool = False) -> Dict[str, Any]`
-- `core_utils/export_profile.py::ExportProfile.scoped_tables(cls, manager: type) -> type`
-- `core_utils/export_profile.py::ExportProfile.strip_deliverable_extension(name: Optional[str]) -> str`
-- `core_utils/export_profile.py::ExportProfile.task_order(cls, manager: Any) -> List[str]`
-- `core_utils/export_profile.py::ExportProfile.texture_file_type_options(cls) -> Dict[str, Any]`
-- `core_utils/export_profile.py::ExportProfile.texture_size_limit_bytes(max_size_mb: Any) -> Optional[int]`
-- `core_utils/export_profile.py::ExportProfile.unimplemented(cls, manager: Any) -> Dict[str, List[str]]`
-- `core_utils/export_profile.py::ExportRun(class)`
-- `core_utils/export_profile.py::ExportRun.create_glb(self) -> bool`
-- `core_utils/export_profile.py::ExportRun.from_tasks(cls, tasks: Optional[Mapping[str, Any]], texture_file_types: Iterable[Any] = ()) -> Tuple['ExportRun', Dict[str, Any], List[Tuple[str, str]]]`
-- `core_utils/export_profile.py::ExportRun.glb_only(self) -> bool`
-- `core_utils/export_profile.py::ExportRun.replace(self, **changes: Any) -> 'ExportRun'`
-- `core_utils/export_profile.py::ExportRun.usd(self) -> bool`
-- `core_utils/export_profile.py::ExportRun.with_tasks(self, tasks: Mapping[str, Any]) -> 'ExportRun'`
-- `core_utils/task_factory.py::TaskFactory.kept_edits(self) -> List[str]`
-- `core_utils/task_factory.py::TaskFactory.record_kept_edit(self, label: str) -> None`
-- `file_utils/_file_utils.py::FileUtils.atomic_write(target: str, write: Callable[[str], Any], promote: bool = True) -> str`
-- `file_utils/_file_utils.py::FileUtils.next_version_number(directory: str, format: str = '{stem}_v{n:03d}{ext}', stem: str = '', ext: str = '', start: int = 1, extensions: Iterable[str] = ()) -> int`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.OPTIMIZE_WORKERS(cls) -> int`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.effect_preview_channels(cls, nodes: Sequence[str], channel: str, keys: Sequence[Sequence[float]], colors: Optional[Sequence[Optional[Sequence[float]]]] = None, fps: float = 30.0) -> Dict[str, Any]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fix_glb_lightmap_metadata(cls, glb: GlbTarget) -> int`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fix_glb_skin_skeletons(cls, glb: GlbTarget) -> List[str]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.overlay_data_export(cls, gltf: dict, channels: Dict[str, Any]) -> List[str]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.prune_glb_unused_skins(cls, glb: GlbTarget) -> Dict[str, int]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.reduce_glb_animations(cls, glb: GlbTarget, tolerance: float, rotation_tolerance: Optional[float] = None) -> Dict[str, int]`
-- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_glb_image_bytes(self) -> List[Finding]`
-- `file_utils/mesh_convert/fbx_file.py::FbxFile.user_properties(self, name: str, kind: str = 'Model') -> List[Any]`
-- `file_utils/mesh_convert/fbx_media.py::FbxMedia.drop_takes(cls, src: str, dst: Optional[str] = None, *, names: Iterable[str]) -> Dict[str, Any]`
-- `file_utils/mesh_convert/fbx_media.py::FbxMedia.expand_grayscale(cls, src: str, dst: Optional[str] = None, *, png_compress_level: int = 1, jpeg_quality: int = 95, workers: Optional[int] = None) -> Dict[str, Any]`
-- `file_utils/mesh_convert/glb_fades.py::PointerChannel.color_key(self) -> Optional[str]`
-- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction(class)`
-- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction.deviation(cls, reference: Sampler, candidate: Sampler, quaternion: bool = False) -> float`
-- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction.evaluate(times: Sequence[float], values: Sequence[Sequence[float]], at: float, interpolation: str = 'LINEAR', quaternion: bool = False) -> Tuple[float, ...]`
-- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction.read_sampler(gltf: Dict[str, Any], blob: Optional[bytes], sampler: Dict[str, Any]) -> Optional[Sampler]`
-- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction.reduce(cls, glb: Any, tolerance: float, rotation_tolerance: Optional[float] = None) -> Dict[str, int]`
-- `img_utils/_img_utils.py::ImgUtils.encode_workers(cls, requested: Optional[int] = None) -> int`
-- `img_utils/ktx2_encoder.py::Ktx2Encoder.encode_timeout(cls, width: int, height: int) -> float`
-- `math_utils/ramp_keys.py::RampKeys(class)`
-- `math_utils/ramp_keys.py::RampKeys.fade(cls, start: float, end: float, direction: str = 'in', whole_frames: bool = True) -> List[Key]`
-- `math_utils/ramp_keys.py::RampKeys.fade_loop(cls, duration: float, hold: float = 0.0, direction: str = 'in') -> List[Key]`
-- `math_utils/ramp_keys.py::RampKeys.frames(whole: bool, *times: float) -> Tuple[float, ...]`
-- `math_utils/ramp_keys.py::RampKeys.pulse(cls, start: float, end: float, period: float, bright_fraction: float = 0.59, ramp_fraction: float = 0.25, lead_in: Optional[float] = None, lead_out: Optional[float] = None, whole_frames: bool = True) -> List[Key]`
-- `math_utils/ramp_keys.py::RampKeys.pulse_gaps(cls, start: float, end: float, ramp: float, lead_in: Optional[float] = None, lead_out: Optional[float] = None, gap_min: Optional[float] = None) -> Tuple[float, float]`
-- `str_utils/_str_utils.py::StrUtils.expand_wildcard(text: str, key: str = 'name', wildcard: str = '*') -> str`
-- `str_utils/_str_utils.py::StrUtils.name_pattern_context(**values) -> dict`
-- `str_utils/_str_utils.py::StrUtils.resolve_name_pattern(cls, pattern: str, context: dict = None, wildcard: str = '*', key: str = 'name', keep: Iterable[str] = ()) -> dict`
-- `str_utils/_str_utils.py::StrUtils.to_legal_filename(cls, name: str, replacement: str = '', report: bool = False)`
+- `core_utils/app_handoff.py::RIG_MODES(constant)`
+- `core_utils/app_handoff.py::RIG_MODE_PARAM(constant)`
+- `core_utils/deprecation.py::Deprecation(class)`
+- `core_utils/deprecation.py::Deprecation.attributes(cls, module_globals: Dict[str, Any], moved: Mapping[str, str], *, remove_in: str, reason: Optional[str] = None) -> Dict[str, DeprecationRecord]`
+- `core_utils/deprecation.py::Deprecation.expired(cls, version: str, *, module: Optional[str] = None) -> Tuple[DeprecationRecord, ...]`
+- `core_utils/deprecation.py::Deprecation.parameter(cls, old: str, *, remove_in: str, new: Optional[str] = None, transform: Optional[Callable[[Any], Any]] = None, drop: bool = False, reason: Optional[str] = None) -> Callable[[Callable], Callable]`
+- `core_utils/deprecation.py::Deprecation.registered(cls, *, module: Optional[str] = None, kind: Optional[str] = None) -> Tuple[DeprecationRecord, ...]`
+- `core_utils/deprecation.py::Deprecation.report(cls, version: Optional[str] = None, *, module: Optional[str] = None) -> str`
+- `core_utils/deprecation.py::Deprecation.symbol(cls, replacement: str, *, remove_in: str, reason: Optional[str] = None) -> Callable[[Any], Any]`
+- `core_utils/deprecation.py::Deprecation.values(cls, aliases: Mapping[Any, Any], *, what: str, remove_in: str, module: Optional[str] = None, reason: Optional[str] = None) -> Callable[[Any], Any]`
+- `core_utils/deprecation.py::Deprecation.version_key(version: str) -> Tuple[int, int, int]`
+- `core_utils/deprecation.py::Deprecation.warn(cls, what: str, replacement: str, *, remove_in: str, reason: Optional[str] = None, module: Optional[str] = None, kind: str = 'symbol', stacklevel: int = 1) -> DeprecationRecord`
+- `core_utils/deprecation.py::DeprecationRecord(class)`
+- `core_utils/deprecation.py::DeprecationRecord.expired(self, version: str) -> bool`
+- `core_utils/deprecation.py::DeprecationRecord.key(self) -> Tuple[str, str]`
+- `core_utils/deprecation.py::DeprecationRecord.message(self) -> str`
+- `core_utils/deprecation.py::DeprecationRecord.package(self) -> str`
+- `core_utils/engines/rig_graph/rig_capability.py::FIDELITIES(constant)`
+- `core_utils/engines/rig_graph/rig_capability.py::RigCapability(class)`
+- `core_utils/engines/rig_graph/rig_capability.py::RigCapability.from_dict(cls, data: Dict[str, Any]) -> 'RigCapability'`
+- `core_utils/engines/rig_graph/rig_capability.py::RigCapability.op(self, record: RigRecord) -> Optional[RigOpCapability]`
+- `core_utils/engines/rig_graph/rig_capability.py::RigCapability.rejects(self, record: RigRecord) -> List[Tuple[str, str]]`
+- `core_utils/engines/rig_graph/rig_capability.py::RigCapability.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/rig_graph/rig_capability.py::RigOpCapability(class)`
+- `core_utils/engines/rig_graph/rig_capability.py::RigOpCapability.accepts_param(self, path: str, value: Any) -> bool`
+- `core_utils/engines/rig_graph/rig_capability.py::RigOpCapability.accepts_plug(self, path: str) -> bool`
+- `core_utils/engines/rig_graph/rig_capability.py::RigOpCapability.from_dict(cls, data: Dict[str, Any]) -> 'RigOpCapability'`
+- `core_utils/engines/rig_graph/rig_capability.py::RigOpCapability.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/rig_graph/rig_machinery.py::RigMachinery(class)`
+- `core_utils/engines/rig_graph/rig_machinery.py::RigMachinery.classify(cls, nodes: Mapping[str, str], *, seeds: Iterable[str] = (), protected: Iterable[str] = (), separator: str = '|') -> Dict[str, str]`
+- `core_utils/engines/rig_graph/rig_machinery.py::RigMachinery.select(cls, section: Mapping[str, str], subtrees: Mapping[str, Sequence[str]], *, protected: Iterable[str] = (), separator: str = '|', suffix: str = '.') -> Tuple[Dict[str, str], Tuple[str, ...]]`
+- `core_utils/engines/rig_graph/rig_machinery.py::RigMachinery.tally(kinds: Mapping[str, str]) -> Dict[str, int]`
+- `core_utils/engines/rig_graph/rig_machinery.py::RigMachinery.unambiguous(cls, kinds: Mapping[str, str], names: Iterable[str], *, separator: str = '|') -> Tuple[Dict[str, str], Tuple[str, ...]]`
+- `core_utils/engines/rig_graph/rig_model.py::DEFAULT_FALLBACK(constant)`
+- `core_utils/engines/rig_graph/rig_model.py::EXPR_FUNCTIONS(constant)`
+- `core_utils/engines/rig_graph/rig_model.py::FALLBACKS(constant)`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph(class)`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.components(self, record_ids: Optional[Iterable[str]] = None) -> List[List[str]]`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.coverage(self) -> Dict[str, Any]`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.effective_policy(self, record: RigRecord) -> RigPolicy`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.from_dict(cls, data: Dict[str, Any]) -> 'RigGraph'`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.is_plug(value: Any) -> bool`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.iter_edges(self) -> Iterator[Tuple[str, str]]`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.node(self, node_id: str) -> Optional[RigNode]`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.parent_of(node_id: str) -> Optional[str]`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.record(self, record_id: str) -> Optional[RigRecord]`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.split_plug(plug: str) -> Tuple[str, str]`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.validate(self) -> List[str]`
+- `core_utils/engines/rig_graph/rig_model.py::RigGraph.validate_expression(expr: str, variables: Sequence[str] = ()) -> List[str]`
+- `core_utils/engines/rig_graph/rig_model.py::RigNode(class)`
+- `core_utils/engines/rig_graph/rig_model.py::RigNode.from_dict(cls, data: Dict[str, Any]) -> 'RigNode'`
+- `core_utils/engines/rig_graph/rig_model.py::RigNode.parent(self) -> Optional[str]`
+- `core_utils/engines/rig_graph/rig_model.py::RigNode.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/rig_graph/rig_model.py::RigPolicy(class)`
+- `core_utils/engines/rig_graph/rig_model.py::RigPolicy.from_dict(cls, data: Optional[Dict[str, Any]]) -> 'RigPolicy'`
+- `core_utils/engines/rig_graph/rig_model.py::RigPolicy.merged(self, default: 'RigPolicy') -> 'RigPolicy'`
+- `core_utils/engines/rig_graph/rig_model.py::RigPolicy.resolved(self) -> 'RigPolicy'`
+- `core_utils/engines/rig_graph/rig_model.py::RigPolicy.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/rig_graph/rig_model.py::RigRecord(class)`
+- `core_utils/engines/rig_graph/rig_model.py::RigRecord.from_dict(cls, data: Dict[str, Any]) -> 'RigRecord'`
+- `core_utils/engines/rig_graph/rig_model.py::RigRecord.key(self) -> str`
+- `core_utils/engines/rig_graph/rig_model.py::RigRecord.node_ids(self) -> List[str]`
+- `core_utils/engines/rig_graph/rig_model.py::RigRecord.plug_paths(self) -> List[Tuple[str, str]]`
+- `core_utils/engines/rig_graph/rig_model.py::RigRecord.source_ids(self) -> List[str]`
+- `core_utils/engines/rig_graph/rig_model.py::RigRecord.target_ids(self) -> List[str]`
+- `core_utils/engines/rig_graph/rig_model.py::RigRecord.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/rig_graph/rig_model.py::SCHEMA_VERSION(constant)`
+- `core_utils/engines/rig_graph/rig_model.py::SHAPES(constant)`
+- `core_utils/engines/rig_graph/rig_plan.py::KINDS(constant)`
+- `core_utils/engines/rig_graph/rig_plan.py::PlanResult(class)`
+- `core_utils/engines/rig_graph/rig_plan.py::PlanResult.counts(self) -> Dict[str, int]`
+- `core_utils/engines/rig_graph/rig_plan.py::PlanResult.entries(self, severity: str) -> List[ReportEntry]`
+- `core_utils/engines/rig_graph/rig_plan.py::PlanResult.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/rig_graph/rig_plan.py::PlanResult.worst_severity(self) -> str`
+- `core_utils/engines/rig_graph/rig_plan.py::ReportEntry(class)`
+- `core_utils/engines/rig_graph/rig_plan.py::ReportEntry.recoverable(self) -> bool`
+- `core_utils/engines/rig_graph/rig_plan.py::ReportEntry.severity(self) -> str`
+- `core_utils/engines/rig_graph/rig_plan.py::ReportEntry.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/rig_graph/rig_plan.py::RigPlanRefused(class)`
+- `core_utils/engines/rig_graph/rig_plan.py::RigPlanner(class)`
+- `core_utils/engines/rig_graph/rig_plan.py::RigPlanner.plan(cls, graph: RigGraph, capability: RigCapability) -> PlanResult`
+- `core_utils/engines/rig_graph/rig_transfer.py::RigTransfer(class)`
+- `core_utils/engines/rig_graph/rig_transfer.py::RigTransfer.apply(cls, section: Optional[Dict[str, Any]], builder: Any, imported: Sequence[Any], *, is_usd: bool = False, frame_offset: float = 0.0, source_unit: str = 'cm', source_up_axis: str = 'y', logger: Any = None) -> Optional[Dict[str, Any]]`
+- `core_utils/engines/rig_graph/rig_transfer.py::RigTransfer.capability_key(capability: Dict[str, Any]) -> str`
+- `core_utils/engines/rig_graph/rig_verify.py::RigVerify(class)`
+- `core_utils/engines/rig_graph/rig_verify.py::RigVerify.compare(want: Sequence[Point], got: Sequence[Point]) -> Dict[str, Any]`
+- `core_utils/engines/rig_graph/rig_verify.py::RigVerify.compare_frames(cls, want: Mapping[Any, Sequence[Point]], got: Mapping[Any, Sequence[Point]]) -> Dict[str, Any]`
+- `core_utils/engines/rig_graph/rig_verify.py::RigVerify.convert_point(point: Sequence[float], source_unit: str = 'cm', source_up_axis: str = 'y', target_unit: str = 'm', target_up_axis: str = 'z') -> Point`
+- `core_utils/engines/rig_graph/rig_verify.py::RigVerify.default_tolerance(unit: str) -> float`
+- `core_utils/engines/rig_graph/rig_verify.py::RigVerify.demoted(cls, result: Mapping[str, Any]) -> List[Dict[str, Any]]`
+- `core_utils/engines/rig_graph/rig_verify.py::RigVerify.summary(cls, result: Mapping[str, Any]) -> str`
+- `core_utils/engines/rig_graph/rig_verify.py::RigVerify.verdict(measured: float, tolerance: float) -> Dict[str, Any]`
+- `core_utils/engines/rig_graph/rig_verify.py::RigVerify.verify_plan(cls, result: Dict[str, Any], samples: Mapping[str, Mapping[Any, Sequence[float]]], sample: Callable[[str, int], Optional[Sequence[float]]], *, source_unit: str = 'cm', source_up_axis: str = 'y', target_unit: str = 'm', target_up_axis: str = 'z', frame_offset: float = 0.0, remove: Callable[[str], Any], graph: Any = None) -> List[str]`
+- `core_utils/engines/rig_graph/rig_verify.py::UNIT_METRES(constant)`
+- `core_utils/engines/rig_graph/rig_verify.py::VERIFY_TOLERANCE_M(constant)`
+- `core_utils/engines/shots/shot_transfer.py::ShotTransfer(class)`
+- `core_utils/engines/shots/shot_transfer.py::ShotTransfer.decode(cls, section: Dict[str, Any], *, resolve: Optional[Resolve] = None, curve_key: Optional[CurveKey] = None, key_exists: Optional[KeyExists] = None, scene_fps: Optional[float] = None, frame_offset: float = 0.0, converted: Optional[Callable[[str], bool]] = None, write_channels: Optional[Callable[[str, Dict[str, Any]], Any]] = None, write_audio: Optional[Callable[[List[Dict[str, Any]]], Any]] = None) -> Dict[str, Any]`
+- `core_utils/engines/shots/shot_transfer.py::ShotTransfer.encode(cls, state: Dict[str, Any], *, spell: Optional[Spell] = None, curve_ref: Optional[CurveRef] = None, objects: Optional[Iterable[str]] = None, channels: Optional[Dict[str, Dict[str, Any]]] = None, audio: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_transfer.py::ShotTransfer.merge(cls, existing: Optional[Dict[str, Any]], incoming: Dict[str, Any]) -> Dict[str, Any]`
+- `core_utils/engines/shots/shot_transfer.py::ShotTransfer.swap_up_axis(cls, label: str) -> str`
+- `core_utils/export_profile.py::ExportProfile.fold_legacy_regex(cls, name_regex: Optional[str]) -> Optional[str]`
+- `core_utils/handoff_manifest.py::HandoffManifest(class)`
+- `core_utils/handoff_manifest.py::HandoffManifest.build(cls, **sections: Any) -> 'HandoffManifest'`
+- `core_utils/handoff_manifest.py::HandoffManifest.carries(self, section: str) -> bool`
+- `core_utils/handoff_manifest.py::HandoffManifest.data(self) -> Dict[str, Any]`
+- `core_utils/handoff_manifest.py::HandoffManifest.format(self) -> Any`
+- `core_utils/handoff_manifest.py::HandoffManifest.path(self) -> Optional[str]`
+- `core_utils/handoff_manifest.py::HandoffManifest.path_for(cls, payload_path: str) -> str`
+- `core_utils/handoff_manifest.py::HandoffManifest.payload_path(self) -> Optional[str]`
+- `core_utils/handoff_manifest.py::HandoffManifest.plan(self, *, on_error: Optional[OnError] = None, cancel_prefix: Optional[str] = None) -> ManifestPlan`
+- `core_utils/handoff_manifest.py::HandoffManifest.read(cls, payload_path: str) -> 'HandoffManifest'`
+- `core_utils/handoff_manifest.py::HandoffManifest.unreadable(self) -> bool`
+- `core_utils/handoff_manifest.py::HandoffManifest.version(self) -> Any`
+- `core_utils/handoff_manifest.py::HandoffManifest.write(self, path: Optional[str] = None, *, indent: Optional[int] = 1) -> str`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline(class)`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.compare(cls, baseline: Iterable[str], current: Iterable[str], roots: Optional[Sequence[str]] = None) -> Tuple[bool, List[str], List[str], bool]`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.decode(cls, record) -> Set[str]`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.encode(cls, paths: Iterable[str]) -> Dict`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.in_scope(cls, paths: Iterable[str], roots: Sequence[str]) -> Set[str]`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.is_record(cls, record) -> bool`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.merge(cls, baseline: Iterable[str], current: Iterable[str], roots: Optional[Sequence[str]] = None) -> Set[str]`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.paths_hash(paths: Iterable[str]) -> str`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.relevant_roots(cls, baseline: Iterable[str], current: Iterable[str], roots: Optional[Sequence[str]] = None) -> List[str]`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.top_level(cls, paths: Iterable[str]) -> List[str]`
+- `core_utils/manifest_plan.py::ManifestPlan(class)`
+- `core_utils/manifest_plan.py::ManifestPlan.add(self, section: Optional[str], label: str, apply: Apply, *, when: bool = True, best_effort: bool = False) -> 'ManifestPlan'`
+- `core_utils/manifest_plan.py::ManifestPlan.labels(self) -> List[str]`
+- `core_utils/manifest_plan.py::ManifestPlan.run(self, *, progress: Optional[Progress] = None, done_label: Optional[str] = None) -> List[Any]`
+- `core_utils/script_run.py::ProgressRelay(class)`
+- `core_utils/script_run.py::ProgressRelay.line(cls, step: int, steps: int, text: str = '') -> str`
+- `core_utils/script_run.py::ProgressRelay.parse(cls, line: Optional[str]) -> Optional[Tuple[int, int, str]]`
+- `core_utils/script_run.py::ProgressRelay.reader(self, stage: int, label: str = '') -> Callable[[Optional[str]], bool]`
+- `core_utils/script_run.py::ProgressRelay.report(self, stage: int, step: float, steps: float, text: Optional[str] = None) -> bool`
+- `core_utils/script_run.py::ProgressRelay.tick(self) -> bool`
+- `core_utils/script_run.py::ProgressRelay.value(self) -> int`
+- `str_utils/_str_utils.py::StrUtils.apply_regex_modifier(cls, value, spec: str) -> Tuple[str, Optional[str]]`
+- `str_utils/_str_utils.py::StrUtils.attach_modifier(cls, text: str, key: str, spec: str) -> str`
+- `str_utils/_str_utils.py::StrUtils.split_regex_modifier(cls, spec: str) -> Optional[Tuple[str, str]]`
 
-## Signature changed (12)
+## Deprecations (6)
 
-- `file_utils/_file_utils.py::FileUtils.next_version_path`
-  - was: `(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1) -> str`
-  - now: `(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1, extensions: Iterable[str] = ()) -> str`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.clip_spans`
-  - was: `(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None) -> Dict[str, List[float]]`
-  - now: `(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None, key_spans: Optional[Callable[[List[Tuple[Optional[float], Optional[float]]]], Sequence[Optional[Sequence[float]]]]] = None) -> Dict[str, List[float]]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.describe_texture_pass`
-  - was: `(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0) -> str`
-  - now: `(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0, secondary_max_size: int = 0, uastc_rdo: Optional[float] = None) -> str`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fbx_to_glb`
-  - was: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str`
-  - now: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.optimize_glb_textures`
-  - was: `(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = True) -> Dict[str, Any]`
-  - now: `(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = WEB_DELIVERY_KTX2_FALLBACK, secondary_max_size: int = WEB_DELIVERY_SECONDARY_MAX_SIZE, uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO) -> Dict[str, Any]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.web_delivery_texture_params`
-  - was: `(cls, image_format: Optional[str] = None, max_size: Optional[int] = None) -> Dict[str, Any]`
-  - now: `(cls, image_format: Optional[str] = None, max_size: Optional[int] = None, ktx2_fallback: Optional[bool] = None, secondary_max_size: Optional[int] = None, uastc_rdo: Optional[float] = None) -> Dict[str, Any]`
-- `file_utils/mesh_convert/glb_fades.py::GlbFades.apply_channels`
-  - was: `(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Rgb]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]`
-  - now: `(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Any]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]`
-- `file_utils/mesh_convert/glb_pipeline.py::GlbPipeline.build`
-  - was: `(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]`
-  - now: `(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]`
+_Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived its one-release window: delete the alias and its tests rather than moving the date._
+
+- `core_utils/engines/textures/map_factory/conversions.py::ConversionRegistry.register_from_class` — remove in 0.11.0
+- `file_utils/_file_utils.py::FileUtils.get_json` — remove in 0.11.0
+- `file_utils/_file_utils.py::FileUtils.get_json_file` — remove in 0.11.0
+- `file_utils/_file_utils.py::FileUtils.set_json` — remove in 0.11.0
+- `file_utils/_file_utils.py::FileUtils.set_json_file` — remove in 0.11.0
+- `core_utils/git.py::Git` — remove in 0.11.0
+
+## Signature changed (6)
+
+- `core_utils/app_launcher.py::AppLauncher.run`
+  - was: `(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None, hide_window=False)`
+  - now: `(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None, hide_window=False, on_output=None, poll_interval=0.1)`
+- `core_utils/export_profile.py::ExportProfile.fold_legacy_naming`
+  - was: `(cls, pattern: Optional[str], version_format: str = '', timestamp: bool = False) -> Optional[str]`
+  - now: `(cls, pattern: Optional[str], version_format: str = '', timestamp: bool = False, name_regex: Optional[str] = None) -> Optional[str]`
+- `core_utils/export_profile.py::ExportProfile.resolve_output_path`
+  - was: `(cls, pattern: Optional[str], context: Mapping[str, Any], export_dir: str = '', output_format: str = 'fbx', version_format: str = '', timestamp: bool = False) -> Dict[str, Any]`
+  - now: `(cls, pattern: Optional[str], context: Mapping[str, Any], export_dir: str = '', output_format: str = 'fbx', version_format: str = '', timestamp: bool = False, name_regex: Optional[str] = None) -> Dict[str, Any]`
+- `core_utils/script_run.py::ScriptRunner.run_script_to_artifact`
+  - was: `(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None, expect: str = CREATED) -> ScriptRunResult`
+  - now: `(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None, expect: str = CREATED, on_output: Optional[Callable[[Optional[str]], Optional[bool]]] = None) -> ScriptRunResult`
 - `img_utils/ktx2_encoder.py::Ktx2Encoder.args_for`
-  - was: `(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None) -> List[str]`
-  - now: `(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None) -> List[str]`
+  - was: `(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None) -> List[str]`
+  - now: `(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> List[str]`
 - `img_utils/ktx2_encoder.py::Ktx2Encoder.encode`
-  - was: `(self, source: Union[str, 'Image.Image'], output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None) -> str`
-  - now: `(self, source: Union[str, 'Image.Image'], output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None) -> str`
-- `net_utils/preview/bridge.py::PreviewBridge.push`
-  - was: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, **params: Any) -> Optional[Dict[str, Any]]`
-  - now: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, data_export: Optional[Dict[str, Any]] = None, **params: Any) -> Optional[Dict[str, Any]]`
-- `net_utils/preview/playblast.py::PreviewPlayblast.begin`
-  - was: `(self, name: str, fps: float, start_frame: int = 1, frames: int = 0, content_type: str = 'image/png') -> Dict[str, Any]`
-  - now: `(self, name: str, fps: float, start_frame: int = 1, frames: int = 0, content_type: str = 'image/png', quality: Optional[int] = None) -> Dict[str, Any]`
+  - was: `(self, source: Union[str, 'Image.Image'], output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None) -> str`
+  - now: `(self, source: Union[str, 'Image.Image'], output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> str`

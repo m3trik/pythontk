@@ -10,7 +10,89 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class AppLauncher:
+class _AppLauncherInternal(object):
+    """Internal helpers for AppLauncher."""
+
+    #: Seconds to keep draining a child's pipe after the child itself has exited.
+    #: A grandchild that inherited the handle can hold the pipe open forever, so
+    #: end-of-file alone is not a safe exit condition.
+    _EXIT_DRAIN_GRACE = 2.0
+
+    @staticmethod
+    def _kill(proc) -> None:
+        """Kill *proc* and reap it; a process already gone is not an error."""
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Process {proc.pid} did not exit after kill.")
+
+    @staticmethod
+    def _run_streaming(cmd, cwd, timeout, env, creationflags, on_output, poll_interval):
+        """The :meth:`AppLauncher.run` body when *on_output* is given (see there)."""
+        import queue
+        import time
+
+        from pythontk.core_utils.cancel_scope import CancelScope, OperationCancelled
+        from pythontk.core_utils.process_stream import OutputStream, ProcessReader
+
+        # Merged into ONE pipe so lines keep their relative order: a traceback on
+        # stderr must land after the progress line that preceded it.
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            shell=False,
+            creationflags=creationflags,
+        )
+        stream = OutputStream()
+        lines: "queue.Queue[str]" = queue.Queue()
+        unsubscribe = stream.subscribe(lambda _source, line: lines.put(line))
+        reader = ProcessReader(proc.stdout, stream, "stdout")
+        reader.start()
+        output = []
+        deadline = None if timeout is None else time.monotonic() + timeout
+        exited_at = None
+        try:
+            while True:
+                try:
+                    line = lines.get(timeout=poll_interval)
+                    output.append(line)
+                except queue.Empty:
+                    line = None
+                    if proc.poll() is not None:
+                        exited_at = exited_at or time.monotonic()
+                        if not reader.is_alive() or (
+                            time.monotonic() - exited_at
+                            > _AppLauncherInternal._EXIT_DRAIN_GRACE
+                        ):
+                            break
+                if on_output(line) is False or not CancelScope.proceed():
+                    _AppLauncherInternal._kill(proc)
+                    raise OperationCancelled(
+                        f"'{os.path.basename(cmd[0])}' cancelled by the caller"
+                    )
+                if deadline is not None and time.monotonic() > deadline:
+                    _AppLauncherInternal._kill(proc)
+                    raise subprocess.TimeoutExpired(
+                        cmd, timeout, output="\n".join(output)
+                    )
+        finally:
+            unsubscribe()
+            stream.close()
+        text = "\n".join(output)
+        return subprocess.CompletedProcess(
+            cmd, proc.wait(), stdout=text + "\n" if output else "", stderr=""
+        )
+
+
+class AppLauncher(_AppLauncherInternal):
     """
     A utility class for launching applications on Windows and Linux.
     """
@@ -164,6 +246,8 @@ class AppLauncher:
         output_file=None,
         env=None,
         hide_window=False,
+        on_output=None,
+        poll_interval=0.1,
     ):
         """Execute an application synchronously and return its result.
 
@@ -185,11 +269,29 @@ class AppLauncher:
                         would otherwise pop for a console-subsystem child when
                         the parent is a GUI app (e.g. mayapy run from a DCC).
                         No effect on the captured/redirected output.
+        :param on_output: Stream the output instead of collecting it at exit:
+                        called on THIS thread with each line of the child's
+                        merged stdout+stderr as it arrives (newline stripped),
+                        and with ``None`` whenever *poll_interval* seconds pass
+                        without one, so a caller driving a UI keeps it alive
+                        through a long silent step. Return ``False`` to stop the
+                        run: the child is killed and
+                        :class:`pythontk.OperationCancelled` raised. An ambient
+                        :class:`pythontk.CancelScope` is polled at the same
+                        points. The returned ``stdout`` still carries the whole
+                        output; ``stderr`` is ``""`` (merged). A child only
+                        streams what it flushes: a Python child that prints
+                        progress should pass ``flush=True``. Not combinable with
+                        *output_file*.
+        :param poll_interval: Seconds between idle ``on_output(None)`` calls.
         :return: A ``subprocess.CompletedProcess`` with *returncode* and, unless
                  *output_file* is set, *stdout*/*stderr* (decoded text).
         :raises FileNotFoundError: If the application cannot be found.
         :raises subprocess.TimeoutExpired: If *timeout* is exceeded.
+        :raises pythontk.OperationCancelled: When *on_output* returns ``False``.
         """
+        if on_output is not None and output_file:
+            raise ValueError("on_output and output_file are mutually exclusive.")
         executable_path = AppLauncher.find_app(app_identifier)
         if not executable_path:
             raise FileNotFoundError(f"Application '{app_identifier}' not found.")
@@ -205,6 +307,10 @@ class AppLauncher:
             subprocess.CREATE_NO_WINDOW if hide_window and os.name == "nt" else 0
         )
         logger.debug(f"Running (blocking): {cmd}")
+        if on_output is not None:
+            return AppLauncher._run_streaming(
+                cmd, cwd, timeout, env, creationflags, on_output, poll_interval
+            )
         if output_file:
             with open(output_file, "w", encoding="utf-8", errors="replace") as fh:
                 return subprocess.run(

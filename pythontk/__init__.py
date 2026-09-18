@@ -92,6 +92,9 @@ DEFAULT_INCLUDE = {
     # Declarative widget definitions -> run configuration (the two Scene
     # Exporter panels' export button, once).
     "core_utils.export_profile": ["ExportProfile", "ExportRun"],
+    # The hierarchy change-detection baseline's set algebra -- ONE baseline per
+    # scene, scoped at compare time (shared by both DCC scene exporters).
+    "core_utils.hierarchy_baseline": ["HierarchyBaseline"],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [
         "ShotStore",
@@ -112,6 +115,12 @@ DEFAULT_INCLUDE = {
     "core_utils.engines.shots.shot_ledger": [
         "ShotEditLedger",
     ],
+    # The store as a hand-off manifest section: mayatk / blendertk encode on
+    # the way out and decode on the way in, so shots cross the FBX / USD hop
+    # 1:1 in either direction.
+    "core_utils.engines.shots.shot_transfer": [
+        "ShotTransfer",
+    ],
     # Key stash engine — clips of keys parked outside the working animation,
     # inert until retrieved; the DCC adapters (mayatk / blendertk ``KeyStash``)
     # subclass it and own where the keys physically live.
@@ -128,6 +137,29 @@ DEFAULT_INCLUDE = {
     "core_utils.engines.shots.shot_detection": [
         "STANDARD_TRANSFORM_ATTRS",
         "ShotDetection",
+    ],
+    # Rig-graph engine — DCC-agnostic model of a rig's INTENT, plus the pure
+    # planner that decides what ONE target can build from it. mayatk extracts
+    # into it and blendertk builds from it; neither can import the other, and
+    # the planner runs a pre-flight with no DCC open.
+    "core_utils.engines.rig_graph.rig_model": [
+        "RigGraph",
+        "RigNode",
+        "RigRecord",
+        "RigPolicy",
+    ],
+    "core_utils.engines.rig_graph.rig_capability": [
+        "RigCapability",
+        "RigOpCapability",
+    ],
+    "core_utils.engines.rig_graph.rig_verify": ["RigVerify"],
+    "core_utils.engines.rig_graph.rig_transfer": ["RigTransfer"],
+    "core_utils.engines.rig_graph.rig_machinery": ["RigMachinery"],
+    "core_utils.engines.rig_graph.rig_plan": [
+        "RigPlanner",
+        "PlanResult",
+        "ReportEntry",
+        "RigPlanRefused",
     ],
     # shot_apply's `apply` is deliberately NOT root-registered — same policy as
     # the comment below: generic names stay off the top level (consumers import
@@ -177,6 +209,9 @@ DEFAULT_INCLUDE = {
     "core_utils._core_utils": "*",
     "core_utils.help_mixin": "HelpMixin",
     "core_utils.symbol_record": "SymbolRecord",
+    # One mechanism for retiring public surface, and the only thing in the
+    # ecosystem that records WHICH release an alias stops working in.
+    "core_utils.deprecation": ["Deprecation", "DeprecationRecord"],
     # Markdown-example rot gate — validates doc code blocks against the live
     # surface (README gates here and downstream build on it).
     "core_utils.doc_audit": "DocAudit",
@@ -223,6 +258,8 @@ DEFAULT_INCLUDE = {
         # The carrier vocabulary beside USD_EXTENSIONS: one spelling for every
         # panel (uitk) and every producer (the DCC mixins).
         "CARRIER_PARAM",
+        "RIG_MODE_PARAM",
+        "RIG_MODES",
         "CARRIER_EXTENSIONS",
         "CARRIER_BY_EXTENSION",
         "HandoffBridge",
@@ -236,9 +273,19 @@ DEFAULT_INCLUDE = {
         "HandoffRequest",
         "Payload",
     ],
+    # The `<payload>.manifest.json` sidecar every conversion ships beside its
+    # FBX / USD intermediate: the suffix, the section vocabulary and the
+    # read/write rules, so both producers and both consumers spell one contract
+    # instead of eighty string literals. A section's CONTENTS stay with the
+    # codec that owns them (e.g. ShotTransfer for `shots`).
+    "core_utils.handoff_manifest": ["HandoffManifest"],
+    # Replay of those sections: an ordered, gated, best-effort-per-step plan
+    # with one progress/cancel protocol, so adding a section is a line rather
+    # than an edit to a hand-written chain in every consumer.
+    "core_utils.manifest_plan": ["ManifestPlan"],
     # Blocking run-script-collect-artifact counterpart of ScriptLaunchDeliverer
     # (backs pull-direction bridges, e.g. blendertk's Maya-scene import).
-    "core_utils.script_run": ["ScriptRunResult", "ScriptRunner"],
+    "core_utils.script_run": ["ScriptRunResult", "ScriptRunner", "ProgressRelay"],
     # Process/log line-stream primitives (composed by the app-specific
     # connection shells in mayatk/blendertk, e.g. SubstanceConnection).
     "core_utils.process_stream": [

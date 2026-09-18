@@ -80,6 +80,19 @@ CARRIER_BY_EXTENSION: Dict[str, str] = {
     **{ext: "usd" for ext in USD_EXTENSIONS},
 }
 
+#: The request param that picks how a hand-off treats the RIG LOGIC driving what
+#: it carries (constraints, IK, drivers, expressions -- what neither carrier has
+#: a form for). A vocabulary like the carrier's: one spelling for every panel and
+#: every producer, and a bridge declares nothing -- every hand-off offers all four.
+RIG_MODE_PARAM = "RIG_MODE"
+#: In order, because the FIRST is what an undecided request gets (like
+#: :attr:`HandoffBridge.carriers`): ``auto`` bakes when the cheap driver probe
+#: fires, else imports raw; ``bake`` smart-bakes every driven channel to keys;
+#: ``rig`` extracts a RigGraph, plans it against the consumer's capability and
+#: bakes ONLY what the plan says (so it can never carry less than ``bake``);
+#: ``raw`` touches nothing. The engine is :mod:`pythontk.core_utils.engines.rig_graph`.
+RIG_MODES: Tuple[str, ...] = ("auto", "bake", "rig", "raw")
+
 
 # --------------------------------------------------------------------------- specs
 @dataclass(frozen=True)

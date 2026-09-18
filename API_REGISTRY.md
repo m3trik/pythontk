@@ -14,9 +14,16 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/class_property.py`](#core_utils--class_property)
 - [`core_utils/cli.py`](#core_utils--cli)
 - [`core_utils/color.py`](#core_utils--color) — Lightweight, DCC-agnostic color primitives.
+- [`core_utils/deprecation.py`](#core_utils--deprecation) — Deprecation - retiring public surface through one mechanism, with a clock.
 - [`core_utils/doc_audit.py`](#core_utils--doc_audit) — Audit markdown code examples against the live package surface.
 - [`core_utils/engines/instancing/assembly_sorter.py`](#core_utils--engines--instancing--assembly_sorter) — Sort separated mesh parts into repeated-assembly copies.
 - [`core_utils/engines/key_stash/key_stash_model.py`](#core_utils--engines--key_stash--key_stash_model) — Key stash — park keyframes outside the working animation, retrieve later.
+- [`core_utils/engines/rig_graph/rig_capability.py`](#core_utils--engines--rig_graph--rig_capability) — What ONE target can actually build — the capability manifest.
+- [`core_utils/engines/rig_graph/rig_machinery.py`](#core_utils--engines--rig_graph--rig_machinery) — Naming the rig apparatus a bake leaves inert -- the rule, with no DCC in it.
+- [`core_utils/engines/rig_graph/rig_model.py`](#core_utils--engines--rig_graph--rig_model) — The RigGraph document — a DCC-agnostic statement of a rig's INTENT.
+- [`core_utils/engines/rig_graph/rig_plan.py`](#core_utils--engines--rig_graph--rig_plan) — Resolve a RigGraph against ONE target into what to build, what to bake, and why.
+- [`core_utils/engines/rig_graph/rig_transfer.py`](#core_utils--engines--rig_graph--rig_transfer) — Applying a hand-off manifest's ``rig`` section to a target scene -- the ONE
+- [`core_utils/engines/rig_graph/rig_verify.py`](#core_utils--engines--rig_graph--rig_verify) — Point-cloud verification for a rebuilt rig -- pure math, no DCC.
 - [`core_utils/engines/shots/manifest/behaviors/_behaviors.py`](#core_utils--engines--shots--manifest--behaviors--_behaviors) — Behaviors — load JSON keying recipes and resolve them to keyframe math.
 - [`core_utils/engines/shots/manifest/behaviors/_spec.py`](#core_utils--engines--shots--manifest--behaviors--_spec) — Schema for a *behavior* template file, defined as a dataclass.
 - [`core_utils/engines/shots/manifest/manifest_engine.py`](#core_utils--engines--shots--manifest--manifest_engine) — Shot Manifest engine — pure planning/orchestration core with scene hooks.
@@ -29,6 +36,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/engines/shots/shot_ledger.py`](#core_utils--engines--shots--shot_ledger) — Ledger of the edits the shot system authors on a scene's animation.
 - [`core_utils/engines/shots/shot_model.py`](#core_utils--engines--shots--shot_model) — DCC-agnostic shot data model and persistent store.
 - [`core_utils/engines/shots/shot_plan.py`](#core_utils--engines--shots--shot_plan) — Pure planning layer for multi-shot topology transformations.
+- [`core_utils/engines/shots/shot_transfer.py`](#core_utils--engines--shots--shot_transfer) — Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
 - [`core_utils/engines/textures/map_compositor.py`](#core_utils--engines--textures--map_compositor) — Pure image-compositing engine — alpha-composite layered texture maps
 - [`core_utils/engines/textures/map_factory/_map_factory.py`](#core_utils--engines--textures--map_factory--_map_factory) — ``MapFactory`` -- the texture-map workflow orchestrator.
 - [`core_utils/engines/textures/map_factory/conversions.py`](#core_utils--engines--textures--map_factory--conversions) — Map-conversion registry primitives for the texture MapFactory.
@@ -43,13 +51,16 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/execution_monitor/_sidecar.py`](#core_utils--execution_monitor--_sidecar) — Sidecar processes for ``ExecutionMonitor``: indicator, dialog and watchdog.
 - [`core_utils/export_profile.py`](#core_utils--export_profile) — The Scene Exporter panels' shared contract, written once.
 - [`core_utils/git.py`](#core_utils--git)
+- [`core_utils/handoff_manifest.py`](#core_utils--handoff_manifest) — The hand-off sidecar -- what an FBX or USD payload cannot carry by itself.
 - [`core_utils/help_mixin.py`](#core_utils--help_mixin) — HelpMixin - Enhanced help system leveraging Python's built-in help infrastructure.
+- [`core_utils/hierarchy_baseline.py`](#core_utils--hierarchy_baseline) — The change-detection baseline an exporter diffs a scene's hierarchy against.
 - [`core_utils/hierarchy_utils/hierarchy_analyzer.py`](#core_utils--hierarchy_utils--hierarchy_analyzer)
 - [`core_utils/hierarchy_utils/hierarchy_diff.py`](#core_utils--hierarchy_utils--hierarchy_diff)
 - [`core_utils/hierarchy_utils/hierarchy_indexer.py`](#core_utils--hierarchy_utils--hierarchy_indexer)
 - [`core_utils/hierarchy_utils/hierarchy_matching.py`](#core_utils--hierarchy_utils--hierarchy_matching)
 - [`core_utils/hierarchy_utils/hierarchy_path.py`](#core_utils--hierarchy_utils--hierarchy_path) — Pure string primitives for delimited hierarchy paths.
 - [`core_utils/logging_mixin.py`](#core_utils--logging_mixin) — Class-scoped logging toolkit.
+- [`core_utils/manifest_plan.py`](#core_utils--manifest_plan) — Ordered, gated replay of the steps a hand-off manifest asks for.
 - [`core_utils/module_reloader.py`](#core_utils--module_reloader) — Helpers for hot-reloading packages and their submodules.
 - [`core_utils/module_resolver.py`](#core_utils--module_resolver) — Reusable module attribute resolver for package-style imports.
 - [`core_utils/namedtuple_container.py`](#core_utils--namedtuple_container)
@@ -179,19 +190,21 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 - [`CARRIER_PARAM`](pythontk/pythontk/core_utils/app_handoff.py#L67) — constant
 - [`CARRIER_EXTENSIONS`](pythontk/pythontk/core_utils/app_handoff.py#L74) — constant
 - [`CARRIER_BY_EXTENSION`](pythontk/pythontk/core_utils/app_handoff.py#L78) — constant
-- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L86)** — Declarative target-application executable-discovery config (data, not code).
+- [`RIG_MODE_PARAM`](pythontk/pythontk/core_utils/app_handoff.py#L87) — constant
+- [`RIG_MODES`](pythontk/pythontk/core_utils/app_handoff.py#L94) — constant
+- **[`class AppSpec`](pythontk/pythontk/core_utils/app_handoff.py#L99)** — Declarative target-application executable-discovery config (data, not code).
   - `AppSpec.resolve(self) -> Optional[str]` — Resolve the executable, first hit wins (env -> find_app -> install scan).
   - `AppSpec.path(self) -> Optional[str]` *(property)* — :meth:`resolve`, memoized for this spec instance.
   - `AppSpec.available(self) -> bool` *(property)* — Whether the target app is installed (cached -- see :attr:`path`).
   - `AppSpec.refresh(self) -> Optional[str]` — Discard the memoized :attr:`path` and re-probe.
   - `AppSpec.not_found_message(self) -> str` *(property)* — A user-facing "couldn't find it" message (custom, or a sensible default).
-- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L167)** — The unit of work threaded through the skeleton.
+- **[`class HandoffRequest`](pythontk/pythontk/core_utils/app_handoff.py#L180)** — The unit of work threaded through the skeleton.
   - `HandoffRequest.get(self, key: str, default: Any = None) -> Any` — Read a per-bridge orchestration knob from :attr:`extras`.
-- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L187)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
-- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L202)** — Strategy: hand a produced :class:`Payload` to the target app.
+- **[`class Payload`](pythontk/pythontk/core_utils/app_handoff.py#L200)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
+- **[`class Deliverer`](pythontk/pythontk/core_utils/app_handoff.py#L215)** — Strategy: hand a produced :class:`Payload` to the target app.
   - `Deliverer.preflight(self, bridge: 'HandoffBridge', request: HandoffRequest) -> bool` — Validate *request* before producing the payload.
   - `Deliverer.deliver(self, bridge: 'HandoffBridge', payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]` — Hand *payload* to the target app;
-- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L223)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
+- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/app_handoff.py#L236)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
   - `HandoffBridge.app_path(self) -> Optional[str]` *(property)* — Resolved target executable (cached), or ``None``.
   - `HandoffBridge.headless_app_path(self) -> Optional[str]` *(property)* — Executable for a BLOCKING/headless run;
   - `HandoffBridge.params_defaults(self) -> Dict[str, Any]` — Return ``{key: default}`` for the bridge's tunable params (default empty).
@@ -201,17 +214,17 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `HandoffBridge.carrier_of(path: str) -> str` *(static)* — The carrier a payload *path* names, by extension (``"fbx"`` / ``"usd"``).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
   - `HandoffBridge.import_roots(*packages: str) -> List[str]` *(static)* — ``sys.path`` entries that make *packages* importable in a launched child app.
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L719)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L744)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L732)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L757)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L893)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
+- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L906)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
   - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L1045)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L1058)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
   - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1128)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1141)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
   - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app work on them, and re-ingest the result.
@@ -233,11 +246,11 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 <a id="core_utils--app_launcher"></a>
 ### `core_utils/app_launcher.py`
 
-- **[`class AppLauncher`](pythontk/pythontk/core_utils/app_launcher.py#L13)** — A utility class for launching applications on Windows and Linux.
+- **[`class AppLauncher(_AppLauncherInternal)`](pythontk/pythontk/core_utils/app_launcher.py#L95)** — A utility class for launching applications on Windows and Linux.
   - `AppLauncher.launch(app_identifier, args=None, cwd=None, detached=True, env=None)` *(static)* — Launches an application.
   - `AppLauncher.process_environ()` *(static)* — The LIVE process environment -- what a child would actually inherit.
   - `AppLauncher.handoff_env(source_root)` *(static)* — Child env for launching a DIFFERENT app: this process's env, minus its
-  - `AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None, hide_window=False)` *(static)* — Execute an application synchronously and return its result.
+  - `AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None, hide_window=False, on_output=None, poll_interval=0.1)` *(static)* — Execute an application synchronously and return its result.
   - `AppLauncher.current_session_id()` *(static)* — Windows session id of the *current* process.
   - `AppLauncher.active_console_session_id()` *(static)* — Session id of the physically logged-in console (interactive desktop).
   - `AppLauncher.is_interactive_session()` *(static)* — True if the current process is in an interactive session (non-zero —
@@ -345,6 +358,27 @@ Lightweight, DCC-agnostic color primitives.
   - `Palette.ui(cls) -> 'Palette'` *(class)* — Common UI element colours for dark themes.
   - `Palette.diff(cls) -> 'Palette'` *(class)* — Comparison / diff palette for dark-theme tree views.
 
+<a id="core_utils--deprecation"></a>
+### `core_utils/deprecation.py`
+
+Deprecation - retiring public surface through one mechanism, with a clock.
+
+- **[`class DeprecationRecord`](pythontk/pythontk/core_utils/deprecation.py#L113)** — One retired name, what replaces it, and the release it stops working in.
+  - `DeprecationRecord.key(self) -> Tuple[str, str]` *(property)* — Identity in the roster: ``(kind, what)``.
+  - `DeprecationRecord.package(self) -> str` *(property)* — Top-level package the deprecated name belongs to (may be empty).
+  - `DeprecationRecord.message(self) -> str` — The warning text: what went, when it goes, what to use instead.
+  - `DeprecationRecord.expired(self, version: str) -> bool` — True once *version* has reached the release this was to be removed in.
+- **[`class Deprecation(_DeprecationInternal)`](pythontk/pythontk/core_utils/deprecation.py#L369)** — Retire a public name with a notice and a removal version.
+  - `Deprecation.version_key(version: str) -> Tuple[int, int, int]` *(static)* — Comparable key for a ``MAJOR.MINOR[.PATCH]`` release version.
+  - `Deprecation.warn(cls, what: str, replacement: str, *, remove_in: str, reason: Optional[str] = None, module: Optional[str] = None, kind: str = 'symbol', stacklevel: int = 1) -> DeprecationRecord` *(class)* — Emit a deprecation notice from inside a function body.
+  - `Deprecation.symbol(cls, replacement: str, *, remove_in: str, reason: Optional[str] = None) -> Callable[[Any], Any]` *(class)* — Deprecate a whole function, method or class.
+  - `Deprecation.parameter(cls, old: str, *, remove_in: str, new: Optional[str] = None, transform: Optional[Callable[[Any], Any]] = None, drop: bool = False, reason: Optional[str] = None) -> Callable[[Callable], Callable]` *(class)* — Deprecate one keyword argument of a function that stays.
+  - `Deprecation.attributes(cls, module_globals: Dict[str, Any], moved: Mapping[str, str], *, remove_in: str, reason: Optional[str] = None) -> Dict[str, DeprecationRecord]` *(class)* — Serve module attributes that moved, through a module ``__getattr__``.
+  - `Deprecation.values(cls, aliases: Mapping[Any, Any], *, what: str, remove_in: str, module: Optional[str] = None, reason: Optional[str] = None) -> Callable[[Any], Any]` *(class)* — Build a resolver mapping retired members of a value vocabulary onto live ones.
+  - `Deprecation.registered(cls, *, module: Optional[str] = None, kind: Optional[str] = None) -> Tuple[DeprecationRecord, ...]` *(class)* — Every deprecation registered so far, sorted by removal version.
+  - `Deprecation.expired(cls, version: str, *, module: Optional[str] = None) -> Tuple[DeprecationRecord, ...]` *(class)* — Registered deprecations that should already have been deleted.
+  - `Deprecation.report(cls, version: Optional[str] = None, *, module: Optional[str] = None) -> str` *(class)* — Render the roster as lines, marking anything already overdue.
+
 <a id="core_utils--doc_audit"></a>
 ### `core_utils/doc_audit.py`
 
@@ -405,6 +439,121 @@ Key stash — park keyframes outside the working animation, retrieve later.
   - `KeyStash.remove_invalidation_listener(cls, callback: Callable[[StashChanged], None]) -> None` *(class)* — Remove a previously registered invalidation listener.
   - `KeyStash.offset_for(clip: StashedClip, at: Optional[float]) -> float` *(static)* — Frame offset that lands *clip*'s first key on *at* (``0.0`` for ``None``).
   - `KeyStash.gate_range(clip: StashedClip) -> Optional[Tuple[float, float]]` *(static)* — ``(start, end)`` of *clip*, or ``None`` when it holds no keys.
+
+<a id="core_utils--engines--rig_graph--rig_capability"></a>
+### `core_utils/engines/rig_graph/rig_capability.py`
+
+What ONE target can actually build — the capability manifest.
+
+- [`FIDELITIES`](pythontk/pythontk/core_utils/engines/rig_graph/rig_capability.py#L36) — constant
+- **[`class RigOpCapability`](pythontk/pythontk/core_utils/engines/rig_graph/rig_capability.py#L40)** — One ``"<shape>/<op>"`` entry: what this target honours, and how well.
+  - `RigOpCapability.from_dict(cls, data: Dict[str, Any]) -> 'RigOpCapability'` *(class)* — Build from plain values.
+  - `RigOpCapability.to_dict(self) -> Dict[str, Any]` — Plain-value form, omitting empty sections.
+  - `RigOpCapability.accepts_param(self, path: str, value: Any) -> bool` — Whether this op honours *value* at parameter *path*.
+  - `RigOpCapability.accepts_plug(self, path: str) -> bool` — Whether a driven Value may sit at *path* (prefixed, e.g.
+- **[`class RigCapability`](pythontk/pythontk/core_utils/engines/rig_graph/rig_capability.py#L110)** — Everything one target can build, as data.
+  - `RigCapability.from_dict(cls, data: Dict[str, Any]) -> 'RigCapability'` *(class)* — Build from plain values (a committed manifest).
+  - `RigCapability.to_dict(self) -> Dict[str, Any]` — Plain-value form, with ops sorted so a regenerated manifest diffs
+  - `RigCapability.op(self, record: RigRecord) -> Optional[RigOpCapability]` — The entry for *record*'s ``"<shape>/<op>"``, or None.
+  - `RigCapability.rejects(self, record: RigRecord) -> List[Tuple[str, str]]` — Why this target cannot build *record* — the capability rules, in order.
+
+<a id="core_utils--engines--rig_graph--rig_machinery"></a>
+### `core_utils/engines/rig_graph/rig_machinery.py`
+
+Naming the rig apparatus a bake leaves inert -- the rule, with no DCC in it.
+
+- **[`class RigMachinery`](pythontk/pythontk/core_utils/engines/rig_graph/rig_machinery.py#L31)** — The apparatus rule: what a baked rig leaves behind, and what may go.
+  - `RigMachinery.classify(cls, nodes: Mapping[str, str], *, seeds: Iterable[str] = (), protected: Iterable[str] = (), separator: str = '|') -> Dict[str, str]` *(class)* — The apparatus in *nodes*: ``{path: kind}``, empty when there is none.
+  - `RigMachinery.unambiguous(cls, kinds: Mapping[str, str], names: Iterable[str], *, separator: str = '|') -> Tuple[Dict[str, str], Tuple[str, ...]]` *(class)* — *kinds* less every entry a consumer could not address without risk.
+  - `RigMachinery.select(cls, section: Mapping[str, str], subtrees: Mapping[str, Sequence[str]], *, protected: Iterable[str] = (), separator: str = '|', suffix: str = '.') -> Tuple[Dict[str, str], Tuple[str, ...]]` *(class)* — What a delivered scene may drop for *section*, and what it may not.
+  - `RigMachinery.tally(kinds: Mapping[str, str]) -> Dict[str, int]` *(static)* — ``{kind: count}`` over *kinds*, for a log line that says WHAT went.
+
+<a id="core_utils--engines--rig_graph--rig_model"></a>
+### `core_utils/engines/rig_graph/rig_model.py`
+
+The RigGraph document — a DCC-agnostic statement of a rig's INTENT.
+
+- [`SCHEMA_VERSION`](pythontk/pythontk/core_utils/engines/rig_graph/rig_model.py#L34) — constant
+- [`SHAPES`](pythontk/pythontk/core_utils/engines/rig_graph/rig_model.py#L37) — constant
+- [`FALLBACKS`](pythontk/pythontk/core_utils/engines/rig_graph/rig_model.py#L40) — constant
+- [`DEFAULT_FALLBACK`](pythontk/pythontk/core_utils/engines/rig_graph/rig_model.py#L44) — constant
+- [`EXPR_FUNCTIONS`](pythontk/pythontk/core_utils/engines/rig_graph/rig_model.py#L51) — constant
+- **[`class RigPolicy`](pythontk/pythontk/core_utils/engines/rig_graph/rig_model.py#L101)** — What to do with one record when its target cannot build it.
+  - `RigPolicy.from_dict(cls, data: Optional[Dict[str, Any]]) -> 'RigPolicy'` *(class)* — Build from plain values;
+  - `RigPolicy.to_dict(self) -> Dict[str, Any]` — Plain-value form, omitting every field nobody set.
+  - `RigPolicy.merged(self, default: 'RigPolicy') -> 'RigPolicy'` — This policy over *default*, field by field;
+  - `RigPolicy.resolved(self) -> 'RigPolicy'` — This policy with every remaining unset field filled by the schema.
+- **[`class RigNode`](pythontk/pythontk/core_utils/engines/rig_graph/rig_model.py#L174)** — A node a record references.
+  - `RigNode.parent(self) -> Optional[str]` *(property)* — The parent node id, derived from this one's path.
+  - `RigNode.from_dict(cls, data: Dict[str, Any]) -> 'RigNode'` *(class)* — Build from plain values.
+  - `RigNode.to_dict(self) -> Dict[str, Any]` — Plain-value form, omitting empty optional sections.
+- **[`class RigRecord`](pythontk/pythontk/core_utils/engines/rig_graph/rig_model.py#L221)** — One relationship: a target receives a value computed by an op from sources.
+  - `RigRecord.key(self) -> str` *(property)* — ``"<shape>/<op>"`` -- how a capability manifest names this record.
+  - `RigRecord.from_dict(cls, data: Dict[str, Any]) -> 'RigRecord'` *(class)* — Build from plain values.
+  - `RigRecord.to_dict(self) -> Dict[str, Any]` — Plain-value form.
+  - `RigRecord.target_ids(self) -> List[str]` — Node ids this record DRIVES, whatever its shape.
+  - `RigRecord.source_ids(self) -> List[str]` — Node ids this record READS, from both source entries and plug values.
+  - `RigRecord.node_ids(self) -> List[str]` — Every node id this record touches -- targets first, then sources --
+  - `RigRecord.plug_paths(self) -> List[Tuple[str, str]]` — Every ``{"plug": ...}`` in this record, as ``(dotted path, plug)``.
+- **[`class RigGraph`](pythontk/pythontk/core_utils/engines/rig_graph/rig_model.py#L350)** — One scene's rig intent: what exists, and what drives what.
+  - `RigGraph.is_plug(value: Any) -> bool` *(static)* — True when *value* is a plug reference rather than a literal.
+  - `RigGraph.split_plug(plug: str) -> Tuple[str, str]` *(static)* — Split ``"<id>.<channel>"`` into its node id and channel.
+  - `RigGraph.parent_of(node_id: str) -> Optional[str]` *(static)* — The parent path of *node_id*, or None for a root.
+  - `RigGraph.validate_expression(expr: str, variables: Sequence[str] = ()) -> List[str]` *(static)* — Check *expr* against the restricted grammar;
+  - `RigGraph.from_dict(cls, data: Dict[str, Any]) -> 'RigGraph'` *(class)* — Build from plain values (the serialised envelope).
+  - `RigGraph.to_dict(self) -> Dict[str, Any]` — Plain-value form of the whole envelope.
+  - `RigGraph.node(self, node_id: str) -> Optional[RigNode]` — The node with *node_id*, or None.
+  - `RigGraph.record(self, record_id: str) -> Optional[RigRecord]` — The record with *record_id*, or None.
+  - `RigGraph.effective_policy(self, record: RigRecord) -> RigPolicy` — *record*'s policy over the graph's, over the schema's — fully resolved.
+  - `RigGraph.validate(self) -> List[str]` — Check the envelope and the five shapes;
+  - `RigGraph.coverage(self) -> Dict[str, Any]` — Prove the extractor accounted for every driver node it saw.
+  - `RigGraph.components(self, record_ids: Optional[Iterable[str]] = None) -> List[List[str]]` — Group records into RIG COMPONENTS: two records share one when they
+  - `RigGraph.iter_edges(self) -> Iterator[Tuple[str, str]]` — ``(source node, target node)`` for every dependency a record creates.
+
+<a id="core_utils--engines--rig_graph--rig_plan"></a>
+### `core_utils/engines/rig_graph/rig_plan.py`
+
+Resolve a RigGraph against ONE target into what to build, what to bake, and why.
+
+- [`KINDS`](pythontk/pythontk/core_utils/engines/rig_graph/rig_plan.py#L40) — constant
+- **[`class RigPlanRefused(RuntimeError)`](pythontk/pythontk/core_utils/engines/rig_graph/rig_plan.py#L56)** — A record whose fallback is ``"fail"`` could not be built.
+- **[`class ReportEntry`](pythontk/pythontk/core_utils/engines/rig_graph/rig_plan.py#L65)** — One thing that happened to one record, and what it cost.
+  - `ReportEntry.severity(self) -> str` *(property)* — ``info`` / ``warn`` / ``error``, from :data:`KINDS`.
+  - `ReportEntry.recoverable(self) -> bool` *(property)* — Whether the motion survived even though the relationship did not.
+  - `ReportEntry.to_dict(self) -> Dict[str, Any]` — Plain-value form, as written to a manifest sidecar.
+- **[`class PlanResult`](pythontk/pythontk/core_utils/engines/rig_graph/rig_plan.py#L102)** — What a target should do with a graph.
+  - `PlanResult.counts(self) -> Dict[str, int]` — How many records met each outcome — the one-line pre-flight summary.
+  - `PlanResult.worst_severity(self) -> str` — The highest severity present: ``error`` > ``warn`` > ``info``.
+  - `PlanResult.entries(self, severity: str) -> List[ReportEntry]` — Report entries at exactly *severity*.
+  - `PlanResult.to_dict(self) -> Dict[str, Any]` — Plain-value form, as written beside the graph in a sidecar.
+- **[`class RigPlanner`](pythontk/pythontk/core_utils/engines/rig_graph/rig_plan.py#L147)** — Resolve one :class:`RigGraph` against one :class:`RigCapability`.
+  - `RigPlanner.plan(cls, graph: RigGraph, capability: RigCapability) -> PlanResult` *(class)* — Decide what *capability*'s target can build from *graph*.
+
+<a id="core_utils--engines--rig_graph--rig_transfer"></a>
+### `core_utils/engines/rig_graph/rig_transfer.py`
+
+Applying a hand-off manifest's ``rig`` section to a target scene -- the ONE
+
+- **[`class RigTransfer`](pythontk/pythontk/core_utils/engines/rig_graph/rig_transfer.py#L24)** — Apply a manifest's ``rig`` section (schema section 15.3) to a scene.
+  - `RigTransfer.capability_key(capability: Dict[str, Any]) -> str` *(static)* — A short, stable digest of *capability*, for a conversion's identity.
+  - `RigTransfer.apply(cls, section: Optional[Dict[str, Any]], builder: Any, imported: Sequence[Any], *, is_usd: bool = False, frame_offset: float = 0.0, source_unit: str = 'cm', source_up_axis: str = 'y', logger: Any = None) -> Optional[Dict[str, Any]]` *(class)* — Build *section*'s graph with *builder*, verify it, and report.
+
+<a id="core_utils--engines--rig_graph--rig_verify"></a>
+### `core_utils/engines/rig_graph/rig_verify.py`
+
+Point-cloud verification for a rebuilt rig -- pure math, no DCC.
+
+- [`UNIT_METRES`](pythontk/pythontk/core_utils/engines/rig_graph/rig_verify.py#L21) — constant
+- [`VERIFY_TOLERANCE_M`](pythontk/pythontk/core_utils/engines/rig_graph/rig_verify.py#L33) — constant
+- **[`class RigVerify`](pythontk/pythontk/core_utils/engines/rig_graph/rig_verify.py#L36)** — Compare sampled world points of one object against ground truth.
+  - `RigVerify.compare(want: Sequence[Point], got: Sequence[Point]) -> Dict[str, Any]` *(static)* — Measure *got* against *want*, point by point, at one frame.
+  - `RigVerify.compare_frames(cls, want: Mapping[Any, Sequence[Point]], got: Mapping[Any, Sequence[Point]]) -> Dict[str, Any]` *(class)* — :meth:`compare` over every frame both sides sampled;
+  - `RigVerify.default_tolerance(unit: str) -> float` *(static)* — :data:`VERIFY_TOLERANCE_M` expressed in *unit* (``"cm"`` -> 1.0,
+  - `RigVerify.demoted(cls, result: Mapping[str, Any]) -> List[Dict[str, Any]]` *(class)* — The report entries of *result* that took a built record back --
+  - `RigVerify.summary(cls, result: Mapping[str, Any]) -> str` *(class)* — One log line for a build result: what was built, what the bake keeps,
+  - `RigVerify.verdict(measured: float, tolerance: float) -> Dict[str, Any]` *(static)* — Pass or fail one measurement, carrying both numbers.
+  - `RigVerify.convert_point(point: Sequence[float], source_unit: str = 'cm', source_up_axis: str = 'y', target_unit: str = 'm', target_up_axis: str = 'z') -> Point` *(static)* — A sampled point in the SOURCE's unit and up-axis, spelled in the
+  - `RigVerify.verify_plan(cls, result: Dict[str, Any], samples: Mapping[str, Mapping[Any, Sequence[float]]], sample: Callable[[str, int], Optional[Sequence[float]]], *, source_unit: str = 'cm', source_up_axis: str = 'y', target_unit: str = 'm', target_up_axis: str = 'z', frame_offset: float = 0.0, remove: Callable[[str], Any], graph: Any = None) -> List[str]` *(class)* — Section 9.4, once: measure every built record the plan wants verified
 
 <a id="core_utils--engines--shots--manifest--behaviors--_behaviors"></a>
 ### `core_utils/engines/shots/manifest/behaviors/_behaviors.py`
@@ -659,6 +808,17 @@ Pure planning layer for multi-shot topology transformations.
   - `GapRetime.shrinks(self) -> bool` *(property)*
   - `GapRetime.grows(self) -> bool` *(property)*
 
+<a id="core_utils--engines--shots--shot_transfer"></a>
+### `core_utils/engines/shots/shot_transfer.py`
+
+Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
+
+- **[`class ShotTransfer(_ShotTransferInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_transfer.py#L124)** — Encode a shot store into a manifest section and decode it into a store.
+  - `ShotTransfer.swap_up_axis(cls, label: str) -> str` *(class)* — *label* as the far side of a Y-up / Z-up crossing spells the channel.
+  - `ShotTransfer.encode(cls, state: Dict[str, Any], *, spell: Optional[Spell] = None, curve_ref: Optional[CurveRef] = None, objects: Optional[Iterable[str]] = None, channels: Optional[Dict[str, Dict[str, Any]]] = None, audio: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]` *(class)* — The ``shots`` section for a store's :meth:`~pythontk.ShotStore.to_dict`.
+  - `ShotTransfer.decode(cls, section: Dict[str, Any], *, resolve: Optional[Resolve] = None, curve_key: Optional[CurveKey] = None, key_exists: Optional[KeyExists] = None, scene_fps: Optional[float] = None, frame_offset: float = 0.0, converted: Optional[Callable[[str], bool]] = None, write_channels: Optional[Callable[[str, Dict[str, Any]], Any]] = None, write_audio: Optional[Callable[[List[Dict[str, Any]]], Any]] = None) -> Dict[str, Any]` *(class)* — A store dict (``from_dict`` shape) for a ``shots`` section.
+  - `ShotTransfer.merge(cls, existing: Optional[Dict[str, Any]], incoming: Dict[str, Any]) -> Dict[str, Any]` *(class)* — *incoming* (a decoded store dict) folded into *existing*'s.
+
 <a id="core_utils--engines--textures--map_compositor"></a>
 ### `core_utils/engines/textures/map_compositor.py`
 
@@ -737,11 +897,11 @@ Pure image-compositing engine — alpha-composite layered texture maps
 
 Map-conversion registry primitives for the texture MapFactory.
 
-- **[`class MapConversion`](pythontk/pythontk/core_utils/engines/textures/map_factory/conversions.py#L19)** — Defines a single map conversion operation.
-- **[`class ConversionRegistry`](pythontk/pythontk/core_utils/engines/textures/map_factory/conversions.py#L28)** — Central registry for all map type conversions.
+- **[`class MapConversion`](pythontk/pythontk/core_utils/engines/textures/map_factory/conversions.py#L20)** — Defines a single map conversion operation.
+- **[`class ConversionRegistry`](pythontk/pythontk/core_utils/engines/textures/map_factory/conversions.py#L29)** — Central registry for all map type conversions.
   - `ConversionRegistry.add_plugin(self, cls)` — Register a class to be scanned for conversions on first lookup.
   - `ConversionRegistry.register(self, target_type: Union[str, MapConversion], source_types: Union[str, List[str]] = None, converter: Callable = None, priority: int = 0)` — Register a new conversion strategy.
-  - `ConversionRegistry.register_from_class(self, cls)` — Register all decorated conversion methods from a class.
+  - `ConversionRegistry.register_from_class(self, cls)` **DEPRECATED (remove in 0.11.0)** — Register all decorated conversion methods from a class.
   - `ConversionRegistry.get_conversions_for(self, target_type: str) -> List[MapConversion]` — Get all conversions that can produce target type.
 
 <a id="core_utils--engines--textures--map_factory--handlers"></a>
@@ -1034,8 +1194,9 @@ The Scene Exporter panels' shared contract, written once.
   - `ExportProfile.read_values(cls, widgets: Mapping[str, Any], *tables: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]` *(class)* — Read the panel's live widgets into ``{objectName: value}``.
   - `ExportProfile.texture_size_limit_bytes(max_size_mb: Any) -> Optional[int]` *(static)* — The Max Texture Size row's value as bytes;
   - `ExportProfile.strip_deliverable_extension(name: Optional[str]) -> str` *(static)* — *name* trimmed, without a trailing deliverable extension -- a whitelist
-  - `ExportProfile.fold_legacy_naming(cls, pattern: Optional[str], version_format: str = '', timestamp: bool = False) -> Optional[str]` *(class)* — Fold the retired Version pattern and Timestamp flag into a name pattern.
-  - `ExportProfile.resolve_output_path(cls, pattern: Optional[str], context: Mapping[str, Any], export_dir: str = '', output_format: str = 'fbx', version_format: str = '', timestamp: bool = False) -> Dict[str, Any]` *(class)* — Resolve the Output Filename field into the file(s) an export writes.
+  - `ExportProfile.fold_legacy_regex(cls, name_regex: Optional[str]) -> Optional[str]` *(class)* — The retired free-standing RegEx field's text as an inline modifier spec.
+  - `ExportProfile.fold_legacy_naming(cls, pattern: Optional[str], version_format: str = '', timestamp: bool = False, name_regex: Optional[str] = None) -> Optional[str]` *(class)* — Fold the retired Version pattern and Timestamp flag into a name pattern.
+  - `ExportProfile.resolve_output_path(cls, pattern: Optional[str], context: Mapping[str, Any], export_dir: str = '', output_format: str = 'fbx', version_format: str = '', timestamp: bool = False, name_regex: Optional[str] = None) -> Dict[str, Any]` *(class)* — Resolve the Output Filename field into the file(s) an export writes.
   - `ExportProfile.naming_report(cls, resolved: Mapping[str, Any], tokens: Mapping[str, str], version_suffix=None) -> List[Tuple[str, str]]` *(class)* — ``[(level, message), ...]`` for what :meth:`resolve_output_path` hit.
   - `ExportProfile.scoped_tables(cls, manager: type) -> type` *(class)* — Class decorator: give *manager* the shared tables, scoped to it.
   - `ExportProfile.task_order(cls, manager: Any) -> List[str]` *(class)* — :attr:`TASK_ORDER` scoped to the tasks *manager* implements.
@@ -1043,7 +1204,7 @@ The Scene Exporter panels' shared contract, written once.
   - `ExportProfile.optimize_textures_options(cls) -> Dict[str, Any]` *(class)* — Optimize Textures -- the pass switch and its size dial in ONE combo.
   - `ExportProfile.texture_file_type_options(cls) -> Dict[str, Any]` *(class)* — Texture File Type -- the container dial for EVERY texture the export
   - `ExportProfile.frame_rate_options(cls) -> Dict[str, Optional[str]]` *(class)* — Frame Rate check -- every ``VidUtils.FRAME_RATES`` entry labelled
-- **[`class ExportRun`](pythontk/pythontk/core_utils/export_profile.py#L770)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
+- **[`class ExportRun`](pythontk/pythontk/core_utils/export_profile.py#L825)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
   - `ExportRun.glb_only(self) -> bool` *(property)* — The GLB is the deliverable;
   - `ExportRun.create_glb(self) -> bool` *(property)* — A ``.glb`` is written this run (alone, or beside the FBX).
   - `ExportRun.usd(self) -> bool` *(property)* — The deliverable is a USD layer.
@@ -1054,7 +1215,7 @@ The Scene Exporter panels' shared contract, written once.
 <a id="core_utils--git"></a>
 ### `core_utils/git.py`
 
-- **[`class Git`](pythontk/pythontk/core_utils/git.py#L10)** — A wrapper around git subprocess commands for a specific repository.
+- **[`class Git`](pythontk/pythontk/core_utils/git.py#L16)** **DEPRECATED (remove in 0.11.0)** — A wrapper around git subprocess commands for a specific repository.
   - `Git.execute(self, cmd: Union[str, List[str]], desc: str = None, check: bool = True) -> Optional[str]` — Run a generic shell command in the repository directory.
   - `Git.run(self, cmd: Union[str, List[str]], desc: str = None, check: bool = True) -> Optional[str]` — Run a git command in the repository.
   - `Git.checkout(self, branch: str)` — Checkout a branch.
@@ -1064,6 +1225,25 @@ The Scene Exporter panels' shared contract, written once.
   - `Git.fetch(self, remote: str = 'origin')` — Fetch remote.
   - `Git.status(self) -> str` — Get status output.
   - `Git.current_branch(self) -> str` — Get current branch name.
+
+<a id="core_utils--handoff_manifest"></a>
+### `core_utils/handoff_manifest.py`
+
+The hand-off sidecar -- what an FBX or USD payload cannot carry by itself.
+
+- **[`class HandoffManifest(_HandoffManifestInternal)`](pythontk/pythontk/core_utils/handoff_manifest.py#L92)** — The ``<payload>.manifest.json`` beside a conversion payload.
+  - `HandoffManifest.path_for(cls, payload_path: str) -> str` *(class)* — The sidecar path for *payload_path*.
+  - `HandoffManifest.read(cls, payload_path: str) -> 'HandoffManifest'` *(class)* — The manifest for *payload_path* (the payload's path or the sidecar's).
+  - `HandoffManifest.path(self) -> Optional[str]` *(property)* — Where this manifest was read from, or ``None`` when built in memory.
+  - `HandoffManifest.payload_path(self) -> Optional[str]` *(property)* — The payload this manifest describes -- :attr:`path` less :attr:`SUFFIX`.
+  - `HandoffManifest.data(self) -> Dict[str, Any]` *(property)* — A deep copy of the document;
+  - `HandoffManifest.unreadable(self) -> bool` *(property)* — Whether a sidecar was there and could not be used.
+  - `HandoffManifest.version(self) -> Any` *(property)* — The document's :attr:`VERSION` value, or ``None``.
+  - `HandoffManifest.format(self) -> Any` *(property)* — The document's :attr:`FORMAT_KEY` value, or ``None``.
+  - `HandoffManifest.carries(self, section: str) -> bool` — Whether *section* arrived with something worth replaying.
+  - `HandoffManifest.build(cls, **sections: Any) -> 'HandoffManifest'` *(class)* — A manifest of *sections*, dropping the ones given as ``None``.
+  - `HandoffManifest.write(self, path: Optional[str] = None, *, indent: Optional[int] = 1) -> str` — Write the document beside its payload atomically;
+  - `HandoffManifest.plan(self, *, on_error: Optional[OnError] = None, cancel_prefix: Optional[str] = None) -> ManifestPlan` — A :class:`~pythontk.ManifestPlan` gated on this manifest's sections.
 
 <a id="core_utils--help_mixin"></a>
 ### `core_utils/help_mixin.py`
@@ -1079,6 +1259,22 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
   - `HelpMixin.classify(cls, name: Optional[str] = None, *, returns: bool = False, as_dict: bool = False, as_json: bool = False) -> Any` *(class)* — Classify a member or list all members with their classifications.
   - `HelpMixin.list_members(cls, members: Optional[str] = None, *, inherited: bool = True, private: bool = False, sort: bool = True, returns: bool = False, as_dict: bool = False, as_json: bool = False) -> Any` *(class)* — Get a list of member names.
   - `HelpMixin.about(target, name=None, *, brief=False, returns=False, as_dict=False, as_json=False)` *(static)* — Get help for any Python object (class, function, module, method, etc.).
+
+<a id="core_utils--hierarchy_baseline"></a>
+### `core_utils/hierarchy_baseline.py`
+
+The change-detection baseline an exporter diffs a scene's hierarchy against.
+
+- **[`class HierarchyBaseline`](pythontk/pythontk/core_utils/hierarchy_baseline.py#L33)** — Pure set algebra over ``|``-delimited hierarchy paths.
+  - `HierarchyBaseline.top_level(cls, paths: Iterable[str]) -> List[str]` *(class)* — The shallowest paths in *paths* -- those with no ancestor also present.
+  - `HierarchyBaseline.in_scope(cls, paths: Iterable[str], roots: Sequence[str]) -> Set[str]` *(class)* — The subset of *paths* at or under any of *roots*.
+  - `HierarchyBaseline.relevant_roots(cls, baseline: Iterable[str], current: Iterable[str], roots: Optional[Sequence[str]] = None) -> List[str]` *(class)* — The baseline roots THIS export is answerable for.
+  - `HierarchyBaseline.compare(cls, baseline: Iterable[str], current: Iterable[str], roots: Optional[Sequence[str]] = None) -> Tuple[bool, List[str], List[str], bool]` *(class)* — Diff *current* against the part of *baseline* in the same scope.
+  - `HierarchyBaseline.merge(cls, baseline: Iterable[str], current: Iterable[str], roots: Optional[Sequence[str]] = None) -> Set[str]` *(class)* — *baseline* with this export's scope replaced by *current*.
+  - `HierarchyBaseline.paths_hash(paths: Iterable[str]) -> str` *(static)* — SHA-256 over the sorted paths -- the fast-path equality check.
+  - `HierarchyBaseline.encode(cls, paths: Iterable[str]) -> Dict` *(class)* — The stored record for *paths*.
+  - `HierarchyBaseline.is_record(cls, record) -> bool` *(class)* — *record* is a recognisable baseline, even an empty one.
+  - `HierarchyBaseline.decode(cls, record) -> Set[str]` *(class)* — The path set in *record*;
 
 <a id="core_utils--hierarchy_utils--hierarchy_analyzer"></a>
 ### `core_utils/hierarchy_utils/hierarchy_analyzer.py`
@@ -1188,6 +1384,16 @@ Class-scoped logging toolkit.
   - `LoggingMixin.disable_log_buffer(cls) -> None` *(class)* — Stop ring-buffer capture and discard buffered records.
   - `LoggingMixin.clear_log_buffer(cls) -> None` *(class)* — Drop buffered records but keep capturing.
   - `LoggingMixin.dump_log(cls, target: Union[str, object, None] = None, mode: str = 'w', encoding: str = 'utf-8') -> str` *(class)* — Render the ring buffer to text, optionally writing it to *target*.
+
+<a id="core_utils--manifest_plan"></a>
+### `core_utils/manifest_plan.py`
+
+Ordered, gated replay of the steps a hand-off manifest asks for.
+
+- **[`class ManifestPlan(_ManifestPlanInternal)`](pythontk/pythontk/core_utils/manifest_plan.py#L112)** — An ordered list of gated manifest steps, run with one progress protocol.
+  - `ManifestPlan.labels(self) -> List[str]` *(property)* — The admitted steps' labels, in run order (handy in tests and logs).
+  - `ManifestPlan.add(self, section: Optional[str], label: str, apply: Apply, *, when: bool = True, best_effort: bool = False) -> 'ManifestPlan'` — Admit a step when its gates pass;
+  - `ManifestPlan.run(self, *, progress: Optional[Progress] = None, done_label: Optional[str] = None) -> List[Any]` — Run every admitted step in order;
 
 <a id="core_utils--module_reloader"></a>
 ### `core_utils/module_reloader.py`
@@ -1414,11 +1620,18 @@ Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 
 Run a script in an external app, block until it exits, and collect an artifact.
 
-- [`CREATED`](pythontk/pythontk/core_utils/script_run.py#L38) — constant
-- [`REWRITTEN`](pythontk/pythontk/core_utils/script_run.py#L39) — constant
-- **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/script_run.py#L59)** — Run a script in an external app, block, and collect its artifact.
-  - `ScriptRunner.run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None, expect: str = CREATED) -> ScriptRunResult` *(static)* — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
-- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L193)** — What a successful :func:`run_script_to_artifact` returns.
+- [`CREATED`](pythontk/pythontk/core_utils/script_run.py#L39) — constant
+- [`REWRITTEN`](pythontk/pythontk/core_utils/script_run.py#L40) — constant
+- **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/script_run.py#L60)** — Run a script in an external app, block, and collect its artifact.
+  - `ScriptRunner.run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None, expect: str = CREATED, on_output: Optional[Callable[[Optional[str]], Optional[bool]]] = None) -> ScriptRunResult` *(static)* — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
+- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/script_run.py#L219)** — What a successful :func:`run_script_to_artifact` returns.
+- **[`class ProgressRelay`](pythontk/pythontk/core_utils/script_run.py#L234)** — One progress callback fed by staged work: child-script markers and in-process steps.
+  - `ProgressRelay.line(cls, step: int, steps: int, text: str = '') -> str` *(class)* — The marker line a child prints for *step* of *steps*.
+  - `ProgressRelay.parse(cls, line: Optional[str]) -> Optional[Tuple[int, int, str]]` *(class)* — ``(step, steps, text)`` from a marker anywhere in *line*, else ``None``.
+  - `ProgressRelay.value(self) -> int` *(property)* — The bar position last reported.
+  - `ProgressRelay.report(self, stage: int, step: float, steps: float, text: Optional[str] = None) -> bool` — Report *step* of *steps* inside *stage* (0-based);
+  - `ProgressRelay.tick(self) -> bool` — Keep the receiver alive between reports (throttled);
+  - `ProgressRelay.reader(self, stage: int, label: str = '') -> Callable[[Optional[str]], bool]` — An ``on_output`` for :meth:`ScriptRunner.run_script_to_artifact` scoped to
 
 <a id="core_utils--script_template"></a>
 ### `core_utils/script_template.py`
@@ -1483,7 +1696,7 @@ Timed multi-step press toggles.
 
 SymbolRecord - the shared public-API symbol shape.
 
-- **[`class SymbolRecord`](pythontk/pythontk/core_utils/symbol_record.py#L41)** — One public symbol: a top-level function or a class member.
+- **[`class SymbolRecord`](pythontk/pythontk/core_utils/symbol_record.py#L48)** — One public symbol: a top-level function or a class member.
   - `SymbolRecord.as_dict(self) -> Dict[str, Any]` — Plain ``dict`` of the fields (matches the ``hierarchy_diff`` convention).
   - `SymbolRecord.as_json(self, indent: int = 2) -> str` — JSON string of :meth:`as_dict`.
   - `SymbolRecord.to_registry_row(self) -> str` — Render the full-registry class-member bullet.
@@ -1590,10 +1803,10 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.append_path(cls, path, **kwargs)` *(class)* — Append a directory to the python path.
   - `FileUtils.get_object_path(obj, inc_filename: bool = False) -> str` *(static)* — Retrieve the absolute file path associated with a Python object.
   - `FileUtils.get_classes_from_path(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)` *(class)* — Scan the specified directory or Python file and retrieve class information from each file.
-  - `FileUtils.set_json_file(cls, file)` *(class)* — Set the current json filepath.
-  - `FileUtils.get_json_file(cls)` *(class)* — Get the current json filepath.
-  - `FileUtils.set_json(cls, key, value, file=None)` *(class)* — **Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;
-  - `FileUtils.get_json(cls, key, file=None)` *(class)* — **Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;
+  - `FileUtils.set_json_file(cls, file)` *(class)* **DEPRECATED (remove in 0.11.0)** — Set the current json filepath.
+  - `FileUtils.get_json_file(cls)` *(class)* **DEPRECATED (remove in 0.11.0)** — Get the current json filepath.
+  - `FileUtils.set_json(cls, key, value, file=None)` *(class)* **DEPRECATED (remove in 0.11.0)** — **Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;
+  - `FileUtils.get_json(cls, key, file=None)` *(class)* **DEPRECATED (remove in 0.11.0)** — **Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;
 
 <a id="file_utils--file_naming"></a>
 ### `file_utils/file_naming.py`
@@ -2190,8 +2403,8 @@ KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
   - `Ktx2Encoder.resolve_toktx(cls, required: bool = False, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the ``toktx`` executable: PATH, conventional install
   - `Ktx2Encoder.available(cls) -> bool` *(class)* — True when a ``toktx`` binary is discoverable.
   - `Ktx2Encoder.read_header(cls, path: str) -> Dict[str, int]` *(class)* — Read the fixed-layout KTX 2.0 header of *path* — no transcoder needed.
-  - `Ktx2Encoder.args_for(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None) -> List[str]` — Assemble the full ``toktx`` command for one encode.
-  - `Ktx2Encoder.encode(self, source: Union[str, 'Image.Image'], output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None) -> str` — Encode *source* to *output* (``.ktx2``).
+  - `Ktx2Encoder.args_for(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> List[str]` — Assemble the full ``toktx`` command for one encode.
+  - `Ktx2Encoder.encode(self, source: Union[str, 'Image.Image'], output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> str` — Encode *source* to *output* (``.ktx2``).
 
 <a id="img_utils--mask_generator"></a>
 ### `img_utils/mask_generator.py`
@@ -2513,13 +2726,16 @@ The in-application half of the RPC pair: registry + marshaller + server.
 <a id="str_utils--_str_utils"></a>
 ### `str_utils/_str_utils.py`
 
-- [`ANSI_ESCAPE_RE`](pythontk/pythontk/str_utils/_str_utils.py#L14) — constant
-- **[`class StrUtils(CoreUtils)`](pythontk/pythontk/str_utils/_str_utils.py#L17)**
+- [`ANSI_ESCAPE_RE`](pythontk/pythontk/str_utils/_str_utils.py#L15) — constant
+- **[`class StrUtils(CoreUtils)`](pythontk/pythontk/str_utils/_str_utils.py#L60)**
   - `StrUtils.to_legal_name(name: str) -> str` *(static)* — Every non-alphanumeric becomes ``_``: the objectName rule.
   - `StrUtils.to_legal_filename(cls, name: str, replacement: str = '', report: bool = False)` *(class)* — *name* with every character illegal in a file name removed.
   - `StrUtils.strip_ansi(string: str) -> str` *(static)* — Remove ANSI escape sequences (color/cursor codes) from a string.
   - `StrUtils.sanitize(text: Union[str, List[str]], replacement_char: str = '_', char_map: Optional[Dict[str, str]] = None, preserve_trailing: bool = False, preserve_case: bool = False, allow_consecutive: bool = False, return_original: bool = False) -> Union[str, Tuple[str, str], List[str], List[Tuple[str, str]]]` *(static)* — Sanitizes a string or a list of strings by replacing invalid characters.
   - `StrUtils.expand_wildcard(text: str, key: str = 'name', wildcard: str = '*') -> str` *(static)* — Rewrite a bare-wildcard template into pure placeholder form.
+  - `StrUtils.split_regex_modifier(cls, spec: str) -> Optional[Tuple[str, str]]` *(class)* — ``(pattern, replacement)`` when *spec* is a regex modifier, else ``None``.
+  - `StrUtils.apply_regex_modifier(cls, value, spec: str) -> Tuple[str, Optional[str]]` *(class)* — *value* reshaped by the regex modifier *spec* -- ``(result, error)``.
+  - `StrUtils.attach_modifier(cls, text: str, key: str, spec: str) -> str` *(class)* — Give every bare ``{key}`` in *text* the regex modifier *spec*.
   - `StrUtils.replace_placeholders(text: str, **kwargs) -> str` *(static)* — Replace placeholders in a string with provided values.
   - `StrUtils.resolve_placeholders(text: str, **kwargs) -> dict` *(static)* — Resolve placeholders and report what was substituted vs.
   - `StrUtils.name_pattern_context(**values) -> dict` *(static)* — Live values for :attr:`NAME_PATTERN_TOKENS`, plus the caller's own.

@@ -23,6 +23,7 @@ Two homes, two contracts (both bound by the Hard rules above — no DCC imports,
 
 ## Notable modules
 
+- `Deprecation` — the ONE way to retire public surface (`@Deprecation.symbol` / `.parameter` / `.attributes` / `.values`). `remove_in` is a version, not a sentence: the registry `--check` fails once it ships. Never hand-roll a `warnings.warn`. Rules in [CODE_STANDARD.md §5](../m3trik/docs/CODE_STANDARD.md).
 - `AudioUtils` — ffmpeg-backed audio conversion and WAV compositing (shared by mayatk audio events).
 - `AppLauncher` — subprocess launcher (used by mayatk's MayaConnection; do not bypass with raw subprocess).
 - `MapFactory` — PBR texture-map orchestrator, a `core_utils/engines/textures/` tenant (`map_factory/` package: `conversions` registry → `processor` context → `handlers` strategies → `_map_factory` orchestrator; siblings `map_registry`/`map_optimizer`/`map_compositor`). Root re-exports (`ptk.MapFactory`, `ptk.MapCompositor`) unchanged.

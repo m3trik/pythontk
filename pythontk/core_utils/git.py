@@ -1,35 +1,34 @@
 import subprocess
 import logging
-import warnings
 from pathlib import Path
 from typing import Union, List, Optional
+
+from pythontk.core_utils.deprecation import Deprecation
 
 logger = logging.getLogger(__name__)
 
 
+@Deprecation.symbol(
+    "subprocess directly, or a dedicated git library",
+    remove_in="0.11.0",
+    reason="It has no callers in any ecosystem package and no tests of its own.",
+)
 class Git:
     """A wrapper around git subprocess commands for a specific repository.
 
-    **Deprecated** -- removed in the next release. It has no callers anywhere
-    in the ecosystem and no tests of its own, so it is published surface that
-    only costs review attention and a name on the index. Shell out to ``git``
+    **Deprecated** -- removed in 0.11.0. It has no callers anywhere in the
+    ecosystem and no tests of its own, so it is published surface that only
+    costs review attention and a name on the index. Shell out to ``git``
     directly, or use a real client library if a project needs one.
     """
-
-    #: Named so the retirement is greppable alongside the JSON key-value one.
-    _DEPRECATION = (
-        "pythontk.Git is deprecated and will be removed in the next release: "
-        "it has no callers in any ecosystem package. Call git through "
-        "subprocess directly, or use a dedicated git library."
-    )
 
     def __init__(
         self, path: Union[str, Path], dry_run: bool = False, verbose: bool = True
     ):
-        # In __init__ rather than a module-level __getattr__: the class is
-        # registered by name through the package resolver, so __getattr__
-        # never sees the lookup.
-        warnings.warn(self._DEPRECATION, DeprecationWarning, stacklevel=2)
+        # The notice is on the class, not here: ``Deprecation.symbol`` wraps
+        # ``__new__``, so a subclass warns too -- which a hand-written
+        # ``__init__`` warn could not do, and a subclass is the one dependency
+        # on a retired class that a grep for the name still finds.
         self.path = Path(path).resolve()
         self.dry_run = dry_run
         self.verbose = verbose
