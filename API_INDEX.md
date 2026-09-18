@@ -14,7 +14,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: cached_property, listify, format_return, set_attributes, get_attributes, has_attribute, get_derived_type, teardown_guard, cycle, are_similar, randomize, parse_method_args
 
 ### `core_utils/app_handoff.py` — Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
-- constants: SEND_TO, SAVE_AS, ROUND_TRIP, CARRIER_PARAM, CARRIER_EXTENSIONS, CARRIER_BY_EXTENSION
+- constants: SEND_TO, SAVE_AS, ROUND_TRIP, CARRIER_PARAM, CARRIER_EXTENSIONS, CARRIER_BY_EXTENSION, RIG_MODE_PARAM, RIG_MODES
 - `class AppSpec`
   - methods: resolve, path, available, refresh, not_found_message
 - `class HandoffRequest`
@@ -40,7 +40,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: ensure, get_path, consent
 
 ### `core_utils/app_launcher.py`
-- `class AppLauncher`
+- `class AppLauncher(_AppLauncherInternal)`
   - methods: launch, process_environ, handoff_env, run, current_session_id, active_console_session_id, is_interactive_session, find_session_launcher, launch_in_session, wait_for_ready, get_window_titles, append_to_path, scan_for_executables, is_path_persisted, scan_install_dirs, resolve_app_path, find_app, get_running_processes, close_process
 
 ### `core_utils/cancel_scope.py` — Cooperative cancellation — one scope shared by every cancel affordance.
@@ -67,6 +67,12 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class Palette(dict)`
   - methods: update, setdefault, copy, alias, override, status, axes, channels, ui, diff
 
+### `core_utils/deprecation.py` — Deprecation - retiring public surface through one mechanism, with a clock.
+- `class DeprecationRecord`
+  - methods: key, package, message, expired
+- `class Deprecation(_DeprecationInternal)`
+  - methods: version_key, warn, symbol, parameter, attributes, values, registered, expired, report
+
 ### `core_utils/doc_audit.py` — Audit markdown code examples against the live package surface.
 - `class DocAudit(help_mixin.HelpMixin)`
   - methods: default_roots, extract_code_blocks, audit_markdown, audit_code
@@ -82,6 +88,47 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class StashChanged`
 - `class KeyStash(_KeyStashInternal)`
   - methods: add_clip, get_clip, remove_clip, clips_for_object, clips_for_shot, is_empty, set_preview, clear_preview, is_previewing, add_listener, remove_listener, batch_update, rescale_to_fps, mark_dirty, save, to_dict, from_dict, set_persistence, active, invalidate, add_invalidation_listener, remove_invalidation_listener, offset_for, gate_range
+
+### `core_utils/engines/rig_graph/rig_capability.py` — What ONE target can actually build — the capability manifest.
+- constants: FIDELITIES
+- `class RigOpCapability`
+  - methods: from_dict, to_dict, accepts_param, accepts_plug
+- `class RigCapability`
+  - methods: from_dict, to_dict, op, rejects
+
+### `core_utils/engines/rig_graph/rig_machinery.py` — Naming the rig apparatus a bake leaves inert -- the rule, with no DCC in it.
+- `class RigMachinery`
+  - methods: classify, unambiguous, select, tally
+
+### `core_utils/engines/rig_graph/rig_model.py` — The RigGraph document — a DCC-agnostic statement of a rig's INTENT.
+- constants: SCHEMA_VERSION, SHAPES, FALLBACKS, DEFAULT_FALLBACK, EXPR_FUNCTIONS
+- `class RigPolicy`
+  - methods: from_dict, to_dict, merged, resolved
+- `class RigNode`
+  - methods: parent, from_dict, to_dict
+- `class RigRecord`
+  - methods: key, from_dict, to_dict, target_ids, source_ids, node_ids, plug_paths
+- `class RigGraph`
+  - methods: is_plug, split_plug, parent_of, validate_expression, from_dict, to_dict, node, record, effective_policy, validate, coverage, components, iter_edges
+
+### `core_utils/engines/rig_graph/rig_plan.py` — Resolve a RigGraph against ONE target into what to build, what to bake, and why.
+- constants: KINDS
+- `class RigPlanRefused(RuntimeError)`
+- `class ReportEntry`
+  - methods: severity, recoverable, to_dict
+- `class PlanResult`
+  - methods: counts, worst_severity, entries, to_dict
+- `class RigPlanner`
+  - methods: plan
+
+### `core_utils/engines/rig_graph/rig_transfer.py` — Applying a hand-off manifest's ``rig`` section to a target scene -- the ONE
+- `class RigTransfer`
+  - methods: capability_key, apply
+
+### `core_utils/engines/rig_graph/rig_verify.py` — Point-cloud verification for a rebuilt rig -- pure math, no DCC.
+- constants: UNIT_METRES, VERIFY_TOLERANCE_M
+- `class RigVerify`
+  - methods: compare, compare_frames, default_tolerance, demoted, summary, verdict, convert_point, verify_plan
 
 ### `core_utils/engines/shots/manifest/behaviors/_behaviors.py` — Behaviors — load JSON keying recipes and resolve them to keyframe math.
 - `class Behaviors(_BehaviorsInternal)`
@@ -165,6 +212,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class MovePlan`
 - `class GapRetime`
   - methods: width, scale, shrinks, grows
+
+### `core_utils/engines/shots/shot_transfer.py` — Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
+- `class ShotTransfer(_ShotTransferInternal)`
+  - methods: swap_up_axis, encode, decode, merge
 
 ### `core_utils/engines/textures/map_compositor.py` — Pure image-compositing engine — alpha-composite layered texture maps
 - `class BatchResult(Enum)`
@@ -261,7 +312,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/export_profile.py` — The Scene Exporter panels' shared contract, written once.
 - `class ExportProfile`
-  - methods: legal_name, widget_key, value_method, run_config, read_values, texture_size_limit_bytes, strip_deliverable_extension, fold_legacy_naming, resolve_output_path, naming_report, scoped_tables, task_order, unimplemented, optimize_textures_options, texture_file_type_options, frame_rate_options
+  - methods: legal_name, widget_key, value_method, run_config, read_values, texture_size_limit_bytes, strip_deliverable_extension, fold_legacy_regex, fold_legacy_naming, resolve_output_path, naming_report, scoped_tables, task_order, unimplemented, optimize_textures_options, texture_file_type_options, frame_rate_options
 - `class ExportRun`
   - methods: glb_only, create_glb, usd, replace, with_tasks, from_tasks
 
@@ -269,9 +320,17 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class Git`
   - methods: execute, run, checkout, pull, push, merge, fetch, status, current_branch
 
+### `core_utils/handoff_manifest.py` — The hand-off sidecar -- what an FBX or USD payload cannot carry by itself.
+- `class HandoffManifest(_HandoffManifestInternal)`
+  - methods: path_for, read, path, payload_path, data, unreadable, version, format, carries, build, write, plan
+
 ### `core_utils/help_mixin.py` — HelpMixin - Enhanced help system leveraging Python's built-in help infrastructure.
 - `class HelpMixin`
   - methods: help, source, where, show_mro, signature, classify, list_members, about
+
+### `core_utils/hierarchy_baseline.py` — The change-detection baseline an exporter diffs a scene's hierarchy against.
+- `class HierarchyBaseline`
+  - methods: top_level, in_scope, relevant_roots, compare, merge, paths_hash, encode, is_record, decode
 
 ### `core_utils/hierarchy_utils/hierarchy_analyzer.py`
 - `class DifferenceType(Enum)`
@@ -310,6 +369,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: format_table, log_table, log_group
 - `class LoggingMixin(TableMixin)`
   - methods: logger, use_logger, class_logger, logging, set_log_level, set_log_file, enable_log_buffer, disable_log_buffer, clear_log_buffer, dump_log
+
+### `core_utils/manifest_plan.py` — Ordered, gated replay of the steps a hand-off manifest asks for.
+- `class ManifestPlan(_ManifestPlanInternal)`
+  - methods: labels, add, run
 
 ### `core_utils/module_reloader.py` — Helpers for hot-reloading packages and their submodules.
 - `reload_package(package: ModuleRef, **kwargs) -> ReloadReport`
@@ -388,6 +451,8 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class ScriptRunner(_ScriptRunnerInternal)`
   - methods: run_script_to_artifact
 - `class ScriptRunResult`
+- `class ProgressRelay`
+  - methods: line, parse, value, report, tick, reader
 
 ### `core_utils/script_template.py` — Generic on-disk script-template discovery + ``__KEY__`` rendering.
 - constants: SEND_TO, SAVE_AS, ROUND_TRIP
@@ -686,7 +751,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `str_utils/_str_utils.py`
 - constants: ANSI_ESCAPE_RE
 - `class StrUtils(CoreUtils)`
-  - methods: to_legal_name, to_legal_filename, strip_ansi, sanitize, expand_wildcard, replace_placeholders, resolve_placeholders, name_pattern_context, resolve_name_pattern, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
+  - methods: to_legal_name, to_legal_filename, strip_ansi, sanitize, expand_wildcard, split_regex_modifier, apply_regex_modifier, attach_modifier, replace_placeholders, resolve_placeholders, name_pattern_context, resolve_name_pattern, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
 
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`

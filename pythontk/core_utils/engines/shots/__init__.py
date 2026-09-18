@@ -14,6 +14,9 @@ The core shots layer is complete on its own:
   boundary / clustering math that a DCC's scene-acquisition feeds.
 - :mod:`~pythontk.core_utils.engines.shots.shot_apply` commits a plan via
   injected writer callables (bounds-only by default).
+- :mod:`~pythontk.core_utils.engines.shots.shot_transfer` encodes a store as
+  the hand-off manifest's ``shots`` section and decodes it against another
+  scene (the DCC adapters' ``export_transfer`` / ``apply_transfer``).
 
 Scene-reaching behaviour (framerate, animation queries, region detection,
 export projection, name resolution) is exposed as overridable hooks with pure

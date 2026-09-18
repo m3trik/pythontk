@@ -188,6 +188,7 @@ class Ktx2Encoder:
         etc1s_clevel: int = 2,
         uastc_quality: int = 2,
         uastc_rdo: Optional[float] = None,
+        uastc_rdo_dictionary: Optional[int] = None,
         extra_args: tuple = (),
         timeout: Optional[float] = AUTO_TIMEOUT,
     ) -> None:
@@ -197,6 +198,7 @@ class Ktx2Encoder:
         self.etc1s_clevel = int(etc1s_clevel)
         self.uastc_quality = int(uastc_quality)
         self.uastc_rdo = self._rdo_lambda(uastc_rdo)
+        self.uastc_rdo_dictionary = self._rdo_dictionary(uastc_rdo_dictionary)
         self.extra_args = tuple(extra_args)
         self.timeout = timeout
 
@@ -416,6 +418,33 @@ class Ktx2Encoder:
             )
         return rdo
 
+    @staticmethod
+    def _rdo_dictionary(value: Optional[int]) -> Optional[int]:
+        """Validate a UASTC RDO dictionary size (``--uastc_rdo_d``); None = toktx's own.
+
+        The RDO pass rewrites UASTC blocks so the supercompressor finds more
+        matches, and the dictionary bounds how far back it may look. toktx
+        accepts 256-65536; a smaller window is dramatically cheaper and gives up
+        some of the size win.
+
+        Raises:
+            ValueError: Outside toktx's 256-65536 range.
+        """
+        if value is None:
+            return None
+        try:
+            size = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"uastc_rdo_dictionary must be an integer, got {value!r}."
+            ) from None
+        if not 256 <= size <= 65536:
+            raise ValueError(
+                "uastc_rdo_dictionary must be within 256-65536 (toktx's range), "
+                f"got {value!r}."
+            )
+        return size
+
     def args_for(
         self,
         source: str,
@@ -425,6 +454,7 @@ class Ktx2Encoder:
         mipmaps: bool = True,
         quality: Optional[int] = None,
         uastc_rdo: Optional[float] = None,
+        uastc_rdo_dictionary: Optional[int] = None,
     ) -> List[str]:
         """Assemble the full ``toktx`` command for one encode.
 
@@ -447,6 +477,16 @@ class Ktx2Encoder:
                 ``uastc_quality`` tier.
             uastc_rdo: UASTC RDO lambda for THIS encode; None takes the
                 constructor's, ``0`` switches it off. Ignored for ETC1S.
+            uastc_rdo_dictionary: RDO dictionary size (``--uastc_rdo_d``, 256 to
+                65536) for THIS encode; None takes the constructor's, and a
+                constructor default of None leaves toktx to its own. The
+                encode's dominant cost: measured on a 4K normal map at UASTC
+                quality 2 with RDO 0.75, toktx's default took 56.6 s for 18.22
+                MB, 1024 took 24.9 s for 18.47 MB and 256 took 15.4 s for 18.60
+                MB. Unset by default because that probe was an upscaled
+                synthetic map -- the size cost on real content is unmeasured,
+                and a GLB ships to a headset over a network. Ignored for
+                ETC1S.
 
         Returns:
             list[str]: The complete argv, binary first.
@@ -456,6 +496,15 @@ class Ktx2Encoder:
             raise ValueError(
                 f"Unknown KTX2 codec {codec!r}: expected one of {self.CODECS}."
             )
+        # Validated up front rather than where it is emitted: the flag is only
+        # USED with an RDO pass on UASTC, but a malformed VALUE is a typo either
+        # way, and swallowing it on the branches that ignore the option would
+        # mean the constructor rejects `99` while a per-call `99` passes.
+        dictionary = self._rdo_dictionary(
+            self.uastc_rdo_dictionary
+            if uastc_rdo_dictionary is None
+            else uastc_rdo_dictionary
+        )
 
         args = [self.toktx]
         args += ["--t2", "--encode", codec_key.lower()]
@@ -480,6 +529,11 @@ class Ktx2Encoder:
             rdo = self._rdo_lambda(self.uastc_rdo if uastc_rdo is None else uastc_rdo)
             if rdo:
                 args += ["--uastc_rdo_l", f"{rdo:g}"]
+                # Only meaningful WITH an RDO pass -- toktx rejects the
+                # dictionary flag when RDO is off, so it is emitted inside the
+                # same branch rather than beside it (validated above).
+                if dictionary:
+                    args += ["--uastc_rdo_d", str(dictionary)]
             if self.zstd_level:
                 args += ["--zcmp", str(self.zstd_level)]
         args += list(self.extra_args)
@@ -495,6 +549,7 @@ class Ktx2Encoder:
         mipmaps: bool = True,
         quality: Optional[int] = None,
         uastc_rdo: Optional[float] = None,
+        uastc_rdo_dictionary: Optional[int] = None,
     ) -> str:
         """Encode *source* to *output* (``.ktx2``).
 
@@ -502,7 +557,8 @@ class Ktx2Encoder:
             source: Image file path, or a ``PIL.Image.Image`` (staged to a
                 scratch PNG for the encoder — toktx reads files, not pipes).
             output: Destination path; parent directories are created.
-            codec, srgb, mipmaps, quality, uastc_rdo: See :meth:`args_for`.
+            codec, srgb, mipmaps, quality, uastc_rdo, uastc_rdo_dictionary:
+                See :meth:`args_for`.
 
         Returns:
             str: *output*, for chaining.

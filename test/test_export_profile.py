@@ -6,6 +6,7 @@ import os
 import unittest
 
 from pythontk.core_utils.export_profile import ExportProfile, ExportRun
+from pythontk.str_utils._str_utils import StrUtils
 
 
 TASKS = {
@@ -58,6 +59,79 @@ class TestNaming(unittest.TestCase):
         self.assertEqual(
             ExportProfile.value_method(CHECKS["check_path_length"]), "value"
         )
+
+
+class TestLegacyRegexFold(unittest.TestCase):
+    """The retired RegEx field folds into the token system's modifier grammar,
+    so ONE regex implementation serves the field and the inline form."""
+
+    def test_an_explicit_delimiter_passes_through(self):
+        for spec in ("_bar.*->", "a=>b", "(foo|bar)->baz"):
+            with self.subTest(spec=spec):
+                self.assertEqual(ExportProfile.fold_legacy_regex(spec), spec)
+
+    def test_the_legacy_pipe_shorthand_becomes_an_arrow(self):
+        """`A|B` meant "replace A with B" in the retired field. It cannot stay a
+        delimiter -- that is regex alternation -- so it folds."""
+        self.assertEqual(ExportProfile.fold_legacy_regex("scene|asset"), "scene->asset")
+
+    def test_a_bare_pattern_deletes_its_match(self):
+        self.assertEqual(ExportProfile.fold_legacy_regex("_bar.*"), "_bar.*->")
+
+    def test_blank_is_no_modifier(self):
+        for value in (None, "", "   "):
+            with self.subTest(value=value):
+                self.assertIsNone(ExportProfile.fold_legacy_regex(value))
+
+    def test_the_fold_round_trips_through_the_shared_primitive(self):
+        """What the old field did, the new primitive must still do."""
+        for regex, expected in (
+            ("test_->prod_", "prod_scene"),
+            ("scene|asset", "test_asset"),
+            ("_scene.*", "test"),
+        ):
+            with self.subTest(regex=regex):
+                spec = ExportProfile.fold_legacy_regex(regex)
+                got, error = StrUtils.apply_regex_modifier("test_scene", spec)
+                self.assertIsNone(error)
+                self.assertEqual(got, expected)
+
+
+class TestLegacyRegexFoldsIntoThePattern(unittest.TestCase):
+    """Retiring the RegEx field must not drop the rule it held: it folds onto
+    the name token so the pattern states the whole thing."""
+
+    def test_the_wildcard_carries_the_folded_regex(self):
+        self.assertEqual(
+            ExportProfile.fold_legacy_naming("WIP_*", name_regex="test_->prod_"),
+            "WIP_{scene:test_->prod_}",
+        )
+
+    def test_a_retired_token_spelling_still_gets_it(self):
+        """A saved `{name}_x` has always had the RegEx applied; the alias is
+        deprecated, not broken."""
+        self.assertEqual(
+            ExportProfile.fold_legacy_naming("{name}_x", name_regex="test_->prod_"),
+            "{name:test_->prod_}_x",
+        )
+
+    def test_no_regex_leaves_the_pattern_untouched(self):
+        for value in (None, "", "   "):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    ExportProfile.fold_legacy_naming("WIP_*", name_regex=value), "WIP_*"
+                )
+
+    def test_the_folded_pattern_resolves_to_what_the_field_produced(self):
+        """The whole point: same file, whether the rule came from the retired
+        field or from an inline modifier."""
+        ctx = {"scene": "test_scene", "name": "test_scene"}
+        from_field = ExportProfile.resolve_output_path(
+            "WIP_*", ctx, name_regex="test_->prod_"
+        )
+        inline = ExportProfile.resolve_output_path("WIP_{scene:test_->prod_}", ctx)
+        self.assertEqual(from_field["stem"], "WIP_prod_scene")
+        self.assertEqual(from_field["stem"], inline["stem"])
 
 
 class TestRunConfig(unittest.TestCase):
@@ -240,7 +314,8 @@ class TestOutputPath(unittest.TestCase):
 
     def test_retired_version_and_timestamp_inputs_fold_into_the_same_file(self):
         legacy = self.resolve("WIP_*", version_format="{stem}_v{n:03d}", timestamp=True)
-        self.assertEqual(legacy["folded"], "WIP_{name}_{date}_{time}_v{n:03d}")
+        # the wildcard expands to the CANONICAL name token (ExportProfile.NAME_KEY)
+        self.assertEqual(legacy["folded"], "WIP_{scene}_{date}_{time}_v{n:03d}")
         self.assertEqual(legacy["stem"], "WIP_hero_2026-09-13_10-00-00_v001")
         self.assertIsNone(self.resolve("WIP_*")["folded"])
 
@@ -251,10 +326,15 @@ class TestOutputPath(unittest.TestCase):
         report = ExportProfile.naming_report(
             resolved, {"name": "", "n": ""}, version_suffix=re.compile(r"_v\d+$")
         )
-        self.assertEqual([level for level, _ in report], ["warning"] * 3)
+        self.assertEqual([level for level, _ in report], ["warning"] * 2)
         text = " ".join(message for _, message in report)
-        for fragment in ("{nope}", "?", "_v<N>"):
+        for fragment in ("{nope}", "?"):
             self.assertIn(fragment, text)
+        # version_suffix is accepted and IGNORED: it warned that a name not
+        # ending in "_v<N>" would lose its diff baseline across versions, which
+        # was only true while that baseline was keyed by the output file's stem.
+        # It is per-scene now, so no filename can carry or lose it.
+        self.assertNotIn("_v<N>", text)
 
     def test_the_version_suffix_strips_what_the_counter_wrote_and_nothing_else(self):
         self.touch("hero_v002.fbx")

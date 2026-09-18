@@ -1331,3 +1331,20 @@ class RoundTripArtifactShapeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RigModeVocabularyTest(unittest.TestCase):
+    """The rig-transfer mode is a hand-off vocabulary like the carrier: one
+    spelling for every panel and every producer, declared once in pythontk."""
+
+    def test_the_vocabulary_is_data_beside_the_carriers(self):
+        from pythontk import RIG_MODE_PARAM, RIG_MODES
+
+        self.assertEqual(RIG_MODE_PARAM, "RIG_MODE")
+        self.assertEqual(RIG_MODES, ("auto", "bake", "rig", "raw"))
+
+    def test_auto_is_first_because_first_is_what_an_undecided_request_gets(self):
+        # Mirrors ``HandoffBridge.carriers[0]``: order is the default.
+        from pythontk import RIG_MODES
+
+        self.assertEqual(RIG_MODES[0], "auto")

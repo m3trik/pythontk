@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 import re
+import string
 from typing import Union, List, Optional, Dict, Tuple, Callable, Iterable
 
 # from this package:
@@ -12,6 +13,48 @@ from pythontk.iter_utils._iter_utils import IterUtils
 # two-character escapes. Compiled at module scope because strip_ansi runs per console
 # write, on a streaming hot path.
 ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+class _SafeFormatter(string.Formatter):
+    """The one formatter behind every ``{token}`` this class resolves.
+
+    Two departures from ``string.Formatter``, both because the text it formats
+    was typed by a USER into a pattern field rather than written by a
+    programmer:
+
+    - An unknown key is preserved verbatim (``{missing}``) instead of raising,
+      so one stray brace pair is a typo rather than an aborted export.
+    - A format spec carrying a regex delimiter
+      (:attr:`StrUtils.REGEX_MODIFIER_DELIMITERS`) is a *regex modifier* on the
+      token's own value, not a format spec: ``{name:_bar.*->}``. Errors are
+      collected on :attr:`errors`, never raised -- the caller reports them at
+      its own severity.
+    """
+
+    def __init__(self):
+        super().__init__()
+        #: ``[(spec, message), ...]`` for every modifier that would not compile.
+        self.errors = []
+
+    def get_value(self, key, args, kwargs):
+        if isinstance(key, str):
+            return kwargs.get(key, "{" + key + "}")
+        return "{" + str(key) + "}"
+
+    def format_field(self, value, format_spec):
+        # Preserve unresolved placeholders verbatim, including their format
+        # spec, so a second pass can still apply padding (or a modifier) later.
+        # (`!r`/`!a` conversions on unresolved keys are not preserved.)
+        if isinstance(value, str) and value.startswith("{") and value.endswith("}"):
+            if format_spec:
+                return value[:-1] + ":" + format_spec + "}"
+            return value
+        if format_spec and StrUtils.split_regex_modifier(format_spec) is not None:
+            result, error = StrUtils.apply_regex_modifier(value, format_spec)
+            if error:
+                self.errors.append((format_spec, error))
+            return result
+        return super().format_field(value, format_spec)
 
 
 class StrUtils(CoreUtils):
@@ -164,7 +207,7 @@ class StrUtils(CoreUtils):
 
     @staticmethod
     def expand_wildcard(text: str, key: str = "name", wildcard: str = "*") -> str:
-        """Rewrite a bare-wildcard template into pure placeholder form.
+        r"""Rewrite a bare-wildcard template into pure placeholder form.
 
         Sugar for the one wildcard a single-value template can mean: *stands in
         for the default value*. A blank template is the bare default, so both
@@ -180,9 +223,15 @@ class StrUtils(CoreUtils):
             key (str): The placeholder name the wildcard stands for.
             wildcard (str): The token treated as the default-value marker.
 
+        Only LITERAL text is rewritten. A *wildcard* inside a ``{token}`` belongs
+        to that token's own grammar -- ``*`` is the regex "zero or more" in an
+        inline modifier (:meth:`split_regex_modifier`) -- and expanding it there
+        turns ``{name:_bar.*->}`` into ``{name:_bar.{name}->}``, silently
+        breaking every regex that uses ``.*``, ``\d*`` or ``[a-z]*``.
+
         Returns:
-            str: *text* with every *wildcard* replaced by ``"{key}"``; ``"{key}"``
-            when *text* is empty or whitespace.
+            str: *text* with every *wildcard* in its literal runs replaced by
+            ``"{key}"``; ``"{key}"`` when *text* is empty or whitespace.
 
         Example:
             >>> StrUtils.expand_wildcard("")             # -> '{name}'
@@ -190,18 +239,169 @@ class StrUtils(CoreUtils):
             >>> StrUtils.expand_wildcard("WIP_*")        # -> 'WIP_{name}'
             >>> StrUtils.expand_wildcard("WIP_*_export") # -> 'WIP_{name}_export'
             >>> StrUtils.expand_wildcard("asset")        # -> 'asset'
+            >>> StrUtils.expand_wildcard("{name:_bar.*->}")  # -> unchanged
         """
         token = "{" + key + "}"
         text = (text or "").strip()
         if not text:
             return token
-        return text.replace(wildcard, token)
+        if wildcard not in text:
+            return text
+        try:
+            parsed = list(string.Formatter().parse(text))
+        except ValueError:
+            # Malformed (a lone brace) -- no token structure to respect, so fall
+            # back to the blind rewrite and let the caller report the syntax.
+            return text.replace(wildcard, token)
+        out = []
+        for literal, field, spec, conversion in parsed:
+            # `parse` hands back literals already UNescaped, so re-double the
+            # braces a user typed to mean one.
+            out.append(
+                literal.replace("{", "{{").replace("}", "}}").replace(wildcard, token)
+            )
+            if field is None:
+                continue
+            out.append(
+                "{"
+                + field
+                + (f"!{conversion}" if conversion else "")
+                + (f":{spec}" if spec else "")
+                + "}"
+            )
+        return "".join(out)
+
+    #: Delimiters an inline regex modifier accepts, longest first -- the spec
+    #: form a token uses to reshape its OWN value: ``{name:_bar.*->}``. A spec
+    #: WITHOUT one of these stays an ordinary format spec (``{n:03d}``), so the
+    #: two grammars cannot collide. ``|`` is deliberately not a delimiter: it is
+    #: regex alternation, and splitting on it makes ``(foo|bar)->baz``
+    #: unwritable.
+    REGEX_MODIFIER_DELIMITERS = ("->", "=>")
+
+    @classmethod
+    def split_regex_modifier(cls, spec: str) -> Optional[Tuple[str, str]]:
+        """``(pattern, replacement)`` when *spec* is a regex modifier, else ``None``.
+
+        The ONE place the modifier's grammar is spelled. A spec with no
+        delimiter is not a modifier (``None``), which is what lets a token carry
+        either grammar: ``{n:03d}`` pads, ``{name:_bar.*->}`` substitutes.
+        A delimiter with nothing after it deletes the match, the common case
+        (``_bar.*->`` strips a suffix and everything past it).
+
+        Parameters:
+            spec (str): A token's format spec, as ``string.Formatter`` yields it.
+
+        Returns:
+            (tuple | None) ``(pattern, replacement)``, both stripped.
+
+        Example:
+            >>> StrUtils.split_regex_modifier("_bar.*->")
+            ('_bar.*', '')
+            >>> StrUtils.split_regex_modifier("03d") is None
+            True
+        """
+        for delim in cls.REGEX_MODIFIER_DELIMITERS:
+            if delim in spec:
+                pattern, replacement = spec.split(delim, 1)
+                return pattern.strip(), replacement.strip()
+        return None
+
+    @classmethod
+    def apply_regex_modifier(cls, value, spec: str) -> Tuple[str, Optional[str]]:
+        """*value* reshaped by the regex modifier *spec* -- ``(result, error)``.
+
+        A pattern that will not compile is NOT raised: the text came from a user
+        mid-edit, where half a regex is a keystroke rather than a reason to
+        abort. The value comes back untouched with the error worded, so the
+        caller reports it at its own severity (a tooltip greys it, an export
+        logs it).
+
+        Parameters:
+            value: The token's value; a non-string is formatted first.
+            spec (str): The modifier (see :meth:`split_regex_modifier`). A spec
+                that is not a modifier leaves *value* untouched.
+
+        Returns:
+            (tuple) ``(result, error)`` -- *error* is ``None`` on success.
+
+        Example:
+            >>> StrUtils.apply_regex_modifier("asset_bar_old", "_bar.*->")
+            ('asset', None)
+            >>> StrUtils.apply_regex_modifier("asset", "(->")[0]
+            'asset'
+        """
+        text = value if isinstance(value, str) else format(value)
+        parts = cls.split_regex_modifier(spec)
+        if parts is None:
+            return text, None
+        pattern, replacement = parts
+        try:
+            return re.sub(pattern, replacement, text), None
+        except re.error as e:
+            return text, f"invalid regex {pattern!r}: {e}"
+
+    @classmethod
+    def attach_modifier(cls, text: str, key: str, spec: str) -> str:
+        """Give every bare ``{key}`` in *text* the regex modifier *spec*.
+
+        The migration primitive: it folds a rule that lived in a SEPARATE field
+        into the pattern itself, so retiring that field cannot silently drop
+        what the user set.
+
+        A ``{key}`` that already carries a spec is left untouched -- what the
+        user wrote inline outranks a folded default -- and so is every other
+        token. *text* must already be in placeholder form
+        (:meth:`expand_wildcard`).
+
+        Parameters:
+            text (str): The pattern, in pure placeholder form.
+            key (str): The token to modify.
+            spec (str): The modifier (see :meth:`split_regex_modifier`).
+
+        Returns:
+            (str) *text* with the modifier attached.
+
+        Example:
+            >>> StrUtils.attach_modifier("WIP_{scene}", "scene", "_bar.*->")
+            'WIP_{scene:_bar.*->}'
+            >>> StrUtils.attach_modifier("{scene:^a->b}", "scene", "_bar.*->")
+            '{scene:^a->b}'
+        """
+        if not spec or not text:
+            return text
+        try:
+            parsed = list(string.Formatter().parse(text))
+        except ValueError:
+            return text
+        out = []
+        for literal, field, field_spec, conversion in parsed:
+            out.append(literal.replace("{", "{{").replace("}", "}}"))
+            if field is None:
+                continue
+            base = field.split(".")[0].split("[")[0]
+            if base == key and not field_spec:
+                field_spec = spec
+            out.append(
+                "{"
+                + field
+                + (f"!{conversion}" if conversion else "")
+                + (f":{field_spec}" if field_spec else "")
+                + "}"
+            )
+        return "".join(out)
 
     @staticmethod
     def replace_placeholders(text: str, **kwargs) -> str:
         """Replace placeholders in a string with provided values.
 
-        Supports standard Python string formatting syntax (e.g. {value:03d}).
+        Supports standard Python string formatting syntax (e.g. {value:03d})
+        **and the inline regex modifier** -- a spec carrying a delimiter
+        (:attr:`REGEX_MODIFIER_DELIMITERS`) reshapes the token's own value
+        rather than formatting it: ``{name:_bar.*->}``. A modifier that will not
+        compile leaves the value untouched; use :meth:`resolve_placeholders` to
+        see WHY (this returns only the text).
+
         Missing keys are preserved as placeholders -- **including a POSITIONAL
         one** (``{}`` / ``{0}``), which has no value here because this takes only
         keywords. That used to raise ``IndexError`` out of the formatter, which
@@ -224,29 +424,7 @@ class StrUtils(CoreUtils):
             >>> StrUtils.replace_placeholders("Path: {root}/{missing}", root="C:/Projects")
             'Path: C:/Projects/{missing}'
         """
-        import string
-
-        class SafeFormatter(string.Formatter):
-            def get_value(self, key, args, kwargs):
-                if isinstance(key, str):
-                    return kwargs.get(key, "{" + key + "}")
-                return "{" + str(key) + "}"
-
-            def format_field(self, value, format_spec):
-                # Preserve unresolved placeholders verbatim, including their
-                # format spec, so a second pass can still apply padding etc.
-                # (`!r`/`!a` conversions on unresolved keys are not preserved.)
-                if (
-                    isinstance(value, str)
-                    and value.startswith("{")
-                    and value.endswith("}")
-                ):
-                    if format_spec:
-                        return value[:-1] + ":" + format_spec + "}"
-                    return value
-                return super().format_field(value, format_spec)
-
-        return SafeFormatter().format(text, **kwargs)
+        return _SafeFormatter().format(text, **kwargs)
 
     @staticmethod
     def resolve_placeholders(text: str, **kwargs) -> dict:
@@ -274,6 +452,9 @@ class StrUtils(CoreUtils):
                   rendered as a string, for fields present in *kwargs*.
                 - ``"unresolved"`` (list[str]): base names present in *text* but
                   absent from *kwargs*, in first-seen order.
+                - ``"regex_errors"`` (list[tuple]): ``(spec, message)`` for every
+                  inline regex modifier that would not compile. The value is
+                  left untouched, so the result is still usable.
 
         Raises:
             ValueError: If *text* is a malformed format string (e.g. a lone ``{``),
@@ -296,11 +477,17 @@ class StrUtils(CoreUtils):
         resolved = {name: format(kwargs[name]) for name in fields if name in kwargs}
         unresolved = [name for name in fields if name not in kwargs]
 
+        # Format through an OWNED formatter rather than replace_placeholders, so
+        # the regex modifiers it applied can be reported rather than swallowed.
+        formatter = _SafeFormatter()
+        result = formatter.format(text, **kwargs)
+
         return {
-            "result": StrUtils.replace_placeholders(text, **kwargs),
+            "result": result,
             "fields": fields,
             "resolved": resolved,
             "unresolved": unresolved,
+            "regex_errors": formatter.errors,
         }
 
     #: The tokens every name pattern gets for free -- token -> meaning, in the
@@ -353,7 +540,8 @@ class StrUtils(CoreUtils):
         The one grammar a *single output name* can carry, composed from this
         class's primitives: :meth:`expand_wildcard` (the bare wildcard, and a
         blank pattern, stand for the default value), :meth:`resolve_placeholders`
-        (``{token}`` substitution + what it could not fill) and
+        (``{token}`` substitution, the inline regex modifier
+        ``{token:PATTERN->REPLACEMENT}``, and what it could not fill) and
         :meth:`to_legal_filename`. Anything else in the pattern is literal.
 
         Diagnostics are *returned*, not logged, so the caller reports them
@@ -388,6 +576,9 @@ class StrUtils(CoreUtils):
                   they are left in ``name`` verbatim, as typed.
                 - ``"dropped"`` (list): characters removed as illegal in a file
                   name.
+                - ``"regex_errors"`` (list): ``(spec, message)`` for every inline
+                  regex modifier that would not compile; its token kept its
+                  unmodified value.
                 - ``"error"`` (str | None): set when *pattern* is not a valid
                   format string, in which case ``name`` is the pattern with its
                   braces taken literally -- still legalized, ``dropped`` saying
@@ -449,9 +640,10 @@ class StrUtils(CoreUtils):
                 "expanded": expanded,
                 "unresolved": [],
                 "dropped": dropped,
+                "regex_errors": [],
                 "error": str(e),
             }
-        name, template, unresolved, dropped = "", "", [], []
+        name, template, unresolved, dropped, regex_errors = "", "", [], [], []
         for text, resolved in runs:
             if isinstance(resolved, str):  # a kept placeholder, verbatim
                 name += resolved
@@ -462,6 +654,9 @@ class StrUtils(CoreUtils):
             template += escape(legal)
             unresolved += [n for n in resolved["unresolved"] if n not in unresolved]
             dropped += [c for c in bad if c not in dropped]
+            regex_errors += [
+                e for e in resolved["regex_errors"] if e not in regex_errors
+            ]
         # A pattern that resolves to NOTHING is not a name -- a lone "?" drops to
         # empty, and the caller would join it onto a directory and write a file
         # that is only an extension. Fall back to the default the wildcard stands
@@ -476,6 +671,7 @@ class StrUtils(CoreUtils):
             "expanded": expanded,
             "unresolved": unresolved,
             "dropped": dropped,
+            "regex_errors": regex_errors,
             "error": None,
         }
 

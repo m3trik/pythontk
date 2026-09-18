@@ -17,10 +17,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
+from pythontk.core_utils.app_launcher import AppLauncher
+from pythontk.core_utils.cancel_scope import CancelScope, OperationCancelled
 from pythontk.core_utils.script_run import (
     REWRITTEN,
+    ProgressRelay,
     ScriptRunner,
     ScriptRunResult,
 )
@@ -210,6 +214,144 @@ class TestRewrittenExpectation(ScriptRunBase):
             self.run_script("pass\n", expect="whatever")
 
 
+class TestStreaming(ScriptRunBase):
+    """``on_output``: a long headless run reports while it works and can be stopped.
+
+    A blocking run used to be silent until the child exited, so a UI waiting on a
+    minutes-long DCC conversion could show nothing, and the only way out was the
+    timeout -- which killed a production conversion that was still working.
+    """
+
+    def _scripts_left(self):
+        pattern = os.path.join(tempfile.gettempdir(), f"{self.SCRIPT_PREFIX}_*")
+        return glob.glob(pattern)
+
+    def test_lines_arrive_while_the_child_is_still_running(self):
+        script = (
+            "import time\n"
+            "print('first', flush=True)\n"
+            "time.sleep(0.6)\n"
+            "print('second', flush=True)\n"
+            f"open({self.artifact!r}, 'wb').write(b'x')\n"
+        )
+        seen = []
+        result = self.run_script(script, on_output=seen.append)
+        self.assertEqual(
+            [line for line in seen if line is not None][:2], ["first", "second"]
+        )
+        # Quiet polls BETWEEN the two lines prove the first was delivered before
+        # the child finished, not collected at exit.
+        between = seen[seen.index("first") : seen.index("second")]
+        self.assertIn(None, between)
+        self.assertIn("second", result.output)
+
+    def test_returning_false_kills_the_child_and_leaves_nothing(self):
+        script = (
+            "import time\n"
+            "print('ready', flush=True)\n"
+            "time.sleep(60)\n"
+            f"open({self.artifact!r}, 'wb').write(b'x')\n"
+        )
+        started = time.monotonic()
+        with self.assertRaises(OperationCancelled):
+            self.run_script(script, on_output=lambda line: line != "ready")
+        self.assertLess(time.monotonic() - started, 30, "the child was not killed")
+        self.assertFalse(os.path.exists(self.artifact))
+        self.assertEqual(self._scripts_left(), [])
+
+    def test_a_cancelled_ambient_scope_stops_the_child(self):
+        script = "import time\nprint('ready', flush=True)\ntime.sleep(60)\n"
+        scope = CancelScope("test run")
+
+        def on_output(line):
+            if line == "ready":
+                scope.cancel("test")
+
+        with scope:
+            with self.assertRaises(OperationCancelled):
+                self.run_script(script, on_output=on_output)
+
+    def test_the_timeout_still_applies_while_streaming(self):
+        script = "import time\nwhile True:\n    print('tick', flush=True)\n    time.sleep(0.05)\n"
+        with self.assertRaises(subprocess.TimeoutExpired) as ctx:
+            self.run_script(script, timeout=2, on_output=lambda line: True)
+        kept = getattr(ctx.exception, "script_path", None)
+        self.assertTrue(kept and os.path.exists(kept))
+        os.remove(kept)
+
+    def test_a_failed_streamed_run_still_embeds_its_output(self):
+        script = "print('MARKER-99', flush=True)\nraise SystemExit(1)\n"
+        with self.assertRaises(RuntimeError) as ctx:
+            self.run_script(script, on_output=lambda line: True)
+        self.assertIn("MARKER-99", str(ctx.exception))
+        os.remove(getattr(ctx.exception, "script_path"))
+
+    def test_output_file_and_on_output_are_exclusive(self):
+        with self.assertRaises(ValueError):
+            AppLauncher.run(
+                sys.executable,
+                args=["-c", "pass"],
+                output_file=os.path.join(self.dir, "log.txt"),
+                on_output=lambda line: True,
+            )
+
+    def test_a_relay_turns_markers_into_bar_positions(self):
+        script = (
+            "print('::progress:: 1/2 half', flush=True)\n"
+            "print('::progress:: 2/2 done', flush=True)\n"
+            f"open({self.artifact!r}, 'wb').write(b'x')\n"
+        )
+        reports = []
+        relay = ProgressRelay(
+            lambda current, total, text: reports.append((current, text))
+        )
+        self.run_script(script, on_output=relay.reader(0, "Child"))
+        self.assertIn((50, "Child: half"), reports)
+        self.assertIn((100, "Child: done"), reports)
+
+
+class TestProgressRelay(unittest.TestCase):
+    def test_marker_round_trip(self):
+        line = ProgressRelay.line(3, 7, "Baking animation")
+        self.assertEqual(line, "::progress:: 3/7 Baking animation")
+        self.assertEqual(ProgressRelay.parse(line), (3, 7, "Baking animation"))
+
+    def test_ordinary_output_is_not_a_marker(self):
+        self.assertIsNone(ProgressRelay.parse("Warning: something"))
+        self.assertIsNone(ProgressRelay.parse(None))
+        self.assertIsNone(ProgressRelay.parse("::progress:: x/y text"))
+        # A host that prefixes its console lines still delivers the marker.
+        self.assertEqual(ProgressRelay.parse("# ::progress:: 1/2"), (1, 2, ""))
+
+    def test_stages_share_one_bar_and_it_never_moves_back(self):
+        calls = []
+        relay = ProgressRelay(lambda c, t, m: calls.append((c, t, m)), stages=2)
+        relay.reader(1, "Blender")("::progress:: 1/2 Importing")
+        self.assertEqual(calls[-1], (75, 100, "Blender: Importing"))
+        relay.report(0, 1, 1, "late")
+        self.assertEqual(calls[-1][0], 75)
+        self.assertEqual(relay.value, 75)
+
+    def test_quiet_output_becomes_throttled_keep_alive_ticks(self):
+        calls = []
+        relay = ProgressRelay(lambda c, t, m: calls.append(c), throttle=60)
+        reader = relay.reader(0)
+        reader(None)
+        reader("plain output")
+        reader(None)
+        self.assertEqual(calls, [None])
+
+    def test_a_false_receiver_cancels(self):
+        relay = ProgressRelay(lambda c, t, m: False)
+        self.assertFalse(relay.report(0, 1, 2, "x"))
+        self.assertFalse(relay.reader(0)("::progress:: 1/2 x"))
+
+    def test_no_receiver_always_continues(self):
+        relay = ProgressRelay()
+        self.assertTrue(relay.report(0, 1, 2))
+        self.assertTrue(relay.tick())
+
+
 class TestRootExport(unittest.TestCase):
     def test_registered_on_package_root(self):
         import pythontk as ptk
@@ -217,6 +359,7 @@ class TestRootExport(unittest.TestCase):
         self.assertTrue(hasattr(ptk, "ScriptRunner"))
         self.assertTrue(callable(ptk.ScriptRunner.run_script_to_artifact))
         self.assertTrue(hasattr(ptk, "ScriptRunResult"))
+        self.assertIs(ptk.ProgressRelay, ProgressRelay)
 
 
 if __name__ == "__main__":

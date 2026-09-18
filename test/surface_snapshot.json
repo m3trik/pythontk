@@ -29,6 +29,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "apply_regex_modifier",
+    "qualname": "StrUtils.apply_regex_modifier",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.img_utils._img_utils",
     "name": "are_identical",
     "qualname": "ImgUtils.are_identical",
@@ -74,6 +81,13 @@
     "module": "pythontk.file_utils._file_utils",
     "name": "atomic_write_text",
     "qualname": "FileUtils.atomic_write_text",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "attach_modifier",
+    "qualname": "StrUtils.attach_modifier",
     "tier": "bare"
   },
   {
@@ -1457,6 +1471,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "split_regex_modifier",
+    "qualname": "StrUtils.split_regex_modifier",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.img_utils._img_utils",
     "name": "srgb_to_linear",
     "qualname": "ImgUtils.srgb_to_linear",
@@ -1835,6 +1856,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.deprecation",
+    "name": "Deprecation",
+    "qualname": "Deprecation",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.deprecation",
+    "name": "DeprecationRecord",
+    "qualname": "DeprecationRecord",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.hierarchy_utils.hierarchy_analyzer",
     "name": "DifferenceType",
     "qualname": "DifferenceType",
@@ -1989,6 +2024,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.handoff_manifest",
+    "name": "HandoffManifest",
+    "qualname": "HandoffManifest",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.app_handoff",
     "name": "HandoffRequest",
     "qualname": "HandoffRequest",
@@ -2013,6 +2055,13 @@
     "module": "pythontk.core_utils.hierarchy_utils.hierarchy_analyzer",
     "name": "HierarchyAnalyzer",
     "qualname": "HierarchyAnalyzer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.hierarchy_baseline",
+    "name": "HierarchyBaseline",
+    "qualname": "HierarchyBaseline",
     "tier": "root"
   },
   {
@@ -2153,6 +2202,13 @@
     "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
     "name": "ManifestModel",
     "qualname": "ManifestModel",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.manifest_plan",
+    "name": "ManifestPlan",
+    "qualname": "ManifestPlan",
     "tier": "root"
   },
   {
@@ -2367,6 +2423,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_plan",
+    "name": "PlanResult",
+    "qualname": "PlanResult",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
     "name": "PlannedShot",
     "qualname": "PlannedShot",
@@ -2444,6 +2507,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.script_run",
+    "name": "ProgressRelay",
+    "qualname": "ProgressRelay",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.math_utils.progression",
     "name": "ProgressionCurves",
     "qualname": "ProgressionCurves",
@@ -2461,6 +2531,20 @@
     "module": "pythontk.core_utils.qc_log",
     "name": "QcLog",
     "qualname": "QcLog",
+    "tier": "root"
+  },
+  {
+    "kind": "tuple",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "RIG_MODES",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "str",
+    "module": "pythontk.core_utils.app_handoff",
+    "name": "RIG_MODE_PARAM",
+    "qualname": null,
     "tier": "root"
   },
   {
@@ -2549,9 +2633,93 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_plan",
+    "name": "ReportEntry",
+    "qualname": "ReportEntry",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.net_utils.rpc.job",
     "name": "Result",
     "qualname": "Result",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_capability",
+    "name": "RigCapability",
+    "qualname": "RigCapability",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_model",
+    "name": "RigGraph",
+    "qualname": "RigGraph",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_machinery",
+    "name": "RigMachinery",
+    "qualname": "RigMachinery",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_model",
+    "name": "RigNode",
+    "qualname": "RigNode",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_capability",
+    "name": "RigOpCapability",
+    "qualname": "RigOpCapability",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_plan",
+    "name": "RigPlanRefused",
+    "qualname": "RigPlanRefused",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_plan",
+    "name": "RigPlanner",
+    "qualname": "RigPlanner",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_model",
+    "name": "RigPolicy",
+    "qualname": "RigPolicy",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_model",
+    "name": "RigRecord",
+    "qualname": "RigRecord",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_transfer",
+    "name": "RigTransfer",
+    "qualname": "RigTransfer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.rig_graph.rig_verify",
+    "name": "RigVerify",
+    "qualname": "RigVerify",
     "tier": "root"
   },
   {
@@ -2811,6 +2979,13 @@
     "module": "pythontk.core_utils.engines.shots.shot_model",
     "name": "ShotStore",
     "qualname": "ShotStore",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_transfer",
+    "name": "ShotTransfer",
+    "qualname": "ShotTransfer",
     "tier": "root"
   },
   {

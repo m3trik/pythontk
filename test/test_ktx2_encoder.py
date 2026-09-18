@@ -125,6 +125,63 @@ class Ktx2EncoderArgsTest(BaseTestCase):
         with self.assertRaises(ValueError):
             self._encoder().args_for("in.png", "out.ktx2", uastc_rdo=11)
 
+    def test_uastc_rdo_dictionary(self):
+        """``--uastc_rdo_d`` sizes the RDO match window, and it is the encode's
+        dominant cost: measured on a 4K normal map alone on every core at UASTC
+        quality 2 / RDO 0.75, toktx's own default took 56.6 s for 18.22 MB, 1024
+        took 24.9 s for 18.47 MB and 256 took 15.4 s for 18.60 MB.
+
+        UNSET by default on purpose -- that probe was an upscaled synthetic map,
+        so what a cheaper dictionary costs on real content is unmeasured, and a
+        GLB ships to a headset over a network. The dial exists so the trade can
+        be measured; moving the default is a separate, measured change.
+        Added: 2026-09-17"""
+        args = self._encoder(uastc_rdo=0.75, uastc_rdo_dictionary=1024).args_for(
+            "in.png", "out.ktx2"
+        )
+        self.assertEqual(args[args.index("--uastc_rdo_d") + 1], "1024")
+        args = self._encoder(uastc_rdo=0.75).args_for(
+            "in.png", "out.ktx2", uastc_rdo_dictionary=256
+        )
+        self.assertEqual(args[args.index("--uastc_rdo_d") + 1], "256")
+
+        # The default must not move without a measurement on real content.
+        self.assertNotIn(
+            "--uastc_rdo_d", self._encoder(uastc_rdo=0.75).args_for("i.png", "o.ktx2")
+        )
+
+        # Meaningless without an RDO pass: toktx rejects the flag when RDO is
+        # off, so it must not be emitted beside a missing --uastc_rdo_l.
+        self.assertNotIn(
+            "--uastc_rdo_d",
+            self._encoder(uastc_rdo_dictionary=1024).args_for("i.png", "o.ktx2"),
+        )
+        self.assertNotIn(
+            "--uastc_rdo_d",
+            self._encoder(uastc_rdo=0.75, uastc_rdo_dictionary=1024).args_for(
+                "i.png", "o.ktx2", uastc_rdo=0
+            ),
+        )
+        # ETC1S has no RDO stage at all.
+        self.assertNotIn(
+            "--uastc_rdo_d",
+            self._encoder(uastc_rdo=0.75, uastc_rdo_dictionary=1024).args_for(
+                "i.png", "o.ktx2", codec="ETC1S"
+            ),
+        )
+        # A malformed VALUE is a typo whether or not this encode would use it,
+        # so it is rejected on every branch -- otherwise the constructor would
+        # refuse `99` while the same `99` passed per call with RDO off.
+        for bad in (128, 65537, "big"):
+            with self.assertRaises(ValueError):
+                self._encoder(uastc_rdo=0.75).args_for(
+                    "i.png", "o.ktx2", uastc_rdo_dictionary=bad
+                )
+            with self.assertRaises(ValueError):
+                self._encoder().args_for("i.png", "o.ktx2", uastc_rdo_dictionary=bad)
+            with self.assertRaises(ValueError):
+                self._encoder(uastc_rdo_dictionary=bad)
+
     def test_etc1s_defaults(self):
         args = self._encoder().args_for("in.png", "out.ktx2", codec="ETC1S")
         self.assertEqual(args[args.index("--encode") + 1], "etc1s")

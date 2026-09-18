@@ -25,6 +25,7 @@ EXPECTED_FIELDS = [
     "summary",
     "line",
     "deprecated",
+    "remove_in",
 ]
 
 
@@ -40,6 +41,7 @@ class SymbolRecordTest(BaseTestCase):
             summary="Return x as a list.",
             line=42,
             deprecated=False,
+            remove_in="",
         )
         base.update(overrides)
         return SymbolRecord(**base)
@@ -91,6 +93,21 @@ class SymbolRecordTest(BaseTestCase):
     def test_registry_row_deprecated(self):
         row = self._rec(deprecated=True, summary="").to_registry_row()
         self.assertIn(" **DEPRECATED**", row)
+
+    def test_registry_row_carries_the_removal_version(self):
+        """A retirement without a deadline is what let an alias ship in 50
+        releases; the row states the deadline so a reviewer sees it without
+        opening the source."""
+        row = self._rec(
+            deprecated=True, remove_in="0.11.0", summary=""
+        ).to_registry_row()
+        self.assertIn(" **DEPRECATED (remove in 0.11.0)**", row)
+
+    def test_remove_in_alone_decorates_nothing(self):
+        """Only ``deprecated`` decides the marker: a stray version on a live
+        symbol must not announce a removal nobody scheduled."""
+        row = self._rec(remove_in="0.11.0", summary="").to_registry_row()
+        self.assertNotIn("DEPRECATED", row)
 
     def test_registry_row_deprecated_static_with_summary(self):
         """Decoration order: kind marker, then DEPRECATED, then summary."""

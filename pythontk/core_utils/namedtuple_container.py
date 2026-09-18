@@ -629,6 +629,6 @@ if __name__ == "__main__":
 # --------------------------------------------------------------------------------------------
 #
 # The container itself is domain-agnostic — the extender function supplies the
-# domain-specific logic (see uitk's FileContainer for a subclass that overrides
+# domain-specific logic (see uitk's FileRegistry for a subclass that overrides
 # `extend` instead). This keeps it reusable beyond file management.
 #
