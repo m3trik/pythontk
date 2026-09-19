@@ -1880,6 +1880,53 @@ class StrTest(BaseTestCase):
         self.assertEqual(StrUtils.to_legal_name("Name "), "Name_")
         self.assertEqual(StrUtils.to_legal_name("MiXeD"), "MiXeD")
 
+    # ----------------------------------------------------------- legal names
+    def test_is_legal_name_is_the_pattern_every_carrier_keeps(self):
+        for name in ("Shot_01", "_x", "A", "Fade__In", "Wipe_Out_", "007"):
+            self.assertTrue(StrUtils.is_legal_name(name), name)
+        for name in ("", "Step 4.1", "a-b", "é", "a b", None, 5):
+            self.assertFalse(StrUtils.is_legal_name(name), repr(name))
+
+    def test_name_error_explains_and_never_repairs(self):
+        """The refusal names every offending character once, in order, and a
+        legal name is accepted exactly as typed (nothing to report)."""
+        self.assertIsNone(StrUtils.name_error("Fade__In"))
+        error = StrUtils.name_error("Step 4.1-b.c")
+        self.assertIn("'Step 4.1-b.c' has a space, '.', '-'", error)
+        self.assertIn(StrUtils.LEGAL_NAME_RULE, error)
+        self.assertEqual(error.count("'.'"), 1)
+        self.assertEqual(StrUtils.name_error(""), "Names cannot be empty.")
+        self.assertEqual(
+            StrUtils.name_error("a b", subject="shot names", reason="because x"),
+            "'a b' has a space: shot names use letters, digits and '_' only, "
+            "because x.",
+        )
+
+    def test_to_legal_name_output_is_always_legal(self):
+        """The converter and the checker describe ONE rule."""
+        for name in ("Convert Textures (2K)", "a  b", "x-y.z", "é!"):
+            self.assertTrue(StrUtils.is_legal_name(StrUtils.to_legal_name(name)))
+
+    def test_legal_name_matcher_is_the_inverse_of_to_legal_name(self):
+        """Every original that converts to a legal name matches its pattern,
+        and a different spelling of the letters does not."""
+        for original in ("my ui", "my_ui", "my-ui", "my.ui"):
+            legal = StrUtils.to_legal_name(original)
+            self.assertEqual(legal, "my_ui")
+            self.assertIsNotNone(StrUtils.legal_name_matcher(legal).fullmatch(original))
+        self.assertIsNone(StrUtils.legal_name_matcher("my_ui").fullmatch("myxui"))
+        self.assertIsNone(StrUtils.legal_name_matcher("my_ui").fullmatch("my ui2"))
+
+    def test_the_shot_store_enforces_this_rule(self):
+        """``ShotStore.NAME_PATTERN`` is this rule, not a second copy of it."""
+        from pythontk import ShotStore
+
+        self.assertEqual(ShotStore.NAME_PATTERN, StrUtils.LEGAL_NAME_PATTERN)
+        self.assertEqual(ShotStore.NAME_RULE, StrUtils.LEGAL_NAME_RULE)
+        store = ShotStore()
+        self.assertIn("has a space", store.name_error("Step 4"))
+        self.assertIsNone(store.name_error("Step_4"))
+
     def test_export_profile_reads_the_rule_from_here(self):
         """`ExportProfile.legal_name` is a pass-through, not a second copy.
 

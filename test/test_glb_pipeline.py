@@ -441,5 +441,55 @@ class GlbPipelineTestCase(unittest.TestCase):
         self.assertTrue(any("sidecar skipped" in m for m in caught.output))
 
 
+class TestDeclaredTakes(unittest.TestCase):
+    """Which takes an FBX declares: the shot record's clips (each carries its
+    range since 0.11.0) first, the legacy ``fbx_takes`` channel for a file
+    written before."""
+
+    class _Fbx:
+        def __init__(self, props):
+            self.props = props
+
+        def user_properties(self, name):
+            return self.props.get(name, [])
+
+    def test_the_shot_record_is_read_first(self):
+        fbx = self._Fbx(
+            {
+                "shot_metadata": [
+                    b'{"version": 1, "shots": [{"clip": "A", "start": 1, "end": 9}]}'
+                ],
+                "fbx_takes": [b'[{"name": "legacy"}]'],
+            }
+        )
+        self.assertEqual(GlbPipeline._declared_takes(fbx), {"A"})
+
+    def test_every_carrier_is_read(self):
+        """An imported reference brings its own carrier and clips."""
+        fbx = self._Fbx(
+            {
+                "shot_metadata": [
+                    b'{"shots": [{"clip": "A", "start": 1, "end": 9}]}',
+                    b'{"shots": [{"clip": "B", "start": 20, "end": 30}]}',
+                ]
+            }
+        )
+        self.assertEqual(GlbPipeline._declared_takes(fbx), {"A", "B"})
+
+    def test_clips_without_ranges_are_an_older_file(self):
+        fbx = self._Fbx(
+            {
+                "shot_metadata": [b'{"shots": [{"clip": "A"}]}'],
+                "fbx_takes": [b'[{"name": "legacy"}]'],
+            }
+        )
+        self.assertEqual(GlbPipeline._declared_takes(fbx), {"legacy"})
+
+    def test_an_older_file_falls_back_to_fbx_takes(self):
+        fbx = self._Fbx({"fbx_takes": [b'[{"name": "legacy"}]', b""]})
+        self.assertEqual(GlbPipeline._declared_takes(fbx), {"legacy"})
+        self.assertEqual(GlbPipeline._declared_takes(self._Fbx({})), set())
+
+
 if __name__ == "__main__":
     unittest.main()

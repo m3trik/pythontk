@@ -833,7 +833,7 @@ class ExportRun:
     needs a ``getattr`` default because every mode is declared here with the
     value a run that never named it has.
 
-    The two modes derived from dispatched tasks (:meth:`with_tasks`) are
+    The three modes derived from dispatched tasks (:meth:`with_tasks`) are
     re-read by ``TaskManager.run_tasks`` off the FULL task dict, so a caller
     that drives the manager directly gets them too -- and an override that
     resumes a subset of tasks never re-derives them from that subset.
@@ -875,6 +875,13 @@ class ExportRun:
     #: Whether convert_to_relative_paths runs, so a write-back texture
     #: conversion relativizes what it rewired (derived: :meth:`with_tasks`).
     relative_paths: bool = False
+    #: The Animation Clips row's own value (``full`` / ``shots`` / ``both``, or
+    #: the boolean a pre-combo preset stored), unresolved -- the exporter
+    #: normalises it once, and hands it to the shots producer as INPUT through
+    #: the export context, so the shot record is declared, never patched
+    #: (derived: :meth:`with_tasks`; ``"both"`` when the row is absent, the
+    #: mode a run that never realizes takes still converts its GLB under).
+    animation_clips_mode: Any = "both"
     #: The Output Filename carried a version counter, so the sidecar routes
     #: through the base stem and a series shares one manifest.
     versioned: bool = False
@@ -973,6 +980,7 @@ class ExportRun:
         return self.replace(
             optimize_keys_level=tasks.get("optimize_keys", False),
             relative_paths=bool(tasks.get("convert_to_relative_paths", False)),
+            animation_clips_mode=tasks.get("apply_declared_takes", "both"),
         )
 
     @classmethod

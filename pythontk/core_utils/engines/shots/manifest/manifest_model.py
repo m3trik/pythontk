@@ -415,7 +415,7 @@ class BuilderStep:
 # Build plan (compute-then-commit)
 # ---------------------------------------------------------------------------
 
-Action = Literal["created", "patched", "skipped", "locked", "removed"]
+Action = Literal["created", "patched", "skipped", "locked", "removed", "refused"]
 
 
 @dataclass

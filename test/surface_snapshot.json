@@ -701,20 +701,6 @@
   },
   {
     "kind": "function",
-    "module": "pythontk.file_utils._file_utils",
-    "name": "get_json",
-    "qualname": "FileUtils.get_json",
-    "tier": "bare"
-  },
-  {
-    "kind": "function",
-    "module": "pythontk.file_utils._file_utils",
-    "name": "get_json_file",
-    "qualname": "FileUtils.get_json_file",
-    "tier": "bare"
-  },
-  {
-    "kind": "function",
     "module": "pythontk.math_utils._math_utils",
     "name": "get_kmeans_threshold",
     "qualname": "MathUtils.get_kmeans_threshold",
@@ -795,6 +781,13 @@
     "module": "pythontk.core_utils._core_utils",
     "name": "has_attribute",
     "qualname": "CoreUtils.has_attribute",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "illegal_name_chars",
+    "qualname": "StrUtils.illegal_name_chars",
     "tier": "bare"
   },
   {
@@ -883,6 +876,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "is_legal_name",
+    "qualname": "StrUtils.is_legal_name",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.file_utils._file_utils",
     "name": "is_locked",
     "qualname": "FileUtils.is_locked",
@@ -935,6 +935,13 @@
     "module": "pythontk.img_utils._img_utils",
     "name": "ktx2_available",
     "qualname": "ImgUtils.ktx2_available",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "legal_name_matcher",
+    "qualname": "StrUtils.legal_name_matcher",
     "tier": "bare"
   },
   {
@@ -1033,6 +1040,13 @@
     "module": "pythontk.math_utils._math_utils",
     "name": "move_point_relative_along_vector",
     "qualname": "MathUtils.move_point_relative_along_vector",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "name_error",
+    "qualname": "StrUtils.name_error",
     "tier": "bare"
   },
   {
@@ -1418,20 +1432,6 @@
     "module": "pythontk.img_utils._img_utils",
     "name": "set_contrast",
     "qualname": "ImgUtils.set_contrast",
-    "tier": "bare"
-  },
-  {
-    "kind": "function",
-    "module": "pythontk.file_utils._file_utils",
-    "name": "set_json",
-    "qualname": "FileUtils.set_json",
-    "tier": "bare"
-  },
-  {
-    "kind": "function",
-    "module": "pythontk.file_utils._file_utils",
-    "name": "set_json_file",
-    "qualname": "FileUtils.set_json_file",
     "tier": "bare"
   },
   {
@@ -1891,6 +1891,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.scene_records",
+    "name": "ExportContext",
+    "qualname": "ExportContext",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.export_profile",
     "name": "ExportProfile",
     "qualname": "ExportProfile",
@@ -1908,6 +1915,13 @@
     "module": "pythontk.core_utils.export_profile",
     "name": "ExportRun",
     "qualname": "ExportRun",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.scene_records",
+    "name": "ExportSnapshot",
+    "qualname": "ExportSnapshot",
     "tier": "root"
   },
   {
@@ -1992,13 +2006,6 @@
     "module": "pythontk.core_utils.qc_log",
     "name": "GateError",
     "qualname": "GateError",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.core_utils.git",
-    "name": "Git",
-    "qualname": "Git",
     "tier": "root"
   },
   {
@@ -2153,6 +2160,13 @@
     "module": "pythontk.core_utils.engines.key_stash.key_stash_model",
     "name": "KeyStash",
     "qualname": "KeyStash",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.scene_records",
+    "name": "Kind",
+    "qualname": "Kind",
     "tier": "root"
   },
   {
@@ -2584,6 +2598,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.scene_records",
+    "name": "Record",
+    "qualname": "Record",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.scene_records",
+    "name": "RecordSpec",
+    "qualname": "RecordSpec",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.textures.region_masks",
     "name": "RegionGroup",
     "qualname": "RegionGroup",
@@ -2787,6 +2815,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.scene_records",
+    "name": "SceneRecords",
+    "qualname": "SceneRecords",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.scene_records",
+    "name": "SceneStoreBase",
+    "qualname": "SceneStoreBase",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.schema_spec",
     "name": "SchemaError",
     "qualname": "SchemaError",
@@ -2797,6 +2839,13 @@
     "module": "pythontk.core_utils.schema_spec",
     "name": "SchemaSpec",
     "qualname": "SchemaSpec",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.scene_records",
+    "name": "Scope",
+    "qualname": "Scope",
     "tier": "root"
   },
   {

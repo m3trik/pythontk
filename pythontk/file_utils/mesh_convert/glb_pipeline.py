@@ -414,18 +414,34 @@ class GlbPipeline(LoggingMixin):
 
     @classmethod
     def _declared_takes(cls, fbx) -> set:
-        """Take names *fbx*'s ``fbx_takes`` channel declares; empty when none."""
+        """Take names *fbx* declares; empty when none.
+
+        Each carrier's shot record read through ``SceneRecords.declared_takes``
+        (the clips' own ranges since 0.11.0), falling back to the legacy
+        ``fbx_takes`` channel an older FBX carries.  Unioned across carriers:
+        a file can hold more than one (an imported reference brings its own).
+        """
         import json
 
-        names = set()
-        for value in fbx.user_properties(cls._mesh_convert().FBX_TAKES_KEY):
-            if not isinstance(value, (bytes, bytearray)) or not value.strip():
-                continue
-            try:
-                entries = json.loads(bytes(value).decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
-                continue
-            for entry in entries if isinstance(entries, list) else ():
-                if isinstance(entry, dict) and entry.get("name"):
-                    names.add(str(entry["name"]))
+        from pythontk.core_utils.scene_records import SceneRecords
+
+        def decoded(key: str):
+            for value in fbx.user_properties(key):
+                if not isinstance(value, (bytes, bytearray)) or not value.strip():
+                    continue
+                try:
+                    yield json.loads(bytes(value).decode("utf-8"))
+                except (ValueError, UnicodeDecodeError):
+                    continue
+
+        names: set = set()
+        for key in (SceneRecords.SHOTS.key, SceneRecords.FBX_TAKES.key):
+            for payload in decoded(key):
+                names.update(
+                    str(take["name"])
+                    for take in SceneRecords.declared_takes({key: payload}.get)
+                    if take.get("name")
+                )
+            if names:
+                break
         return names

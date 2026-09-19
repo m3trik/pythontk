@@ -25,6 +25,7 @@ from typing import (
     Callable,
     ClassVar,
     Dict,
+    Iterable,
     List,
     Optional,
     Protocol,
@@ -34,6 +35,8 @@ from typing import (
 from contextlib import contextmanager
 
 from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+from pythontk.core_utils.scene_records import ExportContext, Record, SceneRecords
+from pythontk.str_utils._str_utils import StrUtils
 
 _log = logging.getLogger(__name__)
 
@@ -261,11 +264,37 @@ class _ShotStoreInternal(object):
 
     @staticmethod
     def _sanitize_clip_name(name: str) -> str:
-        """Return a Unity/FBX-legal clip name (alphanumeric + ``_``, case preserved)."""
-        import pythontk as ptk
+        """*name* as the clip name every carrier writes.
 
-        clean = ptk.StrUtils.sanitize(name or "", preserve_case=True)
+        A legal name (:attr:`ShotStore.NAME_PATTERN`) is returned VERBATIM --
+        that is the contract the store's name validation rests on: whatever
+        the tools accept arrives unchanged.  Only a name the store holds from
+        before names were validated (a legacy scene, a hand-edited record) is
+        respelled, by the legacy rule (alphanumeric + ``_``, case preserved,
+        runs of ``_`` collapsed, trailing ones stripped) so those scenes keep
+        the clip names their earlier deliverables shipped with.
+        """
+        if StrUtils.is_legal_name(name):
+            return name
+        clean = StrUtils.sanitize(name or "", preserve_case=True)
         return clean or "shot"
+
+    @staticmethod
+    def _clip_key(name: Any) -> str:
+        """The identity two names collide on: their clip spelling, case-folded.
+
+        Compared this way -- not raw -- a legal name cannot be accepted beside
+        a legacy one that EXPORTS as it (``Shot_1`` beside ``"Shot 1"``), and
+        ``Intro`` / ``intro`` are the one clip Unity's case-insensitive join
+        makes them.
+        """
+        return _ShotStoreInternal._sanitize_clip_name(str(name)).casefold()
+
+    def _check_name(self, name: Any, shot_id: Optional[int] = None) -> None:
+        """Raise ``ValueError`` when :meth:`ShotStore.name_error` has a reason."""
+        error = self.name_error(name, shot_id)
+        if error:
+            raise ValueError(error)
 
 
 class ShotStore(_ShotStoreInternal):
@@ -289,6 +318,17 @@ class ShotStore(_ShotStoreInternal):
     # touch the user's real config. A DCC adapter that wants its own store (e.g.
     # QSettings) overrides :meth:`_restore_user_prefs` / :meth:`_save_user_prefs`.
     _prefs_dir_override: ClassVar[Optional[str]] = None
+    #: What a shot name may hold.  The name IS the clip every carrier writes --
+    #: the FBX take, the Unity AnimationClip, the glTF animation and the
+    #: ``shot_metadata`` join key -- and this is the set all of them keep
+    #: verbatim (proven through Unity by unitytk's clip-name contract test).
+    #: The store refuses anything else rather than let an export respell it.
+    #: It is the ecosystem's one legal-name rule
+    #: (``StrUtils.LEGAL_NAME_PATTERN``), so a field validating a shot name as
+    #: the user types -- uitk's ``set_validator("name")`` -- enforces this set.
+    NAME_PATTERN: ClassVar[str] = StrUtils.LEGAL_NAME_PATTERN
+    #: :attr:`NAME_PATTERN` in words, for tooltips and refusals.
+    NAME_RULE: ClassVar[str] = StrUtils.LEGAL_NAME_RULE
     DETECTION_MODES = ("auto", "all", "skip_zero", "zero_as_end")
     FIT_MODES = ("extend_only", "fit_contents")
     DEFAULT_INITIAL_SHOT_LENGTH: float = 200.0
@@ -537,12 +577,16 @@ class ShotStore(_ShotStoreInternal):
                     self._notify(ShotDefined(shot=block))
                     self.mark_dirty()
                 else:
+                    # The name is put back as recorded, not re-validated: a
+                    # restore returns to a state the store already held, and
+                    # part-way through one two shots can briefly share a name
+                    # (undoing a swap).  update_shot below notifies the rename.
+                    self.shot_by_id(rec["shot_id"]).name = rec["name"]
                     self.update_shot(
                         rec["shot_id"],
                         start=rec["start"],
                         end=rec["end"],
                         objects=rec["objects"],
-                        name=rec["name"],
                         description=rec["description"],
                         locked=rec["locked"],
                         metadata=rec["metadata"],
@@ -999,6 +1043,119 @@ class ShotStore(_ShotStoreInternal):
                 return s
         return None
 
+    # ---- names -----------------------------------------------------------
+
+    def name_error(self, name: Any, shot_id: Optional[int] = None) -> Optional[str]:
+        """Why *name* cannot name a shot in this store, or ``None`` when it can.
+
+        A shot's name is its clip name on every carrier, so it has to be
+        written as it will arrive: non-empty, :attr:`NAME_PATTERN` only, and
+        unique among the other shots IGNORING CASE -- Unity joins clip names
+        case-insensitively (``ShotMetadataController``), so ``Intro`` and
+        ``intro`` would be one clip there.  :meth:`define_shot` and
+        :meth:`update_shot` refuse what this refuses; a UI asks it first to
+        say why.
+
+        Parameters:
+            name: The candidate name.
+            shot_id: The shot being renamed, whose own name is no collision.
+
+        Returns:
+            A sentence for the user, or ``None``.
+        """
+        if not isinstance(name, str) or not name:
+            return "A shot needs a name."
+        illegal = StrUtils.name_error(
+            name,
+            subject="shot names",
+            reason="because the name is the exported clip name",
+        )
+        if illegal:
+            return illegal
+        key = self._clip_key(name)
+        for shot in self.shots:
+            if shot.shot_id == shot_id or self._clip_key(shot.name) != key:
+                continue
+            spelled = self._sanitize_clip_name(shot.name)
+            other = repr(shot.name)
+            if spelled != shot.name:  # a legacy name, respelled on export
+                other += f" (exported as {spelled!r})"
+            return (
+                f"{name!r}: another shot is named {other} -- clip names must "
+                "differ by more than case."
+            )
+        # Legacy case twins export de-duplicated (``Intro`` / ``intro`` ship as
+        # ``Intro`` / ``intro_1``), so a name can also collide with a SUFFIXED
+        # clip no shot is named.
+        others = [s for s in self.sorted_shots() if s.shot_id != shot_id]
+        for clip, _start, _end in self.resolve_clip_specs(others):
+            if clip.casefold() == name.casefold():
+                return (
+                    f"{name!r}: another shot already exports as {clip!r} -- "
+                    "clip names must differ by more than case."
+                )
+        return None
+
+    @staticmethod
+    def unique_among(
+        name: str, taken: Iterable[str], first: Optional[int] = None
+    ) -> str:
+        """*name* in its clip spelling, or the first ``name_<n>`` that collides
+        with nothing in *taken* -- compared as :meth:`name_error` compares, by
+        clip spelling ignoring case.
+
+        The spelling comes first, so the result is always a legal name: a
+        legacy one (``"Shot 1"``, from a merged store or a split tail) becomes
+        ``Shot_1``, never ``Shot 1_2``.
+
+        Parameters:
+            name: The wanted name.
+            taken: Names already in use.
+            first: Number from ``name_<first>`` even when *name* itself is
+                free (the ``Shot_<n>`` defaults).  ``None`` keeps *name* when
+                free and otherwise numbers from 2.
+
+        Returns:
+            A name :attr:`NAME_PATTERN` accepts that collides with nothing in
+            *taken*.
+        """
+        name = _ShotStoreInternal._sanitize_clip_name(name)
+        key = _ShotStoreInternal._clip_key
+        used = {key(t) for t in taken}
+        if first is None:
+            if key(name) not in used:
+                return name
+            n = 2
+        else:
+            n = int(first)
+        while key(f"{name}_{n}") in used:
+            n += 1
+        return f"{name}_{n}"
+
+    def unique_name(self, base: str = "Shot", first: Optional[int] = None) -> str:
+        """A name :meth:`name_error` accepts, derived from *base* by
+        :meth:`unique_among` against this store's shots.
+
+        Returns:
+            The derived name.
+        """
+        return self.unique_among(base, (s.name for s in self.shots), first)
+
+    def default_name(self, wanted: Optional[str] = None) -> str:
+        """*wanted* when :meth:`name_error` accepts it, else the store's next
+        free default ``Shot_<n>``.
+
+        For a name a TOOL proposes rather than the user types: detection
+        numbers its candidates from 1, and a store that already has shots may
+        hold those numbers -- the new shot is ``Shot_3``, not ``Shot_1_2``.
+
+        Returns:
+            A name this store accepts.
+        """
+        if wanted and self.name_error(wanted) is None:
+            return wanted
+        return self.unique_name("Shot", first=1)
+
     def define_shot(
         self,
         name: str,
@@ -1012,7 +1169,8 @@ class ShotStore(_ShotStoreInternal):
         """Create a new shot and add it to the store.
 
         Parameters:
-            name: Human-readable label.
+            name: The shot's name, which is also its exported clip name --
+                see :meth:`name_error` (:meth:`unique_name` derives one).
             start: First frame.
             end: Last frame.
             objects: Transform node names.  ``None`` → empty list.
@@ -1021,7 +1179,12 @@ class ShotStore(_ShotStoreInternal):
 
         Returns:
             The newly created :class:`ShotBlock`.
+
+        Raises:
+            ValueError: *name* is not one the carriers write verbatim, or
+                another shot already has it (:meth:`name_error` says which).
         """
+        self._check_name(name)
         if objects is None:
             objects = []
         else:
@@ -1057,10 +1220,17 @@ class ShotStore(_ShotStoreInternal):
         locked: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[ShotBlock]:
-        """Update fields on an existing shot.  Returns the shot, or ``None``."""
+        """Update fields on an existing shot.  Returns the shot, or ``None``.
+
+        Raises:
+            ValueError: A new *name* that :meth:`name_error` refuses.  Checked
+                before any field changes, so a refused rename edits nothing.
+        """
         shot = self.shot_by_id(shot_id)
         if shot is None:
             return None
+        if name is not None and name != shot.name:
+            self._check_name(name, shot_id)
         if start is not None:
             shot.start = self.snap(start)
         if end is not None:
@@ -1159,7 +1329,8 @@ class ShotStore(_ShotStoreInternal):
         """Append a shot after the last existing shot, with gap-aware placement.
 
         Parameters:
-            name: Human-readable label.
+            name: The shot's name -- its clip name on every carrier, so it
+                must pass :meth:`name_error`.
             duration: Shot duration in frames.
             gap: Gap frames after the previous shot.
             start_frame: Explicit start frame.  If ``None``, computed
@@ -1170,6 +1341,9 @@ class ShotStore(_ShotStoreInternal):
 
         Returns:
             The newly created :class:`ShotBlock`.
+
+        Raises:
+            ValueError: *name* is one :meth:`name_error` refuses.
         """
         if start_frame is None:
             sorted_s = self.sorted_shots()
@@ -1279,11 +1453,14 @@ class ShotStore(_ShotStoreInternal):
     def to_export_view(self, strategy: str = "name") -> Dict[str, Any]:
         """Build the FBX/Unity export view from the current shots.
 
-        Returns ``{"fbx_takes": [...], "shot_metadata": {...}}``.  Both payloads
-        derive from a single :func:`resolve_clip_specs` pass, so the FBX take
-        name and the metadata ``clip`` join-key cannot drift.  Minimal overlap:
-        ranges live only in ``fbx_takes``; ``shot_metadata`` carries the extras
-        a clip can't (description, objects, section), keyed by clip.
+        Returns ``{"shot_metadata": {...}}``: one entry per clip -- its name
+        (the FBX take and the ``clip`` join key, from a single
+        :func:`resolve_clip_specs` pass, so they cannot drift), its
+        ``start`` / ``end`` frames, its objects, and a description or section
+        only when the shot has one.  One record, one join key: the ranges
+        are the take list, so there is no second list to disagree with it
+        (``fbx_takes``, dropped in 0.11.0 -- readers of older files go through
+        ``SceneRecords.declared_takes``).
 
         ``fps`` rides on the metadata envelope rather than per shot: the ranges
         it qualifies are the store's, not any one shot's, and without it every
@@ -1294,24 +1471,89 @@ class ShotStore(_ShotStoreInternal):
         """
         sorted_s = self.sorted_shots()
         specs = ShotStore.resolve_clip_specs(sorted_s, strategy=strategy)
-        fbx_takes = [{"name": c, "start": s, "end": e} for c, s, e in specs]
-        shots_meta = [
-            {
-                "clip": clip,
-                "description": shot.description or "",
-                "objects": [ShotStore.leaf_name(o) for o in shot.objects],
-                "section": (shot.metadata or {}).get("section", ""),
-            }
-            for (clip, _s, _e), shot in zip(specs, sorted_s)
+        # The store refuses a name the carrier would respell, so a respelling
+        # here is a name held from before that rule.  Said, never silent.
+        fn = CLIP_NAME_STRATEGIES.get(strategy, CLIP_NAME_STRATEGIES["name"])
+        wanted = [fn(i, shot) for i, shot in enumerate(sorted_s)]
+        respelled = [
+            f"{want!r} -> {clip!r}"
+            for want, (clip, _s, _e) in zip(wanted, specs)
+            if clip != want
         ]
+        if respelled:
+            _log.warning(
+                "Exporting %d shot name(s) as different clip names: %s. Rename "
+                "the shot(s) (%s, unique ignoring case) to ship the names shown.",
+                len(respelled),
+                ", ".join(respelled),
+                self.NAME_RULE,
+            )
+        shots_meta = []
+        for (clip, start, end), shot in zip(specs, sorted_s):
+            entry: Dict[str, Any] = {"clip": clip, "start": start, "end": end}
+            if shot.description:
+                entry["description"] = shot.description
+            # Always present, even empty: Unity's ShotRecord reads it as an array.
+            entry["objects"] = [ShotStore.leaf_name(o) for o in shot.objects]
+            section = (shot.metadata or {}).get("section")
+            if section:
+                entry["section"] = section
+            shots_meta.append(entry)
         return {
-            "fbx_takes": fbx_takes,
             "shot_metadata": {
-                "version": 1,
+                "version": SceneRecords.SHOTS.version,
                 "fps": self.scene_fps,
                 "shots": shots_meta,
             },
         }
+
+    #: Key on the shot record under which the exporter's Animation Clips mode
+    #: is declared (``full`` / ``shots`` / ``both``).  The clips carry their
+    #: ranges in every mode, so only this says whether the file was meant to
+    #: carry them as clips.  ``MeshConvert.SHOT_CLIP_MODE_KEY`` is
+    #: the reader's name for the same key.
+    CLIP_MODE_KEY = "clip_mode"
+
+    def export_records(
+        self, ctx: Optional[ExportContext] = None, strategy: Optional[str] = None
+    ) -> Optional[List[Record]]:
+        """This store's shot records, ready to store -- ``None`` when empty.
+
+        The producer form of :meth:`to_export_view`: the shot record, with the
+        context's clip mode declared on it when the exporter decided one.  An
+        empty store yields ``None``, which a commit turns into a CLEAR --
+        deleting the last shot must not leave the previous takes riding into
+        the next export.  Either way the commit also clears a legacy
+        ``fbx_takes`` a scene still holds (its successor was produced).
+
+        Returns:
+            ``[shot record]``, or ``None`` for an empty store.
+        """
+        if not self.shots:
+            return None
+        view = self.to_export_view(strategy=strategy or self.clip_name_strategy)
+        meta = view["shot_metadata"]
+        if ctx is not None and ctx.clip_mode:
+            meta[self.CLIP_MODE_KEY] = ctx.clip_mode
+        return [SceneRecords.SHOTS.make(meta)]
+
+    @classmethod
+    def produce_export_records(
+        cls, ctx: Optional[ExportContext] = None
+    ) -> Optional[List[Record]]:
+        """The Shots PRODUCER: the active store's records, or ``None``.
+
+        What a DCC's export producer table names for ``SceneRecords.SHOTS``.
+        ``active()`` loads the scene's store when none is live, so an empty
+        scene yields ``None`` and the commit clears whatever an earlier scene
+        state published -- the same "an empty store still publishes" rule
+        :meth:`refresh_export_view` has always had.
+
+        Returns:
+            :meth:`export_records` of the active store, or ``None``.
+        """
+        store = cls.active()
+        return store.export_records(ctx) if store is not None else None
 
     @classmethod
     def refresh_export_view(cls) -> None:
@@ -1552,7 +1794,7 @@ class ShotStore(_ShotStoreInternal):
                 if not overwrite and self._overlaps_existing(cand):
                     continue
                 shot = self.define_shot(
-                    name=cand["name"],
+                    name=self.default_name(cand["name"]),
                     start=cand["start"],
                     end=cand["end"],
                     objects=cand.get("objects", []),
@@ -1575,20 +1817,22 @@ class ShotStore(_ShotStoreInternal):
         shots: List["ShotBlock"], strategy: str = "name"
     ) -> List[Tuple[str, int, int]]:
         """Resolve ``[(clip_name, start, end), …]`` — the single source of truth for
-        clip naming.  Names are sanitized and made unique *in the given order*, so
-        callers pass ``sorted_shots()`` for deterministic, stable results.
+        clip naming.  A legal, unique name passes VERBATIM (every name the store
+        accepts is one); a legacy one is respelled and de-duplicated -- ignoring
+        case, as Unity joins clips -- *in the given order*, so callers pass
+        ``sorted_shots()`` for deterministic, stable results.
         """
         fn = CLIP_NAME_STRATEGIES.get(strategy, CLIP_NAME_STRATEGIES["name"])
         seen: set = set()
         specs: List[Tuple[str, int, int]] = []
         for i, shot in enumerate(shots):
             clip = _ShotStoreInternal._sanitize_clip_name(fn(i, shot))
-            if clip in seen:
+            if clip.casefold() in seen:
                 n = 1
-                while f"{clip}_{n}" in seen:
+                while f"{clip}_{n}".casefold() in seen:
                     n += 1
                 clip = f"{clip}_{n}"
-            seen.add(clip)
+            seen.add(clip.casefold())
             specs.append((clip, int(round(shot.start)), int(round(shot.end))))
         return specs
 

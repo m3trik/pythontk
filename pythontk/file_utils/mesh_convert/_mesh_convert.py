@@ -21,6 +21,7 @@ from typing import (
     Dict,
     Iterable,
     List,
+    Mapping,
     Optional,
     Sequence,
     Set,
@@ -30,6 +31,7 @@ from typing import (
 
 from pythontk.core_utils.class_property import ClassProperty
 from pythontk.core_utils.help_mixin import HelpMixin
+from pythontk.core_utils.scene_records import SceneRecords
 
 logger = logging.getLogger(__name__)
 
@@ -254,36 +256,23 @@ class MeshConvert(HelpMixin):
     #: Separate from :attr:`SIDECAR_VERSION`: that versions the GLB envelope
     #: this block does not live in, and tying them would force a bump on one
     #: carrier every time the other changed.
-    FBX_HANDOFF_VERSION = 1
+    FBX_HANDOFF_VERSION = SceneRecords.HANDOFF.version
 
     #: ``data_export`` channel the FBX handoff block is published on. A channel
     #: like any other, so it rides into the FBX as a user property with no
     #: export-path change and no second carrier -- the deliverable has one
     #: in-band metadata node and this joins it.
-    FBX_HANDOFF_CHANNEL = "handoff"
+    FBX_HANDOFF_CHANNEL = SceneRecords.HANDOFF.key
 
     #: What each known ``data_export`` channel holds, for the block's ``reads``
-    #: map. Descriptions only: the channel LIST is taken from the carrier at
-    #: stamp time, so a producer added later still appears (described
-    #: generically) rather than silently falling out of the contract -- the
-    #: block must never claim a channel the file lacks, nor omit one it has.
+    #: map -- each record's own declaration (``SceneRecords``), so a producer
+    #: added there is described here with no edit. Descriptions only: the
+    #: channel LIST is taken from the carrier at stamp time, so the block never
+    #: claims a channel the file lacks, nor omits one it has.
     FBX_HANDOFF_CHANNELS: Dict[str, str] = {
-        "lightmap_metadata": (
-            "per-object baked-lightmap records: map file name, uvIndex, "
-            "intensity, scaleOffset"
-        ),
-        "shot_metadata": "shot definitions (name, frame range, notes)",
-        "fbx_takes": "the take list realized on this FBX, one per shot",
-        "audio_manifest": "audio events with the frames they fire on",
-        "shadow_metadata": (
-            "projected-shadow planes: per plane, the plane node name, its "
-            "silhouette texture file name, and the authored intensity"
-        ),
-        "emissive_groups": "named emissive material groups and their weights",
-        "visibility_tracks": (
-            "keyed visibility per node, as stepped on/off frames, with the "
-            "authored opacity ramp and each take's first/last authored frame"
-        ),
+        spec.key: spec.description
+        for spec in SceneRecords.deliverable()
+        if spec is not SceneRecords.HANDOFF
     }
 
     #: The standalone-reader contract for an **FBX** deliverable -- the twin of
@@ -313,30 +302,11 @@ class MeshConvert(HelpMixin):
     #: only ever have been the SCENE's, naming a ``.ma`` as though it were the
     #: deliverable. The authoring scene rides under ``source`` instead, where
     #: it is provenance rather than a false identity.
-    FBX_HANDOFF_INSTRUCTIONS = (
-        "The FBX carrying this block embeds every texture its MATERIALS "
-        "reference, so material assignment resolves with no external files "
-        "and no filesystem paths. Tool-authored metadata rides as user "
-        "properties on the 'data_export' node; 'reads' names each channel "
-        "present on it in this file and what that channel holds, and every "
-        "channel value is a JSON string. 'lightmap_metadata' names each baked "
-        "object's map by FILE NAME, with 'uvIndex' (0-based, so 1 is the "
-        "second UV set), 'intensity' (the multiplier restoring the bake's "
-        "original range) and 'scaleOffset' (that object's [scaleX, scaleY, "
-        "offsetX, offsetY] rect within a shared atlas). Those maps are NOT "
-        "embedded: an FBX carries what its materials reference and a "
-        "lighting-only bake leaves the map unwired so the authored material "
-        "survives, so the file name is a join token against maps supplied "
-        "separately, and the directory it sat in is deliberately not carried. "
-        "Each baked object additionally carries its own 'lightmapInfo' user "
-        "property repeating that object's record. Geometry, materials and "
-        "their embedded textures are otherwise complete. The asset carries no "
-        "lights of its own; 'rendering' records the lighting setup the "
-        "reference viewer used to produce the look this asset was approved "
-        "in, so a consumer that lights it differently renders something "
-        "different without either side being wrong. Check 'version' against "
-        "the schema you expect."
-    )
+    #: The text itself lives with the record declarations
+    #: (``SceneRecords.HANDOFF_INSTRUCTIONS``): the snapshot that commits a
+    #: carrier stamps it, and this name is the GLB-side reference to the same
+    #: sentence.
+    FBX_HANDOFF_INSTRUCTIONS = SceneRecords.HANDOFF_INSTRUCTIONS
 
     #: The reference viewer's lighting setup (``net_utils/preview/viewer.html``),
     #: published as data so a recipient can reproduce the look the asset was
@@ -1674,7 +1644,7 @@ class MeshConvert(HelpMixin):
     @classmethod
     def build_fbx_handoff(
         cls,
-        channels: Iterable[str],
+        channels: Union[Iterable[str], Mapping[str, Any]],
         source: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """The standalone-reader contract for an FBX, ready to publish.
@@ -1692,14 +1662,18 @@ class MeshConvert(HelpMixin):
         is one more channel on the carrier that already exists, not a second
         carrier and not a companion file.
 
+        The block itself is built by :meth:`SceneRecords.handoff_block`, beside
+        the record declarations it describes; the export snapshot stamps it
+        on every commit, and this name is the GLB-side entry point to the
+        same builder.
+
         Parameters:
-            channels: The channel names actually present on the carrier --
-                normally ``DataNodes.dump()["data_export"]``. Taken from the
-                caller rather than assumed so the block describes THIS file:
-                a channel the scene never wrote must not be claimed, and one
-                a newer producer wrote must not be omitted. The handoff
-                channel itself is dropped if passed (it does not describe
-                itself).
+            channels: The channels actually present on the carrier --
+                normally ``DataNodes.dump()["data_export"]``, a mapping of
+                name to stored value, of which only the STRING values are
+                described (the carrier also holds keyable float attrs, and
+                the block's own text says every channel value is a JSON
+                string); an iterable of names is taken as given.
             source: Producer identity and provenance, e.g. ``{"application":
                 "maya", "version": "2025", "scene": "PROD_ROOM.ma"}``. No
                 asset name is carried: this is stamped before any FBX path is
@@ -1711,28 +1685,7 @@ class MeshConvert(HelpMixin):
             to make, and stamping one would put a lone self-referential
             channel in an otherwise empty node.
         """
-        present = [c for c in channels if c != cls.FBX_HANDOFF_CHANNEL]
-        if not present:
-            return {}
-        return {
-            "version": cls.FBX_HANDOFF_VERSION,
-            # Empty entries dropped rather than published as nulls: an unsaved
-            # scene has no name, and "scene": null in a delivered artifact reads
-            # as a field that failed rather than one that does not apply.
-            "source": {k: v for k, v in (source or {}).items() if v} or None,
-            "instructions": cls.FBX_HANDOFF_INSTRUCTIONS,
-            "reads": {
-                f"data_export.{name}": cls.FBX_HANDOFF_CHANNELS.get(
-                    name, "tool-authored channel"
-                )
-                for name in sorted(present)
-            },
-            # The same policy the GLB publishes, from the same constant: a
-            # recipient who lights a baked asset normally blows out every baked
-            # surface, and that reads as a bake regression whichever container
-            # it arrived in.
-            "rendering": copy.deepcopy(cls.RENDERING_POLICY),
-        }
+        return SceneRecords.handoff_block(channels, source)
 
     @staticmethod
     def _sidecar_section_scope(present: Set[str], data: Any) -> Optional[int]:
@@ -2374,15 +2327,11 @@ class MeshConvert(HelpMixin):
             # passed, because textures, sections and envelope were all sound.
             # A recipient reading the handoff plans for clips that do not exist,
             # which makes this a defect of the artifact, not a note.
-            declared_takes = cls.data_export_channel(edit.gltf, cls.FBX_TAKES_KEY)
-            if (
-                isinstance(declared_takes, list)
-                and declared_takes
-                and not (edit.gltf.get("animations") or [])
-            ):
+            declared_takes = cls._declared_takes(edit.gltf)
+            if declared_takes and not (edit.gltf.get("animations") or []):
                 fail(
                     f"the handoff declares {len(declared_takes)} take(s) "
-                    f"(data_export.{cls.FBX_TAKES_KEY}) but the file carries no "
+                    "on its data_export carrier but the file carries no "
                     "animations -- either the FBX was written with animation "
                     "off (bake/takes disarmed at export) or nothing in the "
                     "exported set is keyed, so every take was empty and pruned"
@@ -2552,9 +2501,9 @@ class MeshConvert(HelpMixin):
     #: FBX user-property key the host DCCs publish their lightmap manifest under
     #: (mayatk/blendertk ``LightmapBaker.LIGHTMAP_METADATA``); arrives in the GLB
     #: as node extras via FBX2glTF's ``--user-properties``.
-    LIGHTMAP_METADATA_KEY = "lightmap_metadata"
+    LIGHTMAP_METADATA_KEY = SceneRecords.LIGHTMAPS.key
     #: Highest ``lightmap_metadata`` schema this applier knows how to read.
-    LIGHTMAP_METADATA_VERSION = 1
+    LIGHTMAP_METADATA_VERSION = SceneRecords.LIGHTMAPS.version
     #: Extras key the web viewer reads (``preview/viewer.html``): the first
     #: scene's extras, then the root's (:meth:`_lightmap_web_manifest`).
     LIGHTMAP_WEB_KEY = "lightmap_web"
@@ -2572,7 +2521,11 @@ class MeshConvert(HelpMixin):
     #: miss another. ``dirs`` (plural) joined it when a single folder proved
     #: too weak a hint -- a scene with maps in two places published nothing
     #: and the consumer then found a map by basename alone, binding a stale
-    #: atlas. Both are absolute authoring paths and both must come out.
+    #: atlas. Only a manifest written before 0.11.0 carries them (ABSOLUTE
+    #: authoring paths): since then the manifest names no folder at all -- the
+    #: maps are embedded in the GLB, and the host hands the build where they
+    #: live (``lightmap_dirs``) from its own scene state. Either way no hint
+    #: survives into a GLB.
     LOCATE_HINT_KEYS = ("dir", "dirs")
     #: Joins a lightmap clone's name to the material it was cloned from. The
     #: lightmap pass makes one material per INSTANCE (each needs its own atlas
@@ -3285,9 +3238,12 @@ class MeshConvert(HelpMixin):
 
         Parameters:
             glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
-            search_dirs: Extra directories to resolve the manifest's EXR basenames
-                against. Tried after the manifest's own ``dir`` hint, before the
-                GLB's directory.
+            search_dirs: Directories to resolve the manifest's EXR basenames
+                against, in priority order -- the host's own answer to where
+                its maps live (a DCC's ``LightmapBaker.search_dirs``: the
+                folders the bake markers name first).  Tried after the folders
+                a manifest written before 0.11.0 still names, before the GLB's
+                directory.
             carrier: ``"occlusion"`` (default) or ``"emissive"`` -- which material
                 slot carries the map (mirror of blendertk's ``CARRIERS``).
             percentile: Encode divisor percentile
@@ -3775,9 +3731,10 @@ class MeshConvert(HelpMixin):
     #: ``data_export`` channel the DCC shadow rigs publish (mayatk / blendertk
     #: ``ShadowRig.SHADOW_METADATA``). Read here only -- unlike the lightmap
     #: markers it is never promoted to a top-level extras key.
-    SHADOW_METADATA_KEY = "shadow_metadata"
-    #: Highest ``shadow_metadata`` schema this applier knows how to read.
-    SHADOW_METADATA_VERSION = 2
+    SHADOW_METADATA_KEY = SceneRecords.SHADOWS.key
+    #: Highest ``shadow_metadata`` schema this applier knows how to read --
+    #: the record's declared version, like the lightmap and visibility ones.
+    SHADOW_METADATA_VERSION = SceneRecords.SHADOWS.version
     #: Root-extras key the viewer's packaged ``shadow_rig`` script reads.
     SHADOW_WEB_KEY = "shadow_web"
     #: Sampler a horizon DATA map is bound with: no mipmaps (9729 = LINEAR
@@ -4291,8 +4248,8 @@ class MeshConvert(HelpMixin):
     #: ``data_export`` channels the shot system publishes (mayatk/blendertk
     #: ``ShotStore.publish_export_view``): the take list the FBX exporter splits
     #: its AnimStacks by, and the per-shot extras a take NAME cannot carry.
-    FBX_TAKES_KEY = "fbx_takes"
-    SHOT_METADATA_KEY = "shot_metadata"
+    FBX_TAKES_KEY = SceneRecords.FBX_TAKES.key
+    SHOT_METADATA_KEY = SceneRecords.SHOTS.key
     #: The run's Animation Clips mode (``ExportProfile.ANIMATION_CLIPS_OPTIONS``:
     #: ``full`` / ``shots`` / ``both``), DECLARED by the exporter on the
     #: ``shot_metadata`` envelope beside ``fps``. ``fbx_takes`` lists the
@@ -4311,9 +4268,9 @@ class MeshConvert(HelpMixin):
     #: ``data_export`` channel carrying the animated visibility that glTF has no
     #: channel for (mayatk/blendertk ``RenderOpacity.refresh_export_metadata``).
     #: See :meth:`apply_glb_visibility` for why it cannot ride the FBX.
-    VISIBILITY_TRACKS_KEY = "visibility_tracks"
+    VISIBILITY_TRACKS_KEY = SceneRecords.VISIBILITY.key
     #: Highest ``visibility_tracks`` schema this applier knows how to read.
-    VISIBILITY_TRACKS_VERSION = 1
+    VISIBILITY_TRACKS_VERSION = SceneRecords.VISIBILITY.version
 
     @staticmethod
     def _animation_span(gltf: dict, animation: dict) -> Optional[Tuple[float, float]]:
@@ -4734,8 +4691,8 @@ class MeshConvert(HelpMixin):
 
         with cls.open_glb(glb) as edit:
             gltf = edit.gltf
-            takes = cls.data_export_channel(gltf, cls.FBX_TAKES_KEY)
-            if not isinstance(takes, list) or not takes:
+            takes = cls._declared_takes(gltf)
+            if not takes:
                 return None
             metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
             channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
@@ -5103,6 +5060,12 @@ class MeshConvert(HelpMixin):
         wrote it and the one that did not -- and the two cannot import each
         other to share it.
 
+        Every float is rounded to :attr:`VISIBILITY_TRACK_DIGITS` places: the
+        values arrive as float32 attributes read back as doubles
+        (``0.49952034551044694``), and the extra digits are noise, not data
+        -- a millionth of a frame, or of a colour channel, changes nothing a
+        consumer can show.
+
         Returns ``None`` when there is nothing to publish, which is the
         producers' signal to CLEAR the channel rather than stamp an empty one.
         """
@@ -5110,17 +5073,43 @@ class MeshConvert(HelpMixin):
             return None
         payload: Dict[str, Any] = {
             "version": cls.VISIBILITY_TRACKS_VERSION,
-            "tracks": list(tracks),
+            "tracks": cls._rounded(list(tracks), cls.VISIBILITY_TRACK_DIGITS),
         }
         if fps:
             payload["fps"] = float(fps)
         if clip_spans:
-            payload["clip_span"] = clip_spans
+            payload["clip_span"] = cls._rounded(clip_spans, cls.VISIBILITY_TRACK_DIGITS)
         return payload
+
+    #: Decimal places a visibility track's floats are published at.
+    VISIBILITY_TRACK_DIGITS = 6
+
+    @classmethod
+    def _rounded(cls, value: Any, digits: int) -> Any:
+        """*value* with every float rounded to *digits* places, containers
+        rebuilt, everything else (ints, bools, strings) as given.  ``-0.0``
+        comes out as ``0.0``: a sign on nothing is noise too."""
+        if isinstance(value, float):
+            return round(value, digits) + 0.0
+        if isinstance(value, dict):
+            return {k: cls._rounded(v, digits) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [cls._rounded(v, digits) for v in value]
+        return value
+
+    @classmethod
+    def _declared_takes(cls, gltf: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """The take list *gltf*'s carrier declares
+        (:meth:`SceneRecords.declared_takes` over its channels): every GLB
+        reader of the takes goes through here, so none of them is left reading
+        only the legacy ``fbx_takes`` projection when it is retired."""
+        return SceneRecords.declared_takes(
+            lambda key: cls.data_export_channel(gltf, key)
+        )
 
     @classmethod
     def _take_windows(cls, gltf: Dict[str, Any]) -> Dict[str, Tuple[float, float]]:
-        """``{take name: (start frame, end frame)}`` from the ``fbx_takes`` channel.
+        """``{take name: (start frame, end frame)}`` from the declared takes.
 
         Shared by the visibility gate and the clip manifest so a take whose
         bounds one of them cannot read is skipped by BOTH -- the alternative
@@ -5128,8 +5117,8 @@ class MeshConvert(HelpMixin):
         against.
         """
         windows: Dict[str, Tuple[float, float]] = {}
-        for take in cls.data_export_channel(gltf, cls.FBX_TAKES_KEY) or []:
-            if not isinstance(take, dict) or take.get("name") is None:
+        for take in cls._declared_takes(gltf):
+            if take.get("name") is None:
                 continue
             try:
                 windows[str(take["name"])] = (
@@ -6410,10 +6399,8 @@ class MeshConvert(HelpMixin):
             if not animations:
                 return None
 
-            takes = cls.data_export_channel(gltf, cls.FBX_TAKES_KEY) or []
+            takes = cls._declared_takes(gltf)
             metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY) or {}
-            if not isinstance(takes, list):
-                takes = []
             if not isinstance(metadata, dict):
                 metadata = {}
             by_name = {

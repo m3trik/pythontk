@@ -201,7 +201,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class BatchComplete(StoreEvent)`
 - `class StoreInvalidated(StoreEvent)`
 - `class ShotStore(_ShotStoreInternal)`
-  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, is_empty, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, invalidate, snap, compute_gap, sorted_shots, shot_by_id, shot_by_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs, declared_range
+  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, is_empty, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, invalidate, snap, compute_gap, sorted_shots, shot_by_id, shot_by_name, name_error, unique_among, unique_name, default_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, export_records, produce_export_records, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs, declared_range
 
 ### `core_utils/engines/shots/shot_plan.py` — Pure planning layer for multi-shot topology transformations.
 - `class ShotBoundaryConflict(RuntimeError)`
@@ -230,7 +230,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/textures/map_factory/conversions.py` — Map-conversion registry primitives for the texture MapFactory.
 - `class MapConversion`
 - `class ConversionRegistry`
-  - methods: add_plugin, register, register_from_class, get_conversions_for
+  - methods: add_plugin, register, get_conversions_for
 
 ### `core_utils/engines/textures/map_factory/handlers.py` — Workflow handlers (Strategy pattern) for the texture MapFactory.
 - `class WorkflowHandler(ABC)`
@@ -315,10 +315,6 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: legal_name, widget_key, value_method, run_config, read_values, texture_size_limit_bytes, strip_deliverable_extension, fold_legacy_regex, fold_legacy_naming, resolve_output_path, naming_report, scoped_tables, task_order, unimplemented, optimize_textures_options, texture_file_type_options, frame_rate_options
 - `class ExportRun`
   - methods: glb_only, create_glb, usd, replace, with_tasks, from_tasks
-
-### `core_utils/git.py`
-- `class Git`
-  - methods: execute, run, checkout, pull, push, merge, fetch, status, current_branch
 
 ### `core_utils/handoff_manifest.py` — The hand-off sidecar -- what an FBX or USD payload cannot carry by itself.
 - `class HandoffManifest(_HandoffManifestInternal)`
@@ -437,6 +433,22 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class QcGate`
   - methods: check
 
+### `core_utils/scene_records.py` — Scene records -- every piece of tool-authored scene metadata, declared once.
+- `class Scope(str, Enum)`
+- `class Kind(str, Enum)`
+- `class Record`
+  - methods: key, text, save
+- `class RecordSpec`
+  - methods: make, encode, decode, read_text, write_text, load, save, clear, is_present
+- `class SceneRecords`
+  - methods: rendering_policy, all, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
+- `class SceneStoreBase`
+  - methods: name, read, write, values, keys, channels, dump, format_dump
+- `class ExportContext`
+  - methods: record, refreshes
+- `class ExportSnapshot`
+  - methods: assemble, publish, commit, records, record, channels, summary
+
 ### `core_utils/schema_spec.py` — Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 - constants: MISSING
 - `class SchemaError(ValueError)`
@@ -495,7 +507,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/_file_utils.py`
 - `class FileUtils(HelpMixin)`
-  - methods: is_valid, is_cloud_placeholder, is_under, is_rooted_path, resolve_output_dir, relativize_output_dir, path_length_limit, exceeds_path_length, free_space, is_locked, locking_processes, describe_lock, format_bytes, format_bytes_delta, create_dir, next_version_path, next_version_number, get_dir_contents, open_explorer, get_file_contents, write_to_file, read_json, write_json, atomic_write_text, atomic_write, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path, set_json_file, get_json_file, set_json, get_json
+  - methods: is_valid, is_cloud_placeholder, is_under, is_rooted_path, resolve_output_dir, relativize_output_dir, path_length_limit, exceeds_path_length, free_space, is_locked, locking_processes, describe_lock, format_bytes, format_bytes_delta, create_dir, next_version_path, next_version_number, get_dir_contents, open_explorer, get_file_contents, write_to_file, read_json, write_json, atomic_write_text, atomic_write, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path
 
 ### `file_utils/file_naming.py` — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - `class RenamePlan(LoggingMixin)`
@@ -751,7 +763,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `str_utils/_str_utils.py`
 - constants: ANSI_ESCAPE_RE
 - `class StrUtils(CoreUtils)`
-  - methods: to_legal_name, to_legal_filename, strip_ansi, sanitize, expand_wildcard, split_regex_modifier, apply_regex_modifier, attach_modifier, replace_placeholders, resolve_placeholders, name_pattern_context, resolve_name_pattern, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
+  - methods: is_legal_name, illegal_name_chars, name_error, legal_name_matcher, to_legal_name, to_legal_filename, strip_ansi, sanitize, expand_wildcard, split_regex_modifier, apply_regex_modifier, attach_modifier, replace_placeholders, resolve_placeholders, name_pattern_context, resolve_name_pattern, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
 
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`

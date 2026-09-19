@@ -495,6 +495,28 @@ class TestManifestEngine(unittest.TestCase):
         self.assertEqual((shots[0].start, shots[0].end), (1.0, 101.0))
         self.assertEqual({a.status for a in assessment}, {"valid"})
 
+    def test_a_step_another_shot_holds_ignoring_case_is_refused_not_a_crash(self):
+        """``a02`` and step ``A02`` are one clip: the store refuses the step's
+        name, and the build reports it instead of aborting part-way."""
+        self.store.define_shot("a02", 500, 600)
+        with self.assertLogs("pythontk.core_utils.engines.shots.manifest", "WARNING"):
+            actions, _, _ = self.mani.sync(
+                self._steps(["A01", "A02"]),
+                remove_missing=False,
+                initial_shot_length=100,
+            )
+        self.assertEqual(actions, {"A01": "created", "A02": "refused"})
+        self.assertEqual(sorted(s.name for s in self.store.shots), ["A01", "a02"])
+
+    def test_a_step_whose_clash_is_being_removed_is_built(self):
+        """Removals commit first, so the name is free by the time it is built."""
+        self.store.define_shot("a02", 500, 600)
+        actions, _, _ = self.mani.sync(
+            self._steps(["A01", "A02"]), initial_shot_length=100
+        )
+        self.assertEqual(actions["A02"], "created")
+        self.assertEqual(sorted(s.name for s in self.store.shots), ["A01", "A02"])
+
     def test_resync_unchanged_is_skipped(self):
         steps = self._steps(["A01"])
         self.mani.sync(steps, initial_shot_length=100)

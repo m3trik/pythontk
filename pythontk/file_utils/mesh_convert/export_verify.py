@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Union
 
 from pythontk.core_utils.export_profile import ExportProfile
+from pythontk.core_utils.scene_records import SceneRecords
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
@@ -109,7 +110,12 @@ class _ExportVerifierInternal:
 
     @staticmethod
     def _declared_takes(sidecar: Optional[dict]) -> List[dict]:
-        return list(((sidecar or {}).get("data_export") or {}).get("fbx_takes") or [])
+        """The takes the exporter declared: ``shot_metadata.takes`` (the shot
+        record carries them since the fold), else the legacy ``fbx_takes``
+        channel a sidecar written before it still holds."""
+        return SceneRecords.declared_takes(
+            ((sidecar or {}).get("data_export") or {}).get
+        )
 
     @classmethod
     def _undeclared_clips(cls, spans, sidecar: Optional[dict]) -> List[str]:

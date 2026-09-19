@@ -3639,6 +3639,26 @@ class TestSceneSidecar(unittest.TestCase):
 class TestFbxHandoff(unittest.TestCase):
     """The FBX half of the standalone-reader contract."""
 
+    def test_a_mapping_describes_only_its_string_channels(self):
+        """Both stamp sites pass ``DataNodes.dump()["data_export"]`` whole, and
+        that carrier also holds keyable FLOAT attrs (the emissive-group
+        weights). The block's text says every channel value is a JSON string,
+        so a float listed as a channel made the contract lie about the file;
+        the manifest beside the weights already describes them."""
+        block = MeshConvert.build_fbx_handoff(
+            {
+                "emissive_groups": '{"version": 1}',
+                "emissiveGroup_Neon": 0.5,
+                MeshConvert.FBX_HANDOFF_CHANNEL: "{}",
+            }
+        )
+        self.assertEqual(list(block["reads"]), ["data_export.emissive_groups"])
+        self.assertEqual(
+            MeshConvert.build_fbx_handoff({"emissiveGroup_Neon": 1.0}),
+            {},
+            "a carrier holding only float attrs has no channel to describe",
+        )
+
     def test_describes_exactly_the_channels_the_carrier_holds(self):
         """The block must never claim a channel the file lacks, nor omit one it
         has — it is read back off the carrier for that reason, so a producer
@@ -7656,6 +7676,29 @@ class TestApplyGlbVisibility(unittest.TestCase):
         # key expects it to say something.
         self.assertNotIn("clip_span", built)
 
+    def test_the_envelope_rounds_float_noise(self):
+        """float32 attributes read back as doubles publish their noise
+        (``0.49952034551044694``); six places keep every frame and colour a
+        consumer can show, and nothing that is not a float changes."""
+        built = MeshConvert.build_visibility_tracks(
+            [
+                {
+                    "node": "GATE",
+                    "highlight": [[2005.0, 0.49952034551044694], [4737.99, -1e-09]],
+                    "highlight_color": [0.04500000178813934, 0.38999998569488525, 1.0],
+                    "steps": 3,
+                }
+            ],
+            fps=30.0,
+            clip_spans={"*": [80.0, 4738.0], "S": [1.0000001, 9.9999999]},
+        )
+        track = built["tracks"][0]
+        self.assertEqual(track["highlight"], [[2005.0, 0.49952], [4737.99, 0.0]])
+        self.assertEqual(repr(track["highlight"][1][1]), "0.0", "no signed zero")
+        self.assertEqual(track["highlight_color"], [0.045, 0.39, 1.0])
+        self.assertEqual((track["node"], track["steps"]), ("GATE", 3))
+        self.assertEqual(built["clip_span"], {"*": [80.0, 4738.0], "S": [1.0, 10.0]})
+
     def test_a_file_with_no_tracks_is_untouched(self):
         path = self._glb(
             tracks=None,
@@ -8418,6 +8461,22 @@ class TestDataExportOverlay(unittest.TestCase):
                 }
             },
         }
+
+    def test_the_take_list_is_read_from_the_clips(self):
+        """Since 0.11.0 each clip carries its range and ``fbx_takes`` is not
+        written; a file from before still reads through the legacy list."""
+        clips = {"shots": [{"clip": "S", "start": 7, "end": 100, "objects": []}]}
+        gltf = {"nodes": [self._carrier(shot_metadata={"version": 1, **clips})]}
+        self.assertEqual(MeshConvert._take_windows(gltf), {"S": (7.0, 100.0)})
+        older = {
+            "nodes": [
+                self._carrier(
+                    shot_metadata={"version": 1, "shots": [{"clip": "S"}]},
+                    fbx_takes=[{"name": "S", "start": 1, "end": 5}],
+                )
+            ]
+        }
+        self.assertEqual(MeshConvert._take_windows(older), {"S": (1.0, 5.0)})
 
     def test_a_channel_is_replaced_in_both_shapes_and_read_back(self):
         gltf = {

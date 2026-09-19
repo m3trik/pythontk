@@ -41,6 +41,7 @@ from copy import deepcopy
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+from pythontk.core_utils.engines.shots.shot_model import ShotStore
 
 __all__ = ["ShotTransfer"]
 
@@ -452,7 +453,11 @@ class ShotTransfer(_ShotTransferInternal):
         its own settings and gains the incoming shots after its last one under
         fresh ids: memberships, hidden / pinned lists, markers, locked gaps and
         ledger claims come along, with every shot id (a locked gap's pair, a
-        claim's owner) remapped to the id the shot was given.
+        claim's owner) remapped to the id the shot was given.  An incoming
+        name one of the scene's shots already has (ignoring case -- two
+        stores can each be unique and still collide) is numbered through
+        :meth:`~pythontk.ShotStore.unique_among`, so the merged store holds
+        only names its own tools would accept.
         """
         if not incoming.get("shots") and not incoming.get("markers"):
             # Channels or audio alone: the scene's own store stands as it is.
@@ -463,6 +468,7 @@ class ShotTransfer(_ShotTransferInternal):
         taken = [int(s["shot_id"]) for s in out.get("shots") or []]
         next_id = (max(taken) + 1) if taken else 1
         id_map: Dict[int, int] = {}
+        names = [str(s.get("name") or "") for s in out.get("shots") or []]
         for shot in sorted(
             incoming.get("shots") or [],
             key=lambda s: (s.get("start", 0.0), s["shot_id"]),
@@ -471,6 +477,8 @@ class ShotTransfer(_ShotTransferInternal):
             id_map[int(shot["shot_id"])] = next_id
             shot["shot_id"] = next_id
             next_id += 1
+            shot["name"] = ShotStore.unique_among(str(shot.get("name") or ""), names)
+            names.append(shot["name"])
             out["shots"].append(shot)
         for key in cls.OBJECT_LIST_KEYS:
             out[key] = cls._unique(
