@@ -3117,7 +3117,7 @@
               "kind": "method",
               "signature": "(self, steps: List[BuilderStep], exists_fn: Optional[Callable[[str], bool]] = None, verify_fn: Optional[Callable] = None, keyframe_range_fn: Optional[Callable[[str], Optional[Tuple[float, float]]]] = None, audio_exists_fn: Optional[Callable[[str], bool]] = None, skip_scene_discovery: bool = False) -> List[StepStatus]",
               "summary": "Compare parsed steps against the current store state.",
-              "line": 752,
+              "line": 763,
               "deprecated": false
             },
             {
@@ -3126,7 +3126,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath: str, store: Optional[ShotStore] = None, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> Tuple['ShotManifest', List[BuilderStep]]",
               "summary": "Convenience: parse a CSV and return a ready-to-build engine.",
-              "line": 999,
+              "line": 1010,
               "deprecated": false
             },
             {
@@ -3135,7 +3135,7 @@
               "kind": "staticmethod",
               "signature": "(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None) -> Tuple[float, float, float]",
               "summary": "Compute final shot duration for *step* under the given fit policy.",
-              "line": 1026,
+              "line": 1037,
               "deprecated": false
             }
           ]
@@ -3754,7 +3754,7 @@
         {
           "name": "ScenePersistence",
           "summary": "Interface for saving / loading ShotStore data.",
-          "line": 66,
+          "line": 69,
           "bases": [
             "Protocol"
           ],
@@ -3765,7 +3765,7 @@
               "kind": "method",
               "signature": "(self, data: Dict[str, Any]) -> None",
               "summary": "",
-              "line": 69,
+              "line": 72,
               "deprecated": false
             },
             {
@@ -3774,7 +3774,7 @@
               "kind": "method",
               "signature": "(self) -> Optional[Dict[str, Any]]",
               "summary": "",
-              "line": 71,
+              "line": 74,
               "deprecated": false
             }
           ]
@@ -3782,7 +3782,7 @@
         {
           "name": "ShotBlock",
           "summary": "Represents a single shot (contiguous animation range).",
-          "line": 103,
+          "line": 106,
           "bases": [],
           "members": [
             {
@@ -3791,7 +3791,7 @@
               "kind": "property",
               "signature": "(self) -> float",
               "summary": "",
-              "line": 128,
+              "line": 131,
               "deprecated": false
             },
             {
@@ -3800,7 +3800,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, str]",
               "summary": "Return ``{obj_name: status_key}`` using stored metadata.",
-              "line": 131,
+              "line": 134,
               "deprecated": false
             }
           ]
@@ -3808,14 +3808,14 @@
         {
           "name": "StoreEvent",
           "summary": "Base class for typed :class:`ShotStore` events.",
-          "line": 185,
+          "line": 188,
           "bases": [],
           "members": []
         },
         {
           "name": "ShotDefined",
           "summary": "A new shot was created and added to the store.",
-          "line": 197,
+          "line": 200,
           "bases": [
             "StoreEvent"
           ],
@@ -3824,7 +3824,7 @@
         {
           "name": "ShotUpdated",
           "summary": "An existing shot's fields were modified.",
-          "line": 205,
+          "line": 208,
           "bases": [
             "StoreEvent"
           ],
@@ -3833,7 +3833,7 @@
         {
           "name": "ShotRemoved",
           "summary": "A shot was removed from the store.",
-          "line": 213,
+          "line": 216,
           "bases": [
             "StoreEvent"
           ],
@@ -3842,7 +3842,7 @@
         {
           "name": "ActiveShotChanged",
           "summary": "The active (selected) shot changed.",
-          "line": 221,
+          "line": 224,
           "bases": [
             "StoreEvent"
           ],
@@ -3851,7 +3851,7 @@
         {
           "name": "SettingsChanged",
           "summary": "Detection-relevant settings were modified.",
-          "line": 229,
+          "line": 232,
           "bases": [
             "StoreEvent"
           ],
@@ -3860,7 +3860,7 @@
         {
           "name": "BatchComplete",
           "summary": "A :meth:`ShotStore.batch_update` context has exited.",
-          "line": 236,
+          "line": 239,
           "bases": [
             "StoreEvent"
           ],
@@ -3869,7 +3869,7 @@
         {
           "name": "StoreInvalidated",
           "summary": "The active store was discarded (scene change / new scene).",
-          "line": 243,
+          "line": 246,
           "bases": [
             "StoreEvent"
           ],
@@ -3878,7 +3878,7 @@
         {
           "name": "ShotStore",
           "summary": "Central store for shot data with pluggable persistence.",
-          "line": 271,
+          "line": 300,
           "bases": [
             "_ShotStoreInternal"
           ],
@@ -3889,7 +3889,7 @@
               "kind": "method",
               "signature": "(self) -> list",
               "summary": "Return the current shot state for the boundary ledger.",
-              "line": 364,
+              "line": 404,
               "deprecated": false
             },
             {
@@ -3898,7 +3898,7 @@
               "kind": "method",
               "signature": "(self, tag: Any = None) -> None",
               "summary": "Record the current bounds as an undo restore point.",
-              "line": 386,
+              "line": 426,
               "deprecated": false
             },
             {
@@ -3907,7 +3907,7 @@
               "kind": "method",
               "signature": "(self, tag: Any) -> bool",
               "summary": "Attach *tag* to the newest restore point.",
-              "line": 435,
+              "line": 475,
               "deprecated": false
             },
             {
@@ -3916,7 +3916,7 @@
               "kind": "method",
               "signature": "(self, redo: bool = False) -> Any",
               "summary": "Return the tag of the restore point the next apply would consume.",
-              "line": 443,
+              "line": 483,
               "deprecated": false
             },
             {
@@ -3925,7 +3925,7 @@
               "kind": "method",
               "signature": "(self, redo: bool = False) -> bool",
               "summary": "True when a restore point is available in that direction.",
-              "line": 448,
+              "line": 488,
               "deprecated": false
             },
             {
@@ -3934,7 +3934,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Drop the most recent restore point without applying it.",
-              "line": 452,
+              "line": 492,
               "deprecated": false
             },
             {
@@ -3943,7 +3943,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "Apply the most recent restore point (the undo direction).",
-              "line": 468,
+              "line": 508,
               "deprecated": false
             },
             {
@@ -3952,7 +3952,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "Re-apply the state a restore stepped back from (the redo direction).",
-              "line": 490,
+              "line": 530,
               "deprecated": false
             },
             {
@@ -3961,7 +3961,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Drop both ledger sides (scene swap: colliding shot_ids across",
-              "line": 505,
+              "line": 545,
               "deprecated": false
             },
             {
@@ -3970,7 +3970,7 @@
               "kind": "staticmethod",
               "signature": "() -> bool",
               "summary": "Return whether the scene contains animation (overridable hook).",
-              "line": 569,
+              "line": 613,
               "deprecated": false
             },
             {
@@ -3979,7 +3979,7 @@
               "kind": "method",
               "signature": "(self) -> List[Dict[str, Any]]",
               "summary": "Detect shot-region candidates from the scene (overridable hook).",
-              "line": 580,
+              "line": 624,
               "deprecated": false
             },
             {
@@ -3988,7 +3988,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[int, str]",
               "summary": "Assess whether each shot's objects exist in the scene (hook).",
-              "line": 594,
+              "line": 638,
               "deprecated": false
             },
             {
@@ -3997,7 +3997,7 @@
               "kind": "method",
               "signature": "(self, strategy: Optional[str] = None) -> Optional[str]",
               "summary": "Project the export view onto a DCC carrier (overridable hook).",
-              "line": 617,
+              "line": 661,
               "deprecated": false
             },
             {
@@ -4006,7 +4006,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[int]",
               "summary": "The currently selected shot, or ``None``.",
-              "line": 639,
+              "line": 683,
               "deprecated": false
             },
             {
@@ -4015,7 +4015,7 @@
               "kind": "method",
               "signature": "(self, shot_id: Optional[int]) -> None",
               "summary": "Set the active shot and notify listeners.",
-              "line": 643,
+              "line": 687,
               "deprecated": false
             },
             {
@@ -4024,7 +4024,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "``True`` when the store declares no shots.",
-              "line": 650,
+              "line": 694,
               "deprecated": false
             },
             {
@@ -4033,7 +4033,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Fire a ``\"settings_changed\"`` event.",
-              "line": 661,
+              "line": 705,
               "deprecated": false
             },
             {
@@ -4042,7 +4042,7 @@
               "kind": "method",
               "signature": "(self, callback: Callable[[StoreEvent], None]) -> None",
               "summary": "Register a listener called on store mutations.",
-              "line": 670,
+              "line": 714,
               "deprecated": false
             },
             {
@@ -4051,7 +4051,7 @@
               "kind": "method",
               "signature": "(self, callback: Callable[[StoreEvent], None]) -> None",
               "summary": "Remove a previously registered listener.",
-              "line": 687,
+              "line": 731,
               "deprecated": false
             },
             {
@@ -4060,7 +4060,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Defer listener notifications until the block exits.",
-              "line": 708,
+              "line": 752,
               "deprecated": false
             },
             {
@@ -4069,7 +4069,7 @@
               "kind": "method",
               "signature": "(self, left_id: int, right_id: int) -> bool",
               "summary": "Return whether the gap between two adjacent shots is locked.",
-              "line": 732,
+              "line": 776,
               "deprecated": false
             },
             {
@@ -4078,7 +4078,7 @@
               "kind": "method",
               "signature": "(self, left_id: int, right_id: int) -> None",
               "summary": "Lock a gap so its width is preserved during global respace.",
-              "line": 736,
+              "line": 780,
               "deprecated": false
             },
             {
@@ -4087,7 +4087,7 @@
               "kind": "method",
               "signature": "(self, left_id: int, right_id: int) -> None",
               "summary": "Unlock a gap so it follows the global gap value.",
-              "line": 743,
+              "line": 787,
               "deprecated": false
             },
             {
@@ -4096,7 +4096,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Lock every adjacent gap.",
-              "line": 749,
+              "line": 793,
               "deprecated": false
             },
             {
@@ -4105,7 +4105,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Unlock every gap.",
-              "line": 758,
+              "line": 802,
               "deprecated": false
             },
             {
@@ -4114,7 +4114,7 @@
               "kind": "classmethod",
               "signature": "(cls, backend: Optional[ScenePersistence]) -> None",
               "summary": "Set the persistence backend used by :meth:`active` and :meth:`save`.",
-              "line": 767,
+              "line": 811,
               "deprecated": false
             },
             {
@@ -4123,7 +4123,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> 'ShotStore'",
               "summary": "Return the current active store, creating one if needed.",
-              "line": 776,
+              "line": 820,
               "deprecated": false
             },
             {
@@ -4132,7 +4132,7 @@
               "kind": "classmethod",
               "signature": "(cls, store: 'ShotStore') -> None",
               "summary": "Replace the active store instance.",
-              "line": 802,
+              "line": 846,
               "deprecated": false
             },
             {
@@ -4141,7 +4141,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Reset the active store and persistence backend.",
-              "line": 807,
+              "line": 851,
               "deprecated": false
             },
             {
@@ -4150,7 +4150,7 @@
               "kind": "classmethod",
               "signature": "(cls, callback: Callable[['StoreInvalidated'], None]) -> None",
               "summary": "Register a callback fired when the active store is discarded.",
-              "line": 825,
+              "line": 869,
               "deprecated": false
             },
             {
@@ -4159,7 +4159,7 @@
               "kind": "classmethod",
               "signature": "(cls, callback: Callable[['StoreInvalidated'], None]) -> None",
               "summary": "Remove a previously registered invalidation listener.",
-              "line": 838,
+              "line": 882,
               "deprecated": false
             },
             {
@@ -4168,7 +4168,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Drop the active store (the scene changed) and fire the invalidation listeners.",
-              "line": 848,
+              "line": 892,
               "deprecated": false
             },
             {
@@ -4177,7 +4177,7 @@
               "kind": "method",
               "signature": "(self, frame: float) -> float",
               "summary": "Return *frame* rounded to the nearest integer when snapping is on.",
-              "line": 951,
+              "line": 995,
               "deprecated": false
             },
             {
@@ -4186,7 +4186,7 @@
               "kind": "method",
               "signature": "(self) -> float",
               "summary": "Derive the predominant inter-shot gap from current shot positions.",
-              "line": 964,
+              "line": 1008,
               "deprecated": false
             },
             {
@@ -4195,7 +4195,7 @@
               "kind": "method",
               "signature": "(self) -> List[ShotBlock]",
               "summary": "Return shots ordered by start time.",
-              "line": 985,
+              "line": 1029,
               "deprecated": false
             },
             {
@@ -4204,7 +4204,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int) -> Optional[ShotBlock]",
               "summary": "",
-              "line": 989,
+              "line": 1033,
               "deprecated": false
             },
             {
@@ -4213,7 +4213,43 @@
               "kind": "method",
               "signature": "(self, name: str) -> Optional[ShotBlock]",
               "summary": "Return the first shot whose name matches *name*, or ``None``.",
-              "line": 995,
+              "line": 1039,
+              "deprecated": false
+            },
+            {
+              "name": "name_error",
+              "qualname": "ShotStore.name_error",
+              "kind": "method",
+              "signature": "(self, name: Any, shot_id: Optional[int] = None) -> Optional[str]",
+              "summary": "Why *name* cannot name a shot in this store, or ``None`` when it can.",
+              "line": 1048,
+              "deprecated": false
+            },
+            {
+              "name": "unique_among",
+              "qualname": "ShotStore.unique_among",
+              "kind": "staticmethod",
+              "signature": "(name: str, taken: Iterable[str], first: Optional[int] = None) -> str",
+              "summary": "*name* in its clip spelling, or the first ``name_<n>`` that collides",
+              "line": 1100,
+              "deprecated": false
+            },
+            {
+              "name": "unique_name",
+              "qualname": "ShotStore.unique_name",
+              "kind": "method",
+              "signature": "(self, base: str = 'Shot', first: Optional[int] = None) -> str",
+              "summary": "A name :meth:`name_error` accepts, derived from *base* by",
+              "line": 1135,
+              "deprecated": false
+            },
+            {
+              "name": "default_name",
+              "qualname": "ShotStore.default_name",
+              "kind": "method",
+              "signature": "(self, wanted: Optional[str] = None) -> str",
+              "summary": "*wanted* when :meth:`name_error` accepts it, else the store's next",
+              "line": 1144,
               "deprecated": false
             },
             {
@@ -4222,7 +4258,7 @@
               "kind": "method",
               "signature": "(self, name: str, start: float, end: float, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock",
               "summary": "Create a new shot and add it to the store.",
-              "line": 1002,
+              "line": 1159,
               "deprecated": false
             },
             {
@@ -4231,7 +4267,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int, *, start: Optional[float] = None, end: Optional[float] = None, name: Optional[str] = None, objects: Optional[List[str]] = None, description: Optional[str] = None, locked: Optional[bool] = None, metadata: Optional[Dict[str, Any]] = None) -> Optional[ShotBlock]",
               "summary": "Update fields on an existing shot.",
-              "line": 1048,
+              "line": 1211,
               "deprecated": false
             },
             {
@@ -4240,7 +4276,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int) -> bool",
               "summary": "Remove a shot by ID.",
-              "line": 1091,
+              "line": 1261,
               "deprecated": false
             },
             {
@@ -4249,7 +4285,7 @@
               "kind": "method",
               "signature": "(self, name: str, duration: float, gap: float = 0, start_frame: Optional[float] = None, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock",
               "summary": "Append a shot after the last existing shot, with gap-aware placement.",
-              "line": 1148,
+              "line": 1318,
               "deprecated": false
             },
             {
@@ -4258,7 +4294,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str) -> bool",
               "summary": "Return True if *obj_name* is hidden in the sequencer UI.",
-              "line": 1189,
+              "line": 1363,
               "deprecated": false
             },
             {
@@ -4267,7 +4303,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str, hidden: bool = True) -> None",
               "summary": "Show or hide *obj_name* in the sequencer UI.",
-              "line": 1193,
+              "line": 1367,
               "deprecated": false
             },
             {
@@ -4276,7 +4312,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str) -> bool",
               "summary": "Return True if *obj_name* is pinned (kept even when missing).",
-              "line": 1205,
+              "line": 1379,
               "deprecated": false
             },
             {
@@ -4285,7 +4321,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str, pinned: bool = True) -> None",
               "summary": "Pin or unpin *obj_name*.",
-              "line": 1209,
+              "line": 1383,
               "deprecated": false
             },
             {
@@ -4294,7 +4330,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str) -> None",
               "summary": "Remove *obj_name* from every shot's object list.",
-              "line": 1226,
+              "line": 1400,
               "deprecated": false
             },
             {
@@ -4303,7 +4339,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "Serialise shots and settings to a plain dict.",
-              "line": 1244,
+              "line": 1418,
               "deprecated": false
             },
             {
@@ -4312,7 +4348,25 @@
               "kind": "method",
               "signature": "(self, strategy: str = 'name') -> Dict[str, Any]",
               "summary": "Build the FBX/Unity export view from the current shots.",
-              "line": 1279,
+              "line": 1453,
+              "deprecated": false
+            },
+            {
+              "name": "export_records",
+              "qualname": "ShotStore.export_records",
+              "kind": "method",
+              "signature": "(self, ctx: Optional[ExportContext] = None, strategy: Optional[str] = None) -> Optional[List[Record]]",
+              "summary": "This store's shot records, ready to store -- ``None`` when empty.",
+              "line": 1517,
+              "deprecated": false
+            },
+            {
+              "name": "produce_export_records",
+              "qualname": "ShotStore.produce_export_records",
+              "kind": "classmethod",
+              "signature": "(cls, ctx: Optional[ExportContext] = None) -> Optional[List[Record]]",
+              "summary": "The Shots PRODUCER: the active store's records, or ``None``.",
+              "line": 1541,
               "deprecated": false
             },
             {
@@ -4321,7 +4375,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Republish the active store's export view.",
-              "line": 1317,
+              "line": 1559,
               "deprecated": false
             },
             {
@@ -4330,7 +4384,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Opt every export this session into carrying the active store's shots.",
-              "line": 1337,
+              "line": 1579,
               "deprecated": false
             },
             {
@@ -4339,7 +4393,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Remove the before-export preparer for the rest of the session.",
-              "line": 1350,
+              "line": 1592,
               "deprecated": false
             },
             {
@@ -4348,7 +4402,7 @@
               "kind": "classmethod",
               "signature": "(cls, data: Dict[str, Any]) -> 'ShotStore'",
               "summary": "Restore from serialised data.",
-              "line": 1381,
+              "line": 1623,
               "deprecated": false
             },
             {
@@ -4357,7 +4411,7 @@
               "kind": "method",
               "signature": "(self, new_fps: float) -> None",
               "summary": "Scale all shot timings from the current ``scene_fps`` to *new_fps*.",
-              "line": 1447,
+              "line": 1689,
               "deprecated": false
             },
             {
@@ -4366,7 +4420,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Flag the store as needing a save.",
-              "line": 1472,
+              "line": 1714,
               "deprecated": false
             },
             {
@@ -4375,7 +4429,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Persist via the configured backend (no-op if none set).",
-              "line": 1490,
+              "line": 1732,
               "deprecated": false
             },
             {
@@ -4384,7 +4438,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "True when detection settings are actionable.",
-              "line": 1515,
+              "line": 1757,
               "deprecated": false
             },
             {
@@ -4393,7 +4447,7 @@
               "kind": "method",
               "signature": "(self, overwrite: bool = False) -> List[ShotBlock]",
               "summary": "Detect shot regions and define them in the store.",
-              "line": 1532,
+              "line": 1774,
               "deprecated": false
             },
             {
@@ -4402,7 +4456,7 @@
               "kind": "staticmethod",
               "signature": "(node) -> str",
               "summary": "Leaf name with namespace preserved: ``\"|grp|ns:obj\"`` -> ``\"ns:obj\"``.",
-              "line": 1564,
+              "line": 1806,
               "deprecated": false
             },
             {
@@ -4411,7 +4465,7 @@
               "kind": "staticmethod",
               "signature": "(shots: List['ShotBlock'], strategy: str = 'name') -> List[Tuple[str, int, int]]",
               "summary": "Resolve ``[(clip_name, start, end), …]`` — the single source of truth for",
-              "line": 1574,
+              "line": 1816,
               "deprecated": false
             },
             {
@@ -4420,7 +4474,7 @@
               "kind": "classmethod",
               "signature": "(cls, strategy: str = 'name') -> Optional[Tuple[int, int]]",
               "summary": "The ``(start, end)`` frames the active store's shots span, or None.",
-              "line": 1596,
+              "line": 1840,
               "deprecated": false
             }
           ]
@@ -4433,7 +4487,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 173,
+          "line": 176,
           "deprecated": false
         }
       ]
@@ -4658,7 +4712,7 @@
         {
           "name": "ShotTransfer",
           "summary": "Encode a shot store into a manifest section and decode it into a store.",
-          "line": 124,
+          "line": 125,
           "bases": [
             "_ShotTransferInternal"
           ],
@@ -4669,7 +4723,7 @@
               "kind": "classmethod",
               "signature": "(cls, label: str) -> str",
               "summary": "*label* as the far side of a Y-up / Z-up crossing spells the channel.",
-              "line": 171,
+              "line": 172,
               "deprecated": false
             },
             {
@@ -4678,7 +4732,7 @@
               "kind": "classmethod",
               "signature": "(cls, state: Dict[str, Any], *, spell: Optional[Spell] = None, curve_ref: Optional[CurveRef] = None, objects: Optional[Iterable[str]] = None, channels: Optional[Dict[str, Dict[str, Any]]] = None, audio: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]",
               "summary": "The ``shots`` section for a store's :meth:`~pythontk.ShotStore.to_dict`.",
-              "line": 177,
+              "line": 178,
               "deprecated": false
             },
             {
@@ -4687,7 +4741,7 @@
               "kind": "classmethod",
               "signature": "(cls, section: Dict[str, Any], *, resolve: Optional[Resolve] = None, curve_key: Optional[CurveKey] = None, key_exists: Optional[KeyExists] = None, scene_fps: Optional[float] = None, frame_offset: float = 0.0, converted: Optional[Callable[[str], bool]] = None, write_channels: Optional[Callable[[str, Dict[str, Any]], Any]] = None, write_audio: Optional[Callable[[List[Dict[str, Any]]], Any]] = None) -> Dict[str, Any]",
               "summary": "A store dict (``from_dict`` shape) for a ``shots`` section.",
-              "line": 282,
+              "line": 283,
               "deprecated": false
             },
             {
@@ -4696,7 +4750,7 @@
               "kind": "classmethod",
               "signature": "(cls, existing: Optional[Dict[str, Any]], incoming: Dict[str, Any]) -> Dict[str, Any]",
               "summary": "*incoming* (a decoded store dict) folded into *existing*'s.",
-              "line": 444,
+              "line": 445,
               "deprecated": false
             }
           ]
@@ -5279,14 +5333,14 @@
         {
           "name": "MapConversion",
           "summary": "Defines a single map conversion operation.",
-          "line": 20,
+          "line": 17,
           "bases": [],
           "members": []
         },
         {
           "name": "ConversionRegistry",
           "summary": "Central registry for all map type conversions.",
-          "line": 29,
+          "line": 26,
           "bases": [],
           "members": [
             {
@@ -5295,7 +5349,7 @@
               "kind": "method",
               "signature": "(self, cls)",
               "summary": "Register a class to be scanned for conversions on first lookup.",
-              "line": 40,
+              "line": 37,
               "deprecated": false
             },
             {
@@ -5304,18 +5358,8 @@
               "kind": "method",
               "signature": "(self, target_type: Union[str, MapConversion], source_types: Union[str, List[str]] = None, converter: Callable = None, priority: int = 0)",
               "summary": "Register a new conversion strategy.",
-              "line": 65,
+              "line": 61,
               "deprecated": false
-            },
-            {
-              "name": "register_from_class",
-              "qualname": "ConversionRegistry.register_from_class",
-              "kind": "method",
-              "signature": "(self, cls)",
-              "summary": "Register all decorated conversion methods from a class.",
-              "line": 118,
-              "deprecated": true,
-              "remove_in": "0.11.0"
             },
             {
               "name": "get_conversions_for",
@@ -5323,7 +5367,7 @@
               "kind": "method",
               "signature": "(self, target_type: str) -> List[MapConversion]",
               "summary": "Get all conversions that can produce target type.",
-              "line": 147,
+              "line": 105,
               "deprecated": false
             }
           ]
@@ -7625,7 +7669,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "The GLB is the deliverable;",
-              "line": 946,
+              "line": 953,
               "deprecated": false
             },
             {
@@ -7634,7 +7678,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "A ``.glb`` is written this run (alone, or beside the FBX).",
-              "line": 951,
+              "line": 958,
               "deprecated": false
             },
             {
@@ -7643,7 +7687,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "The deliverable is a USD layer.",
-              "line": 956,
+              "line": 963,
               "deprecated": false
             },
             {
@@ -7652,7 +7696,7 @@
               "kind": "method",
               "signature": "(self, **changes: Any) -> 'ExportRun'",
               "summary": "A copy with *changes* applied (``dataclasses.replace``).",
-              "line": 960,
+              "line": 967,
               "deprecated": false
             },
             {
@@ -7661,7 +7705,7 @@
               "kind": "method",
               "signature": "(self, tasks: Mapping[str, Any]) -> 'ExportRun'",
               "summary": "A copy carrying the modes derived from the dispatched *tasks*.",
-              "line": 964,
+              "line": 971,
               "deprecated": false
             },
             {
@@ -7670,109 +7714,10 @@
               "kind": "classmethod",
               "signature": "(cls, tasks: Optional[Mapping[str, Any]], texture_file_types: Iterable[Any] = ()) -> Tuple['ExportRun', Dict[str, Any], List[Tuple[str, str]]]",
               "summary": "Pop the per-run modes out of a ``perform_export`` *tasks* dict.",
-              "line": 979,
+              "line": 987,
               "deprecated": false
             }
           ]
-        }
-      ],
-      "constants": []
-    },
-    {
-      "relpath": "core_utils/git.py",
-      "summary": "",
-      "functions": [],
-      "classes": [
-        {
-          "name": "Git",
-          "summary": "A wrapper around git subprocess commands for a specific repository.",
-          "line": 16,
-          "bases": [],
-          "members": [
-            {
-              "name": "execute",
-              "qualname": "Git.execute",
-              "kind": "method",
-              "signature": "(self, cmd: Union[str, List[str]], desc: str = None, check: bool = True) -> Optional[str]",
-              "summary": "Run a generic shell command in the repository directory.",
-              "line": 43,
-              "deprecated": false
-            },
-            {
-              "name": "run",
-              "qualname": "Git.run",
-              "kind": "method",
-              "signature": "(self, cmd: Union[str, List[str]], desc: str = None, check: bool = True) -> Optional[str]",
-              "summary": "Run a git command in the repository.",
-              "line": 93,
-              "deprecated": false
-            },
-            {
-              "name": "checkout",
-              "qualname": "Git.checkout",
-              "kind": "method",
-              "signature": "(self, branch: str)",
-              "summary": "Checkout a branch.",
-              "line": 104,
-              "deprecated": false
-            },
-            {
-              "name": "pull",
-              "qualname": "Git.pull",
-              "kind": "method",
-              "signature": "(self, remote: str = 'origin', branch: str = None)",
-              "summary": "Pull changes.",
-              "line": 108,
-              "deprecated": false
-            },
-            {
-              "name": "push",
-              "qualname": "Git.push",
-              "kind": "method",
-              "signature": "(self, remote: str = 'origin', branch: str = None)",
-              "summary": "Push changes.",
-              "line": 115,
-              "deprecated": false
-            },
-            {
-              "name": "merge",
-              "qualname": "Git.merge",
-              "kind": "method",
-              "signature": "(self, source_branch: str)",
-              "summary": "Merge a branch into the current branch.",
-              "line": 122,
-              "deprecated": false
-            },
-            {
-              "name": "fetch",
-              "qualname": "Git.fetch",
-              "kind": "method",
-              "signature": "(self, remote: str = 'origin')",
-              "summary": "Fetch remote.",
-              "line": 126,
-              "deprecated": false
-            },
-            {
-              "name": "status",
-              "qualname": "Git.status",
-              "kind": "method",
-              "signature": "(self) -> str",
-              "summary": "Get status output.",
-              "line": 130,
-              "deprecated": false
-            },
-            {
-              "name": "current_branch",
-              "qualname": "Git.current_branch",
-              "kind": "method",
-              "signature": "(self) -> str",
-              "summary": "Get current branch name.",
-              "line": 134,
-              "deprecated": false
-            }
-          ],
-          "deprecated": true,
-          "remove_in": "0.11.0"
         }
       ],
       "constants": []
@@ -10288,6 +10233,442 @@
       "constants": []
     },
     {
+      "relpath": "core_utils/scene_records.py",
+      "summary": "Scene records -- every piece of tool-authored scene metadata, declared once.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "Scope",
+          "summary": "Where a record lives, and therefore what it can never do.",
+          "line": 60,
+          "bases": [
+            "str",
+            "Enum"
+          ],
+          "members": []
+        },
+        {
+          "name": "Kind",
+          "summary": "What a record is a function of, which decides WHEN it is refreshed.",
+          "line": 71,
+          "bases": [
+            "str",
+            "Enum"
+          ],
+          "members": []
+        },
+        {
+          "name": "Record",
+          "summary": "One produced value of a :class:`RecordSpec`, ready to store.",
+          "line": 89,
+          "bases": [],
+          "members": [
+            {
+              "name": "key",
+              "qualname": "Record.key",
+              "kind": "property",
+              "signature": "(self) -> str",
+              "summary": "",
+              "line": 96,
+              "deprecated": false
+            },
+            {
+              "name": "text",
+              "qualname": "Record.text",
+              "kind": "property",
+              "signature": "(self) -> str",
+              "summary": "The stored form (JSON).",
+              "line": 100,
+              "deprecated": false
+            },
+            {
+              "name": "save",
+              "qualname": "Record.save",
+              "kind": "method",
+              "signature": "(self, store) -> Optional[str]",
+              "summary": "Write this record through *store*;",
+              "line": 104,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "RecordSpec",
+          "summary": "The one declaration of a record: identity, contract and codec.",
+          "line": 110,
+          "bases": [],
+          "members": [
+            {
+              "name": "make",
+              "qualname": "RecordSpec.make",
+              "kind": "method",
+              "signature": "(self, payload: Any) -> Record",
+              "summary": "A :class:`Record` of *payload*, the envelope's ``version`` applied.",
+              "line": 156,
+              "deprecated": false
+            },
+            {
+              "name": "encode",
+              "qualname": "RecordSpec.encode",
+              "kind": "method",
+              "signature": "(self, payload: Any) -> str",
+              "summary": "The stored text for *payload*.",
+              "line": 179,
+              "deprecated": false
+            },
+            {
+              "name": "decode",
+              "qualname": "RecordSpec.decode",
+              "kind": "method",
+              "signature": "(self, text: Optional[str], default: Any = None) -> Any",
+              "summary": "*text* parsed, or *default* when absent, cleared, not JSON, or newer",
+              "line": 188,
+              "deprecated": false
+            },
+            {
+              "name": "read_text",
+              "qualname": "RecordSpec.read_text",
+              "kind": "method",
+              "signature": "(self, store) -> Optional[str]",
+              "summary": "The raw stored text, or ``None``.",
+              "line": 215,
+              "deprecated": false
+            },
+            {
+              "name": "write_text",
+              "qualname": "RecordSpec.write_text",
+              "kind": "method",
+              "signature": "(self, store, text: Optional[str]) -> Optional[str]",
+              "summary": "Store *text*;",
+              "line": 219,
+              "deprecated": false
+            },
+            {
+              "name": "load",
+              "qualname": "RecordSpec.load",
+              "kind": "method",
+              "signature": "(self, store, default: Any = None) -> Any",
+              "summary": "The decoded payload from *store*, or *default*.",
+              "line": 223,
+              "deprecated": false
+            },
+            {
+              "name": "save",
+              "qualname": "RecordSpec.save",
+              "kind": "method",
+              "signature": "(self, store, payload: Any) -> Optional[str]",
+              "summary": "Publish *payload* (the publish / clear idiom in one call).",
+              "line": 227,
+              "deprecated": false
+            },
+            {
+              "name": "clear",
+              "qualname": "RecordSpec.clear",
+              "kind": "method",
+              "signature": "(self, store) -> Optional[str]",
+              "summary": "Clear the record;",
+              "line": 240,
+              "deprecated": false
+            },
+            {
+              "name": "is_present",
+              "qualname": "RecordSpec.is_present",
+              "kind": "method",
+              "signature": "(self, store) -> bool",
+              "summary": "Whether *store* holds a non-empty value for this record.",
+              "line": 244,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "SceneRecords",
+          "summary": "The registry: every record, declared once, and what derives from it.",
+          "line": 249,
+          "bases": [],
+          "members": [
+            {
+              "name": "rendering_policy",
+              "qualname": "SceneRecords.rendering_policy",
+              "kind": "staticmethod",
+              "signature": "() -> Dict[str, Any]",
+              "summary": "What a deliverable claims about how it should be lit.",
+              "line": 417,
+              "deprecated": false
+            },
+            {
+              "name": "all",
+              "qualname": "SceneRecords.all",
+              "kind": "classmethod",
+              "signature": "(cls) -> List[RecordSpec]",
+              "summary": "Every declared record, in declaration order.",
+              "line": 460,
+              "deprecated": false
+            },
+            {
+              "name": "deliverable",
+              "qualname": "SceneRecords.deliverable",
+              "kind": "classmethod",
+              "signature": "(cls) -> List[RecordSpec]",
+              "summary": "",
+              "line": 465,
+              "deprecated": false
+            },
+            {
+              "name": "private",
+              "qualname": "SceneRecords.private",
+              "kind": "classmethod",
+              "signature": "(cls) -> List[RecordSpec]",
+              "summary": "",
+              "line": 469,
+              "deprecated": false
+            },
+            {
+              "name": "by_key",
+              "qualname": "SceneRecords.by_key",
+              "kind": "classmethod",
+              "signature": "(cls, key: str, scope: Optional[Scope] = None) -> Optional[RecordSpec]",
+              "summary": "The declaration for *key* (in *scope*, or the deliverable one first",
+              "line": 473,
+              "deprecated": false
+            },
+            {
+              "name": "resolve",
+              "qualname": "SceneRecords.resolve",
+              "kind": "classmethod",
+              "signature": "(cls, item: Union[RecordSpec, str]) -> RecordSpec",
+              "summary": "*item* as a spec: a spec passes through;",
+              "line": 484,
+              "deprecated": false
+            },
+            {
+              "name": "ordered",
+              "qualname": "SceneRecords.ordered",
+              "kind": "classmethod",
+              "signature": "(cls, specs: Iterable[RecordSpec]) -> List[RecordSpec]",
+              "summary": "*specs* in dependency order: every record after the ones its",
+              "line": 499,
+              "deprecated": false
+            },
+            {
+              "name": "check_producers",
+              "qualname": "SceneRecords.check_producers",
+              "kind": "classmethod",
+              "signature": "(cls, table: Mapping[Any, Any]) -> List[RecordSpec]",
+              "summary": "Validate a DCC producer *table* against the registry.",
+              "line": 532,
+              "deprecated": false
+            },
+            {
+              "name": "declared_takes",
+              "qualname": "SceneRecords.declared_takes",
+              "kind": "classmethod",
+              "signature": "(cls, read: Callable[[str], Any]) -> List[Dict[str, Any]]",
+              "summary": "The take list a deliverable declares, however old the file.",
+              "line": 561,
+              "deprecated": false
+            },
+            {
+              "name": "handoff_block",
+              "qualname": "SceneRecords.handoff_block",
+              "kind": "classmethod",
+              "signature": "(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None) -> Dict[str, Any]",
+              "summary": "The standalone-reader contract for an FBX, ready to store.",
+              "line": 593,
+              "deprecated": false
+            },
+            {
+              "name": "describe",
+              "qualname": "SceneRecords.describe",
+              "kind": "classmethod",
+              "signature": "(cls) -> List[Dict[str, Any]]",
+              "summary": "One row per record, for the docs generator and the gates.",
+              "line": 631,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "SceneStoreBase",
+          "summary": "The storage contract a DCC implements -- strings per scope, nothing more.",
+          "line": 652,
+          "bases": [],
+          "members": [
+            {
+              "name": "name",
+              "qualname": "SceneStoreBase.name",
+              "kind": "classmethod",
+              "signature": "(cls, scope: Scope) -> str",
+              "summary": "The carrier name *scope* reports under (:attr:`NAMES`).",
+              "line": 669,
+              "deprecated": false
+            },
+            {
+              "name": "read",
+              "qualname": "SceneStoreBase.read",
+              "kind": "classmethod",
+              "signature": "(cls, scope: Scope, key: str) -> Optional[str]",
+              "summary": "The string channel *key* in *scope*, or ``None`` when the carrier,",
+              "line": 674,
+              "deprecated": false
+            },
+            {
+              "name": "write",
+              "qualname": "SceneStoreBase.write",
+              "kind": "classmethod",
+              "signature": "(cls, scope: Scope, key: str, text: Optional[str]) -> Optional[str]",
+              "summary": "Store *text* on *key*;",
+              "line": 681,
+              "deprecated": false
+            },
+            {
+              "name": "values",
+              "qualname": "SceneStoreBase.values",
+              "kind": "classmethod",
+              "signature": "(cls, scope: Scope) -> Dict[str, Any]",
+              "summary": "Every user value the carrier holds, strings and otherwise, in a",
+              "line": 687,
+              "deprecated": false
+            },
+            {
+              "name": "keys",
+              "qualname": "SceneStoreBase.keys",
+              "kind": "classmethod",
+              "signature": "(cls, scope: Scope) -> List[str]",
+              "summary": "The names of everything :meth:`values` reports for *scope*.",
+              "line": 693,
+              "deprecated": false
+            },
+            {
+              "name": "channels",
+              "qualname": "SceneStoreBase.channels",
+              "kind": "classmethod",
+              "signature": "(cls, scope: Scope) -> Dict[str, str]",
+              "summary": "The non-empty STRING channels of *scope* -- what a handoff describes.",
+              "line": 698,
+              "deprecated": false
+            },
+            {
+              "name": "dump",
+              "qualname": "SceneStoreBase.dump",
+              "kind": "classmethod",
+              "signature": "(cls, decode: bool = True) -> Dict[str, Dict[str, Any]]",
+              "summary": "Every channel the scene actually carries, grouped by carrier name.",
+              "line": 712,
+              "deprecated": false
+            },
+            {
+              "name": "format_dump",
+              "qualname": "SceneStoreBase.format_dump",
+              "kind": "classmethod",
+              "signature": "(cls, decode: bool = True) -> str",
+              "summary": "Pretty JSON of :meth:`dump`, or ``\"\"`` when nothing is stored.",
+              "line": 738,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ExportContext",
+          "summary": "What an export DECIDES, handed to every producer as input.",
+          "line": 747,
+          "bases": [],
+          "members": [
+            {
+              "name": "record",
+              "qualname": "ExportContext.record",
+              "kind": "method",
+              "signature": "(self, spec: Union[RecordSpec, str], store=None, default: Any = None) -> Any",
+              "summary": "The payload of *spec* as produced in THIS assembly, else -- when a",
+              "line": 783,
+              "deprecated": false
+            },
+            {
+              "name": "refreshes",
+              "qualname": "ExportContext.refreshes",
+              "kind": "method",
+              "signature": "(self, spec: RecordSpec) -> bool",
+              "summary": "Whether this context's mode refreshes *spec*.",
+              "line": 805,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "ExportSnapshot",
+          "summary": "The records one export ships, assembled once and committed once.",
+          "line": 815,
+          "bases": [],
+          "members": [
+            {
+              "name": "assemble",
+              "qualname": "ExportSnapshot.assemble",
+              "kind": "classmethod",
+              "signature": "(cls, producers: Mapping[Union[RecordSpec, str], Producer], ctx: Optional[ExportContext] = None, only: Optional[Iterable[Union[RecordSpec, str]]] = None) -> 'ExportSnapshot'",
+              "summary": "Run *producers* in dependency order and collect their records.",
+              "line": 838,
+              "deprecated": false
+            },
+            {
+              "name": "publish",
+              "qualname": "ExportSnapshot.publish",
+              "kind": "classmethod",
+              "signature": "(cls, store, records: Mapping[Union[RecordSpec, str], Any], ctx: Optional[ExportContext] = None) -> 'ExportSnapshot'",
+              "summary": "Commit *records* that are already in hand -- the AUTHORING-time",
+              "line": 918,
+              "deprecated": false
+            },
+            {
+              "name": "commit",
+              "qualname": "ExportSnapshot.commit",
+              "kind": "method",
+              "signature": "(self, store) -> Dict[str, Optional[str]]",
+              "summary": "Write every produced record to *store* in one pass, then stamp the",
+              "line": 961,
+              "deprecated": false
+            },
+            {
+              "name": "records",
+              "qualname": "ExportSnapshot.records",
+              "kind": "property",
+              "signature": "(self) -> Dict[str, Record]",
+              "summary": "The produced records by key (no ``None`` entries).",
+              "line": 1029,
+              "deprecated": false
+            },
+            {
+              "name": "record",
+              "qualname": "ExportSnapshot.record",
+              "kind": "method",
+              "signature": "(self, spec: Union[RecordSpec, str], default: Any = None) -> Any",
+              "summary": "The payload produced for *spec*, or *default*.",
+              "line": 1033,
+              "deprecated": false
+            },
+            {
+              "name": "channels",
+              "qualname": "ExportSnapshot.channels",
+              "kind": "method",
+              "signature": "(self, scope: Scope = Scope.DELIVERABLE) -> Dict[str, Any]",
+              "summary": "Produced payloads of *scope*, by key -- the sidecar's snapshot.",
+              "line": 1038,
+              "deprecated": false
+            },
+            {
+              "name": "summary",
+              "qualname": "ExportSnapshot.summary",
+              "kind": "method",
+              "signature": "(self) -> str",
+              "summary": "One line for the export log: each record that shipped and how",
+              "line": 1042,
+              "deprecated": false
+            }
+          ]
+        }
+      ],
+      "constants": []
+    },
+    {
       "relpath": "core_utils/schema_spec.py",
       "summary": "Declarative schema for JSON/YAML *template* files, defined as a dataclass.",
       "functions": [],
@@ -11344,7 +11725,7 @@
         {
           "name": "FileUtils",
           "summary": "",
-          "line": 18,
+          "line": 17,
           "bases": [
             "HelpMixin"
           ],
@@ -11355,7 +11736,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, expected_type: Optional[str] = None) -> bool",
               "summary": "Check if a path is valid, optionally requiring a specific type ('file' or 'dir').",
-              "line": 22,
+              "line": 21,
               "deprecated": false
             },
             {
@@ -11364,7 +11745,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str) -> bool",
               "summary": "Return True if *filepath* is an online-only cloud-sync placeholder.",
-              "line": 42,
+              "line": 41,
               "deprecated": false
             },
             {
@@ -11373,7 +11754,7 @@
               "kind": "staticmethod",
               "signature": "(path: str, directory: str, inclusive: bool = True) -> bool",
               "summary": "Is *path* inside *directory*?",
-              "line": 80,
+              "line": 79,
               "deprecated": false
             },
             {
@@ -11382,7 +11763,7 @@
               "kind": "staticmethod",
               "signature": "(text: str) -> bool",
               "summary": "Does *text* name a full path rather than a subdirectory?",
-              "line": 110,
+              "line": 109,
               "deprecated": false
             },
             {
@@ -11391,7 +11772,7 @@
               "kind": "classmethod",
               "signature": "(cls, entry: str, base: Optional[str]) -> Optional[str]",
               "summary": "Resolve a user-typed output-directory *entry* against *base*.",
-              "line": 142,
+              "line": 141,
               "deprecated": false
             },
             {
@@ -11400,7 +11781,7 @@
               "kind": "classmethod",
               "signature": "(cls, path: str, base: Optional[str]) -> str",
               "summary": "The portable spelling of *path* for a :meth:`resolve_output_dir` field.",
-              "line": 185,
+              "line": 184,
               "deprecated": false
             },
             {
@@ -11409,7 +11790,7 @@
               "kind": "staticmethod",
               "signature": "() -> int",
               "summary": "The longest path this OS will accept, in characters.",
-              "line": 216,
+              "line": 215,
               "deprecated": false
             },
             {
@@ -11418,7 +11799,7 @@
               "kind": "staticmethod",
               "signature": "(path: str, limit: Optional[int] = None) -> bool",
               "summary": "Is *path* longer than the OS path-length limit?",
-              "line": 255,
+              "line": 254,
               "deprecated": false
             },
             {
@@ -11427,7 +11808,7 @@
               "kind": "staticmethod",
               "signature": "(path: str) -> Optional[int]",
               "summary": "Return free space (bytes) on the volume that holds *path*.",
-              "line": 281,
+              "line": 280,
               "deprecated": false
             },
             {
@@ -11436,7 +11817,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str) -> bool",
               "summary": "Is *filepath* held open by another process, so it cannot be replaced?",
-              "line": 316,
+              "line": 315,
               "deprecated": false
             },
             {
@@ -11445,7 +11826,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str) -> List[str]",
               "summary": "Names of the processes currently holding *filepath* open.",
-              "line": 353,
+              "line": 352,
               "deprecated": false
             },
             {
@@ -11454,7 +11835,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath: str) -> str",
               "summary": "One sentence naming *filepath*'s holder, or \"\" when it is free.",
-              "line": 457,
+              "line": 456,
               "deprecated": false
             },
             {
@@ -11463,7 +11844,7 @@
               "kind": "staticmethod",
               "signature": "(size_bytes, unknown: str = '(unknown)') -> str",
               "summary": "Render a byte count using the largest unit that keeps the number small.",
-              "line": 483,
+              "line": 482,
               "deprecated": false
             },
             {
@@ -11472,7 +11853,7 @@
               "kind": "classmethod",
               "signature": "(cls, before, after, unknown: str = '(unknown)') -> str",
               "summary": "Render a ``before -> after`` size transition with a percent delta.",
-              "line": 515,
+              "line": 514,
               "deprecated": false
             },
             {
@@ -11481,7 +11862,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str) -> None",
               "summary": "Create a directory if one doesn't already exist.",
-              "line": 537,
+              "line": 536,
               "deprecated": false
             },
             {
@@ -11490,7 +11871,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1, extensions: Iterable[str] = ()) -> str",
               "summary": "Return the next available versioned path for `filepath`.",
-              "line": 555,
+              "line": 554,
               "deprecated": false
             },
             {
@@ -11499,7 +11880,7 @@
               "kind": "staticmethod",
               "signature": "(directory: str, format: str = '{stem}_v{n:03d}{ext}', stem: str = '', ext: str = '', start: int = 1, extensions: Iterable[str] = ()) -> int",
               "summary": "Return one past the highest version `format` already holds in `directory`.",
-              "line": 611,
+              "line": 610,
               "deprecated": false
             },
             {
@@ -11508,7 +11889,7 @@
               "kind": "staticmethod",
               "signature": "(dirPath, content='file', recursive=False, num_threads=1, inc_files=[], exc_files=[], inc_dirs=[], exc_dirs=[], group_by_type=False)",
               "summary": "Get the contents of a directory and any of its children.",
-              "line": 690,
+              "line": 689,
               "deprecated": false
             },
             {
@@ -11517,7 +11898,7 @@
               "kind": "staticmethod",
               "signature": "(path: str, create_dir: bool = False, logger=None) -> bool",
               "summary": "Open the file explorer at the given path.",
-              "line": 874,
+              "line": 873,
               "deprecated": false
             },
             {
@@ -11526,7 +11907,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, as_list: bool = False, encoding: str = 'utf-8', default: Optional[Union[str, List[str]]] = None) -> Optional[Union[str, List[str]]]",
               "summary": "Read a text file, whole or as a list of lines, or return *default*.",
-              "line": 923,
+              "line": 922,
               "deprecated": false
             },
             {
@@ -11535,7 +11916,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, lines)",
               "summary": "Write the given list contents to the given file.",
-              "line": 964,
+              "line": 963,
               "deprecated": false
             },
             {
@@ -11544,7 +11925,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, default=None, encoding: str = 'utf-8')",
               "summary": "Parse the JSON document at *filepath*, or return *default*.",
-              "line": 978,
+              "line": 977,
               "deprecated": false
             },
             {
@@ -11553,7 +11934,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath, data, *, indent=2, encoding: str = 'utf-8', sort_keys: bool = False) -> None",
               "summary": "Serialise *data* to *filepath* atomically, creating parent dirs.",
-              "line": 1005,
+              "line": 1004,
               "deprecated": false
             },
             {
@@ -11562,7 +11943,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, content: str, encoding: str = 'utf-8') -> None",
               "summary": "Write text to a file atomically.",
-              "line": 1041,
+              "line": 1040,
               "deprecated": false
             },
             {
@@ -11571,7 +11952,7 @@
               "kind": "staticmethod",
               "signature": "(target: str, write: Callable[[str], Any], promote: bool = True) -> str",
               "summary": "Produce *target* through *write*, so no reader meets a partial file.",
-              "line": 1090,
+              "line": 1089,
               "deprecated": false
             },
             {
@@ -11580,7 +11961,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str",
               "summary": "Copies a file to a specified folder, ensuring the folder exists.",
-              "line": 1148,
+              "line": 1147,
               "deprecated": false
             },
             {
@@ -11589,7 +11970,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]",
               "summary": "Moves one or more files to a specified folder.",
-              "line": 1187,
+              "line": 1186,
               "deprecated": false
             },
             {
@@ -11598,7 +11979,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, _runner=None)",
               "summary": "Open the OS file manager showing ``path`` (selecting the file when supported, else",
-              "line": 1255,
+              "line": 1254,
               "deprecated": false
             },
             {
@@ -11607,7 +11988,7 @@
               "kind": "classmethod",
               "signature": "(cls, paths, info, hash_algo=None, force_tuples=False)",
               "summary": "Returns file and directory information for a list of file strings based on specified parameters.",
-              "line": 1290,
+              "line": 1289,
               "deprecated": false
             },
             {
@@ -11616,7 +11997,7 @@
               "kind": "staticmethod",
               "signature": "(p: Union[str, List[str]], section: Union[str, None] = None, replace: Union[str, None] = None) -> Union[str, List[str]]",
               "summary": "Format a given filepath(s).",
-              "line": 1373,
+              "line": 1372,
               "deprecated": false
             },
             {
@@ -11625,7 +12006,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> Union[str, List[str]]",
               "summary": "Convert an absolute file path to a relative path based on the given base directory.",
-              "line": 1443,
+              "line": 1442,
               "deprecated": false
             },
             {
@@ -11634,7 +12015,7 @@
               "kind": "staticmethod",
               "signature": "(source_paths: List[str], target_dir: str, base_dir: str) -> List[Tuple[str, str, str]]",
               "summary": "Remap a list of file paths to a new directory while preserving their relative",
-              "line": 1490,
+              "line": 1489,
               "deprecated": false
             },
             {
@@ -11643,7 +12024,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, **kwargs)",
               "summary": "Append a directory to the python path.",
-              "line": 1543,
+              "line": 1542,
               "deprecated": false
             },
             {
@@ -11652,7 +12033,7 @@
               "kind": "staticmethod",
               "signature": "(obj, inc_filename: bool = False) -> str",
               "summary": "Retrieve the absolute file path associated with a Python object.",
-              "line": 1565,
+              "line": 1564,
               "deprecated": false
             },
             {
@@ -11661,48 +12042,8 @@
               "kind": "classmethod",
               "signature": "(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)",
               "summary": "Scan the specified directory or Python file and retrieve class information from each file.",
-              "line": 1686,
+              "line": 1685,
               "deprecated": false
-            },
-            {
-              "name": "set_json_file",
-              "qualname": "FileUtils.set_json_file",
-              "kind": "classmethod",
-              "signature": "(cls, file)",
-              "summary": "Set the current json filepath.",
-              "line": 1874,
-              "deprecated": true,
-              "remove_in": "0.11.0"
-            },
-            {
-              "name": "get_json_file",
-              "qualname": "FileUtils.get_json_file",
-              "kind": "classmethod",
-              "signature": "(cls)",
-              "summary": "Get the current json filepath.",
-              "line": 1892,
-              "deprecated": true,
-              "remove_in": "0.11.0"
-            },
-            {
-              "name": "set_json",
-              "qualname": "FileUtils.set_json",
-              "kind": "classmethod",
-              "signature": "(cls, key, value, file=None)",
-              "summary": "**Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;",
-              "line": 1910,
-              "deprecated": true,
-              "remove_in": "0.11.0"
-            },
-            {
-              "name": "get_json",
-              "qualname": "FileUtils.get_json",
-              "kind": "classmethod",
-              "signature": "(cls, key, file=None)",
-              "summary": "**Deprecated** -- see :attr:`_JSON_KV_DEPRECATION`;",
-              "line": 1952,
-              "deprecated": true,
-              "remove_in": "0.11.0"
             }
           ]
         }
@@ -11809,7 +12150,7 @@
         {
           "name": "MeshConvert",
           "summary": "3D mesh format conversion via the godotengine/FBX2glTF CLI.",
-          "line": 64,
+          "line": 66,
           "bases": [
             "HelpMixin"
           ],
@@ -11820,7 +12161,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str) -> float",
               "summary": "Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.",
-              "line": 113,
+              "line": 115,
               "deprecated": false
             },
             {
@@ -11829,7 +12170,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str) -> int",
               "summary": "Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.",
-              "line": 149,
+              "line": 151,
               "deprecated": false
             },
             {
@@ -11838,7 +12179,7 @@
               "kind": "method",
               "signature": "(cls) -> int",
               "summary": "Deprecated alias of :attr:`ImgUtils.ENCODE_WORKERS`, for one release.",
-              "line": 397,
+              "line": 367,
               "deprecated": false
             },
             {
@@ -11847,7 +12188,7 @@
               "kind": "classmethod",
               "signature": "(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]",
               "summary": "Resolve the FBX2glTF executable from PATH or managed installs.",
-              "line": 916,
+              "line": 886,
               "deprecated": false
             },
             {
@@ -11856,7 +12197,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str",
               "summary": "Convert an FBX file to a binary glTF 2.0 (GLB) file.",
-              "line": 1028,
+              "line": 998,
               "deprecated": false
             },
             {
@@ -11865,7 +12206,7 @@
               "kind": "classmethod",
               "signature": "(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]",
               "summary": "Wrap *sections* in the versioned scene-sidecar envelope.",
-              "line": 1534,
+              "line": 1504,
               "deprecated": false
             },
             {
@@ -11874,16 +12215,16 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: dict) -> int",
               "summary": "Drop the FBX's handoff block from a converted glTF's node extras.",
-              "line": 1642,
+              "line": 1612,
               "deprecated": false
             },
             {
               "name": "build_fbx_handoff",
               "qualname": "MeshConvert.build_fbx_handoff",
               "kind": "classmethod",
-              "signature": "(cls, channels: Iterable[str], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]",
+              "signature": "(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]",
               "summary": "The standalone-reader contract for an FBX, ready to publish.",
-              "line": 1675,
+              "line": 1645,
               "deprecated": false
             },
             {
@@ -11892,7 +12233,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]",
               "summary": "Apply a scene-sidecar envelope to a GLB and embed it in its extras.",
-              "line": 1755,
+              "line": 1708,
               "deprecated": false
             },
             {
@@ -11901,7 +12242,7 @@
               "kind": "classmethod",
               "signature": "(cls, sidecar: Optional[Dict[str, Any]], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]",
               "summary": "``{path: map type}`` for envelope textures authored for another engine.",
-              "line": 2178,
+              "line": 2131,
               "deprecated": false
             },
             {
@@ -11910,7 +12251,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "The scene-sidecar envelope embedded in a GLB, or ``None``.",
-              "line": 2229,
+              "line": 2182,
               "deprecated": false
             },
             {
@@ -11919,7 +12260,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, Any]",
               "summary": "Check a delivered GLB against the envelope it carries.",
-              "line": 2255,
+              "line": 2208,
               "deprecated": false
             },
             {
@@ -11928,7 +12269,7 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: dict, key: str) -> Optional[Any]",
               "summary": "Decoded value of one ``data_export`` channel in a parsed glTF, or ``None``.",
-              "line": 2600,
+              "line": 2553,
               "deprecated": false
             },
             {
@@ -11937,7 +12278,7 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: dict, channels: Dict[str, Any]) -> List[str]",
               "summary": "Replace ``data_export`` channels in a parsed glTF, ahead of every reader.",
-              "line": 2662,
+              "line": 2615,
               "deprecated": false
             },
             {
@@ -11946,7 +12287,7 @@
               "kind": "classmethod",
               "signature": "(cls, nodes: Sequence[str], channel: str, keys: Sequence[Sequence[float]], colors: Optional[Sequence[Optional[Sequence[float]]]] = None, fps: float = 30.0) -> Dict[str, Any]",
               "summary": "The :meth:`overlay_data_export` channels that preview ONE render effect.",
-              "line": 2733,
+              "line": 2686,
               "deprecated": false
             },
             {
@@ -11955,7 +12296,7 @@
               "kind": "classmethod",
               "signature": "(cls, data_export: Dict[str, Any]) -> Dict[str, Any]",
               "summary": "Copy of a ``data_export`` snapshot with build-time locate hints removed.",
-              "line": 2933,
+              "line": 2886,
               "deprecated": false
             },
             {
@@ -11964,7 +12305,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "The ``lightmap_metadata`` manifest riding a GLB's node extras, or ``None``.",
-              "line": 3076,
+              "line": 3029,
               "deprecated": false
             },
             {
@@ -11973,7 +12314,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> int",
               "summary": "Make every lightmap copy inside a GLB say what the GLB ships.",
-              "line": 3097,
+              "line": 3050,
               "deprecated": false
             },
             {
@@ -11982,7 +12323,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, List[str]]",
               "summary": "Split a GLB's bake manifest by whether this GLB actually carries each object.",
-              "line": 3190,
+              "line": 3143,
               "deprecated": false
             },
             {
@@ -11991,7 +12332,7 @@
               "kind": "staticmethod",
               "signature": "(coverage: Dict[str, List[str]], bound: Sequence[Dict[str, Any]]) -> Dict[str, Any]",
               "summary": "``{\"expected\", \"bound\", \"unbound\", \"out_of_scope\"}`` for one bind.",
-              "line": 3226,
+              "line": 3179,
               "deprecated": false
             },
             {
@@ -12000,7 +12341,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True) -> List[Dict[str, Any]]",
               "summary": "Wire a host DCC's committed lightmaps into a GLB for the web viewer.",
-              "line": 3251,
+              "line": 3204,
               "deprecated": false
             },
             {
@@ -12009,7 +12350,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()) -> Optional[Dict[str, Any]]",
               "summary": "Bind a scene's shadow-rig maps into a GLB;",
-              "line": 4004,
+              "line": 3961,
               "deprecated": false
             },
             {
@@ -12018,7 +12359,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, *, mode: str = 'both') -> Optional[Dict[str, Any]]",
               "summary": "Rebuild the declared shot clips as exact slices of the whole timeline.",
-              "line": 4680,
+              "line": 4637,
               "deprecated": false
             },
             {
@@ -12027,7 +12368,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Realize keyed visibility as STEP ``scale`` channels the file can play.",
-              "line": 4807,
+              "line": 4764,
               "deprecated": false
             },
             {
@@ -12036,7 +12377,7 @@
               "kind": "classmethod",
               "signature": "(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None, key_spans: Optional[Callable[[List[Tuple[Optional[float], Optional[float]]]], Sequence[Optional[Sequence[float]]]]] = None) -> Dict[str, List[float]]",
               "summary": "Per take, the first and last authored frame inside its window.",
-              "line": 4997,
+              "line": 4954,
               "deprecated": false
             },
             {
@@ -12045,7 +12386,7 @@
               "kind": "classmethod",
               "signature": "(cls, tracks: Sequence[Dict[str, Any]], fps: Optional[float] = None, clip_spans: Optional[Dict[str, List[float]]] = None) -> Optional[Dict[str, Any]]",
               "summary": "Wrap *tracks* in the versioned ``visibility_tracks`` envelope.",
-              "line": 5092,
+              "line": 5049,
               "deprecated": false
             },
             {
@@ -12054,7 +12395,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[str]",
               "summary": "Remove every curve-proxy node (and its channels) from a GLB.",
-              "line": 5539,
+              "line": 5528,
               "deprecated": false
             },
             {
@@ -12063,7 +12404,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Drop the skinning data no node binds.",
-              "line": 5639,
+              "line": 5628,
               "deprecated": false
             },
             {
@@ -12072,7 +12413,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[str]",
               "summary": "Point every ``skin.skeleton`` at a common root of the skin's joints.",
-              "line": 5716,
+              "line": 5705,
               "deprecated": false
             },
             {
@@ -12081,7 +12422,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Realize authored opacity ramps as animated material alpha.",
-              "line": 5784,
+              "line": 5773,
               "deprecated": false
             },
             {
@@ -12090,7 +12431,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[str]",
               "summary": "Drop every animation that carries no channels or no samplers.",
-              "line": 5877,
+              "line": 5866,
               "deprecated": false
             },
             {
@@ -12099,7 +12440,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Collapse every animation channel that never moves to two keys.",
-              "line": 6025,
+              "line": 6014,
               "deprecated": false
             },
             {
@@ -12108,7 +12449,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, tolerance: float, rotation_tolerance: Optional[float] = None) -> Dict[str, int]",
               "summary": "Drop the keys a GLB's samplers do not need to reproduce their motion.",
-              "line": 6220,
+              "line": 6209,
               "deprecated": false
             },
             {
@@ -12117,7 +12458,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Drop the PNG/JPEG twin of every texture that also ships KTX2.",
-              "line": 6283,
+              "line": 6272,
               "deprecated": false
             },
             {
@@ -12126,7 +12467,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Publish the GLB's clips as ``extras.animation_web``, joined to the shots.",
-              "line": 6360,
+              "line": 6349,
               "deprecated": false
             },
             {
@@ -12135,7 +12476,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict[str, str]]",
               "summary": "Inspect a GLB for materials flagged transparent that should be opaque.",
-              "line": 6654,
+              "line": 6641,
               "deprecated": false
             },
             {
@@ -12144,7 +12485,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict]",
               "summary": "Repair the Maya phong → FBX → FBX2glTF transparency translation bug.",
-              "line": 6739,
+              "line": 6726,
               "deprecated": false
             },
             {
@@ -12153,7 +12494,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget)",
               "summary": "Yield an open :class:`GlbEdit` for *glb*, writing once on close.",
-              "line": 6826,
+              "line": 6813,
               "deprecated": false
             },
             {
@@ -12162,7 +12503,7 @@
               "kind": "classmethod",
               "signature": "(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0, secondary_max_size: int = 0, uastc_rdo: Optional[float] = None) -> str",
               "summary": "Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.",
-              "line": 7229,
+              "line": 7216,
               "deprecated": false
             },
             {
@@ -12171,7 +12512,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_format: Optional[str] = None, max_size: Optional[int] = None, ktx2_fallback: Optional[bool] = None, secondary_max_size: Optional[int] = None, uastc_rdo: Optional[float] = None) -> Dict[str, Any]",
               "summary": ":meth:`optimize_glb_textures` kwargs for a WEB deliverable.",
-              "line": 7365,
+              "line": 7352,
               "deprecated": false
             },
             {
@@ -12180,7 +12521,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = WEB_DELIVERY_KTX2_FALLBACK, secondary_max_size: int = WEB_DELIVERY_SECONDARY_MAX_SIZE, uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO) -> Dict[str, Any]",
               "summary": "Downsize and re-encode a GLB's embedded images for web delivery.",
-              "line": 7457,
+              "line": 7444,
               "deprecated": false
             },
             {
@@ -12189,7 +12530,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Pack and write the ORM (metallic/roughness) texture into a GLB, by name.",
-              "line": 8156,
+              "line": 8143,
               "deprecated": false
             },
             {
@@ -12198,7 +12539,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]",
               "summary": "Materials whose delivered ORM binding this pipeline never validated.",
-              "line": 8338,
+              "line": 8325,
               "deprecated": false
             },
             {
@@ -12207,7 +12548,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write emissive color / texture into a GLB's materials, by name.",
-              "line": 8466,
+              "line": 8453,
               "deprecated": false
             },
             {
@@ -12216,7 +12557,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Collapse byte-identical embedded images onto one copy.",
-              "line": 8640,
+              "line": 8627,
               "deprecated": false
             },
             {
@@ -12225,7 +12566,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Drop textures no material samples, and the images/bufferViews only they used.",
-              "line": 8743,
+              "line": 8730,
               "deprecated": false
             },
             {
@@ -12234,7 +12575,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, alpha_mode: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write ``alphaMode`` / ``alphaCutoff`` into a GLB's materials, by name.",
-              "line": 9121,
+              "line": 9108,
               "deprecated": false
             },
             {
@@ -12243,7 +12584,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, scale: float, lightmapped_only: bool = True) -> int",
               "summary": "Write ``normalTexture.scale`` into a GLB's materials.",
-              "line": 9180,
+              "line": 9167,
               "deprecated": false
             },
             {
@@ -12252,7 +12593,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]",
               "summary": "Write base colour / texture into a GLB's materials, by name.",
-              "line": 9250,
+              "line": 9237,
               "deprecated": false
             }
           ]
@@ -12265,7 +12606,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 44,
+          "line": 46,
           "deprecated": false
         },
         {
@@ -12274,7 +12615,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 45,
+          "line": 47,
           "deprecated": false
         }
       ]
@@ -12287,14 +12628,14 @@
         {
           "name": "Finding",
           "summary": "One verification outcome row.",
-          "line": 39,
+          "line": 40,
           "bases": [],
           "members": []
         },
         {
           "name": "VerificationReport",
           "summary": "Every finding from one :meth:`ExportVerifier.run`.",
-          "line": 48,
+          "line": 49,
           "bases": [],
           "members": [
             {
@@ -12303,7 +12644,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "True when no finding FAILed (WARN and SKIP do not fail a report).",
-              "line": 54,
+              "line": 55,
               "deprecated": false
             },
             {
@@ -12312,7 +12653,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, int]",
               "summary": "",
-              "line": 58,
+              "line": 59,
               "deprecated": false
             },
             {
@@ -12321,7 +12662,7 @@
               "kind": "method",
               "signature": "(self) -> str",
               "summary": "Human-readable table plus a one-line verdict.",
-              "line": 64,
+              "line": 65,
               "deprecated": false
             },
             {
@@ -12330,7 +12671,7 @@
               "kind": "method",
               "signature": "(self) -> str",
               "summary": "",
-              "line": 76,
+              "line": 77,
               "deprecated": false
             }
           ]
@@ -12338,7 +12679,7 @@
         {
           "name": "ExportVerifier",
           "summary": "Run file-level gates over an exported GLB and/or FBX.",
-          "line": 169,
+          "line": 175,
           "bases": [
             "_ExportVerifierInternal"
           ],
@@ -12349,7 +12690,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[GlbReader]",
               "summary": "",
-              "line": 245,
+              "line": 251,
               "deprecated": false
             },
             {
@@ -12358,7 +12699,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[FbxFile]",
               "summary": "",
-              "line": 254,
+              "line": 260,
               "deprecated": false
             },
             {
@@ -12367,7 +12708,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Every registered gate, in run order.",
-              "line": 264,
+              "line": 270,
               "deprecated": false
             },
             {
@@ -12376,7 +12717,7 @@
               "kind": "method",
               "signature": "(self, checks: Optional[Sequence[str]] = None) -> VerificationReport",
               "summary": "Run *checks* (default: all) and return the report.",
-              "line": 276,
+              "line": 282,
               "deprecated": false
             },
             {
@@ -12385,7 +12726,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "The GLB parses and carries a scene graph.",
-              "line": 292,
+              "line": 298,
               "deprecated": false
             },
             {
@@ -12394,7 +12735,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "``extensionsRequired`` must be a subset of ``extensionsUsed``.",
-              "line": 310,
+              "line": 316,
               "deprecated": false
             },
             {
@@ -12403,7 +12744,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "Texture sources resolve;",
-              "line": 329,
+              "line": 335,
               "deprecated": false
             },
             {
@@ -12412,7 +12753,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "What each embedded image costs, largest first;",
-              "line": 391,
+              "line": 397,
               "deprecated": false
             },
             {
@@ -12421,7 +12762,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "Referenced skins need inverseBindMatrices and a real skeleton root.",
-              "line": 435,
+              "line": 441,
               "deprecated": false
             },
             {
@@ -12430,7 +12771,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "Channels resolve to real nodes/samplers;",
-              "line": 528,
+              "line": 534,
               "deprecated": false
             },
             {
@@ -12439,7 +12780,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "Delegate to :meth:`MeshConvert.verify_glb` when an envelope rides.",
-              "line": 565,
+              "line": 571,
               "deprecated": false
             },
             {
@@ -12448,7 +12789,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "Each GLB clip's length matches its declared take (±1 frame).",
-              "line": 596,
+              "line": 602,
               "deprecated": false
             },
             {
@@ -12457,7 +12798,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "The stack is as long as the span its clips were cut against.",
-              "line": 714,
+              "line": 720,
               "deprecated": false
             },
             {
@@ -12466,7 +12807,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "The FBX parses;",
-              "line": 782,
+              "line": 788,
               "deprecated": false
             },
             {
@@ -12475,7 +12816,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "Declared sidecar takes all exist as AnimationStacks.",
-              "line": 796,
+              "line": 802,
               "deprecated": false
             },
             {
@@ -12484,7 +12825,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "GLB clip names exist as FBX stacks (the conversion kept them).",
-              "line": 820,
+              "line": 826,
               "deprecated": false
             },
             {
@@ -12493,7 +12834,7 @@
               "kind": "method",
               "signature": "(self) -> List[Finding]",
               "summary": "Structural drift vs a previous known-good GLB.",
-              "line": 836,
+              "line": 842,
               "deprecated": false
             }
           ]
@@ -17908,18 +18249,54 @@
         {
           "name": "StrUtils",
           "summary": "",
-          "line": 60,
+          "line": 65,
           "bases": [
             "CoreUtils"
           ],
           "members": [
+            {
+              "name": "is_legal_name",
+              "qualname": "StrUtils.is_legal_name",
+              "kind": "staticmethod",
+              "signature": "(name) -> bool",
+              "summary": "Whether *name* is a non-empty string of :attr:`LEGAL_NAME_PATTERN`",
+              "line": 79,
+              "deprecated": false
+            },
+            {
+              "name": "illegal_name_chars",
+              "qualname": "StrUtils.illegal_name_chars",
+              "kind": "staticmethod",
+              "signature": "(name: str) -> List[str]",
+              "summary": "The distinct characters of *name* a legal name may not hold, in the",
+              "line": 90,
+              "deprecated": false
+            },
+            {
+              "name": "name_error",
+              "qualname": "StrUtils.name_error",
+              "kind": "classmethod",
+              "signature": "(cls, name, subject: str = 'names', reason: str = '') -> Optional[str]",
+              "summary": "Why *name* is not a legal name, as one sentence, or ``None`` when it is.",
+              "line": 100,
+              "deprecated": false
+            },
+            {
+              "name": "legal_name_matcher",
+              "qualname": "StrUtils.legal_name_matcher",
+              "kind": "staticmethod",
+              "signature": "(legal_name: str) -> 're.Pattern'",
+              "summary": "A pattern matching every name :meth:`to_legal_name` turns into",
+              "line": 135,
+              "deprecated": false
+            },
             {
               "name": "to_legal_name",
               "qualname": "StrUtils.to_legal_name",
               "kind": "staticmethod",
               "signature": "(name: str) -> str",
               "summary": "Every non-alphanumeric becomes ``_``: the objectName rule.",
-              "line": 64,
+              "line": 154,
               "deprecated": false
             },
             {
@@ -17928,7 +18305,7 @@
               "kind": "classmethod",
               "signature": "(cls, name: str, replacement: str = '', report: bool = False)",
               "summary": "*name* with every character illegal in a file name removed.",
-              "line": 100,
+              "line": 190,
               "deprecated": false
             },
             {
@@ -17937,7 +18314,7 @@
               "kind": "staticmethod",
               "signature": "(string: str) -> str",
               "summary": "Remove ANSI escape sequences (color/cursor codes) from a string.",
-              "line": 131,
+              "line": 221,
               "deprecated": false
             },
             {
@@ -17946,7 +18323,7 @@
               "kind": "staticmethod",
               "signature": "(text: Union[str, List[str]], replacement_char: str = '_', char_map: Optional[Dict[str, str]] = None, preserve_trailing: bool = False, preserve_case: bool = False, allow_consecutive: bool = False, return_original: bool = False) -> Union[str, Tuple[str, str], List[str], List[Tuple[str, str]]]",
               "summary": "Sanitizes a string or a list of strings by replacing invalid characters.",
-              "line": 153,
+              "line": 243,
               "deprecated": false
             },
             {
@@ -17955,7 +18332,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, key: str = 'name', wildcard: str = '*') -> str",
               "summary": "Rewrite a bare-wildcard template into pure placeholder form.",
-              "line": 209,
+              "line": 299,
               "deprecated": false
             },
             {
@@ -17964,7 +18341,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: str) -> Optional[Tuple[str, str]]",
               "summary": "``(pattern, replacement)`` when *spec* is a regex modifier, else ``None``.",
-              "line": 283,
+              "line": 373,
               "deprecated": false
             },
             {
@@ -17973,7 +18350,7 @@
               "kind": "classmethod",
               "signature": "(cls, value, spec: str) -> Tuple[str, Optional[str]]",
               "summary": "*value* reshaped by the regex modifier *spec* -- ``(result, error)``.",
-              "line": 311,
+              "line": 401,
               "deprecated": false
             },
             {
@@ -17982,7 +18359,7 @@
               "kind": "classmethod",
               "signature": "(cls, text: str, key: str, spec: str) -> str",
               "summary": "Give every bare ``{key}`` in *text* the regex modifier *spec*.",
-              "line": 345,
+              "line": 435,
               "deprecated": false
             },
             {
@@ -17991,7 +18368,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, **kwargs) -> str",
               "summary": "Replace placeholders in a string with provided values.",
-              "line": 395,
+              "line": 485,
               "deprecated": false
             },
             {
@@ -18000,7 +18377,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, **kwargs) -> dict",
               "summary": "Resolve placeholders and report what was substituted vs.",
-              "line": 430,
+              "line": 520,
               "deprecated": false
             },
             {
@@ -18009,7 +18386,7 @@
               "kind": "staticmethod",
               "signature": "(**values) -> dict",
               "summary": "Live values for :attr:`NAME_PATTERN_TOKENS`, plus the caller's own.",
-              "line": 504,
+              "line": 594,
               "deprecated": false
             },
             {
@@ -18018,7 +18395,7 @@
               "kind": "classmethod",
               "signature": "(cls, pattern: str, context: dict = None, wildcard: str = '*', key: str = 'name', keep: Iterable[str] = ()) -> dict",
               "summary": "Resolve a user-typed name pattern into a file-name-legal name.",
-              "line": 530,
+              "line": 620,
               "deprecated": false
             },
             {
@@ -18027,7 +18404,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, context: dict, prefix: str = '__', suffix: str = '__') -> str",
               "summary": "Replace delimited placeholders in *text* using *context*.",
-              "line": 679,
+              "line": 769,
               "deprecated": false
             },
             {
@@ -18036,7 +18413,7 @@
               "kind": "staticmethod",
               "signature": "(string, case='title') -> Union[str, List[str]]",
               "summary": "Format the given string(s) in the given case.",
-              "line": 721,
+              "line": 811,
               "deprecated": false
             },
             {
@@ -18045,7 +18422,7 @@
               "kind": "staticmethod",
               "signature": "(class_input, attribute_name)",
               "summary": "Returns the mangled name for a private attribute of a class.",
-              "line": 751,
+              "line": 841,
               "deprecated": false
             },
             {
@@ -18054,7 +18431,7 @@
               "kind": "staticmethod",
               "signature": "(hierarchy_items, target, upstream=False, exact=False, downstream=False, reverse=False, delimiters='|')",
               "summary": "Find the closest match(es) for a given 'target' string in a list of hierarchical strings.",
-              "line": 789,
+              "line": 879,
               "deprecated": false
             },
             {
@@ -18063,7 +18440,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, delimiter: str = '|', max_split: Optional[int] = None, occurrence: Optional[int] = None, strip_whitespace: bool = False, remove_empty: bool = False, func: Optional[Callable] = None) -> Union[List[str], Tuple[str, str]]",
               "summary": "Split a delimited string with flexible control over the result format.",
-              "line": 864,
+              "line": 954,
               "deprecated": false
             },
             {
@@ -18072,7 +18449,7 @@
               "kind": "staticmethod",
               "signature": "(string, start_delim, end_delim, as_string=False)",
               "summary": "Get any text between the specified start and end delimiters in the given string.",
-              "line": 976,
+              "line": 1066,
               "deprecated": false
             },
             {
@@ -18081,7 +18458,7 @@
               "kind": "classmethod",
               "signature": "(cls, src, ins, at, occurrence=1, before=False)",
               "summary": "Insert character(s) into a string at a given location.",
-              "line": 1021,
+              "line": 1111,
               "deprecated": false
             },
             {
@@ -18090,7 +18467,7 @@
               "kind": "staticmethod",
               "signature": "(string, old, new='', count=None)",
               "summary": "Replace occurrances in a string from right to left.",
-              "line": 1052,
+              "line": 1142,
               "deprecated": false
             },
             {
@@ -18099,7 +18476,7 @@
               "kind": "staticmethod",
               "signature": "(string, delimiter='_', strip_trailing=True)",
               "summary": "Collapse consecutive delimiter runs to a single delimiter.",
-              "line": 1074,
+              "line": 1164,
               "deprecated": false
             },
             {
@@ -18108,7 +18485,7 @@
               "kind": "staticmethod",
               "signature": "(string, length=75, mode='start', insert='..', head=None) -> Union[str, List[str]]",
               "summary": "Shorten the given string to the given length.",
-              "line": 1107,
+              "line": 1197,
               "deprecated": false
             },
             {
@@ -18117,7 +18494,7 @@
               "kind": "staticmethod",
               "signature": "(string, inc=0, as_string=False)",
               "summary": "Returns any integers from the end of the given string.",
-              "line": 1244,
+              "line": 1334,
               "deprecated": false
             },
             {
@@ -18126,7 +18503,7 @@
               "kind": "classmethod",
               "signature": "(cls, find, strings, regex=False, ignore_case=False)",
               "summary": "Filter for elements that containing the given string in a list of strings.",
-              "line": 1325,
+              "line": 1415,
               "deprecated": false
             },
             {
@@ -18135,7 +18512,7 @@
               "kind": "classmethod",
               "signature": "(cls, strings, to, fltr='', regex=False, ignore_case=False, return_orig_strings=False)",
               "summary": "Expanding on the 'find_str' function: Find matches of a string in a list of strings and re-format t…",
-              "line": 1396,
+              "line": 1486,
               "deprecated": false
             },
             {
@@ -18144,7 +18521,7 @@
               "kind": "staticmethod",
               "signature": "(name: str, suffixes: Iterable[str]) -> str",
               "summary": "*name* without a trailing entry of *suffixes* (case-insensitive;",
-              "line": 1686,
+              "line": 1776,
               "deprecated": false
             },
             {
@@ -18153,7 +18530,7 @@
               "kind": "staticmethod",
               "signature": "(old_name: str, new_name: str, valid_suffixes: Optional[List[str]] = None) -> str",
               "summary": "Carry ``old_name``'s trailing ``_TYPE`` suffix over to ``new_name``.",
-              "line": 1713,
+              "line": 1803,
               "deprecated": false
             },
             {
@@ -18162,7 +18539,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, suffix: str = '', strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False) -> str",
               "summary": "Re-format the suffix for the given string.",
-              "line": 1774,
+              "line": 1864,
               "deprecated": false
             },
             {
@@ -18171,7 +18548,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, prefix: str = '', suffix: str = '', *, case_sensitive: bool = False) -> str",
               "summary": "Strip a configured prefix and/or suffix from a string.",
-              "line": 1846,
+              "line": 1936,
               "deprecated": false
             },
             {
@@ -18180,7 +18557,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, known, *, exclude=(), one: bool = True, case_sensitive: bool = True) -> str",
               "summary": "Strip whichever affix in *known* the string carries, from either end.",
-              "line": 1909,
+              "line": 1999,
               "deprecated": false
             },
             {
@@ -18189,7 +18566,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, delimiter: str = '_', *, default: str = 'prefix') -> str",
               "summary": "Infer ``\"prefix\"`` or ``\"suffix\"`` from *delimiter* placement in *text*.",
-              "line": 1995,
+              "line": 2085,
               "deprecated": false
             },
             {
@@ -18198,7 +18575,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, mode: str = 'auto', *, default: str = 'prefix', delimiter: str = '_') -> Tuple[str, str]",
               "summary": "Split an affix string into a ``(prefix, suffix)`` pair per *mode*.",
-              "line": 2043,
+              "line": 2133,
               "deprecated": false
             },
             {
@@ -18207,7 +18584,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, mode: str = 'suffix', *, delimiter: str = '_') -> str",
               "summary": "Give a bare affix token its boundary delimiter, on *mode*'s side.",
-              "line": 2090,
+              "line": 2180,
               "deprecated": false
             },
             {
@@ -18216,7 +18593,7 @@
               "kind": "staticmethod",
               "signature": "(string: str, prefix: str = '', suffix: str = '') -> str",
               "summary": "Idempotently apply a prefix and/or suffix to a string.",
-              "line": 2149,
+              "line": 2239,
               "deprecated": false
             },
             {
@@ -18225,7 +18602,7 @@
               "kind": "staticmethod",
               "signature": "(index: int) -> str",
               "summary": "Excel-column-style alphabetic label for a 0-based index.",
-              "line": 2191,
+              "line": 2281,
               "deprecated": false
             },
             {
@@ -18234,7 +18611,7 @@
               "kind": "staticmethod",
               "signature": "(count: int, switch_at: int = 26, lowercase: bool = False) -> List[str]",
               "summary": "Generate ``count`` sequential labels for naming sibling items.",
-              "line": 2219,
+              "line": 2309,
               "deprecated": false
             },
             {
@@ -18243,7 +18620,7 @@
               "kind": "staticmethod",
               "signature": "(names: Iterable[str], strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False, collision_suffix: Union[str, Callable[[int, int], str], None] = 'alpha', suffix_separator: str = '_') -> Dict[str, str]",
               "summary": "Reduce a batch of names to a shared base form, then disambiguate",
-              "line": 2260,
+              "line": 2350,
               "deprecated": false
             },
             {
@@ -18252,7 +18629,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, stamp='%m-%d-%Y  %H:%M') -> Union[str, List[str]]",
               "summary": "Attach or detach a modified timestamp and date to/from a given file path.",
-              "line": 2368,
+              "line": 2458,
               "deprecated": false
             }
           ]

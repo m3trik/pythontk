@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pythontk as ptk
 from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
-from pythontk.core_utils.engines.shots.shot_model import ShotStore
+from pythontk.core_utils.engines.shots.shot_model import ShotBlock, ShotStore
 from pythontk.core_utils.engines.shots.shot_transfer import ShotTransfer
 
 
@@ -450,6 +450,35 @@ class TestMerge(unittest.TestCase):
         owners = {rec[0]: rec[1] for rec in led.to_dict()["keys"]["pCube1_translateX"]}
         self.assertEqual(owners, {48.0: 6, 60.0: 7})
         self.assertEqual(led.step_times("pCube1_rotateY"), [48.0])
+
+    def test_an_incoming_name_the_scene_already_has_is_numbered(self):
+        """Each store is unique on its own; merged, ``Intro`` and ``intro``
+        would be one clip (Unity joins ignoring case) -- so the arrival is
+        numbered, as the scene's own tools would have had it named."""
+        existing = ShotStore()
+        existing.define_shot("intro", 0.0, 30.0)
+        merged = ShotTransfer.merge(existing.to_dict(), _store_state())
+        store = ShotStore.from_dict(merged)
+        names = [s.name for s in store.sorted_shots()]
+        self.assertEqual(names, ["intro", "Intro_2", "Walk"])
+        for shot in store.shots:
+            self.assertIsNone(store.name_error(shot.name, shot.shot_id), shot.name)
+
+    def test_an_incoming_legacy_name_is_merged_legal(self):
+        """A store from before names were validated can bring ``"Shot 1"``;
+        numbered beside the scene's ``Shot_1`` it must become a name the store
+        accepts (``Shot_1_2``), never ``"Shot 1_2"`` -- and a blank one a
+        name at all."""
+        existing = ShotStore()
+        existing.define_shot("Shot_1", 0.0, 30.0)
+        incoming = ShotStore([ShotBlock(0, "Shot 1", 40, 50), ShotBlock(1, "", 60, 70)])
+        merged = ShotTransfer.merge(existing.to_dict(), incoming.to_dict())
+        store = ShotStore.from_dict(merged)
+        self.assertEqual(
+            [s.name for s in store.sorted_shots()], ["Shot_1", "Shot_1_2", "shot"]
+        )
+        for shot in store.shots:
+            self.assertIsNone(store.name_error(shot.name, shot.shot_id), shot.name)
 
     def test_merge_is_idempotent_on_ledger_records(self):
         existing = _store_state()

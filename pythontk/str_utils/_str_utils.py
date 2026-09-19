@@ -14,6 +14,11 @@ from pythontk.iter_utils._iter_utils import IterUtils
 # write, on a streaming hot path.
 ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
+# The legal-name character class (see StrUtils.LEGAL_NAME_PATTERN), compiled once:
+# a validating field runs it on every keystroke.
+_LEGAL_NAME_RE = re.compile(r"[A-Za-z0-9_]+")
+_ILLEGAL_NAME_CHAR_RE = re.compile(r"[^A-Za-z0-9_]")
+
 
 class _SafeFormatter(string.Formatter):
     """The one formatter behind every ``{token}`` this class resolves.
@@ -59,6 +64,91 @@ class _SafeFormatter(string.Formatter):
 
 class StrUtils(CoreUtils):
     """ """
+
+    #: What a legal name may hold, as a whole-name pattern.  A name that
+    #: becomes an identity somewhere else -- a Qt objectName, an exported clip,
+    #: an FBX take -- is legal when every carrier keeps it verbatim, and this
+    #: is that set.  :meth:`to_legal_name` converts TO it; :meth:`name_error`
+    #: explains a name that breaks it, for a field that refuses rather than
+    #: respells (uitk's ``set_validator("name")``).
+    LEGAL_NAME_PATTERN = _LEGAL_NAME_RE.pattern
+    #: :attr:`LEGAL_NAME_PATTERN` in words, for tooltips and refusals.
+    LEGAL_NAME_RULE = "letters, digits and '_'"
+
+    @staticmethod
+    def is_legal_name(name) -> bool:
+        """Whether *name* is a non-empty string of :attr:`LEGAL_NAME_PATTERN`
+        characters only.
+
+        Example:
+            is_legal_name("Shot_01") --> True
+            is_legal_name("Step 4.1") --> False
+        """
+        return isinstance(name, str) and bool(_LEGAL_NAME_RE.fullmatch(name))
+
+    @staticmethod
+    def illegal_name_chars(name: str) -> List[str]:
+        """The distinct characters of *name* a legal name may not hold, in the
+        order they first appear -- what a refusal names.
+
+        Example:
+            illegal_name_chars("Step 4.1-b") --> [' ', '.', '-']
+        """
+        return list(dict.fromkeys(_ILLEGAL_NAME_CHAR_RE.findall(name or "")))
+
+    @classmethod
+    def name_error(
+        cls, name, subject: str = "names", reason: str = ""
+    ) -> Optional[str]:
+        """Why *name* is not a legal name, as one sentence, or ``None`` when it is.
+
+        Explains and never repairs: the answer is for a field that keeps what
+        the user typed and marks it refused (uitk's ``set_validator("name")``)
+        or for a store that raises it -- the opposite of :meth:`to_legal_name`,
+        which silently converts and is only right where the result is a key
+        both sides derive the same way.
+
+        Parameters:
+            name: The candidate.  Anything but a non-empty string is refused.
+            subject: What the names are, as the sentence names them after the
+                colon ("shot names use letters, digits and '_' only").
+            reason: Why the rule applies, appended as a clause
+                ("because the name is the exported clip name").
+
+        Returns:
+            A sentence for the user, or ``None``.
+
+        Example:
+            name_error("Step 4.1") --> "'Step 4.1' has a space, '.': names use
+            letters, digits and '_' only."
+        """
+        if not isinstance(name, str) or not name:
+            return f"{subject[:1].upper()}{subject[1:]} cannot be empty."
+        bad = cls.illegal_name_chars(name)
+        if not bad:
+            return None
+        shown = ", ".join("a space" if c == " " else repr(c) for c in bad)
+        tail = f", {reason}" if reason else ""
+        return f"{name!r} has {shown}: {subject} use {cls.LEGAL_NAME_RULE} only{tail}."
+
+    @staticmethod
+    def legal_name_matcher(legal_name: str) -> "re.Pattern":
+        """A pattern matching every name :meth:`to_legal_name` turns into
+        *legal_name* -- the inverse lookup, for finding the original a legal
+        identity was derived from (a ``.ui`` file behind a switchboard name).
+
+        Each ``_`` may have been any non-alphanumeric character (an ``_``
+        included); every other character matches itself.
+
+        Example:
+            legal_name_matcher("my_ui").fullmatch("my ui") --> <match>
+        """
+        return re.compile(
+            "".join(
+                "[^0-9a-zA-Z]" if char == "_" else re.escape(char)
+                for char in legal_name
+            )
+        )
 
     @staticmethod
     def to_legal_name(name: str) -> str:

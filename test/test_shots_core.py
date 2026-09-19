@@ -31,6 +31,7 @@ if _PKG_PARENT not in sys.path:
 
 from pythontk.core_utils.engines.shots import shot_model
 from pythontk.core_utils.engines.shots.shot_model import ShotBlock, ShotStore
+from pythontk.core_utils.scene_records import SceneRecords
 from pythontk.core_utils.engines.shots.shot_plan import ShotPlanner, ShotMove
 from pythontk.core_utils.engines.shots.shot_apply import ShotApply
 from pythontk.core_utils.engines.shots.shot_detection import (
@@ -960,16 +961,184 @@ class TestShotStoreSerialisation(_ShotTest):
         self.assertEqual(restored.to_dict(), data)
 
     def test_to_export_view_shape(self):
+        """One record, one join key: each clip carries its own range, so
+        there is no second take list to disagree with it; an empty
+        description or section is left out rather than written as ""."""
         s = _store([])
-        s.define_shot("Intro Shot", 0, 10, objects=["|grp|hero"], description="d")
+        s.define_shot("Intro_Shot", 0, 10, objects=["|grp|hero"], description="d")
+        s.define_shot("Plain", 20, 30)
         view = s.to_export_view()
-        self.assertEqual(len(view["fbx_takes"]), 1)
-        take = view["fbx_takes"][0]
-        self.assertEqual((take["start"], take["end"]), (0, 10))
-        # Sanitised, join-key consistent between takes and metadata.
-        self.assertEqual(view["shot_metadata"]["shots"][0]["clip"], take["name"])
-        # Objects are reduced to leaf names in the metadata channel.
-        self.assertEqual(view["shot_metadata"]["shots"][0]["objects"], ["hero"])
+        self.assertEqual(list(view), ["shot_metadata"])
+        meta = view["shot_metadata"]
+        self.assertNotIn("takes", meta)
+        self.assertEqual(
+            meta["shots"][0],
+            {
+                "clip": "Intro_Shot",
+                "start": 0,
+                "end": 10,
+                "description": "d",
+                # Objects are reduced to leaf names in the metadata channel.
+                "objects": ["hero"],
+            },
+        )
+        # Nothing to say: no description / section keys, objects still an array.
+        self.assertEqual(
+            meta["shots"][1], {"clip": "Plain", "start": 20, "end": 30, "objects": []}
+        )
+
+
+class TestShotNames(_ShotTest):
+    """A shot's name is its clip name on every carrier, so the store refuses a
+    name the export would have to respell -- instead of respelling it silently
+    on the way out (2026-09-18: names typed as "Step 9.1" shipped as
+    "Step_9_1", and a second "Shot 1" as "Shot_1_1")."""
+
+    #: Each would reach the FBX take / Unity clip / join key as something else.
+    ILLEGAL = ("Shot 1", "Step 9.1", "Fade-In!", "café", "a/b", "")
+
+    def _clips(self, store):
+        view = store.to_export_view()
+        return [r["clip"] for r in view["shot_metadata"]["shots"]]
+
+    def test_define_refuses_a_name_the_carrier_would_respell(self):
+        s = _store([])
+        for name in self.ILLEGAL:
+            with self.subTest(name=name):
+                self.assertIsNotNone(s.name_error(name))
+                with self.assertRaises(ValueError):
+                    s.define_shot(name, 0, 10)
+        self.assertEqual(s.shots, [])
+
+    def test_a_refused_rename_edits_nothing(self):
+        s = _store([])
+        shot = s.define_shot("Intro", 0, 10, description="d")
+        with self.assertRaises(ValueError):
+            s.update_shot(shot.shot_id, start=5, name="Intro 2", description="x")
+        self.assertEqual((shot.name, shot.start, shot.description), ("Intro", 0, "d"))
+
+    def test_names_must_differ_by_more_than_case(self):
+        """Unity joins clip names ignoring case: Intro and intro are one clip."""
+        s = _store([])
+        intro = s.define_shot("Intro", 0, 10)
+        with self.assertRaises(ValueError):
+            s.define_shot("intro", 20, 30)
+        # A shot's own name is no collision: re-casing it is a rename.
+        s.update_shot(intro.shot_id, name="INTRO")
+        self.assertEqual(intro.name, "INTRO")
+
+    def test_every_accepted_name_reaches_the_carrier_verbatim(self):
+        """Including the forms the legacy respelling collapsed or stripped."""
+        names = ["Intro", "A__B", "Shot_", "_lead", "01_x", "b"]
+        s = _store([])
+        for i, name in enumerate(names):
+            s.define_shot(name, i * 10, i * 10 + 5)
+        self.assertEqual(self._clips(s), names)
+        # ... and through the stored JSON record the deliverable carries, and
+        # the take list every reader derives from it.
+        (shots_rec,) = s.export_records()
+        decoded = shots_rec.spec.decode(shots_rec.text)
+        self.assertEqual([r["clip"] for r in decoded["shots"]], names)
+        takes = SceneRecords.declared_takes({SceneRecords.SHOTS.key: decoded}.get)
+        self.assertEqual([t["name"] for t in takes], names)
+
+    def test_descriptions_travel_verbatim(self):
+        """JSON holds any text, so a description is never refused or respelled."""
+        text = 'café — "quoted" \\ back\nslash\ttab ✓'
+        s = _store([])
+        s.define_shot("A", 0, 10, description=text)
+        (shots_rec,) = s.export_records()
+        decoded = shots_rec.spec.decode(shots_rec.text)
+        self.assertEqual(decoded["shots"][0]["description"], text)
+
+    def test_a_legacy_name_still_exports_and_says_so(self):
+        """A store loaded from before the rule: respelled as before, but said."""
+        s = _store(
+            [
+                ShotBlock(0, "Shot 1", 0, 10),
+                ShotBlock(1, "Intro", 20, 30),
+                ShotBlock(2, "intro", 40, 50),
+            ]
+        )
+        with self.assertLogs(shot_model._log, "WARNING") as logs:
+            clips = self._clips(s)
+        self.assertEqual(clips, ["Shot_1", "Intro", "intro_1"])
+        self.assertIn("'Shot 1' -> 'Shot_1'", logs.output[0])
+        self.assertIn("'intro' -> 'intro_1'", logs.output[0])
+
+    def test_legal_names_export_without_a_warning(self):
+        s = _store([])
+        s.define_shot("Intro", 0, 10)
+        with self.assertLogs(shot_model._log, "WARNING") as logs:
+            shot_model._log.warning("sentinel")  # assertLogs needs one record
+            self._clips(s)
+        self.assertEqual(len(logs.output), 1, logs.output)
+
+    def test_unique_name_derives_a_legal_unused_name(self):
+        s = _store([])
+        self.assertEqual(s.unique_name("Shot", first=1), "Shot_1")
+        s.define_shot("Shot_1", 0, 10)
+        self.assertEqual(s.unique_name("Shot", first=1), "Shot_2")
+        self.assertEqual(s.unique_name("shot_1"), "shot_1_2")
+        # Derived from a legacy name: legal all the same.
+        self.assertEqual(s.unique_name("Step 9.1_2"), "Step_9_1_2")
+        self.assertIsNone(s.name_error(s.unique_name("Step 9.1_2")))
+
+    def test_a_name_cannot_take_what_a_legacy_name_exports_as(self):
+        """Accepted beside a legacy "Shot 1", ``Shot_1`` would ship as
+        ``Shot_1_1``: the legal name respelled, the very thing refused."""
+        s = _store([ShotBlock(0, "Shot 1", 0, 10)])
+        error = s.name_error("Shot_1")
+        self.assertIsNotNone(error)
+        self.assertIn("exported as 'Shot_1'", error)
+        with self.assertRaises(ValueError):
+            s.define_shot("shot_1", 20, 30)
+        self.assertEqual(s.unique_name("Shot", first=1), "Shot_2")
+
+    def test_a_name_cannot_take_a_legacy_twins_suffixed_clip(self):
+        """Legacy case twins export de-duplicated (``Intro`` / ``intro_1``);
+        a new ``Intro_1`` would ship as ``Intro_1_1`` -- respelled, the very
+        thing name validation exists to prevent."""
+        s = _store([ShotBlock(0, "Intro", 0, 10), ShotBlock(1, "intro", 20, 30)])
+        clips = [c for c, _s, _e in s.resolve_clip_specs(s.sorted_shots())]
+        self.assertEqual(clips, ["Intro", "intro_1"])
+        self.assertIn("exports as 'intro_1'", s.name_error("Intro_1"))
+        self.assertIsNone(s.name_error("Intro_2"))
+        # Renaming the twin itself is not a collision with its own clip.
+        self.assertIsNone(s.name_error("intro_9", shot_id=1))
+
+    def test_detected_candidates_take_the_next_free_default_name(self):
+        """Detection numbers its candidates from 1; beside ``Shot_1`` /
+        ``Shot_2`` the new shots are ``Shot_3`` / ``Shot_4``, not
+        ``Shot_1_2`` / ``Shot_2_2``."""
+
+        class Detecting(ShotStore):
+            def detect_regions(self):
+                return [
+                    {"name": "Shot_1", "start": 100, "end": 110},
+                    {"name": "Shot_2", "start": 120, "end": 130},
+                ]
+
+        s = Detecting([])
+        s.define_shot("Shot_1", 0, 10)
+        s.define_shot("Shot_2", 20, 30)
+        created = s.detect_and_define()
+        self.assertEqual([c.name for c in created], ["Shot_3", "Shot_4"])
+        self.assertEqual(s.default_name("Walk"), "Walk")
+        self.assertEqual(s.default_name("Walk Cycle"), "Shot_5")
+        self.assertEqual(s.default_name(None), "Shot_5")
+
+    def test_a_restore_puts_names_back_without_revalidating(self):
+        """Undoing a swap passes through a moment where two shots share a name."""
+        s = _store([])
+        a = s.define_shot("P", 0, 10)
+        b = s.define_shot("Q", 20, 30)
+        s.push_boundary_snapshot()
+        s.update_shot(a.shot_id, name="R")
+        s.update_shot(b.shot_id, name="P")
+        s.update_shot(a.shot_id, name="Q")
+        self.assertTrue(s.restore_boundary_snapshot())
+        self.assertEqual((a.name, b.name), ("P", "Q"))
 
 
 class TestUserPrefs(_ShotTest):
@@ -1073,13 +1242,12 @@ class TestExportViewRefresh(_ShotTest):
     def test_empty_store_export_view_is_the_clearing_payload(self):
         # Pinned literally: this is what a DCC subclass writes onto its carrier
         # for an empty store, and empty channels are what clear it.  ``fps``
-        # qualifies the frame numbers the takes are expressed in, so it rides
-        # the envelope even when there are none.
+        # qualifies the frame numbers the clips' ranges are expressed in, so
+        # it rides the envelope even when there are none.
         store = ShotStore([])
         self.assertEqual(
             store.to_export_view(),
             {
-                "fbx_takes": [],
                 "shot_metadata": {
                     "version": 1,
                     "fps": store.scene_fps,
@@ -1101,7 +1269,6 @@ class TestExportViewRefresh(_ShotTest):
         self.assertEqual(
             store.published[0],
             {
-                "fbx_takes": [],
                 "shot_metadata": {
                     "version": 1,
                     "fps": store.scene_fps,
@@ -1120,26 +1287,45 @@ class TestExportViewRefresh(_ShotTest):
 
         self.assertEqual(len(store.published), 1)
         view = store.published[0]
-        self.assertEqual(view["fbx_takes"], [{"name": "Intro", "start": 0, "end": 10}])
         self.assertEqual(
             view["shot_metadata"],
             {
                 "version": 1,
-                # The rate the take frames above are counted in -- without it
+                # The rate the clip frames below are counted in -- without it
                 # they are unitless to every consumer that did not author the
                 # scene (MeshConvert.apply_glb_animations reads this back out
                 # of the delivered GLB).
                 "fps": store.scene_fps,
+                # Each clip carries its own range: the take list IS the clips
+                # (one record, one join key); no section, so none is written.
                 "shots": [
                     {
                         "clip": "Intro",
+                        "start": 0,
+                        "end": 10,
                         "description": "d",
                         "objects": ["hero"],
-                        "section": "",
                     }
                 ],
             },
         )
+        self.assertNotIn("fbx_takes", view)
+
+    def test_export_records_declare_the_context_clip_mode(self):
+        """The producer form: the exporter's Animation Clips decision is an
+        INPUT on the record, never patched on afterwards, and an empty store
+        yields nothing -- which a commit turns into a clear."""
+        from pythontk.core_utils.scene_records import ExportContext
+
+        store = _RecordingStore([])
+        self.assertIsNone(store.export_records(ExportContext(clip_mode="full")))
+        store.snap_whole_frames = False
+        store.define_shot("Intro", 0, 10)
+        (record,) = store.export_records(ExportContext(clip_mode="full"))
+        self.assertEqual(record.spec, SceneRecords.SHOTS)
+        self.assertEqual(record.payload["clip_mode"], "full")
+        self.assertEqual(record.payload["shots"][0]["clip"], "Intro")
+        self.assertNotIn("clip_mode", store.export_records()[0].payload)
 
     def test_refresh_republishes_on_every_call(self):
         # The refresh is the canonical *pre-export* step: it must reproject
@@ -1152,8 +1338,8 @@ class TestExportViewRefresh(_ShotTest):
         ShotStore.refresh_export_view()
 
         self.assertEqual(len(store.published), 2)
-        self.assertEqual(store.published[0]["fbx_takes"], [])
-        self.assertEqual(len(store.published[1]["fbx_takes"]), 1)
+        self.assertEqual(store.published[0]["shot_metadata"]["shots"], [])
+        self.assertEqual(len(store.published[1]["shot_metadata"]["shots"]), 1)
 
 
 # ===========================================================================
@@ -1174,7 +1360,8 @@ class TestClusterSegmentsByGap(_ShotTest):
         self.assertEqual(len(out), 2)
         self.assertEqual((out[0]["start"], out[0]["end"]), (0, 20))
         self.assertEqual(out[0]["objects"], ["a", "b"])
-        self.assertEqual(out[0]["name"], "Shot 1")
+        # A name the store accepts as it is: the clip every carrier writes.
+        self.assertEqual(out[0]["name"], "Shot_1")
         self.assertEqual((out[1]["start"], out[1]["end"]), (40, 50))
         self.assertEqual(out[1]["objects"], ["c"])
 

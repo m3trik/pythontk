@@ -11,9 +11,6 @@ the factory orchestrator and its workflow handlers.
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Union
 from collections import defaultdict
-import inspect
-
-from pythontk.core_utils.deprecation import Deprecation
 
 
 @dataclass
@@ -45,10 +42,9 @@ class ConversionRegistry:
 
         Raises:
             TypeError: *cls* defines no ``register_conversions``. This used to
-                be accepted and then fall through to ``register_from_class``,
-                which finds nothing unless the class carries ``_conversion_info``
-                members -- so a plugin that simply forgot the classmethod
-                registered silently and contributed nothing.
+                be accepted and then silently contribute nothing (the member
+                scan it fell back to, ``register_from_class``, was removed in
+                0.11.0).
         """
         if not hasattr(cls, "register_conversions"):
             raise TypeError(
@@ -105,44 +101,6 @@ class ConversionRegistry:
         self._conversions[conversion.target_type].sort(
             key=lambda c: c.priority, reverse=True
         )
-
-    @Deprecation.symbol(
-        "ConversionRegistry.add_plugin with a register_conversions(registry) "
-        "method on the class",
-        remove_in="0.11.0",
-        reason=(
-            "Nothing in the ecosystem sets the _conversion_info attribute it "
-            "scans for, so it has never registered anything."
-        ),
-    )
-    def register_from_class(self, cls):
-        """Register all decorated conversion methods from a class.
-
-        .. deprecated:: 0.11.0
-            Define ``register_conversions(registry)`` on the class and hand it
-            to :meth:`add_plugin` instead. Nothing in the ecosystem sets the
-            ``_conversion_info`` attribute this scans for -- no decorator
-            produces it -- so this has never registered anything; it was
-            reachable only as ``_scan_pending``'s fallback, measured at zero
-            invocations.
-        """
-        if cls in self._registered_classes:
-            return
-
-        for name, method in inspect.getmembers(cls):
-            if hasattr(method, "_conversion_info"):
-                infos = method._conversion_info
-                if isinstance(infos, dict):
-                    infos = [infos]
-                for info in infos:
-                    self.register(
-                        target_type=info["target_type"],
-                        source_types=info["source_types"],
-                        converter=method,
-                        priority=info["priority"],
-                    )
-
-        self._registered_classes.add(cls)
 
     def get_conversions_for(self, target_type: str) -> List[MapConversion]:
         """Get all conversions that can produce target type."""

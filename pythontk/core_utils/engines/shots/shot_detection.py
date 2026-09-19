@@ -104,7 +104,7 @@ class ShotDetection:
             objs = sorted({str(s["obj"]) for s in cluster})
             candidates.append(
                 {
-                    "name": f"Shot {len(candidates) + 1}",
+                    "name": f"Shot_{len(candidates) + 1}",
                     "start": start,
                     "end": end,
                     "objects": objs,
@@ -174,7 +174,7 @@ class ShotDetection:
                     if current_start is not None:
                         candidates.append(
                             {
-                                "name": f"Shot {len(candidates) + 1}",
+                                "name": f"Shot_{len(candidates) + 1}",
                                 "start": current_start,
                                 "end": t,
                                 "objects": sorted(str(o) for o in current_objs),
@@ -186,7 +186,7 @@ class ShotDetection:
             if current_start is not None:
                 candidates.append(
                     {
-                        "name": f"Shot {len(candidates) + 1}",
+                        "name": f"Shot_{len(candidates) + 1}",
                         "start": current_start,
                         "end": current_start + 1.0,
                         "objects": sorted(str(o) for o in current_objs),
@@ -229,7 +229,7 @@ class ShotDetection:
                 end = start + 1.0
             candidates.append(
                 {
-                    "name": f"Shot {len(candidates) + 1}",
+                    "name": f"Shot_{len(candidates) + 1}",
                     "start": start,
                     "end": end,
                     "objects": sorted(str(o) for o in objs),

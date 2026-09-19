@@ -373,7 +373,10 @@ class ShotManifest(_ShotManifestInternal):
         Returns:
             Dict mapping ``step_id`` -> action taken
             (``"created"`` | ``"patched"`` | ``"skipped"``
-            | ``"locked"`` | ``"removed"``).
+            | ``"locked"`` | ``"removed"`` | ``"refused"``).  ``"refused"``
+            is a new step whose id the store will not take as a shot name
+            (another shot is that clip ignoring case -- ``ShotStore.name_error``);
+            it is logged and left unbuilt rather than aborting the batch.
         """
         self._fps_cache = None
         self._animated_transforms = None
@@ -681,6 +684,14 @@ class ShotManifest(_ShotManifestInternal):
                     continue
 
                 if ps.action == "created":
+                    # Checked HERE, not in the plan: phase 1 has already
+                    # removed the shots it planned to, and one of those may
+                    # be the name this step would have collided with.
+                    refused = self.store.name_error(ps.step.step_id)
+                    if refused:
+                        log.warning("Step %s not built: %s", ps.step.step_id, refused)
+                        actions[ps.step.step_id] = "refused"
+                        continue
                     # Store resolved (long / unique) names; missing objects
                     # keep their CSV form so pinning can surface them later.
                     obj_names = self._resolve_names_keep_missing(ps.objects)

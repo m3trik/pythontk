@@ -778,7 +778,8 @@ class TestPreviewViewerLive(unittest.TestCase):
             page.keyboard.press("Escape")
             page.wait_for_selector("#dialog", state="hidden", timeout=30_000)
             live = page.eval_on_selector(
-                "#clipSelect", "s => { s.focus(); return document.activeElement === s; }"
+                "#clipSelect",
+                "s => { s.focus(); return document.activeElement === s; }",
             )
             return {"escaped": escaped, "before": before, "after": after, "live": live}
 

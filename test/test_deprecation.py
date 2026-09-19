@@ -801,9 +801,8 @@ class PythontkRetirementDebtTest(BaseTestCase):
         """Import all of pythontk so the roster is complete.
 
         ``export_all()`` is not enough: it resolves the names in
-        ``DEFAULT_INCLUDE``, and a pure alias module like
-        ``net_utils.preview_server`` registers its retirements at import and is
-        named by nothing. Measured at 0.3s for the whole package, which also
+        ``DEFAULT_INCLUDE``, and a pure alias module (a moved import path)
+        registers its retirements at import and is named by nothing. Measured at 0.3s for the whole package, which also
         exercises the no-side-effects-on-import rule.
         """
         for found in pkgutil.walk_packages(ptk.__path__, "pythontk."):
@@ -822,24 +821,6 @@ class PythontkRetirementDebtTest(BaseTestCase):
             "its tests, or raise remove_in deliberately and say why in "
             f"CHANGELOG.md:\n{Deprecation.report(ptk.__version__, module='pythontk')}",
         )
-
-    def test_the_converted_sites_are_on_the_roster(self):
-        """Pins the conversion itself: these four were the hand-rolled shapes,
-        and a silent regression to one of them would leave a warning that still
-        fires and a deadline nothing tracks."""
-        self._import_every_module()
-        rostered = {r.what for r in Deprecation.registered(module="pythontk")}
-        for expected in (
-            "Git",
-            "FileUtils.set_json",
-            "FileUtils.get_json",
-            "FileUtils.set_json_file",
-            "FileUtils.get_json_file",
-            "ConversionRegistry.register_from_class",
-            "pythontk.net_utils.preview_server.PreviewServer",
-        ):
-            with self.subTest(what=expected):
-                self.assertIn(expected, rostered)
 
     def test_every_pythontk_deprecation_names_a_removal_version(self):
         self._import_every_module()

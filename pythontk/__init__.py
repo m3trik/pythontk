@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.10.1"
+__version__ = "0.11.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -95,6 +95,20 @@ DEFAULT_INCLUDE = {
     # The hierarchy change-detection baseline's set algebra -- ONE baseline per
     # scene, scoped at compare time (shared by both DCC scene exporters).
     "core_utils.hierarchy_baseline": ["HierarchyBaseline"],
+    # Scene records -- every tool-authored scene channel declared ONCE (key,
+    # scope, version, kind, dependencies); the store contract each DCC's
+    # DataNodes implements; the export context + snapshot that assemble the
+    # producers in dependency order and commit the carrier in one pass.
+    "core_utils.scene_records": [
+        "Scope",
+        "Kind",
+        "RecordSpec",
+        "Record",
+        "SceneRecords",
+        "SceneStoreBase",
+        "ExportContext",
+        "ExportSnapshot",
+    ],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [
         "ShotStore",
@@ -216,7 +230,6 @@ DEFAULT_INCLUDE = {
     # surface (README gates here and downstream build on it).
     "core_utils.doc_audit": "DocAudit",
     "core_utils.package_manager": "PackageManager",
-    "core_utils.git": "Git",
     "core_utils.class_property": "ClassProperty",
     # LoggerExt / LevelAwareFormatter are reached by raw module path today
     # (uitk's example wiring, mayatk's scene_audit), which is a published

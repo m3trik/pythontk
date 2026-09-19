@@ -1651,7 +1651,7 @@ class TestConversionPluginSeam(unittest.TestCase):
     of them could ever run.
 
     ``_scan_pending`` preferred ``cls.register_conversions(registry)`` and fell
-    back to ``register_from_class``, which scans members for a
+    back to ``register_from_class`` (removed in 0.11.0), which scanned members for a
     ``_conversion_info`` attribute. Nothing in any of the seven ecosystem
     packages sets ``_conversion_info`` -- there is no decorator that produces
     it -- and the one registered plugin (``MapFactory``) defines
@@ -1695,16 +1695,6 @@ class TestConversionPluginSeam(unittest.TestCase):
         # Scanned once, not on every lookup.
         registry.get_conversions_for("Widget")
         self.assertEqual(len(scanned), 1)
-
-    def test_register_from_class_is_deprecated(self):
-        registry = ConversionRegistry()
-
-        class Legacy:
-            pass
-
-        with self.assertWarns(DeprecationWarning) as caught:
-            registry.register_from_class(Legacy)
-        self.assertIn("register_conversions", str(caught.warning))
 
     def test_the_live_registration_path_is_unaffected(self):
         """Guards the deletion: MapFactory's own conversions still resolve."""
