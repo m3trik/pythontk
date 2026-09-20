@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.11.0"
+__version__ = "0.11.1"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -108,6 +108,9 @@ DEFAULT_INCLUDE = {
         "SceneStoreBase",
         "ExportContext",
         "ExportSnapshot",
+        "Merge",
+        "TransferContext",
+        "RecordTransfer",
     ],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [

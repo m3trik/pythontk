@@ -31,12 +31,13 @@ every downstream scene keyed against it. The DCC layer persists assignments;
 the engine only validates them.
 """
 
+import copy
 import json
 import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 # Optional imaging deps: only the packer (rasterize/write/preview) needs
 # them. The manifest model is pure JSON and must resolve without either —
@@ -260,6 +261,67 @@ class RegionGroupRegistry:
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
+
+    @classmethod
+    def merge_record(
+        cls,
+        own: Optional[dict],
+        other: Optional[dict],
+        ctx: Any = None,
+    ) -> Optional[dict]:
+        """The emissive registry's merge (``SceneRecords.CODECS``).
+
+        Another scene's groups join this scene's by NAME -- membership is
+        keyed by group name on both DCCs, so a merged name is one group.  A
+        group this scene already has keeps this scene's settings; a new one
+        keeps its slot when that slot is free here (neither used nor retired)
+        and otherwise takes the lowest free one, noted, because an engine
+        binding to its old slot must be re-wired.  A group that finds no free
+        slot is left out, noted.  This scene's encoding, mask and retired
+        slots stand.
+        """
+        if not other or not other.get("groups"):
+            return own
+        merged = copy.deepcopy(own) if own else {}
+        merged.setdefault("schema", other.get("schema", cls.SCHEMA_VERSION))
+        merged.setdefault("encoding", other.get("encoding", ENCODING_VERTEX_COLOR))
+        groups = merged.setdefault("groups", {})
+        merged.setdefault("retired_slots", [])
+        taken = {g.get("slot") for g in groups.values()} | set(merged["retired_slots"])
+
+        def note(text: str) -> None:
+            if ctx is not None:
+                ctx.note(text)
+
+        def slot_order(kv) -> int:
+            # Lowest slot first so a taken slot is reported against the group
+            # that held it; a missing, null or non-numeric slot (re-slotted
+            # below) sorts last rather than failing the comparison.
+            slot = kv[1].get("slot")
+            return slot if isinstance(slot, int) else cls.MAX_SLOTS
+
+        for name, data in sorted(other["groups"].items(), key=slot_order):
+            if name in groups:
+                if groups[name] != data:
+                    note(f"Emissive group {name!r}: this scene's settings kept.")
+                continue
+            slot = data.get("slot")
+            if slot in taken or not isinstance(slot, int) or slot >= cls.MAX_SLOTS:
+                free = [s for s in range(cls.MAX_SLOTS) if s not in taken]
+                if not free:
+                    note(
+                        f"Emissive group {name!r} was not merged: all "
+                        f"{cls.MAX_SLOTS} slots are used or retired."
+                    )
+                    continue
+                note(
+                    f"Emissive group {name!r} moves from slot {slot} to "
+                    f"{free[0]}; an engine binding to its old slot needs re-wiring."
+                )
+                slot = free[0]
+            groups[name] = {**copy.deepcopy(data), "slot": slot}
+            taken.add(slot)
+        return merged
 
     def empty(self) -> dict:
         return {

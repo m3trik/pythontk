@@ -373,6 +373,25 @@ class TestExportRun(unittest.TestCase):
         self.assertTrue(run.texture_write_back)
         self.assertTrue(run.animation_write_back)
         self.assertTrue(run.verify_deliverables)
+        self.assertTrue(run.drop_rig_apparatus)
+
+    def test_the_rig_helper_row_is_an_fbx_mode(self):
+        """Exclude Rig Helpers edits the written FBX after the write, so it is a
+        mode like Verify The Written File: popped, off for a caller that never
+        names it (``tasks=`` is exact), and inert -- with a note -- on a USD
+        run, which writes no FBX. Added: 2026-09-19"""
+        self.assertFalse(ExportRun.from_tasks({})[0].drop_rig_apparatus)
+        run, remaining, notes = ExportRun.from_tasks(
+            {"drop_rig_apparatus": True, "output_format": "fbx_glb"}
+        )
+        self.assertTrue(run.drop_rig_apparatus)
+        self.assertEqual((remaining, notes), ({}, []))
+        run, _t, notes = ExportRun.from_tasks(
+            {"drop_rig_apparatus": True, "output_format": "usd"}
+        )
+        self.assertFalse(run.drop_rig_apparatus)
+        self.assertEqual([level for level, _ in notes], ["info"])
+        self.assertIn("Exclude Rig Helpers", notes[0][1])
 
     def test_the_output_format_and_its_legacy_flag(self):
         self.assertEqual(ExportRun.from_tasks({})[0].output_format, "fbx")
@@ -567,6 +586,33 @@ class TestExportRun(unittest.TestCase):
             run.with_tasks({"smart_bake": True}).optimize_keys_level, False
         )
         self.assertEqual(run.optimize_keys_level, "extremes")
+
+    def test_the_clip_mode_resolver_is_one_copy_for_both_exporters(self):
+        """A pre-combo preset's boolean still names the deliverable it meant;
+        an unknown mode is refused, named."""
+        self.assertEqual(ExportRun.clip_mode(True), "both")
+        self.assertEqual(ExportRun.clip_mode(False), "full")
+        self.assertEqual(ExportRun.clip_mode(None), "full")
+        self.assertEqual(ExportRun.clip_mode(" Shots "), "shots")
+        with self.assertRaises(ValueError):
+            ExportRun.clip_mode("everything")
+
+    def test_splits_takes_is_a_shot_bearing_clips_row(self):
+        run = ExportRun.from_tasks({})[0]
+        for value, expected in (
+            ("shots", True),
+            ("both", True),
+            (True, True),
+            ("full", False),
+            (False, False),
+            ("everything", False),  # the task raises on it, naming it
+        ):
+            self.assertIs(
+                run.with_tasks({"apply_declared_takes": value}).splits_takes,
+                expected,
+                value,
+            )
+        self.assertFalse(run.with_tasks({}).splits_takes, "the row off splits nothing")
 
     def test_the_run_is_a_frozen_value_object(self):
         run = ExportRun.from_tasks({"output_format": "glb"})[0]

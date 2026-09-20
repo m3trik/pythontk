@@ -8,6 +8,7 @@ path, byte count) has to match what a real run then produces — a projection
 that drifts is worse than no projection at all.
 """
 
+import io
 import os
 import shutil
 import struct
@@ -1524,9 +1525,25 @@ class _FakeKtx2Encoder:
         self.calls = []
 
     def encode(
-        self, source, output, codec="UASTC", srgb=True, mipmaps=True, quality=None
+        self,
+        source,
+        output,
+        codec="UASTC",
+        srgb=True,
+        mipmaps=True,
+        quality=None,
+        uastc_rdo=None,
+        uastc_rdo_dictionary=None,
     ):
-        self.calls.append({"codec": codec, "srgb": srgb, "quality": quality})
+        self.calls.append(
+            {
+                "codec": codec,
+                "srgb": srgb,
+                "quality": quality,
+                "rdo": uastc_rdo,
+                "rdo_dictionary": uastc_rdo_dictionary,
+            }
+        )
         width, height = source.size
         with open(output, "wb") as fh:
             # A real KTX 2.0 header, so assess() can introspect what a run
@@ -1613,6 +1630,83 @@ class TestKtx2Compression(_TextureFixture):
         MapOptimizer.optimize_map(path, output_type="ktx2")
         self.assertEqual(self.fake.calls[-1]["codec"], "UASTC")
         self.assertFalse(self.fake.calls[-1]["srgb"])
+
+    # --------------------------------------------------------------- UASTC RDO
+    def test_rdo_rides_the_uastc_maps_capped_for_a_normal_map(self):
+        """The map tool's RDO pair reaches the encodes the codec rule sends to
+        UASTC -- a normal map capped at toktx's 0.75, the GLB pass's own cap --
+        and never an ETC1S one, whose encode has no RDO stage. The dictionary
+        rides with the lambda. Added: 2026-09-19"""
+        for name, codec, rdo in (
+            ("wall_Normal_OpenGL.png", "UASTC", 0.75),
+            ("wall_ORM.png", "UASTC", 2.0),
+            ("wall_Base_Color.png", "ETC1S", None),
+        ):
+            with self.subTest(name):
+                MapOptimizer.optimize_map(
+                    self.texture(name),
+                    output_type="ktx2",
+                    uastc_rdo=2.0,
+                    uastc_rdo_dictionary=1024,
+                )
+                call = self.fake.calls[-1]
+                self.assertEqual((call["codec"], call["rdo"]), (codec, rdo))
+                self.assertEqual(call["rdo_dictionary"], 1024 if rdo else None)
+
+    def test_a_dictionary_without_rdo_passes_nothing(self):
+        MapOptimizer.optimize_map(
+            self.texture("wall_Normal_OpenGL.png"),
+            output_type="ktx2",
+            uastc_rdo_dictionary=1024,
+        )
+        call = self.fake.calls[-1]
+        self.assertEqual((call["rdo"], call["rdo_dictionary"]), (None, None))
+
+    def test_rdo_against_another_container_is_reported_not_silent(self):
+        """Same rule as a lossy request against a lossless container: the run
+        writes the map and says the dial did nothing. Added: 2026-09-19"""
+        from contextlib import redirect_stdout
+
+        path = self.texture("wall_Normal_OpenGL.png")
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            MapOptimizer.optimize_map(path, output_type="png", uastc_rdo=1.0)
+        self.assertIn("UASTC RDO 1 ignored", buffer.getvalue())
+        report = MapOptimizer.assess(path, output_type="png", uastc_rdo=1.0)
+        self.assertTrue(
+            any("UASTC RDO 1 ignored" in w for w in report["warnings"]),
+            report["warnings"],
+        )
+
+    def test_a_bad_rdo_dial_is_refused_before_the_source_is_archived(self):
+        """``optimize_map`` archives the source BEFORE it writes, so a typo
+        raised at save time would leave neither map in the folder. Both dials
+        are refused before anything on disk moves -- and the dry run refuses
+        what the real run would. Added: 2026-09-19"""
+        path = self.texture("wall_Normal_OpenGL.png")
+        for kwargs in ({"uastc_rdo": 11}, {"uastc_rdo": 1.0, "uastc_rdo_dictionary": 63}):
+            with self.subTest(**kwargs):
+                with self.assertRaises(ValueError):
+                    MapOptimizer.optimize_map(
+                        path, output_type="ktx2", old_files_folder="old", **kwargs
+                    )
+                self.assertTrue(os.path.isfile(path), "the source was moved")
+                with self.assertRaises(ValueError):
+                    MapOptimizer.assess(path, output_type="ktx2", **kwargs)
+        self.assertEqual(self.fake.calls, [])
+
+    def test_assess_sizes_the_rdo_encode_the_run_makes(self):
+        path = self.texture("wall_Normal_OpenGL.png")
+        report = MapOptimizer.assess(
+            path,
+            output_type="ktx2",
+            predict_size=True,
+            uastc_rdo=2.0,
+            uastc_rdo_dictionary=256,
+        )
+        self.assertEqual(report["predicted"]["uastc_rdo"], 0.75)
+        call = self.fake.calls[-1]
+        self.assertEqual((call["rdo"], call["rdo_dictionary"]), (0.75, 256))
 
     def test_assess_predicts_the_codec_the_run_uses(self):
         path = self.texture("wall_Normal_OpenGL.png")

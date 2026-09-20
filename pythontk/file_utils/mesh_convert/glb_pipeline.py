@@ -311,6 +311,7 @@ class GlbPipeline(LoggingMixin):
                     params.get("max_size") or 0,
                     secondary_max_size=params.get("secondary_max_size") or 0,
                     uastc_rdo=params.get("uastc_rdo"),
+                    uastc_rdo_dictionary=params.get("uastc_rdo_dictionary"),
                 )
             )
         finally:

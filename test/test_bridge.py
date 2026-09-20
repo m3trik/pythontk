@@ -459,6 +459,24 @@ class HandoffSendTest(unittest.TestCase):
         body = Path(result["script"]).read_text(encoding="utf-8")
         self.assertIn("SCALE = 2.5", body)
 
+    def test_a_retired_param_key_reaches_its_live_key(self):
+        """A caller still spelling a renamed knob the old way keeps its value --
+        the live key's default cannot shadow it -- and is told; the live
+        spelling wins when both are given."""
+        from pythontk.core_utils.deprecation import Deprecation
+
+        br = self._bridge()
+        br.param_aliases = Deprecation.values(
+            {"OLD_SCALE": "SCALE"}, what="stub bridge parameter", remove_in="99.0.0"
+        )
+        with self.assertWarns(DeprecationWarning):
+            merged = br.merge_params({"OLD_SCALE": 2.5})
+        self.assertEqual(merged["SCALE"], 2.5)
+        self.assertNotIn("OLD_SCALE", merged)
+        self.assertEqual(
+            br.merge_params({"OLD_SCALE": 2.5, "SCALE": 3.0})["SCALE"], 3.0
+        )
+
     def test_unknown_mode_aborts_before_export(self):
         br = self._bridge()
         result = br.send(template="import", mode="round_trip")

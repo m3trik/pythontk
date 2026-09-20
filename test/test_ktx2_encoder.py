@@ -169,10 +169,18 @@ class Ktx2EncoderArgsTest(BaseTestCase):
                 "i.png", "o.ktx2", codec="ETC1S"
             ),
         )
+        # toktx documents 64-65536 and enforces NOTHING (63 and 65537 encode
+        # with exit 0), so this range is the only guard -- and it is toktx's,
+        # not a stricter one of ours: 64 and 128 are legal sizes.
+        for good in (64, 128, 65536):
+            args = self._encoder(uastc_rdo=0.75).args_for(
+                "i.png", "o.ktx2", uastc_rdo_dictionary=good
+            )
+            self.assertEqual(args[args.index("--uastc_rdo_d") + 1], str(good))
         # A malformed VALUE is a typo whether or not this encode would use it,
         # so it is rejected on every branch -- otherwise the constructor would
-        # refuse `99` while the same `99` passed per call with RDO off.
-        for bad in (128, 65537, "big"):
+        # refuse `63` while the same `63` passed per call with RDO off.
+        for bad in (63, 65537, "big"):
             with self.assertRaises(ValueError):
                 self._encoder(uastc_rdo=0.75).args_for(
                     "i.png", "o.ktx2", uastc_rdo_dictionary=bad
@@ -181,6 +189,18 @@ class Ktx2EncoderArgsTest(BaseTestCase):
                 self._encoder().args_for("i.png", "o.ktx2", uastc_rdo_dictionary=bad)
             with self.assertRaises(ValueError):
                 self._encoder(uastc_rdo_dictionary=bad)
+
+    def test_rdo_for_caps_a_normal_map_only(self):
+        """toktx's guidance caps a normal map's RDO lambda at 0.75; which maps
+        are normal maps is the caller's call, the cap is the codec's. Off stays
+        off, and the lambda's own range still applies. Added: 2026-09-19"""
+        self.assertEqual(Ktx2Encoder.rdo_for(2.0), 2.0)
+        self.assertEqual(Ktx2Encoder.rdo_for(2.0, normal_map=True), 0.75)
+        self.assertEqual(Ktx2Encoder.rdo_for(0.5, normal_map=True), 0.5)
+        self.assertIsNone(Ktx2Encoder.rdo_for(None, normal_map=True))
+        self.assertIsNone(Ktx2Encoder.rdo_for(0))
+        with self.assertRaises(ValueError):
+            Ktx2Encoder.rdo_for(11)
 
     def test_etc1s_defaults(self):
         args = self._encoder().args_for("in.png", "out.ktx2", codec="ETC1S")
@@ -237,6 +257,28 @@ class Ktx2EncoderRunTest(_TempDirTestCase):
         argv = run.call_args[0][0]
         self.assertEqual(argv[0], "toktx-test-bin")
         self.assertEqual(argv[-2:], [out, "src.png"])
+
+    def test_encode_hands_a_per_call_rdo_dictionary_to_toktx(self):
+        """``encode`` accepted ``uastc_rdo_dictionary`` and dropped it before
+        building the argv, so a per-call size silently encoded with the
+        constructor's (toktx's own 4096 by default) -- only ``args_for`` was
+        ever tested. Both source kinds go through the same run. Added:
+        2026-09-19"""
+        enc = Ktx2Encoder(toktx="toktx-test-bin", timeout=None)
+        sources = (
+            ("path", "src.png"),
+            ("image", Image.new("RGB", (8, 8))),
+        )
+        for label, source in sources:
+            with self.subTest(source=label), self._run_capture() as run:
+                enc.encode(
+                    source,
+                    os.path.join(self.out_dir, "map.ktx2"),
+                    uastc_rdo=0.75,
+                    uastc_rdo_dictionary=1024,
+                )
+                argv = run.call_args[0][0]
+                self.assertEqual(argv[argv.index("--uastc_rdo_d") + 1], "1024")
 
     def test_encode_failure_carries_stderr_tail(self):
         enc = Ktx2Encoder(toktx="toktx-test-bin")

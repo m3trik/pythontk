@@ -392,6 +392,15 @@ class MeshConvert(HelpMixin):
     #: -30% at 1.0 at PSNR 50/44/48 dB, a noisy normal map only -3.5%) at 3-4x
     #: the encode time -- the producer's call, not the container's.
     WEB_DELIVERY_UASTC_RDO: Optional[float] = None
+    #: RDO dictionary size (``--uastc_rdo_d``) whenever an RDO lambda is on;
+    #: None = toktx's own (4096). The dictionary is where RDO's time goes.
+    #: Measured through this pass on a production set's own maps (8 normals
+    #: at 4K, 8 ORM packs at 2K, lambda 1, 2026-09-19): 245 s -> 129 s at
+    #: 1024 for +2.2% image bytes (normals +1.8%, ORM +3.5%); 256 bought only
+    #: 20 s more for +4.6%. A web export is time-bound, and the maintainer's
+    #: call is that those bytes do not justify the time; a standalone map tool
+    #: exposes the dial instead.
+    WEB_DELIVERY_UASTC_RDO_DICTIONARY: Optional[int] = 1024
 
     #: Slot semantic -> (Basis codec, sRGB transfer) for KTX2 mode. The glTF
     #: structural twin of ``MapOptimizer.resolve_compression``'s registry rule:
@@ -415,9 +424,15 @@ class MeshConvert(HelpMixin):
     #: detail a resample visibly softens (toktx caps their RDO for the same
     #: reason), and not color, the perceptual detail.
     SECONDARY_SEMANTICS: Tuple[str, ...] = ("data",)
-    #: The RDO lambda a normal map is capped at whatever the caller asks --
-    #: toktx: "for normal maps a good range is [.25,.75]".
-    UASTC_RDO_NORMAL_MAX: float = 0.75
+
+    @ClassProperty
+    def UASTC_RDO_NORMAL_MAX(cls) -> float:
+        """The RDO lambda a normal map is capped at whatever the caller asks:
+        toktx's guidance, owned by :attr:`Ktx2Encoder.UASTC_RDO_NORMAL_MAX` so
+        the map optimizer applies the same number. Read-only."""
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        return Ktx2Encoder.UASTC_RDO_NORMAL_MAX
 
     #: Slot semantics a chroma-subsampled codec may be used on. The WebP twin of
     #: :attr:`BASIS_BY_SEMANTIC`'s ETC1S row, and deliberately the same rule --
@@ -7207,10 +7222,9 @@ class MeshConvert(HelpMixin):
     ) -> Optional[float]:
         """The RDO lambda a UASTC encode of *semantic* takes: the caller's,
         capped at :attr:`UASTC_RDO_NORMAL_MAX` for a normal map; None = off."""
-        if not uastc_rdo:
-            return None
-        value = float(uastc_rdo)
-        return min(value, cls.UASTC_RDO_NORMAL_MAX) if semantic == "normal" else value
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        return Ktx2Encoder.rdo_for(uastc_rdo, normal_map=semantic == "normal")
 
     @classmethod
     def describe_texture_pass(
@@ -7220,6 +7234,7 @@ class MeshConvert(HelpMixin):
         max_size: int = 0,
         secondary_max_size: int = 0,
         uastc_rdo: Optional[float] = None,
+        uastc_rdo_dictionary: Optional[int] = None,
     ) -> str:
         """Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.
 
@@ -7244,6 +7259,8 @@ class MeshConvert(HelpMixin):
             max_size: The ceiling that was in force; ``0`` = never resample.
             secondary_max_size: The data-map ceiling in force, if any.
             uastc_rdo: The UASTC RDO lambda in force, if any.
+            uastc_rdo_dictionary: The RDO dictionary size in force, if any
+                (None is toktx's own); named only beside an RDO lambda.
 
         Returns:
             One complete sentence, ready to log.
@@ -7274,7 +7291,10 @@ class MeshConvert(HelpMixin):
         if secondary_max_size:
             dials.append(f"data maps capped at {secondary_max_size}px")
         if uastc_rdo:
-            dials.append(f"UASTC RDO lambda {uastc_rdo:g}")
+            dials.append(
+                f"UASTC RDO lambda {uastc_rdo:g}"
+                + (f" (dictionary {uastc_rdo_dictionary})" if uastc_rdo_dictionary else "")
+            )
         if dials:
             did += "; " + ", ".join(dials)
         return (
@@ -7356,6 +7376,7 @@ class MeshConvert(HelpMixin):
         ktx2_fallback: Optional[bool] = None,
         secondary_max_size: Optional[int] = None,
         uastc_rdo: Optional[float] = None,
+        uastc_rdo_dictionary: Optional[int] = None,
     ) -> Dict[str, Any]:
         """:meth:`optimize_glb_textures` kwargs for a WEB deliverable.
 
@@ -7399,10 +7420,14 @@ class MeshConvert(HelpMixin):
                 ``max_size``.
             uastc_rdo: UASTC RDO lambda for the KTX2 encodes; ``None`` takes
                 :attr:`WEB_DELIVERY_UASTC_RDO`, ``0`` is off.
+            uastc_rdo_dictionary: RDO dictionary size for those encodes;
+                ``None`` takes :attr:`WEB_DELIVERY_UASTC_RDO_DICTIONARY`, ``0``
+                is toktx's own.
 
         Returns:
             ``{"image_format": str, "max_size": int, "ktx2_fallback": bool,
-            "secondary_max_size": int, "uastc_rdo": float | None}``.
+            "secondary_max_size": int, "uastc_rdo": float | None,
+            "uastc_rdo_dictionary": int | None}``.
         """
         return {
             "image_format": image_format or cls.WEB_DELIVERY_FORMAT,
@@ -7423,6 +7448,11 @@ class MeshConvert(HelpMixin):
                 cls.WEB_DELIVERY_UASTC_RDO
                 if uastc_rdo is None
                 else (float(uastc_rdo) or None)
+            ),
+            "uastc_rdo_dictionary": (
+                cls.WEB_DELIVERY_UASTC_RDO_DICTIONARY
+                if uastc_rdo_dictionary is None
+                else (int(uastc_rdo_dictionary) or None)
             ),
         }
 
@@ -7451,6 +7481,7 @@ class MeshConvert(HelpMixin):
         ktx2_fallback: bool = WEB_DELIVERY_KTX2_FALLBACK,
         secondary_max_size: int = WEB_DELIVERY_SECONDARY_MAX_SIZE,
         uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO,
+        uastc_rdo_dictionary: Optional[int] = WEB_DELIVERY_UASTC_RDO_DICTIONARY,
     ) -> Dict[str, Any]:
         """Downsize and re-encode a GLB's embedded images for web delivery.
 
@@ -7575,6 +7606,10 @@ class MeshConvert(HelpMixin):
                 is capped at :attr:`UASTC_RDO_NORMAL_MAX`. ``None`` is off.
                 Measured on a 4K production set: ORM packs -30% at 1.0 (PSNR
                 50/44/48 dB), a noisy normal map -3.5%, encode 3-4x slower.
+            uastc_rdo_dictionary: KTX2 mode with *uastc_rdo* only. The RDO
+                dictionary size (``toktx --uastc_rdo_d``); the default is the
+                web-delivery policy (:attr:`WEB_DELIVERY_UASTC_RDO_DICTIONARY`),
+                ``None`` toktx's own.
 
         Returns:
             Summary dict: ``images`` (converted count), ``bytes_before`` /
@@ -7602,8 +7637,14 @@ class MeshConvert(HelpMixin):
             # would ship a deliverable that *looks* optimized while missing
             # the entire point of the request.
             from pythontk.img_utils._img_utils import ImgUtils
+            from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
 
             encoder = ImgUtils.resolve_ktx2_encoder(required=True)
+            # A typo in either RDO dial is the caller's, raised before any work:
+            # inside the per-image encode it would read as one failed encode per
+            # image, each shipping its original bytes.
+            Ktx2Encoder.rdo_for(uastc_rdo)
+            uastc_rdo_dictionary = Ktx2Encoder.rdo_dictionary(uastc_rdo_dictionary)
         with cls.open_glb(glb) as edit:
             gltf = edit.gltf
             images = gltf.get("images") or []
@@ -7781,9 +7822,9 @@ class MeshConvert(HelpMixin):
                     try:
                         with TempArtifacts("glb_ktx2", policy="scoped") as tmp:
                             out = tmp.path(extension=".ktx2")
-                            # RDO rides only when asked: an encoder registered
-                            # through ImgUtils.register_ktx2_encoder need not
-                            # model the keyword, and it is a UASTC-only stage.
+                            # RDO rides only when asked (Ktx2Encoder.rdo_kwargs:
+                            # a registered encoder need not model it), and it
+                            # is a UASTC-only stage.
                             rdo = (
                                 cls._uastc_rdo_for(semantic, uastc_rdo)
                                 if codec == "UASTC"
@@ -7795,7 +7836,7 @@ class MeshConvert(HelpMixin):
                                 codec=codec,
                                 srgb=srgb,
                                 quality=quality if codec == "ETC1S" else None,
-                                **({"uastc_rdo": rdo} if rdo else {}),
+                                **Ktx2Encoder.rdo_kwargs(rdo, uastc_rdo_dictionary),
                             )
                             with open(out, "rb") as fh:
                                 encoded = fh.read()

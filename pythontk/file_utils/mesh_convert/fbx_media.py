@@ -7,8 +7,9 @@ the edits a hand-off pipeline needs on its scratch copy: replacing the
 ``Video`` objects' ``Content`` payloads -- the textures
 ``FBXExportEmbeddedTextures`` copies into the file at full authoring
 resolution (:meth:`FbxMedia.downsize`), and the grayscale ones FBX2glTF would
-pack as white (:meth:`FbxMedia.expand_grayscale`) -- and dropping animation
-takes the converter would bake for nothing (:meth:`FbxMedia.drop_takes`).
+pack as white (:meth:`FbxMedia.expand_grayscale`) -- dropping animation
+takes the converter would bake for nothing (:meth:`FbxMedia.drop_takes`), and
+dropping the apparatus of a baked rig (:meth:`FbxMedia.drop_apparatus`).
 Everything else is copied byte for byte. Only the record headers are
 re-serialised, because binary FBX stores
 every record's end as an *absolute* offset, so one payload that changes size
@@ -43,7 +44,7 @@ import os
 import struct
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.mesh_convert.fbx_file import FBX_MAGIC
@@ -690,6 +691,406 @@ class FbxMedia(_FbxMediaInternal):
             part = cls._write_part(target, version, roots, footer_id, magic)
         os.replace(part, target)
         return report
+
+    #: Model classes that draw nothing and bind nothing by themselves -- a
+    #: group or locator (``Null``), a joint (``LimbNode``, and the older
+    #: ``Limb`` / ``Root``) and a curve (``Line`` is how Maya writes a NURBS
+    #: curve). Only these may go: a mesh, a camera, a light -- or a class this
+    #: writer does not know -- is content, and keeps every ancestor holding it.
+    INERT_MODEL_CLASSES = (
+        b"Null",
+        b"LimbNode",
+        b"Limb",
+        b"Root",
+        b"Line",
+        b"NurbsCurve",
+    )
+    #: What a removed Model takes with it once every one of their owners has
+    #: gone: its attribute, its curve geometry with that geometry's deformers,
+    #: and the animation driving any of them. No other object type is ever
+    #: removed, and a Model wired to one is kept.
+    OWNED_OBJECTS = (
+        b"NodeAttribute",
+        b"Geometry",
+        b"Deformer",
+        b"AnimationCurveNode",
+        b"AnimationCurve",
+    )
+
+    @classmethod
+    def drop_apparatus(
+        cls,
+        src: str,
+        dst: Optional[str] = None,
+        *,
+        section: Mapping[str, str],
+        separator: str = "|",
+    ) -> Dict[str, Any]:
+        """Remove the rig apparatus *section* names, and everything only it owns.
+
+        The consumer half of :class:`~pythontk.RigMachinery`, run on the file
+        instead of on a scene: *section* is what the producer's census named
+        (``RigMachinery.classify``, made unambiguous), matched against the
+        Models by leaf name, and :meth:`RigMachinery.select` decides with THIS
+        file's own facts as the net -- a named node whose subtree holds a mesh
+        or other content, an influence of a skin that survives, a carrier of
+        in-band data (a scene record, a curve proxy) or an object this writer
+        does not own is refused, by name. Each Model that goes takes its whole
+        subtree, its attribute, its curve geometry and that geometry's
+        deformers, and every animation curve node and curve only it drove;
+        every connection naming a removed object, its bind-pose entries and
+        the removed objects' ``Definitions`` counts go with it. Everything else
+        is copied byte for byte.
+
+        Why it exists: a carrier ships every node of a scene, so a baked rig
+        arrives twice -- its motion on the joints, and the controls, IK and
+        helper groups that used to make it, each still animated. FBX2glTF bakes
+        every node at every frame, so they cost conversion time as well as
+        bytes. Measured on a production assembly: ~600 of ~2480 nodes, and half
+        its animation data, drove nothing a skin references and held no mesh.
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+            section: ``{producer path: kind}`` -- the apparatus, as
+                ``RigMachinery.classify`` / ``unambiguous`` returned it.
+            separator: The hierarchy separator of *section*'s paths.
+
+        Returns:
+            ``{"models", "kinds", "refused", "objects", "connections"}`` -- how
+            many Models were removed, ``{kind: count}`` over them, the named
+            nodes kept (sorted), ``{record name: count}`` of every object
+            removed (Models included) and how many connections went. When
+            nothing qualifies the file is not written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+        """
+        from pythontk.core_utils.engines.rig_graph.rig_machinery import (
+            RigMachinery,
+        )
+
+        report: Dict[str, Any] = {
+            "models": 0,
+            "kinds": {},
+            "refused": [],
+            "objects": {},
+            "connections": 0,
+        }
+        if not section:
+            return report
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            sections = {record.name: record for record in roots}
+            objects = sections.get(b"Objects")
+            if objects is None:
+                return report
+            connections = sections.get(b"Connections")
+            graph = cls._model_graph(objects, connections)
+            doomed, refused = RigMachinery.select(
+                section,
+                cls._families(graph, section, separator),
+                protected=cls._load_bearing(graph, section, separator),
+                separator=separator,
+            )
+            names = graph["names"]
+            children = graph["children"]
+            skinned = cls._skinned(graph)
+            dropped = {oid for oid, name in names.items() if name in doomed}
+            # A Model only goes with its whole subtree -- one that left a
+            # survivor behind would re-root it at the scene origin -- and an
+            # influence only with every Model its skin deforms, or that skin's
+            # cluster would dangle. What stays re-checks its own parent on the
+            # next pass.
+            kept = set()
+            while True:
+                keep = {
+                    oid
+                    for oid in dropped
+                    if any(child not in dropped for child in children.get(oid, ()))
+                    or any(
+                        not graph["owners"].get(g, set()) <= dropped
+                        for g in skinned.get(oid, ())
+                    )
+                }
+                if not keep:
+                    break
+                dropped -= keep
+                kept |= keep
+            report["refused"] = sorted(set(refused) | {names[oid] for oid in kept})
+            if not dropped:
+                return report
+
+            removed = cls._owned_closure(graph, dropped)
+            counts: Dict[bytes, int] = {}
+            survivors = []
+            for record in objects.children:
+                oid = graph["id_of"].get(id(record))
+                if oid in removed:
+                    counts[record.name] = counts.get(record.name, 0) + 1
+                else:
+                    survivors.append(record)
+                    if record.name == b"Pose":
+                        cls._drop_pose_nodes(record, removed)
+            objects.children = survivors
+
+            if connections is not None:
+                before = len(connections.children)
+                connections.children = [
+                    record
+                    for record, row in graph["rows"]
+                    if not (len(row) >= 3 and (row[1] in removed or row[2] in removed))
+                ]
+                report["connections"] = before - len(connections.children)
+
+            definitions = sections.get(b"Definitions")
+            if definitions is not None:
+                total = 0
+                for object_type in definitions.children:
+                    if object_type.name != b"ObjectType":
+                        continue
+                    head = cls._scalars(object_type)
+                    count = counts.get(head[0], 0) if head else 0
+                    if count:
+                        cls._subtract_count(object_type, count)
+                        total += count
+                if total:
+                    cls._subtract_count(definitions, total)
+
+            report["models"] = len(dropped)
+            report["kinds"] = RigMachinery.tally(
+                {oid: doomed[names[oid]] for oid in dropped}
+            )
+            report["objects"] = {k.decode(): v for k, v in counts.items()}
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        os.replace(part, target)
+        return report
+
+    @classmethod
+    def _model_graph(
+        cls, objects: _Record, connections: Optional[_Record]
+    ) -> Dict[str, Any]:
+        """The file's object table and Model hierarchy, as plain lookups.
+
+        ``kinds`` (id -> record name), ``classes`` (id -> the object's class,
+        ``b"Mesh"`` / ``b"Cluster"`` ...), ``id_of`` (record identity -> id),
+        ``names`` / ``records`` for Models, ``parent`` / ``children`` of the
+        Model hierarchy, ``owners`` (id -> every object it is wired UNDER),
+        ``links`` (every connection as ``(child, parent)``) and ``rows`` (each
+        connection record with its decoded head).
+        """
+        kinds: Dict[int, bytes] = {}
+        classes: Dict[int, bytes] = {}
+        id_of: Dict[int, int] = {}
+        names: Dict[int, str] = {}
+        records: Dict[int, _Record] = {}
+        for record in objects.children:
+            head = cls._scalars(record)
+            if not head or not isinstance(head[0], int):
+                continue
+            oid = head[0]
+            kinds[oid] = record.name
+            id_of[id(record)] = oid
+            if len(head) > 2 and isinstance(head[2], bytes):
+                classes[oid] = head[2]
+            if record.name == b"Model":
+                label = head[1] if len(head) > 1 and isinstance(head[1], bytes) else b""
+                names[oid] = cls._display(label)
+                records[oid] = record
+        rows = [
+            (record, cls._scalars(record))
+            for record in (connections.children if connections else [])
+        ]
+        links: List[Tuple[int, int]] = []
+        parent: Dict[int, int] = {}
+        children: Dict[int, List[int]] = {}
+        owners: Dict[int, set] = {}
+        for _record, row in rows:
+            if (
+                len(row) < 3
+                or not isinstance(row[1], int)
+                or not isinstance(row[2], int)
+            ):
+                continue
+            links.append((row[1], row[2]))
+            owners.setdefault(row[1], set()).add(row[2])
+            if row[1] in names and row[2] in names:
+                parent[row[1]] = row[2]
+                children.setdefault(row[2], []).append(row[1])
+        return {
+            "kinds": kinds,
+            "classes": classes,
+            "id_of": id_of,
+            "names": names,
+            "records": records,
+            "parent": parent,
+            "children": children,
+            "owners": owners,
+            "links": links,
+            "rows": rows,
+        }
+
+    @staticmethod
+    def _skinned(graph: Dict[str, Any]) -> Dict[int, List[int]]:
+        """``{influence Model: [geometry its skins deform]}``.
+
+        A skin binds through its sub-deformers: each ``Cluster`` is wired
+        under its ``Skin``, the Skin under the geometry it deforms, and the
+        influence Model under the Cluster.
+        """
+        kinds, classes, owners = graph["kinds"], graph["classes"], graph["owners"]
+        skinned: Dict[int, List[int]] = {}
+        for child, parent in graph["links"]:
+            if child not in graph["names"] or classes.get(parent) != b"Cluster":
+                continue
+            for skin in owners.get(parent, ()):
+                if kinds.get(skin) == b"Deformer":
+                    skinned.setdefault(child, []).extend(owners.get(skin, ()))
+        return skinned
+
+    @staticmethod
+    def _families(
+        graph: Dict[str, Any], section: Mapping[str, str], separator: str
+    ) -> Dict[str, List[str]]:
+        """``{name: [that Model and its descendants' names]}`` for every Model
+        *section* could name -- the ``subtrees`` :meth:`RigMachinery.select`
+        judges. A name several Models share collects all their subtrees, so a
+        refusal of one is a refusal of the name."""
+        leaves = {str(path).rsplit(separator, 1)[-1] for path in section}
+        names, children = graph["names"], graph["children"]
+        families: Dict[str, List[str]] = {}
+        for oid, name in names.items():
+            if name not in leaves and name.rsplit(".", 1)[0] not in leaves:
+                continue
+            family = families.setdefault(name, [])
+            stack = [oid]
+            while stack:
+                node = stack.pop()
+                family.append(names[node])
+                stack.extend(children.get(node, ()))
+        return families
+
+    @classmethod
+    def _load_bearing(
+        cls, graph: Dict[str, Any], section: Mapping[str, str], separator: str
+    ) -> set:
+        """The Model names this file says must survive, whatever *section* says.
+
+        Content (a Model class outside :attr:`INERT_MODEL_CLASSES`); every
+        influence of a skin that stays -- one deforming content geometry, or a
+        curve whose own Model is not being dropped (its sub-deformer would
+        dangle); a carrier of in-band data (a scene-record channel, the curve
+        proxy marker), whose loss would silently cost the deliverable its
+        records; and a Model wired to an object this writer does not own.
+        """
+        from pythontk.core_utils.scene_records import SceneRecords
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        kinds, classes, names = graph["kinds"], graph["classes"], graph["names"]
+        owners = graph["owners"]
+        leaves = {str(path).rsplit(separator, 1)[-1] for path in section}
+        channels = {spec.key.encode("utf-8") for spec in SceneRecords.all()}
+        channels.add(MeshConvert.CURVE_PROXY_MARKER.encode("utf-8"))
+        partners = set(cls.OWNED_OBJECTS) | {b"Model"}
+
+        protected = set()
+        for oid, name in names.items():
+            if classes.get(oid, b"") not in cls.INERT_MODEL_CLASSES:
+                protected.add(name)
+            elif cls._user_properties(graph["records"][oid]) & channels:
+                protected.add(name)
+        for child, parent in graph["links"]:
+            for mine, other in ((child, parent), (parent, child)):
+                if mine in names and other and kinds.get(other) not in partners:
+                    protected.add(names[mine])
+
+        def survives(geometry: int) -> bool:
+            if classes.get(geometry) not in cls.INERT_MODEL_CLASSES:
+                return True  # a mesh (or anything but a curve) is content
+            return any(
+                names[model] not in leaves
+                for model in owners.get(geometry, ())
+                if model in names
+            )
+
+        for influence, geometry in cls._skinned(graph).items():
+            if any(survives(g) for g in geometry):
+                protected.add(names[influence])
+        return protected
+
+    @classmethod
+    def _owned_closure(cls, graph: Dict[str, Any], models: set) -> set:
+        """*models* plus every object only they (and what goes with them) own.
+
+        Ownership follows the wiring UP: an attribute, geometry or curve node
+        is owned by the object it is connected under, a deformer by its
+        geometry, a curve by its curve node. A curve node's animation layer is
+        not an owner -- it holds curve nodes of every object -- so a curve node
+        goes once everything it animates has.
+        """
+        kinds = graph["kinds"]
+        owners: Dict[int, set] = {}
+        for child, parent in graph["links"]:
+            if not parent or kinds.get(child) not in cls.OWNED_OBJECTS:
+                continue
+            if kinds.get(parent) == b"AnimationLayer":
+                continue
+            owners.setdefault(child, set()).add(parent)
+        removed = set(models)
+        grew = True
+        while grew:
+            grew = False
+            for oid, parents in owners.items():
+                if oid not in removed and parents <= removed:
+                    removed.add(oid)
+                    grew = True
+        return removed
+
+    @classmethod
+    def _user_properties(cls, record: _Record) -> set:
+        """The names of *record*'s user-flagged ``Properties70`` entries."""
+        found = set()
+        for child in record.children:
+            if child.name != b"Properties70":
+                continue
+            for prop in child.children:
+                head = cls._scalars(prop)
+                if len(head) >= 4 and isinstance(head[3], bytes) and b"U" in head[3]:
+                    found.add(head[0])
+        return found
+
+    @classmethod
+    def _drop_pose_nodes(cls, pose: _Record, removed: set) -> None:
+        """Remove *pose*'s entries for *removed* nodes and recount it."""
+        entries = [child for child in pose.children if child.name == b"PoseNode"]
+        gone = []
+        for entry in entries:
+            for child in entry.children:
+                if child.name != b"Node":
+                    continue
+                head = cls._scalars(child)
+                if head and head[0] in removed:
+                    gone.append(entry)
+                break
+        if not gone:
+            return
+        pose.children = [child for child in pose.children if child not in gone]
+        for child in pose.children:
+            if child.name != b"NbPoseNodes":
+                continue
+            head = cls._scalars(child)
+            if head and isinstance(head[0], int):
+                tag = bytes(child.payload[:1])
+                left = max(0, head[0] - len(gone))
+                child.replaced = (
+                    b"L" + struct.pack("<q", left)
+                    if tag == b"L"
+                    else b"I" + struct.pack("<i", left)
+                )
 
     @staticmethod
     def _display(raw: bytes) -> str:

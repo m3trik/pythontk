@@ -464,21 +464,113 @@ class TestMerge(unittest.TestCase):
         for shot in store.shots:
             self.assertIsNone(store.name_error(shot.name, shot.shot_id), shot.name)
 
-    def test_an_incoming_legacy_name_is_merged_legal(self):
-        """A store from before names were validated can bring ``"Shot 1"``;
-        numbered beside the scene's ``Shot_1`` it must become a name the store
-        accepts (``Shot_1_2``), never ``"Shot 1_2"`` -- and a blank one a
-        name at all."""
+    def test_an_incoming_legacy_name_that_clashes_is_numbered_legal(self):
+        """A store from before names were validated can bring ``"Shot 1"``,
+        which exports as the scene's ``Shot_1`` does: numbered, it must become
+        a name the store accepts (``Shot_1_2``), never ``"Shot 1_2"``.  A
+        blank one clashes with nothing and arrives blank, as a store adopted
+        whole keeps it (its export names it ``shot`` either way)."""
         existing = ShotStore()
         existing.define_shot("Shot_1", 0.0, 30.0)
         incoming = ShotStore([ShotBlock(0, "Shot 1", 40, 50), ShotBlock(1, "", 60, 70)])
         merged = ShotTransfer.merge(existing.to_dict(), incoming.to_dict())
         store = ShotStore.from_dict(merged)
         self.assertEqual(
-            [s.name for s in store.sorted_shots()], ["Shot_1", "Shot_1_2", "shot"]
+            [s.name for s in store.sorted_shots()], ["Shot_1", "Shot_1_2", ""]
         )
-        for shot in store.shots:
-            self.assertIsNone(store.name_error(shot.name, shot.shot_id), shot.name)
+        numbered = store.sorted_shots()[1]
+        self.assertIsNone(store.name_error(numbered.name, numbered.shot_id))
+
+    def test_an_incoming_name_that_clashes_with_nothing_keeps_its_spelling(self):
+        """A legacy name the rule refuses is still the shot's name: the store
+        keeps it and the sequencer marks it.  A merge renames only to resolve
+        a clash, so a scene with shots of its own receives such a name as a
+        scene without any does -- as it was saved."""
+        existing = ShotStore()
+        existing.define_shot("Host", 0.0, 30.0)
+        incoming = ShotStore(
+            [ShotBlock(0, "Take 2.1", 40, 50), ShotBlock(1, "Act 3.4-5", 60, 70)]
+        )
+        merged = ShotTransfer.merge(existing.to_dict(), incoming.to_dict())
+        names = [s.name for s in ShotStore.from_dict(merged).sorted_shots()]
+        self.assertEqual(names, ["Host", "Take 2.1", "Act 3.4-5"])
+        adopted = ShotTransfer.merge(None, incoming.to_dict())
+        self.assertEqual(names[1:], [s["name"] for s in adopted["shots"]])
+
+    def test_a_merge_puts_the_incoming_times_on_the_scene_clock(self):
+        """A 30 fps module merged into a 24 fps scene with shots: the DCC lands
+        the module's keys at the same seconds, so its shots, markers and
+        ledger claims land there too (the key stash's merge rescales its clips
+        the same way).  The scene's own shots, gap and clock stand."""
+        existing = ShotStore()
+        existing.scene_fps = 24.0
+        existing.gap = 2.0
+        existing.define_shot("Host", 0.0, 30.0)
+        incoming = ShotStore()
+        incoming.scene_fps = 30.0
+        incoming.define_shot("Late", 300.0, 600.0)
+        incoming.markers = [{"time": 450.0, "note": "beat"}]
+        incoming.edit_ledger.record_key("a_tx", 600.0, incoming.shots[0].shot_id, "end")
+        merged = ShotTransfer.merge(existing.to_dict(), incoming.to_dict())
+        store = ShotStore.from_dict(merged)
+        self.assertEqual(store.scene_fps, 24.0)
+        self.assertEqual(store.gap, 2.0)
+        self.assertEqual(
+            [(s.name, s.start, s.end) for s in store.sorted_shots()],
+            [("Host", 0.0, 30.0), ("Late", 240.0, 480.0)],
+        )
+        self.assertEqual(store.markers, [{"time": 360.0, "note": "beat"}])
+        self.assertEqual(store.edit_ledger.key_times("a_tx"), [480.0])
+
+    def test_the_rescale_snaps_by_the_receiving_scene_not_the_module(self):
+        """The merge keeps the scene's settings, so its snap policy decides
+        whether a rescaled bound may sit between frames -- a module saved
+        without snapping must not land fractional bounds in a scene that
+        guarantees whole frames."""
+        existing = ShotStore()
+        existing.scene_fps = 24.0
+        existing.define_shot("Host", 0.0, 30.0)
+        incoming = ShotStore()
+        incoming.scene_fps = 30.0
+        incoming.snap_whole_frames = False
+        incoming.define_shot("Late", 301.0, 330.0)
+        merged = ShotTransfer.merge(existing.to_dict(), incoming.to_dict())
+        store = ShotStore.from_dict(merged)
+        self.assertTrue(store.snap_whole_frames)
+        late = next(s for s in store.sorted_shots() if s.name == "Late")
+        self.assertEqual((late.start, late.end), (241.0, 264.0))
+
+    def test_merge_record_notes_a_rescale_and_only_a_real_rename(self):
+        """The report says what the merge changed and why: a clash's
+        numbering and a clock change -- never a rename that did not happen."""
+        existing = ShotStore()
+        existing.scene_fps = 24.0
+        existing.define_shot("Shot_1", 0.0, 30.0)
+        incoming = ShotStore(
+            [ShotBlock(0, "Shot 1", 300, 330), ShotBlock(1, "Take 2.1", 400, 430)]
+        )
+        incoming.scene_fps = 30.0
+        ctx = ptk.TransferContext()
+        ShotTransfer.merge_record(existing.to_dict(), incoming.to_dict(), ctx)
+        self.assertEqual(len(ctx.notes), 2, ctx.notes)
+        renamed, rescaled = ctx.notes
+        self.assertIn("'Shot 1' arrives as 'Shot_1_2'", renamed)
+        self.assertNotIn("Take 2.1", renamed)
+        self.assertIn("2 shot(s) rescaled from 30 to 24 fps", rescaled)
+
+    def test_a_ledger_in_its_legacy_shape_merges(self):
+        """A bare time is the ledger's legacy record (an unowned sample) and
+        the ledger loads it, so a merge must too: a raise here cost the whole
+        store -- the crossing notes the record "not merged" and moves on."""
+        existing = ShotStore()
+        existing.define_shot("A", 0.0, 10.0)
+        existing.edit_ledger.record_key("mine", 5.0, 0, "end")
+        incoming = _store_state()
+        incoming["edit_ledger"] = {"keys": {"c": [48.0, 60.0]}}
+        merged = ShotTransfer.merge(existing.to_dict(), incoming)
+        led = ShotEditLedger.from_dict(merged["edit_ledger"])
+        self.assertEqual(led.key_times("c"), [48.0, 60.0])
+        self.assertEqual(led.key_times("mine"), [5.0])
 
     def test_merge_is_idempotent_on_ledger_records(self):
         existing = _store_state()

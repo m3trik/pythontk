@@ -882,12 +882,21 @@ class ExportRun:
     #: (derived: :meth:`with_tasks`; ``"both"`` when the row is absent, the
     #: mode a run that never realizes takes still converts its GLB under).
     animation_clips_mode: Any = "both"
+    #: The write splits the scene's declared takes: the Animation Clips row ran
+    #: in a shot-bearing mode (derived: :meth:`with_tasks`). Whether the scene
+    #: declares any takes is the DCC's read, off its carrier.
+    splits_takes: bool = False
     #: The Output Filename carried a version counter, so the sidecar routes
     #: through the base stem and a series shares one manifest.
     versioned: bool = False
     #: The Verify The Written File row: re-open the deliverables after the
     #: write and run the file-level gates.
     verify_deliverables: bool = False
+    #: The Exclude Rig Helpers row: the written FBX -- and so the GLB built
+    #: from it -- drops the apparatus of the rig it baked (the DCC's census,
+    #: removed by ``FbxMedia.drop_apparatus``). FBX only: a USD layer is
+    #: written as the scene samples.
+    drop_rig_apparatus: bool = False
     #: The written FBX carries its own texture copies (embedded media, or a
     #: path mode that copies them beside it), so staged textures are temp.
     fbx_media_selfcontained: bool = False
@@ -934,6 +943,7 @@ class ExportRun:
         "optimize_textures_write_back",
         "animation_write_back",
         "verify_deliverables",
+        "drop_rig_apparatus",
         "texture_max_size",
         "secondary_max_size",
         "uastc_rdo",
@@ -968,6 +978,32 @@ class ExportRun:
         """A copy with *changes* applied (``dataclasses.replace``)."""
         return dataclasses.replace(self, **changes)
 
+    @staticmethod
+    def clip_mode(value: Any) -> str:
+        """An Animation Clips row value as one of its modes (``full`` /
+        ``shots`` / ``both``) -- the one resolver both DCC exporters use.
+
+        Accepts the boolean a pre-combo preset stored: a stored preset is a
+        contract, and a widget-type change must not silently re-point it at a
+        different deliverable. ``True`` kept the whole-timeline stack beside
+        the split takes, so it is ``both``; every FALSY value (the unticked
+        box, and the ``None`` a headless caller passes for OFF) split nothing
+        and shipped the sequence alone, so it is ``full``.
+
+        Raises:
+            ValueError: An unknown mode.
+        """
+        if not value or isinstance(value, bool):
+            return "both" if value else "full"
+        resolved = str(value).strip().lower()
+        modes = tuple(ExportProfile.ANIMATION_CLIPS_OPTIONS.values())
+        if resolved not in modes:
+            raise ValueError(
+                f"Unknown animation clips mode {value!r}; expected one of "
+                f"{', '.join(modes)}."
+            )
+        return resolved
+
     def with_tasks(self, tasks: Mapping[str, Any]) -> "ExportRun":
         """A copy carrying the modes derived from the dispatched *tasks*.
 
@@ -975,12 +1011,21 @@ class ExportRun:
         through unresolved (each DCC's SmartBake resolves the token against
         its ``AnimUtils.OPTIMIZE_LEVELS``, so there is one table); a
         write-back texture conversion relativizes its rewired paths only when
-        ``convert_to_relative_paths`` is on.
+        ``convert_to_relative_paths`` is on; ``splits_takes`` is whether the
+        Animation Clips row runs in a shot-bearing mode (an unknown mode reads
+        False here -- the task itself raises, naming it).
         """
+        try:
+            splits = "apply_declared_takes" in tasks and (
+                self.clip_mode(tasks["apply_declared_takes"]) != "full"
+            )
+        except ValueError:
+            splits = False
         return self.replace(
             optimize_keys_level=tasks.get("optimize_keys", False),
             relative_paths=bool(tasks.get("convert_to_relative_paths", False)),
             animation_clips_mode=tasks.get("apply_declared_takes", "both"),
+            splits_takes=splits,
         )
 
     @classmethod
@@ -999,7 +1044,8 @@ class ExportRun:
         fallback token becomes ``ktx2`` plus :attr:`ktx2_fallback`; KTX2
         without a GLB to carry it is inert), the two write-back flags (a
         preset saved before the rename carries
-        ``optimize_textures_write_back``), the verification row, the size
+        ``optimize_textures_write_back``), the verification row, the rig-helper
+        row (inert on a USD run, with a note), the size
         dial and the three GLB optimisation dials (secondary map size, UASTC
         RDO, key reduction -- each None when off; the key reduction rides
         Optimize Keys and is inert without it). A GLB-only format drops
@@ -1107,6 +1153,18 @@ class ExportRun:
                 )
             )
             key_tolerance = None
+        drop_rig_apparatus = bool(tasks.pop("drop_rig_apparatus", False))
+        if drop_rig_apparatus and output_format == "usd":
+            # The pass edits a written FBX; a USD layer has none, and its
+            # writer samples the live scene, so nothing reaches it. Inert.
+            notes.append(
+                (
+                    "info",
+                    "Exclude Rig Helpers ignored: it edits the written FBX, and "
+                    "the output format is USD.",
+                )
+            )
+            drop_rig_apparatus = False
         if output_format == "glb":
             skipped = [key for key in cls.FBX_KEY_HYGIENE if tasks.pop(key, None)]
             if skipped:
@@ -1138,5 +1196,6 @@ class ExportRun:
             ),
             optimize_textures=bool(optimize),
             verify_deliverables=bool(tasks.pop("verify_deliverables", False)),
+            drop_rig_apparatus=drop_rig_apparatus,
         )
         return run.with_tasks(tasks), tasks, notes

@@ -87,7 +87,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: times, start, end, duration, key_count, rescale, to_dict, from_dict
 - `class StashChanged`
 - `class KeyStash(_KeyStashInternal)`
-  - methods: add_clip, get_clip, remove_clip, clips_for_object, clips_for_shot, is_empty, set_preview, clear_preview, is_previewing, add_listener, remove_listener, batch_update, rescale_to_fps, mark_dirty, save, to_dict, from_dict, set_persistence, active, invalidate, add_invalidation_listener, remove_invalidation_listener, offset_for, gate_range
+  - methods: add_clip, get_clip, remove_clip, clips_for_object, clips_for_shot, is_empty, set_preview, clear_preview, is_previewing, add_listener, remove_listener, batch_update, rescale_to_fps, mark_dirty, save, to_dict, merge_record, respell_record, from_dict, set_persistence, active, invalidate, flush_pending, add_invalidation_listener, remove_invalidation_listener, offset_for, gate_range
 
 ### `core_utils/engines/rig_graph/rig_capability.py` — What ONE target can actually build — the capability manifest.
 - constants: FIDELITIES
@@ -201,7 +201,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class BatchComplete(StoreEvent)`
 - `class StoreInvalidated(StoreEvent)`
 - `class ShotStore(_ShotStoreInternal)`
-  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, is_empty, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, invalidate, snap, compute_gap, sorted_shots, shot_by_id, shot_by_name, name_error, unique_among, unique_name, default_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, export_records, produce_export_records, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs, declared_range
+  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, is_empty, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, invalidate, flush_pending, snap, compute_gap, sorted_shots, shot_by_id, shot_by_name, name_error, unique_among, unique_name, default_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, export_records, produce_export_records, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs, declared_range
 
 ### `core_utils/engines/shots/shot_plan.py` — Pure planning layer for multi-shot topology transformations.
 - `class ShotBoundaryConflict(RuntimeError)`
@@ -215,7 +215,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/shots/shot_transfer.py` — Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
 - `class ShotTransfer(_ShotTransferInternal)`
-  - methods: swap_up_axis, encode, decode, merge
+  - methods: swap_up_axis, encode, decode, merge, section_out, section_in, merge_record, respell_record
 
 ### `core_utils/engines/textures/map_compositor.py` — Pure image-compositing engine — alpha-composite layered texture maps
 - `class BatchResult(Enum)`
@@ -260,7 +260,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/textures/map_optimizer.py` — Plan, assess, and apply map (texture) optimizations.
 - `class Op`
 - `class MapOptimizer(HelpMixin)`
-  - methods: resolve_size_clamp, describe_size_clamp, plan, project, apply, resolve_quality, resolve_compression, optimize_map, channel_loss_warning, format_result, batch_optimize_maps, is_recompressible, optimize_maps, stage_maps, assess
+  - methods: resolve_size_clamp, describe_size_clamp, plan, project, apply, resolve_quality, resolve_compression, resolve_uastc_rdo, optimize_map, channel_loss_warning, format_result, batch_optimize_maps, is_recompressible, optimize_maps, stage_maps, assess
 
 ### `core_utils/engines/textures/map_registry.py`
 - `class WF`
@@ -290,7 +290,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class RegionMaskManifest`
   - methods: vertex_color, channels, to_dict, to_json, from_dict, from_json, save, load
 - `class RegionGroupRegistry`
-  - methods: empty, read, write, sanitize, groups, next_slot, add, remove, set_default, set_attr, compact, set_encoding, manifest
+  - methods: merge_record, empty, read, write, sanitize, groups, next_slot, add, remove, set_default, set_attr, compact, set_encoding, manifest
 - `class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal)`
   - methods: groups, add_group, validate, rasterize, write, preview
 
@@ -314,7 +314,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class ExportProfile`
   - methods: legal_name, widget_key, value_method, run_config, read_values, texture_size_limit_bytes, strip_deliverable_extension, fold_legacy_regex, fold_legacy_naming, resolve_output_path, naming_report, scoped_tables, task_order, unimplemented, optimize_textures_options, texture_file_type_options, frame_rate_options
 - `class ExportRun`
-  - methods: glb_only, create_glb, usd, replace, with_tasks, from_tasks
+  - methods: glb_only, create_glb, usd, replace, clip_mode, with_tasks, from_tasks
 
 ### `core_utils/handoff_manifest.py` — The hand-off sidecar -- what an FBX or USD payload cannot carry by itself.
 - `class HandoffManifest(_HandoffManifestInternal)`
@@ -436,18 +436,23 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/scene_records.py` — Scene records -- every piece of tool-authored scene metadata, declared once.
 - `class Scope(str, Enum)`
 - `class Kind(str, Enum)`
+- `class Merge(str, Enum)`
 - `class Record`
   - methods: key, text, save
 - `class RecordSpec`
   - methods: make, encode, decode, read_text, write_text, load, save, clear, is_present
 - `class SceneRecords`
-  - methods: rendering_policy, all, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
+  - methods: resolve_class, codec, portable, rendering_policy, all, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
 - `class SceneStoreBase`
-  - methods: name, read, write, values, keys, channels, dump, format_dump
+  - methods: name, read, write, values, keys, channels, dump, format_dump, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
 - `class ExportContext`
   - methods: record, refreshes
 - `class ExportSnapshot`
   - methods: assemble, publish, commit, records, record, channels, summary
+- `class TransferContext`
+  - methods: note, adapter, spell, respell
+- `class RecordTransfer`
+  - methods: between, incoming, rederive, is_empty, summary, payloads, apply, merge_record, respell, union, sections, receive
 
 ### `core_utils/schema_spec.py` — Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 - constants: MISSING
@@ -518,7 +523,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - constants: FBX2GLTF_VERSION, FBX2GLTF_PLATFORMS
 - `class MeshConvert(HelpMixin)`
-  - methods: conversion_timeout, bake_node_frames, OPTIMIZE_WORKERS, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, effect_preview_channels, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, apply_glb_fades, prune_glb_animations, compact_glb_animations, reduce_glb_animations, drop_glb_texture_fallbacks, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
+  - methods: conversion_timeout, bake_node_frames, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, effect_preview_channels, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, apply_glb_fades, prune_glb_animations, compact_glb_animations, reduce_glb_animations, drop_glb_texture_fallbacks, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
 
 ### `file_utils/mesh_convert/export_verify.py` — Deliverable verification for exported FBX / GLB pairs.
 - `class Finding`
@@ -534,7 +539,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/fbx_media.py` — Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 - `class FbxMedia(_FbxMediaInternal)`
-  - methods: embedded, downsize, expand_grayscale, drop_takes, rewrite
+  - methods: embedded, downsize, expand_grayscale, drop_takes, drop_apparatus, rewrite
 
 ### `file_utils/mesh_convert/glb_clips.py` — Rebuild a GLB's shot clips from its one whole-timeline animation.
 - `class GlbClips(_GlbClipsInternal)`
@@ -656,7 +661,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `img_utils/_img_utils.py`
 - `class ImgUtils(HelpMixin)`
-  - methods: encode_workers, effective_mode, dropped_channels, channels_carrying_data, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, ensure_ktx2_encoder, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, rasterize_height_fields, rasterize_height_spans, rasterize_shadow, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
+  - methods: encode_workers, effective_mode, dropped_channels, channels_carrying_data, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, settle_ktx2_encoder, ensure_ktx2_encoder, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, rasterize_height_fields, rasterize_height_spans, rasterize_shadow, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
 
 ### `img_utils/exposure_equalizer.py` — Cross-set exposure / white-balance equalization.
 - `class ExposureEqualizer`
@@ -669,7 +674,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `img_utils/ktx2_encoder.py` — KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
 - constants: KTX_SOFTWARE_VERSION, KTX_SOFTWARE_PLATFORMS, KTX_SOFTWARE_SHA256
 - `class Ktx2Encoder`
-  - methods: encode_timeout, toktx, not_installed_error, resolve_toktx, available, read_header, args_for, encode
+  - methods: encode_timeout, toktx, not_installed_error, resolve_toktx, available, read_header, rdo_for, rdo_kwargs, rdo_dictionary, args_for, encode
 
 ### `img_utils/mask_generator.py` — Background mask generation via rembg (optional dependency).
 - `class MaskGenerator`

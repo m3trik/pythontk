@@ -31,7 +31,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from pythontk import FileUtils, ImgUtils, MeshConvert
+from pythontk import FileUtils, ImgUtils, Ktx2Encoder, MeshConvert
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
 from pythontk.file_utils.mesh_convert.glb_clips import GlbClips
@@ -5842,6 +5842,7 @@ class _FakeKtx2Encoder:
         mipmaps=True,
         quality=None,
         uastc_rdo=None,
+        uastc_rdo_dictionary=None,
     ):
         self.calls.append(
             {
@@ -5850,6 +5851,7 @@ class _FakeKtx2Encoder:
                 "quality": quality,
                 "size": getattr(source, "size", None),
                 "rdo": uastc_rdo,
+                "rdo_dictionary": uastc_rdo_dictionary,
             }
         )
         with open(output, "wb") as fh:
@@ -5879,6 +5881,28 @@ class TestWebDeliveryDials(unittest.TestCase):
         self.assertEqual(MeshConvert._uastc_rdo_for("data", 2.0), 2.0)
         self.assertEqual(MeshConvert._uastc_rdo_for("normal", 2.0), 0.75)
         self.assertEqual(MeshConvert._uastc_rdo_for("normal", 0.5), 0.5)
+        # One cap, owned by the codec: the map optimizer applies the same one.
+        self.assertEqual(
+            MeshConvert.UASTC_RDO_NORMAL_MAX, Ktx2Encoder.UASTC_RDO_NORMAL_MAX
+        )
+
+    def test_the_rdo_dictionary_is_web_delivery_policy(self):
+        """A web export runs RDO on a smaller dictionary than toktx's 4096: the
+        window is where RDO's time goes (a production set's own maps through
+        this pass: 245 s at 4096, 129 s at 1024, +2.2% bytes), and the
+        maintainer's call is that those bytes do not justify the time on an
+        export. Unspecified takes the policy, a size is the caller's, ``0`` is
+        toktx's own. Added: 2026-09-19"""
+        policy = MeshConvert.web_delivery_texture_params()
+        self.assertEqual(policy["uastc_rdo_dictionary"], 1024)
+        self.assertEqual(
+            MeshConvert.WEB_DELIVERY_UASTC_RDO_DICTIONARY,
+            policy["uastc_rdo_dictionary"],
+        )
+        chosen = MeshConvert.web_delivery_texture_params(uastc_rdo_dictionary=256)
+        self.assertEqual(chosen["uastc_rdo_dictionary"], 256)
+        toktx_own = MeshConvert.web_delivery_texture_params(uastc_rdo_dictionary=0)
+        self.assertIsNone(toktx_own["uastc_rdo_dictionary"])
 
     def test_the_pass_description_names_the_dials(self):
         summary = {"images": 3, "bytes_before": 3e6, "bytes_after": 1e6, "resized": 1}
@@ -5887,8 +5911,20 @@ class TestWebDeliveryDials(unittest.TestCase):
         )
         self.assertIn("data maps capped at 2048px", text)
         self.assertIn("UASTC RDO lambda 1", text)
+        self.assertNotIn("dictionary", text)
         self.assertNotIn(
             "capped", MeshConvert.describe_texture_pass(summary, "KTX2", 4096)
+        )
+        sized = MeshConvert.describe_texture_pass(
+            summary, "KTX2", 4096, uastc_rdo=1.0, uastc_rdo_dictionary=1024
+        )
+        self.assertIn("UASTC RDO lambda 1 (dictionary 1024)", sized)
+        # A dictionary with no RDO pass means nothing, so it is not claimed.
+        self.assertNotIn(
+            "dictionary",
+            MeshConvert.describe_texture_pass(
+                summary, "KTX2", 4096, uastc_rdo_dictionary=1024
+            ),
         )
 
 
@@ -5921,6 +5957,7 @@ class TestWebDeliveryTexturePolicy(unittest.TestCase):
                 "ktx2_fallback": False,
                 "secondary_max_size": 0,
                 "uastc_rdo": None,
+                "uastc_rdo_dictionary": MeshConvert.WEB_DELIVERY_UASTC_RDO_DICTIONARY,
             },
         )
 
@@ -5957,6 +5994,7 @@ class TestWebDeliveryTexturePolicy(unittest.TestCase):
                 "ktx2_fallback": MeshConvert.WEB_DELIVERY_KTX2_FALLBACK,
                 "secondary_max_size": MeshConvert.WEB_DELIVERY_SECONDARY_MAX_SIZE,
                 "uastc_rdo": MeshConvert.WEB_DELIVERY_UASTC_RDO,
+                "uastc_rdo_dictionary": MeshConvert.WEB_DELIVERY_UASTC_RDO_DICTIONARY,
             },
         )
 
@@ -6084,6 +6122,39 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
             self._pbr_glb(), max_size=256, image_format="KTX2"
         )
         self.assertEqual({c["rdo"] for c in self.fake.calls}, {None})
+
+    def test_the_rdo_dictionary_rides_only_an_rdo_encode(self):
+        """The web-delivery dictionary reaches every UASTC encode that runs RDO,
+        and nothing else: not ETC1S (no RDO stage), not an encode with RDO off
+        (toktx rejects the flag there), and ``None`` leaves toktx to its own.
+        Added: 2026-09-19"""
+        MeshConvert.optimize_glb_textures(
+            self._pbr_glb(), max_size=256, image_format="KTX2", uastc_rdo=1.0
+        )
+        self.assertEqual(
+            sorted({(c["codec"], c["rdo_dictionary"]) for c in self.fake.calls}),
+            [("ETC1S", None), ("UASTC", MeshConvert.WEB_DELIVERY_UASTC_RDO_DICTIONARY)],
+        )
+        for kwargs in ({}, {"uastc_rdo": 1.0, "uastc_rdo_dictionary": None}):
+            with self.subTest(**kwargs):
+                self.fake.calls.clear()
+                MeshConvert.optimize_glb_textures(
+                    self._pbr_glb(), max_size=256, image_format="KTX2", **kwargs
+                )
+                self.assertEqual({c["rdo_dictionary"] for c in self.fake.calls}, {None})
+
+    def test_a_bad_rdo_dial_is_refused_before_any_encode(self):
+        """A typo in either dial is the caller's error, raised up front. Caught
+        inside the per-image encode it read as one failed encode per image,
+        each keeping its original PNG -- a GLB that ships raw maps under a
+        pass that "ran". Added: 2026-09-19"""
+        for kwargs in ({"uastc_rdo": 11}, {"uastc_rdo": 1.0, "uastc_rdo_dictionary": 63}):
+            with self.subTest(**kwargs):
+                with self.assertRaises(ValueError):
+                    MeshConvert.optimize_glb_textures(
+                        self._pbr_glb(), max_size=256, image_format="KTX2", **kwargs
+                    )
+                self.assertEqual(self.fake.calls, [])
 
     def test_per_slot_codecs_and_fallback_binding(self):
         """Color -> ETC1S/sRGB, normal -> UASTC/linear; with fallbacks asked

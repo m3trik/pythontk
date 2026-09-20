@@ -19,6 +19,7 @@ the store runs in pure in-memory mode.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import (
     Any,
@@ -901,6 +902,18 @@ class ShotStore(_ShotStoreInternal):
         cls._notify_invalidated()
 
     @classmethod
+    def flush_pending(cls) -> None:
+        """Store what the active store holds but has not written yet.
+
+        A DCC store coalesces its writes (Maya's on idle), so the scene record
+        can be an edit behind the live store.  A crossing reads the record
+        (the owner hook ``SceneStoreBase`` calls first), and so does any
+        caller that must see the store as the user does.
+        """
+        if cls._active is not None:
+            cls._active._flush_dirty()
+
+    @classmethod
     def _notify_invalidated(cls) -> None:
         """Fire all invalidation listeners."""
         event = StoreInvalidated()
@@ -992,16 +1005,41 @@ class ShotStore(_ShotStoreInternal):
 
     # ---- frame snapping --------------------------------------------------
 
-    def snap(self, frame: float) -> float:
-        """Return *frame* rounded to the nearest integer when snapping is on.
+    def snap(self, frame: float, direction: str = "nearest") -> float:
+        """Return *frame* on a whole frame when snapping is on.
 
         Single chokepoint for the ``snap_whole_frames`` policy.  Call at
         any site that writes a frame value to a shot, keyframe, or
         timeline range to guarantee the in-memory model stays valid.
+
+        Parameters:
+            frame: The frame to snap.
+            direction: ``"nearest"`` (the default) rounds.  ``"down"`` /
+                ``"up"`` floor / ceil, for a bound that must ENCLOSE content
+                -- a start snaps down, an end up.  Rounded, a start could land
+                up to half a frame past a shot's first key (a retime leaves
+                keys on fractional frames: 984.556 -> 985), putting that key
+                in the span the bound gave up and in the neighbour's envelope
+                from the next edit on.
+
+        Returns:
+            The snapped frame, or *frame* unchanged when snapping is off.
+
+        Raises:
+            ValueError: *direction* is none of the three (a typo would
+                otherwise round silently).
         """
-        if self.snap_whole_frames:
-            return float(round(frame))
-        return float(frame)
+        if direction not in ("nearest", "down", "up"):
+            raise ValueError(
+                f"snap direction must be 'nearest', 'down' or 'up', not {direction!r}"
+            )
+        if not self.snap_whole_frames:
+            return float(frame)
+        if direction == "down":
+            return float(math.floor(frame + 1e-6))
+        if direction == "up":
+            return float(math.ceil(frame - 1e-6))
+        return float(round(frame))
 
     # ---- derived queries --------------------------------------------------
 

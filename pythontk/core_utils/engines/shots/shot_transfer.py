@@ -121,6 +121,53 @@ class _ShotTransferInternal(object):
             return 1.0
         return float(target_fps) / src
 
+    @staticmethod
+    def _frame(value: Any, ratio: float, offset: float, snap: bool) -> float:
+        """*value* on another clock: scaled by *ratio*, then shifted by
+        *offset* -- onto a whole frame when *snap*."""
+        t = float(value) * ratio + offset
+        return float(round(t)) if snap else round(t, 4)
+
+    @classmethod
+    def _on_clock(
+        cls,
+        store: Dict[str, Any],
+        ratio: float,
+        offset: float = 0.0,
+        snap: Optional[bool] = None,
+        ledger: bool = True,
+    ) -> Dict[str, Any]:
+        """A copy of *store* (a ``to_dict`` shape) with its times on another
+        clock -- scaled by *ratio*, then shifted by *offset*: shot bounds
+        (whole frames when *snap* -- the RECEIVING store's policy, default
+        this store's own), markers, the gap (a length, so scaled only) and,
+        unless *ledger* is off, the ledger claims (:meth:`decode` rebuilds
+        the ledger from the section's own, so it skips that work).  What
+        :meth:`~pythontk.ShotStore.rescale_to_fps` does to a live store,
+        done on data."""
+        out = deepcopy(store)
+        if snap is None:
+            snap = bool(store.get("snap_whole_frames", True))
+        for shot in out.get("shots") or []:
+            shot["start"] = cls._frame(shot.get("start", 0.0), ratio, offset, snap)
+            shot["end"] = cls._frame(shot.get("end", 0.0), ratio, offset, snap)
+        for marker in out.get("markers") or []:
+            if "time" in marker:
+                marker["time"] = round(float(marker["time"]) * ratio + offset, 4)
+        if ratio != 1.0:
+            out["gap"] = round(float(store.get("gap") or 0.0) * ratio, 2)
+        if ledger and out.get("edit_ledger"):
+            # Canonical first, so a legacy record shape retimes too.
+            canonical = ShotEditLedger.from_dict(out["edit_ledger"]).to_dict()
+            out["edit_ledger"] = {
+                reg: {
+                    curve: cls._retime(records, ratio, offset)
+                    for curve, records in claims.items()
+                }
+                for reg, claims in canonical.items()
+            }
+        return out
+
 
 class ShotTransfer(_ShotTransferInternal):
     """Encode a shot store into a manifest section and decode it into a store.
@@ -338,10 +385,6 @@ class ShotTransfer(_ShotTransferInternal):
         offset = float(frame_offset or 0.0)
         snap = bool(source.get("snap_whole_frames", True))
 
-        def frame(value: Any) -> float:
-            t = float(value) * ratio + offset
-            return float(round(t)) if snap else round(t, 4)
-
         def resolve_list(names: Iterable[str], keep_missing: bool) -> List[str]:
             out = []
             for name in names or []:
@@ -355,18 +398,17 @@ class ShotTransfer(_ShotTransferInternal):
         def resolve_or_keep(name: str) -> str:
             return str(resolve(str(name)) or name)
 
-        store: Dict[str, Any] = deepcopy(source)
+        # The ledger is rebuilt below from the section's own claims.
+        store = cls._on_clock(source, ratio, offset, ledger=False)
         store["shots"] = [
             {
                 **shot,
-                "start": frame(shot.get("start", 0.0)),
-                "end": frame(shot.get("end", 0.0)),
                 "objects": resolve_list(shot.get("objects") or [], keep_missing=False),
                 "metadata": cls._spell_metadata(
                     shot.get("metadata") or {}, resolve_or_keep
                 ),
             }
-            for shot in source.get("shots") or []
+            for shot in store.get("shots") or []
         ]
         store["hidden_objects"] = resolve_list(
             source.get("hidden_objects") or [], keep_missing=False
@@ -374,15 +416,6 @@ class ShotTransfer(_ShotTransferInternal):
         store["pinned_objects"] = resolve_list(
             source.get("pinned_objects") or [], keep_missing=True
         )
-        markers = []
-        for marker in source.get("markers") or []:
-            marker = dict(marker)
-            if "time" in marker:
-                marker["time"] = round(float(marker["time"]) * ratio + offset, 4)
-            markers.append(marker)
-        store["markers"] = markers
-        if ratio != 1.0:
-            store["gap"] = round(float(source.get("gap") or 0.0) * ratio, 2)
         if scene_fps is not None:
             store["scene_fps"] = float(scene_fps)
 
@@ -409,7 +442,7 @@ class ShotTransfer(_ShotTransferInternal):
                 clip = dict(clip)
                 for key in ("start", "end"):
                     if clip.get(key) is not None:
-                        clip[key] = frame(clip[key])
+                        clip[key] = cls._frame(clip[key], ratio, offset, snap)
                 if clip.get("offset"):
                     clip["offset"] = round(float(clip["offset"]) * ratio, 4)
                 clips.append(clip)
@@ -443,42 +476,74 @@ class ShotTransfer(_ShotTransferInternal):
     # ------------------------------------------------------------------- merge
     @classmethod
     def merge(
-        cls, existing: Optional[Dict[str, Any]], incoming: Dict[str, Any]
+        cls,
+        existing: Optional[Dict[str, Any]],
+        incoming: Dict[str, Any],
+        id_map: Optional[Dict[int, int]] = None,
     ) -> Dict[str, Any]:
         """*incoming* (a decoded store dict) folded into *existing*'s.
 
         A scene without shots adopts the incoming store whole -- settings
         included -- which is the 1:1 case (a clean-slate send, a pull into a
         new scene, a reference bake).  A scene that already has shots keeps
-        its own settings and gains the incoming shots after its last one under
-        fresh ids: memberships, hidden / pinned lists, markers, locked gaps and
-        ledger claims come along, with every shot id (a locked gap's pair, a
-        claim's owner) remapped to the id the shot was given.  An incoming
-        name one of the scene's shots already has (ignoring case -- two
-        stores can each be unique and still collide) is numbered through
-        :meth:`~pythontk.ShotStore.unique_among`, so the merged store holds
-        only names its own tools would accept.
+        its own settings and clock and gains the incoming shots after its last
+        one under fresh ids: memberships, hidden / pinned lists, markers,
+        locked gaps and ledger claims come along, with every shot id (a locked
+        gap's pair, a claim's owner) remapped to the id the shot was given,
+        and every time rescaled onto the scene's clock when the two stores'
+        ``scene_fps`` differ -- the DCC lands the other scene's keys at the
+        same seconds, so its shots must land there too.
+
+        A merge renames a shot only to resolve a clash: an incoming name that
+        exports as one of the scene's shots already does (by clip spelling,
+        ignoring case -- two stores can each be unique and still collide) is
+        numbered through :meth:`~pythontk.ShotStore.unique_among`, a legal
+        name whatever the incoming spelling.  Any other name arrives as it
+        was saved, a legacy spelling included, as a store adopted whole
+        keeps it.
+
+        *id_map*, when given, is filled with each incoming shot id -> the id
+        it has in the result (identity when the store is adopted whole).
         """
         if not incoming.get("shots") and not incoming.get("markers"):
             # Channels or audio alone: the scene's own store stands as it is.
             return deepcopy(existing) if existing else deepcopy(incoming)
         if not existing or not existing.get("shots"):
+            if id_map is not None:
+                id_map.update(
+                    {
+                        int(s["shot_id"]): int(s["shot_id"])
+                        for s in incoming.get("shots") or []
+                    }
+                )
             return deepcopy(incoming)
         out = deepcopy(existing)
+        ratio = cls._ratio(incoming.get("scene_fps"), out.get("scene_fps"))
+        if ratio != 1.0:
+            # This scene's settings stand, its snap policy included: a module
+            # saved without snapping must not land fractional bounds here.
+            incoming = cls._on_clock(
+                incoming, ratio, snap=out.get("snap_whole_frames", True)
+            )
         taken = [int(s["shot_id"]) for s in out.get("shots") or []]
         next_id = (max(taken) + 1) if taken else 1
-        id_map: Dict[int, int] = {}
+        local_ids: Dict[int, int] = {}
         names = [str(s.get("name") or "") for s in out.get("shots") or []]
+        clips = {ShotStore._clip_key(name) for name in names}
         for shot in sorted(
             incoming.get("shots") or [],
             key=lambda s: (s.get("start", 0.0), s["shot_id"]),
         ):
             shot = deepcopy(shot)
-            id_map[int(shot["shot_id"])] = next_id
+            local_ids[int(shot["shot_id"])] = next_id
             shot["shot_id"] = next_id
             next_id += 1
-            shot["name"] = ShotStore.unique_among(str(shot.get("name") or ""), names)
-            names.append(shot["name"])
+            name = str(shot.get("name") or "")
+            if ShotStore._clip_key(name) in clips:
+                name = ShotStore.unique_among(name, names)
+            shot["name"] = name
+            names.append(name)
+            clips.add(ShotStore._clip_key(name))
             out["shots"].append(shot)
         for key in cls.OBJECT_LIST_KEYS:
             out[key] = cls._unique(
@@ -489,20 +554,23 @@ class ShotTransfer(_ShotTransferInternal):
         ]
         gaps = [list(pair) for pair in out.get("locked_gaps") or []]
         for left, right in incoming.get("locked_gaps") or []:
-            if int(left) in id_map and int(right) in id_map:
-                gaps.append([id_map[int(left)], id_map[int(right)]])
+            if int(left) in local_ids and int(right) in local_ids:
+                gaps.append([local_ids[int(left)], local_ids[int(right)]])
         out["locked_gaps"] = gaps
-        ledger = deepcopy(out.get("edit_ledger") or {})
-        incoming_ledger = incoming.get("edit_ledger") or {}
+        # Canonical first (fresh lists): the ledger loads its legacy bare-time
+        # records as unowned samples, so the merge takes them too.
+        ledger = ShotEditLedger.from_dict(out.get("edit_ledger")).to_dict()
+        incoming_ledger = ShotEditLedger.from_dict(
+            incoming.get("edit_ledger")
+        ).to_dict()
         for reg in cls._REGISTERS:
             target = ledger.setdefault(reg, {})
             for curve, records in (incoming_ledger.get(reg) or {}).items():
                 have = target.setdefault(curve, [])
                 for rec in records:
-                    rec = list(rec)
                     if reg == "keys" and len(rec) > 1:
                         try:
-                            rec[1] = id_map.get(int(rec[1]), rec[1])
+                            rec[1] = local_ids.get(int(rec[1]), rec[1])
                         except (TypeError, ValueError):
                             pass
                     if rec not in have:
@@ -510,4 +578,111 @@ class ShotTransfer(_ShotTransferInternal):
             if not target:
                 ledger.pop(reg, None)
         out["edit_ledger"] = ledger
+        if id_map is not None:
+            id_map.update(local_ids)
+        return out
+
+    # ---------------------------------------------------- the record's section
+    @classmethod
+    def section_out(cls, state: Dict[str, Any], ctx: Any) -> Optional[Dict[str, Any]]:
+        """The ``shots`` section for a store crossing with no DCC owner
+        (``RecordTransfer.sections``): :meth:`encode` in the carrier's
+        spelling, scoped to what ships -- the store alone, since no DCC is
+        there to add channels or audio.  The section's shape is this codec's
+        (what every consumer :meth:`decode`\\ s), so the bare record never
+        rides under its name."""
+        return cls.encode(state, spell=ctx.spell, objects=ctx.objects)
+
+    @classmethod
+    def section_in(cls, section: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
+        """A store dict for a received ``shots`` section with no DCC owner to
+        land it (``RecordTransfer.receive``): :meth:`decode`, names resolved
+        through ``ctx.rename`` and the importer's ``frame_offset`` /
+        ``converted`` adapters when it carries them.  The clock is the
+        merge's (:meth:`merge_record` rescales onto this scene's)."""
+        return cls.decode(
+            section,
+            resolve=ctx.rename,
+            frame_offset=float(ctx.adapter("frame_offset", 0.0) or 0.0),
+            converted=ctx.adapter("converted"),
+        )
+
+    @classmethod
+    def merge_record(
+        cls,
+        own: Optional[Dict[str, Any]],
+        other: Optional[Dict[str, Any]],
+        ctx: Any = None,
+    ) -> Optional[Dict[str, Any]]:
+        """The ``shot_store`` record's merge (``SceneRecords.CODECS``).
+
+        :meth:`merge`, for another scene's store arriving beside this one's --
+        a referenced module whose reference is imported, a hand-off landing
+        in a scene with shots.  *other* is already respelled for this scene.
+        The renumbering is published as ``ctx.remaps["shot_id"]`` (the key
+        stash follows its clips' source shots through it); a shot numbered to
+        resolve a clash, and a rescale onto this scene's clock, are noted --
+        nothing changes silently.
+        """
+        if not other:
+            return own
+        id_map: Dict[int, int] = {}
+        merged = cls.merge(own, other, id_map=id_map)
+        if ctx is not None:
+            ctx.remaps["shot_id"] = dict(id_map)
+            by_id = {int(s["shot_id"]): s for s in merged.get("shots") or []}
+            for shot in other.get("shots") or []:
+                arrived = by_id.get(id_map.get(int(shot["shot_id"])))
+                if arrived is not None and arrived.get("name") != shot.get("name"):
+                    ctx.note(
+                        f"Shot {shot.get('name')!r} arrives as "
+                        f"{arrived.get('name')!r} (one of this scene's shots "
+                        "already exports under that name)."
+                    )
+            shots = other.get("shots") or []
+            ratio = cls._ratio(other.get("scene_fps"), (own or {}).get("scene_fps"))
+            if shots and (own or {}).get("shots") and ratio != 1.0:
+                ctx.note(
+                    f"Shots: {len(shots)} shot(s) rescaled from "
+                    f"{float(other['scene_fps']):g} to {float(own['scene_fps']):g} fps."
+                )
+        return merged
+
+    @classmethod
+    def respell_record(cls, state: Optional[Dict[str, Any]], ctx: Any) -> Any:
+        """*state* (a store dict another scene saved) with the names it holds
+        put through ``ctx.spell`` -- the ``shot_store`` record's respelling
+        (``RecordTransfer.respell``).
+
+        Exactly the fields :meth:`encode` spells: each shot's members and
+        object metadata, the hidden / pinned lists, and the ledger's curve
+        keys (the ledger canonicalised first, so a legacy shape respells
+        too).  Shot names, markers and every other string stay as they are:
+        a shot named like a node the crossing renamed keeps its name.
+        """
+        if not state:
+            return state
+        spell = ctx.spell
+        out = deepcopy(state)
+        out["shots"] = [
+            {
+                **shot,
+                "objects": [spell(str(o)) for o in shot.get("objects") or []],
+                "metadata": cls._spell_metadata(shot.get("metadata") or {}, spell),
+            }
+            for shot in out.get("shots") or []
+        ]
+        for key in cls.OBJECT_LIST_KEYS:
+            if key in out:
+                out[key] = [spell(str(n)) for n in out.get(key) or []]
+        if out.get("edit_ledger"):
+            canon = ShotEditLedger.from_dict(out["edit_ledger"]).to_dict()
+            out["edit_ledger"] = {
+                reg: (
+                    {spell(str(curve)): recs for curve, recs in claims.items()}
+                    if isinstance(claims, dict)
+                    else claims
+                )
+                for reg, claims in canon.items()
+            }
         return out

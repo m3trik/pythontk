@@ -1199,6 +1199,36 @@ class TestStoreHooks(_ShotTest):
         self.assertEqual(s._resolve_long_names(["a", "b"]), ["a", "b"])
         self.assertEqual(s._scene_fps(), s.scene_fps)
 
+    def test_flush_pending_stores_what_the_active_store_holds_unwritten(self):
+        """A DCC store writes on idle (Maya coalesces a mutation into one
+        deferred write), so its record can be an edit behind; a crossing
+        reads the record, and asks for what the live store holds first."""
+
+        class Backend:
+            data, saves = None, 0
+
+            def load(self):
+                return self.data
+
+            def save(self, data):
+                self.data, self.saves = data, self.saves + 1
+
+        class Deferred(ShotStore):
+            def _schedule_flush(self):
+                """Writes on idle, as a DCC store does."""
+
+        backend = Backend()
+        Deferred._persistence, Deferred._active = backend, None
+        try:
+            Deferred.active().define_shot("A", 0.0, 10.0)
+            self.assertEqual(backend.saves, 0)
+            Deferred.flush_pending()
+            self.assertEqual([s["name"] for s in backend.data["shots"]], ["A"])
+            Deferred.flush_pending()
+            self.assertEqual(backend.saves, 1)  # nothing pending: nothing written
+        finally:
+            Deferred._persistence, Deferred._active = None, None
+
 
 class _RecordingStore(ShotStore):
     """Stand-in for a DCC subclass: records what the publish hook was handed.
@@ -1436,6 +1466,89 @@ class TestDetectionConstants(_ShotTest):
         self.assertIn("translateX", STANDARD_TRANSFORM_ATTRS)
         self.assertIn("visibility", STANDARD_TRANSFORM_ATTRS)
         self.assertEqual(len(STANDARD_TRANSFORM_ATTRS), 10)
+
+
+class TestSnapEnclosesContent(unittest.TestCase):
+    """``ShotStore.snap(frame, direction)``: a bound that must ENCLOSE
+    content snaps outward.
+
+    Rounded to the nearest frame, a start could land up to half a frame PAST
+    a shot's first key -- a retime leaves keys on fractional frames: measured
+    on the production assembly, a trim moved "Step 4.1"'s start to 985 over
+    its fade's first key at 984.556, leaving that key in the span the trim
+    gave up, where the neighbour's envelope carries it on the next edit.
+    Added: 2026-09-19
+    """
+
+    def test_nearest_is_unchanged_and_down_up_enclose(self):
+        store = ShotStore()
+        self.assertEqual(store.snap(984.556), 985.0)
+        self.assertEqual(store.snap(984.556, "down"), 984.0)
+        self.assertEqual(store.snap(1031.222, "up"), 1032.0)
+        self.assertEqual(store.snap(40.0, "down"), 40.0, "a whole frame stays")
+        # Float noise off a whole frame is not a frame of content.
+        self.assertEqual(store.snap(40.0000001, "up"), 40.0)
+        self.assertEqual(store.snap(39.9999999, "down"), 40.0)
+
+    def test_direction_is_ignored_when_snapping_is_off(self):
+        store = ShotStore()
+        store.snap_whole_frames = False
+        self.assertEqual(store.snap(984.556, "down"), 984.556)
+
+    def test_an_unknown_direction_is_refused(self):
+        with self.assertRaises(ValueError):
+            ShotStore().snap(984.556, "outward")
+
+
+class TestEditLedgerRemap(unittest.TestCase):
+    """``ShotEditLedger.remap`` moves every claim ONCE, all pairs at once.
+
+    Bug: the pairs were applied one after another, so a claim moved onto the
+    source frame of a LATER pair was moved a second time whenever that later
+    key was not claimed itself.  Every mover hands ``remap`` the pairs of ALL
+    the keys it moved, claimed or not, so any ripple whose delta equals a key
+    spacing hit it: measured in Maya, a respace moving a shot +10 over its
+    start pin at 60 and an animator key at 70 left the pin at 70 and its
+    claim at 80 -- on the animator's key, where the next reconcile could cut
+    or disown it while the real pin went unclaimed.
+    Fixed: 2026-09-19
+    """
+
+    def test_a_claim_moves_once_whatever_it_lands_on(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_key("c", 60.0, 1, "start")
+        led.record_step("c", 60.0, "auto", "auto")
+        led.remap("c", [(60.0, 70.0), (70.0, 80.0), (90.0, 100.0)])
+        self.assertEqual(led.key_records("c"), [(70.0, 1, "start")])
+        self.assertEqual(led.step_times("c"), [70.0])
+
+    def test_a_scale_moves_a_claim_once_past_an_unclaimed_key(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_key("c", 25.0, 0, "end")
+        led.remap("c", [(t, t * 2.0) for t in (10.0, 25.0, 50.0)])  # x2 about 0
+        self.assertEqual(led.key_records("c"), [(50.0, 0, "end")])
+
+    def test_claims_that_trade_places_each_move_once(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_key("c", 10.0, 1, "a")
+        led.record_key("c", 20.0, 2, "b")
+        self.assertEqual(led.remap("c", [(10.0, 20.0), (20.0, 10.0)]), 2)
+        self.assertEqual(led.key_records("c"), [(10.0, 2, "b"), (20.0, 1, "a")])
+
+    def test_unclaimed_and_unmoved_pairs_are_ignored(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_key("c", 5.0, 0, "start")
+        self.assertEqual(led.remap("c", [(5.0, 5.0), (7.0, 9.0)]), 0)
+        self.assertEqual(led.remap("other", [(5.0, 6.0)]), 0)
+        self.assertEqual(led.key_records("c"), [(5.0, 0, "start")])
 
 
 class TestBoundaryLedger(unittest.TestCase):

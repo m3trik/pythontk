@@ -273,6 +273,15 @@ class ShotEditLedger(_ShotEditLedgerInternal):
     def remap(self, curve: str, pairs) -> int:
         """Move claims from each ``old_time`` to its ``new_time``.
 
+        Every pair is matched against the claims as they stood BEFORE the
+        call, and all the moves land together.  Applied one after another, a
+        claim moved onto the source frame of a LATER pair was moved a second
+        time whenever that later key was not claimed itself -- and movers
+        hand this the pairs of every key they moved, claimed or not, so any
+        ripple whose delta equals a key spacing did it: a +10 respace over a
+        start pin at 60 and an animator key at 70 left the pin at 70 and its
+        claim at 80, on the animator's key.
+
         Parameters:
             curve: Anim curve node name.
             pairs: ``[(old_time, new_time), ...]``; times not claimed are
@@ -281,21 +290,21 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         Returns:
             The number of claims remapped.
         """
+        todo = [(float(o), float(n)) for o, n in pairs if abs(n - o) >= 1.0e-9]
         moved = 0
-        for old_t, new_t in pairs:
-            if abs(new_t - old_t) < 1.0e-9:
-                continue
-            for reg in self._registers():
-                recs = reg.get(curve)
-                if not recs:
-                    continue
-                i = self._index_of(recs, old_t, self.eps)
-                if i is not None:
-                    recs[i][0] = float(new_t)
-                    moved += 1
         for reg in self._registers():
-            if curve in reg:
-                reg[curve] = self._sorted(reg[curve])
+            recs = reg.get(curve)
+            if not recs:
+                continue
+            landing: Dict[int, float] = {}
+            for old_t, new_t in todo:
+                i = self._index_of(recs, old_t, self.eps)
+                if i is not None and i not in landing:
+                    landing[i] = new_t
+            for i, new_t in landing.items():
+                recs[i][0] = new_t
+            moved += len(landing)
+            reg[curve] = self._sorted(recs)
         return moved
 
     # ---- disposal ---------------------------------------------------------

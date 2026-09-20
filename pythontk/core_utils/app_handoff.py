@@ -329,14 +329,34 @@ class HandoffBridge(LoggingMixin):
         return self.app_path
 
     # ------------------ Parameters ------------------------------------------
+    #: Resolves a parameter key a caller or a saved preset may still spell the
+    #: retired way to its live key -- a :meth:`~pythontk.Deprecation.values`
+    #: resolver (wrapped in ``staticmethod``), so each retirement is on the
+    #: deprecation roster from import and warns when used.  ``None``: no key
+    #: was ever renamed.  :meth:`merge_params` applies it.
+    param_aliases: Optional[Callable[[str], str]] = None
+
     def params_defaults(self) -> Dict[str, Any]:
         """Return ``{key: default}`` for the bridge's tunable params (default empty)."""
         return {}
 
     def merge_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        """Merge *params* over :meth:`params_defaults` (user values win)."""
+        """Merge *params* over :meth:`params_defaults` (user values win).
+
+        A value under a key :attr:`param_aliases` retires moves to the live
+        key -- before the merge, so the live key's default cannot shadow it --
+        unless the live key was given too, which then wins.
+        """
+        given = dict(params or {})
+        resolve = self.param_aliases
+        if resolve is not None:
+            for key in list(given):
+                live = resolve(key)
+                if live != key:
+                    value = given.pop(key)
+                    given.setdefault(live, value)
         merged = self.params_defaults()
-        merged.update(params or {})
+        merged.update(given)
         return merged
 
     # ------------------ Carrier ---------------------------------------------
