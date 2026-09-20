@@ -214,17 +214,17 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `HandoffBridge.carrier_of(path: str) -> str` *(static)* — The carrier a payload *path* names, by extension (``"fbx"`` / ``"usd"``).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
   - `HandoffBridge.import_roots(*packages: str) -> List[str]` *(static)* — ``sys.path`` entries that make *packages* importable in a launched child app.
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L732)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L757)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L752)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L777)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L906)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
+- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L926)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
   - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L1058)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L1078)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
   - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1141)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1161)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
   - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app work on them, and re-ingest the result.
@@ -431,10 +431,13 @@ Key stash — park keyframes outside the working animation, retrieve later.
   - `KeyStash.mark_dirty(self) -> None` — Flag the store for saving;
   - `KeyStash.save(self) -> None` — Persist through the configured backend (no-op without one).
   - `KeyStash.to_dict(self) -> Dict[str, Any]`
+  - `KeyStash.merge_record(cls, own: Optional[Dict[str, Any]], other: Optional[Dict[str, Any]], ctx: Any = None) -> Optional[Dict[str, Any]]` *(class)* — The ``key_stash`` record's merge (``SceneRecords.CODECS``).
+  - `KeyStash.respell_record(cls, data: Optional[Dict[str, Any]], ctx: Any) -> Any` *(class)* — *data* (a stash dict another scene saved) with the names it holds
   - `KeyStash.from_dict(cls, data: Dict[str, Any]) -> 'KeyStash'` *(class)*
   - `KeyStash.set_persistence(cls, backend: Optional[ScenePersistence]) -> None` *(class)* — Set the backend :meth:`active` loads from and :meth:`save` writes to.
   - `KeyStash.active(cls) -> 'KeyStash'` *(class)* — The active store, loaded from the backend on first access.
   - `KeyStash.invalidate(cls) -> None` *(class)* — Drop the active store (scene changed);
+  - `KeyStash.flush_pending(cls) -> None` *(class)* — Store what the active stash holds but has not written yet -- a DCC
   - `KeyStash.add_invalidation_listener(cls, callback: Callable[[StashChanged], None]) -> None` *(class)* — Register a callback that survives store instances (UI rebinding).
   - `KeyStash.remove_invalidation_listener(cls, callback: Callable[[StashChanged], None]) -> None` *(class)* — Remove a previously registered invalidation listener.
   - `KeyStash.offset_for(clip: StashedClip, at: Optional[float]) -> float` *(static)* — Frame offset that lands *clip*'s first key on *at* (``0.0`` for ``None``).
@@ -702,22 +705,22 @@ Ledger of the edits the shot system authors on a scene's animation.
 
 DCC-agnostic shot data model and persistent store.
 
-- [`CLIP_NAME_STRATEGIES`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L176) — constant
-- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L69)** — Interface for saving / loading ShotStore data.
+- [`CLIP_NAME_STRATEGIES`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L177) — constant
+- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L70)** — Interface for saving / loading ShotStore data.
   - `ScenePersistence.save(self, data: Dict[str, Any]) -> None`
   - `ScenePersistence.load(self) -> Optional[Dict[str, Any]]`
-- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L106)** — Represents a single shot (contiguous animation range).
+- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L107)** — Represents a single shot (contiguous animation range).
   - `ShotBlock.duration(self) -> float` *(property)*
   - `ShotBlock.classify_objects(self) -> Dict[str, str]` — Return ``{obj_name: status_key}`` using stored metadata.
-- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L188)** — Base class for typed :class:`ShotStore` events.
-- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L200)** — A new shot was created and added to the store.
-- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L208)** — An existing shot's fields were modified.
-- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L216)** — A shot was removed from the store.
-- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L224)** — The active (selected) shot changed.
-- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L232)** — Detection-relevant settings were modified.
-- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L239)** — A :meth:`ShotStore.batch_update` context has exited.
-- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L246)** — The active store was discarded (scene change / new scene).
-- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L300)** — Central store for shot data with pluggable persistence.
+- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L189)** — Base class for typed :class:`ShotStore` events.
+- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L201)** — A new shot was created and added to the store.
+- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L209)** — An existing shot's fields were modified.
+- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L217)** — A shot was removed from the store.
+- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L225)** — The active (selected) shot changed.
+- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L233)** — Detection-relevant settings were modified.
+- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L240)** — A :meth:`ShotStore.batch_update` context has exited.
+- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L247)** — The active store was discarded (scene change / new scene).
+- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L301)** — Central store for shot data with pluggable persistence.
   - `ShotStore.snapshot_bounds(self) -> list` — Return the current shot state for the boundary ledger.
   - `ShotStore.push_boundary_snapshot(self, tag: Any = None) -> None` — Record the current bounds as an undo restore point.
   - `ShotStore.tag_boundary_snapshot(self, tag: Any) -> bool` — Attach *tag* to the newest restore point.
@@ -750,7 +753,8 @@ DCC-agnostic shot data model and persistent store.
   - `ShotStore.add_invalidation_listener(cls, callback: Callable[['StoreInvalidated'], None]) -> None` *(class)* — Register a callback fired when the active store is discarded.
   - `ShotStore.remove_invalidation_listener(cls, callback: Callable[['StoreInvalidated'], None]) -> None` *(class)* — Remove a previously registered invalidation listener.
   - `ShotStore.invalidate(cls) -> None` *(class)* — Drop the active store (the scene changed) and fire the invalidation listeners.
-  - `ShotStore.snap(self, frame: float) -> float` — Return *frame* rounded to the nearest integer when snapping is on.
+  - `ShotStore.flush_pending(cls) -> None` *(class)* — Store what the active store holds but has not written yet.
+  - `ShotStore.snap(self, frame: float, direction: str = 'nearest') -> float` — Return *frame* on a whole frame when snapping is on.
   - `ShotStore.compute_gap(self) -> float` — Derive the predominant inter-shot gap from current shot positions.
   - `ShotStore.sorted_shots(self) -> List[ShotBlock]` — Return shots ordered by start time.
   - `ShotStore.shot_by_id(self, shot_id: int) -> Optional[ShotBlock]`
@@ -819,11 +823,15 @@ Pure planning layer for multi-shot topology transformations.
 
 Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
 
-- **[`class ShotTransfer(_ShotTransferInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_transfer.py#L125)** — Encode a shot store into a manifest section and decode it into a store.
+- **[`class ShotTransfer(_ShotTransferInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_transfer.py#L172)** — Encode a shot store into a manifest section and decode it into a store.
   - `ShotTransfer.swap_up_axis(cls, label: str) -> str` *(class)* — *label* as the far side of a Y-up / Z-up crossing spells the channel.
   - `ShotTransfer.encode(cls, state: Dict[str, Any], *, spell: Optional[Spell] = None, curve_ref: Optional[CurveRef] = None, objects: Optional[Iterable[str]] = None, channels: Optional[Dict[str, Dict[str, Any]]] = None, audio: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]` *(class)* — The ``shots`` section for a store's :meth:`~pythontk.ShotStore.to_dict`.
   - `ShotTransfer.decode(cls, section: Dict[str, Any], *, resolve: Optional[Resolve] = None, curve_key: Optional[CurveKey] = None, key_exists: Optional[KeyExists] = None, scene_fps: Optional[float] = None, frame_offset: float = 0.0, converted: Optional[Callable[[str], bool]] = None, write_channels: Optional[Callable[[str, Dict[str, Any]], Any]] = None, write_audio: Optional[Callable[[List[Dict[str, Any]]], Any]] = None) -> Dict[str, Any]` *(class)* — A store dict (``from_dict`` shape) for a ``shots`` section.
-  - `ShotTransfer.merge(cls, existing: Optional[Dict[str, Any]], incoming: Dict[str, Any]) -> Dict[str, Any]` *(class)* — *incoming* (a decoded store dict) folded into *existing*'s.
+  - `ShotTransfer.merge(cls, existing: Optional[Dict[str, Any]], incoming: Dict[str, Any], id_map: Optional[Dict[int, int]] = None) -> Dict[str, Any]` *(class)* — *incoming* (a decoded store dict) folded into *existing*'s.
+  - `ShotTransfer.section_out(cls, state: Dict[str, Any], ctx: Any) -> Optional[Dict[str, Any]]` *(class)* — The ``shots`` section for a store crossing with no DCC owner
+  - `ShotTransfer.section_in(cls, section: Dict[str, Any], ctx: Any) -> Dict[str, Any]` *(class)* — A store dict for a received ``shots`` section with no DCC owner to
+  - `ShotTransfer.merge_record(cls, own: Optional[Dict[str, Any]], other: Optional[Dict[str, Any]], ctx: Any = None) -> Optional[Dict[str, Any]]` *(class)* — The ``shot_store`` record's merge (``SceneRecords.CODECS``).
+  - `ShotTransfer.respell_record(cls, state: Optional[Dict[str, Any]], ctx: Any) -> Any` *(class)* — *state* (a store dict another scene saved) with the names it holds
 
 <a id="core_utils--engines--textures--map_compositor"></a>
 ### `core_utils/engines/textures/map_compositor.py`
@@ -1019,14 +1027,15 @@ Plan, assess, and apply map (texture) optimizations.
   - `MapOptimizer.apply(cls, image: 'Image.Image', plan: List[Op]) -> 'Image.Image'` *(class)* — Execute ``plan`` against ``image``.
   - `MapOptimizer.resolve_quality(cls, lossy_quality: Optional[int], map_type_key: Optional[str], output_type: Optional[str], spec: Optional[OutputSpec] = None) -> Tuple[Optional[int], Optional[str]]` *(class)* — Decide the lossy quality a run may actually use, and why not.
   - `MapOptimizer.resolve_compression(cls, map_type_key: Optional[str], output_type: Optional[str], spec: Optional[OutputSpec] = None) -> Tuple[Optional[str], Optional[str], Optional[str]]` *(class)* — Resolve the GPU compression (and its colorspace label) for one map.
-  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: Optional[bool] = None, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None, enforce_budget: bool = False, lossy_quality: int = None, pot_mode: Optional[str] = None) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
+  - `MapOptimizer.resolve_uastc_rdo(cls, uastc_rdo: Optional[float], map_type_key: Optional[str], output_type: Optional[str], compression: Optional[str]) -> Tuple[Optional[float], Optional[str]]` *(class)* — The UASTC RDO lambda one map's encode takes, and why not.
+  - `MapOptimizer.optimize_map(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: Optional[bool] = None, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None, enforce_budget: bool = False, lossy_quality: int = None, pot_mode: Optional[str] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> str` *(class)* — Optimizes a texture by resizing, setting bit depth, and adjusting image type.
   - `MapOptimizer.channel_loss_warning(image: 'Image.Image', ext: str) -> Optional[str]` *(static)* — Warn when *ext* would discard a channel of *image* that holds data.
   - `MapOptimizer.format_result(output_path: str, size_before: Optional[int], dims_before: Optional[Tuple[int, int]], image: 'Image.Image') -> str` *(static)* — Render the one-line result summary for an optimized map.
   - `MapOptimizer.batch_optimize_maps(cls, directory: str, **kwargs)` *(class)* — Batch optimizes all maps in a directory.
   - `MapOptimizer.is_recompressible(cls, path: str) -> bool` *(class)* — Is *path* in a container a plain re-encode can shrink
   - `MapOptimizer.optimize_maps(cls, requests: Sequence[Dict[str, Any]], workers: Optional[int] = None) -> List[Tuple[Optional[str], Optional[Exception]]]` *(class)* — :meth:`optimize_map` over many maps, in threads.
   - `MapOptimizer.stage_maps(cls, sources: Mapping[str, Mapping[str, Any]], assess: Callable[[str], Optional[Mapping[str, Any]]], *, output_profile: Optional[str] = None, clamp: Optional[Mapping[str, Any]] = None, staging_dir: Union[str, Callable[[], Tuple[str, bool]], None] = None, temp_staging: bool = False, write_back: bool = False, recompress: bool = True, old_files_folder: str = 'original_textures', pass_desc: str = '', logger: Optional[logging.Logger] = None, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Optimize the maps an export ships: judge, claim, encode, verify.
-  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: Optional[bool] = None, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False, enforce_budget: bool = False, lossy_quality: int = None, pot_mode: Optional[str] = None) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
+  - `MapOptimizer.assess(cls, texture_path: str, max_size: int = None, force_pot: Optional[bool] = None, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False, enforce_budget: bool = False, lossy_quality: int = None, pot_mode: Optional[str] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> Dict[str, Any]` *(class)* — Predict whether :meth:`optimize_map` would change ``texture_path``.
 
 <a id="core_utils--engines--textures--map_registry"></a>
 ### `core_utils/engines/textures/map_registry.py`
@@ -1107,14 +1116,14 @@ Per-map output-format templates — the "export preset" layer.
 
 Region-mask engine — named face-group masks that gate texture regions at runtime.
 
-- [`ENCODING_VERTEX_COLOR`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L58) — constant
-- [`ENCODING_CHANNELS`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L59) — constant
-- [`ENCODING_ID`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L60) — constant
-- [`SLOT_CHANNELS`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L63) — constant
-- **[`class RegionGroup`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L67)** — One named region group.
+- [`ENCODING_VERTEX_COLOR`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L59) — constant
+- [`ENCODING_CHANNELS`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L60) — constant
+- [`ENCODING_ID`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L61) — constant
+- [`SLOT_CHANNELS`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L64) — constant
+- **[`class RegionGroup`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L68)** — One named region group.
   - `RegionGroup.to_dict(self) -> dict`
   - `RegionGroup.coerce(cls, group: Union['RegionGroup', dict]) -> 'RegionGroup'` *(class)* — Accept a ``RegionGroup`` or its plain-dict form.
-- **[`class RegionMaskManifest`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L110)** — The wire schema joining DCC-authored groups to their game-engine consumer.
+- **[`class RegionMaskManifest`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L111)** — The wire schema joining DCC-authored groups to their game-engine consumer.
   - `RegionMaskManifest.vertex_color(cls, groups: Sequence[Union[RegionGroup, dict]], color_set: str = 'emissiveGroups') -> 'RegionMaskManifest'` *(class)* — Manifest for membership riding in a mesh color set.
   - `RegionMaskManifest.channels(cls, groups: Sequence[Union[RegionGroup, dict]], mask: str, resolution: int, uv_channel: int = 0) -> 'RegionMaskManifest'` *(class)* — Manifest for membership rasterized into an RGBA mask texture.
   - `RegionMaskManifest.to_dict(self) -> dict` — Wire form: encoding-irrelevant fields are omitted, not null.
@@ -1123,7 +1132,8 @@ Region-mask engine — named face-group masks that gate texture regions at runti
   - `RegionMaskManifest.from_json(cls, text: str) -> 'RegionMaskManifest'` *(class)*
   - `RegionMaskManifest.save(self, path: str) -> str`
   - `RegionMaskManifest.load(cls, path: str) -> 'RegionMaskManifest'` *(class)*
-- **[`class RegionGroupRegistry`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L228)** — Slot-assignment model for region groups — persistence injected.
+- **[`class RegionGroupRegistry`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L229)** — Slot-assignment model for region groups — persistence injected.
+  - `RegionGroupRegistry.merge_record(cls, own: Optional[dict], other: Optional[dict], ctx: Any = None) -> Optional[dict]` *(class)* — The emissive registry's merge (``SceneRecords.CODECS``).
   - `RegionGroupRegistry.empty(self) -> dict`
   - `RegionGroupRegistry.read(self) -> dict` — The stored registry, or a fresh empty one (never raises).
   - `RegionGroupRegistry.write(self, registry: dict) -> None` — Persist *registry*, or clear the channel when it holds nothing.
@@ -1137,7 +1147,7 @@ Region-mask engine — named face-group masks that gate texture regions at runti
   - `RegionGroupRegistry.compact(self) -> List[int]` — Reclaim retired slots.
   - `RegionGroupRegistry.set_encoding(self, encoding: str, **info) -> None` — Record the encoding the last bake produced (plus mask info).
   - `RegionGroupRegistry.manifest(self, color_set: Optional[str] = None) -> Optional[RegionMaskManifest]` — The manifest for the current registry, or None when it has no groups.
-- **[`class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal)`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L489)** — Rasterize named UV face-groups into a channel-packed RGBA mask texture.
+- **[`class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal)`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L551)** — Rasterize named UV face-groups into a channel-packed RGBA mask texture.
   - `RegionMaskPacker.groups(self) -> List[RegionGroup]` *(property)*
   - `RegionMaskPacker.add_group(self, name: str, uv_triangles, *, slot: Optional[int] = None, default: float = 1.0, attr: Optional[str] = None) -> RegionGroup` — Register a group and its UV coverage.
   - `RegionMaskPacker.validate(self) -> List[str]` — Non-fatal authoring warnings (hard errors raise in ``add_group``).
@@ -1214,6 +1224,7 @@ The Scene Exporter panels' shared contract, written once.
   - `ExportRun.create_glb(self) -> bool` *(property)* — A ``.glb`` is written this run (alone, or beside the FBX).
   - `ExportRun.usd(self) -> bool` *(property)* — The deliverable is a USD layer.
   - `ExportRun.replace(self, **changes: Any) -> 'ExportRun'` — A copy with *changes* applied (``dataclasses.replace``).
+  - `ExportRun.clip_mode(value: Any) -> str` *(static)* — An Animation Clips row value as one of its modes (``full`` /
   - `ExportRun.with_tasks(self, tasks: Mapping[str, Any]) -> 'ExportRun'` — A copy carrying the modes derived from the dispatched *tasks*.
   - `ExportRun.from_tasks(cls, tasks: Optional[Mapping[str, Any]], texture_file_types: Iterable[Any] = ()) -> Tuple['ExportRun', Dict[str, Any], List[Tuple[str, str]]]` *(class)* — Pop the per-run modes out of a ``perform_export`` *tasks* dict.
 
@@ -1589,13 +1600,14 @@ Structured run logs and threshold-based acceptance gates for pipeline
 
 Scene records -- every piece of tool-authored scene metadata, declared once.
 
-- **[`class Scope(str, Enum)`](pythontk/pythontk/core_utils/scene_records.py#L60)** — Where a record lives, and therefore what it can never do.
-- **[`class Kind(str, Enum)`](pythontk/pythontk/core_utils/scene_records.py#L71)** — What a record is a function of, which decides WHEN it is refreshed.
-- **[`class Record`](pythontk/pythontk/core_utils/scene_records.py#L89)** — One produced value of a :class:`RecordSpec`, ready to store.
+- **[`class Scope(str, Enum)`](pythontk/pythontk/core_utils/scene_records.py#L69)** — Where a record lives, and therefore what it can never do.
+- **[`class Kind(str, Enum)`](pythontk/pythontk/core_utils/scene_records.py#L80)** — What a record is a function of, which decides WHEN it is refreshed.
+- **[`class Merge(str, Enum)`](pythontk/pythontk/core_utils/scene_records.py#L97)** — What happens to a record when another scene's copy arrives beside the
+- **[`class Record`](pythontk/pythontk/core_utils/scene_records.py#L125)** — One produced value of a :class:`RecordSpec`, ready to store.
   - `Record.key(self) -> str` *(property)*
   - `Record.text(self) -> str` *(property)* — The stored form (JSON).
   - `Record.save(self, store) -> Optional[str]` — Write this record through *store*;
-- **[`class RecordSpec`](pythontk/pythontk/core_utils/scene_records.py#L110)** — The one declaration of a record: identity, contract and codec.
+- **[`class RecordSpec`](pythontk/pythontk/core_utils/scene_records.py#L146)** — The one declaration of a record: identity, contract and codec.
   - `RecordSpec.make(self, payload: Any) -> Record` — A :class:`Record` of *payload*, the envelope's ``version`` applied.
   - `RecordSpec.encode(self, payload: Any) -> str` — The stored text for *payload*.
   - `RecordSpec.decode(self, text: Optional[str], default: Any = None) -> Any` — *text* parsed, or *default* when absent, cleared, not JSON, or newer
@@ -1605,7 +1617,10 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `RecordSpec.save(self, store, payload: Any) -> Optional[str]` — Publish *payload* (the publish / clear idiom in one call).
   - `RecordSpec.clear(self, store) -> Optional[str]` — Clear the record;
   - `RecordSpec.is_present(self, store) -> bool` — Whether *store* holds a non-empty value for this record.
-- **[`class SceneRecords`](pythontk/pythontk/core_utils/scene_records.py#L249)** — The registry: every record, declared once, and what derives from it.
+- **[`class SceneRecords`](pythontk/pythontk/core_utils/scene_records.py#L309)** — The registry: every record, declared once, and what derives from it.
+  - `SceneRecords.resolve_class(module: str, name: str) -> Any` *(static)* — The class a ``(module, name)`` row names -- :attr:`CODECS`',
+  - `SceneRecords.codec(cls, spec: RecordSpec) -> Optional[Any]` *(class)* — The codec class of a :attr:`Merge.CODEC` record, else ``None``.
+  - `SceneRecords.portable(cls) -> List[RecordSpec]` *(class)* — The records that cross a DCC hand-off, in declaration order.
   - `SceneRecords.rendering_policy() -> Dict[str, Any]` *(static)* — What a deliverable claims about how it should be lit.
   - `SceneRecords.all(cls) -> List[RecordSpec]` *(class)* — Every declared record, in declaration order.
   - `SceneRecords.deliverable(cls) -> List[RecordSpec]` *(class)*
@@ -1617,7 +1632,7 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `SceneRecords.declared_takes(cls, read: Callable[[str], Any]) -> List[Dict[str, Any]]` *(class)* — The take list a deliverable declares, however old the file.
   - `SceneRecords.handoff_block(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None) -> Dict[str, Any]` *(class)* — The standalone-reader contract for an FBX, ready to store.
   - `SceneRecords.describe(cls) -> List[Dict[str, Any]]` *(class)* — One row per record, for the docs generator and the gates.
-- **[`class SceneStoreBase`](pythontk/pythontk/core_utils/scene_records.py#L652)** — The storage contract a DCC implements -- strings per scope, nothing more.
+- **[`class SceneStoreBase`](pythontk/pythontk/core_utils/scene_records.py#L770)** — The storage contract a DCC implements -- strings per scope, nothing more.
   - `SceneStoreBase.name(cls, scope: Scope) -> str` *(class)* — The carrier name *scope* reports under (:attr:`NAMES`).
   - `SceneStoreBase.read(cls, scope: Scope, key: str) -> Optional[str]` *(class)* — The string channel *key* in *scope*, or ``None`` when the carrier,
   - `SceneStoreBase.write(cls, scope: Scope, key: str, text: Optional[str]) -> Optional[str]` *(class)* — Store *text* on *key*;
@@ -1626,10 +1641,17 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `SceneStoreBase.channels(cls, scope: Scope) -> Dict[str, str]` *(class)* — The non-empty STRING channels of *scope* -- what a handoff describes.
   - `SceneStoreBase.dump(cls, decode: bool = True) -> Dict[str, Dict[str, Any]]` *(class)* — Every channel the scene actually carries, grouped by carrier name.
   - `SceneStoreBase.format_dump(cls, decode: bool = True) -> str` *(class)* — Pretty JSON of :meth:`dump`, or ``""`` when nothing is stored.
-- **[`class ExportContext`](pythontk/pythontk/core_utils/scene_records.py#L747)** — What an export DECIDES, handed to every producer as input.
+  - `SceneStoreBase.owners(cls) -> Dict[str, Any]` *(class)* — :attr:`OWNERS` resolved to classes.
+  - `SceneStoreBase.transfer_sections(cls, spell: Optional[Callable[[str], str]] = None, objects=None) -> Dict[str, Any]` *(class)* — What a hand-off producer adds to its sidecar: every portable record
+  - `SceneStoreBase.receive_sections(cls, manifest: Optional[Mapping[str, Any]], resolve: Optional[Callable[[str], Optional[str]]] = None, source: str = '', **adapters: Any) -> 'TransferContext'` *(class)* — Land a hand-off sidecar's records in this scene
+  - `SceneStoreBase.flush_owners(cls) -> None` *(class)* — Store what every owner (:attr:`OWNERS`) holds but has not written
+  - `SceneStoreBase.merge_plan(cls, carriers: Mapping[Any, Any]) -> 'RecordTransfer'` *(class)* — *carriers* (another scene's, by scope) against this scene's own:
+  - `SceneStoreBase.merge_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None) -> 'TransferContext'` *(class)* — Merge another scene's *carriers* -- an imported reference's, made
+  - `SceneStoreBase.discard_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None) -> 'TransferContext'` *(class)* — Remove another scene's *carriers* without merging their records --
+- **[`class ExportContext`](pythontk/pythontk/core_utils/scene_records.py#L1144)** — What an export DECIDES, handed to every producer as input.
   - `ExportContext.record(self, spec: Union[RecordSpec, str], store=None, default: Any = None) -> Any` — The payload of *spec* as produced in THIS assembly, else -- when a
   - `ExportContext.refreshes(self, spec: RecordSpec) -> bool` — Whether this context's mode refreshes *spec*.
-- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/scene_records.py#L815)** — The records one export ships, assembled once and committed once.
+- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/scene_records.py#L1212)** — The records one export ships, assembled once and committed once.
   - `ExportSnapshot.assemble(cls, producers: Mapping[Union[RecordSpec, str], Producer], ctx: Optional[ExportContext] = None, only: Optional[Iterable[Union[RecordSpec, str]]] = None) -> 'ExportSnapshot'` *(class)* — Run *producers* in dependency order and collect their records.
   - `ExportSnapshot.publish(cls, store, records: Mapping[Union[RecordSpec, str], Any], ctx: Optional[ExportContext] = None) -> 'ExportSnapshot'` *(class)* — Commit *records* that are already in hand -- the AUTHORING-time
   - `ExportSnapshot.commit(self, store) -> Dict[str, Optional[str]]` — Write every produced record to *store* in one pass, then stamp the
@@ -1637,6 +1659,24 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `ExportSnapshot.record(self, spec: Union[RecordSpec, str], default: Any = None) -> Any` — The payload produced for *spec*, or *default*.
   - `ExportSnapshot.channels(self, scope: Scope = Scope.DELIVERABLE) -> Dict[str, Any]` — Produced payloads of *scope*, by key -- the sidecar's snapshot.
   - `ExportSnapshot.summary(self) -> str` — One line for the export log: each record that shipped and how
+- **[`class TransferContext`](pythontk/pythontk/core_utils/scene_records.py#L1468)** — What a record crossing between scenes needs from the DCC, and what the
+  - `TransferContext.note(self, text: str) -> None` — Record one sentence for the report.
+  - `TransferContext.adapter(self, name: str, default: Any = None) -> Any` — The DCC adapter *name*, else *default*.
+  - `TransferContext.spell(self, name: str) -> str` — *name* as this side spells it -- :attr:`rename`'s answer, else
+  - `TransferContext.respell(self, value: Any) -> Any` — *value* with every string -- mapping keys included -- put through
+- **[`class RecordTransfer`](pythontk/pythontk/core_utils/scene_records.py#L1542)** — Another scene's records meeting this scene's -- one engine for every
+  - `RecordTransfer.between(cls, store, other: Mapping[Any, Mapping[str, Any]]) -> 'RecordTransfer'` *(class)* — *store*'s channels, per scope, against *other*'s (``{scope: values}``).
+  - `RecordTransfer.incoming(self) -> List[Tuple[Scope, str]]` *(property)* — What a merge would bring in: every :attr:`Merge.UNION` /
+  - `RecordTransfer.rederive(self) -> List[RecordSpec]` *(property)* — The deliverables to produce again once the merge is applied: every
+  - `RecordTransfer.is_empty(self) -> bool` *(property)* — Nothing to decide: the other scene brings no record a merge keeps.
+  - `RecordTransfer.summary(self) -> List[str]` — One line per record the merge would bring in, for the prompt --
+  - `RecordTransfer.payloads(self, ctx: Optional[TransferContext] = None) -> Dict[RecordSpec, Any]` — The other scene's declared records, decoded -- and respelled through
+  - `RecordTransfer.apply(self, store, ctx: Optional[TransferContext] = None) -> TransferContext` — Merge the other scene's records into *store*, each by its rule.
+  - `RecordTransfer.merge_record(cls, store, spec: RecordSpec, other: Any, ctx: TransferContext, respelled: bool = False) -> Any` *(class)* — Merge *other* (another scene's decoded payload of *spec*) into
+  - `RecordTransfer.respell(spec: RecordSpec, payload: Any, ctx: TransferContext) -> Any` *(static)* — *payload* of *spec* with its names put through ``ctx.rename``.
+  - `RecordTransfer.union(own: Any, other: Any, spec: RecordSpec, ctx: TransferContext) -> Any` *(static)* — The :attr:`Merge.UNION` rule: entries by identity, the scene's own
+  - `RecordTransfer.sections(cls, store, ctx: TransferContext, owners: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]` *(class)* — What a hand-off producer adds to its sidecar: every portable record
+  - `RecordTransfer.receive(cls, manifest: Mapping[str, Any], store, ctx: TransferContext, owners: Optional[Mapping[str, Any]] = None) -> TransferContext` *(class)* — Land a hand-off sidecar's records in *store*'s scene.
 
 <a id="core_utils--schema_spec"></a>
 ### `core_utils/schema_spec.py`
@@ -1873,6 +1913,7 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
   - `MeshConvert.conversion_timeout(cls, src: str) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
   - `MeshConvert.bake_node_frames(cls, src: str) -> int` *(class)* — Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
   - `MeshConvert.OPTIMIZE_WORKERS(cls) -> int` — Deprecated alias of :attr:`ImgUtils.ENCODE_WORKERS`, for one release.
+  - `MeshConvert.UASTC_RDO_NORMAL_MAX(cls) -> float` — The RDO lambda a normal map is capped at whatever the caller asks:
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
   - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
@@ -1908,9 +1949,9 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
   - `MeshConvert.check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
   - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb: GlbTarget) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
   - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
-  - `MeshConvert.describe_texture_pass(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0, secondary_max_size: int = 0, uastc_rdo: Optional[float] = None) -> str` *(class)* — Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.
-  - `MeshConvert.web_delivery_texture_params(cls, image_format: Optional[str] = None, max_size: Optional[int] = None, ktx2_fallback: Optional[bool] = None, secondary_max_size: Optional[int] = None, uastc_rdo: Optional[float] = None) -> Dict[str, Any]` *(class)* — :meth:`optimize_glb_textures` kwargs for a WEB deliverable.
-  - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = WEB_DELIVERY_KTX2_FALLBACK, secondary_max_size: int = WEB_DELIVERY_SECONDARY_MAX_SIZE, uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
+  - `MeshConvert.describe_texture_pass(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0, secondary_max_size: int = 0, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> str` *(class)* — Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.
+  - `MeshConvert.web_delivery_texture_params(cls, image_format: Optional[str] = None, max_size: Optional[int] = None, ktx2_fallback: Optional[bool] = None, secondary_max_size: Optional[int] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> Dict[str, Any]` *(class)* — :meth:`optimize_glb_textures` kwargs for a WEB deliverable.
+  - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = WEB_DELIVERY_KTX2_FALLBACK, secondary_max_size: int = WEB_DELIVERY_SECONDARY_MAX_SIZE, uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO, uastc_rdo_dictionary: Optional[int] = WEB_DELIVERY_UASTC_RDO_DICTIONARY) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
   - `MeshConvert.set_glb_metallic_roughness(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
   - `MeshConvert.suspect_orm_materials(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]` *(class)* — Materials whose delivered ORM binding this pipeline never validated.
   - `MeshConvert.set_glb_emissive(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
@@ -1972,11 +2013,12 @@ Zero-dependency binary-FBX reader: header, node records, objects, takes.
 
 Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 
-- **[`class FbxMedia(_FbxMediaInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_media.py#L364)** — Read and rewrite the media a binary FBX embeds.
+- **[`class FbxMedia(_FbxMediaInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_media.py#L365)** — Read and rewrite the media a binary FBX embeds.
   - `FbxMedia.embedded(cls, path: str) -> List[Dict[str, Any]]` *(class)* — Every embedded image: ``{"name", "format", "size", "bytes"}``.
   - `FbxMedia.downsize(cls, src: str, dst: Optional[str] = None, *, max_size: int, exempt: Iterable[str] = (), png_compress_level: int = 1, jpeg_quality: int = 90, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Resize every embedded PNG/JPEG whose longest edge exceeds *max_size*.
   - `FbxMedia.expand_grayscale(cls, src: str, dst: Optional[str] = None, *, png_compress_level: int = 1, jpeg_quality: int = 95, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Re-encode every embedded grayscale PNG/JPEG with colour channels.
   - `FbxMedia.drop_takes(cls, src: str, dst: Optional[str] = None, *, names: Iterable[str]) -> Dict[str, Any]` *(class)* — Remove the named animation takes, and everything only they own.
+  - `FbxMedia.drop_apparatus(cls, src: str, dst: Optional[str] = None, *, section: Mapping[str, str], separator: str = '|') -> Dict[str, Any]` *(class)* — Remove the rig apparatus *section* names, and everything only it owns.
   - `FbxMedia.rewrite(cls, src: str, dst: str) -> None` *(class)* — Re-serialise *src* to *dst* unchanged -- the writer's own round trip.
 
 <a id="file_utils--mesh_convert--glb_clips"></a>
@@ -2353,8 +2395,9 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.register_ktx2_encoder(cls, encoder) -> None` *(class)* — Register the KTX2/Basis encoder ``save_image`` uses for ``.ktx2``.
   - `ImgUtils.resolve_ktx2_encoder(cls, required: bool = False, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True)` *(class)* — The registered KTX2 encoder, or the built-in ``toktx`` wrapper.
   - `ImgUtils.ktx2_available(cls) -> bool` *(class)* — True when ``.ktx2`` output is currently writable — the capability
+  - `ImgUtils.settle_ktx2_encoder(cls, prompt: Union[bool, Callable[[str], bool]], refused: Callable[[str], Any], installed: Optional[Callable[[str], Any]] = None) -> bool` *(class)* — Whether a KTX2 run may go ahead: :meth:`ensure_ktx2_encoder`, with
   - `ImgUtils.ensure_ktx2_encoder(cls, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Guarantee a KTX2 encoder, offering the managed install when none is found.
-  - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, quality: int = None, colorspace: str = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
+  - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, quality: int = None, colorspace: str = None, uastc_rdo: float = None, uastc_rdo_dictionary: int = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
   - `ImgUtils.load_image(cls, filepath)` *(class)* — Load an image and return a PIL copy, dispatching on the file extension.
   - `ImgUtils.list_image_files(cls, directory, exts=None, full_paths=False)` *(class)* — Sorted image file names in a directory (non-recursive).
   - `ImgUtils.unique_dir_stems(dirs)` *(static)* — Unique, order-preserving output stems for a set of directories.
@@ -2444,6 +2487,9 @@ KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
   - `Ktx2Encoder.resolve_toktx(cls, required: bool = False, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the ``toktx`` executable: PATH, conventional install
   - `Ktx2Encoder.available(cls) -> bool` *(class)* — True when a ``toktx`` binary is discoverable.
   - `Ktx2Encoder.read_header(cls, path: str) -> Dict[str, int]` *(class)* — Read the fixed-layout KTX 2.0 header of *path* — no transcoder needed.
+  - `Ktx2Encoder.rdo_for(cls, uastc_rdo: Optional[float], normal_map: bool = False) -> Optional[float]` *(class)* — The RDO lambda one UASTC encode takes: *uastc_rdo*, capped at
+  - `Ktx2Encoder.rdo_kwargs(uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> Dict[str, Union[float, int]]` *(static)* — The RDO keywords one :meth:`encode` call should carry -- only those
+  - `Ktx2Encoder.rdo_dictionary(cls, value: Optional[int]) -> Optional[int]` *(class)* — Validate a UASTC RDO dictionary size (``--uastc_rdo_d``);
   - `Ktx2Encoder.args_for(self, source: str, output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> List[str]` — Assemble the full ``toktx`` command for one encode.
   - `Ktx2Encoder.encode(self, source: Union[str, 'Image.Image'], output: str, codec: str = 'UASTC', srgb: bool = True, mipmaps: bool = True, quality: Optional[int] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> str` — Encode *source* to *output* (``.ktx2``).
 

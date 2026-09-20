@@ -799,5 +799,288 @@ class ExpandGrayscaleTestCase(unittest.TestCase):
         self.assertFalse(os.path.exists(out))
 
 
+#: ``(id, name, class, parent)`` of every Model :func:`build_rigged_fbx` writes:
+#: a skinned tube, the chain it is bound to, and the rig that used to drive it.
+RIG_MODELS = (
+    (1001, "tube_GEO", "Mesh", 0),
+    (1101, "tube_RIG", "Null", 0),
+    (1102, "tube_jnt_1", "LimbNode", 1101),
+    (1103, "tube_jnt_2", "LimbNode", 1102),
+    (1110, "tube_proxy_GRP", "Null", 1101),
+    (1111, "tube_proxy_jnt_1", "LimbNode", 1110),
+    (1112, "tube_proxy_jnt_2", "LimbNode", 1111),
+    (1120, "tube_ik_curve", "Line", 1110),
+    (1130, "tube_driver_GRP", "Null", 1101),
+    (1131, "tube_driver_jnt", "LimbNode", 1130),
+    (1140, "tube_tweak_CTRL_GRP", "Null", 1101),
+    (1141, "tube_tweak_CTRL", "Line", 1140),
+    (1150, "tube_settings_CTRL", "Line", 1101),
+    (1160, "tube_marker_GRP", "Null", 1101),
+    (1161, "tube_marker_GEO", "Mesh", 1160),
+    (1170, "tube_aux_curve", "Line", 1101),
+    (1171, "tube_aux_jnt", "LimbNode", 1101),
+    (1200, "data_export", "Null", 0),
+)
+
+#: What a census of that scene names -- everything but the tube, its bind chain
+#: and the aux curve -- including four nodes the file itself must refuse.
+RIG_SECTION = {
+    "|tube_RIG|tube_proxy_GRP": "group",
+    "|tube_RIG|tube_proxy_GRP|tube_proxy_jnt_1": "joint",
+    "|tube_RIG|tube_proxy_GRP|tube_proxy_jnt_1|tube_proxy_jnt_2": "joint",
+    "|tube_RIG|tube_proxy_GRP|tube_ik_curve": "control",
+    "|tube_RIG|tube_driver_GRP": "group",
+    "|tube_RIG|tube_driver_GRP|tube_driver_jnt": "joint",
+    "|tube_RIG|tube_tweak_CTRL_GRP": "group",
+    "|tube_RIG|tube_tweak_CTRL_GRP|tube_tweak_CTRL": "control",
+    "|tube_RIG|tube_settings_CTRL": "control",
+    "|tube_RIG|tube_marker_GRP": "group",
+    "|tube_RIG|tube_aux_jnt": "joint",
+    "|data_export": "locator",
+}
+
+
+def build_rigged_fbx(path: str) -> str:
+    """A skinned tube with the rig that drove it, laid out as Maya writes one.
+
+    The mesh is skinned to ``tube_jnt_1/2``. The apparatus: a proxy chain
+    under a group, the IK curve (skinned to ``tube_driver_jnt``), a tweak
+    control in its offset group, animated proxy and tweak, a proxy joint in
+    the bind pose. Four named nodes the file itself must keep: a control wired
+    to a material (an object the writer does not own), a group holding a mesh,
+    a joint deforming a curve that stays (``tube_aux_curve`` is not named) and
+    the ``data_export`` carrier holding a scene record.
+    """
+
+    def p(*values):
+        return ("P", list(values), [])
+
+    objects, connections = [], []
+    for oid, name, kind, parent in RIG_MODELS:
+        props = []
+        if name == "data_export":
+            props.append(p(b"shot_metadata", b"KString", b"", b"U", b"{}"))
+        objects.append(
+            (
+                "Model",
+                [oid, name.encode() + b"\x00\x01Model", kind.encode()],
+                [("Version", [I32(232)], []), ("Properties70", [], props)],
+            )
+        )
+        connections.append(("C", [b"OO", oid, parent], []))
+        if kind in ("Null", "LimbNode"):
+            attribute = oid + 3000
+            objects.append(
+                (
+                    "NodeAttribute",
+                    [attribute, b"\x00\x01NodeAttribute", kind.encode()],
+                    [],
+                )
+            )
+            connections.append(("C", [b"OO", attribute, oid], []))
+        else:
+            geometry = oid + 1000
+            objects.append(
+                (
+                    "Geometry",
+                    [geometry, b"\x00\x01Geometry", kind.encode()],
+                    [],
+                )
+            )
+            connections.append(("C", [b"OO", geometry, oid], []))
+
+    def skin(skin_id, geometry, influences):
+        objects.append(("Deformer", [skin_id, b"\x00\x01Deformer", b"Skin"], []))
+        connections.append(("C", [b"OO", skin_id, geometry], []))
+        for index, influence in enumerate(influences, 1):
+            cluster = skin_id + index
+            objects.append(
+                ("Deformer", [cluster, b"\x00\x01SubDeformer", b"Cluster"], [])
+            )
+            connections.append(("C", [b"OO", cluster, skin_id], []))
+            connections.append(("C", [b"OO", influence, cluster], []))
+
+    skin(7001, 2001, [1102, 1103])  # the tube, on its bind chain
+    skin(7120, 2120, [1131])  # the IK curve, on the driver joint
+    skin(7170, 2170, [1171])  # a curve that stays, on a named joint
+
+    objects.append(("Material", [5150, b"ctrl\x00\x01Material", b""], []))
+    connections.append(("C", [b"OO", 5150, 1150], []))
+
+    objects += [
+        ("AnimationStack", [100, b"Take 001\x00\x01AnimStack", b""], []),
+        ("AnimationLayer", [200, b"BaseLayer\x00\x01AnimLayer", b""], []),
+    ]
+    connections.append(("C", [b"OO", 200, 100], []))
+    for node, target in ((300, 1111), (301, 1141), (302, 1102)):
+        curve = node + 100
+        objects += [
+            ("AnimationCurveNode", [node, b"R\x00\x01AnimCurveNode", b""], []),
+            ("AnimationCurve", [curve, b"\x00\x01AnimCurve", b""], []),
+        ]
+        connections += [
+            ("C", [b"OO", node, 200], []),
+            ("C", [b"OP", node, target, b"Lcl Rotation"], []),
+            ("C", [b"OP", curve, node, b"d|X"], []),
+        ]
+
+    pose_nodes = [
+        (
+            "PoseNode",
+            [],
+            [("Node", [member], []), ("Matrix", [Doubles([1.0] * 16)], [])],
+        )
+        for member in (1001, 1102, 1103, 1111)
+    ]
+    objects.append(
+        (
+            "Pose",
+            [6000, b"BindPose\x00\x01Pose", b"BindPose"],
+            [
+                ("Type", [b"BindPose"], []),
+                ("Version", [I32(100)], []),
+                ("NbPoseNodes", [I32(len(pose_nodes))], []),
+            ]
+            + pose_nodes,
+        )
+    )
+
+    counts = {}
+    for kind, _props, _children in objects:
+        counts[kind] = counts.get(kind, 0) + 1
+    definitions = (
+        "Definitions",
+        [],
+        [("Version", [I32(100)], []), ("Count", [I32(sum(counts.values()))], [])]
+        + [
+            ("ObjectType", [kind.encode()], [("Count", [I32(n)], [])])
+            for kind, n in counts.items()
+        ],
+    )
+    roots = [
+        definitions,
+        ("Objects", [], objects),
+        ("Connections", [], connections),
+        _takes_section({"Take 001": (0, 46186158000)}),
+    ]
+    return _write_fbx(path, roots)
+
+
+class DropApparatusTestCase(unittest.TestCase):
+    """``drop_apparatus`` removes what a census named and the file agrees on."""
+
+    DROPPED = {1110, 1111, 1112, 1120, 1130, 1131, 1140, 1141}
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_rig", policy="scoped")
+        self.dir = self.temp.dir_path()
+        self.src = build_rigged_fbx(os.path.join(self.dir, "rigged.fbx"))
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    @staticmethod
+    def _models(fbx):
+        return {
+            record["props"][0]
+            for record in fbx.iter_objects()
+            if record["name"] == "Model"
+        }
+
+    def test_the_apparatus_goes_with_everything_only_it_owns(self):
+        out = os.path.join(self.dir, "lean.fbx")
+        report = FbxMedia.drop_apparatus(self.src, out, section=RIG_SECTION)
+        self.assertEqual(report["models"], len(self.DROPPED))
+        self.assertEqual(report["kinds"], {"control": 2, "group": 3, "joint": 3})
+        fbx = FbxFile.load(out)
+        self.assertEqual(self._models(fbx), {m[0] for m in RIG_MODELS} - self.DROPPED)
+        # Six attributes, the IK curve's and the tweak's geometry, the curve's
+        # skin and its cluster, and the proxy's and the tweak's animation. The
+        # bind joint's curve node, the layer and the mesh's skin all stay.
+        self.assertEqual(
+            report["objects"],
+            {
+                "Model": 8,
+                "NodeAttribute": 6,
+                "Geometry": 2,
+                "Deformer": 2,
+                "AnimationCurveNode": 2,
+                "AnimationCurve": 2,
+            },
+        )
+        census = fbx.objects_census()
+        self.assertEqual(census["AnimationCurveNode"], 1)
+        self.assertEqual(census["AnimationLayer"], 1)
+        self.assertEqual(census["Deformer"], 3 + 2)  # both surviving skins
+        gone = set(self.DROPPED) | {3000 + m for m in self.DROPPED if m != 1120}
+        gone |= {2120, 2141, 7120, 7121, 300, 301, 400, 401}
+        self.assertTrue(gone.isdisjoint({c[1] for c in fbx.connections()}))
+        self.assertTrue(gone.isdisjoint({c[2] for c in fbx.connections()}))
+        self.assertEqual(
+            report["connections"],
+            len(FbxFile.load(self.src).connections()) - len(fbx.connections()),
+        )
+        # The bind pose loses the proxy joint's entry and is recounted.
+        pose = next(r for r in fbx.iter_objects() if r["name"] == "Pose")
+        members = [
+            c["children"][0]["props"][0]
+            for c in pose["children"]
+            if c["name"] == "PoseNode"
+        ]
+        self.assertEqual(members, [1001, 1102, 1103])
+        self.assertEqual(
+            [c["props"][0] for c in pose["children"] if c["name"] == "NbPoseNodes"],
+            [3],
+        )
+        # Definitions agree with the objects left.
+        definitions = fbx.section("Definitions")["children"]
+        counts = {
+            c["props"][0].decode(): c["children"][0]["props"][0]
+            for c in definitions
+            if c["name"] == "ObjectType"
+        }
+        self.assertEqual({k: v for k, v in counts.items() if v}, census)
+        total = [c["props"][0] for c in definitions if c["name"] == "Count"][0]
+        self.assertEqual(total, sum(census.values()))
+
+    def test_the_file_refuses_what_it_can_see_must_stay(self):
+        report = FbxMedia.drop_apparatus(
+            self.src, os.path.join(self.dir, "lean.fbx"), section=RIG_SECTION
+        )
+        # A control wired to a material, a group holding a mesh, a joint
+        # deforming a curve nobody named, and the carrier of a scene record.
+        self.assertEqual(
+            report["refused"],
+            ["data_export", "tube_aux_jnt", "tube_marker_GRP", "tube_settings_CTRL"],
+        )
+
+    def test_a_curve_influence_stays_while_its_curve_does(self):
+        section = {
+            k: v for k, v in RIG_SECTION.items() if not k.endswith("tube_ik_curve")
+        }
+        section = {k: v for k, v in section.items() if "proxy_GRP" not in k}
+        report = FbxMedia.drop_apparatus(
+            self.src, os.path.join(self.dir, "lean.fbx"), section=section
+        )
+        self.assertIn("tube_driver_jnt", report["refused"])
+        self.assertIn("tube_driver_GRP", report["refused"])
+        self.assertEqual(report["kinds"], {"control": 1, "group": 1})
+
+    def test_nothing_to_drop_writes_nothing(self):
+        out = os.path.join(self.dir, "same.fbx")
+        for section in ({}, {"|elsewhere|ghost_CTRL": "control"}):
+            report = FbxMedia.drop_apparatus(self.src, out, section=section)
+            self.assertEqual(report["models"], 0)
+            self.assertFalse(os.path.exists(out))
+
+    def test_dropping_again_changes_nothing(self):
+        FbxMedia.drop_apparatus(self.src, section=RIG_SECTION)  # in place
+        self.assertFalse(os.path.exists(self.src + ".part"))
+        out = os.path.join(self.dir, "again.fbx")
+        report = FbxMedia.drop_apparatus(self.src, out, section=RIG_SECTION)
+        self.assertEqual(report["models"], 0)
+        self.assertFalse(os.path.exists(out))
+
+
 if __name__ == "__main__":
     unittest.main()

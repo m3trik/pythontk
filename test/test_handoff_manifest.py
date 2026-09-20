@@ -233,6 +233,9 @@ class TestSectionVocabulary(unittest.TestCase):
                 "shots",
                 "rig",
                 "machinery",
+                # 2026-09-19: every portable scene record, keyed by record --
+                # RecordTransfer writes and reads it (its RECORDS_SECTION).
+                "records",
             ),
         )
         self.assertEqual(HandoffManifest.SUFFIX, ".manifest.json")

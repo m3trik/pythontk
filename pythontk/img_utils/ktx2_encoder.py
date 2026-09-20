@@ -127,12 +127,16 @@ class Ktx2Encoder:
             what the Zstandard stage compresses, at a controlled quality cost.
             Measured on a 4K production set: ORM packs -30% at 1.0 (PSNR
             50/44/48 dB), a noisy normal map only -3.5%, encode 3-4x slower.
-            toktx's range is 0.001-10 (0.25-0.75 for normal maps -- the
-            per-map policy is the caller's, see
-            ``MeshConvert.UASTC_RDO_NORMAL_MAX``); a per-call value overrides.
+            toktx's range is 0.001-10, and at most
+            :attr:`UASTC_RDO_NORMAL_MAX` for a normal map -- applying that is
+            the caller's per-map policy (:meth:`rdo_for`); a per-call value
+            overrides.
+        uastc_rdo_dictionary: RDO dictionary size (``--uastc_rdo_d``), or None
+            for toktx's own (:attr:`TOKTX_RDO_DICTIONARY`); see
+            :meth:`args_for`. A per-call value overrides.
         extra_args: Additional ``toktx`` arguments appended verbatim before the
             file arguments — the escape hatch for flags this class does not
-            model (``--uastc_rdo_l``, ``--normalize``, …).
+            model (``--normalize``, ``--uastc_rdo_b``, …).
         timeout: Seconds before a ``toktx`` subprocess is killed and treated
             as a failure. A hung encoder (bad/corrupt input, a stuck child
             process) would otherwise block the calling thread forever — fatal
@@ -144,6 +148,18 @@ class Ktx2Encoder:
     #: Codec vocabulary accepted by :meth:`encode` (and by
     #: ``OutputSpec.compression`` for ``ktx2`` targets).
     CODECS = ("ETC1S", "UASTC")
+
+    #: The RDO lambda a normal map should be capped at, whatever a caller asks
+    #: for -- toktx's guidance: "for normal maps a good range is [.25,.75]".
+    #: Which maps ARE normal maps is the caller's taxonomy (:meth:`rdo_for`).
+    UASTC_RDO_NORMAL_MAX: float = 0.75
+    #: toktx's own RDO dictionary size, used whenever none is passed
+    #: (``toktx --help``, pinned with :data:`KTX_SOFTWARE_VERSION`).
+    TOKTX_RDO_DICTIONARY: int = 4096
+    #: The dictionary sizes toktx documents: ``[64, 65536]``. toktx does NOT
+    #: enforce it -- 63 and 65537 encode with exit 0 -- so this is the only
+    #: guard against a typo.
+    RDO_DICTIONARY_RANGE = (64, 65536)
 
     #: FLOOR for one encode, in seconds: the historical flat budget, so no small
     #: map encodes on a shorter leash than it did.
@@ -198,7 +214,7 @@ class Ktx2Encoder:
         self.etc1s_clevel = int(etc1s_clevel)
         self.uastc_quality = int(uastc_quality)
         self.uastc_rdo = self._rdo_lambda(uastc_rdo)
-        self.uastc_rdo_dictionary = self._rdo_dictionary(uastc_rdo_dictionary)
+        self.uastc_rdo_dictionary = self.rdo_dictionary(uastc_rdo_dictionary)
         self.extra_args = tuple(extra_args)
         self.timeout = timeout
 
@@ -418,17 +434,48 @@ class Ktx2Encoder:
             )
         return rdo
 
+    @classmethod
+    def rdo_for(
+        cls, uastc_rdo: Optional[float], normal_map: bool = False
+    ) -> Optional[float]:
+        """The RDO lambda one UASTC encode takes: *uastc_rdo*, capped at
+        :attr:`UASTC_RDO_NORMAL_MAX` when the map is a normal map; None = off.
+
+        The cap is toktx's; deciding which maps are normal maps is the caller's
+        (the texture taxonomy by map type, the GLB pass by material slot).
+        """
+        rdo = cls._rdo_lambda(uastc_rdo)
+        if rdo is None:
+            return None
+        return min(rdo, cls.UASTC_RDO_NORMAL_MAX) if normal_map else rdo
+
     @staticmethod
-    def _rdo_dictionary(value: Optional[int]) -> Optional[int]:
+    def rdo_kwargs(
+        uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None
+    ) -> Dict[str, Union[float, int]]:
+        """The RDO keywords one :meth:`encode` call should carry -- only those
+        that apply: none without an RDO lambda (the dictionary means nothing
+        then), and the dictionary only when one is chosen. An encoder
+        registered through ``ImgUtils.register_ktx2_encoder`` need not model
+        either keyword, so a call that uses neither must not pass them."""
+        if not uastc_rdo:
+            return {}
+        kwargs: Dict[str, Union[float, int]] = {"uastc_rdo": uastc_rdo}
+        if uastc_rdo_dictionary:
+            kwargs["uastc_rdo_dictionary"] = uastc_rdo_dictionary
+        return kwargs
+
+    @classmethod
+    def rdo_dictionary(cls, value: Optional[int]) -> Optional[int]:
         """Validate a UASTC RDO dictionary size (``--uastc_rdo_d``); None = toktx's own.
 
         The RDO pass rewrites UASTC blocks so the supercompressor finds more
-        matches, and the dictionary bounds how far back it may look. toktx
-        accepts 256-65536; a smaller window is dramatically cheaper and gives up
-        some of the size win.
+        matches, and the dictionary bounds how far back it may look. A smaller
+        window is dramatically cheaper and gives up some of the size win.
 
         Raises:
-            ValueError: Outside toktx's 256-65536 range.
+            ValueError: Outside :attr:`RDO_DICTIONARY_RANGE`, toktx's documented
+                range (toktx itself accepts anything, silently).
         """
         if value is None:
             return None
@@ -438,10 +485,11 @@ class Ktx2Encoder:
             raise ValueError(
                 f"uastc_rdo_dictionary must be an integer, got {value!r}."
             ) from None
-        if not 256 <= size <= 65536:
+        low, high = cls.RDO_DICTIONARY_RANGE
+        if not low <= size <= high:
             raise ValueError(
-                "uastc_rdo_dictionary must be within 256-65536 (toktx's range), "
-                f"got {value!r}."
+                f"uastc_rdo_dictionary must be within {low}-{high} (toktx's "
+                f"documented range), got {value!r}."
             )
         return size
 
@@ -477,16 +525,16 @@ class Ktx2Encoder:
                 ``uastc_quality`` tier.
             uastc_rdo: UASTC RDO lambda for THIS encode; None takes the
                 constructor's, ``0`` switches it off. Ignored for ETC1S.
-            uastc_rdo_dictionary: RDO dictionary size (``--uastc_rdo_d``, 256 to
-                65536) for THIS encode; None takes the constructor's, and a
-                constructor default of None leaves toktx to its own. The
-                encode's dominant cost: measured on a 4K normal map at UASTC
-                quality 2 with RDO 0.75, toktx's default took 56.6 s for 18.22
-                MB, 1024 took 24.9 s for 18.47 MB and 256 took 15.4 s for 18.60
-                MB. Unset by default because that probe was an upscaled
-                synthetic map -- the size cost on real content is unmeasured,
-                and a GLB ships to a headset over a network. Ignored for
-                ETC1S.
+            uastc_rdo_dictionary: RDO dictionary size (``--uastc_rdo_d``,
+                :attr:`RDO_DICTIONARY_RANGE`) for THIS encode; None takes the
+                constructor's, and a constructor default of None leaves toktx
+                to its own (:attr:`TOKTX_RDO_DICTIONARY`). The encode's dominant
+                cost: on a production set's own maps (8 normals at 4K, 8 ORM
+                packs at 2K) the GLB pass took 245 s at toktx's 4096 and 129 s
+                at 1024, for +2.2% bytes. This class stays at toktx's own; a
+                delivery policy that trades size for time chooses its size
+                (``MeshConvert.WEB_DELIVERY_UASTC_RDO_DICTIONARY``). Ignored
+                for ETC1S.
 
         Returns:
             list[str]: The complete argv, binary first.
@@ -500,7 +548,7 @@ class Ktx2Encoder:
         # USED with an RDO pass on UASTC, but a malformed VALUE is a typo either
         # way, and swallowing it on the branches that ignore the option would
         # mean the constructor rejects `99` while a per-call `99` passes.
-        dictionary = self._rdo_dictionary(
+        dictionary = self.rdo_dictionary(
             self.uastc_rdo_dictionary
             if uastc_rdo_dictionary is None
             else uastc_rdo_dictionary
@@ -589,9 +637,25 @@ class Ktx2Encoder:
                 staged = tmp.path(extension=".png")
                 self._stage_image(source, staged)
                 return self._run(
-                    staged, output, codec, srgb, mipmaps, quality, uastc_rdo
+                    staged,
+                    output,
+                    codec,
+                    srgb,
+                    mipmaps,
+                    quality,
+                    uastc_rdo,
+                    uastc_rdo_dictionary,
                 )
-        return self._run(str(source), output, codec, srgb, mipmaps, quality, uastc_rdo)
+        return self._run(
+            str(source),
+            output,
+            codec,
+            srgb,
+            mipmaps,
+            quality,
+            uastc_rdo,
+            uastc_rdo_dictionary,
+        )
 
     def _stage_image(self, im: "Image.Image", path: str) -> None:
         """Write *im* to *path* as the 8-bit PNG toktx will read.
@@ -668,9 +732,17 @@ class Ktx2Encoder:
         mipmaps: bool,
         quality: Optional[int],
         uastc_rdo: Optional[float] = None,
+        uastc_rdo_dictionary: Optional[int] = None,
     ) -> str:
         args = self.args_for(
-            source, output, codec, srgb, mipmaps, quality, uastc_rdo=uastc_rdo
+            source,
+            output,
+            codec,
+            srgb,
+            mipmaps,
+            quality,
+            uastc_rdo=uastc_rdo,
+            uastc_rdo_dictionary=uastc_rdo_dictionary,
         )
         timeout = self._timeout_for(source)
         try:

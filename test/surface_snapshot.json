@@ -1436,6 +1436,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "settle_ktx2_encoder",
+    "qualname": "ImgUtils.settle_ktx2_encoder",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.math_utils._math_utils",
     "name": "smoothstep",
     "qualname": "MathUtils.smoothstep",
@@ -2283,6 +2290,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.scene_records",
+    "name": "Merge",
+    "qualname": "Merge",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.file_utils.mesh_convert._mesh_convert",
     "name": "MeshConvert",
     "qualname": "MeshConvert",
@@ -2608,6 +2622,13 @@
     "module": "pythontk.core_utils.scene_records",
     "name": "RecordSpec",
     "qualname": "RecordSpec",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.scene_records",
+    "name": "RecordTransfer",
+    "qualname": "RecordTransfer",
     "tier": "root"
   },
   {
@@ -3154,6 +3175,13 @@
     "module": "pythontk.core_utils.test_sandbox",
     "name": "TestSandbox",
     "qualname": "TestSandbox",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.scene_records",
+    "name": "TransferContext",
+    "qualname": "TransferContext",
     "tier": "root"
   },
   {

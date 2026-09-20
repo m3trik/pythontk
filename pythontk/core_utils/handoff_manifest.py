@@ -193,6 +193,13 @@ class HandoffManifest(_HandoffManifestInternal):
     #: halves of that judgement are :class:`~pythontk.RigMachinery`; a producer
     #: contributes what each node IS, a consumer what arrived.
     MACHINERY = "machinery"
+    #: The scene records that cross a hand-off, keyed by record
+    #: (``{"emissive_groups": {...}}``) -- every ``SceneRecords`` record
+    #: declared ``portable`` that names no section of its own (the shot store
+    #: keeps :attr:`SHOTS`).  Written and read by
+    #: :class:`~pythontk.RecordTransfer`, so a new portable record crosses with
+    #: no change here or in either bridge.
+    RECORDS = "records"
 
     #: Every section name above, for validation and for tests that pin the
     #: vocabulary.  Not an application order -- that is each consumer's plan.
@@ -212,6 +219,7 @@ class HandoffManifest(_HandoffManifestInternal):
         SHOTS,
         RIG,
         MACHINERY,
+        RECORDS,
     )
 
     def __init__(

@@ -2582,6 +2582,40 @@ class ImgKtx2RoutingTest(BaseTestCase):
         self.assertTrue(call["mipmaps"])
         self.assertEqual(call["quality"], 70)
 
+    def test_the_rdo_pair_rides_a_uastc_save_only(self):
+        """``save_image`` hands the RDO pair to a UASTC encode and to nothing
+        else: an ETC1S encode has no RDO stage, and an encoder that models
+        neither keyword -- this file's fake -- must still take every save that
+        does not use them. Added: 2026-09-19"""
+        image = ImgUtils.create_image("RGB", (8, 8))
+        ImgUtils.save_image(
+            image,
+            os.path.join(self.out_dir, "color.ktx2"),
+            compression="ETC1S",
+            uastc_rdo=1.0,
+            uastc_rdo_dictionary=1024,
+        )
+        self.assertEqual(self.fake.calls[-1]["codec"], "ETC1S")
+
+        seen = {}
+
+        class _RdoAware(_FakeKtx2Encoder):
+            def encode(
+                self, source, output, uastc_rdo=None, uastc_rdo_dictionary=None, **kw
+            ):
+                seen.update(rdo=uastc_rdo, rdo_dictionary=uastc_rdo_dictionary)
+                return super().encode(source, output, **kw)
+
+        ImgUtils.register_ktx2_encoder(_RdoAware())
+        ImgUtils.save_image(
+            image,
+            os.path.join(self.out_dir, "normal.ktx2"),
+            compression="UASTC",
+            uastc_rdo=0.75,
+            uastc_rdo_dictionary=1024,
+        )
+        self.assertEqual(seen, {"rdo": 0.75, "rdo_dictionary": 1024})
+
     def test_save_image_ktx2_defaults_to_uastc_srgb(self):
         """A bare save with no map-type context takes the quality-safe codec."""
         ImgUtils.save_image(
@@ -2594,6 +2628,16 @@ class ImgKtx2RoutingTest(BaseTestCase):
 
     def test_ktx2_available_reflects_registration(self):
         self.assertTrue(ImgUtils.ktx2_available())
+
+    def test_ktx2_available_is_a_predicate_when_the_resolver_refuses(self):
+        """A resolver that raises (no binary, no catalog) means "not
+        available" -- the caller asked a question, not for an install."""
+        from unittest import mock
+
+        with mock.patch.object(
+            ImgUtils, "resolve_ktx2_encoder", side_effect=FileNotFoundError("none")
+        ):
+            self.assertFalse(ImgUtils.ktx2_available())
 
     def test_missing_encoder_raises_fix_shaped_error(self):
         from unittest import mock

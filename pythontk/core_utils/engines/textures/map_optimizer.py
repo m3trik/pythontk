@@ -954,6 +954,57 @@ class MapOptimizer(HelpMixin):
         return codec, colorspace, None
 
     @classmethod
+    def resolve_uastc_rdo(
+        cls,
+        uastc_rdo: Optional[float],
+        map_type_key: Optional[str],
+        output_type: Optional[str],
+        compression: Optional[str],
+    ) -> Tuple[Optional[float], Optional[str]]:
+        """The UASTC RDO lambda one map's encode takes, and why not.
+
+        RDO is a UASTC stage, so it reaches a ``.ktx2`` map that
+        :meth:`resolve_compression` sent to UASTC -- normals, packed and linear
+        data -- capped for a normal map (:attr:`MapRegistry.NORMAL_TYPES`) at
+        ``Ktx2Encoder.UASTC_RDO_NORMAL_MAX``, the same cap the GLB texture pass
+        applies. An ETC1S map has no RDO stage, which is the codec's design
+        rather than a declined request, so it is not reported; a request
+        against another container is, the way :meth:`resolve_quality` reports
+        a lossy request against a lossless one.
+
+        Parameters:
+            uastc_rdo: The caller's lambda, or None/0 for off.
+            map_type_key: Canonical map-type key (the normal-map cap).
+            output_type: Target container extension (with or without a dot).
+            compression: The codec :meth:`resolve_compression` resolved.
+
+        Returns:
+            tuple: ``(lambda, note)`` -- ``lambda`` None when the encode takes
+            no RDO; ``note`` a sentence when a request was declined.
+
+        Raises:
+            ValueError: *uastc_rdo* outside toktx's range.
+        """
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        if not uastc_rdo:
+            return None, None
+        ext = (output_type or "").lower().lstrip(".")
+        if ext != "ktx2":
+            return None, (
+                f"UASTC RDO {float(uastc_rdo):g} ignored: '{ext or 'the source'}' "
+                "is not a KTX2 container"
+            )
+        if (compression or "").upper() != "UASTC":
+            return None, None
+        return (
+            Ktx2Encoder.rdo_for(
+                uastc_rdo, normal_map=map_type_key in MapRegistry.NORMAL_TYPES
+            ),
+            None,
+        )
+
+    @classmethod
     def optimize_map(
         cls,
         texture_path: str,
@@ -972,6 +1023,8 @@ class MapOptimizer(HelpMixin):
         enforce_budget: bool = False,
         lossy_quality: int = None,
         pot_mode: Optional[str] = None,
+        uastc_rdo: Optional[float] = None,
+        uastc_rdo_dictionary: Optional[int] = None,
     ) -> str:
         """Optimizes a texture by resizing, setting bit depth, and adjusting image type.
 
@@ -1016,11 +1069,31 @@ class MapOptimizer(HelpMixin):
                 task enforcing a template's budget without adopting its
                 container) must pass ``"down"`` — a budget must never grow
                 an asset.
+            uastc_rdo (float, optional): ``.ktx2`` output only -- a UASTC
+                rate-distortion lambda (``toktx --uastc_rdo_l``, 0.001-10) for
+                the maps that encode UASTC; see :meth:`resolve_uastc_rdo` for
+                which maps take it and the normal-map cap. Smaller files at a
+                controlled quality cost, 3-4x the encode time. None (default)
+                = off.
+            uastc_rdo_dictionary (int, optional): The RDO dictionary size
+                (``toktx --uastc_rdo_d``, 64-65536) with *uastc_rdo*: smaller
+                is faster and keeps less of the size win. None = toktx's own
+                (4096).
 
         Returns:
             str: Path to the optimized texture.
+
+        Raises:
+            ValueError: *uastc_rdo* / *uastc_rdo_dictionary* outside toktx's
+                ranges -- before anything on disk is touched.
         """
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
         ImgUtils.assert_pathlike(texture_path, "texture_path")
+        # Validated before the archive step below moves the source away: a
+        # typo raised at save time would leave neither map where it was.
+        Ktx2Encoder.rdo_for(uastc_rdo)
+        uastc_rdo_dictionary = Ktx2Encoder.rdo_dictionary(uastc_rdo_dictionary)
 
         if output_dir is None:
             output_dir = os.path.dirname(texture_path)
@@ -1163,6 +1236,11 @@ class MapOptimizer(HelpMixin):
         )
         if compression_note:
             print(f"# {os.path.basename(final_output_path)}: {compression_note}")
+        rdo, rdo_note = cls.resolve_uastc_rdo(
+            uastc_rdo, map_type_key, out_ext, target_compression
+        )
+        if rdo_note:
+            print(f"# {os.path.basename(final_output_path)}: {rdo_note}")
 
         # Route through the capability-aware writer (single save SSoT) so the
         # correct backend handles each format (PIL for most, cv2 for EXR/HDR).
@@ -1207,6 +1285,8 @@ class MapOptimizer(HelpMixin):
             compression=target_compression,
             quality=quality,
             colorspace=target_colorspace,
+            uastc_rdo=rdo,
+            uastc_rdo_dictionary=uastc_rdo_dictionary,
         )
 
         if original_bytes is not None:
@@ -1706,6 +1786,8 @@ class MapOptimizer(HelpMixin):
         enforce_budget: bool = False,
         lossy_quality: int = None,
         pot_mode: Optional[str] = None,
+        uastc_rdo: Optional[float] = None,
+        uastc_rdo_dictionary: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Predict whether :meth:`optimize_map` would change ``texture_path``.
 
@@ -1743,6 +1825,10 @@ class MapOptimizer(HelpMixin):
             pot_mode: Same semantics as :meth:`optimize_map` — an explicit
                 "nearest"/"down" outranks the profile-derived behavior, so a
                 dry run predicts the same snap the caller's real run will make.
+            uastc_rdo, uastc_rdo_dictionary: Same semantics as
+                :meth:`optimize_map`. The predicted size (when *predict_size*)
+                is the RDO encode's, and a declined request surfaces in
+                ``warnings``.
 
         Returns:
             dict with:
@@ -1773,8 +1859,16 @@ class MapOptimizer(HelpMixin):
             just wrote. Such a report is always ``recommended: False`` (nothing
             here can transcode one back to pixels) and carries ``mode`` /
             ``bit_depth`` as None — see :meth:`_assess_delivered_ktx2`.
+
+        Raises:
+            ValueError: *uastc_rdo* / *uastc_rdo_dictionary* outside toktx's
+                ranges, exactly as the real run refuses them.
         """
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
         ImgUtils.assert_pathlike(texture_path, "texture_path")
+        Ktx2Encoder.rdo_for(uastc_rdo)
+        uastc_rdo_dictionary = Ktx2Encoder.rdo_dictionary(uastc_rdo_dictionary)
 
         if not os.path.exists(texture_path) and image is None:
             return {
@@ -1919,6 +2013,11 @@ class MapOptimizer(HelpMixin):
         )
         if compression:
             predicted["compression"] = compression
+        rdo, rdo_note = cls.resolve_uastc_rdo(
+            uastc_rdo, map_type_key, out_ext, compression
+        )
+        if rdo:
+            predicted["uastc_rdo"] = rdo
 
         # Gated on the PLANNED mode, not the source's: a plan that already
         # coerces RGBA->RGB dropped the alpha itself and said so as an op, so
@@ -1940,6 +2039,8 @@ class MapOptimizer(HelpMixin):
                 compression=compression,
                 quality=quality,
                 colorspace=ktx2_colorspace,
+                uastc_rdo=rdo,
+                uastc_rdo_dictionary=uastc_rdo_dictionary,
             )
             predicted["size_bytes"] = predicted_bytes
             if size_error:
@@ -1955,6 +2056,7 @@ class MapOptimizer(HelpMixin):
             + cls._plan_warnings(ops)
             + ([quality_skipped] if quality_skipped else [])
             + ([compression_note] if compression_note else [])
+            + ([rdo_note] if rdo_note else [])
             + ([channel_loss] if channel_loss else []),
             "current": {
                 "path": texture_path,
@@ -2067,6 +2169,8 @@ class MapOptimizer(HelpMixin):
         compression: Optional[str] = None,
         quality: Optional[int] = None,
         colorspace: Optional[str] = None,
+        uastc_rdo: Optional[float] = None,
+        uastc_rdo_dictionary: Optional[int] = None,
     ) -> Tuple[Optional[int], Optional[str]]:
         """Byte count ``plan`` would produce, measured by a throwaway encode.
 
@@ -2098,6 +2202,8 @@ class MapOptimizer(HelpMixin):
                 compression=compression,
                 quality=quality,
                 colorspace=colorspace,
+                uastc_rdo=uastc_rdo,
+                uastc_rdo_dictionary=uastc_rdo_dictionary,
             )
             return os.path.getsize(probe), None
         except Exception as e:

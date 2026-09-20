@@ -178,7 +178,7 @@ class StrUtils(CoreUtils):
         Example:
             to_legal_name("Convert Textures (2K)") --> 'Convert_Textures__2K_'
         """
-        return re.sub(r"[^0-9a-zA-Z]", "_", name)
+        return _ILLEGAL_NAME_CHAR_RE.sub("_", name)
 
     #: Characters no file name may carry on Windows, and the ones a POSIX tool
     #: is happiest without. Path separators are NOT here: a caller that joins a

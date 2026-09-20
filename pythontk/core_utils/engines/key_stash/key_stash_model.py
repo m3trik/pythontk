@@ -453,6 +453,65 @@ class KeyStash(_KeyStashInternal):
         }
 
     @classmethod
+    def merge_record(
+        cls,
+        own: Optional[Dict[str, Any]],
+        other: Optional[Dict[str, Any]],
+        ctx: Any = None,
+    ) -> Optional[Dict[str, Any]]:
+        """The ``key_stash`` record's merge (``SceneRecords.CODECS``).
+
+        Another scene's parked clips join this scene's under fresh ids; this
+        scene's clips and preview stand.  Their times are rescaled to this
+        scene's frame rate when the two differ, and a clip's source shot
+        follows ``ctx.remaps["shot_id"]`` when the shot store merged first --
+        a source shot that did not arrive is forgotten rather than pointed at
+        an unrelated shot of this scene.  *other* is already respelled.
+        """
+        if not other or not other.get("clips"):
+            return own
+        theirs = cls.from_dict(other)
+        mine = cls.from_dict(own) if own else cls(scene_fps=theirs.scene_fps)
+        ratio = 1.0
+        if mine.scene_fps and theirs.scene_fps:
+            ratio = float(mine.scene_fps) / float(theirs.scene_fps)
+        shot_map = None if ctx is None else ctx.remaps.get("shot_id")
+        for clip in theirs.clips:
+            clip = copy.deepcopy(clip)
+            clip.clip_id = mine._next_id
+            mine._next_id += 1
+            if abs(ratio - 1.0) > 1e-9:
+                clip.rescale(ratio)
+            if shot_map is not None and clip.source_shot_id is not None:
+                clip.source_shot_id = shot_map.get(int(clip.source_shot_id))
+            mine.clips.append(clip)
+        if ctx is not None and abs(ratio - 1.0) > 1e-9:
+            ctx.note(
+                f"Key Stash: {len(theirs.clips)} clip(s) rescaled from "
+                f"{theirs.scene_fps:g} to {mine.scene_fps:g} fps."
+            )
+        return mine.to_dict()
+
+    @classmethod
+    def respell_record(cls, data: Optional[Dict[str, Any]], ctx: Any) -> Any:
+        """*data* (a stash dict another scene saved) with the names it holds
+        put through ``ctx`` -- the ``key_stash`` record's respelling
+        (``RecordTransfer.respell``).
+
+        A clip's ``objects`` and its curve records -- adapter-owned names and
+        node references beside the numeric key times -- are respelled; its
+        label, the preview and the counters are not (a label reading like a
+        renamed node keeps its text).
+        """
+        if not data or not data.get("clips"):
+            return data
+        out = copy.deepcopy(data)
+        for clip in out["clips"]:
+            clip["objects"] = [ctx.spell(str(o)) for o in clip.get("objects") or []]
+            clip["curves"] = ctx.respell(clip.get("curves") or [])
+        return out
+
+    @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "KeyStash":
         store = cls(
             clips=[StashedClip.from_dict(c) for c in data.get("clips", [])],
@@ -585,6 +644,14 @@ class KeyStash(_KeyStashInternal):
                 cb(StashChanged("reloaded"))
             except Exception:
                 _log.warning("key stash invalidation listener failed", exc_info=True)
+
+    @classmethod
+    def flush_pending(cls) -> None:
+        """Store what the active stash holds but has not written yet -- a DCC
+        stash writes on idle, and a crossing reads the record (the owner hook
+        ``SceneStoreBase`` calls first).  Mirror of ``ShotStore``'s."""
+        if cls._active is not None:
+            cls._active._flush_dirty()
 
     @classmethod
     def add_invalidation_listener(

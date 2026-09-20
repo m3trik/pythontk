@@ -108,6 +108,9 @@ DEFAULT_INCLUDE = {
         "SceneStoreBase",
         "ExportContext",
         "ExportSnapshot",
+        "Merge",
+        "TransferContext",
+        "RecordTransfer",
     ],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [

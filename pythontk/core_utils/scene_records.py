@@ -26,6 +26,14 @@ derives from that declaration instead.  Three ideas, three classes:
   the export log and the verifier consume, so nothing is read back off the
   node and patched.
 
+- **Cross, by declaration.** A record also says how it crosses into
+  another scene (:class:`Merge`, :attr:`RecordSpec.portable`), so every
+  route a record takes -- a referenced module imported into its host, a
+  DCC hand-off, a legacy fold -- is one engine (:class:`RecordTransfer`)
+  over the declarations.  A record's own semantics plug in as a codec (its
+  merge) and a DCC owner (what it keeps beside the record); a new record
+  crosses correctly by being declared, with no route learning its name.
+
 Two scopes, because the carriers differ in what they must guarantee:
 :attr:`Scope.PRIVATE` records persist with the scene and never leave it;
 :attr:`Scope.DELIVERABLE` records ride every deliverable as user properties.
@@ -36,6 +44,7 @@ and an Empty) -- this module never knows.
 Zero-dep and DCC-agnostic, like everything in ``pythontk``.
 """
 
+import contextlib
 import copy
 import json
 import logging
@@ -83,6 +92,33 @@ class Kind(str, Enum):
     #: stale the moment an artist edits; refreshed before EVERY write,
     #: hand-offs included.
     DERIVED = "derived"
+
+
+class Merge(str, Enum):
+    """What happens to a record when another scene's copy arrives beside the
+    scene's own -- a referenced module imported into its host, a hand-off
+    landing in a scene that already has one.  Declared per record
+    (:attr:`RecordSpec.merge`), so :class:`RecordTransfer` is one loop over
+    the declarations and a new record decides its merge where it is declared.
+    """
+
+    #: Produced again from the merged scene, never combined as data.  A
+    #: deliverable is a projection -- of per-object markers, a private
+    #: registry, the curves -- and the other scene's copy spells names as THAT
+    #: scene did, so the merged scene publishes it afresh instead.
+    DERIVE = "derive"
+    #: The scene's own copy stands and the other's is dropped: it describes
+    #: its own scene and nothing else (an export hierarchy baseline).
+    OWN = "own"
+    #: Entries combine by identity -- a mapping's keys, or a list's
+    #: :attr:`RecordSpec.merge_key` field -- and the scene's own entry wins a
+    #: collision (noted).  A list keeps the scene's own entries LAST, so a
+    #: LIFO stack's newest entry stays on top.
+    UNION = "union"
+    #: A domain merge owns it (:meth:`SceneRecords.codec`): the shot store
+    #: renumbers shots, the emissive registry re-slots a group whose slot is
+    #: taken.
+    CODEC = "codec"
 
 
 @dataclass(frozen=True)
@@ -137,6 +173,25 @@ class RecordSpec:
         consumers: Names of the readers, for the docs and the cross-package
             gates (``"unity"``: the C# importers; ``"glb"``: the GLB appliers;
             ``"verifier"``: the deliverable gates).
+        merge: :class:`Merge` -- what happens when another scene's copy of
+            this record arrives beside the scene's own.  A deliverable is
+            re-derived (the default); every private record declares one.
+        merge_key: For a :attr:`Merge.UNION` list, the field an entry is
+            identified by (``"id"``); ``None`` for a mapping, whose keys are
+            the identity.
+        respell: Whether the payload spells scene names, which a crossing
+            respells through :attr:`TransferContext.rename` before combining.
+            False for a payload of group names or file paths, where a node
+            that happens to share a name must not rename an entry.
+        portable: Whether the record crosses a DCC hand-off (a bridge's
+            sidecar): its payload means the same in both DCCs once names are
+            respelled, or its DCC owner makes it so.  A record bound to one
+            DCC's constructs (a restore manifest of Maya plugs, parked curves)
+            does not; a deliverable never does -- the far side re-derives it.
+        section: The hand-off sidecar section a portable record rides as a
+            whole (``"shots"`` -- the section it had before records were
+            generic, which older producers still write); ``None`` rides the
+            one generic ``records`` section, keyed by :attr:`key`.
     """
 
     key: str
@@ -151,6 +206,11 @@ class RecordSpec:
     deprecated_by: Optional[str] = None
     remove_in: Optional[str] = None
     consumers: Tuple[str, ...] = ()
+    merge: Merge = Merge.DERIVE
+    merge_key: Optional[str] = None
+    respell: bool = True
+    portable: bool = False
+    section: Optional[str] = None
 
     # ------------------------------------------------------------------ codec
     def make(self, payload: Any) -> Record:
@@ -360,6 +420,9 @@ class SceneRecords:
         owner="Shots",
         description="the shot store's full app state",
         envelope=False,
+        merge=Merge.CODEC,
+        portable=True,
+        section="shots",
     )
     KEY_STASH = RecordSpec(
         "key_stash",
@@ -368,6 +431,9 @@ class SceneRecords:
         owner="Key Stash",
         description="the clip manifest of parked keys",
         envelope=False,
+        # Declared after the shot store: a parked clip follows its source
+        # shot through the renumbering the shot store's merge publishes.
+        merge=Merge.CODEC,
     )
     SMART_BAKE_SESSIONS = RecordSpec(
         "smart_bake_sessions",
@@ -376,6 +442,8 @@ class SceneRecords:
         owner="SmartBake",
         description="LIFO stack of bake-session restore manifests",
         envelope=False,
+        merge=Merge.UNION,
+        merge_key="id",
     )
     HIERARCHY_BASELINE = RecordSpec(
         "hierarchy_baseline",
@@ -384,6 +452,7 @@ class SceneRecords:
         owner="Hierarchy check",
         description="the export hierarchy baseline (a HierarchyBaseline record)",
         envelope=False,
+        merge=Merge.OWN,
     )
     EMISSIVE_REGISTRY = RecordSpec(
         "emissive_groups",
@@ -392,6 +461,9 @@ class SceneRecords:
         owner="Emissive Groups",
         description="the group registry: slots, defaults, encoding",
         envelope=False,
+        merge=Merge.CODEC,
+        respell=False,
+        portable=True,
     )
     RENDER_EFFECTS_BINDINGS = RecordSpec(
         "render_effects_bindings",
@@ -403,6 +475,7 @@ class SceneRecords:
             "and rebind round-trips"
         ),
         envelope=False,
+        merge=Merge.UNION,
     )
     AUDIO_FILE_MAP = RecordSpec(
         "audio_file_map",
@@ -411,7 +484,50 @@ class SceneRecords:
         owner="Audio Clips",
         description="track id to audio file path",
         envelope=False,
+        merge=Merge.UNION,
+        respell=False,
     )
+
+    #: The domain codecs: record key -> (module, class) whose classmethod
+    #: ``merge_record(own, other, ctx)`` is a :attr:`Merge.CODEC` record's
+    #: merge.  Resolved lazily, like a DCC's producer table -- the codec lives
+    #: with the model it merges, and this module stays the lighter import.
+    CODECS: Dict[str, Tuple[str, str]] = {
+        "shot_store": (
+            "pythontk.core_utils.engines.shots.shot_transfer",
+            "ShotTransfer",
+        ),
+        "key_stash": (
+            "pythontk.core_utils.engines.key_stash.key_stash_model",
+            "KeyStash",
+        ),
+        "emissive_groups": (
+            "pythontk.core_utils.engines.textures.region_masks",
+            "RegionGroupRegistry",
+        ),
+    }
+
+    @staticmethod
+    def resolve_class(module: str, name: str) -> Any:
+        """The class a ``(module, name)`` row names -- :attr:`CODECS`',
+        :attr:`SceneStoreBase.OWNERS`' -- imported on first use, so declaring
+        a record never imports its engine."""
+        import importlib
+
+        return getattr(importlib.import_module(module), name)
+
+    @classmethod
+    def codec(cls, spec: RecordSpec) -> Optional[Any]:
+        """The codec class of a :attr:`Merge.CODEC` record, else ``None``."""
+        row = cls.CODECS.get(spec.key) if spec.merge is Merge.CODEC else None
+        if row is None:
+            return None
+        return cls.resolve_class(*row)
+
+    @classmethod
+    def portable(cls) -> List[RecordSpec]:
+        """The records that cross a DCC hand-off, in declaration order."""
+        return [s for s in cls.all() if s.portable]
 
     @staticmethod
     def rendering_policy() -> Dict[str, Any]:
@@ -643,6 +759,8 @@ class SceneRecords:
                 "deprecated_by": s.deprecated_by,
                 "remove_in": s.remove_in,
                 "consumers": list(s.consumers),
+                "merge": s.merge.value,
+                "portable": s.portable,
                 "description": s.description,
             }
             for s in cls.all()
@@ -657,6 +775,13 @@ class SceneStoreBase:
     inspection surface (:meth:`dump` / :meth:`format_dump`) is inherited, so
     the "Scene Metadata" viewer and the sidecar snapshot read every mirror the
     same way.  Records never call anything else on a store.
+
+    So are the crossings -- a hand-off's sidecar sections
+    (:meth:`transfer_sections` / :meth:`receive_sections`) and another scene's
+    carriers merged or discarded (:meth:`merge_carriers`), each record by its
+    rule (:class:`RecordTransfer`).  A DCC supplies its record owners
+    (:attr:`OWNERS`) and the few carrier hooks below them; the orchestration
+    is written once, here.
     """
 
     #: The carrier's name per scope, the grouping key ``dump`` reports under.
@@ -741,6 +866,278 @@ class SceneStoreBase:
         if not any(data.values()):
             return ""
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+
+    # --------------------------------------------------------------- crossings
+    #: The DCC owners of records that keep state BESIDE the record -- a
+    #: membership set, a parked curve, an in-memory store to reload -- as
+    #: record key -> ``(module, class)``, resolved lazily (:meth:`owners`).  An
+    #: owner defines any of the hooks the crossings look for:
+    #:
+    #: - ``transfer_out(ctx)`` -- the record's hand-off payload (without it,
+    #:   the stored record crosses as data);
+    #: - ``transfer_in(payload, ctx)`` -- land a received payload (without it,
+    #:   the payload merges by the record's rule);
+    #: - ``merge_carrier(carriers, other, ctx)`` -- another scene's carriers
+    #:   were merged into this scene's (an imported reference): carry over
+    #:   what sits beside the records and refresh whatever caches them;
+    #: - ``discard_carrier(carriers, other, ctx)`` -- they were discarded
+    #:   instead: remove what sat beside the records nobody keeps, and drop
+    #:   whatever caches them (a discarded carrier the import adopted was
+    #:   the scene's own until now);
+    #: - ``flush_pending()`` -- store what the owner holds but has not
+    #:   written yet (:meth:`flush_owners`, before any crossing reads the
+    #:   records).
+    #:
+    #: *other* is ``{RecordSpec: payload}`` (:meth:`RecordTransfer.payloads`).
+    #: A record needing none of this has no row: declaring it
+    #: (:class:`SceneRecords`) is all it takes to cross -- a record with a
+    #: section of its own through its codec's ``section_out`` /
+    #: ``section_in`` (the section's wire shape is the codec's, never the
+    #: bare record's), any other as the stored record, respelled.
+    OWNERS: Dict[str, Tuple[str, str]] = {}
+
+    @classmethod
+    def owners(cls) -> Dict[str, Any]:
+        """:attr:`OWNERS` resolved to classes.  One that does not import is
+        left out, and its record then crosses as plain data."""
+        resolved: Dict[str, Any] = {}
+        for key, (module, owner) in cls.OWNERS.items():
+            try:
+                resolved[key] = SceneRecords.resolve_class(module, owner)
+            except Exception:  # noqa: BLE001 - a missing owner never costs a crossing
+                logger.debug("Record owner %s.%s unavailable.", module, owner)
+        return resolved
+
+    @classmethod
+    def transfer_sections(
+        cls, spell: Optional[Callable[[str], str]] = None, objects=None
+    ) -> Dict[str, Any]:
+        """What a hand-off producer adds to its sidecar: every portable record
+        this scene holds (:meth:`RecordTransfer.sections`), names spelled by
+        *spell* -- the carrier's spelling, the one the sidecar's other
+        sections use -- and scoped to *objects* where an owner scopes
+        (memberships, ledger claims).  ``{}`` when there is nothing to send; a
+        record that could not be sent is logged, never fatal."""
+        ctx = TransferContext(
+            rename=spell,
+            objects=None if objects is None else [str(o) for o in objects],
+        )
+        cls.flush_owners()
+        sections = RecordTransfer.sections(cls, ctx, cls.owners())
+        cls._log_notes(ctx)
+        return sections
+
+    @classmethod
+    def receive_sections(
+        cls,
+        manifest: Optional[Mapping[str, Any]],
+        resolve: Optional[Callable[[str], Optional[str]]] = None,
+        source: str = "",
+        **adapters: Any,
+    ) -> "TransferContext":
+        """Land a hand-off sidecar's records in this scene
+        (:meth:`RecordTransfer.receive`): each to its owner's ``transfer_in``,
+        else merged by its rule.  *resolve* maps the carrier's spelling to the
+        imported object; *adapters* are what an owner asks for by name
+        (``converted``, ``frame_offset``).  Best-effort per record: the
+        returned context's notes are the report, each logged as well."""
+        ctx = TransferContext(rename=resolve, source=source, adapters=adapters)
+        cls.flush_owners()
+        RecordTransfer.receive(manifest or {}, cls, ctx, cls.owners())
+        cls._log_notes(ctx)
+        return ctx
+
+    @classmethod
+    def flush_owners(cls) -> None:
+        """Store what every owner (:attr:`OWNERS`) holds but has not written
+        yet (its ``flush_pending``) -- a crossing reads the records, and a
+        store that writes on idle can hold a change its record lacks.
+
+        The hand-off routes call it themselves.  An importer calls it BEFORE
+        the other scene's nodes land (:meth:`merge_carriers` cannot): a scene
+        with no carrier of its own adopts the import's, and flushed after,
+        the scene's pending state would be written into that carrier -- over
+        the records a merge was to keep, or into the one a discard removes.
+        """
+        for key, owner in cls.owners().items():
+            flush = getattr(owner, "flush_pending", None)
+            if flush is None:
+                continue
+            try:
+                flush()
+            except Exception:  # noqa: BLE001 - the crossing reads what is stored
+                logger.warning(
+                    "%s: pending changes were not stored.", key, exc_info=True
+                )
+
+    @classmethod
+    def merge_plan(cls, carriers: Mapping[Any, Any]) -> "RecordTransfer":
+        """*carriers* (another scene's, by scope) against this scene's own:
+        what a merge would bring in.  ``is_empty`` means nothing a merge
+        keeps, so there is no question to ask before the carriers go."""
+        return RecordTransfer.between(
+            cls,
+            {
+                scope: cls._carrier_values(carrier)
+                for scope, carrier in cls._foreign_carriers(carriers).items()
+            },
+        )
+
+    @classmethod
+    def merge_carriers(
+        cls,
+        carriers: Mapping[Any, Any],
+        rename=None,
+        source: str = "",
+        adapters: Optional[Mapping[str, Any]] = None,
+    ) -> "TransferContext":
+        """Merge another scene's *carriers* -- an imported reference's, made
+        local -- into this scene's, then remove them.
+
+        Each record merges by its declared rule (:meth:`RecordTransfer.apply`);
+        what a carrier holds beside its records (a keyed attribute) moves to
+        this scene's carrier (:meth:`_carry_attributes`); every owner
+        (:attr:`OWNERS`) carries over what sits beside its record.  Then the
+        carriers go, so nothing is left holding records no tool reads, and
+        the deliverables they held are produced again from the merged scene
+        (:meth:`_rederive`).  A carrier that IS this scene's own (the import
+        adopted it: this scene had none) is left alone.  The importer calls
+        :meth:`flush_owners` before the other scene's nodes land.
+
+        Parameters:
+            carriers: ``{scope: carrier}`` of the other scene's carriers.
+            rename: The other scene's names -> this scene's
+                (:attr:`TransferContext.rename`); ``None`` when nothing moved.
+            source: The other scene's name, for the notes.
+            adapters: DCC facts an owner's hook asks for by name
+                (:attr:`TransferContext.adapters`) -- what the crossing knows
+                and the records do not, such as which datablocks the other
+                scene brought.
+
+        Returns:
+            TransferContext: its ``notes`` are what the merge changed or could
+            not keep -- the report the caller shows (each is logged too).
+        """
+        return cls._settle_carriers(
+            carriers, rename, source, keep=True, adapters=adapters
+        )
+
+    @classmethod
+    def discard_carriers(
+        cls,
+        carriers: Mapping[Any, Any],
+        rename=None,
+        source: str = "",
+        adapters: Optional[Mapping[str, Any]] = None,
+    ) -> "TransferContext":
+        """Remove another scene's *carriers* without merging their records --
+        the answer "don't merge" to :meth:`merge_plan`'s question.  Owners
+        remove what sat beside the dropped records, and the deliverables the
+        carriers held are produced again, as a merge does.  Unlike a merge,
+        a carrier the import adopted as this scene's own goes too: it was
+        adopted only because this scene had none.  As for a merge, the
+        importer calls :meth:`flush_owners` before the other scene's nodes
+        land -- an owner reloads what it holds from the records left."""
+        return cls._settle_carriers(
+            carriers, rename, source, keep=False, adapters=adapters
+        )
+
+    @classmethod
+    def _settle_carriers(
+        cls,
+        carriers: Mapping[Any, Any],
+        rename,
+        source: str,
+        keep: bool,
+        adapters: Optional[Mapping[str, Any]] = None,
+    ) -> "TransferContext":
+        """:meth:`merge_carriers` (*keep*) / :meth:`discard_carriers`."""
+        ctx = TransferContext(
+            rename=rename, source=source, adapters=dict(adapters or {})
+        )
+        live = cls._foreign_carriers(carriers) if keep else cls._live_carriers(carriers)
+        if not live:
+            return ctx
+        plan = RecordTransfer.between(
+            cls,
+            {scope: cls._carrier_values(carrier) for scope, carrier in live.items()},
+        )
+        other = plan.payloads(ctx)
+        hook_name = "merge_carrier" if keep else "discard_carrier"
+        with cls._crossing():
+            if keep:
+                plan.apply(cls, ctx)
+                for scope, carrier in live.items():
+                    cls._carry_attributes(carrier, scope, ctx)
+            elif not plan.is_empty:
+                ctx.note(
+                    f"{source or 'The other scene'}: not merged -- "
+                    + "; ".join(plan.summary())
+                    + "."
+                )
+            for key, owner in cls.owners().items():
+                hook = getattr(owner, hook_name, None)
+                if hook is None:
+                    continue
+                try:
+                    hook(live, other, ctx)
+                except Exception as error:  # noqa: BLE001 - one owner never costs the rest
+                    logger.warning("%s: %s failed.", key, hook_name, exc_info=True)
+                    ctx.note(f"{key}: its scene state was not settled ({error}).")
+            for carrier in live.values():
+                cls._delete_carrier(carrier)
+            # From what the scene keeps: while the other carriers stood, one a
+            # discard adopted as the scene's own still held the dropped records.
+            if plan.rederive:
+                cls._rederive(plan.rederive, ctx)
+        cls._log_notes(ctx)
+        return ctx
+
+    @staticmethod
+    def _log_notes(ctx: "TransferContext") -> None:
+        for note in ctx.notes:
+            logger.warning(note)
+
+    # -- the DCC's half of a crossing: override what its carriers need --------
+    @classmethod
+    def _live_carriers(cls, carriers: Mapping[Any, Any]) -> Dict[Scope, Any]:
+        """*carriers* that still exist, by scope (default: every one given)."""
+        return {Scope(s): c for s, c in (carriers or {}).items() if c is not None}
+
+    @classmethod
+    def _foreign_carriers(cls, carriers: Mapping[Any, Any]) -> Dict[Scope, Any]:
+        """:meth:`_live_carriers` less any that is this scene's own carrier of
+        its scope -- one an import adopted because the scene had none
+        (default: none is)."""
+        return cls._live_carriers(carriers)
+
+    @classmethod
+    def _carrier_values(cls, carrier: Any) -> Dict[str, Any]:
+        """Every value another scene's *carrier* holds, by :meth:`values`'
+        rules."""
+        raise NotImplementedError
+
+    @classmethod
+    def _carry_attributes(cls, carrier: Any, scope: Scope, ctx) -> None:
+        """Move what *carrier* holds beside its records -- a keyed attribute
+        and its curve -- to this scene's carrier of *scope* (default:
+        nothing to move)."""
+
+    @classmethod
+    def _rederive(cls, specs: List[RecordSpec], ctx) -> None:
+        """Produce the deliverables *specs* again from the merged scene
+        (default: a store without producers has none to run)."""
+
+    @classmethod
+    def _delete_carrier(cls, carrier: Any) -> None:
+        """Remove another scene's settled *carrier*."""
+        raise NotImplementedError
+
+    @classmethod
+    def _crossing(cls):
+        """The context a settle runs in -- the DCC's one undo step (default:
+        none)."""
+        return contextlib.nullcontext()
 
 
 @dataclass
@@ -1065,3 +1462,483 @@ class ExportSnapshot:
         for key in sorted(self.failed):
             parts.append(f"{key} (FAILED, left as stored)")
         return ", ".join(parts)
+
+
+@dataclass
+class TransferContext:
+    """What a record crossing between scenes needs from the DCC, and what the
+    crossing learns on the way.
+
+    One context for every route: a referenced module's carrier merging into
+    its host (the DCC maps the module's names, namespace stripped, to where
+    the import put them), a hand-off leaving (names spelled as the carrier
+    writes them) or arriving (the carrier's spelling resolved to the imported
+    nodes).
+
+    Attributes:
+        rename: A name as the OTHER side spells it -> as this side does, or
+            ``None`` / the name unchanged when it has no counterpart.  The DCC
+            owns its spellings -- DAG paths, plugs, ``object|path|index`` curve
+            keys -- so no record respells on its own: a codec record's codec
+            puts the names it holds through it (``respell_record``), and every
+            string of any other :attr:`RecordSpec.respell` payload, mapping
+            keys included, goes through it.
+        source: The other scene's name, for the notes (a reference's
+            namespace, ``"MOD"``).
+        objects: A hand-off's exported set in this scene's naming, when the
+            route has one (a DCC owner scopes what it sends to it).
+        adapters: DCC callables an owner asks for by name -- the hooks a
+            codec's DCC half needs that no other record does (the shot store's
+            curve resolution, an importer's frame offset).
+        remaps: What an earlier record's merge renumbered, by kind: the shot
+            store publishes ``{"shot_id": {old: new}}``, and the key stash,
+            declared after it, follows its clips' source shots through it.
+        notes: What the crossing changed or could not keep, one sentence
+            each -- the report the caller shows, so nothing is renamed or
+            dropped silently.
+    """
+
+    rename: Optional[Callable[[str], Optional[str]]] = None
+    source: str = ""
+    objects: Optional[List[str]] = None
+    adapters: Dict[str, Any] = field(default_factory=dict)
+    remaps: Dict[str, Dict[Any, Any]] = field(default_factory=dict)
+    notes: List[str] = field(default_factory=list)
+
+    def note(self, text: str) -> None:
+        """Record one sentence for the report."""
+        self.notes.append(text)
+
+    def adapter(self, name: str, default: Any = None) -> Any:
+        """The DCC adapter *name*, else *default*."""
+        return self.adapters.get(name, default)
+
+    def spell(self, name: str) -> str:
+        """*name* as this side spells it -- :attr:`rename`'s answer, else
+        *name* unchanged (no counterpart, or no rename at all)."""
+        spelled = self.rename(name) if self.rename is not None else None
+        return spelled if isinstance(spelled, str) and spelled else name
+
+    def respell(self, value: Any) -> Any:
+        """*value* with every string -- mapping keys included -- put through
+        :meth:`spell`; containers are rebuilt, never mutated.  For a payload
+        whose strings are all names; a codec that holds other strings too
+        picks its names itself (``respell_record``)."""
+        if self.rename is None:
+            return copy.deepcopy(value)
+
+        def walk(item: Any) -> Any:
+            if isinstance(item, str):
+                return self.spell(item)
+            if isinstance(item, list):
+                return [walk(v) for v in item]
+            if isinstance(item, dict):
+                return {walk(k): walk(v) for k, v in item.items()}
+            return item
+
+        return walk(value)
+
+
+class RecordTransfer:
+    """Another scene's records meeting this scene's -- one engine for every
+    route a record crosses by, driven by the declarations.
+
+    **Merging another scene's carrier** (a module's, once its reference is
+    imported): build it from the two carriers' string channels per scope
+    (:meth:`between`), ask the one question worth asking a user first -- does
+    the other scene bring anything a merge would keep (:attr:`is_empty`,
+    :meth:`summary`) -- then :meth:`apply` merges each record by its
+    :class:`Merge` rule.  A carrier holding only deliverables (the merged
+    scene re-derives them, :attr:`rederive`), its own baseline, or nothing,
+    is empty: it can simply go, with no question.
+
+    **A DCC hand-off**: :meth:`sections` is what the producer adds to its
+    sidecar -- every :attr:`RecordSpec.portable` record the scene holds --
+    and :meth:`receive` lands a sidecar's records in the consumer's scene.
+    Each record's DCC owner may take over its half (``transfer_out(ctx)`` /
+    ``transfer_in(payload, ctx)``) when it keeps state beside the record the
+    generic path cannot see; otherwise the stored record crosses as data,
+    respelled, and merges by its rule.
+
+    Pure: the DCC reads its carriers, supplies the :class:`TransferContext`,
+    writes through its store, re-derives :attr:`rederive` with its
+    producers, and carries over what lives on its carrier beside the records.
+    """
+
+    #: The hand-off sidecar section a portable record rides when it names no
+    #: section of its own (``HandoffManifest.RECORDS``).
+    RECORDS_SECTION = "records"
+
+    def __init__(
+        self,
+        own: Mapping[Any, Mapping[str, Any]],
+        other: Mapping[Any, Mapping[str, Any]],
+    ) -> None:
+        def strings(values: Mapping[str, Any]) -> Dict[str, str]:
+            return {k: v for k, v in values.items() if isinstance(v, str) and v}
+
+        self.own = {Scope(s): strings(v) for s, v in own.items()}
+        self.other = {Scope(s): strings(v) for s, v in other.items()}
+
+    @classmethod
+    def between(cls, store, other: Mapping[Any, Mapping[str, Any]]) -> "RecordTransfer":
+        """*store*'s channels, per scope, against *other*'s (``{scope: values}``)."""
+        return cls({scope: store.channels(scope) for scope in Scope}, other)
+
+    # ------------------------------------------------------------- the plan
+    def _entries(self) -> List[Tuple[Scope, str, Optional[RecordSpec]]]:
+        """The other scene's channels: declared records in declaration order
+        (a codec may read what an earlier one remapped), then the undeclared
+        ones by name."""
+        declared = [
+            (spec.scope, spec.key, spec)
+            for spec in SceneRecords.all()
+            if spec.key in self.other.get(spec.scope, {})
+        ]
+        known = {(scope, key) for scope, key, _ in declared}
+        undeclared = sorted(
+            (scope, key, None)
+            for scope, values in self.other.items()
+            for key in values
+            if (scope, key) not in known
+        )
+        return declared + undeclared
+
+    @property
+    def incoming(self) -> List[Tuple[Scope, str]]:
+        """What a merge would bring in: every :attr:`Merge.UNION` /
+        :attr:`Merge.CODEC` record the other scene holds, and every channel no
+        record declares (adopted when this scene has none of its own) --
+        each one that holds something (:meth:`_holds_nothing`)."""
+        return [
+            (scope, key)
+            for scope, key, spec in self._entries()
+            if (spec is None or spec.merge in (Merge.UNION, Merge.CODEC))
+            and not self._holds_nothing(self.other[scope][key])
+        ]
+
+    @staticmethod
+    def _holds_nothing(text: str) -> bool:
+        """Whether a stored payload holds no entry: an empty list or mapping,
+        or a document whose every list and mapping is empty -- settings
+        beside them are no entry (a key stash with no clip:
+        ``{"schema": 1, "clips": [], "next_id": 1}``).  A payload that is not
+        JSON, or a mapping of settings alone, holds something."""
+        try:
+            payload = json.loads(text)
+        except (ValueError, TypeError):
+            return False
+        if isinstance(payload, list):
+            return not payload
+        if not isinstance(payload, Mapping):
+            return False
+        containers = [v for v in payload.values() if isinstance(v, (list, Mapping))]
+        return not any(containers) if containers else not payload
+
+    @property
+    def rederive(self) -> List[RecordSpec]:
+        """The deliverables to produce again once the merge is applied: every
+        :attr:`Merge.DERIVE` record the other scene held."""
+        return [
+            spec
+            for _scope, _key, spec in self._entries()
+            if spec is not None and spec.merge is Merge.DERIVE
+        ]
+
+    @property
+    def is_empty(self) -> bool:
+        """Nothing to decide: the other scene brings no record a merge keeps."""
+        return not self.incoming
+
+    def summary(self) -> List[str]:
+        """One line per record the merge would bring in, for the prompt --
+        what it is and how many entries the other scene holds.  A record
+        whose counted list is empty holds something else (a shot store with
+        markers alone), so it is named without a count."""
+        lines = []
+        for scope, key in self.incoming:
+            spec = SceneRecords.by_key(key, scope)
+            label = spec.owner if spec is not None else key
+            count = self._count(self.other[scope][key])
+            lines.append(
+                f"{label}: {count} entr{'y' if count == 1 else 'ies'}"
+                if count
+                else label
+            )
+        return lines
+
+    @staticmethod
+    def _count(text: str) -> Optional[int]:
+        """How many entries a stored payload holds: a list's length; a keyed
+        mapping's (every value a container, or none is); a document's first
+        list or mapping (``{"schema": 1, "groups": {...}}`` counts groups)."""
+        try:
+            payload = json.loads(text)
+        except (ValueError, TypeError):
+            return None
+        if isinstance(payload, list):
+            return len(payload)
+        if not isinstance(payload, Mapping):
+            return None
+        containers = [v for v in payload.values() if isinstance(v, (list, Mapping))]
+        if not containers or len(containers) == len(payload):
+            return len(payload)
+        return len(containers[0])
+
+    def payloads(self, ctx: Optional[TransferContext] = None) -> Dict[RecordSpec, Any]:
+        """The other scene's declared records, decoded -- and respelled through
+        *ctx* (:meth:`respell`) when given -- by declaration: what a DCC owner
+        reads to carry over, or clean up, what sits beside them.  A record
+        that does not decode is left out.  Keyed by spec, not key: a private
+        record and a deliverable may share a key."""
+        out: Dict[RecordSpec, Any] = {}
+        for scope, key, spec in self._entries():
+            if spec is None:
+                continue
+            payload = spec.decode(self.other[scope][key])
+            if payload is None:
+                continue
+            out[spec] = payload if ctx is None else self.respell(spec, payload, ctx)
+        return out
+
+    # --------------------------------------------------------------- apply
+    def apply(self, store, ctx: Optional[TransferContext] = None) -> TransferContext:
+        """Merge the other scene's records into *store*, each by its rule.
+
+        The scene's own copy is read from *store* at this moment, not from
+        when the merge was planned.  A record the other scene brings and this
+        scene lacks is adopted; one both hold is combined by its rule.
+        :attr:`Merge.OWN` and :attr:`Merge.DERIVE` records are not written
+        (the caller re-derives :attr:`rederive`).  An undeclared channel is
+        adopted when *store* has none and otherwise left as the scene's own,
+        noted.  One record's failure is noted and the others still merge.
+
+        Returns:
+            The context; its :attr:`~TransferContext.notes` are the report.
+        """
+        ctx = ctx if ctx is not None else TransferContext()
+        for scope, key, spec in self._entries():
+            if spec is not None and spec.merge in (Merge.DERIVE, Merge.OWN):
+                continue
+            text = self.other[scope][key]
+            try:
+                if spec is None:
+                    self._adopt_undeclared(store, scope, key, text, ctx)
+                    continue
+                other = spec.decode(text)
+                if other is None:
+                    ctx.note(f"{spec.owner}: the other scene's copy could not be read.")
+                    continue
+                self.merge_record(store, spec, other, ctx)
+            except Exception as error:  # noqa: BLE001 - one record never costs the rest
+                logger.warning("Scene record %r was not merged.", key, exc_info=True)
+                ctx.note(f"{key}: not merged ({error}).")
+        return ctx
+
+    @staticmethod
+    def _adopt_undeclared(store, scope: Scope, key: str, text: str, ctx) -> None:
+        if store.read(scope, key):
+            ctx.note(
+                f"{key}: this scene's own copy was kept; the other scene's was "
+                "not merged (no merge rule is declared for it)."
+            )
+            return
+        store.write(scope, key, text)
+
+    @classmethod
+    def merge_record(
+        cls,
+        store,
+        spec: RecordSpec,
+        other: Any,
+        ctx: TransferContext,
+        respelled: bool = False,
+    ) -> Any:
+        """Merge *other* (another scene's decoded payload of *spec*) into
+        *store*'s copy by *spec*'s rule and write the result -- the one merge
+        every route calls, a DCC owner's ``transfer_in`` included.
+
+        *other* is respelled first (:meth:`respell`) unless *respelled* says
+        its names already are this scene's -- an owner that decoded the
+        payload against this scene has resolved them.  Returns the payload
+        written (``None`` when the rule writes nothing).
+        """
+        if spec.merge in (Merge.DERIVE, Merge.OWN) or other is None:
+            return None
+        if not respelled:
+            other = cls.respell(spec, other, ctx)
+        own = spec.load(store)
+        if spec.merge is Merge.CODEC:
+            codec = SceneRecords.codec(spec)
+            if codec is None:
+                raise LookupError(f"no codec is registered for {spec.key!r}")
+            merged = codec.merge_record(own, other, ctx)
+        else:
+            merged = cls.union(own, other, spec, ctx)
+        spec.save(store, merged)
+        return merged
+
+    @staticmethod
+    def respell(spec: RecordSpec, payload: Any, ctx: TransferContext) -> Any:
+        """*payload* of *spec* with its names put through ``ctx.rename``.
+
+        A codec that knows which of its strings are names respells those
+        alone (its ``respell_record(payload, ctx)``) -- a shot named like a
+        renamed node keeps its name; any other record that spells names has
+        every string respelled (:meth:`TransferContext.respell`), and one that
+        does not (:attr:`RecordSpec.respell` False) crosses as it is.
+        """
+        if not spec.respell or not payload or ctx.rename is None:
+            return payload
+        codec = SceneRecords.codec(spec)
+        hook = getattr(codec, "respell_record", None)
+        return hook(payload, ctx) if hook is not None else ctx.respell(payload)
+
+    @staticmethod
+    def union(own: Any, other: Any, spec: RecordSpec, ctx: TransferContext) -> Any:
+        """The :attr:`Merge.UNION` rule: entries by identity, the scene's own
+        entry winning a collision (noted when the two differ).
+
+        A mapping unites by key.  A list unites by ``spec.merge_key`` (or by
+        equality without one) with the other scene's new entries FIRST, so a
+        LIFO stack's newest -- the scene's own -- stays on top.  Either side
+        absent adopts the other.
+        """
+        if not own:
+            return other
+        if not other:
+            return own
+        if isinstance(own, Mapping) and isinstance(other, Mapping):
+            merged = dict(other)
+            for key, value in own.items():
+                if key in merged and merged[key] != value:
+                    ctx.note(f"{spec.owner}: {key!r} kept as this scene has it.")
+                merged[key] = value
+            return merged
+        if isinstance(own, list) and isinstance(other, list):
+            field_name = spec.merge_key
+
+            def ident(entry: Any) -> Any:
+                if field_name and isinstance(entry, Mapping):
+                    return entry.get(field_name)
+                return json.dumps(entry, sort_keys=True, default=str)
+
+            mine = {ident(e): e for e in own}
+            fresh = []
+            for entry in other:
+                found = mine.get(ident(entry))
+                if found is None:
+                    fresh.append(entry)
+                elif found != entry:
+                    ctx.note(
+                        f"{spec.owner}: {ident(entry)!r} kept as this scene has it."
+                    )
+            return fresh + list(own)
+        ctx.note(f"{spec.owner}: the two copies differ in shape; this scene's kept.")
+        return own
+
+    # ------------------------------------------------------------ hand-off
+    @classmethod
+    def sections(
+        cls,
+        store,
+        ctx: TransferContext,
+        owners: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """What a hand-off producer adds to its sidecar: every portable record
+        the scene holds, each under its :attr:`RecordSpec.section` or keyed in
+        the generic :attr:`RECORDS_SECTION`.
+
+        A record's DCC owner (*owners*, record key -> class) produces the
+        payload when it defines ``transfer_out(ctx)`` -- it keeps state beside
+        the record (memberships, keyed channels) the stored record does not
+        hold.  Otherwise a record with a section of its own crosses in that
+        section's wire shape, which its codec defines (``section_out(record,
+        ctx)`` -- the shot store's is :meth:`ShotTransfer.encode`'s envelope,
+        what every consumer decodes, never the bare record); any other
+        stored record crosses respelled (:meth:`respell`) through
+        ``ctx.rename`` -- the carrier's spelling.  One record's failure is
+        noted and the others still ship.
+        """
+        out: Dict[str, Any] = {}
+        for spec in SceneRecords.portable():
+            owner = (owners or {}).get(spec.key)
+            hook = getattr(owner, "transfer_out", None)
+            section_out = cls._section_hook(spec, "section_out")
+            try:
+                if hook is not None:
+                    payload = hook(ctx)
+                elif section_out is not None:
+                    payload = section_out(spec.load(store), ctx)
+                else:
+                    payload = cls.respell(spec, spec.load(store), ctx)
+            except Exception as error:  # noqa: BLE001 - one record never costs the rest
+                logger.warning("Scene record %r was not sent.", spec.key, exc_info=True)
+                ctx.note(f"{spec.owner}: not sent ({error}).")
+                continue
+            if not payload:
+                continue
+            if spec.section:
+                out[spec.section] = payload
+            else:
+                out.setdefault(cls.RECORDS_SECTION, {})[spec.key] = payload
+        return out
+
+    @staticmethod
+    def _section_hook(spec: RecordSpec, name: str) -> Optional[Callable[..., Any]]:
+        """The codec's ``section_out`` / ``section_in`` for a record that
+        crosses under a section of its own, else ``None`` -- a section's wire
+        shape is the codec's to define, a generic record's is the record."""
+        if not spec.section:
+            return None
+        return getattr(SceneRecords.codec(spec), name, None)
+
+    @classmethod
+    def receive(
+        cls,
+        manifest: Mapping[str, Any],
+        store,
+        ctx: TransferContext,
+        owners: Optional[Mapping[str, Any]] = None,
+    ) -> TransferContext:
+        """Land a hand-off sidecar's records in *store*'s scene.
+
+        Each portable record found in *manifest* (under its own section, or
+        in :attr:`RECORDS_SECTION`) goes to its DCC owner's
+        ``transfer_in(payload, ctx)`` when it defines one; otherwise a
+        section is first read back by its codec (``section_in(payload,
+        ctx)``, the inverse of what :meth:`sections` wrote, names resolved
+        through ``ctx.rename``), and the record merges by its rule
+        (:meth:`merge_record`; a generic payload is respelled there through
+        ``ctx.rename`` -- the carrier's spelling resolved to this scene).
+        Best-effort per record: a bad payload is noted and never costs the
+        import.
+
+        Returns:
+            *ctx*, its notes the report.
+        """
+        generic = manifest.get(cls.RECORDS_SECTION) if manifest else None
+        generic = generic if isinstance(generic, Mapping) else {}
+        for spec in SceneRecords.portable():
+            payload = (
+                manifest.get(spec.section) if spec.section else generic.get(spec.key)
+            )
+            if not payload:
+                continue
+            owner = (owners or {}).get(spec.key)
+            hook = getattr(owner, "transfer_in", None)
+            section_in = cls._section_hook(spec, "section_in")
+            try:
+                if hook is not None:
+                    hook(payload, ctx)
+                elif section_in is not None:
+                    record = section_in(payload, ctx)
+                    cls.merge_record(store, spec, record, ctx, respelled=True)
+                else:
+                    cls.merge_record(store, spec, payload, ctx)
+            except Exception as error:  # noqa: BLE001 - a record, never a failed import
+                logger.warning(
+                    "Scene record %r was not received.", spec.key, exc_info=True
+                )
+                ctx.note(f"{spec.owner}: not received ({error}).")
+        return ctx

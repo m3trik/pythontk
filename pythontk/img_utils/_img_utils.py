@@ -743,7 +743,51 @@ class ImgUtils(HelpMixin):
     def ktx2_available(cls) -> bool:
         """True when ``.ktx2`` output is currently writable — the capability
         gate a UI checks before offering :attr:`DELIVERY_FORMATS`."""
-        return cls.resolve_ktx2_encoder() is not None
+        # A predicate never raises: a resolver that refuses (no binary, no
+        # catalog) answers "not available", which is the question asked.
+        try:
+            return cls.resolve_ktx2_encoder() is not None
+        except FileNotFoundError:
+            return False
+
+    @classmethod
+    def settle_ktx2_encoder(
+        cls,
+        prompt: Union[bool, Callable[[str], bool]],
+        refused: Callable[[str], Any],
+        installed: Optional[Callable[[str], Any]] = None,
+    ) -> bool:
+        """Whether a KTX2 run may go ahead: :meth:`ensure_ktx2_encoder`, with
+        its two outcomes delivered to the host rather than raised at it.
+
+        The step every panel that offers KTX2 was writing for itself -- Maya's
+        and Blender's Scene Exporters, the WebXR preview, the Map Converter --
+        each with its own copy of the same try/except and its own drift in
+        what it told the user.  Nothing here is host-specific: the host says
+        how it asks (*prompt*), how it refuses (*refused*: the fix-shaped
+        message naming the manual install, to a log or a dialog) and, when it
+        cares, how it reports an install it just made (*installed*: the
+        binary's path).
+
+        Parameters:
+            prompt: As :meth:`ensure_ktx2_encoder`'s -- a consent callable, or
+                a bool answering for the user.
+            refused: Receives the message when the encoder is not there and
+                the install was declined or failed.
+            installed: Receives the installed binary's path when the call
+                installed it; ``None`` reports nothing.
+
+        Returns:
+            True when an encoder is available now.
+        """
+        try:
+            path = cls.ensure_ktx2_encoder(prompt=prompt)
+        except FileNotFoundError as error:
+            refused(str(error))
+            return False
+        if path and installed is not None:
+            installed(path)
+        return True
 
     @classmethod
     def ensure_ktx2_encoder(
@@ -807,6 +851,8 @@ class ImgUtils(HelpMixin):
         compression: str = None,
         quality: int = None,
         colorspace: str = None,
+        uastc_rdo: float = None,
+        uastc_rdo_dictionary: int = None,
         **kwargs,
     ):
         """Save an image to ``name``, dispatching on the file extension.
@@ -837,6 +883,12 @@ class ImgUtils(HelpMixin):
                 that carry one — currently ``.ktx2`` ("sRGB"/"linear"; None =
                 sRGB). A label, not a conversion: the loader samples by it, so
                 linear data maps must say so. Ignored by the PIL/cv2 paths.
+            uastc_rdo (float, optional): ``.ktx2`` UASTC encodes only -- the RDO
+                lambda (``Ktx2Encoder`` ``uastc_rdo``); None = off. Which maps
+                should take it, and at what cap, is the caller's policy
+                (``MapOptimizer.resolve_uastc_rdo``).
+            uastc_rdo_dictionary (int, optional): The RDO dictionary size with
+                *uastc_rdo*; None = toktx's own.
             **kwargs: Additional arguments forwarded to PIL.Image.save (e.g.,
                 optimize=True, compress_level=9). Ignored for OpenCV-backed formats.
 
@@ -852,7 +904,15 @@ class ImgUtils(HelpMixin):
         # bit depth (Basis is 8-bit), lossy kwargs, and encoder buffers do not
         # apply, and the mode fixup happens against the staged PNG instead.
         if ext in cls.DELIVERY_FORMATS:
-            cls._save_ktx2(im, name, compression, quality, colorspace)
+            cls._save_ktx2(
+                im,
+                name,
+                compression,
+                quality,
+                colorspace,
+                uastc_rdo=uastc_rdo,
+                uastc_rdo_dictionary=uastc_rdo_dictionary,
+            )
             return
 
         fmt = cls.image_formats.get(ext)
@@ -1054,6 +1114,8 @@ class ImgUtils(HelpMixin):
         compression: Optional[str],
         quality: Optional[int],
         colorspace: Optional[str],
+        uastc_rdo: Optional[float] = None,
+        uastc_rdo_dictionary: Optional[int] = None,
     ) -> None:
         """Write *im* to ``.ktx2`` through the registered / built-in encoder.
 
@@ -1063,12 +1125,25 @@ class ImgUtils(HelpMixin):
         type for the texture pipeline. ``colorspace`` labels the transfer
         function (None = sRGB, the common case for a bare save); mip levels are
         always generated — a GPU-compressed texture cannot make its own at
-        runtime.
+        runtime. The RDO pair rides a UASTC encode only (ETC1S has no RDO
+        stage), and only when set, so a registered encoder that models neither
+        keyword still encodes everything else.
         """
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
         encoder = cls.resolve_ktx2_encoder(required=True)
         codec = (compression or "UASTC").upper()
         srgb = (colorspace or "sRGB").lower() != "linear"
-        encoder.encode(im, name, codec=codec, srgb=srgb, mipmaps=True, quality=quality)
+        rdo = Ktx2Encoder.rdo_kwargs(uastc_rdo, uastc_rdo_dictionary)
+        encoder.encode(
+            im,
+            name,
+            codec=codec,
+            srgb=srgb,
+            mipmaps=True,
+            quality=quality,
+            **(rdo if codec == "UASTC" else {}),
+        )
 
     @classmethod
     def _save_high_bit_depth(cls, im: "Image.Image", name: str, bit_depth: int) -> bool:

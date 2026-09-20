@@ -293,6 +293,34 @@ class KeyStashPersistenceTest(unittest.TestCase):
         self.assertEqual(store.clips[0].times, [24])
 
 
+class KeyStashFlushPendingTest(unittest.TestCase):
+    def tearDown(self):
+        KeyStash._active = None
+        KeyStash.set_persistence(None)
+
+    def test_flush_pending_stores_what_the_active_stash_holds_unwritten(self):
+        """A DCC stash writes on idle, so its record can be a mutation behind;
+        a crossing reads the record, and asks for what the stash holds first."""
+
+        class Deferred(KeyStash):
+            def _schedule_flush(self):
+                """Writes on idle, as a DCC stash does."""
+
+        backend = _MemoryBackend()
+        Deferred.set_persistence(backend)
+        Deferred._active = None
+        try:
+            Deferred.active().add_clip(["|a"], _curves(("|a", "tx", [1, 2])))
+            self.assertEqual(backend.saves, 0)
+            Deferred.flush_pending()
+            self.assertEqual(len(backend.data["clips"]), 1)
+            Deferred.flush_pending()
+            self.assertEqual(backend.saves, 1)  # nothing pending: nothing written
+        finally:
+            Deferred._active = None
+            Deferred.set_persistence(None)
+
+
 class KeyStashUndoStepTest(unittest.TestCase):
     """The template both DCC adapters run their scene operations through."""
 
