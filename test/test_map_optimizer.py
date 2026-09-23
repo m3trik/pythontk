@@ -1684,7 +1684,10 @@ class TestKtx2Compression(_TextureFixture):
         are refused before anything on disk moves -- and the dry run refuses
         what the real run would. Added: 2026-09-19"""
         path = self.texture("wall_Normal_OpenGL.png")
-        for kwargs in ({"uastc_rdo": 11}, {"uastc_rdo": 1.0, "uastc_rdo_dictionary": 63}):
+        for kwargs in (
+            {"uastc_rdo": 11},
+            {"uastc_rdo": 1.0, "uastc_rdo_dictionary": 63},
+        ):
             with self.subTest(**kwargs):
                 with self.assertRaises(ValueError):
                     MapOptimizer.optimize_map(

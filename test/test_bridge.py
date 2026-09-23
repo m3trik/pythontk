@@ -11,6 +11,7 @@ generic script-template discovery / mode parsing / ``__KEY__`` substitution
 
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -611,6 +612,69 @@ class HandoffContractTest(unittest.TestCase):
     def test_scene_objects_defaults_to_unsupported(self):
         """``None`` = "this host can't enumerate itself" -> save_as uses the selection."""
         self.assertIsNone(HandoffBridge()._scene_objects())
+
+
+class ChildSysPathTest(unittest.TestCase):
+    """``HandoffBridge.child_sys_path``: what a CHILD APP may safely be handed.
+
+    A bake script runs the SAME app as its parent, so it wants the parent's
+    importable set rather than the named roots ``import_roots`` returns. But
+    "the same app" is only true when the parent IS that app: driven from a
+    workspace venv, the parent's own stdlib and site-packages go on the child's
+    path AHEAD of the child's, and a cross-version child dies importing hashlib
+    (measured: `ModuleNotFoundError: _sha512` from a Blender bake driven by a
+    Python 3.11 venv). Dropping everything under the parent's own prefixes is
+    inert in production -- the child has its own copies -- and fixes every caller.
+    """
+
+    def test_the_parents_own_interpreter_directories_are_dropped(self):
+        foreign = os.path.join(sys.prefix, "Lib")
+        base = os.path.join(sys.base_prefix, "Lib", "site-packages")
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+        kept = HandoffBridge.child_sys_path([foreign, repo, base])
+
+        self.assertNotIn(foreign, kept)
+        self.assertNotIn(base, kept)
+        self.assertIn(repo, kept, "the repo roots a template imports must survive")
+
+    def test_the_parents_user_site_packages_is_dropped_too(self):
+        """Versioned and built for the parent's Python, but outside its prefix:
+        a base-interpreter parent handed a 3.13 child its 3.11 binaries."""
+        import site
+
+        user_site = site.getusersitepackages()
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        entries = [user_site, os.path.join(user_site, "win32"), repo]
+        if os.name == "nt":  # Windows compares without case
+            entries.append(user_site.upper())
+
+        kept = HandoffBridge.child_sys_path(entries)
+
+        self.assertEqual(kept, [repo])
+
+    def test_it_defaults_to_the_live_sys_path(self):
+        kept = HandoffBridge.child_sys_path()
+        self.assertTrue(all(entry for entry in kept), "no empty entries")
+        for entry in kept:
+            self.assertFalse(
+                os.path.abspath(entry).startswith(os.path.abspath(sys.prefix)),
+                f"{entry} is under the parent's own prefix",
+            )
+
+    def test_order_and_uniqueness_are_preserved(self):
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        other = os.path.join(repo, "mayatk")
+
+        kept = HandoffBridge.child_sys_path([repo, other, repo])
+
+        self.assertEqual(kept, [repo, other])
+
+    def test_an_empty_or_relative_entry_is_dropped(self):
+        """``sys.path`` carries ``''`` for the cwd, which means something different
+        in the child -- and a relative entry resolves against the child's cwd."""
+        kept = HandoffBridge.child_sys_path(["", ".", os.path.abspath(os.sep)])
+        self.assertEqual(kept, [os.path.abspath(os.sep)])
 
 
 class RunScratchTest(unittest.TestCase):

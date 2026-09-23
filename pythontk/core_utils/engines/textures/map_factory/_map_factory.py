@@ -845,6 +845,55 @@ class MapFactory(LoggingMixin):
         return {base: sorted(maps.values()) for base, maps in merged.items()}
 
     @classmethod
+    def dominant_texture_set(cls, paths: Iterable[str]) -> Optional[Tuple[str, str]]:
+        """``(base, folder)`` of the texture set most of *paths* belong to, or ``None``.
+
+        What names a map derived from a material's textures -- a baked
+        lightmap is ``<base>_Lightmap`` after the set it lights, not after a
+        long import-namespaced node name -- and, with *folder*, where that set
+        lives. Only a real MATERIAL MAP votes: a name carrying no map-type
+        token (:meth:`resolve_map_type`) is an environment cube, a lookup or a
+        stray, and a base taken from a map like that is shared by everything
+        that wears it -- measured on a production scene, the object ``TABLE``
+        baked as ``diffuse_cube_LightMap.exr`` (Maya's StingrayPBS environment
+        texture) beside 46 correctly named objects. The most common base wins,
+        a tie going to the name that sorts first, so neither one stray map nor
+        the order the paths arrive in decides; *folder* is the one most of
+        THAT set's maps sit in, ``""`` for a bare file name (an image embedded
+        in the scene keeps only its name).
+
+        One rule for every host: mayatk's and blendertk's lightmap bakers each
+        carried their own, and the copies disagreed about both the vote and
+        the tie.
+
+        Parameters:
+            paths: Texture paths or bare file names, in any order.
+
+        Returns:
+            ``(base, folder)``, or ``None`` when no path is a material map.
+        """
+        votes: List[Tuple[str, str]] = []
+        for path in paths or ():
+            text = str(path or "")
+            if not text or not cls.resolve_map_type(text):
+                continue  # not a material map
+            base = cls.get_base_texture_name(text)
+            if base:
+                folder = os.path.dirname(text)
+                votes.append((base, os.path.normpath(folder) if folder else ""))
+        if not votes:
+            return None
+
+        def majority(values: List[str]) -> str:
+            counts: Dict[str, int] = {}
+            for value in values:
+                counts[value] = counts.get(value, 0) + 1
+            return max(sorted(counts), key=counts.get)
+
+        base = majority([b for b, _folder in votes])
+        return base, majority([f for b, f in votes if b == base])
+
+    @classmethod
     def _supplement_sets_from_dir(
         cls,
         texture_sets: Dict[str, List[str]],

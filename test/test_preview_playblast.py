@@ -74,7 +74,7 @@ def _viewer_api():
         encoding="utf-8"
     )
     block = page.split("const viewer = {", 1)[1].split("\n};", 1)[0]
-    return set(re.findall(r"^  (?:get )?(\w+)\s*[({:,]", block, re.M))
+    return set(re.findall(r"^  (?:get |async )?(\w+)\s*[({:,]", block, re.M))
 
 
 class PlayblastRoutesTestCase(unittest.TestCase):

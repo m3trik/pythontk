@@ -1999,6 +1999,18 @@ class TestGlbEditSession(unittest.TestCase):
         nothing = MeshConvert.describe_texture_pass({}, "KTX2", 2048)
         self.assertIn("changed nothing", nothing)
 
+        # With no ceiling, a resample is credited to what actually caused it:
+        # the data-map cap (a row of its own), not a power-of-two snap a WEBP
+        # never takes -- and the cap is named once.
+        capped = MeshConvert.describe_texture_pass(
+            {**full, "resized": 2}, "WEBP", 0, secondary_max_size=512
+        )
+        self.assertIn("2 resampled down (data maps to 512px)", capped)
+        self.assertNotIn("power-of-two", capped)
+        self.assertEqual(capped.count("512px"), 1, capped)
+        snapped = MeshConvert.describe_texture_pass({**full, "resized": 1}, "KTX2", 0)
+        self.assertIn("1 resampled down (power-of-two edges for KTX2)", snapped)
+
     def test_the_conversion_timeout_scales_with_the_file_it_converts(self):
         """A flat 300s budget cannot fit both a prop and a production assembly.
 
@@ -3724,6 +3736,27 @@ class TestFbxHandoff(unittest.TestCase):
             "a caller mutating the block must not edit the class constant",
         )
 
+    def test_an_exports_rendering_choice_must_name_a_published_field(self):
+        """An export's choices merge over the policy -- a baked-reflection level
+        -- and only onto a field it declares: a misspelt one would publish a
+        value no reader looks for while the field it meant kept its default.
+        The constant itself is never edited. Added: 2026-09-21"""
+        import copy
+
+        before = copy.deepcopy(MeshConvert.RENDERING_POLICY)
+        merged = MeshConvert.rendering_policy(
+            {"lightmappedMaterials": {"envMapIntensity": 1.0}}
+        )
+        self.assertEqual(merged["lightmappedMaterials"]["envMapIntensity"], 1.0)
+        self.assertEqual(merged["keyLight"], before["keyLight"])
+        self.assertEqual(MeshConvert.RENDERING_POLICY, before)
+        for bad in (
+            {"lightmapped": {"envMapIntensity": 1.0}},
+            {"lightmappedMaterials": {"envMapIntensty": 1.0}},
+        ):
+            with self.subTest(override=bad), self.assertRaises(ValueError):
+                MeshConvert.rendering_policy(bad)
+
     def test_source_drops_entries_that_do_not_apply(self):
         """An unsaved scene has no name; publishing ``"scene": null`` in a
         delivered artifact reads as a field that failed rather than one that
@@ -4641,22 +4674,7 @@ class TestGlbLightmaps(unittest.TestCase):
         if texcoord1:
             attrs["TEXCOORD_1"] = 2
         nodes = [{"name": n, "mesh": i} for i, n in enumerate(objects)]
-        if nested is None:
-            carrier = {}
-        elif nested:
-            carrier = {
-                "fromFBX": {
-                    "userProperties": {
-                        "lightmap_metadata": {
-                            "type": "eFbxString",
-                            "value": json.dumps(manifest),
-                        }
-                    }
-                }
-            }
-        else:
-            carrier = {"lightmap_metadata": json.dumps(manifest)}
-        nodes.append({"name": "data_export", "extras": carrier})
+        nodes.append(self._carrier_node(manifest, nested))
         return {
             "asset": {"version": "2.0"},
             "nodes": nodes,
@@ -4673,6 +4691,94 @@ class TestGlbLightmaps(unittest.TestCase):
             "dir": self.tmp,  # the publisher's locate hint -- no caller paths
             "objects": entries,
         }
+
+    @staticmethod
+    def _carrier_node(manifest, nested=True):
+        """The ``data_export`` node carrying *manifest* (see :meth:`_scene`)."""
+        if nested is None:
+            extras = {}
+        elif nested:
+            extras = {
+                "fromFBX": {
+                    "userProperties": {
+                        "lightmap_metadata": {
+                            "type": "eFbxString",
+                            "value": json.dumps(manifest),
+                        }
+                    }
+                }
+            }
+        else:
+            extras = {"lightmap_metadata": json.dumps(manifest)}
+        return {"name": "data_export", "extras": extras}
+
+    def _tree_scene(self, manifest, paths, prims=None, share_mesh=None, materials=3):
+        """A GLB whose mesh nodes sit at *paths* -- name tuples, root first.
+
+        The FBX2glTF shape: a group node per distinct prefix (two paths sharing
+        ancestors share those nodes), children listed on the parent. *prims*
+        maps a path to its primitives' material indices (default ``[0]``);
+        *share_mesh* maps a path to the path whose MESH it reuses (instancing).
+        Returns ``(gltf, {path: node_index})``.
+        """
+        prims, share_mesh = prims or {}, share_mesh or {}
+        attrs = {"POSITION": 0, "TEXCOORD_0": 1, "TEXCOORD_1": 2}
+        nodes, meshes, index_of = [], [], {}
+
+        def node_for(prefix):
+            if prefix not in index_of:
+                nodes.append({"name": prefix[-1]})
+                index_of[prefix] = len(nodes) - 1
+                if len(prefix) > 1:
+                    parent = node_for(prefix[:-1])
+                    nodes[parent].setdefault("children", []).append(index_of[prefix])
+            return index_of[prefix]
+
+        for path in paths:
+            node_for(tuple(path))
+        for path in paths:
+            path = tuple(path)
+            if path in share_mesh:
+                continue
+            meshes.append(
+                {
+                    "primitives": [
+                        {"attributes": dict(attrs), "material": m}
+                        for m in prims.get(path, [0])
+                    ]
+                }
+            )
+            nodes[index_of[path]]["mesh"] = len(meshes) - 1
+        for path, owner in share_mesh.items():
+            nodes[index_of[tuple(path)]]["mesh"] = nodes[index_of[tuple(owner)]]["mesh"]
+        nodes.append(self._carrier_node(manifest))
+        children = {c for n in nodes for c in n.get("children", ())}
+        roots = [i for i in range(len(nodes)) if i not in children]
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scene": 0,
+            "scenes": [{"nodes": roots}],
+            "nodes": nodes,
+            "meshes": meshes,
+            "materials": [{"name": f"mat{i}"} for i in range(materials)],
+        }
+        return gltf, {p: index_of[tuple(p)] for p in map(tuple, paths)}
+
+    @staticmethod
+    def _bound_map(gltf, node, prim=0):
+        """The lightmap a mesh node's primitive wears, as the viewer reads it.
+
+        By the ``lightmap_web`` entry of the primitive's material, not by image:
+        embeds are deduplicated by content, and the web encode normalizes, so
+        two constant maps share one PNG and differ only in their scalar.
+        """
+        mesh = gltf["meshes"][gltf["nodes"][node]["mesh"]]
+        material = gltf["materials"][mesh["primitives"][prim]["material"]]
+        if not material.get("occlusionTexture"):
+            return None
+        web = (gltf.get("extras") or {}).get("lightmap_web") or {}
+        entry = (web.get("materials") or {}).get(material.get("name")) or {}
+        return entry.get("map")
 
     def _native_export(self, web_holder="scene"):
         """A GLB shaped like blendertk's native glTF export of one baked floor.
@@ -5448,6 +5554,374 @@ class TestGlbLightmaps(unittest.TestCase):
         self.assertGreater(exact_mat, 1, "rect binding must clone the material")
         self.assertEqual(sibling_mat, 0)
 
+    # -- Same-named objects. FBX carries leaf names only, so a scene that reuses
+    #    one (``|GRP|BODY|MACHINE_B|BODY|BODY`` beside ``|GRP|BODY|MACHINE_A|BODY``,
+    #    the production room) publishes two ``BODY`` entries that the
+    #    GLB can tell apart only by where each node SITS.
+    LX = ("RootNode", "GRP", "BODY", "MACHINE_B", "BODY", "BODY")
+    AL = ("RootNode", "GRP", "BODY", "MACHINE_A", "BODY")
+
+    def _two_bodies(self, hierarchy=True):
+        lx_exr = self._exr("LX_Lightmap.exr", value=(0.5, 0.25, 0.125))
+        al_exr = self._exr("AL_Lightmap.exr", value=(0.125, 0.25, 0.5))
+        entries = [
+            {"name": "BODY", "map": os.path.basename(lx_exr)},
+            {"name": "BODY", "map": os.path.basename(al_exr)},
+        ]
+        if hierarchy:
+            # The Maya DAG path: no synthetic FBX root above it.
+            entries[0]["hierarchy"] = list(self.LX[1:])
+            entries[1]["hierarchy"] = list(self.AL[1:])
+        gltf, index = self._tree_scene(
+            self._manifest(entries),
+            [self.LX, self.AL],
+            prims={self.LX: [0], self.AL: [1]},
+        )
+        return self._glb(gltf), index
+
+    def test_same_named_objects_bind_their_own_maps_by_hierarchy(self):
+        """Reported from the WebXR preview: machine A rendered near-black.
+        Both machine bodies are ``BODY``, the exact-name match returned BOTH
+        nodes, and the first entry bound machine B's map onto machine A
+        too -- its own was then refused as a conflict. Each entry's hierarchy
+        now names the one node it belongs to."""
+        glb, index = self._two_bodies()
+        MeshConvert.apply_glb_lightmaps(glb)
+        with MeshConvert.open_glb(glb) as edit:
+            gltf = edit.gltf
+        self.assertEqual(self._bound_map(gltf, index[self.LX]), "LX_Lightmap.png")
+        self.assertEqual(self._bound_map(gltf, index[self.AL]), "AL_Lightmap.png")
+
+    def test_same_named_objects_each_get_their_own_marker_corrected(self):
+        """Each node's own ``lightmapInfo`` marker is corrected to what IT ships
+        (the embedded PNG and its scalar), and the marker is what a reader
+        finds first. Keyed by node NAME, two ``BODY`` nodes wearing different
+        maps read as one conflicted name and both markers kept the bake-time
+        ``.exr`` at intensity 1.0 -- a consumer trusting them renders both
+        machines ~10x too dark."""
+        glb, index = self._two_bodies()
+        with MeshConvert.open_glb(glb) as edit:
+            for path, exr in (
+                (self.LX, "LX_Lightmap.exr"),
+                (self.AL, "AL_Lightmap.exr"),
+            ):
+                edit.gltf["nodes"][index[path]]["extras"] = {
+                    "fromFBX": {
+                        "userProperties": {
+                            "lightmapInfo": {
+                                "type": "eFbxString",
+                                "value": json.dumps({"map": exr, "intensity": 1.0}),
+                            }
+                        }
+                    }
+                }
+            edit.dirty = True
+        MeshConvert.apply_glb_lightmaps(glb)
+        with MeshConvert.open_glb(glb) as edit:
+            gltf = edit.gltf
+        web = gltf["extras"]["lightmap_web"]["materials"]
+        for path, png in ((self.LX, "LX_Lightmap.png"), (self.AL, "AL_Lightmap.png")):
+            node = gltf["nodes"][index[path]]
+            marker = json.loads(
+                node["extras"]["fromFBX"]["userProperties"]["lightmapInfo"]["value"]
+            )
+            material = gltf["materials"][
+                gltf["meshes"][node["mesh"]]["primitives"][0]["material"]
+            ]
+            self.assertEqual(marker["map"], png)
+            self.assertEqual(marker["intensity"], web[material["name"]]["intensity"])
+
+    def test_same_named_objects_without_a_hierarchy_are_not_guessed(self):
+        """A manifest from before the hierarchy key cannot tell the two apart:
+        binding either map to both nodes puts one object's lighting on the
+        other, so neither binds -- and it says so."""
+        glb, _index = self._two_bodies(hierarchy=False)
+        with self.assertLogs(
+            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+        ) as caught:
+            records = MeshConvert.apply_glb_lightmaps(glb)
+        self.assertEqual(records, [])
+        self.assertTrue(
+            any("'BODY'" in m and "ambiguous" in m for m in caught.output),
+            caught.output,
+        )
+
+    def test_a_stale_same_named_entry_loses_to_the_one_that_matches(self):
+        """A marker left on a hidden ``|TEMP|PROPS|TABLE`` by an old bake
+        publishes a second ``TABLE`` entry beside the exported
+        ``|STATIC|PROPS|TABLE``'s. Scene ORDER decided which map the table
+        wore (and the report called both bound); the hierarchy decides it now,
+        and the stale entry counts as out of scope, not as a miss."""
+        stale = self._exr("stale_Lightmap.exr", value=(0.5, 0.5, 0.125))
+        live = self._exr("table_Lightmap.exr", value=(0.125, 0.5, 0.5))
+        table = ("RootNode", "STATIC", "PROPS", "TABLE")
+        manifest = self._manifest(
+            [
+                {
+                    "name": "TABLE",
+                    "map": os.path.basename(stale),
+                    "hierarchy": ["TEMP", "PROPS", "TABLE"],
+                },
+                {
+                    "name": "TABLE",
+                    "map": os.path.basename(live),
+                    "hierarchy": ["STATIC", "PROPS", "TABLE"],
+                },
+            ]
+        )
+        gltf, index = self._tree_scene(manifest, [table])
+        glb = self._glb(gltf)
+        coverage = MeshConvert.lightmap_manifest_coverage(glb)
+        records = MeshConvert.apply_glb_lightmaps(glb)
+        with MeshConvert.open_glb(glb) as edit:
+            self.assertEqual(
+                self._bound_map(edit.gltf, index[table]), "table_Lightmap.png"
+            )
+        self.assertEqual(
+            MeshConvert.lightmap_report(coverage, records),
+            {"expected": 1, "bound": 1, "unbound": [], "out_of_scope": 1},
+        )
+
+    def test_an_exact_name_outranks_a_namespace_twin_the_file_does_not_carry(self):
+        """The file carries ``PROPS_DA:prop352``; the manifest also lists the
+        unpushed ``PROPS_RF:prop352``. Grouped with the exact match on the one
+        node, the namespace-stripped twin tied it -- by name, or by a hierarchy
+        that reads the same once namespaces are ignored -- and the object that
+        WAS exported shipped unlit. The exact name wins wherever the hierarchy
+        cannot tell the two apart, in either manifest order, and the twin is
+        out of scope."""
+        da = self._exr("DA_Lightmap.exr", value=(0.5, 0.25, 0.125))
+        rf = self._exr("RF_Lightmap.exr", value=(0.125, 0.25, 0.5))
+        node = ("RootNode", "PROPS", "PROPS_DA:prop352")
+        for hierarchy in (False, True):
+            for twin_first in (True, False):
+                with self.subTest(hierarchy=hierarchy, twin_first=twin_first):
+                    entries = [
+                        {"name": "PROPS_DA:prop352", "map": os.path.basename(da)},
+                        {"name": "PROPS_RF:prop352", "map": os.path.basename(rf)},
+                    ]
+                    if hierarchy:
+                        entries[0]["hierarchy"] = ["PROPS", "PROPS_DA:prop352"]
+                        entries[1]["hierarchy"] = ["PROPS", "PROPS_RF:prop352"]
+                    if twin_first:
+                        entries.reverse()
+                    gltf, index = self._tree_scene(self._manifest(entries), [node])
+                    glb = self._glb(gltf, name=f"prop_{hierarchy}_{twin_first}.glb")
+                    coverage = MeshConvert.lightmap_manifest_coverage(glb)
+                    self.assertEqual(
+                        coverage,
+                        {
+                            "present": ["PROPS_DA:prop352"],
+                            "ambiguous": [],
+                            "absent": ["PROPS_RF:prop352"],
+                        },
+                    )
+                    records = MeshConvert.apply_glb_lightmaps(glb)
+                    with MeshConvert.open_glb(glb) as edit:
+                        self.assertEqual(
+                            self._bound_map(edit.gltf, index[node]),
+                            "DA_Lightmap.png",
+                        )
+                    self.assertEqual(
+                        MeshConvert.lightmap_report(coverage, records)["unbound"], []
+                    )
+
+    def test_overlapping_candidates_never_bind_one_node_twice(self):
+        """``a:BODY`` names its node exactly; a stripped ``BODY`` entry could be
+        either ``a:BODY`` or ``b:BODY``. Settled as two separate groups, BOTH
+        bound ``a:BODY`` -- the second through a copy of its material -- so the
+        node wore whichever came last in the manifest. One assignment now
+        settles them: the exact entry keeps its node, and the stripped one,
+        whose best node that was, is out of scope."""
+        a_exr = self._exr("A_Lightmap.exr", value=(0.5, 0.25, 0.125))
+        s_exr = self._exr("S_Lightmap.exr", value=(0.125, 0.25, 0.5))
+        a_node, b_node = ("RootNode", "a:GRP", "a:BODY"), ("RootNode", "b:BODY")
+        manifest = self._manifest(
+            [
+                {
+                    "name": "a:BODY",
+                    "map": os.path.basename(a_exr),
+                    "hierarchy": ["a:GRP", "a:BODY"],
+                },
+                {
+                    "name": "BODY",
+                    "map": os.path.basename(s_exr),
+                    "hierarchy": ["GRP", "BODY"],
+                },
+            ]
+        )
+        gltf, index = self._tree_scene(
+            manifest, [a_node, b_node], prims={a_node: [0], b_node: [1]}
+        )
+        glb = self._glb(gltf)
+        coverage = MeshConvert.lightmap_manifest_coverage(glb)
+        records = MeshConvert.apply_glb_lightmaps(glb)
+        self.assertEqual([r["object"] for r in records], ["a:BODY"])
+        with MeshConvert.open_glb(glb) as edit:
+            self.assertEqual(
+                self._bound_map(edit.gltf, index[a_node]), "A_Lightmap.png"
+            )
+            self.assertIsNone(self._bound_map(edit.gltf, index[b_node]))
+        self.assertEqual(
+            coverage, {"present": ["a:BODY"], "ambiguous": [], "absent": ["BODY"]}
+        )
+
+    def test_a_same_named_object_outside_the_push_is_out_of_scope(self):
+        """A push of two of a room's three ``BODY`` machines. The third
+        entry's best nodes tie -- only the name matches either -- and each went
+        to its own machine, so the third object is simply not in this file. It
+        was reported ambiguous: the preview said one object shipped UNLIT when
+        every object in the file was lit."""
+        maps = [
+            self._exr(f"{tag}_Lightmap.exr", value=value)
+            for tag, value in (
+                ("LX", (0.5, 0.25, 0.125)),
+                ("AL", (0.125, 0.25, 0.5)),
+                ("VEND", (0.25, 0.5, 0.125)),
+            )
+        ]
+        hierarchies = [
+            list(self.LX[1:]),
+            list(self.AL[1:]),
+            ["GRP", "BODY", "VENDING", "BODY"],
+        ]
+        manifest = self._manifest(
+            [
+                {"name": "BODY", "map": os.path.basename(m), "hierarchy": h}
+                for m, h in zip(maps, hierarchies)
+            ]
+        )
+        gltf, index = self._tree_scene(
+            manifest, [self.LX, self.AL], prims={self.LX: [0], self.AL: [1]}
+        )
+        glb = self._glb(gltf)
+        coverage = MeshConvert.lightmap_manifest_coverage(glb)
+        self.assertEqual(coverage["ambiguous"], [])
+        self.assertEqual(coverage["absent"], ["BODY"])
+        with self.assertLogs(
+            "pythontk.file_utils.mesh_convert._mesh_convert", level="DEBUG"
+        ) as caught:
+            records = MeshConvert.apply_glb_lightmaps(glb)
+        self.assertFalse([m for m in caught.output if "ambiguous" in m], caught.output)
+        with MeshConvert.open_glb(glb) as edit:
+            self.assertEqual(
+                self._bound_map(edit.gltf, index[self.LX]), "LX_Lightmap.png"
+            )
+            self.assertEqual(
+                self._bound_map(edit.gltf, index[self.AL]), "AL_Lightmap.png"
+            )
+        report = MeshConvert.lightmap_report(coverage, records)
+        self.assertEqual((report["unbound"], report["out_of_scope"]), ([], 1))
+
+    def test_a_malformed_entry_never_stops_the_bind(self):
+        """A non-dict or nameless record resolved as the name ``""`` -- the key
+        the file's NAMELESS mesh nodes sit under -- joined their group, and
+        raised on ``.get("hierarchy")``; the pipeline caught that as
+        "lightmaps skipped", so one bad record left every object unlit."""
+        exr = self._exr()
+        gltf = self._scene(
+            self._manifest(
+                [
+                    "junk",
+                    {"map": "orphan.exr"},
+                    {"name": 7, "map": "orphan.exr"},
+                    {"name": "room", "map": os.path.basename(exr)},
+                ]
+            ),
+            objects=("room", "", ""),
+        )
+        glb = self._glb(gltf)
+        records = MeshConvert.apply_glb_lightmaps(glb)
+        self.assertEqual([r["object"] for r in records], ["room"])
+
+    def test_a_copy_for_the_second_object_is_not_blocked_by_the_first_ones_map(
+        self,
+    ):
+        """Two objects wearing one material, each with its own map, under
+        ``replace_authored=False``. Read AFTER the first object's in-place
+        bind, the slot held that object's lightmap, which passed for an
+        authored map, and the second object's copy was skipped: it shipped
+        unlit. The slot is read as authored, once, before any bind."""
+        lx, al = ("RootNode", "LX_BODY"), ("RootNode", "AL_BODY")
+        lx_exr = self._exr("LX_Lightmap.exr", value=(0.5, 0.25, 0.125))
+        al_exr = self._exr("AL_Lightmap.exr", value=(0.125, 0.25, 0.5))
+        manifest = self._manifest(
+            [
+                {"name": "LX_BODY", "map": os.path.basename(lx_exr)},
+                {"name": "AL_BODY", "map": os.path.basename(al_exr)},
+            ]
+        )
+        gltf, index = self._tree_scene(manifest, [lx, al], prims={lx: [2], al: [2]})
+        glb = self._glb(gltf)
+        with self.assertLogs(
+            "pythontk.file_utils.mesh_convert._mesh_convert", level="DEBUG"
+        ) as caught:
+            records = MeshConvert.apply_glb_lightmaps(glb, replace_authored=False)
+        self.assertEqual(sorted(r["object"] for r in records), ["AL_BODY", "LX_BODY"])
+        self.assertFalse(
+            [m for m in caught.output if "authored" in m.lower()], caught.output
+        )
+        with MeshConvert.open_glb(glb) as edit:
+            self.assertEqual(self._bound_map(edit.gltf, index[lx]), "LX_Lightmap.png")
+            self.assertEqual(self._bound_map(edit.gltf, index[al]), "AL_Lightmap.png")
+
+    def test_a_material_two_lightmaps_share_is_copied_per_object(self):
+        """The machines' GLASS is a SECONDARY material on both bodies, each of
+        which bakes its own map. The first bind claimed the shared material and
+        the second was refused ("per-object maps on a shared material"), so the
+        machine A's glass wore machine B's lighting. The second object now
+        binds a copy of the material that carries its own map."""
+        lx, al = ("RootNode", "LX_BODY"), ("RootNode", "AL_BODY")
+        lx_exr = self._exr("LX_Lightmap.exr", value=(0.5, 0.25, 0.125))
+        al_exr = self._exr("AL_Lightmap.exr", value=(0.125, 0.25, 0.5))
+        manifest = self._manifest(
+            [
+                {"name": "LX_BODY", "map": os.path.basename(lx_exr)},
+                {"name": "AL_BODY", "map": os.path.basename(al_exr)},
+            ]
+        )
+        # mat2 is the shared glass: LX_BODY's 2nd primitive, AL_BODY's 1st.
+        gltf, index = self._tree_scene(
+            manifest, [lx, al], prims={lx: [0, 2], al: [2, 1]}
+        )
+        glb = self._glb(gltf)
+        records = MeshConvert.apply_glb_lightmaps(glb)
+        with MeshConvert.open_glb(glb) as edit:
+            g = edit.gltf
+        self.assertEqual(self._bound_map(g, index[lx], 0), "LX_Lightmap.png")
+        self.assertEqual(self._bound_map(g, index[lx], 1), "LX_Lightmap.png")
+        self.assertEqual(self._bound_map(g, index[al], 0), "AL_Lightmap.png")
+        self.assertEqual(self._bound_map(g, index[al], 1), "AL_Lightmap.png")
+        self.assertEqual(sorted({r["object"] for r in records}), ["AL_BODY", "LX_BODY"])
+
+    def test_per_object_maps_on_instances_each_bind_their_own(self):
+        """Per-Object packing bakes every INSTANCE its own map, while FBX2glTF
+        keeps instancing as one mesh -- one material -- behind several nodes.
+        The first instance's map claimed that material and every sibling wore
+        it. Each instance now binds its own through its own mesh and material
+        entries (JSON only: no geometry is copied)."""
+        a, b = ("RootNode", "FLOOR_A"), ("RootNode", "FLOOR_B")
+        a_exr = self._exr("FLOOR_A_Lightmap.exr", value=(0.5, 0.25, 0.125))
+        b_exr = self._exr("FLOOR_B_Lightmap.exr", value=(0.125, 0.25, 0.5))
+        manifest = self._manifest(
+            [
+                {"name": "FLOOR_A", "map": os.path.basename(a_exr)},
+                {"name": "FLOOR_B", "map": os.path.basename(b_exr)},
+            ]
+        )
+        gltf, index = self._tree_scene(manifest, [a, b], share_mesh={b: a})
+        glb = self._glb(gltf)
+        MeshConvert.apply_glb_lightmaps(glb)
+        with MeshConvert.open_glb(glb) as edit:
+            g = edit.gltf
+        self.assertEqual(self._bound_map(g, index[a]), "FLOOR_A_Lightmap.png")
+        self.assertEqual(self._bound_map(g, index[b]), "FLOOR_B_Lightmap.png")
+        mesh_a = g["meshes"][g["nodes"][index[a]]["mesh"]]
+        mesh_b = g["meshes"][g["nodes"][index[b]]["mesh"]]
+        self.assertEqual(
+            mesh_a["primitives"][0]["attributes"], mesh_b["primitives"][0]["attributes"]
+        )
+
     def test_lightmap_texture_samples_clamp_to_edge(self):
         """Atlas rects legally extend past [0,1]; REPEAT would wrap a tap past
         an atlas edge onto the opposite side's unrelated texels. The lightmap's
@@ -5499,9 +5973,13 @@ class TestGlbLightmaps(unittest.TestCase):
         )
         self.assertEqual(MeshConvert.apply_glb_lightmaps(glb), [])
 
-    def test_shared_material_with_different_maps_first_claim_wins(self):
-        """Per-object maps on one material: the second has nowhere to go. Atlas
-        packing prevents this upstream; here it must warn, not mis-bind."""
+    def test_shared_material_with_different_maps_binds_a_copy_per_object(self):
+        """Per-object maps on one material: the first object binds in place and
+        the second binds its own COPY. The old contract refused the second
+        ("atlas packing prevents this upstream; warn, not mis-bind") -- and
+        mis-bound anyway: the refused object still wore materials[0], i.e. the
+        first object's lighting. Atlas packing does not prevent it either: a
+        secondary material two baked objects share reaches here."""
         # Written for their side effect: the manifest below names them by file.
         _a, _b = self._exr("a.exr"), self._exr("b.exr", value=0.25)
         glb = self._glb(
@@ -5517,9 +5995,22 @@ class TestGlbLightmaps(unittest.TestCase):
             )
         )
         records = MeshConvert.apply_glb_lightmaps(glb)
-        self.assertEqual([r["object"] for r in records], ["room"])
+        self.assertEqual([r["object"] for r in records], ["room", "prop"])
         with MeshConvert.open_glb(glb) as edit:
-            self.assertEqual([i["name"] for i in edit.gltf["images"]], ["a.png"])
+            gltf = edit.gltf
+        worn = [
+            gltf["meshes"][gltf["nodes"][i]["mesh"]]["primitives"][0]["material"]
+            for i in (0, 1)
+        ]
+        self.assertEqual(worn[0], 0, "the first object binds in place")
+        self.assertNotEqual(worn[1], 0, "the second binds its own copy")
+        web = gltf["extras"]["lightmap_web"]["materials"]
+        room, prop = (web[gltf["materials"][m]["name"]] for m in worn)
+        self.assertEqual((room["map"], prop["map"]), ("a.png", "b.png"))
+        self.assertEqual((room["intensity"], prop["intensity"]), (0.5, 0.25))
+        # Both constants normalize to the same bytes, so the file carries ONE
+        # image and the two bindings differ only by their scalars.
+        self.assertEqual(len(gltf["images"]), 1)
 
     def test_shared_atlas_binds_every_object_once_per_material(self):
         """The normal atlas case: two objects, one material, ONE map -- one
@@ -6005,6 +6496,41 @@ class TestWebDeliveryTexturePolicy(unittest.TestCase):
             MeshConvert.web_delivery_texture_params(max_size=0)["max_size"], 0
         )
 
+    def test_a_container_is_named_by_its_file_extension_or_its_format_id(self):
+        """The Scene Exporter's Texture File Type row speaks file EXTENSIONS
+        (``jpg``), while ``optimize_glb_textures`` hands the name to Pillow and
+        builds the glTF mime from it -- ``JPG`` raises in Pillow and would be an
+        invalid mime if it did not. Both exporters carried a private copy of
+        that translation; the policy now owns it, so every producer that asks
+        for a container (the WebXR preview included) gets the same answer."""
+        for asked, expected in (
+            ("jpg", "JPEG"),
+            ("jpeg", "JPEG"),
+            ("JPEG", "JPEG"),
+            (".PNG", "PNG"),
+            ("webp", "WEBP"),
+            ("WEBP", "WEBP"),
+            ("ktx2", "KTX2"),
+        ):
+            with self.subTest(asked=asked):
+                self.assertEqual(
+                    MeshConvert.web_delivery_texture_params(image_format=asked)[
+                        "image_format"
+                    ],
+                    expected,
+                )
+
+    def test_the_containers_a_glb_can_carry(self):
+        """glTF core's own (``IMAGE_MIME_TYPES``) plus the two the texture pass
+        declares an extension for. A scene-side container (TGA, EXR) is not one:
+        a GLB given one takes the policy's container instead."""
+        self.assertEqual(
+            MeshConvert.GLB_IMAGE_FORMATS,
+            frozenset({"png", "jpg", "jpeg", "webp", "ktx2"}),
+        )
+        for ext in MeshConvert.IMAGE_MIME_TYPES:
+            self.assertIn(ext.lstrip("."), MeshConvert.GLB_IMAGE_FORMATS)
+
     def test_the_policy_is_what_the_optimizer_itself_defaults_to(self):
         """Belt and braces on the seam that made this necessary: the preview
         used to inherit `optimize_glb_textures`' own default, so a change there
@@ -6148,7 +6674,10 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         inside the per-image encode it read as one failed encode per image,
         each keeping its original PNG -- a GLB that ships raw maps under a
         pass that "ran". Added: 2026-09-19"""
-        for kwargs in ({"uastc_rdo": 11}, {"uastc_rdo": 1.0, "uastc_rdo_dictionary": 63}):
+        for kwargs in (
+            {"uastc_rdo": 11},
+            {"uastc_rdo": 1.0, "uastc_rdo_dictionary": 63},
+        ):
             with self.subTest(**kwargs):
                 with self.assertRaises(ValueError):
                     MeshConvert.optimize_glb_textures(

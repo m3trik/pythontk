@@ -26,6 +26,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, ClassVar, Dict, Iterable, List, Mapping, Optional, Tuple
 
+from pythontk.core_utils.deprecation import Deprecation
 from pythontk.str_utils._str_utils import StrUtils
 
 
@@ -102,11 +103,12 @@ class ExportProfile:
 
         optimize_choice = task_params.get("optimize_textures")
         if optimize_choice:
-            if optimize_choice is not True:
-                task_params["texture_max_size"] = optimize_choice
-            optimize_value = texture_template or True
-            task_params["optimize_textures"] = optimize_value
-            check_params["check_texture_optimization"] = optimize_value
+            task_params.update(
+                cls.optimize_textures_tasks(optimize_choice, texture_template)
+            )
+            check_params["check_texture_optimization"] = task_params[
+                "optimize_textures"
+            ]
 
         task_params = {k: v for k, v in task_params.items() if v}
         check_params = (
@@ -125,6 +127,35 @@ class ExportProfile:
             "export_mode": export_mode,
             "export_visible": export_mode != "selected",
         }
+
+    @staticmethod
+    def optimize_textures_tasks(
+        choice: Any, template: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """The Optimize Textures combo's ONE value as the tasks it stands for.
+
+        The combo folds the pass switch and its size dial into one choice
+        (:meth:`optimize_textures_options`); the pipeline takes them apart:
+        ``optimize_textures`` -- the pass, ``True`` or the *template* it
+        converts to -- and ``texture_max_size``, the pixel ceiling or the
+        template-budget sentinel, absent for a plain "Optimize". The export
+        button (:meth:`run_config`) and a GLB-only producer
+        (:meth:`ExportRun.for_glb`) both read the combo through this,
+        so neither can take it apart differently.
+
+        Parameters:
+            choice: The combo's value; falsy is OFF.
+            template: The Texture Template row's value, when one is selected.
+
+        Returns:
+            ``{}`` for OFF, else ``{"optimize_textures": ..., ["texture_max_size": ...]}``.
+        """
+        if not choice:
+            return {}
+        tasks: Dict[str, Any] = {"optimize_textures": template or True}
+        if choice is not True:
+            tasks["texture_max_size"] = choice
+        return tasks
 
     @classmethod
     def read_values(
@@ -189,8 +220,8 @@ class ExportProfile:
     #: ``{scene:PATTERN->REPLACEMENT}`` says that explicitly.
     NAME_KEY = "scene"
 
-    #: Retired spellings of :attr:`NAME_KEY`, honoured for one release. A
-    #: consumer keeps them resolvable in its context; they are listed here so a
+    #: Retired spellings of :attr:`NAME_KEY`, still honoured (no removal
+    #: release is set yet). A consumer keeps them resolvable in its context; they are listed here so a
     #: folded modifier reaches a pattern that still uses one -- a saved
     #: ``{name}_x`` must keep getting the RegEx it has always had.
     NAME_KEY_ALIASES = ("name",)
@@ -264,7 +295,8 @@ class ExportProfile:
     ) -> Optional[str]:
         """Fold the retired Version pattern and Timestamp flag into a name pattern.
 
-        DEPRECATED inputs, honoured for one release. *name_regex* is the retired
+        DEPRECATED inputs, still honoured (no removal release is set yet).
+        *name_regex* is the retired
         free-standing RegEx field, which shaped the name token wherever the
         pattern used it; it folds to an inline modifier on that token
         (:meth:`StrUtils.attach_modifier`), so the rule survives the field and
@@ -309,7 +341,7 @@ class ExportProfile:
         """Resolve the Output Filename field into the file(s) an export writes.
 
         The pattern resolves through :meth:`StrUtils.resolve_name_pattern`
-        (blank or ``*`` is ``context["name"]``, ``{tokens}`` fill from
+        (blank or ``*`` is ``context[NAME_KEY]``, ``{tokens}`` fill from
         *context*) with the counter kept; the counter then takes the next
         version the name has among the files *output_format* ships in
         *export_dir* (:meth:`FileUtils.next_version_number`). A counter spec an
@@ -380,6 +412,7 @@ class ExportProfile:
             "counter_error": counter_error,
         }
 
+    @Deprecation.parameter("version_suffix", drop=True, remove_in="0.12.0")
     @classmethod
     def naming_report(
         cls,
@@ -393,7 +426,8 @@ class ExportProfile:
         reports through its own logger at the severity given. *tokens* is the
         vocabulary named when a token had no value.
 
-        *version_suffix* is DEPRECATED and ignored. It used to warn that a
+        *version_suffix* is DEPRECATED (warns; removed in 0.12.0) and ignored.
+        It used to warn that a
         versioned name not ending in ``_v<N>`` would lose its hierarchy diff
         baseline across versions -- true while that baseline was keyed by the
         output file's stem, which is exactly the coupling that made renaming an
@@ -564,8 +598,6 @@ class ExportProfile:
         # and a reparent silently number-suffixes a name that collides under
         # its new parent, so both hierarchy tasks move this verdict.
         "check_duplicate_names": OBJECT_SET_TASKS
-        + ("conform_shape_names", "flatten_sheared_chains", "smart_bake"),
-        "check_duplicate_locator_names": OBJECT_SET_TASKS
         + ("conform_shape_names", "flatten_sheared_chains", "smart_bake"),
         "check_mangled_names": OBJECT_SET_TASKS
         + ("conform_shape_names", "flatten_sheared_chains"),
@@ -758,6 +790,17 @@ class ExportProfile:
         "Within 1e-4 (0.1 mm)": 1e-4,
         "Within 1e-3 (1 mm)": 1e-3,
     }
+    #: Baked Reflections -- how strongly a lightmapped material reflects the
+    #: viewer's environment, published in the deliverable's lighting recipe
+    #: (``handoff.rendering``). The values are TOKENS rather than the levels
+    #: (:attr:`ExportRun.BAKED_REFLECTION_LEVELS`): the export button drops a
+    #: falsy row as "unset", and Off is a real choice here, not the default.
+    BAKED_REFLECTIONS_OPTIONS: Dict[str, str] = {
+        "Off (Pure Bake)": "off",
+        "Quarter": "quarter",
+        "Half": "half",
+        "Full": "full",
+    }
 
     @classmethod
     def optimize_textures_options(cls) -> Dict[str, Any]:
@@ -800,6 +843,94 @@ class ExportProfile:
             "KTX2": "ktx2",
             "KTX2 + PNG/JPEG": ExportRun.KTX2_WITH_FALLBACK,
         }
+
+    #: The Scene Exporter rows that decide a GLB deliverable's images, in panel
+    #: order: each row's key in the export button's dict -> its label.
+    GLB_TEXTURE_ROWS: Dict[str, str] = {
+        "texture_file_type": "Texture File Type",
+        "optimize_textures": "Optimize Textures",
+        "secondary_max_size": "Secondary Map Size",
+        "uastc_rdo": "KTX2 RDO",
+    }
+    #: The rows that decide the lighting recipe it publishes
+    #: (``handoff.rendering``, :attr:`ExportRun.rendering`), likewise.
+    GLB_LIGHTING_ROWS: Dict[str, str] = {
+        "baked_reflections": "Baked Reflections",
+    }
+    #: Every row that decides a GLB deliverable. A producer that makes the GLB
+    #: and nothing else -- the WebXR preview -- offers exactly these
+    #: (:meth:`glb_options`) and resolves them through :meth:`ExportRun.for_glb`,
+    #: so a setting there is the same setting here and the two build the same
+    #: texture pass and publish the same recipe from it.
+    GLB_ROWS: Dict[str, str] = {**GLB_TEXTURE_ROWS, **GLB_LIGHTING_ROWS}
+
+    @classmethod
+    def baked_reflections_default(cls) -> str:
+        """The Baked Reflections token a row starts at: the one whose level the
+        lighting recipe itself declares (``MeshConvert.RENDERING_POLICY``), so
+        an untouched row publishes the policy unchanged."""
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        level = MeshConvert.RENDERING_POLICY["lightmappedMaterials"]["envMapIntensity"]
+        return next(
+            token
+            for token, value in ExportRun.BAKED_REFLECTION_LEVELS.items()
+            if value == level
+        )
+
+    @classmethod
+    def glb_options(cls) -> Dict[str, Dict[str, Any]]:
+        """``{row key: {label: value}}`` for :attr:`GLB_ROWS`, as a producer
+        that makes the GLB alone offers them.
+
+        The Scene Exporter's own tables -- same labels, same values, same
+        order, so a choice in one panel is found under the same name in the
+        other -- minus the entries such a producer cannot honour, because a
+        row offering what the push will not do is a row that lies:
+
+        - **Texture File Type** keeps Original and the containers a GLB can
+          carry (:attr:`MeshConvert.GLB_IMAGE_FORMATS`, plus KTX2 with its
+          twin). A scene-side type (TGA, EXR ...) only ever means the web
+          default inside a GLB.
+        - **Optimize Textures** drops Template Budget. The budget is the
+          export's Texture Template row's, and that row re-authors the
+          materials -- export work a GLB-only producer does not do. Pick the
+          template's ceiling instead.
+
+        Every other row is offered whole.
+        """
+        from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        carried = set(MeshConvert.GLB_IMAGE_FORMATS) | {ExportRun.KTX2_WITH_FALLBACK}
+        return {
+            "texture_file_type": {
+                label: value
+                for label, value in cls.texture_file_type_options().items()
+                if not value or value in carried
+            },
+            "optimize_textures": {
+                label: value
+                for label, value in cls.optimize_textures_options().items()
+                if value != MapOptimizer.SIZE_CLAMP_TEMPLATE
+            },
+            "secondary_max_size": dict(cls.SECONDARY_MAX_SIZE_OPTIONS),
+            "uastc_rdo": dict(cls.UASTC_RDO_OPTIONS),
+            "baked_reflections": dict(cls.BAKED_REFLECTIONS_OPTIONS),
+        }
+
+    @classmethod
+    def glb_defaults(cls) -> Dict[str, Any]:
+        """``{row key: value}`` -- where each :attr:`GLB_ROWS` row starts in
+        the Scene Exporter, so a producer mirroring the rows starts at the same
+        settings: index 0 of its table (the off state), except Baked
+        Reflections, which starts at the lighting recipe's own level
+        (:meth:`baked_reflections_default`)."""
+        defaults = {
+            row: next(iter(table.values())) for row, table in cls.glb_options().items()
+        }
+        defaults["baked_reflections"] = cls.baked_reflections_default()
+        return defaults
 
     @classmethod
     def frame_rate_options(cls) -> Dict[str, Optional[str]]:
@@ -845,8 +976,8 @@ class ExportRun:
     export_path: str = ""
     #: An :attr:`OUTPUT_FORMATS` token.
     output_format: str = "fbx"
-    #: The retired Version pattern, folded into the name by
-    #: :meth:`ExportProfile.fold_legacy_naming`.
+    #: The retired Version pattern (a headless ``tasks["version"]``), folded
+    #: into the name by :meth:`ExportProfile.fold_legacy_naming`.
     version_format: str = ""
     #: The Texture File Type dial -- the container every texture the export
     #: ships is written in (each destination clamps what it cannot carry).
@@ -910,9 +1041,22 @@ class ExportRun:
     #: GLB Key Tolerance: the deviation bound for the deliverable's key reduction
     #: (:attr:`ExportProfile.GLB_KEY_REDUCTION_OPTIONS`); None is off.
     glb_key_tolerance: Optional[float] = None
+    #: Baked Reflections: the environment's specular level on a lightmapped
+    #: material, as a level (:attr:`BAKED_REFLECTION_LEVELS`); None is the
+    #: lighting recipe's own (see :attr:`rendering`).
+    baked_reflections: Optional[float] = None
 
     #: The ``output_format`` tokens a run accepts.
     OUTPUT_FORMATS: ClassVar[Tuple[str, ...]] = ("fbx", "glb", "fbx_glb", "usd")
+    #: Baked Reflections token -> the level it publishes
+    #: (``lightmappedMaterials.envMapIntensity``). The row's labels are
+    #: :attr:`ExportProfile.BAKED_REFLECTIONS_OPTIONS`.
+    BAKED_REFLECTION_LEVELS: ClassVar[Dict[str, float]] = {
+        "off": 0.0,
+        "quarter": 0.25,
+        "half": 0.5,
+        "full": 1.0,
+    }
     #: Texture File Type token for KTX2 PLUS a core-readable PNG/JPEG twin of
     #: every map. :meth:`from_tasks` parses it into the ``ktx2`` container and
     #: the :attr:`ktx2_fallback` flag, so no other consumer ever compares it.
@@ -948,6 +1092,7 @@ class ExportRun:
         "secondary_max_size",
         "uastc_rdo",
         "glb_key_tolerance",
+        "baked_reflections",
     )
 
     @staticmethod
@@ -973,6 +1118,44 @@ class ExportRun:
     def usd(self) -> bool:
         """The deliverable is a USD layer."""
         return self.output_format == "usd"
+
+    @property
+    def rendering(self) -> Dict[str, Dict[str, Any]]:
+        """This run's choices over the lighting recipe its deliverables publish.
+
+        ``{section: {field: value}}`` for ``MeshConvert.rendering_policy`` --
+        what ``GlbPipeline.envelope`` writes into a GLB's handoff and an
+        ``ExportContext`` stamps on an FBX's -- empty while no lighting row is
+        set (an absent row publishes the policy's own value). A decision of the
+        EXPORT, so a deliverable handed on alone still says how it was approved
+        to look.
+        """
+        if self.baked_reflections is None:
+            return {}
+        return {"lightmappedMaterials": {"envMapIntensity": self.baked_reflections}}
+
+    @classmethod
+    def baked_reflection_level(cls, value: Any) -> Optional[float]:
+        """A Baked Reflections row value as its level; ``None`` when unset.
+
+        Takes the row's token (:attr:`BAKED_REFLECTION_LEVELS`) or a level
+        itself, the number a headless caller may pass, clamped at 0.
+
+        Raises:
+            ValueError: neither a known token nor a number.
+        """
+        if value is None or value == "":
+            return None
+        token = str(value).strip().lower()
+        if token in cls.BAKED_REFLECTION_LEVELS:
+            return cls.BAKED_REFLECTION_LEVELS[token]
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Unknown baked_reflections {value!r}; expected one of "
+                f"{', '.join(cls.BAKED_REFLECTION_LEVELS)} or a level."
+            ) from None
 
     def replace(self, **changes: Any) -> "ExportRun":
         """A copy with *changes* applied (``dataclasses.replace``)."""
@@ -1028,6 +1211,89 @@ class ExportRun:
             splits_takes=splits,
         )
 
+    # ------------------------------------------------------------ GLB half
+    def glb_max_size(self, logger: Any = None) -> int:
+        """The Optimize Textures ceiling as pixels, ``0`` for none.
+
+        The size dial speaks the optimizer's richer rule -- a ceiling, or the
+        template's budget (:meth:`MapOptimizer.resolve_size_clamp`) -- while a
+        GLB's texture pass takes pixels, so the budget sentinel is resolved to
+        the template's own ``max_size`` here. ``0`` is "never resample", which
+        is also what the sentinel yields with no (or an unbudgeted) template:
+        the same no-op the scene maps' pass reports. Independent of whether
+        the pass runs -- :meth:`glb_texture_params` applies that gate -- so the
+        size check can still name the ceiling a run used.
+
+        Parameters:
+            logger: Warned when the dial holds something unreadable.
+        """
+        from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer
+        from pythontk.core_utils.engines.textures.output_template import (
+            OutputTemplates,
+        )
+
+        clamp = MapOptimizer.resolve_size_clamp(
+            self.texture_max_size, self.texture_template, logger=logger
+        )
+        if clamp.get("enforce_budget"):
+            return int(OutputTemplates.budget(self.texture_template).max_size or 0)
+        return int(clamp.get("max_size") or 0)
+
+    def glb_texture_params(self, logger: Any = None) -> Dict[str, Any]:
+        """``optimize_glb_textures`` kwargs for this run's GLB.
+
+        The GLB half of the texture rows, resolved against
+        :meth:`MeshConvert.web_delivery_texture_params`, the one definition of
+        what a web deliverable's textures are. Every producer of a GLB calls
+        this -- both Scene Exporters and the WebXR preview -- so the same rows
+        make the same texture pass; before 2026-09-21 each exporter carried its own
+        copy and the preview none, and the preview downsized every push to the
+        web ceiling whatever the export was set to. Each row *overrides* the
+        policy; none restates it:
+
+        - **Container** -- Texture File Type, when it names something a GLB can
+          carry (:attr:`MeshConvert.GLB_IMAGE_FORMATS`). Anything else, and
+          Original, takes the policy's container: a GLB IS the web deliverable,
+          so a scene-side type (TGA, EXR) cannot be what it carries. ``KTX2 +
+          PNG/JPEG`` is the KTX2 container plus :attr:`ktx2_fallback`.
+        - **Ceiling** -- Optimize Textures (:meth:`glb_max_size`), the same size
+          rule every scene map goes through. OFF sets no ceiling: the row says
+          no optimization, so nothing is resampled to fit one, whatever size
+          the dial last held (until 2026-09-21 OFF took the web ceiling, a
+          resize under a row reading "no resize"). With the pass on, a row
+          naming no ceiling -- a plain Optimize, a template with no budget --
+          takes the policy's.
+        - **Secondary Map Size / KTX2 RDO** -- the two GLB-only rows, as given,
+          whatever Optimize Textures says: a data-map cap is a choice of its
+          own, so under OFF it is the one thing that still resamples (besides
+          the power-of-two edges a KTX2 container needs).
+
+        Every part passes ``None`` for an unset row, which the policy answers,
+        rather than a falsy value it would read as a decision -- except OFF's
+        ceiling, which IS the decision ``0`` spells: "keep every pixel".
+
+        Parameters:
+            logger: Told when a container is not one a GLB can carry.
+        """
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        file_type = (self.texture_file_type or "").lower().lstrip(".")
+        carrier = file_type if file_type in MeshConvert.GLB_IMAGE_FORMATS else ""
+        if file_type and not carrier and logger is not None:
+            logger.info(
+                f"GLB textures: {file_type.upper()} is not a container a GLB can "
+                f"carry, so the GLB takes {MeshConvert.WEB_DELIVERY_FORMAT}."
+            )
+        # OFF keeps every pixel (0); with the pass on, no ceiling named is None.
+        ceiling = (self.glb_max_size(logger) or None) if self.optimize_textures else 0
+        return MeshConvert.web_delivery_texture_params(
+            image_format=carrier or None,
+            max_size=ceiling,
+            ktx2_fallback=self.ktx2_fallback or None,
+            secondary_max_size=self.secondary_max_size or None,
+            uastc_rdo=self.uastc_rdo or None,
+        )
+
     @classmethod
     def from_tasks(
         cls,
@@ -1048,7 +1314,9 @@ class ExportRun:
         row (inert on a USD run, with a note), the size
         dial and the three GLB optimisation dials (secondary map size, UASTC
         RDO, key reduction -- each None when off; the key reduction rides
-        Optimize Keys and is inert without it). A GLB-only format drops
+        Optimize Keys and is inert without it), the Baked Reflections level
+        (:meth:`baked_reflection_level`; an unreadable one warns and ships the
+        recipe's own). A GLB-only format drops
         :attr:`FBX_KEY_HYGIENE` with a note: the FBX is then a temp
         intermediate the converter resamples per frame. ``optimize_textures``
         and ``convert_textures`` are READ, not
@@ -1153,6 +1421,13 @@ class ExportRun:
                 )
             )
             key_tolerance = None
+        try:
+            baked_reflections = cls.baked_reflection_level(
+                tasks.pop("baked_reflections", None)
+            )
+        except ValueError as error:
+            notes.append(("warning", f"{error} The recipe's own level ships."))
+            baked_reflections = None
         drop_rig_apparatus = bool(tasks.pop("drop_rig_apparatus", False))
         if drop_rig_apparatus and output_format == "usd":
             # The pass edits a written FBX; a USD layer has none, and its
@@ -1197,5 +1472,57 @@ class ExportRun:
             optimize_textures=bool(optimize),
             verify_deliverables=bool(tasks.pop("verify_deliverables", False)),
             drop_rig_apparatus=drop_rig_apparatus,
+            baked_reflections=baked_reflections,
         )
         return run.with_tasks(tasks), tasks, notes
+
+    @classmethod
+    def for_glb(
+        cls, values: Mapping[str, Any]
+    ) -> Tuple["ExportRun", List[Tuple[str, str]]]:
+        """A GLB-only run carrying the Scene Exporter's GLB rows and no other.
+
+        For a producer that makes the GLB without the rest of an export -- the
+        WebXR preview. *values* is keyed like :attr:`ExportProfile.GLB_ROWS`,
+        each row's value exactly as its combo holds it (Optimize Textures'
+        folded value included, taken apart by
+        :meth:`ExportProfile.optimize_textures_tasks` as the export button does),
+        and read through :meth:`from_tasks` -- the parse both exporters use --
+        so :meth:`glb_texture_params` and :attr:`rendering` answer the preview
+        and the export alike. An absent row is the row at its Scene Exporter
+        default.
+
+        This is a one-way street on purpose: the preview reads the exporter's
+        rules, and nothing an export needs is ever read back from a preview.
+
+        Parameters:
+            values: ``{row key: combo value}``.
+
+        Returns:
+            ``(run, notes)`` -- notes as :meth:`from_tasks` gives them, plus a
+            warning naming any key that is not a GLB row (a misspelt one would
+            otherwise leave its setting at the default with nothing saying
+            why). An ``"error"`` note means the values cannot be honoured.
+        """
+        values = dict(values or {})
+        unknown = sorted(set(values) - set(ExportProfile.GLB_ROWS))
+        notes: List[Tuple[str, str]] = []
+        if unknown:
+            notes.append(
+                (
+                    "warning",
+                    f"Unknown GLB row(s) {', '.join(unknown)} ignored (expected "
+                    f"{', '.join(ExportProfile.GLB_ROWS)}).",
+                )
+            )
+        tasks: Dict[str, Any] = {"output_format": "glb"}
+        for key in ExportProfile.GLB_ROWS:
+            if key == "optimize_textures":
+                # The one row whose combo folds two tasks into one value.
+                tasks.update(ExportProfile.optimize_textures_tasks(values.get(key)))
+            elif values.get(key) is not None:
+                tasks[key] = values[key]
+        run, _tasks, parsed = cls.from_tasks(
+            tasks, ExportProfile.texture_file_type_options().values()
+        )
+        return run, notes + parsed

@@ -1,79 +1,60 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ 8881740)._
+_Diff vs the last release (origin/main @ 412df2e)._
 
-## Added (46)
+## Added (36)
 
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.flush_pending(cls) -> None`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.merge_record(cls, own: Optional[Dict[str, Any]], other: Optional[Dict[str, Any]], ctx: Any = None) -> Optional[Dict[str, Any]]`
-- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.respell_record(cls, data: Optional[Dict[str, Any]], ctx: Any) -> Any`
-- `core_utils/engines/shots/shot_model.py::ShotStore.flush_pending(cls) -> None`
-- `core_utils/engines/shots/shot_transfer.py::ShotTransfer.merge_record(cls, own: Optional[Dict[str, Any]], other: Optional[Dict[str, Any]], ctx: Any = None) -> Optional[Dict[str, Any]]`
-- `core_utils/engines/shots/shot_transfer.py::ShotTransfer.respell_record(cls, state: Optional[Dict[str, Any]], ctx: Any) -> Any`
-- `core_utils/engines/shots/shot_transfer.py::ShotTransfer.section_in(cls, section: Dict[str, Any], ctx: Any) -> Dict[str, Any]`
-- `core_utils/engines/shots/shot_transfer.py::ShotTransfer.section_out(cls, state: Dict[str, Any], ctx: Any) -> Optional[Dict[str, Any]]`
-- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.resolve_uastc_rdo(cls, uastc_rdo: Optional[float], map_type_key: Optional[str], output_type: Optional[str], compression: Optional[str]) -> Tuple[Optional[float], Optional[str]]`
-- `core_utils/engines/textures/region_masks.py::RegionGroupRegistry.merge_record(cls, own: Optional[dict], other: Optional[dict], ctx: Any = None) -> Optional[dict]`
-- `core_utils/export_profile.py::ExportRun.clip_mode(value: Any) -> str`
-- `core_utils/scene_records.py::Merge(class)`
-- `core_utils/scene_records.py::RecordTransfer(class)`
-- `core_utils/scene_records.py::RecordTransfer.apply(self, store, ctx: Optional[TransferContext] = None) -> TransferContext`
-- `core_utils/scene_records.py::RecordTransfer.between(cls, store, other: Mapping[Any, Mapping[str, Any]]) -> 'RecordTransfer'`
-- `core_utils/scene_records.py::RecordTransfer.incoming(self) -> List[Tuple[Scope, str]]`
-- `core_utils/scene_records.py::RecordTransfer.is_empty(self) -> bool`
-- `core_utils/scene_records.py::RecordTransfer.merge_record(cls, store, spec: RecordSpec, other: Any, ctx: TransferContext, respelled: bool = False) -> Any`
-- `core_utils/scene_records.py::RecordTransfer.payloads(self, ctx: Optional[TransferContext] = None) -> Dict[RecordSpec, Any]`
-- `core_utils/scene_records.py::RecordTransfer.receive(cls, manifest: Mapping[str, Any], store, ctx: TransferContext, owners: Optional[Mapping[str, Any]] = None) -> TransferContext`
-- `core_utils/scene_records.py::RecordTransfer.rederive(self) -> List[RecordSpec]`
-- `core_utils/scene_records.py::RecordTransfer.respell(spec: RecordSpec, payload: Any, ctx: TransferContext) -> Any`
-- `core_utils/scene_records.py::RecordTransfer.sections(cls, store, ctx: TransferContext, owners: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]`
-- `core_utils/scene_records.py::RecordTransfer.summary(self) -> List[str]`
-- `core_utils/scene_records.py::RecordTransfer.union(own: Any, other: Any, spec: RecordSpec, ctx: TransferContext) -> Any`
-- `core_utils/scene_records.py::SceneRecords.codec(cls, spec: RecordSpec) -> Optional[Any]`
-- `core_utils/scene_records.py::SceneRecords.portable(cls) -> List[RecordSpec]`
-- `core_utils/scene_records.py::SceneRecords.resolve_class(module: str, name: str) -> Any`
-- `core_utils/scene_records.py::SceneStoreBase.discard_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None) -> 'TransferContext'`
-- `core_utils/scene_records.py::SceneStoreBase.flush_owners(cls) -> None`
-- `core_utils/scene_records.py::SceneStoreBase.merge_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None) -> 'TransferContext'`
-- `core_utils/scene_records.py::SceneStoreBase.merge_plan(cls, carriers: Mapping[Any, Any]) -> 'RecordTransfer'`
-- `core_utils/scene_records.py::SceneStoreBase.owners(cls) -> Dict[str, Any]`
-- `core_utils/scene_records.py::SceneStoreBase.receive_sections(cls, manifest: Optional[Mapping[str, Any]], resolve: Optional[Callable[[str], Optional[str]]] = None, source: str = '', **adapters: Any) -> 'TransferContext'`
-- `core_utils/scene_records.py::SceneStoreBase.transfer_sections(cls, spell: Optional[Callable[[str], str]] = None, objects=None) -> Dict[str, Any]`
-- `core_utils/scene_records.py::TransferContext(class)`
-- `core_utils/scene_records.py::TransferContext.adapter(self, name: str, default: Any = None) -> Any`
-- `core_utils/scene_records.py::TransferContext.note(self, text: str) -> None`
-- `core_utils/scene_records.py::TransferContext.respell(self, value: Any) -> Any`
-- `core_utils/scene_records.py::TransferContext.spell(self, name: str) -> str`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.UASTC_RDO_NORMAL_MAX(cls) -> float`
-- `file_utils/mesh_convert/fbx_media.py::FbxMedia.drop_apparatus(cls, src: str, dst: Optional[str] = None, *, section: Mapping[str, str], separator: str = '|') -> Dict[str, Any]`
-- `img_utils/_img_utils.py::ImgUtils.settle_ktx2_encoder(cls, prompt: Union[bool, Callable[[str], bool]], refused: Callable[[str], Any], installed: Optional[Callable[[str], Any]] = None) -> bool`
-- `img_utils/ktx2_encoder.py::Ktx2Encoder.rdo_dictionary(cls, value: Optional[int]) -> Optional[int]`
-- `img_utils/ktx2_encoder.py::Ktx2Encoder.rdo_for(cls, uastc_rdo: Optional[float], normal_map: bool = False) -> Optional[float]`
-- `img_utils/ktx2_encoder.py::Ktx2Encoder.rdo_kwargs(uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> Dict[str, Union[float, int]]`
+- `core_utils/app_handoff.py::HandoffBridge.child_sys_path(entries: Optional[Sequence[str]] = None) -> List[str]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.dominant_texture_set(cls, paths: Iterable[str]) -> Optional[Tuple[str, str]]`
+- `core_utils/export_profile.py::ExportProfile.baked_reflections_default(cls) -> str`
+- `core_utils/export_profile.py::ExportProfile.glb_defaults(cls) -> Dict[str, Any]`
+- `core_utils/export_profile.py::ExportProfile.glb_options(cls) -> Dict[str, Dict[str, Any]]`
+- `core_utils/export_profile.py::ExportProfile.optimize_textures_tasks(choice: Any, template: Optional[str] = None) -> Dict[str, Any]`
+- `core_utils/export_profile.py::ExportRun.baked_reflection_level(cls, value: Any) -> Optional[float]`
+- `core_utils/export_profile.py::ExportRun.for_glb(cls, values: Mapping[str, Any]) -> Tuple['ExportRun', List[Tuple[str, str]]]`
+- `core_utils/export_profile.py::ExportRun.glb_max_size(self, logger: Any = None) -> int`
+- `core_utils/export_profile.py::ExportRun.glb_texture_params(self, logger: Any = None) -> Dict[str, Any]`
+- `core_utils/export_profile.py::ExportRun.rendering(self) -> Dict[str, Dict[str, Any]]`
+- `core_utils/upstream_patch.py::UpstreamPatch(class)`
+- `core_utils/upstream_patch.py::UpstreamPatch.applied(self)`
+- `core_utils/upstream_patch.py::UpstreamPatch.available(self) -> bool`
+- `core_utils/upstream_patch.py::UpstreamPatch.detects(self, func: Callable[[], bool]) -> Callable[[], bool]`
+- `core_utils/upstream_patch.py::UpstreamPatch.registry(cls) -> List['UpstreamPatch']`
+- `core_utils/upstream_patch.py::UpstreamPatch.replaces(self, func: Callable) -> Callable`
+- `core_utils/upstream_patch.py::UpstreamPatch.still_needed(self) -> bool`
+- `file_utils/_file_utils.py::FileUtils.has_same_content(path_a: str, path_b: str) -> bool`
+- `file_utils/_file_utils.py::FileUtils.is_same_file(path_a: str, path_b: str) -> bool`
+- `file_utils/_file_utils.py::FileUtils.portable_path(cls, path: str, base: Optional[str]) -> str`
+- `file_utils/_file_utils.py::FileUtils.resolve_portable_path(cls, stored: str, base: Optional[str]) -> str`
+- `file_utils/_file_utils.py::FileUtils.unique_path(folder: str, stem: str, ext: str, taken: Optional[set] = None, claims: Optional[Union[Mapping, Iterable[str]]] = None, owners: Iterable[str] = (), avoid: Iterable[str] = ()) -> str`
+- `file_utils/file_dependencies.py::FileDependencies(class)`
+- `file_utils/file_dependencies.py::FileDependencies.claims(refs: Iterable[Sequence[str]]) -> Dict[str, FrozenSet[str]]`
+- `file_utils/file_dependencies.py::FileDependencies.copy_files(cls, sources: Iterable[str], dest_dir: str, mode: str = 'copy') -> List[Tuple[str, str]]`
+- `file_utils/file_dependencies.py::FileDependencies.find_files(names: Iterable[str], root: str) -> List[str]`
+- `file_utils/file_dependencies.py::FileDependencies.relocate(cls, deps: Sequence[Dict[str, Any]], dest_dir: str, source_dir: str = '', mode: str = 'copy', dry_run: bool = False, find_files: Optional[Callable[[List[str], str], List[str]]] = None, copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None) -> Dict[str, Any]`
+- `file_utils/file_dependencies.py::FileDependencies.resolve(cls, refs: Iterable[Sequence[str]], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, resolve_hint: Optional[Callable[[str, str], str]] = None) -> List[Dict[str, Any]]`
+- `file_utils/file_dependencies.py::FileDependencies.search_dirs(deps: Iterable[Dict[str, Any]], then: Iterable[str] = ()) -> List[str]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.rendering_policy(cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]`
+- `img_utils/_img_utils.py::ImgUtils.compose_rect(outer: Optional[Sequence[float]], inner: Sequence[float]) -> List[float]`
+- `img_utils/_img_utils.py::ImgUtils.denoise_image(cls, image: 'np.ndarray', mask: Optional['np.ndarray'] = None, radius: int = 2, strength: float = 3.0, noise: Optional[float] = None, outliers: float = 5.0) -> 'np.ndarray'`
+- `net_utils/preview/deliverer.py::PreviewDeliverer.preflight(self, bridge, request: HandoffRequest) -> bool`
+- `net_utils/preview/server.py::PreviewServer.save_snapshot(self, data: bytes, content_type: str = 'image/png') -> Dict[str, Any]`
+- `net_utils/preview/server.py::SNAPSHOT_PATH(constant)`
 
-## Signature changed (8)
+## Signature changed (5)
 
-- `core_utils/engines/shots/shot_model.py::ShotStore.snap`
-  - was: `(self, frame: float) -> float`
-  - now: `(self, frame: float, direction: str = 'nearest') -> float`
-- `core_utils/engines/shots/shot_transfer.py::ShotTransfer.merge`
-  - was: `(cls, existing: Optional[Dict[str, Any]], incoming: Dict[str, Any]) -> Dict[str, Any]`
-  - now: `(cls, existing: Optional[Dict[str, Any]], incoming: Dict[str, Any], id_map: Optional[Dict[int, int]] = None) -> Dict[str, Any]`
-- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.assess`
-  - was: `(cls, texture_path: str, max_size: int = None, force_pot: Optional[bool] = None, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False, enforce_budget: bool = False, lossy_quality: int = None, pot_mode: Optional[str] = None) -> Dict[str, Any]`
-  - now: `(cls, texture_path: str, max_size: int = None, force_pot: Optional[bool] = None, optimize_bit_depth: bool = True, map_type: str = None, allow_palette: bool = False, image: 'Image.Image' = None, output_type: str = None, output_profile: str = None, predict_size: bool = False, enforce_budget: bool = False, lossy_quality: int = None, pot_mode: Optional[str] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> Dict[str, Any]`
-- `core_utils/engines/textures/map_optimizer.py::MapOptimizer.optimize_map`
-  - was: `(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: Optional[bool] = None, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None, enforce_budget: bool = False, lossy_quality: int = None, pot_mode: Optional[str] = None) -> str`
-  - now: `(cls, texture_path: str, output_dir: str = None, output_type: str = None, max_size: int = None, force_pot: Optional[bool] = None, suffix_old: str = None, suffix_opt: str = None, old_files_folder: str = None, optimize_bit_depth: bool = True, check_existing: bool = False, map_type: str = None, allow_palette: bool = False, output_profile: str = None, enforce_budget: bool = False, lossy_quality: int = None, pot_mode: Optional[str] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> str`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.describe_texture_pass`
-  - was: `(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0, secondary_max_size: int = 0, uastc_rdo: Optional[float] = None) -> str`
-  - now: `(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0, secondary_max_size: int = 0, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> str`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.optimize_glb_textures`
-  - was: `(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = WEB_DELIVERY_KTX2_FALLBACK, secondary_max_size: int = WEB_DELIVERY_SECONDARY_MAX_SIZE, uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO) -> Dict[str, Any]`
-  - now: `(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = WEB_DELIVERY_KTX2_FALLBACK, secondary_max_size: int = WEB_DELIVERY_SECONDARY_MAX_SIZE, uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO, uastc_rdo_dictionary: Optional[int] = WEB_DELIVERY_UASTC_RDO_DICTIONARY) -> Dict[str, Any]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.web_delivery_texture_params`
-  - was: `(cls, image_format: Optional[str] = None, max_size: Optional[int] = None, ktx2_fallback: Optional[bool] = None, secondary_max_size: Optional[int] = None, uastc_rdo: Optional[float] = None) -> Dict[str, Any]`
-  - now: `(cls, image_format: Optional[str] = None, max_size: Optional[int] = None, ktx2_fallback: Optional[bool] = None, secondary_max_size: Optional[int] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> Dict[str, Any]`
-- `img_utils/_img_utils.py::ImgUtils.save_image`
-  - was: `(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, quality: int = None, colorspace: str = None, **kwargs)`
-  - now: `(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, quality: int = None, colorspace: str = None, uastc_rdo: float = None, uastc_rdo_dictionary: int = None, **kwargs)`
+- `core_utils/scene_records.py::SceneRecords.handoff_block`
+  - was: `(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None) -> Dict[str, Any]`
+  - now: `(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]`
+- `core_utils/scene_records.py::SceneRecords.rendering_policy`
+  - was: `() -> Dict[str, Any]`
+  - now: `(overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.build_scene_sidecar`
+  - was: `(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]`
+  - now: `(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/glb_pipeline.py::GlbPipeline.envelope`
+  - was: `(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, logger: Any = None) -> Dict[str, Any]`
+  - now: `(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Dict[str, Dict[str, Any]]] = None, logger: Any = None) -> Dict[str, Any]`
+- `net_utils/preview/bridge.py::PreviewBridge.push`
+  - was: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, data_export: Optional[Dict[str, Any]] = None, **params: Any) -> Optional[Dict[str, Any]]`
+  - now: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, glb_options: Optional[Dict[str, Any]] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, data_export: Optional[Dict[str, Any]] = None, **params: Any) -> Optional[Dict[str, Any]]`

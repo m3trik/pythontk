@@ -161,8 +161,6 @@
 <div id="controls">
   <button class="ui" id="scaleToggle" title="Toggle between a fitted preview size and the model's true scale">Scale: fit</button>
   <button class="ui" id="frameBtn" title="Re-frame the camera on the model">Frame</button>
-  <button class="ui" id="lightToggle" hidden
-          title="Baked lighting plus a dim environment (which is what makes normal maps and specular visible), or the bake on its own">Light: bake + env</button>
   <div id="lookdev" hidden>
     <span class="ui" id="normals" hidden
           title="How strongly the normal maps read on the baked materials. A lightmap carries no direction, so on its own it cannot show a normal map; the preview relieves the bake along the key-light direction so the map reads the way it would under a runtime light. 0 is the pure bake. Save writes the value into the GLB itself as normalTexture.scale.">
@@ -229,7 +227,6 @@ const el = {
   hint: document.getElementById('hint'),
   scaleToggle: document.getElementById('scaleToggle'),
   frameBtn: document.getElementById('frameBtn'),
-  lightToggle: document.getElementById('lightToggle'),
   anim: document.getElementById('anim'),
   clipSelect: document.getElementById('clipSelect'),
   playToggle: document.getElementById('playToggle'),
@@ -294,10 +291,10 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x15171a);
 
 const pmrem = new THREE.PMREMGenerator(renderer);
-// Assigned for the life of the session, and SHARED: a lightmapped model used to switch
-// this off entirely; it is now only dimmed, and dimmed per material, because switching it
-// off takes every normal map with it (see LIGHTMAP_ENV_INTENSITY). Baked materials point
-// their own `envMap` at this same texture, so `disposeModel` must not free it.
+// Assigned for the life of the session, on the SCENE: the main light for
+// everything that is not baked, and the reflections for everything that is.
+// What a baked material takes from it is decided in its shader, not by a
+// per-material intensity (see patchBakedShader).
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 // The RoomEnvironment IBL above is the main light. Piling a bright hemisphere
@@ -309,45 +306,17 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 // of five 8-bit levels, indistinguishable from white. One modest key light for
 // form definition is enough alongside the environment.
 const DEFAULT_KEY_INTENSITY = 0.9;
-// How much environment a LIGHTMAPPED scene keeps. Not zero, and that is the whole point:
-// three.js adds lightmap irradiance through BRDF_Lambert, which has no normal term, so a
-// bake supplies light that does not vary with the surface normal at all. Switch the
-// viewer's own lighting fully off and nothing left in the render samples the normal --
-// normal maps, roughness and every specular highlight go inert and the model reads dead
-// flat. Measured on a production room: 51 of 57 materials lightmapped, all 54 normal maps
-// correctly bound at texCoord 0, no surface detail visible anywhere. The environment is
-// the right thing to keep because it is omnidirectional -- it cannot contradict the bake's
-// shadow DIRECTION the way a key light would -- and its view/normal-dependent specular
-// term (getIBLRadiance, which takes the normal) is exactly what makes a normal map
-// legible. The key light still goes off when the model is FULLY baked; a directional
-// diffuse gradient is precisely the second, contradictory rig to avoid. It cannot be
-// withdrawn per material without render layers, so a partly-baked model keeps it for the
-// sake of the props that have no bake to contradict (see applyLighting).
-//
-// Applied PER MATERIAL. The obstacle is that a material-level `envMapIntensity` is
-// silently overwritten for exactly the materials this affects --
-//
-//     if (material.isMeshStandardMaterial && material.envMap === null
-//         && scene.environment !== null) m_uniforms.envMapIntensity.value
-//                                            = scene.environmentIntensity;
-//
-// and every GLTFLoader material is a MeshStandardMaterial with no envMap of its own, so
-// setting the property alone does nothing at all (an earlier revision of this fix did
-// exactly that). The opt-out is the `envMap === null` clause: give a baked material the
-// SHARED environment as its own envMap and the renderer stops overwriting it. That costs
-// no extra upload -- it is the texture the scene was already lighting with -- and the only
-// thing it demands in return is that `disposeModel` spare it, since the model does not own
-// it. The scene-wide alternative dims a partly-baked model's UN-baked props along with the
-// baked geometry, for a reason invisible from the model, and scenes are routinely partly
-// baked (measured on a production room: 51 of 57 materials).
-const LIGHTMAP_ENV_INTENSITY = 0.25;
-// The environment level everything NOT lightmapped is lit at, and the exposure
-// the look was approved through. Declared as named constants for the same
-// reason as the two above: they are the FALLBACKS the published policy is read
-// against (see readRenderingPolicy), and a fallback that only exists inline is
-// one a test cannot compare with what the deliverable actually ships.
+// The environment level, for the whole model, and the exposure the look was
+// approved through. Declared as named constants for the same reason as the
+// one above: they are the FALLBACKS the published policy is read against (see
+// readRenderingPolicy), and a fallback that only exists inline is one a test
+// cannot compare with what the deliverable actually ships.
 const DEFAULT_ENV_INTENSITY = 1;
 const DEFAULT_TONE_EXPOSURE = 1;
+// How strongly a BAKED material reflects that environment (its specular term;
+// the diffuse is its bake -- see patchBakedShader). The export chooses it, as
+// `lightmappedMaterials.envMapIntensity`; this is the recipe's own default.
+const DEFAULT_BAKED_ENV_INTENSITY = 0.25;
 
 // The rig this page renders with. The values above are what it FALLS BACK to;
 // the live ones come from the deliverable itself, which publishes the whole
@@ -358,9 +327,9 @@ const DEFAULT_TONE_EXPOSURE = 1;
 // the source and this page is one of its readers.
 const POLICY_FALLBACK = Object.freeze({
   keyIntensity: DEFAULT_KEY_INTENSITY,
-  lightmapEnvIntensity: LIGHTMAP_ENV_INTENSITY,
   environmentIntensity: DEFAULT_ENV_INTENSITY,
   toneMappingExposure: DEFAULT_TONE_EXPOSURE,
+  bakedEnvIntensity: DEFAULT_BAKED_ENV_INTENSITY,
 });
 let policy = { ...POLICY_FALLBACK };
 
@@ -402,13 +371,12 @@ function readRenderingPolicy(gltf) {
   // it is the same table the initial value is taken from.
   policy = {
     keyIntensity: num(published?.keyLight?.intensity, POLICY_FALLBACK.keyIntensity),
-    lightmapEnvIntensity: num(
-      published?.lightmappedMaterials?.envMapIntensity,
-      POLICY_FALLBACK.lightmapEnvIntensity),
     environmentIntensity: num(
       published?.environment?.intensity, POLICY_FALLBACK.environmentIntensity),
     toneMappingExposure: num(
       published?.renderer?.toneMappingExposure, POLICY_FALLBACK.toneMappingExposure),
+    bakedEnvIntensity: num(
+      published?.lightmappedMaterials?.envMapIntensity, POLICY_FALLBACK.bakedEnvIntensity),
   };
   renderer.toneMappingExposure = policy.toneMappingExposure;
 }
@@ -559,8 +527,8 @@ if (navigator.xr) {
 /* ---------------------------------------------------------------- model --- */
 
 const loader = new GLTFLoader();
-// KTX2/Basis support (KHR_texture_basisu) — what the deliverer's opt-in
-// texture_format="KTX2" mode emits, and REQUIRED by those GLBs (they carry no
+// KTX2/Basis support (KHR_texture_basisu) — what a KTX2 Texture File Type
+// row emits (glb_options), and REQUIRED by those GLBs (they carry no
 // fallback image). One transcoder serves both Basis codecs (ETC1S and UASTC);
 // detectSupport picks the GPU target per device — ASTC on a standalone
 // headset, BC7/DXT on desktop — which is the whole point: the texture stays
@@ -592,12 +560,11 @@ function disposeModel(root) {
     if (node.geometry) node.geometry.dispose();
     for (const material of materialsOf(node)) {
       for (const value of Object.values(material)) {
-        // Everything here belongs to the MODEL and dies with it — except the
-        // shared environment, which is session-owned and assigned onto each
-        // lightmapped material to win back per-material `envMapIntensity`
-        // (see applyLighting). Disposing that would take the environment out
-        // from under every later push, and the model is not its owner.
-        if (value && value.isTexture && value !== scene.environment) value.dispose();
+        // Everything here belongs to the MODEL and dies with it. The session's
+        // environment lives on the scene, never on a material -- while baked
+        // materials briefly carried it as their own `envMap`, this loop needed
+        // a guard or the second push rendered unlit.
+        if (value && value.isTexture) value.dispose();
       }
       material.dispose();
     }
@@ -673,39 +640,76 @@ function frameCamera() {
 // refusal below. Map.get answers only for keys actually in the table.
 const CARRIER_SLOTS = new Map([['occlusion', 'aoMap'], ['emissive', 'emissiveMap']]);
 
-// Let the normal map show on a BAKED surface.
+// What a BAKED material takes from the page's own lighting.
 //
-// A lightmap is irradiance with no direction in it: three.js adds the texel
-// to the diffuse term and never consults the normal, so on a baked material
-// the normal map reaches the picture only through the environment -- which
-// applyLighting dims to a quarter, because that surface's lighting is already
-// in its bake. Measured on a production room: normalScale 1 -> 4 moved ~1% of
-// pixels by ~0.4/255. A normal map that cannot be seen is the same as one that
-// is missing, which is how it was reported ("no normal effect at all").
+// A lightmap is irradiance: it already holds the surface's diffuse lighting,
+// every light in the scene and the sky included. three.js adds it through
+// BRDF_Lambert and then ALSO adds the environment's irradiance, so a baked
+// surface was lit twice. Measured on a production room (2026-09-21): a
+// quarter of the environment on top of the bake doubled every shadow and
+// lifted every surface, which reads as a washed-out bake and gets reported
+// as a baker regression. The same environment is the only thing in the
+// render that can show a reflection, a roughness map or a normal map on a
+// baked surface -- a lightmap carries no direction and no specular, and with
+// the environment off entirely (as this once did) a room measured 51 of 57
+// materials baked, 54 normal maps bound, no surface detail visible anywhere.
+// So it is not withdrawn, it is confined to the SPECULAR term: the role a
+// reflection probe plays for a lightmapped surface in a runtime. The diffuse
+// comes from the bake alone. That is one line dropped from the chunk below,
+// the one that adds the environment's irradiance -- a shader rule rather
+// than a material setting, because `envMapIntensity` scales both terms.
 //
-// The fix modulates the bake by the map. The baked light is taken to arrive
-// along the page's own key-light direction, and the lightmap texel is scaled
-// by how the PERTURBED normal faces that direction relative to how the flat
-// one does -- half-Lambert wrapped so the ratio is well-behaved on a surface
-// facing away, and exactly 1 wherever the map is flat, so normalScale 0 (and a
-// material with no normal map) renders the pure bake. Not a second bake and
+// And at the LEVEL the export chose (`lightmappedMaterials.envMapIntensity`,
+// read by readRenderingPolicy): the environment is a bright studio, not the
+// room the bake lit, so at full strength its reflections lifted the darkest
+// baked surfaces from 0.06 to 0.22 of display (measured, a production room).
+// With the irradiance line gone, everything the environment gives a baked
+// material rides `radiance` / `clearcoatRadiance` (`iblIrradiance` stays 0,
+// so the multiscatter and sheen terms that read it add nothing), and one
+// uniform scaling those two at the end of the chunk is the whole level --
+// shared by every baked material, so a new level needs no recompile.
+//
+// Relief. A lightmap never consults the normal, so a normal map on a baked
+// surface reached the picture only through the environment's specular
+// (measured: normalScale 1 -> 4 moved ~1% of pixels by ~0.4/255, reported as
+// "no normal effect at all"). The fix modulates the bake by the map: the
+// baked light is taken to arrive along the page's own key-light direction,
+// and the lightmap texel is scaled by how the PERTURBED normal faces that
+// direction relative to how the flat one does -- half-Lambert wrapped so the
+// ratio is well-behaved on a surface facing away, and exactly 1 wherever the
+// map is flat, so normalScale 0 renders the pure bake. Not a second bake and
 // not physically derived: it is the single-direction reduction of the
 // directional-lightmap trick, chosen because it is one uniform and five lines
 // of GLSL, and because it makes `normalTexture.scale` -- the value the file
-// carries -- do in this preview what it does in a runtime that lights.
+// carries -- do in this preview what it does in a runtime that lights. Only
+// installed when the material has a normal map: there is nothing to relieve
+// by otherwise, and the pure bake must stay the pure bake.
 //
-// Patched at `irradiance += lightMapIrradiance;`, the one line in three.js
-// 0.169's `lights_fragment_maps` chunk that adds the bake; `normal` is the
-// perturbed normal there and `nonPerturbedNormal` the geometry's own. The
-// key light is a world direction and the shader works in view space, so it
-// is turned per fragment with the `viewMatrix` three.js already provides.
+// Both edits land in three.js 0.169's `lights_fragment_maps` chunk, at
+// `iblIrradiance += getIBLIrradiance( geometryNormal );` and at
+// `irradiance += lightMapIrradiance;`; `normal` is the perturbed normal there
+// and `nonPerturbedNormal` the geometry's own. The key light is a world
+// direction and the shader works in view space, so it is turned per fragment
+// with the `viewMatrix` three.js already provides.
 //
 // The hook receives the source with its `#include <...>` directives still
-// UNEXPANDED (the renderer resolves them afterwards), so the line cannot be
+// UNEXPANDED (the renderer resolves them afterwards), so neither line can be
 // matched in what the hook is handed: the directive is replaced with the
-// chunk itself, edited. A replace aimed at the line directly is a silent
-// no-op -- measured, the "patched" render moved the same ~1% of pixels as
-// the unpatched one.
+// chunk itself, edited. A replace aimed at a line directly is a silent no-op
+// -- measured, the "patched" render moved the same ~1% of pixels as the
+// unpatched one -- which is why the live suite asserts on the pixels.
+const IBL_DIFFUSE_GLSL = 'iblIrradiance += getIBLIrradiance( geometryNormal );';
+const LIGHTMAP_GLSL = 'irradiance += lightMapIrradiance;';
+// Checked once, at boot, against the chunk this three.js ships: a line it no
+// longer carries makes its replace below a silent no-op -- every baked surface
+// washes out again, or the Normal Scale dial goes inert -- so a miss is an
+// ERROR (the live suite fails on console errors), not a warning nobody in a
+// headset reads.
+for (const [edit, line] of [['environment diffuse', IBL_DIFFUSE_GLSL], ['normal relief', LIGHTMAP_GLSL]]) {
+  if (!THREE.ShaderChunk.lights_fragment_maps.includes(line)) {
+    console.error(`three.js changed lights_fragment_maps: the baked shader's ${edit} edit no longer applies`);
+  }
+}
 const bakeLightDir = { value: new THREE.Vector3() };
 const RELIEF_GLSL = [
   '{',
@@ -717,22 +721,39 @@ const RELIEF_GLSL = [
   '}',
 ].join('\n');
 
-function reliefFromNormalMap(material) {
-  bakeLightDir.value.copy(keyLight.position).normalize();
+// The baked-reflection level: ONE uniform object shared by every baked
+// material's program, so applyLighting sets it once for all of them.
+const bakedEnvUniform = { value: DEFAULT_BAKED_ENV_INTENSITY };
+const BAKED_ENV_GLSL = [
+  '#if defined( RE_IndirectSpecular )',
+  '  radiance *= bakedEnvIntensity;',
+  '  clearcoatRadiance *= bakedEnvIntensity;',
+  '#endif',
+].join('\n');
+
+function patchBakedShader(material) {
+  const relieve = Boolean(material.normalMap);
+  if (relieve) bakeLightDir.value.copy(keyLight.position).normalize();
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.bakeLightDir = bakeLightDir;
+    let chunk = THREE.ShaderChunk.lights_fragment_maps.replace(IBL_DIFFUSE_GLSL, '');
+    if (relieve) chunk = chunk.replace(LIGHTMAP_GLSL, RELIEF_GLSL);
+    if (!shader.fragmentShader.includes('#include <lights_fragment_maps>')) {
+      console.error('three.js changed its fragment shader: the baked shader edits no longer apply');
+    }
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 bakeLightDir;')
-      .replace(
-        '#include <lights_fragment_maps>',
-        THREE.ShaderChunk.lights_fragment_maps.replace(
-          'irradiance += lightMapIrradiance;', RELIEF_GLSL,
-        ),
-      );
+      .replace('#include <lights_fragment_maps>', `${chunk}\n${BAKED_ENV_GLSL}`);
+    shader.uniforms.bakedEnvIntensity = bakedEnvUniform;
+    let declared = 'uniform float bakedEnvIntensity;';
+    if (relieve) {
+      shader.uniforms.bakeLightDir = bakeLightDir;
+      declared += '\nuniform vec3 bakeLightDir;';
+    }
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\n${declared}`);
   };
-  // A distinct program from a plain lightmapped material's, or the renderer
-  // would hand one of them the other's shader.
-  material.customProgramCacheKey = () => 'lightmap-relief';
+  // A distinct program from an unpatched material's with the same maps, or
+  // the renderer would hand one of them the other's shader.
+  material.customProgramCacheKey = () => (relieve ? 'baked-relief' : 'baked');
 }
 
 function applyLightmaps(gltf) {
@@ -772,14 +793,7 @@ function applyLightmaps(gltf) {
       material.lightMapIntensity = entry.intensity ?? 1;
       material[slot] = null;
       if (carrier === 'emissive') material.emissive = new THREE.Color(0x000000);
-      // Opt this material OUT of the scene-wide envMapIntensity override: the
-      // renderer only forces it onto MeshStandardMaterials whose own envMap is
-      // null, so pointing it at the shared environment (the same texture the
-      // scene already lights with — no second upload, no visual change on its
-      // own) is what makes the per-material dimming in applyLighting stick.
-      // disposeModel is guarded against freeing it.
-      material.envMap = scene.environment;
-      if (material.normalMap) reliefFromNormalMap(material);
+      patchBakedShader(material);
       material.userData.lightmapBound = true;
       material.needsUpdate = true;
       lightmappedMaterials.push(material);
@@ -789,31 +803,26 @@ function applyLightmaps(gltf) {
   return bound;
 }
 
-// The whole lighting policy, in one place, so the load path and the toggle cannot drift
-// into disagreeing about it. `bakeOnly` drops the environment to nothing, which is what
-// tells a flat-looking model caused by a bad bake apart from one caused by the viewer's
-// own lighting — the question that toggle exists to answer.
-//
-// Applied PER MATERIAL, not scene-wide. Only a material that actually carries a bake has
-// its lighting already in it; a prop that does not is an ordinary PBR surface and wants
-// the full environment. The earlier scene-wide form dimmed both, so every un-baked prop in
-// a partly-baked scene rendered cooler than it should for no reason anyone could see from
-// the model — and a scene is routinely partly baked (measured on a production room: 51 of
-// 57 materials). `lightmappedMaterials` is rebuilt per load and holds only materials this
-// model owns, so it dies with the model.
+// The whole lighting policy, in one place, so the load path and a later
+// re-read cannot drift into disagreeing about it. Nothing here is per
+// material: the environment plays at one level for the whole model, and what
+// a BAKED material takes from it is decided in its shader (patchBakedShader)
+// -- the specular term only, since its diffuse is in its bake, at the level
+// the export published. An earlier form dimmed the environment per baked
+// material, diffuse and specular together: any diffuse at all on top of the
+// bake washed the room out, which is why the level now reaches the specular
+// alone. `lightmappedMaterials` is rebuilt per load and holds only
+// materials this model owns, so it dies with the model; the lookdev dials
+// read it.
 let lightmapped = 0;
 let lightmappedMaterials = [];
 let materialCount = 0;
-let bakeOnly = false;
 
 function applyLighting() {
-  // Left at 1 for everything the manifest did not name; the baked materials
-  // opt out of this via their own envMap (see applyLightmaps) and are dimmed
-  // individually just below.
   scene.environmentIntensity = policy.environmentIntensity;
-  for (const material of lightmappedMaterials) {
-    material.envMapIntensity = bakeOnly ? 0 : policy.lightmapEnvIntensity;
-  }
+  // What a baked material reflects of it: the export's level (see
+  // patchBakedShader), on top of the one environment level above.
+  bakedEnvUniform.value = policy.bakedEnvIntensity;
   // The key light cannot go per material without render layers, so it stays
   // scene-wide and goes off the moment ANYTHING is baked. Gating it on the
   // model being FULLY baked (as this briefly did) is what blows out a baked
@@ -824,13 +833,13 @@ function applyLighting() {
   // re-baking with the Maya lights turned down changes nothing, because the
   // extra light is added here, downstream of the EXR.
   //
-  // The un-baked props that gate was added for are not left dark: the
-  // per-material split above holds them at the FULL environment (they were on
-  // 0.25 when the key light mattered, which is what made them look unlit), and
-  // the environment is normal- and view-dependent -- getIBLRadiance takes the
-  // normal -- so their normal maps and specular stay legible without it. What
-  // they give up is a directional diffuse gradient, which is precisely the
-  // term that must not reach the baked geometry standing beside them.
+  // The un-baked props that gate was added for are not left dark: they keep
+  // the FULL environment (they were on 0.25 when the key light mattered, which
+  // is what made them look unlit), and the environment is normal- and
+  // view-dependent -- getIBLIrradiance and getIBLRadiance take the normal --
+  // so their normal maps and specular stay legible without it. What they give
+  // up is a directional diffuse gradient, which is precisely the term that
+  // must not reach the baked geometry standing beside them.
   //
   // Render layers would let the key light skip only the baked meshes, but
   // layers 1 and 2 are already spoken for: three.js 0.169.0 -- the version
@@ -842,17 +851,6 @@ function applyLighting() {
   // Layers are also per OBJECT while a bake is per MATERIAL, so a mesh with
   // mixed materials would need a conservative rule regardless.
   keyLight.intensity = lightmapped ? 0 : policy.keyIntensity;
-  el.lightToggle.hidden = !lightmapped;
-  el.lightToggle.textContent = `Light: ${bakeOnly ? 'bake only' : 'bake + env'}`;
-}
-
-// Guarded, because the keyboard shortcut works whether or not the button is showing: on an
-// un-lightmapped model the toggle has no effect to see, so flipping it there would silently
-// leave the flag set and open the NEXT lightmapped push with no environment at all.
-function toggleBakeOnly() {
-  if (!lightmapped) return;
-  bakeOnly = !bakeOnly;
-  applyLighting();
 }
 
 // Distinct materials on the model, by identity — the denominator for the HUD's baked
@@ -918,11 +916,11 @@ function syncLookdev() {
 // A lightmap contributes irradiance with no direction in it -- three.js adds
 // `lightMapTexel * intensity` to the diffuse term and never consults the
 // normal -- so on a baked surface the normal map survives only through the
-// environment, which applyLighting deliberately dims to a quarter because that
-// surface's lighting is already in its bake. Correct, and flat-looking: the
+// environment's specular term (its diffuse is withheld from a baked surface,
+// see patchBakedShader). Correct, and flat-looking on a matte surface: the
 // detail is there and barely lit. This is the dial that brings it back without
-// touching the bake or re-lighting the room, which is why it is offered beside
-// the bake-only toggle and hidden entirely when nothing is baked.
+// touching the bake or re-lighting the room, which is why it is hidden
+// entirely when nothing is baked.
 //
 // Its home is the FILE, not this page: `normalTexture.scale` is core glTF, so
 // GLTFLoader has already read the model's own value into `material.normalScale`
@@ -1566,8 +1564,8 @@ async function load(url, version) {
   // A lightmapped material already contains its DIFFUSE lighting, so the viewer's own
   // light is what has to give way: a second rig on top of a bake leaves the baked shadows
   // in place while everything around them lifts, which reads as a washed out model rather
-  // than as double lighting and is easy to misdiagnose as a bad bake. Only the BAKED
-  // materials give way though — see applyLighting.
+  // than as double lighting and is easy to misdiagnose as a bad bake. Only for the BAKED
+  // materials though — see applyLighting and patchBakedShader.
   //
   // Reset before applying, not after: these describe the model now on screen, and a load
   // that failed or was superseded above must not leave the previous model's materials
@@ -1754,6 +1752,68 @@ const viewer = {
    * `addButton` rather than `createElement`: one look, one place.
    */
   showDialog,
+  /**
+   * `{width, height, pixelRatio}` for a capture of the view whose long edge is
+   * `maxEdge`: the size to hand over, and the pixel ratio to RENDER at for it
+   * -- null when the drawing buffer is already at least that large, and the
+   * capture is downsampled instead. A capture is therefore a real render at
+   * its size, never an upscale of a smaller one.
+   *
+   * Clamped to what the GPU will allocate. A canvas asked for a buffer past
+   * MAX_RENDERBUFFER_SIZE does not fail; it silently allocates a smaller one,
+   * and a capture would read that stretched across the frame.
+   *
+   * The one sizing rule for everything the page writes to a file -- a
+   * playblast's frames and an exported still -- so the two cannot disagree
+   * about what a size means.
+   */
+  captureSize(maxEdge) {
+    const canvas = renderer.domElement;
+    const gl = renderer.getContext();
+    const [viewportWidth, viewportHeight] = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+    const limit = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), viewportWidth, viewportHeight);
+    const scale = Math.min(maxEdge, limit) / Math.max(canvas.width, canvas.height);
+    return {
+      width: Math.max(1, Math.round(canvas.width * scale)),
+      height: Math.max(1, Math.round(canvas.height * scale)),
+      pixelRatio: scale > 1 ? renderer.getPixelRatio() * scale : null,
+    };
+  },
+  /**
+   * Why the server refused `response`, as a sentence to put in the status
+   * line. The server states it (a frame ceiling, no ffmpeg, a body that is not
+   * an image); showing "500" instead sends the user to a console they cannot
+   * open in a headset.
+   *
+   * `send_error` puts the message in the status line AND in its HTML body, so
+   * statusText is the cheap read and the body the fallback for a proxy or a
+   * browser that drops the reason phrase. The body match stops at the tag, not
+   * at the first full stop -- these messages are sentences.
+   */
+  async refusal(response) {
+    if (response.statusText) return response.statusText;
+    const text = await response.text().catch(() => '');
+    const match = text.match(/<p>Message:\s*([^<]+)/i);
+    return (match ? match[1] : `HTTP ${response.status}`).trim().replace(/\.$/, '');
+  },
+  /**
+   * Save a file this server serves as a download, rather than navigating the
+   * page to it -- which in a headset would replace the preview with an image
+   * viewer or a video player.
+   *
+   * A browser honours `download` on the page's OWN origin only, and this page
+   * is as validly open at localhost as at 127.0.0.1: pass a path relative to
+   * the page, or a route that answers with `Content-Disposition: attachment`
+   * (a recording's does), or a tab opened by the other spelling navigates.
+   */
+  download(url) {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = '';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  },
 };
 
 function emit(event, detail) {
@@ -1975,7 +2035,6 @@ el.dialog.addEventListener('mousedown', (event) => {
 
 el.scaleToggle.addEventListener('click', () => { realScale = !realScale; layout(); });
 el.frameBtn.addEventListener('click', frameCamera);
-el.lightToggle.addEventListener('click', toggleBakeOnly);
 el.normalScale.addEventListener('input', () => applyNormalScale(Number(el.normalScale.value)));
 el.normalSave.addEventListener('click', saveNormalScale);
 el.clipSelect.addEventListener('change', () => selectClip(Number(el.clipSelect.value)));
@@ -2000,7 +2059,6 @@ addEventListener('keydown', (event) => {
   if (event.target === el.clipSelect) return;
   if (event.key === 'r') { realScale = !realScale; layout(); }
   if (event.key === 'f') frameCamera();
-  if (event.key === 'l') toggleBakeOnly();
   // Guarded on there being a mixer: with no clips these keys mean nothing, and
   // Space would otherwise flip a play state the next animated push inherits.
   if (mixer) {

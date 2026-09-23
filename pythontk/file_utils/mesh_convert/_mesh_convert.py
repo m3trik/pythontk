@@ -311,15 +311,18 @@ class MeshConvert(HelpMixin):
     #: The reference viewer's lighting setup (``net_utils/preview/viewer.html``),
     #: published as data so a recipient can reproduce the look the asset was
     #: signed off in instead of inferring it. A baked asset needs this more than
-    #: an unbaked one, not less: its lighting is already in its textures, so the
-    #: viewer's own rig has to be *withheld* by exactly the right amount, and
-    #: every number below is a measured compromise rather than a default (see the
-    #: viewer's own comments for what each one is compensating for). Without it a
-    #: recipient reasonably adds a normal key light and blows out every baked
-    #: surface -- which reads as a bake regression and sends them back to the
-    #: baker, where nothing is wrong.
+    #: an unbaked one, not less: its diffuse lighting is already in its
+    #: textures, so the viewer's own rig has to be withheld exactly where the
+    #: bake already answers (the key light, and the environment's diffuse) and
+    #: kept where it does not (the environment's specular, which is all that
+    #: can show a reflection, a roughness map or a normal map on a baked
+    #: surface). Without it a recipient reasonably adds a normal key light, or
+    #: an ambient term, and washes out every baked surface -- which reads as a
+    #: bake regression and sends them back to the baker, where nothing is
+    #: wrong.
     #:
-    #: ``test_preview_server`` pins these against the viewer's literals, so the
+    #: ``test_preview_server`` pins these against the viewer's literals, and
+    #: ``test_preview_viewer_live`` against the pixels it draws, so the
     #: published contract cannot drift from what the viewer actually does.
     RENDERING_POLICY: Dict[str, Any] = {
         "renderer": {
@@ -333,10 +336,9 @@ class MeshConvert(HelpMixin):
             "prefilterBlur": 0.04,
             "intensity": 1.0,
             "note": (
-                "The main light. Kept non-zero even for a fully baked asset: "
-                "lightmap irradiance carries no normal term, so with the "
-                "environment off nothing left in the render samples the normal "
-                "and normal maps, roughness and speculars all go inert."
+                "The main light for everything that is not baked, and the "
+                "source of the reflections on everything that is -- scaled "
+                "there by lightmappedMaterials.envMapIntensity."
             ),
         },
         "keyLight": {
@@ -351,17 +353,63 @@ class MeshConvert(HelpMixin):
             ),
         },
         "lightmappedMaterials": {
+            "envMapTerms": "specular",
             "envMapIntensity": 0.25,
             "lightMapIntensity": (
                 "per material, from extras.lightmap_web.materials[<name>].intensity"
             ),
             "note": (
-                "Applied per material, not scene-wide: only a material that "
-                "carries a bake has its lighting already in it. Un-baked props in "
-                "the same asset keep the full environment (1.0)."
+                "The bake already holds the diffuse lighting (every light and "
+                "the sky), so the environment's irradiance is NOT added on top: "
+                "that double-counts it and reads as a washed-out bake. The "
+                "environment keeps only its specular term -- the "
+                "reflection-probe role, and what a native lightmap path such as "
+                "Unity's does with a lightmapped renderer -- at envMapIntensity "
+                "times the environment's own intensity. The environment is a "
+                "studio, brighter than the room the bake lit, so at full "
+                "strength its reflections lift every dark glossy surface "
+                "(measured on a production room: the darkest machine surfaces "
+                "at display level 0.06 baked alone, 0.22 with full reflections, "
+                "0.11 at a quarter). The level is the export's choice. Un-baked "
+                "materials in the same asset take the environment whole, "
+                "diffuse and specular."
             ),
         },
     }
+
+    @classmethod
+    def rendering_policy(
+        cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """:attr:`RENDERING_POLICY` with a deliverable's own choices laid over it.
+
+        *overrides* is ``{section: {field: value}}`` -- what the export that
+        made the deliverable decided (``ExportRun.rendering``), published in
+        its handoff so any reader, the reference viewer included, lights it
+        the way it was approved. Only a field the policy declares can be
+        overridden: a misspelt one would publish a value no reader looks for
+        while the field it meant kept its default.
+
+        Raises:
+            ValueError: an override names a section or field the policy does
+                not declare.
+        """
+        policy = copy.deepcopy(cls.RENDERING_POLICY)
+        for section, fields in (overrides or {}).items():
+            target = policy.get(section)
+            if not isinstance(target, dict):
+                raise ValueError(
+                    f"Rendering override section {section!r} is not one of "
+                    f"MeshConvert.RENDERING_POLICY's ({', '.join(policy)})."
+                )
+            unknown = sorted(set(fields or {}) - set(target))
+            if unknown:
+                raise ValueError(
+                    f"Rendering override {section}.{', '.join(unknown)} is not a "
+                    "field of MeshConvert.RENDERING_POLICY."
+                )
+            target.update(fields)
+        return policy
 
     @ClassProperty
     def OPTIMIZE_WORKERS(cls) -> int:
@@ -498,6 +546,15 @@ class MeshConvert(HelpMixin):
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
     }
+    #: Containers a GLB can carry its images in, as file-extension tokens:
+    #: glTF core's own (:attr:`IMAGE_MIME_TYPES`) plus the two
+    #: :meth:`optimize_glb_textures` declares an extension for -- WebP
+    #: (``EXT_texture_webp``) and KTX2 (``KHR_texture_basisu``). A scene-side
+    #: container (TGA, EXR, TIFF ...) is not one: asked of the web delivery
+    #: policy, it means the policy's own container.
+    GLB_IMAGE_FORMATS = frozenset(
+        [ext.lstrip(".") for ext in IMAGE_MIME_TYPES] + ["webp", "ktx2"]
+    )
 
     # ------------------------------------------------------------------ #
     # The open-GLB handle every repair below operates on
@@ -1521,6 +1578,7 @@ class MeshConvert(HelpMixin):
         sections: Optional[Dict[str, Any]],
         source: Dict[str, str],
         asset: Optional[str] = None,
+        rendering: Optional[Mapping[str, Mapping[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Wrap *sections* in the versioned scene-sidecar envelope.
 
@@ -1564,6 +1622,9 @@ class MeshConvert(HelpMixin):
             source: Producer identity, e.g.
                 ``{"application": "maya", "version": "2025"}``.
             asset: Basename of the deliverable this envelope belongs to.
+            rendering: The export's choices over the lighting recipe
+                (:meth:`rendering_policy`), published as ``handoff.rendering``.
+                ``None`` publishes the policy as it stands.
         """
         return {
             "version": cls.SIDECAR_VERSION,
@@ -1618,8 +1679,9 @@ class MeshConvert(HelpMixin):
                 # envelope says what the asset is; without this, a recipient can
                 # rebuild every material correctly and still not reproduce the
                 # look, because the lighting lives in the viewer rather than in
-                # the file.
-                "rendering": copy.deepcopy(cls.RENDERING_POLICY),
+                # the file. An input like the sections: what the export chose
+                # (a baked-reflection level), never patched on afterwards.
+                "rendering": cls.rendering_policy(rendering),
             },
         }
 
@@ -2806,46 +2868,42 @@ class MeshConvert(HelpMixin):
     @classmethod
     def _lightmap_final_values(
         cls, gltf: dict, web: Optional[Dict[str, Any]]
-    ) -> Dict[str, Dict[str, Any]]:
-        """``{node name: {"map", "intensity"}}``: each node's lightmap in this file.
+    ) -> Dict[int, Dict[str, Any]]:
+        """``{node index: {"map", "intensity"}}``: each node's lightmap in this file.
 
         Read off the file itself -- the materials a node's primitives wear,
         looked up in *web* (the ``lightmap_web`` manifest, keyed by material) --
         because that is what the viewer binds: a copy corrected to it says what
         the deliverable renders, whoever produced the file. A node wearing two
-        different lightmaps, and a name two nodes disagree about, are left out:
-        a marker names one map, and picking one would put the other's lighting
-        on record.
+        different lightmaps is left out: a marker names one map, and picking one
+        would put the other's lighting on record. Keyed by node INDEX, not name:
+        FBX carries leaf names only, so two same-named nodes can rightly wear two
+        maps, and keyed by name both read as one conflicted entry and kept the
+        bake-time ``.exr`` at intensity 1.0.
         """
         published = (web or {}).get("materials")
         if not isinstance(published, dict) or not published:
             return {}
         materials = gltf.get("materials") or []
         meshes = gltf.get("meshes") or []
-        final: Dict[str, Dict[str, Any]] = {}
-        conflicted: Set[str] = set()
-        for node in gltf.get("nodes") or []:
-            name, mesh = node.get("name"), node.get("mesh")
-            if not name or not isinstance(mesh, int) or not 0 <= mesh < len(meshes):
+        final: Dict[int, Dict[str, Any]] = {}
+        for index, node in enumerate(gltf.get("nodes") or []):
+            mesh = node.get("mesh")
+            if not isinstance(mesh, int) or not 0 <= mesh < len(meshes):
                 continue
             worn: List[Dict[str, Any]] = []
             for prim in meshes[mesh].get("primitives") or []:
-                index = prim.get("material")
-                if not isinstance(index, int) or not 0 <= index < len(materials):
+                mi = prim.get("material")
+                if not isinstance(mi, int) or not 0 <= mi < len(materials):
                     continue
-                entry = published.get(materials[index].get("name"))
+                entry = published.get(materials[mi].get("name"))
                 if not isinstance(entry, dict):
                     continue
                 pair = {k: entry[k] for k in ("map", "intensity") if k in entry}
                 if pair and pair not in worn:
                     worn.append(pair)
-            if not worn:
-                continue
-            if len(worn) > 1 or final.get(name, worn[0]) != worn[0]:
-                conflicted.add(name)
-            final[name] = worn[0]
-        for name in conflicted:
-            del final[name]
+            if len(worn) == 1:
+                final[index] = worn[0]
         return final
 
     @staticmethod
@@ -2865,15 +2923,16 @@ class MeshConvert(HelpMixin):
 
     @classmethod
     def _correct_manifest_entries(
-        cls, gltf: dict, manifest: dict, final: Optional[Dict[str, Dict[str, Any]]]
+        cls, gltf: dict, manifest: dict, final: Optional[Dict[int, Dict[str, Any]]]
     ) -> bool:
         """Correct a manifest's entries from *final*; True when one changed.
 
         Each entry is matched to its nodes by the binder's own rule
-        (:meth:`_resolve_lightmap_node`: exact, then namespace-tolerant), so an
-        entry is corrected where the applier would bind it, and only when every
-        node it resolves to ships the same lightmap. A manifest newer than this
-        reader is left alone: its fields may no longer mean the same.
+        (:meth:`_resolve_lightmap_entries`: exact, then namespace-tolerant,
+        same-named objects told apart by hierarchy), so an entry is corrected
+        where the applier would bind it, and only when every node it resolves
+        to ships the same lightmap. A manifest newer than this reader is left
+        alone: its fields may no longer mean the same.
         """
         entries = manifest.get("objects")
         if not final or not isinstance(entries, list):
@@ -2884,15 +2943,16 @@ class MeshConvert(HelpMixin):
             return False
         if not 0 < version <= cls.LIGHTMAP_METADATA_VERSION:
             return False
-        nodes_by_name, leaf_index, _users = cls._lightmap_node_index(gltf)
+        nodes_by_name, leaf_index, _users, lineage = cls._lightmap_node_index(gltf)
+        resolved = cls._resolve_lightmap_entries(
+            entries, nodes_by_name, leaf_index, lineage
+        )
+        index_of = {id(node): i for i, node in enumerate(gltf.get("nodes") or [])}
         changed = False
-        for entry in entries:
+        for entry, (nodes, _status, _leaves) in zip(entries, resolved):
             if not isinstance(entry, dict):
                 continue
-            nodes, _status, _leaves = cls._resolve_lightmap_node(
-                entry.get("name"), nodes_by_name, leaf_index
-            )
-            shipped = [final.get(node.get("name") or "") for node in nodes or ()]
+            shipped = [final.get(index_of.get(id(node))) for node in nodes or ()]
             if shipped and all(v and v == shipped[0] for v in shipped):
                 changed |= cls._correct_lightmap_record(entry, shipped[0])
         return changed
@@ -2957,7 +3017,7 @@ class MeshConvert(HelpMixin):
         against ``search_dirs`` or the GLB's own directory.
 
         Those KEPT values are also corrected here, from *final* — the map name
-        and intensity each node ships in this file, keyed by node name. They are
+        and intensity each node ships in this file, keyed by node index. They are
         written by the DCC bake pass BEFORE the web encode exists, so they name an
         ``.exr`` that ships nowhere and an intensity of 1.0 that predates
         normalisation, while ``extras.lightmap_web`` carries the embedded PNG and
@@ -2974,7 +3034,7 @@ class MeshConvert(HelpMixin):
 
         Args:
             gltf: Parsed glTF, mutated in place.
-            final: Optional ``{node_name: {"map": str, "intensity": float}}`` -- what
+            final: Optional ``{node index: {"map": str, "intensity": float}}`` -- what
                 each node's lightmap is in this file (:meth:`_lightmap_final_values`).
                 A marker takes its node's values, a manifest entry those of the
                 nodes it resolves to (:meth:`_correct_manifest_entries`). Omitted,
@@ -2984,7 +3044,7 @@ class MeshConvert(HelpMixin):
             int: number of carriers changed (0 when there was nothing to do).
         """
         stripped = 0
-        for node in gltf.get("nodes", []) or []:
+        for index, node in enumerate(gltf.get("nodes", []) or []):
             extras = node.get("extras") or {}
             # TWO on-disk shapes, both real. FBX2glTF nests user properties under
             # extras.fromFBX.userProperties (the Maya route); blendertk's native
@@ -3012,18 +3072,14 @@ class MeshConvert(HelpMixin):
                     if not isinstance(data, dict):
                         continue
                     # Correct the stale values first, then drop the hint. A marker
-                    # is keyed by its NODE's name, a manifest entry by the nodes it
-                    # resolves to; either way a record this file does not bind is
-                    # left exactly as found rather than guessed at.
+                    # takes its OWN node's values, a manifest entry those of the
+                    # nodes it resolves to; either way a record this file does not
+                    # bind is left exactly as found rather than guessed at.
                     if key == cls.LIGHTMAP_METADATA_KEY:
                         corrected = cls._correct_manifest_entries(gltf, data, final)
                     else:
-                        # Guarded on a truthy name: several nodes can be nameless,
-                        # and None == None would then apply one binding's values
-                        # to every nameless marker in the file.
-                        node_name = node.get("name")
                         corrected = cls._correct_lightmap_record(
-                            data, (final or {}).get(node_name) if node_name else None
+                            data, (final or {}).get(index)
                         )
                     had_hint = any(k in data for k in cls.LOCATE_HINT_KEYS)
                     if not had_hint and not corrected:
@@ -3100,26 +3156,201 @@ class MeshConvert(HelpMixin):
                 edit.dirty = True
             return changed
 
+    @staticmethod
+    def _node_parents(gltf: dict) -> Dict[int, int]:
+        """``{child index: parent index}`` over every node's ``children``.
+
+        The first parent listed wins: glTF allows a node exactly one, so a
+        second is a malformed file rather than a choice to honour.
+        """
+        parents: Dict[int, int] = {}
+        for index, node in enumerate(gltf.get("nodes") or []):
+            for child in (node or {}).get("children") or []:
+                if isinstance(child, int):
+                    parents.setdefault(child, index)
+        return parents
+
+    @staticmethod
+    def _node_lineage(parents: Dict[int, int], index: int) -> List[int]:
+        """*index* and its ancestors, nearest first; a cycle ends the walk."""
+        chain, seen = [index], {index}
+        while chain[-1] in parents and parents[chain[-1]] not in seen:
+            chain.append(parents[chain[-1]])
+            seen.add(chain[-1])
+        return chain
+
     @classmethod
     def _lightmap_node_index(cls, gltf: dict):
         """Index a glTF's MESH nodes for manifest lookup.
 
-        Returns ``(nodes_by_name, leaf_index, mesh_users)``: nodes grouped by
-        their exact name, the namespace-stripped leaf of each of those names
-        mapped back to the full names carrying it, and how many nodes reference
-        each mesh (which is what identifies an instanced mesh needing its own
-        clone before a per-instance rect can bind to it).
+        Returns ``(nodes_by_name, leaf_index, mesh_users, lineage)``: nodes
+        grouped by their exact name, the namespace-stripped leaf of each of
+        those names mapped back to the full names carrying it, how many nodes
+        reference each mesh (which is what identifies an instanced mesh needing
+        its own clone before a per-instance binding can land on it), and each
+        mesh node's LINEAGE -- the names from its scene root down to itself,
+        keyed by ``id(node)`` -- which is what tells same-named nodes apart
+        (:meth:`_resolve_lightmap_entries`).
         """
+        nodes = gltf.get("nodes", []) or []
+        parents = cls._node_parents(gltf)
         nodes_by_name: Dict[str, List[dict]] = {}
         mesh_users: Dict[int, int] = {}  # mesh index -> node reference count
-        for node in gltf.get("nodes", []) or []:
-            if "mesh" in node:
-                nodes_by_name.setdefault(node.get("name", ""), []).append(node)
-                mesh_users[node["mesh"]] = mesh_users.get(node["mesh"], 0) + 1
+        lineage: Dict[int, Tuple[str, ...]] = {}
+        for index, node in enumerate(nodes):
+            if "mesh" not in node:
+                continue
+            nodes_by_name.setdefault(node.get("name", ""), []).append(node)
+            mesh_users[node["mesh"]] = mesh_users.get(node["mesh"], 0) + 1
+            lineage[id(node)] = tuple(
+                str(nodes[i].get("name") or "")
+                for i in reversed(cls._node_lineage(parents, index))
+            )
         leaf_index: Dict[str, List[str]] = {}
         for full in nodes_by_name:
             leaf_index.setdefault(full.rsplit(":", 1)[-1], []).append(full)
-        return nodes_by_name, leaf_index, mesh_users
+        return nodes_by_name, leaf_index, mesh_users, lineage
+
+    @staticmethod
+    def _hierarchy_score(hierarchy: Sequence[Any], lineage: Sequence[str]) -> int:
+        """How many trailing names *hierarchy* and *lineage* share.
+
+        Compared from the object itself upward, namespace-blind, and stopped at
+        the first disagreement. Only the tail can be compared: an export may
+        root the file under a node the scene never had (FBX2glTF's
+        ``RootNode``) or drop ancestors it was not given, but it cannot rename
+        the parents it keeps.
+        """
+        score = 0
+        for mine, theirs in zip(reversed(list(hierarchy)), reversed(list(lineage))):
+            if str(mine).rsplit(":", 1)[-1] != str(theirs).rsplit(":", 1)[-1]:
+                break
+            score += 1
+        return score
+
+    @classmethod
+    def _resolve_lightmap_entries(
+        cls,
+        entries: Sequence[Any],
+        nodes_by_name: Dict[str, List[dict]],
+        leaf_index: Dict[str, List[str]],
+        lineage: Dict[int, Tuple[str, ...]],
+    ) -> List[Tuple[Optional[List[dict]], str, List[str]]]:
+        """Resolve every manifest entry to its GLB mesh nodes, as ONE assignment.
+
+        One ``(nodes, status, leaves)`` per entry, aligned with *entries* (see
+        :meth:`_resolve_lightmap_node` for the statuses; a malformed or
+        nameless entry is ``"absent"``). Names alone settle the common case --
+        one entry, one node. A scene that reuses a leaf name does not have it:
+        FBX carries leaf names only, so two objects named ``BODY`` publish two
+        ``BODY`` entries and arrive as two ``BODY`` nodes, and a stale marker
+        on a hidden object can put a second entry on a name whose node belongs
+        to another. Every set of entries whose candidate nodes OVERLAP is
+        settled together -- two such sets settled apart could each bind the
+        same node, and the object would wear whichever came last. Each
+        (entry, node) pair ranks by the entry's ``hierarchy`` (its scene path,
+        root first) against the node's lineage (:meth:`_hierarchy_score`),
+        then by whether the NAME matched exactly, so an exact name still beats
+        a namespace-stripped one wherever the hierarchy cannot tell them apart
+        (the file carries ``PROPS_DA:prop352``, the manifest also lists
+        ``PROPS_RF:prop352``). An entry binds to a node only when each is the
+        other's UNIQUE best match. An entry whose best candidates all went to
+        better-matching entries is ``"absent"`` -- its object is not in this
+        file -- and anything still tied, or with nothing to compare, is
+        ``"ambiguous"``: never guessed, because a guess puts one object's
+        lighting on another. A per-entry match is never widened past the rule
+        :meth:`_resolve_lightmap_node` applies.
+        """
+        resolved: List[Tuple[Optional[List[dict]], str, List[str]]] = []
+        pools: Dict[int, List[dict]] = {}  # entry index -> its candidate nodes
+        for i, entry in enumerate(entries):
+            name = entry.get("name") if isinstance(entry, dict) else None
+            if not name or not isinstance(name, str):
+                # A malformed record never reaches the name lookup: "" is
+                # where the file's NAMELESS mesh nodes are indexed.
+                resolved.append((None, "absent", []))
+                continue
+            nodes, status, leaves = cls._resolve_lightmap_node(
+                name, nodes_by_name, leaf_index
+            )
+            resolved.append((nodes, status, leaves))
+            pool = nodes or [n for full in leaves for n in nodes_by_name.get(full, [])]
+            if pool:
+                pools[i] = pool
+
+        # Union-find over node ids: entries sharing any candidate land together.
+        parent: Dict[int, int] = {}
+
+        def root(x: int) -> int:
+            parent.setdefault(x, x)
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for pool in pools.values():
+            first = root(id(pool[0]))
+            for node in pool[1:]:
+                parent[root(id(node))] = first
+        groups: Dict[int, List[int]] = {}
+        for i, pool in pools.items():
+            groups.setdefault(root(id(pool[0])), []).append(i)
+
+        def unique_best(pairs: List[Tuple[Any, Tuple[int, int]]]) -> Optional[Any]:
+            """The key with the strictly highest rank, or None on a tie / no pairs."""
+            if not pairs:
+                return None
+            top = max(rank for _key, rank in pairs)
+            best = [k for k, rank in pairs if rank == top]
+            return best[0] if len(best) == 1 else None
+
+        for members in groups.values():
+            by_id = {id(node): node for i in members for node in pools[i]}
+            if len(members) == 1 and len(by_id) == 1:
+                continue  # one entry, one node: the name already said it
+            # (hierarchy score, exact name): an entry without a hierarchy
+            # scores 0 on every node, which leaves the name to decide.
+            ranks: Dict[Tuple[int, int], Tuple[int, int]] = {}
+            takers: Dict[int, List[int]] = {}  # node id -> entries it could be
+            for i in members:
+                hierarchy = entries[i].get("hierarchy")
+                usable = isinstance(hierarchy, (list, tuple)) and bool(hierarchy)
+                exact = int(resolved[i][1] == "exact")
+                for node in pools[i]:
+                    score = (
+                        cls._hierarchy_score(hierarchy, lineage.get(id(node), ()))
+                        if usable
+                        else 0
+                    )
+                    ranks[(i, id(node))] = (score, exact)
+                    takers.setdefault(id(node), []).append(i)
+            best_node = {
+                i: unique_best([(id(n), ranks[(i, id(n))]) for n in pools[i]])
+                for i in members
+            }
+            owner = {}  # node id -> the entry it binds to
+            for nid, entries_for in takers.items():
+                taker = unique_best([(i, ranks[(i, nid)]) for i in entries_for])
+                if taker is not None and best_node[taker] == nid:
+                    owner[nid] = taker
+            for i in members:
+                nid = best_node[i]
+                if nid is not None and owner.get(nid) == i:
+                    # Settled out of a leaf pool is still a leaf match.
+                    status = "exact" if resolved[i][1] == "exact" else "leaf"
+                    resolved[i] = ([by_id[nid]], status, [])
+                    continue
+                top = max(ranks[(i, id(n))] for n in pools[i])
+                if all(id(n) in owner for n in pools[i] if ranks[(i, id(n))] == top):
+                    # Every node this entry could best be went to a better
+                    # match: its own object is not in this file.
+                    resolved[i] = (None, "absent", [])
+                else:
+                    # Where each candidate SITS -- the only thing that tells a
+                    # reader which two objects collided.
+                    paths = sorted("/".join(lineage.get(id(n), ())) for n in pools[i])
+                    resolved[i] = (None, "ambiguous", paths)
+        return resolved
 
     @classmethod
     def _resolve_lightmap_node(
@@ -3128,10 +3359,12 @@ class MeshConvert(HelpMixin):
         nodes_by_name: Dict[str, List[dict]],
         leaf_index: Dict[str, List[str]],
     ) -> Tuple[Optional[List[dict]], str, List[str]]:
-        """Resolve one manifest object name to the GLB's mesh nodes.
+        """Resolve one manifest object name to the GLB's mesh nodes, by name alone.
 
-        The single owner of the match rule, because two readers of it is how
-        the binder and the report came to disagree about what "missing" means.
+        The per-entry stage of :meth:`_resolve_lightmap_entries`, which every
+        reader goes through -- two readers of the match rule is how the binder
+        and the report came to disagree about what "missing" means -- and which
+        settles what a name alone cannot (several objects sharing it).
         Exact first, then namespace-tolerant: manifests and exports can
         disagree about namespaces without either being wrong (an older
         publisher stripped them, some exporters flatten them), but a leaf
@@ -3143,15 +3376,16 @@ class MeshConvert(HelpMixin):
         ``"absent"`` (no such node -- on a selection-scoped export, simply not
         part of it). *leaves* carries the candidates behind an ambiguous match.
         """
-        nodes = nodes_by_name.get(name or "")
+        if not name:
+            return None, "absent", []  # "" indexes the file's NAMELESS nodes
+        nodes = nodes_by_name.get(name)
         if nodes:
             return nodes, "exact", []
-        if name:
-            leaves = leaf_index.get(name.rsplit(":", 1)[-1]) or []
-            if len(leaves) == 1:
-                return nodes_by_name[leaves[0]], "leaf", leaves
-            if len(leaves) > 1:
-                return None, "ambiguous", leaves
+        leaves = leaf_index.get(name.rsplit(":", 1)[-1]) or []
+        if len(leaves) == 1:
+            return nodes_by_name[leaves[0]], "leaf", leaves
+        if len(leaves) > 1:
+            return None, "ambiguous", leaves
         return None, "absent", []
 
     @classmethod
@@ -3165,29 +3399,34 @@ class MeshConvert(HelpMixin):
         every unselected object as unlit, which is a false alarm raised
         precisely when the deliverable is correct.
 
-        Returns ``{"present", "ambiguous", "absent"}`` name lists, where
-        *present* is in scope and bindable, *ambiguous* is in scope but matched
-        several nodes by leaf name (a real failure), and *absent* has no node in
-        this GLB at all (out of scope -- or, if it was meant to be exported, a
-        name mismatch this cannot tell apart from a scope boundary).
+        Returns ``{"present", "ambiguous", "absent"}`` name lists -- one item
+        per ENTRY, so a name two objects share is listed once per object --
+        where *present* is in scope and bindable, *ambiguous* is in scope but
+        matched several nodes nothing tells apart (a real failure), and
+        *absent* has no node in this GLB at all (out of scope -- or, if it was
+        meant to be exported, a name mismatch this cannot tell apart from a
+        scope boundary). Resolved by the binder's own rule
+        (:meth:`_resolve_lightmap_entries`).
         """
         with cls.open_glb(glb) as edit:
             manifest = cls._lightmap_manifest(edit.gltf) or {}
-            nodes_by_name, leaf_index, _ = cls._lightmap_node_index(edit.gltf)
+            nodes_by_name, leaf_index, _, lineage = cls._lightmap_node_index(edit.gltf)
             buckets: Dict[str, List[str]] = {
                 "present": [],
                 "ambiguous": [],
                 "absent": [],
             }
-            for entry in manifest.get("objects") or []:
-                name = entry.get("name")
-                if not name:
-                    continue
-                _, status, _ = cls._resolve_lightmap_node(
-                    name, nodes_by_name, leaf_index
-                )
+            entries = [
+                e
+                for e in manifest.get("objects") or []
+                if isinstance(e, dict) and e.get("name")
+            ]
+            resolved = cls._resolve_lightmap_entries(
+                entries, nodes_by_name, leaf_index, lineage
+            )
+            for entry, (_, status, _) in zip(entries, resolved):
                 bucket = "present" if status in ("exact", "leaf") else status
-                buckets[bucket].append(str(name))
+                buckets[bucket].append(str(entry["name"]))
             return buckets
 
     @staticmethod
@@ -3207,11 +3446,25 @@ class MeshConvert(HelpMixin):
         other 47 were never in the export.
         """
         wanted = list(coverage.get("present", [])) + list(coverage.get("ambiguous", []))
-        bound_objects = {str(record.get("object")) for record in bound}
+        # Counted in OBJECTS, not names: a record is per (object, material), and
+        # two objects can share a name -- each its own manifest entry, told
+        # apart by the record's ``entry``. Keyed by name alone, one bound
+        # ``BODY`` reported its unbound namesake as bound too.
+        per_name: Dict[str, Set[Any]] = {}
+        for record in bound:
+            name = str(record.get("object"))
+            per_name.setdefault(name, set()).add(record.get("entry", name))
+        left = {name: len(keys) for name, keys in per_name.items()}
+        unbound: List[str] = []
+        for name in wanted:
+            if left.get(name, 0) > 0:
+                left[name] -= 1
+            else:
+                unbound.append(name)
         return {
             "expected": len(wanted),
-            "bound": len([name for name in wanted if name in bound_objects]),
-            "unbound": [name for name in wanted if name not in bound_objects],
+            "bound": len(wanted) - len(unbound),
+            "unbound": unbound,
             "out_of_scope": len(coverage.get("absent", [])),
         }
 
@@ -3243,19 +3496,23 @@ class MeshConvert(HelpMixin):
         stripped from both sides and binds only when that leaf is unambiguous among
         the GLB's nodes (manifests and exports can disagree about namespaces
         without either being wrong -- an older publisher stripped them, some
-        exporters flatten them). Every remaining miss is loud: an ambiguous leaf,
-        a name matching no node at all, a primitive without ``TEXCOORD_1`` (the
-        FBX was exported without the second UV set), an EXR that cannot be found,
-        and two objects claiming one material with different maps (atlas packing
-        prevents this; reaching it means per-object maps on a shared material --
-        the symptom is one object wearing another's lighting) are each warned and
-        skipped, never guessed at.
+        exporters flatten them). A name several objects share -- FBX carries leaf
+        names only -- is settled by each entry's ``hierarchy`` against where each
+        node sits (:meth:`_resolve_lightmap_entries`). Every remaining miss is
+        loud: a name nothing tells apart, a name matching no node at all, a
+        primitive without ``TEXCOORD_1`` (the FBX was exported without the second
+        UV set) and an EXR that cannot be found are each warned and skipped, never
+        guessed at. A material worn by objects baked into DIFFERENT maps (a
+        secondary material two objects share, or a Per-Object bake of instances)
+        binds a copy per object after the first, like a per-instance rect below
+        -- it used to be refused, and the object wore the first claimant's
+        lighting.
 
         Parameters:
             glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
             search_dirs: Directories to resolve the manifest's EXR basenames
                 against, in priority order -- the host's own answer to where
-                its maps live (a DCC's ``LightmapBaker.search_dirs``: the
+                its maps live (a DCC's ``LightmapRecords.search_dirs``: the
                 folders the bake markers name first).  Tried after the folders
                 a manifest written before 0.11.0 still names, before the GLB's
                 directory.
@@ -3287,9 +3544,10 @@ class MeshConvert(HelpMixin):
 
         Returns:
             One record per (object, material) binding: ``{"material", "object",
-            "map", "intensity", "scaleOffset"}`` -- several objects sharing one atlas
-            material each get a record. Empty when there was no manifest or nothing
-            matched.
+            "map", "intensity", "scaleOffset", "entry"}`` -- several objects
+            sharing one atlas material each get a record, and ``entry`` is the
+            manifest entry's index, which tells apart objects that share a name.
+            Empty when there was no manifest or nothing matched.
         """
         import copy
 
@@ -3372,7 +3630,12 @@ class MeshConvert(HelpMixin):
             dirs.append(os.path.dirname(os.path.abspath(edit.path)))
             authored_norm = {os.path.normcase(os.path.abspath(d)) for d in authored}
 
-            nodes_by_name, leaf_index, mesh_users = cls._lightmap_node_index(gltf)
+            nodes_by_name, leaf_index, mesh_users, lineage = cls._lightmap_node_index(
+                gltf
+            )
+            resolutions = cls._resolve_lightmap_entries(
+                entries, nodes_by_name, leaf_index, lineage
+            )
             #: Manifest entries with no node in this GLB. The manifest is a
             #: SCENE record and every export carries all of it, so on a
             #: selection export these are simply the objects that were not
@@ -3401,22 +3664,43 @@ class MeshConvert(HelpMixin):
             # reported (displaced, or kept under replace_authored=False) -- so the
             # warning fires once however many instances or primitives share it.
             dropped_authored: Set[int] = set()
+            # Each material's carrier slot AS AUTHORED, read the first time the
+            # material is touched. A binding in place overwrites that slot, and
+            # read afterwards the lightmap itself would pass for an authored map
+            # -- warned as displaced on every copy made from the material, or,
+            # under replace_authored=False, keeping that copy unlit.
+            authored_before: Dict[int, Optional[dict]] = {}
+
+            def _authored(mi: int) -> Optional[dict]:
+                if mi not in authored_before:
+                    authored_before[mi] = _authored_carrier(gltf["materials"][mi])
+                return authored_before[mi]
+
+            # Materials already reported as shared by objects wearing different
+            # lightmaps (once each; see the copy site).
+            shared_reported: Set[int] = set()
             web_materials: Dict[str, Dict[str, Any]] = {}
             used_transform = False
-            for entry in entries:
+            for entry_index, (entry, (nodes, status, leaves)) in enumerate(
+                zip(entries, resolutions)
+            ):
+                if not isinstance(entry, dict):
+                    continue  # malformed record: skipped, as the coverage report does
                 name, basename = entry.get("name"), entry.get("map")
                 rect = [float(v) for v in (entry.get("scaleOffset") or identity)]
                 has_rect = rect != identity
-                nodes, status, leaves = cls._resolve_lightmap_node(
-                    name, nodes_by_name, leaf_index
-                )
                 if status == "ambiguous":
                     # In the file, and genuinely unbindable: still loud.
                     logger.warning(
-                        "Lightmap for %r: leaf name matches several GLB "
-                        "nodes (%s) -- ambiguous, not bound.",
+                        "Lightmap for %r: nothing tells its object apart among "
+                        "the GLB node(s) %s and the manifest entries sharing "
+                        "them%s -- ambiguous, not bound.",
                         name,
                         ", ".join(sorted(leaves)),
+                        ""
+                        if entry.get("hierarchy")
+                        else " (the manifest predates the hierarchy key; "
+                        "re-export to publish one)",
                     )
                     continue
                 if status == "absent":
@@ -3480,7 +3764,22 @@ class MeshConvert(HelpMixin):
                     return scalars[src]
 
                 for node in nodes:
-                    if has_rect and mesh_users.get(node["mesh"], 0) > 1:
+                    # This object needs a binding of its OWN wherever its map
+                    # cannot ride the material in place: a per-instance rect, or
+                    # a material another object's DIFFERENT map already claimed
+                    # -- a secondary material two baked objects share (one GLASS
+                    # on two machine bodies), or a Per-Object bake of instances,
+                    # which FBX2glTF keeps as one mesh and one material behind
+                    # every instance node. That used to be refused ("atlas
+                    # packing prevents this" -- it does not prevent either), and
+                    # the object wore the first claimant's lighting.
+                    own = has_rect or any(
+                        claimed.get(p.get("material"), src) != src
+                        for p in gltf["meshes"][node["mesh"]].get("primitives", [])
+                        if p.get("material") is not None
+                        and "TEXCOORD_1" in (p.get("attributes") or {})
+                    )
+                    if own and mesh_users.get(node["mesh"], 0) > 1:
                         # This node shares its mesh with siblings but needs its own
                         # material binding: give it its own mesh ENTRY. Pure JSON --
                         # the clone references the same accessors/bufferViews, so no
@@ -3507,13 +3806,14 @@ class MeshConvert(HelpMixin):
                         if mi is None:
                             continue
 
-                        if has_rect:
-                            # The rect is per-INSTANCE and the material is shared by
-                            # every instance -- so the rect rides a material CLONE as
-                            # a glTF-standard KHR_texture_transform, and any
-                            # compliant viewer applies it with no custom code. The
-                            # clone is JSON only (same shader inputs, same embedded
-                            # texture index).
+                        if has_rect or claimed.get(mi, src) != src:
+                            # The binding is this object's alone, and the material
+                            # is shared -- so it rides a material CLONE: a rect as
+                            # a glTF-standard KHR_texture_transform (any compliant
+                            # viewer applies it with no custom code), a map the
+                            # shared material cannot carry as the clone's own slot.
+                            # The clone is JSON only (same shader inputs, same
+                            # embedded texture index).
                             base = gltf["materials"][mi]
                             base_name = base.get("name") or f"mat{mi}"
                             # The authored gate runs BEFORE the encode: _scalar()
@@ -3524,8 +3824,10 @@ class MeshConvert(HelpMixin):
                             # share one material would otherwise emit 46 identical
                             # lines and bury every other warning in the log. The
                             # instance names are the noise here -- the material and
-                            # the count are the finding.
-                            if _authored_carrier(base) is not None:
+                            # the count are the finding. Read AS AUTHORED: a
+                            # material another object bound in place carries a
+                            # lightmap in the slot by now, not an authored map.
+                            if _authored(mi) is not None:
                                 if not replace_authored:
                                     if mi not in dropped_authored:
                                         dropped_authored.add(mi)
@@ -3546,6 +3848,14 @@ class MeshConvert(HelpMixin):
                                         base_name,
                                         slot,
                                     )
+                            if not has_rect and mi not in shared_reported:
+                                shared_reported.add(mi)
+                                logger.info(
+                                    "Material %r is worn by objects baked into "
+                                    "different lightmaps; each after the first binds "
+                                    "its own copy of it.",
+                                    base_name,
+                                )
                             scalar = _scalar()
                             if scalar is None:  # encode failed, already logged
                                 continue
@@ -3554,20 +3864,22 @@ class MeshConvert(HelpMixin):
                                 f"{base_name}{cls.LIGHTMAP_CLONE_SUFFIX}"
                                 f"{len(gltf['materials'])}"
                             )
-                            g_rect = ImgUtils.flip_rect_v(rect)
-                            clone[slot] = {
+                            binding: Dict[str, Any] = {
                                 "index": edit.embedded[src],
                                 "texCoord": 1,
-                                "extensions": {
+                            }
+                            if has_rect:
+                                g_rect = ImgUtils.flip_rect_v(rect)
+                                binding["extensions"] = {
                                     "KHR_texture_transform": {
                                         "offset": [g_rect[2], g_rect[3]],
                                         "scale": [g_rect[0], g_rect[1]],
                                     }
-                                },
-                            }
+                                }
+                                used_transform = True
+                            clone[slot] = binding
                             gltf["materials"].append(clone)
                             prim["material"] = len(gltf["materials"]) - 1
-                            used_transform = True
                             web_materials[clone["name"]] = {
                                 "map": png_name,
                                 "intensity": round(scalar, 6),
@@ -3579,23 +3891,13 @@ class MeshConvert(HelpMixin):
                                     "map": basename,
                                     "intensity": scalar,
                                     "scaleOffset": rect,
+                                    "entry": entry_index,
                                 }
                             )
                             continue
 
-                        if claimed.get(mi, src) != src:
-                            logger.warning(
-                                "Material %r already carries %r; %r's map %r has "
-                                "nowhere to go (per-object maps on a shared "
-                                "material -- atlas packing prevents this).",
-                                (gltf["materials"][mi].get("name") or mi),
-                                os.path.basename(claimed[mi]),
-                                name,
-                                basename,
-                            )
-                            continue
                         material = gltf["materials"][mi]
-                        if mi not in claimed and _authored_carrier(material):
+                        if mi not in claimed and _authored(mi):
                             # An AUTHORED map sits on the carrier slot (a real AO
                             # map, say -- the packed-ORM binding is already ruled
                             # out). The default displaces it, loudly: the bake IS
@@ -3653,6 +3955,7 @@ class MeshConvert(HelpMixin):
                                 "map": basename,
                                 "intensity": scalar,
                                 "scaleOffset": list(identity),
+                                "entry": entry_index,
                             }
                         )
 
@@ -5740,19 +6043,7 @@ class MeshConvert(HelpMixin):
         with cls.open_glb(glb) as edit:
             gltf = edit.gltf
             nodes = gltf.get("nodes") or []
-            parents: Dict[int, int] = {}
-            for index, node in enumerate(nodes):
-                for child in (node or {}).get("children") or []:
-                    parents.setdefault(child, index)
-
-            def lineage(index: int) -> List[int]:
-                """*index* and its ancestors, nearest first; a cycle ends it."""
-                chain, seen = [index], {index}
-                while chain[-1] in parents and parents[chain[-1]] not in seen:
-                    chain.append(parents[chain[-1]])
-                    seen.add(chain[-1])
-                return chain
-
+            parents = cls._node_parents(gltf)
             repaired: List[str] = []
             outcomes: List[str] = []
             for index, skin in enumerate(gltf.get("skins") or []):
@@ -5761,7 +6052,7 @@ class MeshConvert(HelpMixin):
                 ):
                     continue
                 joints = [j for j in skin.get("joints") or [] if isinstance(j, int)]
-                chains = [lineage(joint) for joint in joints]
+                chains = [cls._node_lineage(parents, joint) for joint in joints]
                 if not chains or all(skin["skeleton"] in chain for chain in chains):
                     continue
                 shared = set(chains[0]).intersection(*chains[1:])
@@ -7271,29 +7562,43 @@ class MeshConvert(HelpMixin):
                 "embedded image improved on its original bytes."
             )
         resized = summary.get("resized") or 0
+        named_secondary = False
         if not max_size:
-            # "Never CLAMP", which is not "never resample": KTX2 snaps every
-            # non-exempt image down to a power of two whatever the ceiling
-            # (KHR_texture_basisu needs multiple-of-4 edges and a full mip
-            # pyramid), so an unconditional "pixels untouched" here is the same
-            # false claim this method exists to remove -- over the delivery mode
-            # where a silently halved map is what someone would go looking for.
-            did = (
-                f"{resized} snapped down to power-of-two for {image_format}"
-                if resized
-                else "container only, pixels untouched"
-            )
+            # "Never CLAMP", which is not "never resample": Secondary Map Size
+            # is a row of its own and still caps the data maps it names, and
+            # KTX2 snaps every non-exempt image down to a power of two
+            # whatever the ceiling (KHR_texture_basisu needs multiple-of-4
+            # edges and a full mip pyramid). An unconditional "pixels
+            # untouched" here is the same false claim this method exists to
+            # remove -- over the delivery modes where a silently halved map
+            # is what someone would go looking for.
+            causes = []
+            if secondary_max_size:
+                causes.append(f"data maps to {secondary_max_size}px")
+            if str(image_format).upper() == "KTX2":
+                causes.append(f"power-of-two edges for {image_format}")
+            if resized:
+                did = f"{resized} resampled down"
+                if causes:
+                    did += f" ({'; '.join(causes)})"
+                    named_secondary = bool(secondary_max_size)
+            else:
+                did = "container only, pixels untouched"
         elif resized:
             did = f"{resized} resampled down to fit {max_size}px"
         else:
             did = f"none resampled - all were already within {max_size}px"
         dials = []
-        if secondary_max_size:
+        if secondary_max_size and not named_secondary:
             dials.append(f"data maps capped at {secondary_max_size}px")
         if uastc_rdo:
             dials.append(
                 f"UASTC RDO lambda {uastc_rdo:g}"
-                + (f" (dictionary {uastc_rdo_dictionary})" if uastc_rdo_dictionary else "")
+                + (
+                    f" (dictionary {uastc_rdo_dictionary})"
+                    if uastc_rdo_dictionary
+                    else ""
+                )
             )
         if dials:
             did += "; " + ", ".join(dials)
@@ -7407,7 +7712,10 @@ class MeshConvert(HelpMixin):
         Texture File Type does.
 
         Parameters:
-            image_format: Container override; ``None``/empty takes
+            image_format: Container override, as a format id (``"WEBP"``) or a
+                file extension (``"jpg"``, the vocabulary of the Scene
+                Exporter's Texture File Type row) -- returned as the id
+                :meth:`optimize_glb_textures` needs. ``None``/empty takes
                 :attr:`WEB_DELIVERY_FORMAT`.
             max_size: Longest-edge ceiling in pixels; ``None`` takes
                 :attr:`WEB_DELIVERY_MAX_SIZE`, ``0`` skips resizing.
@@ -7430,7 +7738,8 @@ class MeshConvert(HelpMixin):
             "uastc_rdo_dictionary": int | None}``.
         """
         return {
-            "image_format": image_format or cls.WEB_DELIVERY_FORMAT,
+            "image_format": cls._image_format_id(image_format)
+            or cls.WEB_DELIVERY_FORMAT,
             "max_size": (
                 cls.WEB_DELIVERY_MAX_SIZE if max_size is None else int(max_size)
             ),
@@ -7455,6 +7764,30 @@ class MeshConvert(HelpMixin):
                 else (int(uastc_rdo_dictionary) or None)
             ),
         }
+
+    @classmethod
+    def _image_format_id(cls, container: Optional[str]) -> str:
+        """*container* as the format id :meth:`optimize_glb_textures` needs.
+
+        That pass hands ``image_format`` straight to Pillow AND builds the glTF
+        mime as ``image/<lowercased>``, so a container's file extension is not
+        always the right token: ``jpg`` is a legal filename suffix and the
+        Scene Exporter's Texture File Type row offers it, but Pillow only knows
+        ``JPEG`` and glTF only accepts ``image/jpeg`` -- ``JPG`` raises mid-encode
+        and, had it not, would write an invalid mime. Canonicalised through
+        :attr:`IMAGE_MIME_TYPES` rather than a private alias table, so the
+        mapping stays the one glTF itself is keyed on. Both exporters carried a
+        copy of this; the web policy and the pass now share one.
+
+        Returns:
+            ``"PNG"`` / ``"JPEG"`` / ``"WEBP"`` / ``"KTX2"`` ...; ``""`` for an
+            empty *container*.
+        """
+        token = str(container or "").strip().lower().lstrip(".")
+        if not token:
+            return ""
+        mime = cls.IMAGE_MIME_TYPES.get(f".{token}", "")
+        return (mime.split("/")[-1] or token).upper()
 
     @staticmethod
     def _largest_first(jobs: Dict[Any, bytes]) -> List[Any]:
@@ -7627,7 +7960,8 @@ class MeshConvert(HelpMixin):
             logger.warning("optimize_glb_textures: Pillow unavailable; skipped.")
             return {}
 
-        image_format = image_format.upper()
+        # An extension ("jpg") becomes Pillow's id; an empty one is the policy's.
+        image_format = cls._image_format_id(image_format) or cls.WEB_DELIVERY_FORMAT
         is_ktx2 = image_format == "KTX2"
         mime = f"image/{image_format.lower()}"
         encoder = None
@@ -7655,7 +7989,8 @@ class MeshConvert(HelpMixin):
             exempt: Set[str] = set()
             # Read where the viewer reads it: a native DCC export writes the
             # first scene's extras, which the root alone never saw.
-            published = (cls._lightmap_web_manifest(gltf) or {}).get("materials")
+            web_manifest = cls._lightmap_web_manifest(gltf)
+            published = (web_manifest or {}).get("materials")
             if isinstance(published, dict):
                 for entry in published.values():
                     if isinstance(entry, dict) and entry.get("map"):

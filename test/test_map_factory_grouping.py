@@ -1128,5 +1128,44 @@ class UdimGroupingTest(BaseTestCase):
         )
 
 
+class DominantTextureSetTest(BaseTestCase):
+    """``MapFactory.dominant_texture_set`` -- what a map derived from a
+    material's textures (a baked lightmap) is named after."""
+
+    def test_the_majority_set_and_its_folder(self):
+        paths = [
+            "/tex/wood/Crate_BaseColor.png",
+            "/tex/wood/Crate_Normal.png",
+            "/tex/other/Crate_Roughness.png",
+            "/tex/metal/Rail_BaseColor.png",
+        ]
+        self.assertEqual(
+            MapFactory.dominant_texture_set(paths),
+            ("Crate", os.path.normpath("/tex/wood")),
+        )
+
+    def test_only_material_maps_vote(self):
+        """An environment cube carries no map-type token; it must not name the map."""
+        paths = ["/t/diffuse_cube.dds", "/t/diffuse_cube.dds", "/t/Table_BaseColor.png"]
+        self.assertEqual(MapFactory.dominant_texture_set(paths)[0], "Table")
+        self.assertIsNone(MapFactory.dominant_texture_set(["/t/diffuse_cube.dds"]))
+
+    def test_a_tie_goes_to_the_name_not_the_order(self):
+        paths = ["/t/Zinc_BaseColor.png", "/t/Alder_BaseColor.png"]
+        self.assertEqual(MapFactory.dominant_texture_set(paths)[0], "Alder")
+        self.assertEqual(
+            MapFactory.dominant_texture_set(list(reversed(paths)))[0], "Alder"
+        )
+
+    def test_a_bare_name_has_no_folder(self):
+        self.assertEqual(
+            MapFactory.dominant_texture_set(["Crate_BaseColor.png"]), ("Crate", "")
+        )
+
+    def test_nothing_votes_for_nothing(self):
+        self.assertIsNone(MapFactory.dominant_texture_set([]))
+        self.assertIsNone(MapFactory.dominant_texture_set(None))
+
+
 if __name__ == "__main__":
     unittest.main()

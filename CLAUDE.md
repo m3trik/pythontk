@@ -24,6 +24,7 @@ Two homes, two contracts (both bound by the Hard rules above — no DCC imports,
 ## Notable modules
 
 - `Deprecation` — the ONE way to retire public surface (`@Deprecation.symbol` / `.parameter` / `.attributes` / `.values`). `remove_in` is a version, not a sentence: the registry `--check` fails once it ships. Never hand-roll a `warnings.warn`. Rules in [CODE_STANDARD.md §5](../m3trik/docs/CODE_STANDARD.md).
+- `UpstreamPatch` — the ONE way to correct a defect in code we do not own (`with patch.applied():`). Mirror of `Deprecation`: its point is `detects`, the probe that reproduces the defect against the STOCK code, so a sweep test fails when upstream fixes it and names the patch to delete. Declare them per package in one module (blendertk: `env_utils/upstream_patches.py`); never `setattr` a third party by hand.
 - `AudioUtils` — ffmpeg-backed audio conversion and WAV compositing (shared by mayatk audio events).
 - `AppLauncher` — subprocess launcher (used by mayatk's MayaConnection; do not bypass with raw subprocess).
 - `MapFactory` — PBR texture-map orchestrator, a `core_utils/engines/textures/` tenant (`map_factory/` package: `conversions` registry → `processor` context → `handlers` strategies → `_map_factory` orchestrator; siblings `map_registry`/`map_optimizer`/`map_compositor`). Root re-exports (`ptk.MapFactory`, `ptk.MapCompositor`) unchanged.

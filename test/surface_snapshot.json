@@ -183,6 +183,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "compose_rect",
+    "qualname": "ImgUtils.compose_rect",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.vid_utils._vid_utils",
     "name": "compress_video",
     "qualname": "VidUtils.compress_video",
@@ -284,6 +291,13 @@
     "module": "pythontk.str_utils._str_utils",
     "name": "delimit_affix",
     "qualname": "StrUtils.delimit_affix",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "denoise_image",
+    "qualname": "ImgUtils.denoise_image",
     "tier": "bare"
   },
   {
@@ -785,6 +799,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "has_same_content",
+    "qualname": "FileUtils.has_same_content",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.str_utils._str_utils",
     "name": "illegal_name_chars",
     "qualname": "StrUtils.illegal_name_chars",
@@ -893,6 +914,13 @@
     "module": "pythontk.file_utils._file_utils",
     "name": "is_rooted_path",
     "qualname": "FileUtils.is_rooted_path",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "is_same_file",
+    "qualname": "FileUtils.is_same_file",
     "tier": "bare"
   },
   {
@@ -1142,6 +1170,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "portable_path",
+    "qualname": "FileUtils.portable_path",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.img_utils._img_utils",
     "name": "radial_gradient",
     "qualname": "ImgUtils.radial_gradient",
@@ -1320,6 +1355,13 @@
     "module": "pythontk.str_utils._str_utils",
     "name": "resolve_placeholders",
     "qualname": "StrUtils.resolve_placeholders",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "resolve_portable_path",
+    "qualname": "FileUtils.resolve_portable_path",
     "tier": "bare"
   },
   {
@@ -1579,6 +1621,13 @@
     "module": "pythontk.img_utils._img_utils",
     "name": "unique_dir_stems",
     "qualname": "ImgUtils.unique_dir_stems",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "unique_path",
+    "qualname": "FileUtils.unique_path",
     "tier": "bare"
   },
   {
@@ -1971,6 +2020,13 @@
     "module": "pythontk.core_utils.schema_spec",
     "name": "FieldDoc",
     "qualname": "FieldDoc",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.file_dependencies",
+    "name": "FileDependencies",
+    "qualname": "FileDependencies",
     "tier": "root"
   },
   {
@@ -3196,6 +3252,13 @@
     "module": "pythontk.file_utils.usd",
     "name": "USD_EXTENSIONS",
     "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.upstream_patch",
+    "name": "UpstreamPatch",
+    "qualname": "UpstreamPatch",
     "tier": "root"
   },
   {

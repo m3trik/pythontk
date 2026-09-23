@@ -687,6 +687,68 @@ class HandoffBridge(LoggingMixin):
                 roots.append(root)
         return roots
 
+    @staticmethod
+    def child_sys_path(entries: Optional[Sequence[str]] = None) -> List[str]:
+        """The parent's importable set, minus what belongs to the parent's OWN Python.
+
+        The counterpart to :meth:`import_roots`, for the other kind of child. A
+        script that runs the SAME app as its parent (a bake, a save-as) wants
+        everything the parent can import, not a named subset -- but "the same app"
+        holds only while the parent IS that app. Driven from a workspace venv
+        instead, handing over the whole ``sys.path`` puts the PARENT's stdlib and
+        site-packages ahead of the child's, and a cross-version child dies on the
+        first binary module it resolves to the wrong build: measured, a Blender 5.1
+        bake driven from a Python 3.11 venv failed with ``ValueError: unsupported
+        hash type sha256`` / ``ModuleNotFoundError: _sha512``, a traceback naming
+        hashlib from a scene bake.
+
+        Dropping everything under ``sys.prefix`` / ``sys.base_prefix`` -- and under
+        the per-user site-packages, which is the parent's Python's too (versioned,
+        ``Python311``, and built for it, pywin32's entries included) but lives
+        outside every prefix -- is inert in production: the child is the same
+        build and already has its own copies of exactly those. Repo roots, which
+        live outside all of them, survive: those are what the child actually
+        needed from the parent.
+
+        COMPOSE it with :meth:`import_roots` when the child must import a named
+        toolkit. The parent may only be able to import that toolkit through its own
+        ``site-packages`` -- an editable install contributing to a namespace package,
+        which is precisely what this drops -- so name the roots rather than hope they
+        are already on the list: ``import_roots("blendertk", "pythontk") +
+        child_sys_path()``, roots first.
+
+        Also dropped: ``""`` (``sys.path``'s stand-in for the current directory,
+        which means a DIFFERENT directory in the child) and any relative entry, for
+        the same reason.
+
+        Parameters:
+            entries: The path list to filter; defaults to the live ``sys.path``.
+
+        Returns:
+            list: Absolute, de-duplicated entries, in the order given.
+        """
+        import os
+        import site
+        import sys
+
+        roots = [sys.prefix, getattr(sys, "base_prefix", sys.prefix)]
+        try:  # an embedded Python's `site` may not implement it
+            roots.append(site.getusersitepackages())
+        except (AttributeError, OSError):
+            pass
+        prefixes = {os.path.normcase(os.path.abspath(p)) + os.sep for p in roots if p}
+        kept: List[str] = []
+        for entry in sys.path if entries is None else entries:
+            if not entry or not os.path.isabs(entry):
+                continue
+            absolute = os.path.abspath(entry)
+            spelled = os.path.normcase(absolute) + os.sep
+            if any(spelled.startswith(prefix) for prefix in prefixes):
+                continue
+            if absolute not in kept:
+                kept.append(absolute)
+        return kept
+
     # ------------------ Subclass hooks --------------------------------------
     def _resolve_objects(self, objects):  # pragma: no cover - subclass contract
         """Return the list of objects to export; ``None`` -> host selection."""

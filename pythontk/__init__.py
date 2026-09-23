@@ -56,6 +56,10 @@ DEFAULT_INCLUDE = {
     # Batch-rename executor (dry-run + one-record report) shared by the file
     # tenant here and the mayatk / blendertk scene-naming engines.
     "file_utils.file_naming": ["RenamePlan", "FileNaming"],
+    # Files a record names by name + recorded folder, found where they are NOW
+    # (resolve, search order, claims, relocation) -- the lightmap markers of
+    # both DCC bakers today; any record that names files that way.
+    "file_utils.file_dependencies": ["FileDependencies"],
     # Shared project-workspace model + workspace.mel codec (zero-dep). One
     # project folder serves Maya (which parses the marker natively) and
     # blendertk (whose current-workspace resolver builds on this); one
@@ -229,6 +233,7 @@ DEFAULT_INCLUDE = {
     # One mechanism for retiring public surface, and the only thing in the
     # ecosystem that records WHICH release an alias stops working in.
     "core_utils.deprecation": ["Deprecation", "DeprecationRecord"],
+    "core_utils.upstream_patch": ["UpstreamPatch"],
     # Markdown-example rot gate — validates doc code blocks against the live
     # surface (README gates here and downstream build on it).
     "core_utils.doc_audit": "DocAudit",

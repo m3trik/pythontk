@@ -6,6 +6,7 @@ import re
 import json
 import functools
 import traceback
+from collections.abc import Mapping
 from typing import Any, Callable, Iterable, Union, List, Tuple, Optional
 
 # From this package:
@@ -104,6 +105,52 @@ class FileUtils(HelpMixin):
         if p == d:
             return inclusive
         return p.startswith(d.rstrip(os.sep) + os.sep)
+
+    @staticmethod
+    def is_same_file(path_a: str, path_b: str) -> bool:
+        """Whether two paths name ONE file (or folder) on disk, however spelled.
+
+        A comparison of spellings cannot see a junction, a symlink, a ``subst``
+        drive or a mapped drive against its UNC path -- and a gather that took
+        such an alias of its source for a second copy deleted the only one when
+        it "removed the redundant source". Asks the filesystem when both exist,
+        else compares the normalized spellings.
+
+        Parameters:
+            path_a (str): A path.
+            path_b (str): Another path.
+
+        Returns:
+            bool: True when both name the same file.
+        """
+        try:
+            return os.path.samefile(path_a, path_b)
+        except (OSError, ValueError, TypeError):
+            spell = lambda p: os.path.normcase(os.path.abspath(str(p)))  # noqa: E731
+            return spell(path_a) == spell(path_b)
+
+    @staticmethod
+    def has_same_content(path_a: str, path_b: str) -> bool:
+        """Whether two existing files hold byte-identical content.
+
+        The test before a copy reuses a file already at its destination. Size
+        is not one: two same-named maps of one resolution are the same size in
+        every uncompressed or block-compressed format, and a move that trusted
+        size deleted the new bake and kept the stale one.
+
+        Parameters:
+            path_a (str): A file path.
+            path_b (str): Another file path.
+
+        Returns:
+            bool: False when either is missing, unreadable or not a file.
+        """
+        import filecmp
+
+        try:
+            return filecmp.cmp(path_a, path_b, shallow=False)
+        except (OSError, ValueError, TypeError):
+            return False
 
     @staticmethod
     def is_rooted_path(text: str) -> bool:
@@ -209,6 +256,61 @@ class FileUtils(HelpMixin):
             return path
         relative = cls.convert_to_relative_path(path, base, prepend_base=False)
         return "" if relative in (".", "") else relative
+
+    @classmethod
+    def portable_path(cls, path: str, base: Optional[str]) -> str:
+        """The spelling of file *path* that a scene record stores.
+
+        Relative to *base* (a project root) when the file lies under it --
+        ``sound/vo.wav`` -- so a teammate's copy of the project, mounted
+        anywhere, resolves the same file; absolute otherwise. Forward slashes
+        either way: the file twin of :meth:`relativize_output_dir`, which is
+        what it spells through, normalized because this is stored data rather
+        than a field a user just saw.
+
+        Deliberately never a ``../`` chain for a file beside the project: a
+        reader resolves against whatever project its session has set, and a
+        chain written under one project and read under another walks off the
+        drive root and names a different file -- which the next write then
+        stores for good (measured 2026-09-22). Texture paths and lightmap
+        markers follow the same rule. Inverse: :meth:`resolve_portable_path`.
+
+        Parameters:
+            path (str): Absolute file path.
+            base (str): Directory the stored spelling is relative to.
+
+        Returns:
+            str: The spelling to store (``""`` for an empty *path*).
+        """
+        if not path:
+            return ""
+        norm = os.path.normpath(path)
+        if cls.is_rooted_path(norm):
+            norm = cls.relativize_output_dir(norm, base)
+        return norm.replace("\\", "/")
+
+    @classmethod
+    def resolve_portable_path(cls, stored: str, base: Optional[str]) -> str:
+        """The absolute path a :meth:`portable_path` spelling names from *base*.
+
+        An absolute *stored* value (a record written before the rule, or a
+        cross-drive path) comes back as it is, normalized -- and so does one
+        that merely starts at a root (``/audio/x.wav`` on Windows), which is
+        relative to nothing: joined, it would keep only *base*'s drive. Without
+        a *base* a relative value cannot be resolved and is returned unchanged.
+
+        Parameters:
+            stored (str): The spelling a record holds.
+            base (str): Directory it is relative to.
+
+        Returns:
+            str: Absolute path with forward slashes (``""`` for an empty value).
+        """
+        if not stored:
+            return ""
+        if cls.is_rooted_path(stored) or stored[:1] in ("/", "\\") or not base:
+            return os.path.normpath(stored).replace("\\", "/")
+        return os.path.normpath(os.path.join(base, stored)).replace("\\", "/")
 
     @staticmethod
     @functools.lru_cache(maxsize=1)
@@ -684,6 +786,77 @@ class FileUtils(HelpMixin):
             elif field == "ext":
                 parts.append(ext)
         return re.compile("^" + "".join(parts) + "$")
+
+    @staticmethod
+    def unique_path(
+        folder: str,
+        stem: str,
+        ext: str,
+        taken: Optional[set] = None,
+        claims: Optional[Union[Mapping, Iterable[str]]] = None,
+        owners: Iterable[str] = (),
+        avoid: Iterable[str] = (),
+    ) -> str:
+        """``<folder>/<stem><ext>``, or the first ``<stem>_<k><ext>`` this write may take.
+
+        The one naming rule for a batch of outputs that must land neither on
+        each other nor on a file something outside the batch still reads. A
+        spelling is passed over when
+
+        * *taken* holds it: an output earlier in this batch. The chosen path
+          is added to it, so one set threads a whole batch together;
+        * *avoid* holds it: a file the batch still needs (a source it has not
+          consumed yet);
+        * a reader outside *owners* claims its file name. *claims* maps a file
+          name to what reads it, so a name read only by the *owners* of this
+          write (an object re-baking its own map) stays theirs to replace,
+          while a name anyone else reads does not. A plain collection of names
+          claims each one outright.
+
+        Only these three decide. The disk is not consulted, so a file nobody
+        claims is simply replaced -- a re-run writing over its own output.
+        Paths compare the way the filesystem does (``os.path.normcase``), file
+        names without case.
+
+        Parameters:
+            folder (str): The directory the file goes in.
+            stem (str): The name without its extension (``Crate_Lightmap``).
+            ext (str): The extension, with or without its dot.
+            taken (set): This batch's outputs so far, updated in place. ``None``
+                starts an empty one.
+            claims (Mapping | Iterable[str]): ``{file_name: readers}``, or file
+                names claimed outright.
+            owners (Iterable[str]): The readers this write replaces.
+            avoid (Iterable[str]): Paths that must not be written.
+
+        Returns:
+            str: The chosen path, ``os.path.join(folder, <file name>)``.
+        """
+        ext = ext if not ext or ext.startswith(".") else f".{ext}"
+        taken = set() if taken is None else taken
+        if isinstance(claims, Mapping):
+            readers = {str(k).lower(): frozenset(v or ()) for k, v in claims.items()}
+        else:  # names claimed outright: no owner can take one back
+            readers = {str(k).lower(): None for k in claims or ()}
+        owners = frozenset(owners)
+
+        def key(path: str) -> str:
+            return os.path.normcase(os.path.abspath(path))
+
+        blocked = {key(p) for p in taken} | {key(p) for p in avoid}
+        k = 0
+        while True:
+            candidate = os.path.join(
+                folder, f"{stem}{ext}" if k == 0 else f"{stem}_{k}{ext}"
+            )
+            k += 1
+            if key(candidate) in blocked:
+                continue
+            claim = readers.get(os.path.basename(candidate).lower(), frozenset())
+            if claim is None or claim - owners:
+                continue
+            taken.add(candidate)
+            return candidate
 
     @staticmethod
     def get_dir_contents(
