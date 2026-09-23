@@ -18,7 +18,8 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
-from pythontk.core_utils.app_handoff import HandoffBridge, Payload
+from pythontk.core_utils.app_handoff import HandoffBridge, HandoffRequest, Payload
+from pythontk.core_utils.deprecation import Deprecation
 from pythontk.net_utils.preview.deliverer import PreviewDeliverer
 
 
@@ -100,6 +101,7 @@ class PreviewBridge(HandoffBridge):
         payload: Payload,
         read_sections: Callable[[], Optional[Dict[str, Any]]],
         source: Dict[str, str],
+        request: Optional[HandoffRequest] = None,
     ) -> Payload:
         """Attach the scene-sidecar envelope for this push to *payload*.
 
@@ -117,6 +119,12 @@ class PreviewBridge(HandoffBridge):
         is on, so key presence in ``Payload.extras`` is the "was it requested"
         signal :meth:`sidecar_summary` reads -- an empty scene still attaches
         (and writes) an envelope whose ``sections`` is ``{}``.
+
+        *request* is the push's own: the envelope publishes the lighting
+        recipe with the choices its GLB rows made (the Baked Reflections row),
+        which the deliverer resolved in its preflight and left on it
+        (:attr:`PreviewDeliverer.RENDERING_KEY`). Without one -- or through a
+        deliverer that resolves no rows -- the recipe ships as declared.
         """
         from pythontk.file_utils.mesh_convert.glb_pipeline import GlbPipeline
 
@@ -124,6 +132,11 @@ class PreviewBridge(HandoffBridge):
             read_sections,
             source=source,
             asset=os.path.basename(payload.primary) if payload.primary else None,
+            rendering=(
+                request.get(PreviewDeliverer.RENDERING_KEY)
+                if request is not None
+                else None
+            ),
             logger=self.logger,
         )
         return payload
@@ -161,12 +174,20 @@ class PreviewBridge(HandoffBridge):
         # empty scene, which would report a populated scene as nothing to push.
         return self._resolve_objects(objects)
 
+    @Deprecation.parameter(
+        "texture_format",
+        remove_in="0.12.0",
+        new="glb_options",
+        transform=lambda value: {"texture_file_type": value},
+        reason="A push now takes every Scene Exporter GLB row, the "
+        "container being Texture File Type.",
+    )
     def push(
         self,
         objects: Optional[List[Any]] = None,
         scope: str = "selected",
         open_browser: Union[bool, str, None] = None,
-        texture_format: Optional[str] = None,
+        glb_options: Optional[Dict[str, Any]] = None,
         scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None,
         progress: Optional[Callable[[str], Any]] = None,
         data_export: Optional[Dict[str, Any]] = None,
@@ -191,17 +212,26 @@ class PreviewBridge(HandoffBridge):
                 caller that said nothing. It was ``"auto"`` here too, and that
                 travelled as the request's EXPLICIT answer: every push through
                 a deliverer that said ``False`` still opened a tab.
-            texture_format: Override the deliverer's texture container for
-                *this* push only (``"WEBP"`` / ``"KTX2"``); ``None`` keeps its
-                default. Named explicitly rather than left to ``**params``,
-                which is the *export* param bag -- swept up there it would be
-                handed to the exporter and never reach the deliverer.
+            glb_options: The Scene Exporter's GLB rows for *this* push only
+                -- ``{row key: combo value}`` keyed by
+                :attr:`ExportProfile.GLB_ROWS` (the texture rows and Baked
+                Reflections), each value exactly as that row's combo holds it
+                (:meth:`ExportProfile.glb_options`). Laid over the deliverer's
+                own rows, row by row, and resolved by the methods the
+                exporters call, so the same rows make the same texture pass
+                and publish the same lighting recipe; ``None`` keeps the
+                deliverer's. Named explicitly rather than left to
+                ``**params``, which is the *export* param bag -- swept up there
+                it would be handed to the exporter and never reach the
+                deliverer. Replaces ``texture_format`` (the container alone),
+                which still works as ``{"texture_file_type": ...}`` and warns
+                until 0.12.0.
             scripts: Viewer scripts to run for this push -- a list of
                 :attr:`PreviewServer.SCRIPTS` names, or a ``{name: path}``
                 mapping for modules of your own. ``None`` (the default) leaves
                 whatever the server already has active alone; ``[]`` clears
                 them. Named explicitly for the same reason as
-                *texture_format*: ``**params`` is the *export* bag, and swept
+                *glb_options*: ``**params`` is the *export* bag, and swept
                 up there it would be handed to the exporter and never reach the
                 deliverer.
             progress: Called with a short message before each build stage, for
@@ -229,7 +259,7 @@ class PreviewBridge(HandoffBridge):
             objects,
             params=params,
             open_browser=open_browser,
-            texture_format=texture_format,
+            glb_options=glb_options,
             scripts=scripts,
             progress=progress,
             data_export=data_export,

@@ -69,9 +69,10 @@ format: a third-party glTF tool opens it and gets a sane, if plainer, result.
 
 The preview's job is to show what the target platform will get, so the GLB **content** is never
 the preview's own: the sidecar, the lightmaps, the render effects, the texture policy all come out
-of `GlbPipeline`, and a fix to any of them lands in the export and the preview at once. What the
-preview decides for itself stops at the delivery container (the viewer's texture format), where its
-scratch files live, and the fact that it runs **no export tasks or validation checks** -- those
+of `GlbPipeline`, and a fix to any of them lands in the export and the preview at once. Its texture
+settings are the Scene Exporter's own rows, resolved by the exporters' own method (see *Preview and
+export are one deliverable*). What the preview decides for itself stops at where its scratch files
+live, and the fact that it runs **no export tasks or validation checks** -- those
 belong to the Scene Exporter, and the preview must stay fast enough to press after every tweak.
 When you want the exporter's *whole* run checked, export the GLB and publish that file (see
 *Publishing a GLB you already have*).
@@ -151,15 +152,13 @@ it is a *source*, not a scope, and every other hand-off bridge would inherit a c
 to honour. The viewer-script rows still apply — those describe the page, and the page is the same
 one either source publishes to.
 
-In the page: **Scale** toggles fitted (normalized to 1.5 m) vs. true scale, **Frame** re-frames the
-camera, **Light** appears for a lightmapped model and toggles the dim environment on and off
-(`r` / `f` / `l`). A fourth slot, `#lookdev`, is the area for dials that tune how the model
-*reads* and write the result back into **the GLB** rather than into the page — the **Normals**
-dial (`normalTexture.scale`, saved through `POST /settings`) is its only occupant so far, and the
-area ships **off** behind `LOOKDEV_ENABLED`: one slider does not earn a permanent seat in a control
-bar that has to survive a phone-sized viewport, and lookdev worth offering is a *set* tuned
-together. Flipping the flag restores it as it was; adding the next dial is markup inside
-`#lookdev`, a sync called from `syncLookdev`, and its element in that function's `controls` list.
+In the page: **Scale** toggles fitted (normalized to 1.5 m) vs. true scale and **Frame** re-frames
+the camera (`r` / `f`). A third slot, `#lookdev`, is the area for dials that tune how the model
+*reads*: the **Normals** dial (`normalTexture.scale`, saved into the GLB through `POST /settings`).
+Each dial hides itself when the model gives it nothing to do, and the area follows them;
+`LOOKDEV_ENABLED` holds the whole area back until there is a SET of dials worth a permanent
+seat. Adding the next dial is markup inside `#lookdev`, a sync called from `syncLookdev`, and
+its element in that function's `controls` list.
 
 Fitted mode exists because exported units are rarely metres — a centimetre scene
 arrives 100× too large, and "my model is invisible because I am standing inside it" is the most
@@ -226,6 +225,14 @@ next push that simply says nothing about scripts. An explicit `[]` is still an i
 A module's default export receives the viewer API: `THREE`, `scene`, `renderer`, `camera`,
 `controls`, `pivot`, `model`, `bounds`, `policy`, `setStatus`, `addButton(label, onClick)`,
 `showDialog({title, fields, confirm})`, and `on(event, fn)` for `'load'` / `'frame'` / `'key'`.
+A script that writes a file through the server gets the page's half of that too:
+`captureSize(maxEdge)` — the size to capture at and the pixel ratio to *render* at for it, clamped
+to what the GPU allocates, the one sizing rule a playblast and a still share — `refusal(response)`,
+the server's own reason for a refused request, for the status line, and `download(url)`, which
+saves a served file rather than navigating the page to it. Hand `download` a path **relative to the
+page** (or a route that answers `Content-Disposition: attachment`): a browser honours `download`
+only on the page's own origin, and the page is as validly open at `localhost` as at the
+`127.0.0.1` the server's `url` spells — an absolute link navigates a `localhost` tab to the file.
 `showDialog` is the page's one modal — a script asks for options through it rather than through
 `window.confirm` for the reason it adds buttons through `addButton` rather than `createElement`:
 one look, one place. Its `fields` are `{key, label, type, value, title}` — `'check'` by default,
@@ -243,15 +250,17 @@ logged and contained —
 an optional module must never make a good preview *look* broken, because the one place this is read
 is a headset where the console is not visible.
 
-Four ship in the box: **`turntable`** (hands-free rotation, on the pivot so it survives a push),
+Five ship in the box: **`turntable`** (hands-free rotation, on the pivot so it survives a push),
 **`inspect`** (draw calls, materials and *decoded* texture memory read off the renderer — the two
 numbers a GLB's size does not tell you) and **`shadow_rig`** (the runtime half of the DCC shadow
 rigs: reads the `extras.shadow_web` manifest `MeshConvert.apply_glb_shadows` writes during the
 conversion, gives every plane one `ShaderMaterial` — projected silhouettes and horizon maps in one
 program — batches the projected planes that share an atlas and carry no fade into an
 `InstancedMesh`, and re-places each plane from its source and contact nodes every frame with a port
-of `ShadowProjection.model`; the contract is `mayatk/docs/shadow_rig_morphing.md`). The first two
-are checkboxes on the WebXR Preview option box, which passes an explicit list every push: the panel
+of `ShadowProjection.model`; the contract is `mayatk/docs/shadow_rig_morphing.md`), and
+**`snapshot`** (an **Export Image** button: the current view saved as a PNG — see *Exporting a
+still* below). `turntable`, `inspect` and `snapshot` are checkboxes on the WebXR Preview option box,
+which passes an explicit list every push: the panel
 is authoritative, so a script registered on the server by other code is cleared by the next push
 from there. **`playblast`** records the clip the transport is on to a movie file (see *Recording a clip*
 below). `shadow_rig` and `playblast` are **on by themselves**: `PreviewServer.AUTO_SCRIPTS` maps it to the extras key
@@ -344,7 +353,7 @@ The manifest names each map by **basename**; the folder it records is the one th
 committed from, and that is history, not a contract (a reorganised project, a scene migrated to
 another module, a teammate's machine). The applier resolves each basename against, in order: the
 manifest's recorded folder, the `search_dirs` the host hands it, and the GLB's own folder. Both
-DCC hosts pass `LightmapBaker.search_dirs()` — the project's texture folders plus wherever the
+DCC hosts pass `LightmapRecords.search_dirs()` — the project's texture folders plus wherever the
 bake markers' maps were actually found — so a map that moved into a subfolder still binds. A map
 found nowhere is **not guessed at**: its objects are left unbound (they render unlit, exactly like
 no bake), the applier logs one line naming the file and the folders searched, and the push result
@@ -357,7 +366,9 @@ Exporter's *Check For Valid Paths* fails on a lightmap the markers name but no f
 Per-instance atlas rects (one object's patch of a shared atlas) cannot bind on a shared material,
 so they ride a **material clone carrying `KHR_texture_transform`** — pure JSON referencing the same
 accessors and the same embedded texture, so any compliant viewer renders the rect with no custom
-code.
+code. A map the shared material cannot carry takes the same route: when objects baked into
+DIFFERENT maps share a material (a secondary material on two machine bodies, or a Per-Object bake
+of instances), each object after the first binds its own clone.
 
 ### Why a lightmap and not a fused unlit bake?
 
@@ -392,47 +403,51 @@ where collapsing normal + ORM + lightmap to one map is the largest single reduct
 Architectural walkthroughs and product turntables are usually fused for exactly these reasons.
 
 It is not a binary, either. The usual middle ground is baked lighting for static geometry plus some
-cheap analytic term for everything it cannot cover — here that is the dimmed environment described
-in the next section, which is what carries specular and normal response rather than a probe system
-(there is none). Other points on the spectrum: fuse *indirect* only and keep direct lighting
-dynamic, or vertex-bake the low-frequency term.
+cheap analytic term for everything it cannot cover — here that is the environment's specular term
+described in the next section, which plays the reflection-probe role (there is no probe system) and
+is what carries specular and normal response. Other points on the spectrum: fuse *indirect* only and
+keep direct lighting dynamic, or vertex-bake the low-frequency term.
 
 ### Are they combined with the viewer's default lighting?
 
-**Partly, and the details are load-bearing.**
+**Only where the bake has nothing to say, and the details are load-bearing.**
 
 - **The key light goes off.** A baked scene already contains its diffuse lighting. A second
   directional rig leaves the baked shadows in place while everything around them lifts, which reads
-  as a washed-out model rather than as double lighting — easy to misdiagnose as a bad bake.
-- **The environment stays on, dimmed to 25%.** This is deliberate and it is the fix for a real bug.
-  three.js adds lightmap irradiance through `BRDF_Lambert`, which has **no normal term** — a bake
-  supplies light that does not vary with the surface normal at all. Switch the viewer's own lighting
-  fully off and *nothing left in the render samples the normal*: every correctly-bound normal map,
-  all roughness variation and every specular highlight go inert, and the model reads dead flat.
-  (Measured: 51 of 57 materials lightmapped, 54 normal maps correctly bound, no surface detail
-  visible anywhere.) The environment is the right thing to keep because it is omnidirectional — it
-  cannot contradict the bake's shadow *direction* the way a key light would — while its view- and
-  normal-dependent **specular** term (`getIBLRadiance`, which takes the normal) is exactly what
-  makes a normal map legible.
-- The dimming is **per material**, so a partly-baked scene stops under-lighting its un-baked props.
-  Only a lightmapped material already contains its diffuse lighting and wants the viewer's own light
-  held back; a prop carrying no bake is an ordinary PBR surface and gets the **full** environment.
-  This matters because scenes are routinely partly baked — measured on a production room, 51 of 57
-  materials — so a scene-wide dim left every un-baked prop cooler than it should be for a reason
-  invisible from the model.
+  as a washed-out model rather than as double lighting — easy to misdiagnose as a bad bake. It is
+  scene-wide (it cannot be withheld per material without render layers), so it goes off the moment
+  *anything* is baked; a room is routinely partly baked (measured: 51 of 57 materials).
+- **The environment stays at full strength, and a baked material takes only its specular.** A
+  lightmap holds the surface's diffuse lighting, every light and the sky included, so adding the
+  environment's irradiance on top double-counts it: measured on a production office, a quarter of
+  the environment on top of the bake doubled every shadow and lifted every surface — the washed-out
+  look that gets reported as "blown out". Switching the environment off instead renders the model
+  dead flat: three.js adds lightmap irradiance through `BRDF_Lambert`, which has **no normal
+  term**, so with the environment gone *nothing left in the render samples the normal* and every
+  normal map, roughness map and specular highlight goes inert (measured: 54 normal maps correctly
+  bound, no surface detail visible anywhere). So on a baked material the viewer drops the one line
+  of three.js's `lights_fragment_maps` chunk that adds the environment's irradiance and keeps the
+  specular term — the role a reflection probe plays for a lightmapped surface in a runtime, and
+  what Unity's native lightmap path does with a lightmapped renderer (no ambient, probes for
+  specular). It is a shader rule rather than a material setting because three.js scales the
+  environment's diffuse and specular with one number (`envMapIntensity`) and no glTF-level
+  setting can express the split, which is why the published policy states it as
+  `lightmappedMaterials.envMapTerms: "specular"` for a recipient to act on.
+- **A baked material reflects at the level the export chose.** The environment is a bright studio,
+  not the room the bake lit, so at full strength its reflections lift every dark glossy baked
+  surface (measured on a production room: the darkest machine surfaces at 0.06 of display baked
+  alone, 0.22 with full reflections, 0.11 at a quarter). The Scene Exporter's **Baked Reflections**
+  row sets the level -- Off (the pure bake), Quarter (the default), Half, Full -- and the deliverable
+  publishes it as `lightmappedMaterials.envMapIntensity`; the page scales everything the
+  environment gives a baked material by it, with one uniform the baked shaders share.
+- **Un-baked materials in the same asset are ordinary PBR surfaces** and take the full environment,
+  diffuse and specular.
 
-  The obstacle was real and is solved rather than accepted: three.js overwrites a *material's*
-  `envMapIntensity` from the scene value for any `MeshStandardMaterial` whose `envMap` is `null` —
-  which is every material GLTFLoader produces — so setting the property alone does nothing. The
-  opt-out is that `envMap === null` clause, so a baked material is handed the **shared** session
-  environment as its own `envMap`. That costs no extra upload (it is the texture the scene was
-  already lighting with) and stops the override. `disposeModel` is guarded to spare
-  `scene.environment` accordingly: it frees every texture-valued property of every material, and
-  without the guard the second push would render unlit — a failure no first-push check would catch.
-
-The **Light** button toggles between `bake + env` and `bake only`. That comparison is the one that
-tells a flat-looking model caused by a bad bake apart from one caused by the viewer's lighting
-policy.
+There is no page-local lighting mode: the deliverable's own `handoff.rendering` is the one rig, and
+this page is one of its readers. The earlier **Light** toggle (`bake only` / `bake + env`) existed
+to tell a flat bake from the viewer's lighting; with the environment's diffuse withheld from baked
+materials that question no longer arises, and a mode the export cannot express is a preview that
+lies about the deliverable.
 
 ### Are they resource intensive?
 
@@ -565,9 +580,44 @@ So: a genuine standalone hand-off and audit trail, not a substitute for the DCC 
 The preview is the approval gate, so the asset a developer receives has to be the asset the artist
 signed off. That is a *shared definition*, not a convention: `MeshConvert.web_delivery_texture_params`
 is the one statement of what a web deliverable's textures are (`WEB_DELIVERY_FORMAT`,
-`WEB_DELIVERY_MAX_SIZE`), and the preview's texture pass and both scene exporters' GLB paths all
-resolve through it. The exporters' panel dials **override** it — Texture File Type the container,
-Optimize Textures the ceiling — rather than being the only thing that turns the pass on.
+`WEB_DELIVERY_MAX_SIZE`), and the Scene Exporter's texture rows **override** it — Texture File Type
+the container, Optimize Textures the ceiling, Secondary Map Size and KTX2 RDO the two GLB-only
+levers — rather than being the only thing that turns the pass on.
+
+**The preview offers those same rows, and resolves them with the same methods.**
+`ExportProfile.GLB_ROWS` declares the rows that decide a GLB deliverable -- its images
+(`GLB_TEXTURE_ROWS`) and the lighting recipe it publishes (`GLB_LIGHTING_ROWS`: Baked
+Reflections). `ExportRun.glb_texture_params` resolves the texture rows against the policy and
+`ExportRun.rendering` the lighting ones, and both Scene Exporters and the preview call them (each
+exporter used to carry a private copy of the texture half, and the preview none: it named a
+container and inherited the web ceiling, so every push was cut to 2048 px whatever the export was
+set to). The WebXR Preview panel's **Textures** and **Lighting** rows are built from the same
+tables with the same labels and defaults (`ExportProfile.glb_options`, `glb_defaults`), and a push
+hands their values to the deliverer as `glb_options`, keyed as the export button keys them:
+
+```python
+preview.push(glb_options={"optimize_textures": 4096, "texture_file_type": "ktx2"})
+```
+
+Set the two panels the same and the GLB texture pass is the same in both: same container, same
+ceilings. An export can still do more to its maps BEFORE that pass -- a Texture Template re-authors
+the materials, and Optimize Textures corrects each scene map's mode and bit depth -- and those are
+export tasks a preview does not run. The panel offers only what a
+GLB-only push can honour: the containers a GLB can carry (a TGA or EXR choice means the web default
+inside a GLB anyway), and no *Template Budget* — that ceiling comes from the export's Texture
+Template row, whose material conversion the preview does not run, so pick the template's ceiling
+instead. Optimize Textures at **OFF** resizes nothing, in the GLB too: every map keeps its own
+resolution, re-encoded to the container. A plain **Optimize** names no ceiling, so the GLB takes
+the web ceiling (`WEB_DELIVERY_MAX_SIZE`, 2048 px); *Optimize + Max N* caps at N.
+
+The lighting row rides the same way, into the file rather than the texture pass: the export
+publishes its level in the GLB's `handoff.rendering` (and the FBX's handoff record, through its
+`ExportContext`), and the page reads it from the GLB it loaded. The preview's Lighting row reaches
+the page through the scene sidecar, so it needs Scene Sidecar on, and a file-source push -- which
+builds no sidecar -- does not offer it.
+
+The dependency runs one way. An export reads its own panel and the scene; nothing it needs to be
+configured or handed off comes from a preview run.
 
 This is worth stating because the alternative was measured. Running both legs over one production
 assembly in one Maya session and diffing 24 observable properties of the two GLBs: geometry,
@@ -732,6 +782,38 @@ Details worth knowing:
 - The button doubles as the progress readout (`Recording 42/151 ✕`) and cancels on a second click;
   the status line is left saying what the page is showing.
 
+## Exporting a still
+
+**Export Image** saves the current view — the camera where the reviewer left it, the pose the
+transport is holding — as a PNG. It is the `snapshot` viewer script, a checkbox on the panel's
+Viewer Scripts row; the HUD and the control bar are page markup over the canvas and are not in it.
+
+```
+  page     [raise pixel ratio] -> render -> drawImage onto a pad -> [restore]   (one task)
+           pad.toBlob(PNG) -> POST /snapshot
+  server   PreviewServer.save_snapshot -> <deliverable>_view_001.png, _002 ...
+```
+
+- **Sizes** are the prompt's: *As shown* (the drawing buffer exactly as the page draws it), or
+  Standard / High / Maximum at the playblast presets' long edges (1920 / 2560 / 3840 px; High is the
+  default and the choice is remembered for the tab). A sized still is **rendered** at that size via
+  `viewer.captureSize` — the playblast's rule — never upscaled, and the ratio is put back in the
+  same task, with a re-render so the page never composites a blank frame.
+- **Render and readback happen in one task**, for the playblast's reason: without
+  `preserveDrawingBuffer` the drawing buffer is gone once the browser composites, and a readback
+  after an `await` saves an empty canvas without complaint.
+- **Where it lands** is the playblast's table, decided by the one rule the server holds for every
+  file the page writes: beside the published file when it is on disk, else in the serve root, which
+  the page then downloads. Stills
+  are **numbered, never overwritten** (`FileUtils.next_version_path`) — the next angle must not
+  replace the last — and the name is composed server-side from the deliverable's sanitized stem;
+  nothing in the request can name or place the file.
+- The route takes **PNG only**, checked by signature as well as by `Content-Type`
+  (`PreviewServer.SNAPSHOT_TYPES`), under `MAX_SNAPSHOT_BYTES`, and is held to the Host and Origin
+  checks every writing route carries.
+- Refused inside an immersive session (the canvas is the mirror, not the device), with a lost GPU
+  context (the page's own sticky status says why), and with no model loaded.
+
 ## Cost and budget
 
 Timings, measured end to end on a production assembly (366 MB FBX, 2485 nodes over 757 mesh
@@ -767,7 +849,7 @@ those runs shared the machine with the experiments above):
 | Export Preset | the push's tasks, checks, textures, animation and sidecar are the chosen Scene Exporter preset's rows (2026-09-05; the dials below were the option box's own before that and are kept for the costs they measured) |
 | Textures **off** | FBX 366 → 12 MB, no sidecar textures, no optimize pass — and the conversion still takes minutes |
 | Scene Sidecar **off** | saves the 17 s ORM repack; the preview then shows FBX2glTF's own packing, which reads metallic 1 on grayscale source sets |
-| Texture Format **KTX2** | texture pass 57 s instead of 21 s (`toktx`, UASTC for data maps / ETC1S for colour) and 42 MB instead of 35 MB on the wire — the win is GPU memory, not the push |
+| Texture File Type **KTX2** | texture pass 57 s instead of 21 s (`toktx`, UASTC for data maps / ETC1S for colour) and 42 MB instead of 35 MB on the wire — the win is GPU memory, not the push |
 | Include Animation **on** | push 719 s: Maya's FBX write becomes 84 s (it bakes complex animation), the FBX 482 MB, the conversion 616 s, and the GLB 101 MB — 73 MB of it animation accessors |
 | Scope **visible**, both viewer scripts | push 306 s: the hidden rig helpers (24% of the nodes) stay behind, and with them about a quarter of the bake; the two viewer scripts cost nothing measurable |
 | External GLB (`publish_file`) | milliseconds: no export, no conversion |
@@ -796,8 +878,9 @@ the wire, 5.97 MB of it images, which decode to ~555 MB of RGBA and ~740 MB with
 one of its 38 images is 2048², because `max_size` is a per-image ceiling and nothing budgets the
 total. On a headset that, not the download, is what limits how large a scene can be previewed.
 
-The fix is opt-in and request-scoped: `bridge.push(texture_format="KTX2")` — the **Texture Format**
-row on the WebXR Preview option box — re-encodes that delivery to
+The fix is opt-in and request-scoped: `bridge.push(glb_options={"texture_file_type": "ktx2"})`
+— the **Texture File Type** row on the WebXR Preview panel, the Scene Exporter's own — re-encodes
+that delivery to
 KTX2/Basis (`KHR_texture_basisu`), which the GPU keeps block-compressed — the viewer's `KTX2Loader`
 transcodes it to ASTC on a standalone headset, BC7 on desktop. It needs KTX-Software's `toktx` on
 the authoring machine (the push raises with the install URL when it is missing, never silently
@@ -821,9 +904,10 @@ are capped at 0.75). The deliverable's per-frame animation keys are the third le
   absent and the VR button simply never appears; the page says which case it is in.
 - **A missing `TEXCOORD_1` means no lightmap.** The FBX was exported without the lightmap UV set;
   the applier warns per primitive rather than binding something wrong.
-- **Per-object maps on a shared material cannot both ship.** A glTF material carries one lightmap.
-  Atlas packing is what normally prevents this; reaching it means one object wears another's
-  lighting — which looks like a bad bake. It is warned, loudly.
+- **Per-object maps on a shared material each bind a copy.** A glTF material carries one lightmap,
+  so the first object binds the shared material and every later object with a different map binds
+  its own clone of it (and its own mesh entry when instanced). This used to be refused — and the
+  refused object wore the first one's lighting anyway, which reads as a bad bake.
 - **Draco-compressed GLBs do not load** in the bundled viewer (no decoder wired in). Don't pass
   `--draco`. If that changes it should arrive as a *script*, not a viewer edit.
 - **A viewer script that names a hook the page does not emit is inert, silently.** Nothing throws;
@@ -835,3 +919,9 @@ are capped at 0.75). The deliverable's per-frame animation keys are the third le
 - **Namespaces can disagree.** Manifest and export can differ about `NS:leaf` without either being
   wrong, so matching is exact first, then namespace-stripped — but only when the leaf is
   unambiguous. An ambiguous leaf is skipped rather than guessed.
+- **Same-named objects are told apart by where they sit.** FBX carries leaf names only, so two
+  objects sharing one (`…|MACHINE_B|BODY|BODY`, `…|MACHINE_A|BODY`) arrive as two `BODY` nodes. The
+  manifest publishes each object's `hierarchy`, and a record binds only to the node whose lineage
+  it is the unique best match for; a stale record whose node belongs to a better match counts as
+  out of scope. A manifest without hierarchies (built before they were published) cannot tell
+  them apart, so they are skipped and warned — re-export to publish one.

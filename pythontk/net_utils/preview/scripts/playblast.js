@@ -41,9 +41,9 @@
 //:
 //: The frame is RENDERED at the preset's size, never upscaled to it: a view
 //: whose drawing buffer is smaller has its pixel ratio raised for the recording
-//: and put back afterwards (see `captureSize`), so High from a 1280-wide window
-//: is a real 2560-wide render. A larger view is downsampled by the capture,
-//: which antialiases for free.
+//: and put back afterwards (see `viewer.captureSize`), so High from a
+//: 1280-wide window is a real 2560-wide render. A larger view is downsampled by
+//: the capture, which antialiases for free.
 //:
 //: Size is no longer the wall-clock dial it was when frames compressed on the
 //: main thread (1920 -> 1280 then measured 2.1x faster); with the worker pool
@@ -90,26 +90,6 @@ const DEFAULT_PRESET = 'high';
 function presetFor(key) {
   return QUALITY_PRESETS.find((preset) => preset.key === key)
     || QUALITY_PRESETS.find((preset) => preset.key === DEFAULT_PRESET);
-}
-
-//: `{width, height, pixelRatio}` for a recording whose long edge is *maxEdge*:
-//: the size every frame is resized to, and the pixel ratio to render at while
-//: recording -- null when the view is already at least that large.
-//:
-//: Clamped to what the GPU will allocate. A canvas asked for a buffer past
-//: MAX_RENDERBUFFER_SIZE does not fail; it silently allocates a smaller one,
-//: and the capture would then read that stretched across the frame.
-function captureSize(renderer, maxEdge) {
-  const canvas = renderer.domElement;
-  const gl = renderer.getContext();
-  const [viewportWidth, viewportHeight] = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
-  const limit = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), viewportWidth, viewportHeight);
-  const scale = Math.min(maxEdge, limit) / Math.max(canvas.width, canvas.height);
-  return {
-    width: Math.max(1, Math.round(canvas.width * scale)),
-    height: Math.max(1, Math.round(canvas.height * scale)),
-    pixelRatio: scale > 1 ? renderer.getPixelRatio() * scale : null,
-  };
 }
 
 //: Frames are sent as PNG -- lossless, and NOT the slow choice, which is the
@@ -343,7 +323,7 @@ export default function playblast(viewer) {
     // phone) would otherwise change the frame size part way through, which
     // ffmpeg answers with a garbled encode rather than an error.
     const preset = presetFor(options.preset);
-    const size = captureSize(viewer.renderer, preset.maxEdge);
+    const size = viewer.captureSize(preset.maxEdge);
 
     job = {
       clip,
@@ -598,7 +578,7 @@ export default function playblast(viewer) {
       // was a scene push there IS no such file — its GLB is the bridge's own
       // scratch — so the download is the only copy that survives the session,
       // and the one viewer who cannot open a folder is the one in the headset.
-      if (report.in_serve_root) download(report.url);
+      if (report.in_serve_root) viewer.download(report.url);
       else console.info(`playblast written to ${report.output}`);
       reset();
     } catch (error) {
@@ -731,7 +711,7 @@ export default function playblast(viewer) {
                 body: blob,
                 headers: { 'Content-Type': FRAME_TYPE },
               });
-              if (!response.ok) throw new Error(await reason(response));
+              if (!response.ok) throw new Error(await viewer.refusal(response));
               busy = false;
               if (!closed) onDone(index);
             } catch (error) {
@@ -801,31 +781,8 @@ export default function playblast(viewer) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!response.ok) throw new Error(await reason(response));
+    // Why it refused, from the server's own message -- see `viewer.refusal`.
+    if (!response.ok) throw new Error(await viewer.refusal(response));
     return response.json();
-  }
-
-  //: The server states WHY it refused (a frame ceiling, a missing frame, no
-  //: ffmpeg); showing "500" instead would send the user to a console they
-  //: cannot open in a headset.
-  //:
-  //: `send_error` puts the message in the status line AND in its HTML body, so
-  //: statusText is the cheap read and the body is the fallback for a proxy or a
-  //: browser that drops the reason phrase. The body match stops at the tag, not
-  //: at the first full stop -- these messages are sentences.
-  async function reason(response) {
-    if (response.statusText) return response.statusText;
-    const text = await response.text().catch(() => '');
-    const match = text.match(/<p>Message:\s*([^<]+)/i);
-    return (match ? match[1] : `HTTP ${response.status}`).trim().replace(/\.$/, '');
-  }
-
-  function download(url) {
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = '';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
   }
 }

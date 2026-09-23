@@ -361,7 +361,8 @@ class SceneRecords:
         owner="Lightmap Baker",
         description=(
             "per-object baked-lightmap records: map file name, uvIndex, "
-            "intensity, scaleOffset"
+            "intensity, scaleOffset, and the object's scene hierarchy (which "
+            "tells apart objects that share a name)"
         ),
         consumers=("unity", "glb"),
     )
@@ -530,19 +531,23 @@ class SceneRecords:
         return [s for s in cls.all() if s.portable]
 
     @staticmethod
-    def rendering_policy() -> Dict[str, Any]:
+    def rendering_policy(
+        overrides: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """What a deliverable claims about how it should be lit.
 
         The GLB's handoff section and the FBX's handoff record publish the
         same policy, and it is the reference viewer's contract
         (``MeshConvert.RENDERING_POLICY``, pinned against the viewer's own
         literals by ``test_preview_server``), so it is read from there rather
-        than declared twice.  Imported lazily: this module is the lighter
+        than declared twice -- *overrides* included: an export's choices
+        (``ExportContext.rendering``) merge by ``MeshConvert.rendering_policy``
+        on both carriers.  Imported lazily: this module is the lighter
         dependency and must import first.
         """
         from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
-        return copy.deepcopy(MeshConvert.RENDERING_POLICY)
+        return MeshConvert.rendering_policy(overrides)
 
     #: The standalone-reader contract for the carrier the block rides on.
     #: Plain declarative sentences about the file's own structure, no
@@ -710,6 +715,7 @@ class SceneRecords:
         cls,
         channels: Union[Iterable[str], Mapping[str, Any]],
         source: Optional[Mapping[str, str]] = None,
+        rendering: Optional[Mapping[str, Mapping[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """The standalone-reader contract for an FBX, ready to store.
 
@@ -725,6 +731,9 @@ class SceneRecords:
         *source* is producer identity and provenance (``application``,
         ``version``, ``scene``); empty entries are dropped rather than
         published as nulls.
+
+        *rendering* is the export's choices over the lighting recipe
+        (:meth:`rendering_policy`); ``None`` publishes the policy as it stands.
         """
         if isinstance(channels, Mapping):
             channels = [k for k, v in channels.items() if isinstance(v, str) and v]
@@ -740,7 +749,7 @@ class SceneRecords:
                 f"data_export.{name}": described.get(name, "tool-authored channel")
                 for name in present
             },
-            "rendering": cls.rendering_policy(),
+            "rendering": cls.rendering_policy(rendering),
         }
 
     @classmethod
@@ -1162,6 +1171,10 @@ class ExportContext:
             from the final keys, ``None`` when nothing measured it.
         source: Producer identity and provenance for the handoff block
             (``application``, ``version``, ``scene``).
+        rendering: The export's choices over the lighting recipe the handoff
+            block publishes (``ExportRun.rendering``: ``{section: {field:
+            value}}`` over ``MeshConvert.RENDERING_POLICY``); empty = the
+            policy as it stands.
         records: Every record produced so far in this assembly, by key --
             how a producer reads another's output (the audio manifest scopes
             its events against the takes the shots producer just built).
@@ -1175,6 +1188,7 @@ class ExportContext:
     clip_mode: Optional[str] = None
     clip_span: Optional[Tuple[float, float]] = None
     source: Dict[str, Any] = field(default_factory=dict)
+    rendering: Dict[str, Any] = field(default_factory=dict)
     records: Dict[str, Optional[Record]] = field(default_factory=dict)
 
     def record(
@@ -1409,7 +1423,9 @@ class ExportSnapshot:
         try:
             handoff = SceneRecords.HANDOFF
             present = store.channels(Scope.DELIVERABLE)
-            block = SceneRecords.handoff_block(present, source=self.ctx.source)
+            block = SceneRecords.handoff_block(
+                present, source=self.ctx.source, rendering=self.ctx.rendering
+            )
             if block:
                 text = handoff.make(block).text
                 handoff.write_text(store, text)

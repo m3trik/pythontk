@@ -19,12 +19,14 @@ tool and the default story stays pure Python:
 
     python -m pip install playwright     # drives the INSTALLED Edge; no download
 
-Deliberately narrow. This covers the animation transport and the load path,
-which the backlog names as the best first target because they need no material
-fakes. The lighting policy wants a baked fixture and is left to follow.
+This covers the animation transport, the load path, and the lighting policy
+-- the last on the pixels the page draws as well as on its materials, because
+the policy's baked-material half is a shader edit, and a shader edit that
+matches nothing fails silently to every property check.
 """
 
 import json
+import math
 import os
 import pathlib
 import struct
@@ -43,6 +45,34 @@ PROBE_JS = """
 export default function probe(viewer) {
   const report = { ready: false, errors: [] };
   window.__probe = report;
+  window.__api = viewer;
+  // Display luminance (0-255) at the centre of the fixture's one face, read
+  // back off the page's own canvas after a render -- so what is measured is
+  // the picture, tone mapping and all, rather than a material property.
+  window.__sample = () => {
+    const { renderer, scene, camera, THREE } = viewer;
+    let mesh = null;
+    viewer.model.traverse((n) => { if (!mesh && n.isMesh) mesh = n; });
+    const position = mesh.geometry.attributes.position;
+    const centroid = new THREE.Vector3();
+    for (let i = 0; i < position.count; i += 1) {
+      centroid.add(new THREE.Vector3().fromBufferAttribute(position, i));
+    }
+    centroid.divideScalar(position.count);
+    mesh.updateWorldMatrix(true, false);
+    const ndc = centroid.applyMatrix4(mesh.matrixWorld).project(camera);
+    renderer.render(scene, camera);
+    const gl = renderer.getContext();
+    const x = Math.round((ndc.x + 1) / 2 * gl.drawingBufferWidth);
+    const y = Math.round((ndc.y + 1) / 2 * gl.drawingBufferHeight);
+    const pixels = new Uint8Array(4 * 9);
+    gl.readPixels(x - 1, y - 1, 3, 3, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    let sum = 0;
+    for (let i = 0; i < 9; i += 1) {
+      sum += 0.2126 * pixels[4 * i] + 0.7152 * pixels[4 * i + 1] + 0.0722 * pixels[4 * i + 2];
+    }
+    return sum / 9;
+  };
   viewer.on('load', (detail) => {
     try {
       const select = document.getElementById('clipSelect');
@@ -74,12 +104,12 @@ export default function probe(viewer) {
               : null,
             lightMapIntensity: m.lightMapIntensity,
             hasAoMap: !!m.aoMap,
-            envMapIntensity: m.envMapIntensity,
-            hasEnvMap: !!m.envMap,
             hasNormalMap: !!m.normalMap,
-            // The bake-relief shader patch, as an OWN property: the base
-            // class carries a no-op through the prototype.
-            reliefHook: Object.prototype.hasOwnProperty.call(m, 'onBeforeCompile'),
+            // The shader patch a baked material declares through its program
+            // cache key: 'baked' (environment specular only) or 'baked-relief'
+            // (that, plus the normal-map relief). An unpatched material
+            // reports the base class's key, which is neither.
+            programKey: m.customProgramCacheKey(),
           });
         }
       });
@@ -98,10 +128,16 @@ export default function probe(viewer) {
           report.lights.push({ type: n.type, intensity: n.intensity });
         }
       });
+      // The session's environment, on the SCENE: it lights every un-baked
+      // material and is what every baked one reflects, and a second push
+      // must not take it away (see disposeModel).
+      report.environment = {
+        present: !!viewer.scene.environment,
+        intensity: viewer.scene.environmentIntensity,
+      };
       // One entry per model swap, so a test can assert what the SECOND push
-      // rendered. `disposeModel` frees the outgoing model's textures and has
-      // to spare the shared environment map; missing that renders the second
-      // push unlit, which no first-push check can see.
+      // rendered. `disposeModel` frees the outgoing model's textures; a
+      // second push rendering unlit is a failure no first-push check can see.
       report.loads = (report.loads || 0) + 1;
       report.ready = true;
     } catch (error) {
@@ -192,6 +228,24 @@ NO_WORKER_PROBE = RECORD_PROBE.replace(
     # would pass while proving nothing.
     "report.workerType = typeof Worker;\n    report.ready = true;",
 )
+
+
+def bake_face_level(irradiance, albedo=1.0):
+    """The 8-bit display level a Lambert face lit by *irradiance* alone lands on.
+
+    three.js adds a lightmap through ``BRDF_Lambert`` (``irradiance * albedo /
+    pi``), tone-maps with ACES filmic at exposure 1 and writes sRGB -- all
+    three pinned by the published rendering policy. On a grey value the ACES
+    fit's input and output matrices are the identity, so the transfer is the
+    fit alone, ``fit(x / 0.6)``, then the sRGB curve.
+    """
+    v = irradiance * albedo / math.pi / 0.6
+    fit = (v * (v + 0.0245786) - 0.000090537) / (
+        v * (0.983729 * v + 0.4329510) + 0.238081
+    )
+    fit = min(max(fit, 0.0), 1.0)
+    srgb = 12.92 * fit if fit <= 0.0031308 else 1.055 * fit ** (1 / 2.4) - 0.055
+    return 255.0 * srgb
 
 
 def _runtime_available():
@@ -1030,7 +1084,14 @@ class TestPreviewViewerLive(unittest.TestCase):
         "2mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
     )
 
-    def _lightmapped_glb(self, normal_map=False):
+    def _lightmapped_glb(
+        self,
+        normal_map=False,
+        bake_value=None,
+        pbr=None,
+        environment=None,
+        baked_reflections=None,
+    ):
         """A GLB whose material wears a BAKED map, built by the real applier.
 
         Hand-writing `extras.lightmap_web` would test the page against a
@@ -1040,14 +1101,25 @@ class TestPreviewViewerLive(unittest.TestCase):
         `apply_glb_lightmaps` produces the block the viewer reads.
 
         *normal_map* also gives the material a normal map, which is what
-        turns on the page's bake-relief shader patch.
+        turns on the page's bake-relief shader patch. *bake_value* is the
+        bake's irradiance (default `BAKE_VALUE`); *pbr* a
+        `pbrMetallicRoughness` block for the material, which otherwise takes
+        glTF's defaults -- a ROUGH METAL, which no lightmap can light, so a
+        pixel test says what it wants. *environment* publishes that
+        environment intensity in the file's own rendering policy, the way a
+        deliverable states its rig, so the page is driven through the read
+        path a real GLB uses rather than by poking its materials; and
+        *baked_reflections* the level a baked material reflects it at
+        (``lightmappedMaterials.envMapIntensity``), the export's choice.
         """
         import cv2
         import numpy as np
 
         exr_dir = self.temp.dir_path()
         exr = os.path.join(exr_dir, "room_Lightmap.exr")
-        cv2.imwrite(exr, np.full((8, 8, 3), self.BAKE_VALUE, dtype=np.float32))
+        if bake_value is None:
+            bake_value = self.BAKE_VALUE
+        cv2.imwrite(exr, np.full((8, 8, 3), bake_value, dtype=np.float32))
 
         manifest = {
             # Load-bearing: the reader refuses a manifest whose version it does
@@ -1101,10 +1173,19 @@ class TestPreviewViewerLive(unittest.TestCase):
             ],
             "materials": [{"name": "room_MAT"}],
         }
+        if pbr:
+            gltf["materials"][0]["pbrMetallicRoughness"] = dict(pbr)
         if normal_map:
             gltf["images"] = [{"name": "room_N", "uri": self.PIXEL_PNG}]
             gltf["textures"] = [{"source": 0}]
             gltf["materials"][0]["normalTexture"] = {"index": 0}
+        rendering = {}
+        if environment is not None:
+            rendering["environment"] = {"intensity": environment}
+        if baked_reflections is not None:
+            rendering["lightmappedMaterials"] = {"envMapIntensity": baked_reflections}
+        if rendering:
+            gltf["extras"] = {"scene_sidecar": {"handoff": {"rendering": rendering}}}
         path = self._write(gltf, uvs=True)
         bound = ptk.MeshConvert.apply_glb_lightmaps(path, search_dirs=[exr_dir])
         # A fixture that silently bound nothing would make every assertion
@@ -1169,16 +1250,190 @@ class TestPreviewViewerLive(unittest.TestCase):
         json_bytes += b" " * ((4 - len(json_bytes) % 4) % 4)
         blob += b"\0" * ((4 - len(blob) % 4) % 4)
         total = 12 + 8 + len(json_bytes) + 8 + len(blob)
-        out = self.temp.path(extension=".glb")
+        # Its own tracked folder: a still or a recording the page writes
+        # BESIDE the deliverable lands in there and goes with cleanup(), and
+        # a before/after listing of it sees nothing another process wrote.
+        out = os.path.join(self.temp.dir_path(), "fixture.glb")
         with open(out, "wb") as fh:
             fh.write(struct.pack("<4sII", b"glTF", 2, total))
             fh.write(struct.pack("<I4s", len(json_bytes), b"JSON") + json_bytes)
             fh.write(struct.pack("<I4s", len(blob), b"BIN\0") + blob)
         return out
 
+    # ------------------------------------------------- exporting a still
+    # The page's Export Image: the view it is showing, rendered at the size the
+    # prompt asks for and written beside the deliverable. What these check is
+    # the PICTURE -- a readback one task too late saves an empty canvas, and
+    # nothing about the file's existence or size says so.
+
+    def test_export_image_saves_the_view_beside_the_deliverable(self):
+        """At the default (High) size, which the headless view is smaller than
+        -- so a 2560 px file is a raised-ratio RENDER, not an upscale, and the
+        raised ratio has to be back once the still is taken."""
+        import cv2
+
+        found, image = self._export_image()
+
+        self.assertLess(found["viewEdge"], 2560, "the view must be smaller than High")
+        self.assertEqual(image.name, f"{found['stem']}_view_001.png")
+        pixels = cv2.imread(str(image), cv2.IMREAD_GRAYSCALE)
+        self.assertEqual(max(pixels.shape), 2560)
+        self._assert_still_not_blank(pixels, image)
+        self.assertEqual(found["pixelRatio"], found["pagePixelRatio"], "ratio kept")
+        # The status names what was written, so the reviewer need not go look.
+        self.assertIn(image.name, found["status"])
+        self.assertIn("2560×", found["status"])
+
+    def test_as_shown_saves_the_drawing_buffer_unscaled(self):
+        import cv2
+
+        found, image = self._export_image(preset="view")
+
+        pixels = cv2.imread(str(image), cv2.IMREAD_GRAYSCALE)
+        self.assertEqual(
+            (pixels.shape[1], pixels.shape[0]), tuple(found["canvas"]), "resized"
+        )
+        self._assert_still_not_blank(pixels, image)
+
+    def test_the_image_prompt_can_be_cancelled_without_saving(self):
+        glb = self._shots_only_glb()
+        beside = os.path.dirname(glb)
+        before = set(os.listdir(beside))
+
+        def drive(server, page):
+            page.click("#controls button:has-text('Export Image')")
+            page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
+            page.click("#dialogCancel")
+            page.wait_for_selector("#dialog", state="hidden", timeout=30_000)
+
+        found = self._load(
+            glb, probe=self._record_probe(), then=drive, scripts=["snapshot"]
+        )
+
+        self.assertEqual(found["errors"], [])
+        self.assertEqual(
+            [n for n in set(os.listdir(beside)) - before if n.endswith(".png")],
+            [],
+            "a cancelled prompt saved an image anyway",
+        )
+
+    def test_a_scene_push_still_is_downloaded_by_the_page(self):
+        """With no file on disk to sit beside, the serve root holds the still
+        and the page's download is the only copy that outlives the session.
+
+        Under BOTH spellings of the loopback host. A browser honours an
+        anchor's `download` only on the page's own origin, and the page is as
+        validly open at localhost as at 127.0.0.1 -- so a link spelled the
+        server's way navigated a localhost tab to the bare PNG, replacing the
+        preview, instead of saving it.
+        """
+        for host in ("127.0.0.1", "localhost"):
+            with self.subTest(host=host):
+                glb = self._shots_only_glb()
+
+                def drive(server, page, glb=glb):
+                    # What a scene push looks like from here: the published
+                    # file is the bridge's scratch, and is gone by the time
+                    # anyone presses a button.
+                    os.remove(glb)
+                    page.click("#controls button:has-text('Export Image')")
+                    page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
+                    with page.expect_download(timeout=60_000) as download:
+                        page.click("#dialogConfirm")
+                    path = pathlib.Path(self.temp.path(extension=".png"))
+                    download.value.save_as(str(path))
+                    return {
+                        "downloaded": download.value.suggested_filename,
+                        "saved": str(path),
+                        "still_on_page": page.evaluate("() => !!window.__probe"),
+                    }
+
+                found = self._load(
+                    glb,
+                    probe=self._record_probe(),
+                    then=drive,
+                    scripts=["snapshot"],
+                    host=host,
+                )
+
+                self.assertEqual(found["errors"], [])
+                self.assertTrue(found["still_on_page"], "the tab navigated away")
+                # Not named after the scratch payload (a random tag): with no
+                # deliverable on disk a still is a plain numbered view.
+                self.assertEqual(found["downloaded"], "view_001.png")
+                self.assertTrue(
+                    pathlib.Path(found["saved"]).read_bytes().startswith(b"\x89PNG"),
+                    "the download is not the PNG the page posted",
+                )
+
+    def _export_image(self, preset=None):
+        """Press Export Image in the real page, answer the prompt, and return
+        the findings plus the PNG it wrote beside the deliverable.
+
+        *preset* picks a Size by key; None leaves the default. A fresh fixture
+        per call, so a numbered still is the first in its folder.
+        """
+        glb = self._shots_only_glb()
+        beside = os.path.dirname(glb)
+        before = set(os.listdir(beside))
+
+        def drive(server, page):
+            page_ratio = page.evaluate("() => window.__pixelRatio()")
+            page.click("#controls button:has-text('Export Image')")
+            page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
+            if preset is not None:
+                page.select_option(
+                    "#dialogFields label:has-text('Size') select", preset
+                )
+            page.click("#dialogConfirm")
+            page.wait_for_function(
+                "() => /image (saved|export failed)/.test("
+                "document.getElementById('status').textContent)",
+                timeout=120_000,
+            )
+            return {
+                "status": page.eval_on_selector("#status", "el => el.textContent"),
+                "pixelRatio": page.evaluate("() => window.__pixelRatio()"),
+                "pagePixelRatio": page_ratio,
+                "viewEdge": page.evaluate(
+                    "(ratio) => Math.max(innerWidth, innerHeight) * ratio", page_ratio
+                ),
+                "canvas": page.evaluate(
+                    "() => { const c = document.querySelector('canvas');"
+                    " return [c.width, c.height]; }"
+                ),
+            }
+
+        found = self._load(
+            glb, probe=self._record_probe(), then=drive, scripts=["snapshot"]
+        )
+        self.assertEqual(found["errors"], [])
+        self.assertIn("image saved", found["status"], found["status"])
+        new = [n for n in set(os.listdir(beside)) - before if n.endswith(".png")]
+        self.assertEqual(len(new), 1, f"expected one image, got {new}")
+        found["stem"] = pathlib.Path(glb).stem
+        return found, pathlib.Path(beside, new[0])
+
+    def _assert_still_not_blank(self, pixels, image):
+        """The saved still must hold the SCENE, not an empty canvas: the
+        fixture is a lit model on a dark background, so a real one covers a
+        wide range and a blank readback is one value everywhere."""
+        self.assertGreater(
+            int(pixels.max()) - int(pixels.min()),
+            8,
+            f"{image.name} is near-uniform -- the capture read an empty canvas",
+        )
+
     # ------------------------------------------------------------------ driver
-    def _load(self, glb, then_publish=None, probe=None, then=None):
+    def _load(
+        self, glb, then_publish=None, probe=None, then=None, scripts=(), host=None
+    ):
         """Serve *glb*, open it in the real page, return the probe's findings.
+
+        *scripts* are packaged viewer scripts to activate alongside the probe
+        -- the ones a push names, as opposed to those a deliverable turns on
+        by itself. *host* opens the page under another loopback spelling
+        (``"localhost"``) than the server's own URL uses.
 
         *then_publish* publishes a SECOND version once the page is up and waits
         for the swap -- the only way to reach `disposeModel`, which frees the
@@ -1193,8 +1448,12 @@ class TestPreviewViewerLive(unittest.TestCase):
         """
         from playwright.sync_api import sync_playwright
 
-        server = ptk.PreviewServer(viewer=True, title="live-test")
+        # port=0: the default is the production port, and a real preview tab
+        # the user has open would poll this test server.
+        server = ptk.PreviewServer(viewer=True, title="live-test", port=0)
         server.start()
+        for name in scripts:
+            server.add_script(name)
         server.add_script("probe", probe or self.probe)
         server.publish(glb)
         console = []
@@ -1218,7 +1477,8 @@ class TestPreviewViewerLive(unittest.TestCase):
                     ),
                 )
                 page.on("pageerror", lambda e: console.append(f"[pageerror] {e}"))
-                page.goto(server.url, wait_until="domcontentloaded", timeout=120_000)
+                url = server.url.replace(server.host, host) if host else server.url
+                page.goto(url, wait_until="domcontentloaded", timeout=120_000)
                 page.wait_for_function(
                     "() => window.__probe && window.__probe.ready === true",
                     timeout=180_000,
@@ -1387,9 +1647,10 @@ class TestPreviewViewerLive(unittest.TestCase):
 
     def test_the_SECOND_push_is_still_lit(self):
         """`disposeModel` frees the outgoing model's textures between pushes and
-        must spare the shared environment map, which every baked material was
-        given as its own `envMap`. Miss that and the second push renders unlit
-        -- invisible to every first-push check, and the failure an artist hits
+        must leave the session's environment alone: it is the scene's, not the
+        model's, and once (when baked materials carried it as their own
+        `envMap`) a push disposed it. The second push then renders unlit --
+        invisible to every first-push check, and the failure an artist hits
         on their second click rather than their first."""
         found = self._load(
             self._lightmapped_glb(), then_publish=self._lightmapped_glb()
@@ -1399,48 +1660,189 @@ class TestPreviewViewerLive(unittest.TestCase):
         material = self._lit(found)
         self.assertTrue(material["hasLightMap"], "the second push lost its bake")
         self.assertTrue(
-            material["hasEnvMap"],
-            "the shared environment was disposed with the outgoing model",
+            found["environment"]["present"],
+            "the environment was disposed with the outgoing model",
         )
+        self.assertGreater(found["environment"]["intensity"], 0)
         self.assertEqual(found["console_errors"], [])
 
-    def test_a_baked_material_keeps_SOME_environment_light(self):
-        """The per-material opt-out: a bake carries diffuse light and no
-        specular, so dropping the environment entirely leaves every metal and
-        every gloss dead flat. It is turned DOWN, never off."""
-        material = self._lit(self._load(self._lightmapped_glb()))
+    #: Display levels (0-255) a BAKED rough dielectric's face may sit above or
+    #: below the level the bake alone dictates (`bake_face_level`). With the
+    #: environment published at zero that is the bake path itself -- divisor,
+    #: sRGB decode, Lambert, ACES -- and 8-bit rounding is all that moves it.
+    BAKE_PATH_TOLERANCE = 6
+    #: With the environment at full, only its specular is left to move the same
+    #: face, and at roughness 1 that is a few levels (measured: 5). With the
+    #: environment's diffuse added on top -- the washed-out bake reported
+    #: 2026-09-21 -- the face sat 44 levels above the bake at a QUARTER of the
+    #: environment.
+    ENV_SPECULAR_TOLERANCE = 20
+    #: And the least a baked glossy METAL's face must move by between the two,
+    #: its reflections at full strength: it has no diffuse for a bake to carry,
+    #: so the environment is all it shows.
+    ENV_REFLECTION_FLOOR = 60
+    #: The least that metal's face must drop between each published
+    #: baked-reflection level and the next one down (full -> quarter -> off).
+    REFLECTION_LEVEL_STEP = 8
 
-        self.assertTrue(material["hasEnvMap"], "the environment was removed outright")
-        self.assertGreater(material["envMapIntensity"], 0)
+    def _face_with_and_without_environment(self, pbr, reflections=1.0):
+        """Sample the fixture's face lit by the full environment, then again
+        after republishing the same fixture with the environment published
+        at zero in its own rendering policy. Returns (lit, unlit). Both
+        publish *reflections* as the baked-reflection level (full, unless a
+        test says otherwise -- the recipe's own default is a quarter)."""
+        dark = self._lightmapped_glb(
+            bake_value=1.0, pbr=pbr, environment=0.0, baked_reflections=reflections
+        )
+
+        def republish_dark(server, page):
+            lit = page.evaluate("() => window.__sample()")
+            server.publish(dark)
+            page.wait_for_function("() => window.__probe.loads >= 2", timeout=180_000)
+            return {"lit": lit, "unlit": page.evaluate("() => window.__sample()")}
+
+        found = self._load(
+            self._lightmapped_glb(
+                bake_value=1.0, pbr=pbr, baked_reflections=reflections
+            ),
+            then=republish_dark,
+        )
+        self.assertEqual(found["console_errors"], [])
+        self.assertEqual(found["lightmapped"], 1, "fixture lost its bake")
+        return found["lit"], found["unlit"]
+
+    def test_a_baked_dielectric_takes_no_DIFFUSE_from_the_environment(self):
+        """A lightmap already holds the surface's diffuse lighting, every light
+        and the sky included, so the environment's irradiance added on top
+        lights it twice. Measured on a production room: a quarter of the
+        environment on top of the bake doubled every shadow and lifted every
+        surface -- the washed-out look that gets reported as a bake regression.
+        The environment stays (see the metal below) and is confined to the
+        specular term, so the face of a rough dielectric barely moves with it.
+        Asserted on the PIXELS the page draws: the fix is a shader edit, and
+        the two ways a shader edit goes wrong -- a replace that matches nothing,
+        a chunk that changed under it -- are silent to every property check."""
+        lit, unlit = self._face_with_and_without_environment(
+            {"metallicFactor": 0.0, "roughnessFactor": 1.0}
+        )
+        expected = bake_face_level(1.0)
+
+        # The bake path itself, with nothing else in the render: what the file
+        # says the surface receives is what reaches the screen.
         self.assertLess(
-            material["envMapIntensity"],
-            1.0,
-            "a baked material must not take the full environment on top",
+            abs(unlit - expected),
+            self.BAKE_PATH_TOLERANCE,
+            f"the bake alone lands at {unlit:.0f}, not the {expected:.0f} its "
+            "irradiance dictates",
+        )
+        # Absolute rather than relative to `unlit`, because the defect this
+        # pins was unreachable from the file: the old per-material dimming held
+        # a baked material at a quarter of the environment whatever the policy
+        # published, so lit and unlit agreed with each other while both sat
+        # well above the bake.
+        self.assertLess(
+            abs(lit - expected),
+            self.ENV_SPECULAR_TOLERANCE,
+            f"the environment moved a baked matte face to {lit:.0f} from the "
+            f"{expected:.0f} its bake dictates: its diffuse is landing on the bake",
+        )
+
+    def test_a_baked_metal_still_REFLECTS_the_environment(self):
+        """The other half, and why the environment cannot simply go off for a
+        baked model (as it once did): a lightmap carries no specular and no
+        direction, so without the environment every metal, every gloss and
+        every normal map on a baked surface renders dead flat. A glossy metal
+        has no diffuse for the bake to hold; the environment is all it shows."""
+        lit, unlit = self._face_with_and_without_environment(
+            {"metallicFactor": 1.0, "roughnessFactor": 0.3}
+        )
+
+        self.assertGreater(
+            lit - unlit,
+            self.ENV_REFLECTION_FLOOR,
+            f"a baked metal shows no environment ({unlit:.0f} -> {lit:.0f})",
+        )
+
+    def test_the_published_level_scales_a_baked_materials_reflections(self):
+        """REGRESSION (2026-09-21): the export's Baked Reflections level reaches
+        the pixels. A studio environment is brighter than the room a bake lit,
+        so its reflections at full strength lifted the darkest baked surfaces
+        of a production room from 0.06 to 0.22 of display. The level scales
+        everything the environment gives a baked material -- measured on a
+        glossy metal, which shows nothing else -- and at zero the face is the
+        bake path alone, exactly as with the environment published off."""
+        pbr = {"metallicFactor": 1.0, "roughnessFactor": 0.3}
+        steps = [
+            (
+                "quarter",
+                self._lightmapped_glb(bake_value=1.0, pbr=pbr, baked_reflections=0.25),
+            ),
+            (
+                "off",
+                self._lightmapped_glb(bake_value=1.0, pbr=pbr, baked_reflections=0.0),
+            ),
+            ("dark", self._lightmapped_glb(bake_value=1.0, pbr=pbr, environment=0.0)),
+        ]
+
+        def republish(server, page):
+            faces = {"full": page.evaluate("() => window.__sample()")}
+            for loads, (name, glb) in enumerate(steps, start=2):
+                server.publish(glb)
+                page.wait_for_function(
+                    f"() => window.__probe.loads >= {loads}", timeout=180_000
+                )
+                faces[name] = page.evaluate("() => window.__sample()")
+            return faces
+
+        found = self._load(
+            self._lightmapped_glb(bake_value=1.0, pbr=pbr, baked_reflections=1.0),
+            then=republish,
+        )
+        self.assertEqual(found["console_errors"], [])
+        self.assertGreater(
+            found["full"] - found["quarter"],
+            self.REFLECTION_LEVEL_STEP,
+            f"full {found['full']:.0f} vs quarter {found['quarter']:.0f}",
+        )
+        self.assertGreater(
+            found["quarter"] - found["off"],
+            self.REFLECTION_LEVEL_STEP,
+            f"quarter {found['quarter']:.0f} vs off {found['off']:.0f}",
+        )
+        self.assertLess(
+            abs(found["off"] - found["dark"]),
+            self.BAKE_PATH_TOLERANCE,
+            f"level 0 left {found['off']:.0f} against the env-less "
+            f"{found['dark']:.0f}: something still reflects",
         )
 
     def test_a_baked_normal_mapped_material_relieves_the_bake_and_compiles(self):
         """A lightmap is direction-free irradiance that never consults the
         normal, so on a baked surface the normal map reached the picture only
-        through the dimmed environment -- measured on a production room as
+        through the environment's specular -- measured on a production room as
         ~1% of pixels moving by ~0.4/255 between normalScale 1 and 4. The page
         patches the bake by the map through `onBeforeCompile`.
 
-        Asserted on the hook AND on a clean console, because the two ways this
-        patch has already gone wrong are both silent to everything else: a
-        replace aimed inside an `#include` the hook never sees is a no-op, and
-        a GLSL reserved word (`flat`) fails the compile with the material
-        falling back to nothing -- both logged, neither thrown.
+        Asserted on the program key the patch declares AND on a clean console,
+        because the two ways this patch has already gone wrong are both silent
+        to everything else: a replace aimed inside an `#include` the hook never
+        sees is a no-op, and a GLSL reserved word (`flat`) fails the compile
+        with the material falling back to nothing -- both logged, neither
+        thrown.
         """
         found = self._load(self._lightmapped_glb(normal_map=True))
 
         material = self._lit(found)
         self.assertTrue(material["hasNormalMap"], "fixture lost its normal map")
-        self.assertTrue(material["reliefHook"], "the relief patch is not installed")
+        self.assertEqual(
+            material["programKey"], "baked-relief", "the relief patch is not installed"
+        )
         self.assertEqual(found["console_errors"], [])
         # And NOT on a baked material without a normal map: there is nothing
-        # to relieve by, and the pure bake must stay the pure bake.
+        # to relieve by, and the pure bake must stay the pure bake. It still
+        # carries the baked patch that keeps the environment off its diffuse.
         plain = self._lit(self._load(self._lightmapped_glb()))
-        self.assertFalse(plain["reliefHook"])
+        self.assertEqual(plain["programKey"], "baked")
 
     def test_the_lookdev_area_ships_hidden(self):
         """The normals dial is finished and wired, and deliberately not offered:
@@ -1884,4 +2286,8 @@ export default function probe(viewer) {
 
 
 if __name__ == "__main__":
+    # A direct run loads no conftest: sandbox the temp root and the browser.
+    from pythontk.core_utils.test_sandbox import TestSandbox
+
+    TestSandbox.activate()
     unittest.main()

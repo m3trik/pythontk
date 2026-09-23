@@ -1187,6 +1187,118 @@ class FileTest(BaseTestCase):
             self.assertEqual(FileUtils.resolve_output_dir(entry, base), picked, entry)
 
     # -------------------------------------------------------------------------
+    # portable_path / resolve_portable_path Tests -- scene-record file paths
+    # -------------------------------------------------------------------------
+
+    def test_portable_path_is_relative_to_the_base(self):
+        """A scene record stores no machine's drive layout: under the project
+        root the spelling is root-relative, forward slashes on every OS."""
+        root = os.path.abspath("/proj")
+        self.assertEqual(
+            FileUtils.portable_path(os.path.join(root, "sound", "vo.wav"), root),
+            "sound/vo.wav",
+        )
+
+    def test_portable_path_keeps_a_path_outside_the_base_absolute(self):
+        """Never a ``../`` chain: a reader resolves against whatever project
+        its session has set.  Measured 2026-09-22: stored under the default
+        project, ``C:/Audio/VO/line01.wav`` became six ``..`` steps; read with
+        another project set they walked off the drive root to a file that
+        does not exist, and the next write stored THAT for good."""
+        root = os.path.abspath("/work/proj")
+        lib = os.path.join(os.path.abspath("/work/library"), "hit.wav")
+        want = os.path.normpath(lib).replace("\\", "/")
+        self.assertEqual(FileUtils.portable_path(lib, root), want)
+        other = os.path.abspath("/elsewhere/show")
+        self.assertEqual(
+            FileUtils.resolve_portable_path(FileUtils.portable_path(lib, root), other),
+            want,
+            "read under another project it still names the same file",
+        )
+
+    def test_portable_path_keeps_a_path_no_relative_spelling_reaches(self):
+        """Across drives no relative spelling exists; nor without a base."""
+        if os.name == "nt":
+            self.assertEqual(
+                FileUtils.portable_path("D:\\lib\\hit.wav", "C:\\proj"),
+                "D:/lib/hit.wav",
+            )
+        full = os.path.abspath("/lib/hit.wav")
+        self.assertEqual(
+            FileUtils.portable_path(full, ""), os.path.normpath(full).replace("\\", "/")
+        )
+        self.assertEqual(FileUtils.portable_path("", "/proj"), "")
+
+    def test_resolve_portable_path_round_trips(self):
+        root = os.path.abspath("/work/proj")
+        for picked in (
+            os.path.join(root, "sound", "vo.wav"),
+            os.path.join(os.path.abspath("/work/library"), "hit.wav"),
+        ):
+            stored = FileUtils.portable_path(picked, root)
+            self.assertEqual(
+                FileUtils.resolve_portable_path(stored, root),
+                os.path.normpath(picked).replace("\\", "/"),
+                stored,
+            )
+
+    def test_resolve_portable_path_leaves_an_absolute_value_alone(self):
+        """Maps written before the rule hold absolute paths; they still read."""
+        full = os.path.abspath("/old/machine/vo.wav")
+        self.assertEqual(
+            FileUtils.resolve_portable_path(full, os.path.abspath("/proj")),
+            os.path.normpath(full).replace("\\", "/"),
+        )
+        self.assertEqual(FileUtils.resolve_portable_path("", "/proj"), "")
+        # Starting at a root, a value is relative to nothing: a Windows join
+        # would keep only the base's DRIVE and silently re-home it there.
+        self.assertEqual(
+            FileUtils.resolve_portable_path(
+                "/audio/foot.wav", os.path.abspath("/proj")
+            ),
+            "/audio/foot.wav",
+        )
+
+    # -------------------------------------------------------------------------
+    # is_same_file / has_same_content Tests -- the checks before a copy reuses
+    # -------------------------------------------------------------------------
+
+    def test_is_same_file_asks_the_filesystem_not_the_spelling(self):
+        store = __import__("pythontk").TempArtifacts("ptk_same_file")
+        self.addCleanup(store.cleanup)
+        folder = store.dir_path()
+        path = os.path.join(folder, "Map.exr")
+        with open(path, "wb") as fh:
+            fh.write(b"x")
+        self.assertTrue(FileUtils.is_same_file(path, path.upper()))
+        self.assertTrue(
+            FileUtils.is_same_file(path, os.path.join(folder, "sub", "..", "Map.exr"))
+        )
+        self.assertFalse(FileUtils.is_same_file(path, os.path.join(folder, "Other")))
+        # Neither on disk: the normalized spellings decide.
+        self.assertTrue(FileUtils.is_same_file("gone/a.exr", "gone\\a.exr"))
+
+    def test_has_same_content_is_the_bytes_not_the_size(self):
+        store = __import__("pythontk").TempArtifacts("ptk_same_content")
+        self.addCleanup(store.cleanup)
+        folder = store.dir_path()
+
+        def write(name, data):
+            path = os.path.join(folder, name)
+            with open(path, "wb") as fh:
+                fh.write(data)
+            return path
+
+        old, new, twin = (
+            write("old.exr", b"OLD-BAKE"),
+            write("new.exr", b"NEW-BAKE"),
+            write("twin.exr", b"OLD-BAKE"),
+        )
+        self.assertFalse(FileUtils.has_same_content(old, new), "same size, not same")
+        self.assertTrue(FileUtils.has_same_content(old, twin))
+        self.assertFalse(FileUtils.has_same_content(old, os.path.join(folder, "gone")))
+
+    # -------------------------------------------------------------------------
     # path_length_limit / exceeds_path_length Tests
     # -------------------------------------------------------------------------
 
@@ -1675,6 +1787,64 @@ class AtomicWriteTest(unittest.TestCase):
         self.assertEqual(self._read(self.target), b"previous")
         os.replace(part, self.target)
         self.assertEqual(self._read(self.target), b"new")
+
+
+class TestUniquePath(unittest.TestCase):
+    """``FileUtils.unique_path`` -- the naming rule a batch of outputs goes through."""
+
+    def test_the_bare_name_when_nothing_stands_in_the_way(self):
+        self.assertEqual(
+            FileUtils.unique_path("out", "Crate", "exr"),
+            os.path.join("out", "Crate.exr"),
+        )
+
+    def test_taken_names_step_to_the_next_index_and_are_recorded(self):
+        taken = set()
+        first = FileUtils.unique_path("out", "Crate", ".exr", taken)
+        second = FileUtils.unique_path("out", "crate", ".exr", taken)
+        self.assertEqual(os.path.basename(first), "Crate.exr")
+        # Case-insensitive on a case-insensitive filesystem, as the disk compares.
+        if os.path.normcase("A") == os.path.normcase("a"):
+            self.assertEqual(os.path.basename(second), "crate_1.exr")
+        self.assertEqual(taken, {first, second})
+
+    def test_a_name_another_reader_claims_is_passed_over(self):
+        claims = {"crate.exr": frozenset({"|other"})}
+        path = FileUtils.unique_path(
+            "out", "Crate", ".exr", claims=claims, owners=["|me"]
+        )
+        self.assertEqual(os.path.basename(path), "Crate_1.exr")
+
+    def test_a_name_only_the_owners_read_stays_theirs(self):
+        """Re-writing an owner's file keeps its name."""
+        claims = {"crate.exr": frozenset({"|me"})}
+        path = FileUtils.unique_path(
+            "out", "Crate", ".exr", claims=claims, owners=["|me"]
+        )
+        self.assertEqual(os.path.basename(path), "Crate.exr")
+
+    def test_a_name_shared_with_someone_else_is_not_one_owners_to_take(self):
+        """A file two readers share is not free for one of them alone."""
+        claims = {"crate.exr": frozenset({"|me", "|sibling"})}
+        path = FileUtils.unique_path(
+            "out", "Crate", ".exr", claims=claims, owners=["|me"]
+        )
+        self.assertEqual(os.path.basename(path), "Crate_1.exr")
+        both = FileUtils.unique_path(
+            "out", "Crate", ".exr", claims=claims, owners=["|me", "|sibling"]
+        )
+        self.assertEqual(os.path.basename(both), "Crate.exr")
+
+    def test_a_plain_collection_claims_names_outright(self):
+        path = FileUtils.unique_path(
+            "out", "Crate", ".exr", claims=["CRATE.exr"], owners=["|me"]
+        )
+        self.assertEqual(os.path.basename(path), "Crate_1.exr")
+
+    def test_avoided_paths_are_passed_over(self):
+        avoid = {os.path.abspath(os.path.join("out", "Crate.exr"))}
+        path = FileUtils.unique_path("out", "Crate", ".exr", avoid=avoid)
+        self.assertEqual(os.path.basename(path), "Crate_1.exr")
 
 
 if __name__ == "__main__":

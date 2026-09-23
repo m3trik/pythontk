@@ -1295,6 +1295,172 @@ class DilateImageTest(unittest.TestCase):
         )
 
 
+class DenoiseImageTest(unittest.TestCase):
+    """ImgUtils.denoise_image -- edge-preserving denoise of a baked (HDR) map.
+
+    Arnold's bake path has no denoiser (RTT ignores imagers), so a lightmap's
+    sampling noise shipped as-is: measured on a production floor, 9% per texel
+    in the cell after the atlas's own supersample, which read as splotches in
+    the WebXR preview. This is the pass that removes it. Added: 2026-09-21
+    """
+
+    @staticmethod
+    def _noisy(signal, sigma=0.08, seed=7):
+        """*signal* (linear, HxWx3) under RELATIVE noise, as a path tracer's."""
+        rng = np.random.default_rng(seed)
+        return signal * np.exp(rng.normal(0.0, sigma, signal.shape[:2]))[..., None]
+
+    @staticmethod
+    def _log_rms(a, b, where=None):
+        d = np.log(a.mean(axis=2)) - np.log(b.mean(axis=2))
+        return float(
+            np.sqrt((d[where] ** 2).mean() if where is not None else (d**2).mean())
+        )
+
+    def _ramp_with_a_shadow(self):
+        """A light falloff (a ramp in log) with a hard shadow across it."""
+        h, w = 64, 64
+        ramp = np.exp(np.linspace(0.0, 1.0, w))[None, :].repeat(h, axis=0)
+        shadow = np.ones((h, w))
+        shadow[:, 40:] = 0.35
+        return np.stack([ramp * shadow] * 3, axis=2)
+
+    def test_grain_goes_and_a_falloff_and_a_shadow_edge_stay(self):
+        clean = self._ramp_with_a_shadow()
+        noisy = self._noisy(clean)
+        out = ImgUtils.denoise_image(noisy)
+        # Away from the edge, the grain is mostly gone and the falloff is kept
+        # (an error against the CLEAN ramp, so a flattened ramp would fail).
+        away = np.ones(clean.shape[:2], dtype=bool)
+        away[:, 36:44] = False
+        self.assertLess(
+            self._log_rms(out, clean, away), 0.3 * self._log_rms(noisy, clean, away)
+        )
+
+        # The shadow edge. Clear of the windows' reach the step is exact; right
+        # at it, a razor-sharp synthetic step keeps most of its height (the
+        # guided filter's known softening within a radius of a step -- a
+        # baked shadow is soft to begin with).
+        def step(left, right):
+            return float(np.log(out[:, right].mean() / out[:, left].mean()))
+
+        def truth(left, right):
+            return float(np.log(0.35) + (right - left) / 63)
+
+        self.assertLess(abs(step(34, 46) - truth(34, 46)), 0.05)
+        self.assertGreater(step(38, 41) / truth(38, 41), 0.8)
+
+    def test_only_the_mask_is_read_or_written(self):
+        clean = self._ramp_with_a_shadow()
+        noisy = self._noisy(clean)
+        mask = np.zeros(noisy.shape[:2], dtype=bool)
+        mask[8:56, 8:56] = True
+        poisoned = noisy.copy()
+        poisoned[~mask] = 1e4  # a gutter the filter must never average in
+        out = ImgUtils.denoise_image(poisoned, mask=mask)
+        np.testing.assert_array_equal(out[~mask], poisoned[~mask])
+        self.assertLess(out[mask].max(), 10.0)
+
+    def test_a_lone_spike_is_clamped_to_its_neighbourhood(self):
+        clean = np.ones((32, 32, 3))
+        noisy = self._noisy(clean, sigma=0.03)
+        noisy[16, 16] *= 50.0  # a firefly
+        out = ImgUtils.denoise_image(noisy)
+        self.assertLess(out[16, 16].mean(), 1.3)
+
+    def test_scale_and_channel_order_change_nothing(self):
+        """Relative noise is filtered in log space: an HDR map 100x brighter
+        denoises the same, and BGR (cv2) the same as RGB."""
+        clean = self._ramp_with_a_shadow() * np.array([1.0, 0.8, 0.6])
+        noisy = self._noisy(clean)
+        out = ImgUtils.denoise_image(noisy)
+        np.testing.assert_allclose(
+            ImgUtils.denoise_image(noisy * 100.0), out * 100.0, rtol=1e-5
+        )
+        np.testing.assert_allclose(
+            ImgUtils.denoise_image(noisy[..., ::-1])[..., ::-1], out, rtol=1e-5
+        )
+
+    def test_dtype_and_shape_come_back(self):
+        noisy = self._noisy(self._ramp_with_a_shadow()).astype(np.float32)
+        out = ImgUtils.denoise_image(noisy)
+        self.assertEqual((out.dtype, out.shape), (noisy.dtype, noisy.shape))
+        single = ImgUtils.denoise_image(noisy[..., 0])
+        self.assertEqual(single.shape, noisy.shape[:2])
+
+    def test_the_cv2_path_and_the_numpy_path_agree(self):
+        """cv2 is the fast path (float32 filters), numpy the fallback for a
+        Python without it (float64 integral images) -- the same filter, so the
+        same answer to float32 precision."""
+        from unittest import mock
+
+        clean = self._ramp_with_a_shadow()
+        noisy = self._noisy(clean)
+        noisy[20, 20] *= 40.0  # a spike, so the median path runs too
+        mask = np.ones(noisy.shape[:2], dtype=bool)
+        mask[:, 56:] = False
+        if ImgUtils._cv2() is None:
+            self.skipTest("cv2 unavailable: nothing to compare the fallback with")
+        fast = ImgUtils.denoise_image(noisy, mask=mask)
+        with mock.patch.object(ImgUtils, "_cv2", staticmethod(lambda: None)):
+            slow = ImgUtils.denoise_image(noisy, mask=mask)
+        np.testing.assert_allclose(fast, slow, rtol=1e-4)
+
+    def test_a_bad_sample_is_healed_and_poisons_nothing(self):
+        """One NaN or inf texel -- a renderer's rare bad sample -- turned the
+        WHOLE map NaN: every statistic it touched went with it, 0 * NaN
+        included. It now reads as absent and is written from its neighbours."""
+        clean = self._ramp_with_a_shadow()
+        noisy = self._noisy(clean)
+        for bad in (np.nan, np.inf):
+            with self.subTest(bad=bad):
+                image = noisy.copy()
+                image[30, 20] = bad
+                out = ImgUtils.denoise_image(image)
+                self.assertTrue(np.isfinite(out).all())
+                self.assertLess(
+                    abs(float(np.log(out[30, 20].mean() / clean[30, 20].mean()))), 0.2
+                )
+
+    def test_a_bad_sample_outside_the_mask_stays_outside_it(self):
+        """"Only mask texels are read or written" held for finite gutters
+        only: a NaN two texels off an island poisoned the island through the
+        zero-weighted window sums."""
+        clean = self._ramp_with_a_shadow()
+        image = self._noisy(clean)
+        mask = np.zeros(image.shape[:2], dtype=bool)
+        mask[8:56, 8:56] = True
+        image[6, 30], image[30, 6] = np.nan, np.inf
+        out = ImgUtils.denoise_image(image, mask=mask)
+        self.assertTrue(np.isfinite(out[mask]).all())
+        self.assertTrue(np.isnan(out[6, 30]).all(), "left for the caller, untouched")
+        self.assertTrue(np.isinf(out[30, 6]).all())
+
+    def test_the_two_paths_agree_on_a_bad_sample(self):
+        from unittest import mock
+
+        if ImgUtils._cv2() is None:
+            self.skipTest("cv2 unavailable: nothing to compare the fallback with")
+        image = self._noisy(self._ramp_with_a_shadow())
+        image[20, 20], image[40, 10] = np.inf, np.nan
+        fast = ImgUtils.denoise_image(image)
+        with mock.patch.object(ImgUtils, "_cv2", staticmethod(lambda: None)):
+            slow = ImgUtils.denoise_image(image)
+        np.testing.assert_allclose(fast, slow, rtol=1e-4)
+
+    def test_a_zero_channel_barely_tints_its_neighbours(self):
+        """A channel at exactly zero sat ~14 log units under its lit
+        neighbours (floored against the MAP's level) and dragged that
+        channel's window means: the texel two over lost 42% of its blue.
+        Floored against its own texel's level it drags half as far."""
+        image = self._noisy(np.stack([self._ramp_with_a_shadow()[..., 0]] * 3, 2))
+        reference = ImgUtils.denoise_image(image)
+        image[30, 20, 2] = 0.0
+        out = ImgUtils.denoise_image(image)
+        ratios = out[30, 21:24, 2] / reference[30, 21:24, 2]
+        self.assertGreater(float(ratios.min()), 0.7, ratios)
+
+
 class ImageFormatCapabilityTest(unittest.TestCase):
     """The per-format capability table is the SSoT for IO routing (read/write/backend)."""
 
@@ -2885,6 +3051,25 @@ class ChannelsCarryingDataTest(unittest.TestCase):
     def test_a_band_the_image_does_not_have_is_ignored(self):
         img = ImgUtils.create_image("RGB", (4, 4), (255, 0, 0))
         self.assertEqual(ImgUtils.channels_carrying_data(img, ("A",)), ())
+
+
+class ComposeRectTest(unittest.TestCase):
+    """``ImgUtils.compose_rect`` -- two UV rects folded into one."""
+
+    def test_composed_samples_what_the_two_steps_sampled(self):
+        inner = [0.5, 0.25, 0.1, 0.6]
+        outer = [0.8, 0.9, 0.05, 0.02]
+        both = ImgUtils.compose_rect(outer, inner)
+        for u, v in ((0.0, 0.0), (1.0, 1.0), (0.3, 0.7)):
+            step = (u * inner[0] + inner[2], v * inner[1] + inner[3])
+            want = (step[0] * outer[0] + outer[2], step[1] * outer[1] + outer[3])
+            got = (u * both[0] + both[2], v * both[1] + both[3])
+            self.assertAlmostEqual(want[0], got[0])
+            self.assertAlmostEqual(want[1], got[1])
+
+    def test_no_outer_rect_is_the_identity(self):
+        rect = [0.5, 0.25, 0.1, 0.6]
+        self.assertEqual(ImgUtils.compose_rect(None, rect), rect)
 
 
 if __name__ == "__main__":

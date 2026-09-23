@@ -81,8 +81,10 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/task_factory.py`](#core_utils--task_factory) — Generic task/check pipeline primitive -- host- and Qt-free.
 - [`core_utils/template_set.py`](#core_utils--template_set) — A discoverable, user-extensible collection of schema-validated template files.
 - [`core_utils/test_sandbox.py`](#core_utils--test_sandbox) — Process-level test isolation -- keep a test run off the developer's machine.
+- [`core_utils/upstream_patch.py`](#core_utils--upstream_patch) — UpstreamPatch - correcting a defect in code we do not own, with a way out.
 - [`core_utils/user_config.py`](#core_utils--user_config) — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
+- [`file_utils/file_dependencies.py`](#file_utils--file_dependencies) — File dependencies -- files a record names by *name*, found where they are NOW.
 - [`file_utils/file_naming.py`](#file_utils--file_naming) — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert)
 - [`file_utils/mesh_convert/export_verify.py`](#file_utils--mesh_convert--export_verify) — Deliverable verification for exported FBX / GLB pairs.
@@ -214,17 +216,18 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `HandoffBridge.carrier_of(path: str) -> str` *(static)* — The carrier a payload *path* names, by extension (``"fbx"`` / ``"usd"``).
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
   - `HandoffBridge.import_roots(*packages: str) -> List[str]` *(static)* — ``sys.path`` entries that make *packages* importable in a launched child app.
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L752)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L777)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+  - `HandoffBridge.child_sys_path(entries: Optional[Sequence[str]] = None) -> List[str]` *(static)* — The parent's importable set, minus what belongs to the parent's OWN Python.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/app_handoff.py#L814)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L839)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L926)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
+- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L988)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
   - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L1078)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/app_handoff.py#L1140)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
   - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1161)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/app_handoff.py#L1223)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
   - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app work on them, and re-ingest the result.
@@ -808,11 +811,11 @@ Pure planning layer for multi-shot topology transformations.
   - `ShotPlanner.plan_ripple_downstream(store: ShotStore, pivot_shot_id: int, after_frame: float, delta: float, carry_gap: bool = False) -> MovePlan` *(static)* — Build a plan that shifts every shot starting at or after
   - `ShotPlanner.plan_reorder(store: ShotStore, shot_id: int, target_pos: int, gap: float) -> MovePlan` *(static)* — Build a plan that moves ``shot_id`` to 1-based timeline position ``target_pos``.
   - `ShotPlanner.plan_ripple_upstream(store: ShotStore, pivot_shot_id: int, before_frame: float, delta: float, carry_gap: bool = False) -> MovePlan` *(static)* — Build a plan that shifts every shot ending at or before
-- **[`class ShotMove`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L810)** — A single shot's source and destination ranges.
+- **[`class ShotMove`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L819)** — A single shot's source and destination ranges.
   - `ShotMove.delta(self) -> float` *(property)*
   - `ShotMove.moves(self) -> bool` *(property)*
-- **[`class MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L845)** — Resolved multi-shot timeline mutation.
-- **[`class GapRetime`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L868)** — One inter-shot gap whose WIDTH changes, and where its content must land.
+- **[`class MovePlan`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L854)** — Resolved multi-shot timeline mutation.
+- **[`class GapRetime`](pythontk/pythontk/core_utils/engines/shots/shot_plan.py#L877)** — One inter-shot gap whose WIDTH changes, and where its content must land.
   - `GapRetime.width(self) -> float` *(property)*
   - `GapRetime.scale(self) -> float` *(property)* — Time factor about the gap's left edge (0.0 collapses the gap).
   - `GapRetime.shrinks(self) -> bool` *(property)*
@@ -868,6 +871,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapFactory.get_tile_paths(cls, filepath: str) -> List[str]` *(class)* — Every tile on disk of the tile set a texture path names, sorted.
   - `MapFactory.group_textures_by_set(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]` *(class)* — Groups texture maps into sets based on matching base names.
   - `MapFactory.collapse_tile_sets(cls, texture_sets: Dict[str, List[str]]) -> Dict[str, List[str]]` *(class)* — One set per MATERIAL from per-tile sets: each map once, as its lowest tile.
+  - `MapFactory.dominant_texture_set(cls, paths: Iterable[str]) -> Optional[Tuple[str, str]]` *(class)* — ``(base, folder)`` of the texture set most of *paths* belong to, or ``None``.
   - `MapFactory.filter_images_by_type(cls, files, types='')` *(class)* — Parameters:
   - `MapFactory.sort_images_by_type(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]` *(class)* — Sort image files by map type based on the input format.
   - `MapFactory.contains_map_types(cls, files, map_types)` *(class)* — Check if the given images contain the given map types.
@@ -1201,11 +1205,12 @@ Sidecar processes for ``ExecutionMonitor``: indicator, dialog and watchdog.
 
 The Scene Exporter panels' shared contract, written once.
 
-- **[`class ExportProfile`](pythontk/pythontk/core_utils/export_profile.py#L32)** — Pure helpers over Scene Exporter task / check definitions.
+- **[`class ExportProfile`](pythontk/pythontk/core_utils/export_profile.py#L33)** — Pure helpers over Scene Exporter task / check definitions.
   - `ExportProfile.legal_name(name: str) -> str` *(static)* — The switchboard's objectName rule, from its owner.
   - `ExportProfile.widget_key(cls, name: str, spec: Mapping[str, Any]) -> str` *(class)* — The objectName the panel gives *name*'s widget (and the preset stores).
   - `ExportProfile.value_method(cls, spec: Mapping[str, Any]) -> str` *(class)* — The read the export button performs on the widget (``b000``'s rule).
   - `ExportProfile.run_config(cls, values: Mapping[str, Any], task_definitions: Mapping[str, Mapping[str, Any]], check_definitions: Mapping[str, Mapping[str, Any]], override_checks: bool = False, ignore_groups_case_sensitive: bool = False, default_export_mode: str = 'visible') -> Dict[str, Any]` *(class)* — The export button's contract: widget values -> ``perform_export`` inputs.
+  - `ExportProfile.optimize_textures_tasks(choice: Any, template: Optional[str] = None) -> Dict[str, Any]` *(static)* — The Optimize Textures combo's ONE value as the tasks it stands for.
   - `ExportProfile.read_values(cls, widgets: Mapping[str, Any], *tables: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]` *(class)* — Read the panel's live widgets into ``{objectName: value}``.
   - `ExportProfile.texture_size_limit_bytes(max_size_mb: Any) -> Optional[int]` *(static)* — The Max Texture Size row's value as bytes;
   - `ExportProfile.strip_deliverable_extension(name: Optional[str]) -> str` *(static)* — *name* trimmed, without a trailing deliverable extension -- a whitelist
@@ -1218,15 +1223,23 @@ The Scene Exporter panels' shared contract, written once.
   - `ExportProfile.unimplemented(cls, manager: Any) -> Dict[str, List[str]]` *(class)* — The shared tables' names *manager* has no method for.
   - `ExportProfile.optimize_textures_options(cls) -> Dict[str, Any]` *(class)* — Optimize Textures -- the pass switch and its size dial in ONE combo.
   - `ExportProfile.texture_file_type_options(cls) -> Dict[str, Any]` *(class)* — Texture File Type -- the container dial for EVERY texture the export
+  - `ExportProfile.baked_reflections_default(cls) -> str` *(class)* — The Baked Reflections token a row starts at: the one whose level the
+  - `ExportProfile.glb_options(cls) -> Dict[str, Dict[str, Any]]` *(class)* — ``{row key: {label: value}}`` for :attr:`GLB_ROWS`, as a producer
+  - `ExportProfile.glb_defaults(cls) -> Dict[str, Any]` *(class)* — ``{row key: value}`` -- where each :attr:`GLB_ROWS` row starts in
   - `ExportProfile.frame_rate_options(cls) -> Dict[str, Optional[str]]` *(class)* — Frame Rate check -- every ``VidUtils.FRAME_RATES`` entry labelled
-- **[`class ExportRun`](pythontk/pythontk/core_utils/export_profile.py#L825)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
+- **[`class ExportRun`](pythontk/pythontk/core_utils/export_profile.py#L956)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
   - `ExportRun.glb_only(self) -> bool` *(property)* — The GLB is the deliverable;
   - `ExportRun.create_glb(self) -> bool` *(property)* — A ``.glb`` is written this run (alone, or beside the FBX).
   - `ExportRun.usd(self) -> bool` *(property)* — The deliverable is a USD layer.
+  - `ExportRun.rendering(self) -> Dict[str, Dict[str, Any]]` *(property)* — This run's choices over the lighting recipe its deliverables publish.
+  - `ExportRun.baked_reflection_level(cls, value: Any) -> Optional[float]` *(class)* — A Baked Reflections row value as its level;
   - `ExportRun.replace(self, **changes: Any) -> 'ExportRun'` — A copy with *changes* applied (``dataclasses.replace``).
   - `ExportRun.clip_mode(value: Any) -> str` *(static)* — An Animation Clips row value as one of its modes (``full`` /
   - `ExportRun.with_tasks(self, tasks: Mapping[str, Any]) -> 'ExportRun'` — A copy carrying the modes derived from the dispatched *tasks*.
+  - `ExportRun.glb_max_size(self, logger: Any = None) -> int` — The Optimize Textures ceiling as pixels, ``0`` for none.
+  - `ExportRun.glb_texture_params(self, logger: Any = None) -> Dict[str, Any]` — ``optimize_glb_textures`` kwargs for this run's GLB.
   - `ExportRun.from_tasks(cls, tasks: Optional[Mapping[str, Any]], texture_file_types: Iterable[Any] = ()) -> Tuple['ExportRun', Dict[str, Any], List[Tuple[str, str]]]` *(class)* — Pop the per-run modes out of a ``perform_export`` *tasks* dict.
+  - `ExportRun.for_glb(cls, values: Mapping[str, Any]) -> Tuple['ExportRun', List[Tuple[str, str]]]` *(class)* — A GLB-only run carrying the Scene Exporter's GLB rows and no other.
 
 <a id="core_utils--handoff_manifest"></a>
 ### `core_utils/handoff_manifest.py`
@@ -1621,7 +1634,7 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `SceneRecords.resolve_class(module: str, name: str) -> Any` *(static)* — The class a ``(module, name)`` row names -- :attr:`CODECS`',
   - `SceneRecords.codec(cls, spec: RecordSpec) -> Optional[Any]` *(class)* — The codec class of a :attr:`Merge.CODEC` record, else ``None``.
   - `SceneRecords.portable(cls) -> List[RecordSpec]` *(class)* — The records that cross a DCC hand-off, in declaration order.
-  - `SceneRecords.rendering_policy() -> Dict[str, Any]` *(static)* — What a deliverable claims about how it should be lit.
+  - `SceneRecords.rendering_policy(overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(static)* — What a deliverable claims about how it should be lit.
   - `SceneRecords.all(cls) -> List[RecordSpec]` *(class)* — Every declared record, in declaration order.
   - `SceneRecords.deliverable(cls) -> List[RecordSpec]` *(class)*
   - `SceneRecords.private(cls) -> List[RecordSpec]` *(class)*
@@ -1630,9 +1643,9 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `SceneRecords.ordered(cls, specs: Iterable[RecordSpec]) -> List[RecordSpec]` *(class)* — *specs* in dependency order: every record after the ones its
   - `SceneRecords.check_producers(cls, table: Mapping[Any, Any]) -> List[RecordSpec]` *(class)* — Validate a DCC producer *table* against the registry.
   - `SceneRecords.declared_takes(cls, read: Callable[[str], Any]) -> List[Dict[str, Any]]` *(class)* — The take list a deliverable declares, however old the file.
-  - `SceneRecords.handoff_block(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None) -> Dict[str, Any]` *(class)* — The standalone-reader contract for an FBX, ready to store.
+  - `SceneRecords.handoff_block(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* — The standalone-reader contract for an FBX, ready to store.
   - `SceneRecords.describe(cls) -> List[Dict[str, Any]]` *(class)* — One row per record, for the docs generator and the gates.
-- **[`class SceneStoreBase`](pythontk/pythontk/core_utils/scene_records.py#L770)** — The storage contract a DCC implements -- strings per scope, nothing more.
+- **[`class SceneStoreBase`](pythontk/pythontk/core_utils/scene_records.py#L779)** — The storage contract a DCC implements -- strings per scope, nothing more.
   - `SceneStoreBase.name(cls, scope: Scope) -> str` *(class)* — The carrier name *scope* reports under (:attr:`NAMES`).
   - `SceneStoreBase.read(cls, scope: Scope, key: str) -> Optional[str]` *(class)* — The string channel *key* in *scope*, or ``None`` when the carrier,
   - `SceneStoreBase.write(cls, scope: Scope, key: str, text: Optional[str]) -> Optional[str]` *(class)* — Store *text* on *key*;
@@ -1648,10 +1661,10 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `SceneStoreBase.merge_plan(cls, carriers: Mapping[Any, Any]) -> 'RecordTransfer'` *(class)* — *carriers* (another scene's, by scope) against this scene's own:
   - `SceneStoreBase.merge_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None) -> 'TransferContext'` *(class)* — Merge another scene's *carriers* -- an imported reference's, made
   - `SceneStoreBase.discard_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None) -> 'TransferContext'` *(class)* — Remove another scene's *carriers* without merging their records --
-- **[`class ExportContext`](pythontk/pythontk/core_utils/scene_records.py#L1144)** — What an export DECIDES, handed to every producer as input.
+- **[`class ExportContext`](pythontk/pythontk/core_utils/scene_records.py#L1153)** — What an export DECIDES, handed to every producer as input.
   - `ExportContext.record(self, spec: Union[RecordSpec, str], store=None, default: Any = None) -> Any` — The payload of *spec* as produced in THIS assembly, else -- when a
   - `ExportContext.refreshes(self, spec: RecordSpec) -> bool` — Whether this context's mode refreshes *spec*.
-- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/scene_records.py#L1212)** — The records one export ships, assembled once and committed once.
+- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/scene_records.py#L1226)** — The records one export ships, assembled once and committed once.
   - `ExportSnapshot.assemble(cls, producers: Mapping[Union[RecordSpec, str], Producer], ctx: Optional[ExportContext] = None, only: Optional[Iterable[Union[RecordSpec, str]]] = None) -> 'ExportSnapshot'` *(class)* — Run *producers* in dependency order and collect their records.
   - `ExportSnapshot.publish(cls, store, records: Mapping[Union[RecordSpec, str], Any], ctx: Optional[ExportContext] = None) -> 'ExportSnapshot'` *(class)* — Commit *records* that are already in hand -- the AUTHORING-time
   - `ExportSnapshot.commit(self, store) -> Dict[str, Optional[str]]` — Write every produced record to *store* in one pass, then stamp the
@@ -1659,12 +1672,12 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `ExportSnapshot.record(self, spec: Union[RecordSpec, str], default: Any = None) -> Any` — The payload produced for *spec*, or *default*.
   - `ExportSnapshot.channels(self, scope: Scope = Scope.DELIVERABLE) -> Dict[str, Any]` — Produced payloads of *scope*, by key -- the sidecar's snapshot.
   - `ExportSnapshot.summary(self) -> str` — One line for the export log: each record that shipped and how
-- **[`class TransferContext`](pythontk/pythontk/core_utils/scene_records.py#L1468)** — What a record crossing between scenes needs from the DCC, and what the
+- **[`class TransferContext`](pythontk/pythontk/core_utils/scene_records.py#L1484)** — What a record crossing between scenes needs from the DCC, and what the
   - `TransferContext.note(self, text: str) -> None` — Record one sentence for the report.
   - `TransferContext.adapter(self, name: str, default: Any = None) -> Any` — The DCC adapter *name*, else *default*.
   - `TransferContext.spell(self, name: str) -> str` — *name* as this side spells it -- :attr:`rename`'s answer, else
   - `TransferContext.respell(self, value: Any) -> Any` — *value* with every string -- mapping keys included -- put through
-- **[`class RecordTransfer`](pythontk/pythontk/core_utils/scene_records.py#L1542)** — Another scene's records meeting this scene's -- one engine for every
+- **[`class RecordTransfer`](pythontk/pythontk/core_utils/scene_records.py#L1558)** — Another scene's records meeting this scene's -- one engine for every
   - `RecordTransfer.between(cls, store, other: Mapping[Any, Mapping[str, Any]]) -> 'RecordTransfer'` *(class)* — *store*'s channels, per scope, against *other*'s (``{scope: values}``).
   - `RecordTransfer.incoming(self) -> List[Tuple[Scope, str]]` *(property)* — What a merge would bring in: every :attr:`Merge.UNION` /
   - `RecordTransfer.rederive(self) -> List[RecordSpec]` *(property)* — The deliverables to produce again once the merge is applied: every
@@ -1834,6 +1847,19 @@ Process-level test isolation -- keep a test run off the developer's machine.
   - `TestSandbox.activate(cls) -> str` *(class)* — Both guards; returns the temp root.
   - `TestSandbox.is_active(cls) -> bool` *(class)* — True while both guards are in place.
 
+<a id="core_utils--upstream_patch"></a>
+### `core_utils/upstream_patch.py`
+
+UpstreamPatch - correcting a defect in code we do not own, with a way out.
+
+- **[`class UpstreamPatch`](pythontk/pythontk/core_utils/upstream_patch.py#L56)** — One third-party defect, its replacement, and the probe that retires it.
+  - `UpstreamPatch.replaces(self, func: Callable) -> Callable` — Register *func* as the replacement;
+  - `UpstreamPatch.detects(self, func: Callable[[], bool]) -> Callable[[], bool]` — Register *func* as the probe;
+  - `UpstreamPatch.available(self) -> bool` *(property)* — Whether :attr:`target` resolves in this host.
+  - `UpstreamPatch.applied(self)` — Swap the replacement in for the duration of the block.
+  - `UpstreamPatch.still_needed(self) -> bool` — Whether the defect is still present in this host.
+  - `UpstreamPatch.registry(cls) -> List['UpstreamPatch']` *(class)* — Every patch declared in this process, in declaration order.
+
 <a id="core_utils--user_config"></a>
 ### `core_utils/user_config.py`
 
@@ -1852,13 +1878,17 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
 <a id="file_utils--_file_utils"></a>
 ### `file_utils/_file_utils.py`
 
-- **[`class FileUtils(HelpMixin)`](pythontk/pythontk/file_utils/_file_utils.py#L17)**
+- **[`class FileUtils(HelpMixin)`](pythontk/pythontk/file_utils/_file_utils.py#L18)**
   - `FileUtils.is_valid(filepath: str, expected_type: Optional[str] = None) -> bool` *(static)* — Check if a path is valid, optionally requiring a specific type ('file' or 'dir').
   - `FileUtils.is_cloud_placeholder(filepath: str) -> bool` *(static)* — Return True if *filepath* is an online-only cloud-sync placeholder.
   - `FileUtils.is_under(path: str, directory: str, inclusive: bool = True) -> bool` *(static)* — Is *path* inside *directory*?
+  - `FileUtils.is_same_file(path_a: str, path_b: str) -> bool` *(static)* — Whether two paths name ONE file (or folder) on disk, however spelled.
+  - `FileUtils.has_same_content(path_a: str, path_b: str) -> bool` *(static)* — Whether two existing files hold byte-identical content.
   - `FileUtils.is_rooted_path(text: str) -> bool` *(static)* — Does *text* name a full path rather than a subdirectory?
   - `FileUtils.resolve_output_dir(cls, entry: str, base: Optional[str]) -> Optional[str]` *(class)* — Resolve a user-typed output-directory *entry* against *base*.
   - `FileUtils.relativize_output_dir(cls, path: str, base: Optional[str]) -> str` *(class)* — The portable spelling of *path* for a :meth:`resolve_output_dir` field.
+  - `FileUtils.portable_path(cls, path: str, base: Optional[str]) -> str` *(class)* — The spelling of file *path* that a scene record stores.
+  - `FileUtils.resolve_portable_path(cls, stored: str, base: Optional[str]) -> str` *(class)* — The absolute path a :meth:`portable_path` spelling names from *base*.
   - `FileUtils.path_length_limit() -> int` *(static)* — The longest path this OS will accept, in characters.
   - `FileUtils.exceeds_path_length(path: str, limit: Optional[int] = None) -> bool` *(static)* — Is *path* longer than the OS path-length limit?
   - `FileUtils.free_space(path: str) -> Optional[int]` *(static)* — Return free space (bytes) on the volume that holds *path*.
@@ -1870,6 +1900,7 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.create_dir(filepath: str) -> None` *(static)* — Create a directory if one doesn't already exist.
   - `FileUtils.next_version_path(filepath: str, format: str = '{stem}_v{n:03d}{ext}', start: int = 1, extensions: Iterable[str] = ()) -> str` *(static)* — Return the next available versioned path for `filepath`.
   - `FileUtils.next_version_number(directory: str, format: str = '{stem}_v{n:03d}{ext}', stem: str = '', ext: str = '', start: int = 1, extensions: Iterable[str] = ()) -> int` *(static)* — Return one past the highest version `format` already holds in `directory`.
+  - `FileUtils.unique_path(folder: str, stem: str, ext: str, taken: Optional[set] = None, claims: Optional[Union[Mapping, Iterable[str]]] = None, owners: Iterable[str] = (), avoid: Iterable[str] = ()) -> str` *(static)* — ``<folder>/<stem><ext>``, or the first ``<stem>_<k><ext>`` this write may take.
   - `FileUtils.get_dir_contents(dirPath, content='file', recursive=False, num_threads=1, inc_files=[], exc_files=[], inc_dirs=[], exc_dirs=[], group_by_type=False)` *(static)* — Get the contents of a directory and any of its children.
   - `FileUtils.open_explorer(path: str, create_dir: bool = False, logger=None) -> bool` *(static)* — Open the file explorer at the given path.
   - `FileUtils.get_file_contents(filepath: str, as_list: bool = False, encoding: str = 'utf-8', default: Optional[Union[str, List[str]]] = None) -> Optional[Union[str, List[str]]]` *(static)* — Read a text file, whole or as a list of lines, or return *default*.
@@ -1888,6 +1919,19 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `FileUtils.append_path(cls, path, **kwargs)` *(class)* — Append a directory to the python path.
   - `FileUtils.get_object_path(obj, inc_filename: bool = False) -> str` *(static)* — Retrieve the absolute file path associated with a Python object.
   - `FileUtils.get_classes_from_path(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)` *(class)* — Scan the specified directory or Python file and retrieve class information from each file.
+
+<a id="file_utils--file_dependencies"></a>
+### `file_utils/file_dependencies.py`
+
+File dependencies -- files a record names by *name*, found where they are NOW.
+
+- **[`class FileDependencies(LoggingMixin)`](pythontk/pythontk/file_utils/file_dependencies.py#L44)** — The rules over files that records name by name;
+  - `FileDependencies.claims(refs: Iterable[Sequence[str]]) -> Dict[str, FrozenSet[str]]` *(static)* — ``{file name: owners}`` -- which owners read which file name.
+  - `FileDependencies.find_files(names: Iterable[str], root: str) -> List[str]` *(static)* — Every file under *root*, recursively, whose name is one of *names*.
+  - `FileDependencies.resolve(cls, refs: Iterable[Sequence[str]], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, resolve_hint: Optional[Callable[[str, str], str]] = None) -> List[Dict[str, Any]]` *(class)* — Every file *refs* name, resolved on disk NOW;
+  - `FileDependencies.search_dirs(deps: Iterable[Dict[str, Any]], then: Iterable[str] = ()) -> List[str]` *(static)* — The folders a consumer that joins names should try, in priority order.
+  - `FileDependencies.copy_files(cls, sources: Iterable[str], dest_dir: str, mode: str = 'copy') -> List[Tuple[str, str]]` *(class)* — Copy (or, ``mode="move"``, move) *sources* into *dest_dir*, without clobbering.
+  - `FileDependencies.relocate(cls, deps: Sequence[Dict[str, Any]], dest_dir: str, source_dir: str = '', mode: str = 'copy', dry_run: bool = False, find_files: Optional[Callable[[List[str], str], List[str]]] = None, copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None) -> Dict[str, Any]` *(class)* — Gather *deps*' files into *dest_dir*.
 
 <a id="file_utils--file_naming"></a>
 ### `file_utils/file_naming.py`
@@ -1912,11 +1956,12 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L66)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.conversion_timeout(cls, src: str) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
   - `MeshConvert.bake_node_frames(cls, src: str) -> int` *(class)* — Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
+  - `MeshConvert.rendering_policy(cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* — :attr:`RENDERING_POLICY` with a deliverable's own choices laid over it.
   - `MeshConvert.OPTIMIZE_WORKERS(cls) -> int` — Deprecated alias of :attr:`ImgUtils.ENCODE_WORKERS`, for one release.
   - `MeshConvert.UASTC_RDO_NORMAL_MAX(cls) -> float` — The RDO lambda a normal map is capped at whatever the caller asks:
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
   - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
-  - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
+  - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
   - `MeshConvert.strip_fbx_handoff(cls, gltf: dict) -> int` *(class)* — Drop the FBX's handoff block from a converted glTF's node extras.
   - `MeshConvert.build_fbx_handoff(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]` *(class)* — The standalone-reader contract for an FBX, ready to publish.
   - `MeshConvert.apply_scene_sidecar(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]` *(class)* — Apply a scene-sidecar envelope to a GLB and embed it in its extras.
@@ -2064,7 +2109,7 @@ Reduce a GLB's animation keys to what its interpolation needs.
 FBX -> GLB: the one build every GLB deliverable goes through.
 
 - **[`class GlbPipeline(LoggingMixin)`](pythontk/pythontk/file_utils/mesh_convert/glb_pipeline.py#L63)** — FBX -> GLB, with every deliverable's passes, for every deliverable.
-  - `GlbPipeline.envelope(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — The scene-sidecar envelope a build applies, from a host's reader.
+  - `GlbPipeline.envelope(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Dict[str, Dict[str, Any]]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — The scene-sidecar envelope a build applies, from a host's reader.
   - `GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — Build the GLB for *src* and report what each stage did.
 
 <a id="file_utils--mesh_convert--glb_reader"></a>
@@ -2420,10 +2465,12 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.set_contrast(cls, image, level=255)` *(class)* — Parameters:
   - `ImgUtils.gaussian_blur(cls, image: Union[str, 'Image.Image', 'np.ndarray'], radius: float = 2.0, channel: Optional[str] = None) -> Union['Image.Image', 'np.ndarray']` *(class)* — Apply a Gaussian blur to an image or 2D/3D numpy array.
   - `ImgUtils.dilate_image(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8, return_mask: bool = False) -> 'np.ndarray'` *(static)* — Extend valid pixels outward into empty (background) regions.
+  - `ImgUtils.denoise_image(cls, image: 'np.ndarray', mask: Optional['np.ndarray'] = None, radius: int = 2, strength: float = 3.0, noise: Optional[float] = None, outliers: float = 5.0) -> 'np.ndarray'` *(class)* — Edge-preserving denoise of a linear-light image (HDR-safe), within *mask*.
   - `ImgUtils.fill_empty_texels(cls, image: 'np.ndarray', mask: Optional['np.ndarray'] = None) -> 'np.ndarray'` *(class)* — Fill EVERY empty texel with its nearest valid texel's color.
   - `ImgUtils.compute_atlas_layout(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Lay out N weighted items as non-overlapping rects tiling the unit square.
   - `ImgUtils.atlas_pixel_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[int, int, int, int]]` *(static)* — Convert normalized ``scaleOffset`` rects to integer pixel rects.
   - `ImgUtils.flip_rect_v(rect: Sequence[float]) -> List[float]` *(static)* — A ``[sx, sy, ox, oy]`` atlas rect, V-flipped between UV conventions.
+  - `ImgUtils.compose_rect(outer: Optional[Sequence[float]], inner: Sequence[float]) -> List[float]` *(static)* — The one ``[sx, sy, ox, oy]`` rect that applies *inner*, then *outer*.
   - `ImgUtils.inset_atlas_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], gutter: int) -> List[Tuple[float, float, float, float]]` *(static)* — Shrink each atlas rect by a pixel gutter on every side.
   - `ImgUtils.snap_atlas_rects(cls, rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[float, float, float, float]]` *(class)* — Snap normalized atlas rects onto the atlas's integer texel grid.
   - `ImgUtils.inset_rects_to_texel_centers(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], bboxes: Optional[Sequence[Optional[Tuple[float, float, float, float]]]] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Re-aim each rect so its content's edge UVs sample border-texel CENTERS.
@@ -2661,17 +2708,17 @@ Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 
 The hand-off bridge whose target is a live preview page.
 
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L25)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L26)** — Hand-off bridge whose target is a live preview page rather than an application.
   - `PreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Extra directories the lightmap pass resolves the manifest's EXRs against.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
   - `PreviewBridge.scope_objects(self, scope: str = 'selected') -> List[Any]` — The objects *scope* resolves to, through the host hooks.
-  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, data_export: Optional[Dict[str, Any]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
+  - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, glb_options: Optional[Dict[str, Any]] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, data_export: Optional[Dict[str, Any]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
   - `PreviewBridge.publish_file(self, path: Union[str, Path], open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Publish a GLB that already exists on disk, unchanged.
   - `PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line describing what the scene sidecar did.
   - `PreviewBridge.lightmap_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line on the lightmaps: bound, or how many came back unlit.
   - `PreviewBridge.stop(self) -> None` — Stop serving and release the port.
-- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L384)** — Preview bridge whose source is a file on disk rather than a host selection.
+- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L414)** — Preview bridge whose source is a file on disk rather than a host selection.
   - `FilePreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Where to look for the EXRs a lightmap manifest names.
 
 <a id="net_utils--preview--deliverer"></a>
@@ -2679,9 +2726,10 @@ The hand-off bridge whose target is a live preview page.
 
 FBX -> GLB -> publish: the hand-off strategy behind every live preview.
 
-- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview/deliverer.py#L24)** — Hand-off strategy: build the GLB and publish it to the preview page.
+- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview/deliverer.py#L29)** — Hand-off strategy: build the GLB and publish it to the preview page.
   - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
   - `PreviewDeliverer.publish(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Put *glb* on the server and report what the viewer now sees.
+  - `PreviewDeliverer.preflight(self, bridge, request: HandoffRequest) -> bool` — Resolve this push's GLB rows BEFORE the export is paid for.
   - `PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
 
 <a id="net_utils--preview--playblast"></a>
@@ -2703,11 +2751,12 @@ Record a clip playing in the preview page to a movie file.
 
 Localhost static-file server for live browser / WebXR previews.
 
-- [`VIEWER_CLOSED_PATH`](pythontk/pythontk/net_utils/preview/server.py#L82) — constant
-- [`SETTINGS_PATH`](pythontk/pythontk/net_utils/preview/server.py#L87) — constant
-- [`PLAYBLAST_PATH`](pythontk/pythontk/net_utils/preview/server.py#L93) — constant
-- [`PLAYBLAST_ACTIONS`](pythontk/pythontk/net_utils/preview/server.py#L98) — constant
-- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview/server.py#L524)** — Serve a directory of preview assets on loopback, with a live manifest.
+- [`VIEWER_CLOSED_PATH`](pythontk/pythontk/net_utils/preview/server.py#L87) — constant
+- [`SETTINGS_PATH`](pythontk/pythontk/net_utils/preview/server.py#L92) — constant
+- [`PLAYBLAST_PATH`](pythontk/pythontk/net_utils/preview/server.py#L98) — constant
+- [`PLAYBLAST_ACTIONS`](pythontk/pythontk/net_utils/preview/server.py#L103) — constant
+- [`SNAPSHOT_PATH`](pythontk/pythontk/net_utils/preview/server.py#L107) — constant
+- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview/server.py#L667)** — Serve a directory of preview assets on loopback, with a live manifest.
   - `PreviewServer.port(self) -> Optional[int]` *(property)* — The bound port, or ``None`` before :meth:`start`.
   - `PreviewServer.url(self) -> Optional[str]` *(property)* — The viewer URL, or ``None`` before :meth:`start`.
   - `PreviewServer.version(self) -> int` *(property)* — Number of published revisions;
@@ -2726,6 +2775,7 @@ Localhost static-file server for live browser / WebXR previews.
   - `PreviewServer.begin_playblast(self, **kwargs: Any) -> Dict[str, Any]` — Open a recording (see :meth:`PreviewPlayblast.begin`).
   - `PreviewServer.finish_playblast(self, token: str, target: Optional[str] = None) -> Dict[str, Any]` — Encode a recording and report where it went.
   - `PreviewServer.recording_path(self, token: str) -> Optional[Path]` — The file a finished recording produced, or None.
+  - `PreviewServer.save_snapshot(self, data: bytes, content_type: str = 'image/png') -> Dict[str, Any]` — Write a still of the page's view, and report where it went.
   - `PreviewServer.webxr_browser(cls) -> Optional[str]` *(class)* — Which browser to open so an immersive session is POSSIBLE.
   - `PreviewServer.open_in_browser(self) -> bool` — Open the viewer.
 

@@ -77,6 +77,7 @@ class GlbPipeline(LoggingMixin):
         *,
         source: Dict[str, str],
         asset: Optional[str] = None,
+        rendering: Optional[Dict[str, Dict[str, Any]]] = None,
         logger: Any = None,
     ) -> Dict[str, Any]:
         """The scene-sidecar envelope a build applies, from a host's reader.
@@ -92,6 +93,8 @@ class GlbPipeline(LoggingMixin):
             read_sections: Returns the sidecar sections for the export set.
             source: ``{"application", "version"}`` of the authoring host.
             asset: The payload's basename, recorded in the envelope.
+            rendering: The export's choices over the lighting recipe the GLB
+                publishes (``ExportRun.rendering``); ``None`` is the policy.
             logger: Where the outcome line goes; the class logger otherwise.
         """
         log = logger or cls.logger
@@ -101,7 +104,7 @@ class GlbPipeline(LoggingMixin):
             log.warning("Scene sidecar skipped.", exc_info=True)
             sections = {}
         envelope = cls._mesh_convert().build_scene_sidecar(
-            sections, source=source, asset=asset
+            sections, source=source, asset=asset, rendering=rendering
         )
         # Names what the sidecar IS, because "riding the GLB" read as a
         # companion file the consumer has to be handed: the sections are

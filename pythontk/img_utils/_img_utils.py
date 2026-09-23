@@ -119,7 +119,8 @@ class ImgUtils(HelpMixin):
     # DESTINATION may carry it, which is what this set names.
     # Consumers: the scene-exporter texture clamp in mayatk / blendertk
     # (`_resolved_output_type` / `_scene_safe_output_type`) — the GLB's own
-    # container dial (`_glb_texture_params`) is deliberately NOT clamped by it.
+    # container row (`ExportRun.glb_texture_params`) is deliberately NOT
+    # clamped by it.
     DELIVERY_ONLY_FORMATS = DELIVERY_FORMATS + ("webp",)
 
     # Plain photographic raster formats (dotted, lowercase) — the directory-scan
@@ -2206,6 +2207,311 @@ class ImgUtils(HelpMixin):
         return (result, valid) if return_mask else result
 
     @classmethod
+    def denoise_image(
+        cls,
+        image: "np.ndarray",
+        mask: Optional["np.ndarray"] = None,
+        radius: int = 2,
+        strength: float = 3.0,
+        noise: Optional[float] = None,
+        outliers: float = 5.0,
+    ) -> "np.ndarray":
+        """Edge-preserving denoise of a linear-light image (HDR-safe), within *mask*.
+
+        A self-guided filter (He, Sun and Tang, *Guided Image Filtering*) in
+        LOG space. Every ``(2 * radius + 1)^2`` window fits the image as a line
+        ``a * G + b`` of its own log-brightness ``G`` (the channel mean, so
+        RGB and BGR are alike), and the window's spread
+        against the noise decides ``a``: a window no wider than the noise gets
+        ``a ~ 0`` -- its mean, the noise averaged away -- and one straddling a
+        step many times the noise gets ``a ~ 1``, the step kept. A LINEAR ramp
+        (a light's falloff) passes through exactly at any ``a``, because a
+        window's mean of a ramp is its centre. Each texel then averages the
+        lines of every window covering it.
+
+        Log space, because a path tracer's noise is relative -- it scales with
+        the signal it rides on -- so in log units one noise level describes a
+        whole map, shadow and lit alike. O(texels) at any radius: five box
+        filters and one 3x3 median in float32 through cv2 where it is present
+        (every DCC Python the bakes run in ships it), integral images in numpy
+        where it is not -- the same result either way.
+
+        Only *mask* texels are read or written: every box sum is normalised by
+        the count of mask texels in its window, so gutters, background and the
+        texels a bake refills are never averaged in, and everything outside
+        the mask comes back untouched for the caller to refill from the result.
+
+        Lone spikes (a firefly, a sample-starved black texel) are clamped to
+        their 3x3 neighbourhood's median first. The filter alone keeps them:
+        one texel far from its neighbours makes every window holding it look
+        like an edge. The median decides, not a Laplacian, because beside a
+        straight shadow edge the median stays on the texel's own side -- an
+        edge texel is not a spike.
+
+        Parameters:
+            image: HxW or HxWxC linear values (``>= 0``). Not modified.
+            mask: HxW truthy -- the texels that are the image's own content.
+                Defaults to every texel with a channel above zero.
+            radius: Window radius, in texels of *image*.
+            strength: The edge threshold in noise sigmas (``eps = (strength *
+                noise) ** 2``): a window whose spread stays within it is
+                smoothed as noise, a step well beyond it is kept.
+            noise: Per-texel noise as a log-space standard deviation. ``None``
+                estimates it from the image: the robust spread (MAD) of the
+                Laplacian over the mask's interior, which a smooth signal adds
+                little to and an edge -- a thin line of texels -- cannot move.
+            outliers: How far from its neighbourhood's median, in noise sigmas,
+                a texel must stand to be clamped as a spike; ``0`` disables it.
+
+        Returns:
+            The denoised image, same shape and dtype; texels outside *mask*
+            unchanged.
+        """
+        arr = np.asarray(image)
+        cv2 = cls._cv2()
+        # float32 through cv2 (its filters' native type), float64 in numpy,
+        # where the integral images' running sums need the headroom.
+        dtype = np.float32 if cv2 is not None else np.float64
+        work = arr.astype(dtype, copy=False)
+        squeeze = work.ndim == 2
+        if squeeze:
+            work = work[..., None]
+        h, w, channels = work.shape
+        finite = np.isfinite(work).all(axis=2)
+        if mask is None:
+            # A bad sample is still where the renderer wrote content.
+            with np.errstate(invalid="ignore"):
+                valid = ~finite | (work > 0).any(axis=2)
+        else:
+            valid = np.asarray(mask).astype(bool)
+            if valid.shape != (h, w):
+                raise ValueError(f"mask shape {valid.shape} != image {(h, w)}")
+        # A NaN or inf texel -- a renderer's rare bad sample -- is read as
+        # absent: one would poison every statistic it touches (0 * NaN is NaN,
+        # so even a zero-weighted texel leaks into its windows), and the whole
+        # map came back NaN. Where it is the caller's content it is written
+        # from its neighbourhood; outside the mask it comes back untouched.
+        original = work
+        heal = None
+        if not finite.all():
+            heal = valid & ~finite
+            work = np.where(finite[..., None], work, dtype(0))
+            valid = valid & finite
+        if not valid.any() or radius < 1:
+            return arr.copy()
+
+        # PLANAR from here on: one contiguous 2D plane per channel. A numpy op
+        # broadcasting an HxW plane against HxWx3 runs a strided inner loop
+        # (measured: 24 ms at 1024^2 against ~1 ms for the same op plane by
+        # plane), and the filter is a few dozen such ops.
+        planes = (
+            list(cv2.split(work))
+            if cv2 is not None and channels > 1
+            else [np.ascontiguousarray(work[..., c]) for c in range(channels)]
+        )
+        # The guide is the channel MEAN, not a luma: callers hand in RGB and
+        # cv2's BGR alike, and the guide only has to carry the structure.
+        luma = planes[0].copy()
+        for plane in planes[1:]:
+            luma += plane
+        luma *= dtype(1.0 / channels)
+        # A floor far under the content, so a black texel inside the mask is a
+        # very dark value rather than log(0) = -inf poisoning every window.
+        sample = cls._sample(luma[valid & (luma > 0)])
+        floor = dtype(1e-6 * (float(np.median(sample)) if sample.size else 1.0))
+        guide = cls._log(np.maximum(luma, floor))
+        # Centred on the map's own level: the variance is a difference of box
+        # means of G and G^2, and in float32 that cancellation is exact only
+        # while G sits near zero. The fit is shift-invariant, so the centre is
+        # added back at the end.
+        centre = dtype(np.median(cls._sample(guide[valid])))
+        guide -= centre
+        # Each channel floored against its OWN texel's brightness, not the
+        # map's: a channel at exactly zero beside lit neighbours (a saturated
+        # colour, a coloured light's edge) otherwise sits ~14 log units under
+        # them and drags that channel's window means down -- a colour fringe
+        # (measured: x0.64 on the next texel's blue). A thousandth of the
+        # texel's own level is invisible after any display transform.
+        chroma_floor = np.maximum(luma * dtype(1e-3), floor)
+        logs = [cls._log(np.maximum(plane, chroma_floor)) - centre for plane in planes]
+
+        if noise is None:
+            noise = cls._log_noise_sigma(guide, valid)
+        weight = valid.astype(dtype)
+        inv_count = 1.0 / np.maximum(cls._box_sum(weight, radius), dtype(1e-6))
+        if outliers and noise > 0:
+            # The median reads a mask-outside neighbour as the local mean of
+            # the mask texels around it, so a gutter cannot pull it.
+            local = cls._box_sum(weight * guide, radius) * inv_count
+            median = cls._median3(np.where(valid, guide, local), valid)
+            deviation = guide - median
+            spike = valid & (np.abs(deviation) > dtype(float(outliers) * float(noise)))
+            if spike.any():
+                # Brightness to the neighbourhood's, the texel's own colour kept.
+                shift = deviation[spike]
+                for plane in logs:
+                    plane[spike] -= shift
+                guide[spike] = median[spike]
+        eps = dtype(max(float(strength) * float(noise), 1e-6) ** 2)
+
+        weighted_g = weight * guide
+        mean_g = cls._box_sum(weighted_g, radius) * inv_count
+        var_g = cls._box_sum(weighted_g * guide, radius) * inv_count
+        var_g -= mean_g * mean_g
+        np.maximum(var_g, 0.0, out=var_g)
+        inv_var = 1.0 / (var_g + eps)
+        out_planes = []
+        for plane, log in zip(planes, logs):
+            weighted = np.multiply(log, weight, out=log)
+            mean_p = cls._box_sum(weighted, radius) * inv_count
+            a = cls._box_sum(weighted * guide, radius) * inv_count
+            a -= mean_g * mean_p
+            a *= inv_var
+            b = mean_p - a * mean_g
+            fitted = cls._box_sum(a * weight, radius) * inv_count
+            fitted *= guide
+            fitted += cls._box_sum(b * weight, radius) * inv_count
+            fitted += centre
+            result = np.where(valid, cls._exp(fitted), plane)
+            if heal is not None:
+                # A bad sample's own value says nothing, so it takes its
+                # window's (log) mean of the good texels around it.
+                result = np.where(heal, cls._exp(mean_p + centre), result)
+            out_planes.append(result)
+        out = (
+            cv2.merge(out_planes)
+            if cv2 is not None and channels > 1
+            else np.stack(out_planes, axis=2)
+        )
+        if heal is not None:
+            untouched = ~finite & ~heal  # bad samples outside the mask
+            out[untouched] = original[untouched]
+
+        if squeeze:
+            out = out[..., 0]
+        return out.astype(arr.dtype, copy=False)
+
+    @staticmethod
+    def _cv2():
+        """cv2 when it imports, else ``None``: the fast path, never a need."""
+        try:
+            import cv2
+
+            return cv2
+        except ImportError:
+            return None
+
+    @classmethod
+    def _log(cls, values: "np.ndarray") -> "np.ndarray":
+        """``log`` of a float32 plane through cv2 (~1.6x numpy's), else numpy."""
+        cv2 = cls._cv2()
+        if cv2 is not None and values.dtype == np.float32:
+            return cv2.log(values)
+        return np.log(values)
+
+    @classmethod
+    def _exp(cls, values: "np.ndarray") -> "np.ndarray":
+        """``exp`` of a float32 plane through cv2 (~1.8x numpy's), else numpy."""
+        cv2 = cls._cv2()
+        if cv2 is not None and values.dtype == np.float32:
+            return cv2.exp(values)
+        return np.exp(values)
+
+    @staticmethod
+    def _sample(values: "np.ndarray", limit: int = 1 << 18) -> "np.ndarray":
+        """*values*, strided down to about *limit* for a median: a quarter of a
+        million texels pins a level as well as all of them, at a fraction of the
+        partition."""
+        step = max(1, values.size // limit)
+        return values[::step] if step > 1 else values
+
+    @classmethod
+    def _box_sum(cls, values: "np.ndarray", radius: int) -> "np.ndarray":
+        """Sum of *values* (HxW or HxWxC) over the ``(2 * radius + 1)^2`` window
+        at each texel, clipped at the frame: cv2's box filter on float32 (zero
+        border = clipped), an integral image otherwise."""
+        k = 2 * radius + 1
+        cv2 = cls._cv2()
+        if cv2 is not None and values.dtype == np.float32:
+            planes = values.shape[2] if values.ndim == 3 else 0
+            if planes == 1:
+                return cv2.boxFilter(
+                    values[..., 0],
+                    -1,
+                    (k, k),
+                    normalize=False,
+                    borderType=cv2.BORDER_CONSTANT,
+                )[..., None]
+            if planes <= 4:
+                return cv2.boxFilter(
+                    values, -1, (k, k), normalize=False, borderType=cv2.BORDER_CONSTANT
+                )
+        pad = [(radius + 1, radius), (radius + 1, radius)] + [(0, 0)] * (
+            values.ndim - 2
+        )
+        table = np.pad(values, pad).cumsum(axis=0).cumsum(axis=1)
+        return table[k:, k:] - table[:-k, k:] - table[k:, :-k] + table[:-k, :-k]
+
+    @classmethod
+    def _median3(
+        cls, values: "np.ndarray", mask: "np.ndarray", band: int = 256
+    ) -> "np.ndarray":
+        """Each texel's 3x3 median, *values* already filled outside *mask*.
+
+        cv2's median filter on float32; without it, nine shifted planes per
+        band of rows -- all nine of a 4K map at once would be over a gigabyte
+        inside the DCC running the bake.
+        """
+        cv2 = cls._cv2()
+        if cv2 is not None:
+            return cv2.medianBlur(values.astype(np.float32, copy=False), 3).astype(
+                values.dtype, copy=False
+            )
+        h, w = values.shape
+        padded = np.pad(values, 1, mode="edge")
+        out = np.empty_like(values)
+        for top in range(0, h, band):
+            bottom = min(top + band, h)
+            planes = [
+                padded[top + dy : bottom + dy, dx : dx + w]
+                for dy in range(3)
+                for dx in range(3)
+            ]
+            out[top:bottom] = np.median(np.stack(planes), axis=0)
+        return out
+
+    @classmethod
+    def _log_noise_sigma(cls, log_image: "np.ndarray", mask: "np.ndarray") -> float:
+        """Per-texel noise of *log_image* over *mask*, as a standard deviation.
+
+        The median absolute Laplacian, scaled to a Gaussian's sigma: robust to
+        the edges and gradients a map is made of, since those occupy few
+        texels or add almost nothing to a Laplacian. White noise of sigma s
+        gives a 4-neighbour Laplacian of sigma ``s * sqrt(1.25)``. Read on
+        every other row: half a megapixel of 1024^2 samples pins a median as
+        well as the whole map does.
+        """
+        centre = log_image[1:-1:2, 1:-1]
+        up, down = log_image[0:-2:2, 1:-1], log_image[2::2, 1:-1]
+        left, right = log_image[1:-1:2, :-2], log_image[1:-1:2, 2:]
+        rows = min(len(centre), len(up), len(down))
+        inner = (
+            mask[1:-1:2, 1:-1][:rows]
+            & mask[0:-2:2, 1:-1][:rows]
+            & mask[2::2, 1:-1][:rows]
+            & mask[1:-1:2, :-2][:rows]
+            & mask[1:-1:2, 2:][:rows]
+        )
+        if not inner.any():
+            return 0.0
+        lap = centre[:rows] - 0.25 * (
+            up[:rows] + down[:rows] + left[:rows] + right[:rows]
+        )
+        residual = cls._sample(lap[inner]).astype(np.float64)
+        mad = float(np.median(np.abs(residual - np.median(residual))))
+        return 1.4826 * mad / math.sqrt(1.25)
+
+    @classmethod
     def fill_empty_texels(
         cls,
         image: "np.ndarray",
@@ -2560,6 +2866,30 @@ class ImgUtils(HelpMixin):
         """
         sx, sy, ox, oy = (float(v) for v in rect)
         return [sx, sy, ox, 1.0 - sy - oy]
+
+    @staticmethod
+    def compose_rect(
+        outer: Optional[Sequence[float]], inner: Sequence[float]
+    ) -> List[float]:
+        """The one ``[sx, sy, ox, oy]`` rect that applies *inner*, then *outer*.
+
+        ``uv' = uv * s + o`` twice over folded into one: scale ``inner_s *
+        outer_s``, offset ``inner_o * outer_s + outer_o``. A rect is a UV
+        transform, so a mapping already baked into a layout (UVs an old atlas
+        pack squeezed into their cell, say) can move into the rect a consumer
+        applies at sample time -- restore the layout, compose, and every texel
+        is sampled exactly where it was. ``None`` for *outer* is the identity.
+
+        Parameters:
+            outer: The rect applied second (``None``: identity).
+            inner: The rect applied first.
+
+        Returns:
+            List[float]: ``[sx, sy, ox, oy]``.
+        """
+        osx, osy, oox, ooy = (float(v) for v in (outer or (1.0, 1.0, 0.0, 0.0)))
+        isx, isy, iox, ioy = (float(v) for v in inner)
+        return [isx * osx, isy * osy, iox * osx + oox, ioy * osy + ooy]
 
     @staticmethod
     def inset_atlas_rects(

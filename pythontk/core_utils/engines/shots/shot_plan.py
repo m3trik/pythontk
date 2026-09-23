@@ -619,8 +619,15 @@ class ShotPlanner(_ShotPlannerInternal):
         tail and a shrink landed the neighbour on it.  A whole-shot move
         carries its own trailing gap already (its envelope reaches the next
         shot's start), so it leaves this off or the same keys would move
-        twice.  The sample ON ``after_frame`` is the pivot's closing pose and
-        stays with it either way.
+        twice.  A sample ON ``after_frame`` in that gap stays with the pivot.
+
+        The carried window trims the GAP, never the shot it moves: a bound
+        that reaches that shot's own start (a key dragged onto its keyed
+        start, or into it) leaves the shot its whole envelope, opening sample
+        included.  The key-drag handlers ripple BEFORE the dragged keys land,
+        so the sample on such a bound is the neighbour's own pose, and
+        opening the window past it stranded that pose in the gap (measured
+        2026-09-22) -- the drag grammar keeps neighbours intact.
         """
         shots = store.sorted_shots()
         if not shots or abs(delta) < _EPS:
@@ -647,11 +654,11 @@ class ShotPlanner(_ShotPlannerInternal):
             env_start, env_end, lo_open, hi_closed = _ShotPlannerInternal._envelope_for(
                 shots, i
             )
-            if carry_gap and first:
-                # Everything beyond the pivot's bound moves, and only that:
-                # the window opens just past ``after_frame`` whether that
-                # is before this shot's start (its gap rides) or after it
-                # (what the bound now covers stays with the pivot).
+            if carry_gap and first and after_frame < shot.start - _EPS:
+                # The window opens just past ``after_frame``, so the gap's
+                # content beyond the pivot's bound rides.  Only in the gap: a
+                # bound on or past this shot's start leaves its own envelope
+                # (and fencepost) alone, or its own samples stay behind.
                 env_start, lo_open = after_frame, True
             first = False
             moves[shot.shot_id] = ShotMove(
@@ -763,8 +770,10 @@ class ShotPlanner(_ShotPlannerInternal):
         so the pivot's bound sample -- and anything the pivot now covers up to
         it -- stays with the pivot.  A shot's envelope already reaches the
         next shot's start, so the gap before the pivot rides regardless; the
-        cap matters when the caller's bound sits INSIDE that reach (a key
-        dragged onto the previous shot's end).
+        cap matters when the caller's bound sits INSIDE that reach.  Like the
+        downstream carry it trims the GAP, never the shot it moves: a bound on
+        or before that shot's own end (a key dragged onto its keyed end, or
+        into it) leaves it whole, closing sample included.
         """
         shots = store.sorted_shots()
         if not shots or abs(delta) < _EPS:
@@ -800,7 +809,7 @@ class ShotPlanner(_ShotPlannerInternal):
             )
         if carry_gap and last_id is not None:
             mv = moves[last_id]
-            if before_frame < mv.env_end - _EPS:
+            if mv.old_end + _EPS < before_frame < mv.env_end - _EPS:
                 mv.env_end, mv.env_hi_closed = before_frame, False
 
         return _ShotPlannerInternal._finalize_plan(moves)

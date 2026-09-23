@@ -8,17 +8,22 @@ build the Scene Exporters run for their GLB deliverable (downsize, convert
 with the sidecar and the lightmaps, texture pass) -- and publishes the result
 to the :class:`~pythontk.PreviewServer` it owns. Nothing about the GLB's
 content is decided here: the preview shows what the export ships because the
-two are one chain, and the deliverer's own choices stop at the delivery
-container (the viewer's texture format) and where the scratch files live.
+two are one chain, and its settings are the Scene Exporter's own GLB rows
+(:attr:`pythontk.ExportProfile.GLB_ROWS`) -- the texture pass and the lighting
+recipe -- resolved by the methods the exporters call
+(:meth:`pythontk.ExportRun.glb_texture_params`, :attr:`pythontk.ExportRun.rendering`).
+What the deliverer decides for itself stops at where the scratch files live.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 from pythontk.core_utils.app_handoff import Deliverer, HandoffRequest, Payload
-from pythontk.net_utils.preview.server import PreviewServer, _mesh_convert
+from pythontk.core_utils.deprecation import Deprecation
+from pythontk.core_utils.export_profile import ExportRun
+from pythontk.net_utils.preview.server import PreviewServer
 
 
 class PreviewDeliverer(Deliverer):
@@ -51,31 +56,45 @@ class PreviewDeliverer(Deliverer):
             and steal focus from the DCC), and a push after the tab was closed
             opens one again. ``True`` always opens, ``False`` never does.
         title: Label shown in the viewer, when creating the server.
-        texture_format: Container the texture pass re-encodes to --
-            ``"WEBP"`` (default; transport size) or ``"KTX2"`` (GPU-resident
-            Basis compression, the headset-memory win; requires the ``toktx``
-            encoder -- see :meth:`MeshConvert.optimize_glb_textures`). This is
-            the *default*; a single push overrides it per request --
-            ``bridge.push(texture_format="KTX2")`` -- so one high-fidelity push
-            costs the next quick-iteration one nothing.
+        glb_options: The Scene Exporter's GLB rows for every push --
+            ``{row key: combo value}`` keyed by :attr:`ExportProfile.GLB_ROWS`
+            (the texture rows ``texture_file_type``, ``optimize_textures``,
+            ``secondary_max_size``, ``uastc_rdo``, and ``baked_reflections``),
+            each value exactly as that row's combo holds it. An absent row is
+            the Scene Exporter's default, so ``None`` -- the default -- builds
+            the GLB an export with untouched rows ships (the web container,
+            WebP, every map at its own resolution, the lighting recipe as
+            declared). These are *defaults*; a single push overrides them row
+            by row -- ``bridge.push(glb_options={"optimize_textures": 4096})``
+            -- so one high-fidelity push costs the next quick-iteration one
+            nothing. KTX2 needs the ``toktx`` encoder (see
+            :meth:`MeshConvert.optimize_glb_textures`).
         scripts: Viewer scripts to activate on every push (see
             :attr:`PreviewServer.SCRIPTS`). ``None`` -- the default -- leaves
             whatever the server already has alone, so a script registered
             directly on a long-lived server survives; a list replaces the set.
     """
 
+    @Deprecation.parameter(
+        "texture_format",
+        remove_in="0.12.0",
+        new="glb_options",
+        transform=lambda value: {"texture_file_type": value},
+        reason="The preview now takes every Scene Exporter GLB row, the "
+        "container being Texture File Type.",
+    )
     def __init__(
         self,
         server: Optional[PreviewServer] = None,
         open_browser: Union[bool, str] = "auto",
         title: str = "Preview",
-        texture_format: str = "WEBP",
+        glb_options: Optional[Mapping[str, Any]] = None,
         scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None,
     ):
         self.server = server
         self.open_browser = open_browser
         self.title = title
-        self.texture_format = texture_format
+        self.glb_options: Dict[str, Any] = self._glb_rows(glb_options)
         self.scripts = scripts
 
     def ensure_server(self) -> PreviewServer:
@@ -146,12 +165,107 @@ class PreviewDeliverer(Deliverer):
             "opened_browser": opened,
         }
 
+    #: Where :meth:`preflight` leaves the resolved texture pass for
+    #: :meth:`deliver` -- on the request, which lives exactly one push.
+    _TEXTURE_PARAMS_KEY = "_texture_params"
+    #: Where :meth:`preflight` leaves the push's choices over the lighting
+    #: recipe (:attr:`ExportRun.rendering`) for the host, whose envelope
+    #: publishes them (:meth:`PreviewBridge._attach_sidecar` reads it).
+    RENDERING_KEY = "rendering"
+
+    @staticmethod
+    def _glb_rows(value: Any) -> Dict[str, Any]:
+        """*value* as a copy of a row mapping; a bare container is refused, named.
+
+        ``glb_options`` took ``texture_format``'s place in both signatures,
+        so a caller that passed the container POSITIONALLY now hands a string
+        to a mapping. Said here, with the fix, rather than as a dict-unpacking
+        error from inside the push.
+        """
+        if value is None:
+            return {}
+        if not isinstance(value, Mapping):
+            raise TypeError(
+                "glb_options takes the Scene Exporter's GLB rows as a mapping "
+                f"(ExportProfile.GLB_ROWS), not {value!r}; a container alone "
+                f"is {{'texture_file_type': {value!r}}}."
+            )
+        return dict(value)
+
+    def _glb_run(
+        self, request: Optional[HandoffRequest], logger: Any
+    ) -> Optional[ExportRun]:
+        """The GLB rows *request* builds with, as a run; ``None`` when one
+        cannot be honoured (an unknown container -- the export refuses it
+        too), with the reason logged.
+
+        The deliverer's :attr:`glb_options` with the request's own laid over
+        them row by row, parsed exactly as a Scene Exporter parses the same
+        rows (:meth:`ExportRun.for_glb`). Request-scoped like ``open_browser``:
+        a deliverer is bound once per bridge *class*, so a row written onto the
+        instance for one high-fidelity push would stick process-wide -- every
+        later quick push would require ``toktx`` and pay the Basis encode, with
+        no way to opt back out for one push.
+
+        Raises:
+            TypeError: a request's rows are not a mapping.
+        """
+        requested = request.get("glb_options") if request is not None else None
+        run, notes = ExportRun.for_glb(
+            {**self.glb_options, **self._glb_rows(requested)}
+        )
+        for level, message in notes:
+            getattr(logger, level)(message)
+        if any(level == "error" for level, _message in notes):
+            return None
+        return run
+
+    @staticmethod
+    def _texture_params(run: ExportRun, logger: Any) -> Dict[str, Any]:
+        """*run*'s texture pass (:meth:`ExportRun.glb_texture_params`), with its
+        encoder settled.
+
+        KTX2 is settled here, and it is the one exception to "the pipeline
+        reports its own failure": docs/webxr_preview.md promises the push
+        raises with the install URL when ``toktx`` is missing, never silently
+        ships WebP instead -- and the optimizer only reaches its own
+        ``resolve_ktx2_encoder(required=True)`` once it hits a KTX2 image,
+        minutes into a conversion it would then abandon.
+
+        Raises:
+            FileNotFoundError: KTX2 with no ``toktx`` to encode it.
+        """
+        params = run.glb_texture_params(logger=logger)
+        if params["image_format"] == "KTX2":
+            from pythontk.img_utils._img_utils import ImgUtils
+
+            ImgUtils.resolve_ktx2_encoder(required=True)
+        return params
+
+    def preflight(self, bridge, request: HandoffRequest) -> bool:
+        """Resolve this push's GLB rows BEFORE the export is paid for.
+
+        A row the export would refuse, or a KTX2 push with no encoder, costs
+        nothing but the check here -- found in :meth:`deliver` it arrived after
+        the host had already written the FBX. The results ride the request:
+        the texture pass to :meth:`deliver`, and the lighting recipe's
+        overrides (:attr:`RENDERING_KEY`) to the host, whose envelope publishes
+        them -- so the rows are resolved (and their notes logged) once.
+        """
+        run = self._glb_run(request, bridge.logger)
+        if run is None:
+            return False
+        request.extras[self._TEXTURE_PARAMS_KEY] = self._texture_params(
+            run, bridge.logger
+        )
+        request.extras[self.RENDERING_KEY] = run.rendering
+        return True
+
     def deliver(
         self, bridge, payload: Payload, request: HandoffRequest
     ) -> Optional[Dict[str, Any]]:
-        # Imported here rather than at module scope: the converter pulls in the
+        # Imported here rather than at module scope: the pipeline pulls in the
         # managed-binary installer, which no other PreviewServer user needs.
-        MeshConvert = _mesh_convert()
         from pythontk.file_utils.mesh_convert.glb_pipeline import GlbPipeline
 
         if not payload.primary:
@@ -163,31 +277,14 @@ class PreviewDeliverer(Deliverer):
         # should not arrive after a multi-minute conversion has been paid for.
         self.ensure_server()
 
-        # Request-scoped exactly like `open_browser` below. A deliverer is
-        # bound once per bridge *class*, so a format written onto the instance
-        # for one high-fidelity push would stick process-wide for every bridge
-        # in the session: each later quick-iteration push would then require
-        # `toktx` and pay the Basis encode, with no way to opt back out for a
-        # single push. The instance attribute stays the default. Falsy falls
-        # back rather than overriding (unlike `open_browser`, where False is a
-        # meaningful value) -- an empty format is "unspecified", not a request
-        # to hand the optimizer nothing, and it lets the caller-facing knobs
-        # pass their `None` default straight through. The trailing WEBP is
-        # load-bearing: a falsy INSTANCE default would otherwise hand the
-        # optimizer None, which raises inside it.
-        texture_format = request.get("texture_format") or self.texture_format or "WEBP"
-
-        # KTX2 is the one exception to "the pipeline reports its own failure":
-        # docs/webxr_preview.md promises the push raises with the install URL
-        # when `toktx` is missing, never silently ships WebP instead -- and the
-        # optimizer only reaches its own `resolve_ktx2_encoder(required=True)`
-        # once it hits a KTX2 image, minutes into a conversion it would then
-        # abandon. Checked BEFORE the build, so the fix-shaped error arrives
-        # before the session pays for it.
-        if texture_format.upper() == "KTX2":
-            from pythontk.img_utils._img_utils import ImgUtils
-
-            ImgUtils.resolve_ktx2_encoder(required=True)
+        # Resolved by `preflight` on the skeleton's path; a caller driving the
+        # deliverer directly skipped it, so it resolves here instead.
+        texture_params = request.get(self._TEXTURE_PARAMS_KEY)
+        if texture_params is None:
+            run = self._glb_run(request, bridge.logger)
+            if run is None:
+                return None
+            texture_params = self._texture_params(run, bridge.logger)
 
         # Allocate the GLB through the bridge's own payload artifacts rather
         # than deriving a path from the FBX: that keeps it inside the prefix
@@ -215,16 +312,11 @@ class PreviewDeliverer(Deliverer):
                 # effect at the panel's current settings), never the next one.
                 data_export=request.get("data_export"),
                 lightmap_dirs=lightmap_dirs,
-                # The shared web-delivery policy, named rather than inherited:
-                # the resolution the preview approves used to be set by a
-                # signature default two packages away, where the exporters
-                # could not see it to agree with it (8.71 MB here against
-                # 280.13 MB from the exporter, same scene, same session). Its
-                # KTX2 carries no fallback twins, which this GLB never needs:
-                # it is streamed to a page that wires KTX2Loader.
-                texture_params=MeshConvert.web_delivery_texture_params(
-                    image_format=texture_format
-                ),
+                # The Scene Exporter's texture rows, resolved by its own method:
+                # the preview once named a container and inherited the web
+                # ceiling, so every push was cut to 2048 px whatever the export
+                # was set to. Untouched, the rows resize nothing (OFF).
+                texture_params=texture_params,
                 downsize=bool(request.params.get("EMBED_TEXTURES", True)),
                 # Scratch through the bridge's own payload store (swept after a
                 # crash), and the superseded payload released as soon as the
@@ -279,7 +371,7 @@ class PreviewDeliverer(Deliverer):
             # The GLB is this bridge's own scratch artifact and nothing reads
             # it again once the server owns a copy.
             move=True,
-            # Request-scoped like `texture_format`. `.get`'s default is not
+            # Request-scoped like `glb_options`. `.get`'s default is not
             # enough: `push()` names both knobs explicitly, so the keys are
             # PRESENT and None whenever the caller said nothing -- read with a
             # default here, the deliverer's own settings could never apply.

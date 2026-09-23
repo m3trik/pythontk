@@ -19,6 +19,7 @@ import unittest
 import unittest.mock
 import urllib.error
 import urllib.request
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -35,6 +36,7 @@ from pythontk.net_utils.preview.bridge import PreviewBridge
 from pythontk.net_utils.preview.deliverer import PreviewDeliverer
 from pythontk.net_utils.preview.server import (
     SETTINGS_PATH,
+    SNAPSHOT_PATH,
     VIEWER_CLOSED_PATH,
     PreviewServer,
 )
@@ -420,52 +422,72 @@ class PreviewServerTestCase(unittest.TestCase):
         # presenting has to read differently from no runtime at all.
         self.assertIn("start Link", page)
 
-    def test_a_lightmapped_model_keeps_some_environment_lighting(self):
-        """Zero environment on a lightmapped model renders it dead flat.
+    def test_a_baked_material_takes_the_environment_as_specular_only(self):
+        """The environment lights a baked material's reflections, never its diffuse.
 
-        three.js adds ``lightMap`` irradiance through ``BRDF_Lambert``, which
-        has no normal term -- a bake supplies light that does not vary with the
-        surface normal. Switch the viewer's own lighting fully off (as this
-        once did) and nothing left in the render samples the normal at all, so
-        every correctly-bound normal map, all roughness variation and every
-        specular highlight go inert. Measured on a production room GLB: 51 of
-        57 materials lightmapped, all 54 normal maps bound at texCoord 0, and
-        no surface detail visible anywhere. The environment is what stays on to
-        carry the normal-dependent specular term, so a zero (or absent) level
-        here is the regression.
+        A lightmap already holds the surface's diffuse lighting, every light
+        and the sky included. three.js adds it through ``BRDF_Lambert`` and
+        then also adds the environment's irradiance, so a baked surface was
+        lit twice: measured on a production office (2026-09-21), a quarter of
+        the environment on top of the bake doubled every shadow and lifted
+        every surface -- the washed-out look that gets reported as a bake
+        regression. Switching the environment off instead (as this once did)
+        renders the model dead flat, because lightmap irradiance has no normal
+        term and nothing left in the render samples the normal: every normal
+        map, roughness map and specular goes inert (measured: 51 of 57
+        materials lightmapped, 54 normal maps bound, no surface detail).
 
-        The dimming is applied PER MATERIAL, and getting there needs one
-        specific trick: a material-level ``envMapIntensity`` is overwritten
-        from the scene value for precisely the materials this affects
-        (``isMeshStandardMaterial`` with no ``envMap`` of its own, which is
-        every GLTFLoader material), so setting it alone renders the whole fix
-        inert -- verified against the three.js 0.169.0 source, and the first
-        cut of this fix did exactly that. Assigning the shared environment
-        onto the material opts it out of that override, which is what makes
-        the per-material value stick. A scene-wide lever would work too, but
-        it dims the model's UN-baked props along with the baked geometry, and
-        a scene is routinely partly baked.
+        So the environment stays at full strength and is confined to the
+        SPECULAR term on a baked material -- the reflection-probe role -- by
+        dropping the one line of three.js 0.169's ``lights_fragment_maps``
+        chunk that adds its irradiance. Pinned on the exact line, because the
+        replace is a silent no-op if the chunk changes under it (the live
+        suite measures the pixels). Nothing is per material any more: the
+        earlier per-material ``envMapIntensity`` dimming, and the ``envMap``
+        opt-out it needed, went with the diffuse they were dimming -- and so
+        did the Light toggle, a page-local mode the deliverable could not
+        express, which only ever isolated that diffuse.
         """
         self._serve()
         page = (self.root / "index.html").read_text(encoding="utf-8")
-        match = re.search(r"const LIGHTMAP_ENV_INTENSITY = ([0-9.]+)", page)
-        self.assertIsNotNone(
-            match, "the viewer no longer declares a lightmapped-scene env level"
-        )
-        self.assertGreater(float(match.group(1)), 0.0)
-        # Per material, and only for the materials the manifest named. Spent
-        # from the live policy rather than the constant -- the constant is now
-        # what that read FALLS BACK to (see the policy test below).
         self.assertIn(
-            "material.envMapIntensity = bakeOnly ? 0 : policy.lightmapEnvIntensity",
+            "const IBL_DIFFUSE_GLSL = "
+            "'iblIrradiance += getIBLIrradiance( geometryNormal );'",
             page,
         )
-        self.assertIn("material.envMap = scene.environment", page)
-        # The override opt-out is only safe while disposeModel spares the
-        # shared texture; without that guard the second push runs unlit.
-        self.assertIn("value !== scene.environment", page)
-        # And the scene-wide lever must NOT be keyed off the bake any more.
-        self.assertNotIn("scene.environmentIntensity = lightmapped", page)
+        self.assertIn("patchBakedShader(material)", page)
+        # One environment level for the whole model, spent from the policy.
+        self.assertIn("scene.environmentIntensity = policy.environmentIntensity", page)
+        self.assertNotIn("material.envMapIntensity", page)
+        self.assertNotIn("material.envMap = scene.environment", page)
+        self.assertNotIn("lightToggle", page)
+        self.assertNotIn("bakeOnly", page)
+
+    def test_a_baked_materials_reflections_play_at_the_exports_level(self):
+        """REGRESSION (2026-09-21): a studio environment is not the baked room.
+
+        With the environment's diffuse gone from a baked material, its
+        reflections still played at full strength, and the studio environment
+        is far brighter than the room the bake lit: the darkest baked machine
+        surfaces of a production room read 0.22 of display against 0.06 baked
+        alone -- the contrast the bake had, lifted away. The export publishes a
+        level (``lightmappedMaterials.envMapIntensity``) and the viewer scales
+        everything the environment gives a baked material by it: after the
+        irradiance line is dropped that is ``radiance`` and
+        ``clearcoatRadiance`` alone, scaled at the end of the patched chunk by
+        ONE uniform every baked program shares, which applyLighting sets from
+        the policy -- so a new level needs no recompile, and un-baked materials
+        never see it. The live suite measures the pixels.
+        """
+        self._serve()
+        page = (self.root / "index.html").read_text(encoding="utf-8")
+        self.assertIn("radiance *= bakedEnvIntensity;", page)
+        self.assertIn("clearcoatRadiance *= bakedEnvIntensity;", page)
+        self.assertIn("shader.uniforms.bakedEnvIntensity = bakedEnvUniform;", page)
+        self.assertIn("bakedEnvUniform.value = policy.bakedEnvIntensity;", page)
+        # Appended to the patched chunk for EVERY baked material -- the relief
+        # patch is the conditional one, the level is not.
+        self.assertIn(r"`${chunk}\n${BAKED_ENV_GLSL}`", page)
 
     def test_published_rendering_policy_matches_the_viewer(self):
         """The hand-off's lighting recipe must be what the viewer actually does.
@@ -490,14 +512,14 @@ class PreviewServerTestCase(unittest.TestCase):
 
         for const, published in (
             ("DEFAULT_KEY_INTENSITY", policy["keyLight"]["intensity"]),
-            (
-                "LIGHTMAP_ENV_INTENSITY",
-                policy["lightmappedMaterials"]["envMapIntensity"],
-            ),
             ("DEFAULT_ENV_INTENSITY", policy["environment"]["intensity"]),
             (
                 "DEFAULT_TONE_EXPOSURE",
                 policy["renderer"]["toneMappingExposure"],
+            ),
+            (
+                "DEFAULT_BAKED_ENV_INTENSITY",
+                policy["lightmappedMaterials"]["envMapIntensity"],
             ),
         ):
             match = re.search(rf"const {const} = ([0-9.]+)", page)
@@ -537,6 +559,14 @@ class PreviewServerTestCase(unittest.TestCase):
                 "the published off-condition has drifted to the FULLY-baked "
                 "reading the viewer was fixed away from",
             )
+        # What a baked material takes from the environment is a RULE and a
+        # LEVEL. The rule is stated the way `disabled_when` states the key
+        # light's off-condition -- a recipient acts on it -- and the viewer
+        # implements it in the baked materials' shader (see the specular-only
+        # test above). The level is the export's choice (the Baked Reflections
+        # row), published beside it and read like the other numbers.
+        self.assertEqual(policy["lightmappedMaterials"]["envMapTerms"], "specular")
+        self.assertIn("published?.lightmappedMaterials?.envMapIntensity", page)
 
         # The named pieces of the rig, spelled as the viewer builds them.
         self.assertIn("THREE.ACESFilmicToneMapping", page)
@@ -602,9 +632,9 @@ class PreviewServerTestCase(unittest.TestCase):
         policy = MeshConvert.RENDERING_POLICY
         for path in (
             ("keyLight", "intensity"),
-            ("lightmappedMaterials", "envMapIntensity"),
             ("environment", "intensity"),
             ("renderer", "toneMappingExposure"),
+            ("lightmappedMaterials", "envMapIntensity"),
         ):
             with self.subTest(field=".".join(path)):
                 section, field = path
@@ -627,15 +657,9 @@ class PreviewServerTestCase(unittest.TestCase):
         nothing, because the extra term is applied downstream of the EXR.
 
         The un-baked props the gate was added for are not left dark. They keep
-        the FULL environment via the per-material split above (they were on
-        0.25 when the key light mattered), and the environment is normal- and
-        view-dependent, so their normal maps and specular survive without it.
-
-        This also restores the "bake only" toggle as real isolation: it is
-        guarded on ``lightmapped``, so wherever it can be flipped the key light
-        is already off and a baked material is lit by its bake alone. Un-baked
-        props keep the full environment under the toggle -- they have no bake
-        to isolate, and blacking them out would answer no question.
+        the FULL environment (they were on 0.25 when the key light mattered),
+        and the environment is normal- and view-dependent, so their normal
+        maps and specular survive without it.
         """
         self._serve()
         page = (self.root / "index.html").read_text(encoding="utf-8")
@@ -647,12 +671,6 @@ class PreviewServerTestCase(unittest.TestCase):
         # mechanism teaches the next reader to delete the explanation rather
         # than the code.
         self.assertNotIn("const fullyBaked", page)
-        # The isolation holds only while the toggle stays guarded on the same
-        # condition the key light is keyed to; without this guard "bake only is
-        # reachable" and "key light is off" stop being the same state. Matched
-        # loosely on purpose -- a formatter adding braces to the guard clause
-        # would change nothing about the behaviour being pinned.
-        self.assertRegex(page, r"if \(!lightmapped\)\s*\{?\s*return")
 
     def test_timeout_tolerates_hidden_tab_throttling(self):
         """Browsers throttle a hidden tab's timers to ~1/min; 90s clears that."""
@@ -1272,6 +1290,7 @@ class _StubPreviewBridge(PreviewBridge):
             Payload(primary=path),
             lambda: self.sections,
             source={"application": "stub", "version": "0"},
+            request=request,
         )
 
 
@@ -1503,7 +1522,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
     def test_saying_nothing_about_scripts_leaves_the_server_alone(self):
         """A set registered on the server must survive an ordinary push.
 
-        Unlike ``texture_format``, silence here is not "use the default" -- the
+        Unlike ``glb_options``, silence here is not "use the default" -- the
         server outlives every push, so a session that set a script up once (or
         a caller who registered one directly) would otherwise have it dropped
         by the next push that simply did not mention scripts.
@@ -1519,6 +1538,36 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         self._push(scripts=[])
         self.assertEqual(self.server.scripts, ())
+
+    def test_a_push_publishes_the_lighting_recipe_its_rows_chose(self):
+        """The Baked Reflections row reaches the GLB as the export's does: the
+        deliverer resolves it in its preflight, and the host's envelope
+        publishes it -- an input to the envelope, never patched on afterwards.
+        A push's own row outranks the deliverer's, as every row does."""
+        from pythontk.file_utils.mesh_convert.glb_pipeline import GlbPipeline
+
+        bridge = _StubPreviewBridge()
+        bridge.deliverer = PreviewDeliverer(
+            server=self.server,
+            open_browser=False,
+            glb_options={"baked_reflections": "full"},
+        )
+        self.addCleanup(
+            lambda: [Path(p).unlink(missing_ok=True) for p in bridge.payload_paths]
+        )
+        seen = {}
+
+        def _build(src, dst=None, **kwargs):
+            seen.update(kwargs)
+            raise RuntimeError("captured")  # the push stops here, reported
+
+        with unittest.mock.patch.object(GlbPipeline, "build", side_effect=_build):
+            bridge.push(glb_options={"baked_reflections": "off"})
+            pushed = seen["sidecar"]["handoff"]["rendering"]["lightmappedMaterials"]
+            bridge.push()
+            default = seen["sidecar"]["handoff"]["rendering"]["lightmappedMaterials"]
+        self.assertEqual(pushed["envMapIntensity"], 0.0)
+        self.assertEqual(default["envMapIntensity"], 1.0)
 
     def test_the_glb_is_built_by_the_pipeline_the_exporters_run(self):
         """One chain for the preview and the deliverable.
@@ -1553,7 +1602,9 @@ class PreviewDelivererTestCase(unittest.TestCase):
 
         self.bridge.lightmap_search_dirs = lambda: ["D:/maps"]
         self.bridge.deliverer = PreviewDeliverer(
-            server=self.server, open_browser=False, texture_format="KTX2"
+            server=self.server,
+            open_browser=False,
+            glb_options={"texture_file_type": "ktx2"},
         )
         envelope = _sidecar({"emissive": {"m": {"color": (1, 0, 0)}}})
         encoder = "pythontk.img_utils._img_utils.ImgUtils.resolve_ktx2_encoder"
@@ -1571,7 +1622,8 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.assertEqual(seen["lightmap_dirs"], ["D:/maps"])
         self.assertEqual(
             seen["texture_params"],
-            MeshConvert.web_delivery_texture_params(image_format="KTX2"),
+            # Optimize Textures untouched is OFF: every map keeps its size.
+            MeshConvert.web_delivery_texture_params(image_format="KTX2", max_size=0),
         )
         self.assertIs(
             seen["texture_params"]["ktx2_fallback"],
@@ -1608,12 +1660,11 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.assertTrue(any("encode failed" in line for line in logged.output))
 
     def test_a_push_scoped_script_set_does_not_leak_into_the_next_push(self):
-        """The knob is request-scoped, like ``texture_format`` beside it.
+        """The knob is request-scoped, like ``glb_options`` beside it.
 
         A deliverer is bound once per bridge *class*, so anything a single push
         writes onto the instance sticks process-wide for every bridge in the
-        session -- the exact leak the texture-format knob was reshaped to
-        avoid.
+        session -- the exact leak the texture knob was reshaped to avoid.
         """
         self.bridge.deliverer = PreviewDeliverer(
             server=self.server, open_browser=False, scripts=["inspect"]
@@ -1749,20 +1800,20 @@ class PreviewDelivererTestCase(unittest.TestCase):
             ),
         ):
             with self.assertRaises(FileNotFoundError) as ctx:
-                self._deliver(texture_format="KTX2")
+                self._deliver(glb_options={"texture_file_type": "ktx2"})
         self.assertIn("toktx", str(ctx.exception))
         self.assertEqual(self.server.version, 0, "must not publish a partial push")
 
-    # `texture_format` is a per-push knob, so these assert the request-scoped
-    # half: a deliverer is bound once per bridge *class*, so a format written
+    # `glb_options` is a per-push knob, so these assert the request-scoped
+    # half: a deliverer is bound once per bridge *class*, so a setting written
     # onto the instance for one high-fidelity push would otherwise stick for
     # every bridge in the session -- silently requiring toktx and paying the
     # Basis encode on every later quick-iteration push, with no way back out.
 
-    def _optimize_formats(self, *pushes):
-        """Run *pushes* (each a dict of request extras) and return the
-        `image_format` each one asked the optimizer for, plus the eager
-        KTX2-encoder resolves they triggered."""
+    def _optimize_calls(self, *pushes):
+        """Run *pushes* (each a dict of request extras) and return the kwargs
+        each one handed the texture pass, plus the eager KTX2-encoder resolves
+        they triggered."""
         from pythontk.img_utils._img_utils import ImgUtils
 
         with (
@@ -1773,47 +1824,133 @@ class PreviewDelivererTestCase(unittest.TestCase):
         ):
             for extras in pushes:
                 self._push(**extras)
-        formats = [call.kwargs["image_format"] for call in optimize.call_args_list]
-        return formats, resolve.call_count
+        return [call.kwargs for call in optimize.call_args_list], resolve.call_count
 
-    def test_a_per_request_texture_format_does_not_leak_into_the_next_push(self):
+    def _optimize_formats(self, *pushes):
+        """The `image_format` each of *pushes* asked the texture pass for, plus
+        the eager KTX2-encoder resolves they triggered."""
+        calls, resolves = self._optimize_calls(*pushes)
+        return [call["image_format"] for call in calls], resolves
+
+    def test_the_preview_takes_the_scene_exporters_texture_rows(self):
+        """Parity with the export: the rows it offers, resolved by the SAME
+        method the Scene Exporters call (``ExportRun.glb_texture_params``).
+
+        The preview used to name a container and nothing else, so every push
+        was cut to the web ceiling (2048 px) whatever the export was set to --
+        a 4K export previewed at 2K, with nothing saying they differed.
+        """
+        from pythontk.core_utils.export_profile import ExportRun
+
+        rows = {
+            "texture_file_type": ExportRun.KTX2_WITH_FALLBACK,
+            "optimize_textures": 4096,
+            "secondary_max_size": 1024,
+            "uastc_rdo": 1.0,
+        }
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        formats, resolves = self._optimize_formats({"texture_format": "KTX2"}, {})
+        calls, _ = self._optimize_calls({"glb_options": rows})
+        expected = ExportRun.for_glb(rows)[0].glb_texture_params()
+        self.assertEqual({key: calls[0][key] for key in expected}, expected)
+        self.assertEqual(
+            (calls[0]["image_format"], calls[0]["max_size"], calls[0]["ktx2_fallback"]),
+            ("KTX2", 4096, True),
+        )
+
+    def test_untouched_rows_are_the_exports_untouched_rows(self):
+        """Saying nothing is the Scene Exporter's defaults -- the same texture
+        pass an export with its rows untouched runs: the web container, every
+        map at its own resolution (Optimize Textures is OFF)."""
+        from pythontk.core_utils.export_profile import ExportRun
+
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        calls, resolves = self._optimize_calls({})
+        exported = ExportRun.from_tasks({"output_format": "glb"})[
+            0
+        ].glb_texture_params()
+        self.assertEqual({key: calls[0][key] for key in exported}, exported)
+        self.assertEqual(calls[0]["max_size"], 0, "OFF resizes nothing")
+        self.assertEqual(resolves, 0, "WebP needs no encoder")
+
+    def test_a_request_row_overrides_the_deliverers_row_by_row(self):
+        """A caller that configured the deliverer's container once keeps it on a
+        push that only raises the ceiling -- rows merge, they do not replace."""
+        self.bridge.deliverer = PreviewDeliverer(
+            server=self.server,
+            open_browser=False,
+            glb_options={"texture_file_type": "ktx2"},
+        )
+        calls, _ = self._optimize_calls({"glb_options": {"optimize_textures": 8192}})
+        self.assertEqual(
+            (calls[0]["image_format"], calls[0]["max_size"]), ("KTX2", 8192)
+        )
+
+    def test_a_row_the_export_would_refuse_refuses_the_push(self):
+        """An unknown container is the export's config error too (it aborts);
+        the preview says so and publishes nothing rather than guessing -- and
+        says it in PREFLIGHT, before the host has spent the export on it."""
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        with (
+            unittest.mock.patch.object(self.bridge, "_produce") as produce,
+            self.assertLogs(self.bridge.logger, level="ERROR") as logged,
+        ):
+            result = self._push(glb_options={"texture_file_type": "xyz"})
+        self.assertIsNone(result)
+        produce.assert_not_called()
+        self.assertEqual(self.server.version, 0)
+        self.assertTrue(any("xyz" in line for line in logged.output), logged.output)
+
+    def test_a_bare_container_is_refused_with_the_fix(self):
+        """``glb_options`` took ``texture_format``'s slot: a container
+        passed positionally is a string where rows belong."""
+        with self.assertRaises(TypeError) as ctx:
+            PreviewDeliverer(None, False, "Preview", "KTX2")
+        self.assertIn("texture_file_type", str(ctx.exception))
+
+    def test_a_per_request_texture_row_does_not_leak_into_the_next_push(self):
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        formats, resolves = self._optimize_formats(
+            {"glb_options": {"texture_file_type": "ktx2"}}, {}
+        )
         self.assertEqual(formats, ["KTX2", "WEBP"])
         # The eager `resolve_ktx2_encoder(required=True)` must lapse with the
         # request that asked for KTX2: left inherited, the next push raises
         # FileNotFoundError on a machine that never wanted the encoder.
         self.assertEqual(resolves, 1)
         # ...and the override never wrote through to the shared instance.
-        self.assertEqual(self.bridge.deliverer.texture_format, "WEBP")
+        self.assertEqual(self.bridge.deliverer.glb_options, {})
 
-    def test_a_request_without_a_format_falls_back_to_the_instance_default(self):
+    def test_a_request_without_rows_falls_back_to_the_instance_default(self):
         self.bridge.deliverer = PreviewDeliverer(
-            server=self.server, open_browser=False, texture_format="KTX2"
+            server=self.server,
+            open_browser=False,
+            glb_options={"texture_file_type": "ktx2"},
         )
         formats, resolves = self._optimize_formats({})
         self.assertEqual(formats, ["KTX2"])
         self.assertEqual(resolves, 1)
 
-    def test_a_falsy_instance_default_still_optimizes(self):
-        """Making the format request-scoped moved it from "absent kwarg" to
-        "explicit value", so a falsy instance default stopped inheriting
-        ``optimize_glb_textures``' own ``WEBP`` default and started handing it
-        ``None`` -- which raises inside the optimizer and is swallowed by the
-        broad ``except``, silently shipping an UNOPTIMIZED GLB (the 94.7MB ->
-        ~15MB pass is the whole point of the step). Both falsy forms have to
-        land back on WEBP."""
-        for default in (None, ""):
+    def test_a_falsy_container_still_optimizes(self):
+        """Every empty spelling of the container lands on the policy's (WEBP),
+        never on an empty format id -- which fails every image's encode and
+        ships the GLB unoptimized (the 94.7MB -> ~15MB pass is the whole point
+        of the step)."""
+        for default in (
+            None,
+            {},
+            {"texture_file_type": None},
+            {"texture_file_type": ""},
+        ):
             with self.subTest(instance_default=default):
                 self.bridge.deliverer = PreviewDeliverer(
-                    server=self.server, open_browser=False, texture_format=default
+                    server=self.server, open_browser=False, glb_options=default
                 )
                 formats, _ = self._optimize_formats({})
                 self.assertEqual(formats, ["WEBP"])
 
-    def test_push_forwards_the_format_as_a_request_knob_not_an_export_param(self):
+    def test_push_forwards_the_rows_as_a_request_knob_not_an_export_param(self):
         """`push(**params)` sweeps unknown kwargs into the *export* params, so
-        without an explicit parameter a `push(texture_format=...)` would be
+        without an explicit parameter a `push(glb_options=...)` would be
         handed to the exporter and never reach the deliverer at all."""
         bridge = _StubPreviewBridge()
         bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
@@ -1828,11 +1965,37 @@ class PreviewDelivererTestCase(unittest.TestCase):
                 MeshConvert, "fbx_to_glb", side_effect=self._fake_convert
             ),
         ):
-            bridge.push(texture_format="KTX2")
+            bridge.push(glb_options={"texture_file_type": "ktx2"})
             self.assertEqual(optimize.call_args.kwargs["image_format"], "KTX2")
             bridge.push()
         # Omitting it must leave the deliverer's own default in force rather
         # than overriding it with the parameter's `None` sentinel.
+        self.assertEqual(optimize.call_args.kwargs["image_format"], "WEBP")
+
+    def test_the_retired_texture_format_still_names_the_container(self):
+        """``texture_format`` (push and deliverer) was the container alone; it
+        is now the Texture File Type row of ``glb_options`` and warns for
+        one release rather than breaking a caller."""
+        bridge = _StubPreviewBridge()
+        from pythontk.img_utils._img_utils import ImgUtils
+
+        with (
+            unittest.mock.patch.object(
+                MeshConvert, "optimize_glb_textures", return_value={}
+            ) as optimize,
+            unittest.mock.patch.object(ImgUtils, "resolve_ktx2_encoder"),
+            unittest.mock.patch.object(
+                MeshConvert, "fbx_to_glb", side_effect=self._fake_convert
+            ),
+            self.assertWarns(DeprecationWarning),
+        ):
+            bridge.deliverer = PreviewDeliverer(
+                server=self.server, open_browser=False, texture_format="KTX2"
+            )
+            self.assertEqual(
+                bridge.deliverer.glb_options, {"texture_file_type": "KTX2"}
+            )
+            bridge.push(texture_format="WEBP")
         self.assertEqual(optimize.call_args.kwargs["image_format"], "WEBP")
 
     def test_push_defers_to_a_deliverer_that_says_no_browser(self):
@@ -2213,7 +2376,13 @@ class PayloadPassTestCase(unittest.TestCase):
         self.temp = TempArtifacts("test_preview_payload_pass", policy="scoped")
         self.server = PreviewServer(root=self.temp.dir_path(), port=0).start()
         self.bridge = _StubBridge()
-        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        # A plain Optimize: the pass is on and names no ceiling, so the web
+        # policy's applies -- which each test patches to its own size.
+        self.bridge.deliverer = PreviewDeliverer(
+            server=self.server,
+            open_browser=False,
+            glb_options={"optimize_textures": True},
+        )
         self.converted = []
 
     def tearDown(self):
@@ -2305,6 +2474,23 @@ class PayloadPassTestCase(unittest.TestCase):
         ):
             self.bridge.deliverer.deliver(
                 self.bridge, Payload(primary=original), HandoffRequest(mode="push")
+            )
+        self.assertEqual(self.converted, [original])
+
+    def test_optimize_textures_off_never_downsizes_the_payload(self):
+        """OFF means no resampling anywhere in the build: the converter reads the
+        payload as exported, whatever the web policy's ceiling is."""
+        original = self._payload(self.bridge._make_payload_path(extension=".fbx"))
+        request = HandoffRequest(
+            mode="push", extras={"glb_options": {"optimize_textures": 0}}
+        )
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with (
+            unittest.mock.patch(target, side_effect=self._fake_convert),
+            unittest.mock.patch.object(MeshConvert, "WEB_DELIVERY_MAX_SIZE", 128),
+        ):
+            self.bridge.deliverer.deliver(
+                self.bridge, Payload(primary=original), request
             )
         self.assertEqual(self.converted, [original])
 
@@ -2916,6 +3102,301 @@ class PreviewSettingsTestCase(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self._post("/nope", b"{}")
         self.assertEqual(caught.exception.code, 404)
+
+
+def _png(width=4, height=4, value=180):
+    """A real, decodable PNG -- what the page's canvas readback posts."""
+    raw = b"".join(
+        b"\x00" + bytes([value, value, value] * width) for _ in range(height)
+    )
+
+    def chunk(tag, data):
+        body = tag + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+class PreviewSnapshotTestCase(unittest.TestCase):
+    """The page's Export Image: one POST, one PNG, placed by the server.
+
+    The route writes a file under a name the page does not choose, so what is
+    covered is where it lands (beside the deliverable, else the serve root),
+    that a second still never replaces the first, and that nothing but a real
+    image of an allowed type gets written at all.
+    """
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_preview_snapshot", policy="scoped")
+        self.root = Path(self.temp.dir_path())
+        self.assets = Path(self.temp.dir_path())
+        self.server = PreviewServer(root=self.root, port=0, viewer=False).start()
+
+    def tearDown(self):
+        self.server.stop()
+        self.temp.cleanup()
+
+    # -- helpers --------------------------------------------------------
+    def _publish(self, name="cube.glb"):
+        source = self.assets / name
+        source.write_bytes(b"glTF-stub-0")
+        self.server.publish(source)
+        return source
+
+    def _post(self, body, content_type="image/png", origin=None, query=""):
+        headers = {"Content-Type": content_type}
+        if origin:
+            headers["Origin"] = origin
+        request = urllib.request.Request(
+            f"{self.server.url}{SNAPSHOT_PATH}{query}", data=body, headers=headers
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.loads(response.read())
+
+    def _refused(self, body, **kwargs):
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self._post(body, **kwargs)
+        return caught.exception
+
+    def _pngs(self, directory):
+        return sorted(p.name for p in Path(directory).glob("*.png"))
+
+    # -- where it lands -------------------------------------------------
+    def test_a_still_lands_beside_the_file_it_was_taken_of(self):
+        source = self._publish()
+        image = _png()
+        report = self._post(image)
+
+        output = Path(report["output"])
+        self.assertEqual(output.parent, source.parent)
+        # Named for the deliverable: a folder of stills from several pushes is
+        # otherwise unreadable.
+        self.assertEqual(output.name, "cube_view_001.png")
+        self.assertEqual(output.read_bytes(), image)
+        self.assertFalse(report["in_serve_root"])
+        # Already where its owner keeps it: nothing for the page to download.
+        self.assertIsNone(report["url"])
+
+    def test_a_second_still_is_numbered_not_overwritten(self):
+        """A still is taken again from another angle; the second must never
+        replace the first."""
+        self._publish()
+        first = self._post(_png(value=10))
+        second = self._post(_png(value=250))
+
+        self.assertEqual(
+            (first["name"], second["name"]), ("cube_view_001.png", "cube_view_002.png")
+        )
+        self.assertEqual(Path(first["output"]).read_bytes(), _png(value=10))
+        self.assertEqual(Path(second["output"]).read_bytes(), _png(value=250))
+
+    def test_a_scene_push_still_lands_in_the_serve_root_and_is_fetchable(self):
+        """A scene push's GLB is the bridge's scratch, released once published,
+        so there is nothing to sit beside -- the page's download is then the
+        only copy that outlives the session, and it has to be fetchable."""
+        self._publish().unlink()
+        image = _png()
+        report = self._post(image)
+
+        self.assertEqual(Path(report["output"]).parent, self.root)
+        self.assertTrue(report["in_serve_root"])
+        # Relative, so the page resolves it against the origin it was opened
+        # at: `download` is ignored on any other (see the live suite).
+        self.assertNotIn("//", report["url"])
+        with urllib.request.urlopen(self.server.url + report["url"], timeout=5) as r:
+            self.assertEqual(r.read(), image)
+
+    def test_the_page_cannot_name_the_file(self):
+        """The name reaches the filesystem, so it is composed server-side and
+        nothing the request carries can place it elsewhere."""
+        source = self._publish()
+        report = self._post(_png(), query="?name=../../pwned")
+
+        self.assertEqual(Path(report["output"]).parent, source.parent)
+        self.assertEqual(report["name"], "cube_view_001.png")
+
+    def test_a_deliverable_name_is_made_legal(self):
+        self._publish("my chair (v2).glb")
+        self.assertEqual(self._post(_png())["name"], "my_chair__v2__view_001.png")
+
+    # -- refusals -------------------------------------------------------
+    def test_a_body_that_is_not_the_image_it_claims_is_refused(self):
+        source = self._publish()
+        error = self._refused(b"not a png at all")
+        self.assertEqual(error.code, 400)
+        self.assertIn("not a image/png", error.reason)
+        self.assertEqual(self._pngs(source.parent), [])
+
+    def test_an_unsupported_type_is_refused(self):
+        self._publish()
+        self.assertEqual(self._refused(_png(), content_type="image/gif").code, 400)
+
+    def test_an_empty_image_is_refused(self):
+        self._publish()
+        self.assertEqual(self._refused(b"").code, 400)
+
+    def test_an_oversized_image_is_refused(self):
+        source = self._publish()
+        with unittest.mock.patch.object(PreviewServer, "MAX_SNAPSHOT_BYTES", 16):
+            self.assertEqual(self._refused(_png()).code, 413)
+        self.assertEqual(self._pngs(source.parent), [])
+
+    def _raw_post(self, headers, body=b""):
+        """``(status, reason)`` for a POST whose headers are sent verbatim."""
+        import http.client
+
+        connection = http.client.HTTPConnection(
+            self.server.host, self.server.port, timeout=5
+        )
+        try:
+            connection.putrequest("POST", f"/{SNAPSHOT_PATH}")
+            for key, value in headers.items():
+                connection.putheader(key, value)
+            connection.endheaders()
+            if body:
+                connection.send(body)
+            response = connection.getresponse()
+            return response.status, response.reason
+        finally:
+            connection.close()
+
+    def test_a_body_is_measured_before_it_is_read(self):
+        """``rfile.read(n)`` allocates *n* up front, so a size check on the
+        buffered body bounds nothing: a claimed 8 GB committed 8 GB of the
+        DCC's memory while the read waited for bytes that never came. The
+        claim is refused unread -- promptly, not after a read times out. (A
+        small ceiling and a 1 MiB claim test the same ordering; a regression
+        then waits out the client's timeout instead of allocating gigabytes.)"""
+        self._publish()
+        with unittest.mock.patch.object(PreviewServer, "MAX_SNAPSHOT_BYTES", 1024):
+            status, _reason = self._raw_post(
+                {"Content-Type": "image/png", "Content-Length": str(1024**2)}
+            )
+        self.assertEqual(status, 413)
+
+    def test_a_length_that_cannot_bound_the_read_is_refused(self):
+        self._publish()
+        for headers, code in (
+            ({"Content-Length": "-1"}, 400),
+            ({"Content-Length": "lots"}, 400),
+            ({"Transfer-Encoding": "chunked"}, 411),
+        ):
+            with self.subTest(headers=headers):
+                status, _reason = self._raw_post(
+                    {"Content-Type": "image/png", **headers}
+                )
+                self.assertEqual(status, code)
+
+    def test_a_write_error_naming_a_non_latin_folder_still_reaches_the_page(self):
+        """The reason rides the status line, which ``http.server`` encodes as
+        strict Latin-1: an error naming a path in a Cyrillic folder raised
+        inside the error path, dropping the connection, and the page said
+        "Failed to fetch" instead of why."""
+        self._publish()
+        with unittest.mock.patch(
+            "pythontk.net_utils.preview.server.os.replace",
+            side_effect=OSError("C:\\\u0444\u043e\u0442\u043e\\cube_view_001.png"),
+        ):
+            error = self._refused(_png())
+        self.assertEqual(error.code, 500)
+        self.assertIn("Image write failed", error.reason)
+
+    def test_a_scene_push_still_is_not_named_after_the_scratch_payload(self):
+        """A scene push publishes the bridge's scratch payload, whose stem is a
+        random tag: every push restarted the numbering under a new unreadable
+        prefix. Without a deliverable on disk the still is a numbered view."""
+        self._publish("maya_webxr_preview_18d7d3b39e91ae54.glb").unlink()
+        first = self._post(_png(value=10))
+        self._publish("maya_webxr_preview_77aa01c3d2e4f5b6.glb").unlink()
+        second = self._post(_png(value=250))
+        self.assertEqual(
+            (first["name"], second["name"]), ("view_001.png", "view_002.png")
+        )
+
+    def test_an_unwritable_deliverable_folder_falls_back_to_the_serve_root(self):
+        """An External GLB on a read-only share: the still cannot sit beside
+        it, so it goes where the page can collect it -- still named for it."""
+        self._publish()
+        with unittest.mock.patch.object(
+            PreviewServer, "_writable", return_value=False
+        ):
+            report = self._post(_png())
+        self.assertEqual(Path(report["output"]).parent, self.root)
+        self.assertEqual(report["name"], "cube_view_001.png")
+        self.assertTrue(report["in_serve_root"])
+        self.assertEqual(report["url"], "cube_view_001.png")
+
+    def test_a_failed_write_leaves_nothing_beside_the_deliverable(self):
+        """The folder is the user's: a write that fails part way must not leave
+        its partial file there, and the page is told why."""
+        source = self._publish()
+        with unittest.mock.patch(
+            "pythontk.net_utils.preview.server.os.replace",
+            side_effect=OSError("disk full"),
+        ):
+            error = self._refused(_png())
+        self.assertEqual(error.code, 500)
+        self.assertIn("disk full", error.reason)
+        self.assertEqual(sorted(p.name for p in source.parent.iterdir()), ["cube.glb"])
+
+    def test_a_cross_origin_still_is_refused(self):
+        """Held to the origin check every writing route carries: a page the
+        user happens to have open must not drop files beside their assets."""
+        source = self._publish()
+        error = self._refused(_png(), origin="http://evil.example")
+        self.assertEqual(error.code, 403)
+        self.assertEqual(self._pngs(source.parent), [])
+
+    # -- the button -----------------------------------------------------
+    def test_the_script_is_packaged_and_opt_in(self):
+        """A Viewer Scripts row, like turntable: the page pays nothing for it
+        unless a push asks."""
+        self.assertIn("snapshot", PreviewServer.SCRIPTS)
+        self.assertNotIn("snapshot", PreviewServer.AUTO_SCRIPTS)
+
+    def test_the_script_posts_only_to_the_route_the_server_answers(self):
+        """A typo here is a 404 the user meets in a headset."""
+        source = self._script()
+        posted = set(re.findall(r"fetch\(\s*'([\w/]+)'", source))
+        self.assertEqual(posted, {SNAPSHOT_PATH})
+
+    def test_the_script_uses_only_the_published_viewer_api(self):
+        """A script is handed the page's API object; reaching past it is what
+        the seam exists to prevent. Read out of the page, so a rename of an
+        API member fails the script that used it."""
+        page = (PreviewServer.SCRIPTS_DIR.parent / "viewer.html").read_text(
+            encoding="utf-8"
+        )
+        block = page.split("const viewer = {", 1)[1].split("\n};", 1)[0]
+        published = set(re.findall(r"^  (?:get |async )?(\w+)\s*[({:,]", block, re.M))
+        used = set(re.findall(r"viewer[.](\w+)", self._script()))
+        self.assertTrue(used)
+        self.assertEqual(sorted(used - published), [])
+
+    def test_the_sizes_are_the_playblast_presets_own(self):
+        """The still's sized entries carry the playblast's labels and edges on
+        purpose -- "High — 1440p" means one thing on the page -- so a change to
+        one table that misses the other fails here."""
+        entry = re.compile(r"key: '(\w+)',\s*label: '([^']+)',\s*maxEdge: (\d+)")
+
+        def presets(name):
+            text = (PreviewServer.SCRIPTS_DIR / name).read_text(encoding="utf-8")
+            return {key: (label, int(edge)) for key, label, edge in entry.findall(text)}
+
+        still, recording = presets("snapshot.js"), presets("playblast.js")
+        self.assertTrue(still, "no sized entries parsed out of snapshot.js")
+        self.assertEqual(
+            {key: recording.get(key) for key in still}, still, "the tables drifted"
+        )
+
+    @staticmethod
+    def _script():
+        return (PreviewServer.SCRIPTS_DIR / "snapshot.js").read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":

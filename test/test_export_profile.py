@@ -2,6 +2,7 @@
 # coding=utf-8
 """ExportProfile -- the Scene Exporter panels' export-button contract, once."""
 
+import logging
 import os
 import unittest
 
@@ -323,9 +324,12 @@ class TestOutputPath(unittest.TestCase):
         import re
 
         resolved = self.resolve("{nope}_a?b_{n}")
-        report = ExportProfile.naming_report(
-            resolved, {"name": "", "n": ""}, version_suffix=re.compile(r"_v\d+$")
-        )
+        # version_suffix is retired (warns until 0.12.0) as well as ignored.
+        with self.assertWarns(DeprecationWarning) as retired:
+            report = ExportProfile.naming_report(
+                resolved, {"name": "", "n": ""}, version_suffix=re.compile(r"_v\d+$")
+            )
+        self.assertIn("0.12.0", str(retired.warning))
         self.assertEqual([level for level, _ in report], ["warning"] * 2)
         text = " ".join(message for _, message in report)
         for fragment in ("{nope}", "?"):
@@ -622,6 +626,349 @@ class TestExportRun(unittest.TestCase):
         self.assertEqual(resolved.export_path, "C:/out/asset.fbx")
         self.assertTrue(resolved.versioned and resolved.glb_only)
         self.assertEqual(run.export_path, "", "the original is untouched")
+
+
+class TestGlbTextureParams(unittest.TestCase):
+    """The Scene Exporter's texture rows, resolved to a GLB's texture pass ONCE.
+
+    Both DCC exporters carried a private copy of this resolution, and the WebXR
+    preview carried none: it downsized every push to the web ceiling whatever
+    the export was set to. One method on the run is what both exporters and the
+    preview now call, so the same rows make the same texture pass. Added: 2026-09-21
+    """
+
+    KNOWN = ExportProfile.texture_file_type_options().values()
+
+    def _run(self, **tasks):
+        return ExportRun.from_tasks({"output_format": "glb", **tasks}, self.KNOWN)[0]
+
+    def test_untouched_rows_keep_every_pixel_in_the_web_container(self):
+        """Optimize Textures OFF is the rows' default, and OFF resizes nothing:
+        the GLB takes the web container and keeps each map's own resolution.
+        Until 2026-09-21 an OFF row took the web ceiling (2048 px), a resize
+        under a setting that reads as "no optimization"."""
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        self.assertEqual(
+            self._run().glb_texture_params(),
+            MeshConvert.web_delivery_texture_params(max_size=0),
+        )
+
+    def test_each_row_overrides_only_its_own_half(self):
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        policy = MeshConvert.web_delivery_texture_params()
+        typed = self._run(texture_file_type="jpg").glb_texture_params()
+        self.assertEqual(typed["image_format"], "JPEG", "an extension, as Pillow's id")
+        self.assertEqual(typed["max_size"], 0, "Optimize Textures is still OFF")
+        capped = self._run(
+            optimize_textures=True, texture_max_size=4096
+        ).glb_texture_params()
+        self.assertEqual(capped["max_size"], 4096)
+        self.assertEqual(capped["image_format"], policy["image_format"])
+        dials = self._run(secondary_max_size=1024, uastc_rdo=1.0).glb_texture_params()
+        self.assertEqual((dials["secondary_max_size"], dials["uastc_rdo"]), (1024, 1.0))
+
+    def test_a_ceiling_only_counts_while_the_pass_is_on(self):
+        """OFF keeps every pixel, whatever size the dial last held. With the pass
+        on, a row naming no ceiling (a plain Optimize) takes the web policy's,
+        and Optimize + Max N caps at N."""
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        for run, expected in (
+            (self._run(), 0),
+            (self._run(texture_max_size=4096), 0),  # a size with the pass off: inert
+            (self._run(optimize_textures=True), MeshConvert.WEB_DELIVERY_MAX_SIZE),
+            (self._run(optimize_textures=True, texture_max_size=4096), 4096),
+        ):
+            with self.subTest(run=run):
+                self.assertEqual(run.glb_texture_params()["max_size"], expected)
+        # The dial's own ceiling is still readable (the size check's remedy
+        # names it); only the texture pass gates it on the pass being on.
+        self.assertEqual(self._run(texture_max_size=4096).glb_max_size(), 4096)
+        self.assertEqual(self._run(optimize_textures=True).glb_max_size(), 0)
+
+    def test_the_template_budget_reads_the_templates_own_ceiling(self):
+        from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer
+        from pythontk.core_utils.engines.textures.output_template import (
+            OutputTemplates,
+        )
+
+        budgeted = next(
+            name
+            for name, _description in OutputTemplates.profile_choices()
+            if OutputTemplates.budget(name).max_size
+        )
+        run = self._run(
+            optimize_textures=budgeted,
+            texture_max_size=MapOptimizer.SIZE_CLAMP_TEMPLATE,
+        )
+        self.assertEqual(run.glb_max_size(), OutputTemplates.budget(budgeted).max_size)
+        self.assertEqual(
+            run.glb_texture_params()["max_size"],
+            OutputTemplates.budget(budgeted).max_size,
+        )
+
+    def test_a_container_a_glb_cannot_carry_takes_the_policys_and_says_so(self):
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        log = logging.getLogger("test_glb_texture_params")
+        with self.assertLogs(log, level="INFO") as logged:
+            params = self._run(texture_file_type="tga").glb_texture_params(logger=log)
+        self.assertEqual(params["image_format"], MeshConvert.WEB_DELIVERY_FORMAT)
+        self.assertTrue(any("TGA" in line for line in logged.output), logged.output)
+
+    def test_ktx2_with_a_core_readable_twin(self):
+        params = self._run(
+            texture_file_type=ExportRun.KTX2_WITH_FALLBACK
+        ).glb_texture_params()
+        self.assertEqual(
+            (params["image_format"], params["ktx2_fallback"]), ("KTX2", True)
+        )
+        alone = self._run(texture_file_type="ktx2").glb_texture_params()
+        self.assertEqual(
+            (alone["image_format"], alone["ktx2_fallback"]), ("KTX2", False)
+        )
+
+
+class TestGlbOnlyProducer(unittest.TestCase):
+    """A producer that makes the GLB and nothing else -- the WebXR preview --
+    offers the Scene Exporter's GLB rows (the texture pass and the lighting
+    recipe) and resolves them identically. Added: 2026-09-21
+    """
+
+    #: The Scene Exporter panel's GLB rows, as a task table.
+    ROWS = {
+        "texture_file_type": {
+            "widget_type": "ComboBox",
+            "add": ExportProfile.texture_file_type_options(),
+        },
+        "optimize_textures": {
+            "widget_type": "ComboBox",
+            "object_name": "texture_optimize",
+            "add": ExportProfile.optimize_textures_options(),
+        },
+        "secondary_max_size": {
+            "widget_type": "ComboBox",
+            "add": ExportProfile.SECONDARY_MAX_SIZE_OPTIONS,
+        },
+        "uastc_rdo": {
+            "widget_type": "ComboBox",
+            "add": ExportProfile.UASTC_RDO_OPTIONS,
+        },
+        "baked_reflections": {
+            "widget_type": "ComboBox",
+            "add": ExportProfile.BAKED_REFLECTIONS_OPTIONS,
+        },
+    }
+
+    def _exported(self, values):
+        """What the Scene Exporter's GLB gets from *values*: the export
+        button's read (``run_config``), the run's parse, the run's resolution."""
+        widget_values = {
+            ExportProfile.widget_key(name, spec): values[name]
+            for name, spec in self.ROWS.items()
+            if name in values
+        }
+        tasks = ExportProfile.run_config(widget_values, self.ROWS, {})["tasks"]
+        tasks["output_format"] = "glb"
+        run = ExportRun.from_tasks(
+            tasks, ExportProfile.texture_file_type_options().values()
+        )[0]
+        return run.glb_texture_params(), run.rendering
+
+    def _previewed(self, values):
+        run, notes = ExportRun.for_glb(values)
+        self.assertNotIn("error", [level for level, _ in notes], notes)
+        return run.glb_texture_params(), run.rendering
+
+    def test_every_offered_setting_resolves_as_the_export_does(self):
+        """The whole point: the same rows make the same texture pass and publish
+        the same lighting recipe. Every entry the preview offers, row by row,
+        against the exporter's own chain."""
+        options = ExportProfile.glb_options()
+        for row, table in options.items():
+            for label, value in table.items():
+                with self.subTest(row=row, choice=label):
+                    self.assertEqual(
+                        self._previewed({row: value}), self._exported({row: value})
+                    )
+        combined = {
+            "texture_file_type": ExportRun.KTX2_WITH_FALLBACK,
+            "optimize_textures": 4096,
+            "secondary_max_size": 1024,
+            "uastc_rdo": 1.0,
+            "baked_reflections": "half",
+        }
+        self.assertEqual(self._previewed(combined), self._exported(combined))
+
+    def test_the_rows_are_the_exporters_own_tables(self):
+        """Same labels and values, from the same tables, minus what a GLB-only
+        producer cannot honour: a container glTF cannot embed (it would only
+        ever mean the web default), and the Template Budget entry (its budget
+        comes from the export's Texture Template, whose material conversion a
+        GLB-only producer does not run)."""
+        from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        options = ExportProfile.glb_options()
+        self.assertEqual(list(options), list(ExportProfile.GLB_ROWS))
+        types = options["texture_file_type"]
+        self.assertEqual(list(types.items())[0], ("Original", ""))
+        self.assertIn(ExportRun.KTX2_WITH_FALLBACK, types.values())
+        for label, value in types.items():
+            if value and value != ExportRun.KTX2_WITH_FALLBACK:
+                self.assertIn(value, MeshConvert.GLB_IMAGE_FORMATS, label)
+        self.assertNotIn("tga", types.values())
+        full = ExportProfile.optimize_textures_options()
+        self.assertEqual(
+            options["optimize_textures"],
+            {k: v for k, v in full.items() if v != MapOptimizer.SIZE_CLAMP_TEMPLATE},
+        )
+        self.assertEqual(
+            options["secondary_max_size"], ExportProfile.SECONDARY_MAX_SIZE_OPTIONS
+        )
+        self.assertEqual(options["uastc_rdo"], ExportProfile.UASTC_RDO_OPTIONS)
+        self.assertEqual(
+            options["baked_reflections"], ExportProfile.BAKED_REFLECTIONS_OPTIONS
+        )
+        for row in ExportProfile.GLB_TEXTURE_ROWS:
+            self.assertFalse(
+                list(options[row].values())[0], f"{row}: index 0 is the off state"
+            )
+        # Off is a real choice there, not "unset", so it is a TOKEN.
+        self.assertEqual(list(options["baked_reflections"].values())[0], "off")
+
+    def test_the_optimize_combo_is_taken_apart_in_one_place(self):
+        self.assertEqual(ExportProfile.optimize_textures_tasks(0), {})
+        self.assertEqual(ExportProfile.optimize_textures_tasks(None), {})
+        self.assertEqual(
+            ExportProfile.optimize_textures_tasks(True), {"optimize_textures": True}
+        )
+        self.assertEqual(
+            ExportProfile.optimize_textures_tasks(4096),
+            {"optimize_textures": True, "texture_max_size": 4096},
+        )
+        self.assertEqual(
+            ExportProfile.optimize_textures_tasks(1024, "glTF 2.0"),
+            {"optimize_textures": "glTF 2.0", "texture_max_size": 1024},
+        )
+
+    def test_an_absent_row_is_the_exporters_default(self):
+        self.assertEqual(self._previewed({}), self._exported({}))
+
+    def test_the_rows_start_where_the_exporter_starts_them(self):
+        """What a mirroring panel defaults each row to: the off state, and the
+        recipe's own level for Baked Reflections -- so an untouched mirror
+        builds the texture pass and publishes the recipe an absent row does."""
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        defaults = ExportProfile.glb_defaults()
+        self.assertEqual(list(defaults), list(ExportProfile.GLB_ROWS))
+        self.assertEqual(
+            defaults["baked_reflections"], ExportProfile.baked_reflections_default()
+        )
+        (untouched, chosen), (absent, none) = (
+            self._previewed(defaults),
+            self._previewed({}),
+        )
+        self.assertEqual(untouched, absent)
+        self.assertEqual(
+            MeshConvert.rendering_policy(chosen), MeshConvert.rendering_policy(none)
+        )
+
+    def test_an_unknown_row_is_said_rather_than_dropped(self):
+        """A misspelt key would otherwise leave the images at the policy with
+        nothing saying why the setting did nothing."""
+        _run, notes = ExportRun.for_glb({"max_size": 4096})
+        self.assertEqual([level for level, _ in notes], ["warning"])
+        self.assertIn("max_size", notes[0][1])
+
+    def test_an_unknown_container_is_refused(self):
+        _run, notes = ExportRun.for_glb({"texture_file_type": "xyz"})
+        self.assertIn("error", [level for level, _ in notes])
+
+
+class TestBakedReflections(unittest.TestCase):
+    """The Baked Reflections row: how strongly a lightmapped material reflects
+    the viewer's environment, published in the deliverable's lighting recipe.
+
+    At full strength the studio environment's reflections lifted the darkest
+    baked machine surfaces of a production room from 0.06 to 0.22 of display
+    (a quarter: 0.11). The level is the EXPORT's choice, so a deliverable
+    handed on alone still carries the look it was approved in; the WebXR
+    preview mirrors the row. Added: 2026-09-21
+    """
+
+    def test_every_token_is_a_level_and_the_default_is_the_recipes_own(self):
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        self.assertEqual(
+            list(ExportProfile.BAKED_REFLECTIONS_OPTIONS.values()),
+            list(ExportRun.BAKED_REFLECTION_LEVELS),
+        )
+        default = ExportProfile.baked_reflections_default()
+        self.assertEqual(
+            ExportRun.BAKED_REFLECTION_LEVELS[default],
+            MeshConvert.RENDERING_POLICY["lightmappedMaterials"]["envMapIntensity"],
+        )
+
+    def test_off_survives_the_export_button(self):
+        """REGRESSION guard: the export button drops a falsy row as unset, and
+        an Off stored as 0.0 would have shipped the default level instead."""
+        rows = {
+            "baked_reflections": {
+                "widget_type": "ComboBox",
+                "add": ExportProfile.BAKED_REFLECTIONS_OPTIONS,
+            }
+        }
+        tasks = ExportProfile.run_config({"baked_reflections": "off"}, rows, {})[
+            "tasks"
+        ]
+        run = ExportRun.from_tasks(tasks)[0]
+        self.assertEqual(run.baked_reflections, 0.0)
+        self.assertEqual(
+            run.rendering, {"lightmappedMaterials": {"envMapIntensity": 0.0}}
+        )
+
+    def test_an_untouched_row_publishes_the_recipe_unchanged(self):
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        run = ExportRun.from_tasks({})[0]
+        self.assertIsNone(run.baked_reflections)
+        self.assertEqual(run.rendering, {})
+        self.assertEqual(
+            MeshConvert.rendering_policy(run.rendering), MeshConvert.RENDERING_POLICY
+        )
+
+    def test_a_number_is_a_level_and_anything_else_is_said(self):
+        self.assertEqual(
+            ExportRun.from_tasks({"baked_reflections": 0.4})[0].baked_reflections, 0.4
+        )
+        self.assertEqual(
+            ExportRun.from_tasks({"baked_reflections": -1})[0].baked_reflections, 0.0
+        )
+        run, _tasks, notes = ExportRun.from_tasks({"baked_reflections": "bright"})
+        self.assertIsNone(run.baked_reflections)
+        self.assertEqual([level for level, _ in notes], ["warning"])
+        self.assertIn("bright", notes[0][1])
+
+    def test_the_level_reaches_both_carriers(self):
+        """One decision, two deliverables: the GLB's envelope and the FBX's
+        handoff record publish the same recipe from it."""
+        from pythontk.core_utils.scene_records import SceneRecords
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        run = ExportRun.from_tasks({"baked_reflections": "half"})[0]
+        envelope = MeshConvert.build_scene_sidecar(
+            {}, source={"application": "test"}, rendering=run.rendering
+        )
+        block = SceneRecords.handoff_block(
+            ["lightmap_metadata"], rendering=run.rendering
+        )
+        for recipe in (envelope["handoff"]["rendering"], block["rendering"]):
+            self.assertEqual(recipe["lightmappedMaterials"]["envMapIntensity"], 0.5)
+            self.assertEqual(recipe["lightmappedMaterials"]["envMapTerms"], "specular")
 
 
 class TestRunTables(unittest.TestCase):

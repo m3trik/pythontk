@@ -401,6 +401,21 @@ class TestSnapshot(SceneRecordsCase):
         self.assertIsNone(written["lightmap_metadata"])
         self.assertIn("handoff", written)
 
+    def test_the_handoff_publishes_the_exports_lighting_choices(self):
+        """What the export decided about the lighting recipe (a baked-reflection
+        level) is an input like the clip mode: the stamped handoff carries it,
+        merged the way the GLB's envelope merges it. Added: 2026-09-21"""
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        rendering = {"lightmappedMaterials": {"envMapIntensity": 1.0}}
+        ExportSnapshot.assemble(PRODUCERS, ExportContext(rendering=rendering)).commit(
+            DictStore
+        )
+        self.assertEqual(
+            SR.HANDOFF.load(DictStore)["rendering"],
+            MeshConvert.rendering_policy(rendering),
+        )
+
     def test_the_same_context_produces_the_same_records_twice(self):
         """Re-running an assembly is harmless by construction -- the defect the
         old patch-after-producers pipeline had (three exports logging the right
@@ -946,9 +961,7 @@ class TestRecordTransfer(SceneRecordsCase):
         groups = SR.EMISSIVE_REGISTRY.load(DictStore)["groups"]
         self.assertEqual(sorted(groups), ["early", "late", "odd"], ctx.notes)
         self.assertEqual(groups["early"]["slot"], 3)
-        self.assertEqual(
-            sorted(groups[g]["slot"] for g in ("late", "odd")), [0, 1]
-        )
+        self.assertEqual(sorted(groups[g]["slot"] for g in ("late", "odd")), [0, 1])
         self.assertFalse(any("not merged" in n for n in ctx.notes), ctx.notes)
 
     def test_a_codec_respells_only_the_names_it_holds(self):

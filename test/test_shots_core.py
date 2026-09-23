@@ -338,14 +338,23 @@ class TestPlanRipple(_ShotTest):
             (plan.moves[2].env_start, plan.moves[2].env_lo_open), (20, False)
         )
 
-    def test_carry_gap_on_the_seam_keeps_the_sample_with_the_pivot(self):
-        """A bound moved ONTO the next shot's start (a key dragged to the seam)
-        still owns the sample there: the window opens just past it."""
+    def test_carry_gap_never_cuts_into_the_shot_it_moves(self):
+        """A bound moved ONTO the next shot's start leaves that shot its own
+        opening sample.  The key-drag handlers ripple BEFORE the dragged keys
+        land, so the sample on that frame is the NEIGHBOUR's opening pose, not
+        the pivot's: a window opening just past it stranded the pose in the
+        gap, one frame past the landed key, with the neighbour opening on
+        nothing (measured 2026-09-22).  The carried window trims the gap and
+        never the shot it moves."""
         store = _store([ShotBlock(1, "A", 0, 10, []), ShotBlock(2, "B", 20, 30, [])])
         plan = ShotPlanner.plan_ripple_downstream(store, 1, 20, 5, carry_gap=True)
         self.assertEqual(
-            (plan.moves[2].env_start, plan.moves[2].env_lo_open), (20, True)
+            (plan.moves[2].env_start, plan.moves[2].env_lo_open), (20, False)
         )
+        # Short of the neighbour it still trims the gap: the sample on the
+        # bound stays with the pivot and the rest of the gap rides.
+        gap = ShotPlanner.plan_ripple_downstream(store, 1, 15, 5, carry_gap=True)
+        self.assertEqual((gap.moves[2].env_start, gap.moves[2].env_lo_open), (15, True))
 
     def test_carry_gap_upstream_caps_the_last_window_at_the_pivots_bound(self):
         store = _store(
@@ -365,20 +374,40 @@ class TestPlanRipple(_ShotTest):
         plain = ShotPlanner.plan_ripple_upstream(store, 3, 35, -5)
         self.assertEqual(plain.moves[2].env_end, 40, "the default reaches the pivot")
 
+    def test_carry_gap_upstream_never_cuts_into_the_shot_it_moves(self):
+        """The mirror: a key dragged onto the PREVIOUS shot's keyed end grows
+        the pivot's head to that end, and capping the window there cut the
+        neighbour's own closing sample off -- stranded inside the gap it left
+        (measured 2026-09-22).  Only a bound in the gap caps the window."""
+        store = _store([ShotBlock(1, "P", 0, 10, []), ShotBlock(2, "A", 20, 30, [])])
+        onto = ShotPlanner.plan_ripple_upstream(store, 2, 10, -10, carry_gap=True)
+        self.assertEqual(
+            (onto.moves[1].env_end, onto.moves[1].env_hi_closed), (20, False)
+        )
+        inside = ShotPlanner.plan_ripple_upstream(store, 2, 5, -15, carry_gap=True)
+        self.assertEqual(inside.moves[1].env_end, 20, "into the shot: still whole")
+
     def test_a_bound_dragged_into_the_neighbour_still_ripples_it(self):
         """A key dragged INSIDE the next shot grows the pivot past that shot's
-        start; the neighbour is downstream by ORDER and must still move, and
-        the carried window opens at the new bound so what the bound now covers
-        stays with the pivot."""
+        start; the neighbour is downstream by ORDER and must still move, and it
+        moves WHOLE.  The carried window opening at the new bound stripped the
+        keys the bound now covered off it -- the neighbour played torn.  The
+        drag grammar keeps neighbours intact (keeping covered keys is Ctrl's
+        job), and the sample on a CONTIGUOUS start stays the pivot's
+        fencepost."""
         store = _store([ShotBlock(1, "A", 0, 30, []), ShotBlock(2, "B", 30, 60, [])])
         plan = ShotPlanner.plan_ripple_downstream(store, 1, 35, 5, carry_gap=True)
         b = plan.moves[2]
-        self.assertEqual((b.new_start, b.env_start, b.env_lo_open), (35, 35, True))
+        self.assertEqual((b.new_start, b.env_start, b.env_lo_open), (35, 30, True))
+        gapped = _store([ShotBlock(1, "A", 0, 20, []), ShotBlock(2, "B", 30, 60, [])])
+        plan = ShotPlanner.plan_ripple_downstream(gapped, 1, 35, 15, carry_gap=True)
+        b = plan.moves[2]
+        self.assertEqual((b.new_start, b.env_start, b.env_lo_open), (45, 30, False))
 
     def test_insert_and_delete_ripple_without_carry(self):
         """Insert and delete ripple from a shot's own start with pivot -1 and
-        no carry, so the sample on that start moves with its shot as before;
-        with carry the same frame reads as the caller's bound and stays."""
+        no carry, so the sample on that start moves with its shot as before.
+        Carry cannot change that: it trims a gap, never the shot it moves."""
         store = _store([ShotBlock(1, "A", 0, 10, []), ShotBlock(2, "B", 20, 30, [])])
         plain = ShotPlanner.plan_ripple_downstream(store, -1, 20, 5)
         self.assertEqual(
@@ -386,7 +415,7 @@ class TestPlanRipple(_ShotTest):
         )
         carried = ShotPlanner.plan_ripple_downstream(store, -1, 20, 5, carry_gap=True)
         self.assertEqual(
-            (carried.moves[2].env_start, carried.moves[2].env_lo_open), (20, True)
+            (carried.moves[2].env_start, carried.moves[2].env_lo_open), (20, False)
         )
 
     def test_zero_delta_returns_empty_plan(self):

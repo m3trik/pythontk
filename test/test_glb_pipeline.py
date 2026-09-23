@@ -421,6 +421,23 @@ class GlbPipelineTestCase(unittest.TestCase):
         self.assertEqual(envelope["version"], MeshConvert.SIDECAR_VERSION)
         self.assertEqual(envelope["asset"], "scene.fbx")
         self.assertIn("emissive", envelope["sections"])
+        self.assertEqual(
+            envelope["handoff"]["rendering"],
+            MeshConvert.RENDERING_POLICY,
+            "no choices made: the recipe as declared",
+        )
+
+    def test_the_envelope_publishes_the_exports_lighting_choices(self):
+        """Both producers hand their rows' choices in (``ExportRun.rendering``);
+        the envelope publishes them as ``handoff.rendering``, where the viewer
+        and any other reader find them. Added: 2026-09-21"""
+        rendering = {"lightmappedMaterials": {"envMapIntensity": 0.5}}
+        envelope = GlbPipeline.envelope(
+            lambda: {}, source={"application": "test"}, rendering=rendering
+        )
+        self.assertEqual(
+            envelope["handoff"]["rendering"], MeshConvert.rendering_policy(rendering)
+        )
 
     def test_a_failing_read_degrades_to_an_empty_envelope_not_a_failed_build(self):
         """Requested-but-empty stays distinguishable from switched off: the
