@@ -89,10 +89,12 @@ class AppInstaller:
                              "linux":   {"url": "...", "type": "tar.gz"}}
 
                         ``"type"`` is an archive kind (``zip``, ``tar.gz``,
-                        ``tar.xz``, ``tar.bz2``) or ``"nsis"`` -- a Windows
+                        ``tar.xz``, ``tar.bz2``), ``"nsis"`` -- a Windows
                         installer, run silently into the tool directory
                         instead of extracted (see
-                        :meth:`_run_silent_installer`). Each entry may
+                        :meth:`_run_silent_installer`) -- or ``"binary"``,
+                        a bare executable placed under the tool's own name
+                        (see :meth:`_place_binary`). Each entry may
                         also include a per-platform ``"executable"``
                         override.
             executable: Binary name to search for after extraction.
@@ -140,8 +142,13 @@ class AppInstaller:
 
         exe_name = plat_info.get("executable", executable or name)
 
-        # Check PATH first (already installed globally).
-        existing = cls.get_path(name, location=location, executable=exe_name)
+        # Check PATH first (already installed globally). *add_to_path* is
+        # honoured on this early return too: a tool found in the catalog is on
+        # no PATH, and "ensure put it on PATH" must not depend on whether this
+        # call is the one that downloaded it.
+        existing = cls.get_path(
+            name, location=location, executable=exe_name, add_to_path=add_to_path
+        )
         if existing and not update:
             return existing
 
@@ -181,14 +188,18 @@ class AppInstaller:
         # three call sites -- and never to a bare except, which would fold a genuine
         # programming error into a misleading 'install failed'.
         try:
-            cls._extract(archive_path, tool_dir, archive_type)
+            if archive_type.lower() == "binary":
+                cls._place_binary(archive_path, tool_dir, exe_name)
+            else:
+                cls._extract(archive_path, tool_dir, archive_type)
         except RuntimeError:
             raise
         except Exception as exc:
             raise RuntimeError(
                 f"Could not extract {archive_name} for '{name}': {exc}"
             ) from exc
-        os.remove(archive_path)
+        if os.path.isfile(archive_path):  # a binary was MOVED into place
+            os.remove(archive_path)
 
         # Discover executable inside extraction
         exe_path = cls._find_executable(tool_dir, exe_name)
@@ -454,6 +465,27 @@ class AppInstaller:
             AppInstaller._run_silent_installer(archive_path, dest)
         else:
             raise RuntimeError(f"Unsupported archive type: {archive_type!r}")
+
+    @classmethod
+    def _place_binary(cls, download: str, dest: str, exe_name: str) -> str:
+        """Move a downloaded bare executable into *dest*, under the tool's name.
+
+        The ``binary`` type: a tool that ships as one executable per platform
+        (cloudflared's release assets) has nothing to unpack. It is renamed on
+        the way in because a release asset is named for its BUILD
+        (``cloudflared-windows-amd64.exe``) while discovery -- this class's
+        :meth:`_find_executable`, and ``shutil.which`` once the folder is on
+        PATH -- looks for the command.
+
+        Returns:
+            The executable's path.
+        """
+        name = exe_name
+        if cls._current_platform() == "windows" and not name.lower().endswith(".exe"):
+            name += ".exe"
+        target = os.path.join(dest, name)
+        shutil.move(download, target)
+        return target
 
     @classmethod
     def _run_silent_installer(cls, installer: str, dest: str) -> None:

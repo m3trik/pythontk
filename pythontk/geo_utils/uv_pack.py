@@ -25,8 +25,11 @@ Two packing modes, chosen by ``resolution``:
 Verified engine facts this wrapper relies on (xatlas 0.0.11):
 
 - ``add_uv_mesh`` + ``generate`` packs the *given* parametrization — islands are
-  detected from UV topology and never re-cut, and the islands' relative input
-  scale is preserved exactly (pack-only mode applies one global scale).
+  never re-cut, and the islands' relative input scale is preserved exactly
+  (pack-only mode applies one global scale). Charts are found by UV *position*,
+  though: coincident vertices weld, so islands touching along a seam would
+  merge into one gutterless chart — :meth:`UvPack._separate_islands` moves each
+  topological island clear of the others in the engine input first.
 - In content-driven mode, returned UVs are normalized 0-1 **per axis** of a
   generally non-square atlas, so equal UV distances are unequal in texture
   space; the wrapper de-normalizes by the atlas dimensions.
@@ -202,6 +205,60 @@ class UvPack(HelpMixin):
         if brute_force:
             pairs += [(v, True) for v in variants]
         return pairs
+
+    @staticmethod
+    def _separate_islands(uvs, triangles):
+        """Engine-input copy of *uvs* with every topological island in its own cell.
+
+        The engine finds charts by UV *position*, not index: its colocal pass
+        welds coincident vertices, so two islands touching along a cut seam --
+        distinct indices, identical coordinates -- merge into one chart and come
+        back with no gutter between them (measured: a cut sphere's shells 0.0
+        apart at padding 4, and a caller's per-island write-back then drifted
+        them into overlap). Where an island starts doesn't affect how it packs,
+        so each vertex-connected island (the DCC definition of a shell) is
+        translated onto a grid of cells one largest-island wide plus a gutter.
+        Only the engine's input moves; pass-through rows keep the caller's
+        coordinates. Islands stacked exactly on each other (mirrored halves
+        sharing texels) come apart the same way: the weld used to fuse them
+        into one chart, which kept them stacked.
+        """
+        import numpy as np
+
+        count = len(uvs)
+        tri = np.asarray(triangles, dtype=np.int64).reshape(-1, 3)
+        # Connected components by min-label hooking with pointer jumping: a
+        # handful of vectorized passes, where a Python union-find would walk
+        # every face-vertex of a dense mesh one by one. Each triangle's lowest
+        # label is hooked onto its corners AND onto the labels they hang from,
+        # so whole trees merge at once: hooking the corners alone crept about a
+        # triangle per pass along an island with scattered indices (a shuffled
+        # 40k-triangle strip took 5753 passes, 11.8 s; about a dozen now).
+        labels = np.arange(count)
+        while True:
+            low = labels[tri].min(axis=1)
+            merged = labels.copy()
+            for col in range(3):
+                np.minimum.at(merged, tri[:, col], low)
+                np.minimum.at(merged, labels[tri[:, col]], low)
+            merged = merged[merged]
+            if np.array_equal(merged, labels):
+                break
+            labels = merged
+        _, island = np.unique(labels, return_inverse=True)
+        islands = int(island.max()) + 1
+        if islands < 2:
+            return uvs
+
+        lo = np.full((islands, 2), np.inf)
+        hi = np.full((islands, 2), -np.inf)
+        np.minimum.at(lo, island, uvs)
+        np.maximum.at(hi, island, uvs)
+        cell = float((hi - lo).max()) * 1.25 or 1.0
+        columns = int(np.ceil(np.sqrt(islands)))
+        slot = np.arange(islands)
+        corner = np.column_stack([slot % columns, slot // columns]) * cell
+        return uvs + (corner - lo)[island]
 
     @staticmethod
     def _uv_area(uvs, triangles) -> float:
@@ -397,8 +454,9 @@ class UvPack(HelpMixin):
             RuntimeError: xatlas missing (install note), the engine re-indexed
                 a parametrized mesh in a way that can't be mapped back, or the
                 fixed-page search could not fit the page budget.
-            ValueError: no meshes, a mesh with no UVs/triangles, or zero UV
-                area in fixed-page mode.
+            ValueError: no meshes, a mesh with no UVs/triangles, a triangle
+                indexing past its mesh's UVs, or zero UV area in fixed-page
+                mode.
         """
         import numpy as np
 
@@ -407,13 +465,19 @@ class UvPack(HelpMixin):
         if not meshes:
             raise ValueError("No meshes to pack.")
 
-        arrays = []
+        arrays, originals = [], []
         for i, (uvs, tris) in enumerate(meshes):
-            uv_arr = np.asarray(uvs, dtype=np.float32).reshape(-1, 2)
+            uv_arr = np.asarray(uvs, dtype=np.float64).reshape(-1, 2)
             tri_arr = np.asarray(tris, dtype=np.uint32).reshape(-1, 3)
             if not len(uv_arr) or not len(tri_arr):
                 raise ValueError(f"Mesh {i} has no UVs or no triangles.")
-            arrays.append((uv_arr, tri_arr))
+            if int(tri_arr.max()) >= len(uv_arr):
+                raise ValueError(
+                    f"Mesh {i}: a triangle indexes past its {len(uv_arr)} UVs."
+                )
+            originals.append(uv_arr)
+            separated = cls._separate_islands(uv_arr, tri_arr)
+            arrays.append((separated.astype(np.float32), tri_arr))
 
         candidates = cls._candidates(cls._variants(rotate, align_to_axis), brute_force)
         fixed = resolution > 0
@@ -440,7 +504,7 @@ class UvPack(HelpMixin):
             extent = (width / longest, height / longest)
 
         packed, written, page_arrays = [], [], []
-        for i, (uv_arr, _) in enumerate(arrays):
+        for i, uv_arr in enumerate(originals):
             vmapping, out_tris, new_uvs = atlas.get_mesh(i)
             vmapping = np.asarray(vmapping)
             if len(vmapping) != len(np.unique(vmapping)):

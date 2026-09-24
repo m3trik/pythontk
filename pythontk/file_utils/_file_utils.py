@@ -259,25 +259,28 @@ class FileUtils(HelpMixin):
 
     @classmethod
     def portable_path(cls, path: str, base: Optional[str]) -> str:
-        """The spelling of file *path* that a scene record stores.
+        """The spelling of *path* (a file or a folder) that a scene record stores.
 
-        Relative to *base* (a project root) when the file lies under it --
-        ``sound/vo.wav`` -- so a teammate's copy of the project, mounted
-        anywhere, resolves the same file; absolute otherwise. Forward slashes
-        either way: the file twin of :meth:`relativize_output_dir`, which is
-        what it spells through, normalized because this is stored data rather
-        than a field a user just saw.
+        Relative to *base* wherever a relative spelling reaches it --
+        ``sound/vo.wav`` under it, a ``../`` chain beside it
+        (``../library/hit.wav``) -- so a teammate's copy of the project,
+        mounted anywhere beside the same neighbours, resolves the same file;
+        ``"."`` for *base* itself. Absolute where none does: another drive or
+        share, or no *base* (an unsaved scene). Forward slashes either way.
 
-        Deliberately never a ``../`` chain for a file beside the project: a
-        reader resolves against whatever project its session has set, and a
-        chain written under one project and read under another walks off the
-        drive root and names a different file -- which the next write then
-        stores for good (measured 2026-09-22). Texture paths and lightmap
-        markers follow the same rule. Inverse: :meth:`resolve_portable_path`.
+        *base* must be the SCENE'S OWN project -- the one its file lives in
+        (``Workspace.for_path``) -- never the session's (maintainer rule,
+        2026-09-23). A chain spelled from whatever project a session had set
+        walked off the drive root when read under another and named a
+        different file, which the next write then stored for good (measured
+        2026-09-22); a base that moves with the scene cannot drift that way,
+        and a Save As into another project re-spells the record
+        (:meth:`rebase_portable_path`). Texture paths are Maya's and Blender's
+        own and keep their spelling. Inverse: :meth:`resolve_portable_path`.
 
         Parameters:
-            path (str): Absolute file path.
-            base (str): Directory the stored spelling is relative to.
+            path (str): Absolute path.
+            base (str): The scene's own project root.
 
         Returns:
             str: The spelling to store (``""`` for an empty *path*).
@@ -285,9 +288,37 @@ class FileUtils(HelpMixin):
         if not path:
             return ""
         norm = os.path.normpath(path)
-        if cls.is_rooted_path(norm):
-            norm = cls.relativize_output_dir(norm, base)
+        if base and cls.is_rooted_path(norm):
+            try:
+                norm = os.path.relpath(norm, os.path.normpath(base))
+            except ValueError:
+                pass  # another drive or share: no relative spelling reaches it
         return norm.replace("\\", "/")
+
+    @classmethod
+    def rebase_portable_path(
+        cls, stored: str, old_base: Optional[str], new_base: Optional[str]
+    ) -> str:
+        """*stored*, a :meth:`portable_path` spelling from *old_base*, spelled
+        from *new_base* instead -- the same file, as a scene saved into another
+        project must now name it.
+
+        With the two bases equal it is the normalizer: an absolute value (a
+        record written before the rule, or one that crossed a hand-off) is
+        spelled relative wherever a relative spelling reaches. A relative
+        value with no *old_base* cannot be resolved and is kept as it is.
+
+        Parameters:
+            stored (str): The spelling a record holds.
+            old_base (str): The project it was spelled from.
+            new_base (str): The project it is spelled from now.
+
+        Returns:
+            str: The new spelling (``""`` for an empty value).
+        """
+        if not stored:
+            return ""
+        return cls.portable_path(cls.resolve_portable_path(stored, old_base), new_base)
 
     @classmethod
     def resolve_portable_path(cls, stored: str, base: Optional[str]) -> str:

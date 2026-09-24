@@ -5,8 +5,8 @@
 :class:`PreviewBridge` specialises :class:`pythontk.HandoffBridge` for one
 delivery shape -- geometry pushed to a browser -- and owns everything about it
 that is host-independent: the glTF-appropriate export defaults, the scene
-sidecar attach, and the ``push`` / ``publish_file`` / ``url`` / ``stop``
-surface. A DCC package supplies only the mixin that reads its selection
+sidecar attach, and the ``push`` / ``publish_file`` / ``url`` / ``share`` /
+``stop`` surface. A DCC package supplies only the mixin that reads its selection
 (``mayatk.WebXrPreview`` / ``blendertk.WebXrPreview``). It lives here rather
 than mirrored per engine because mayatk and blendertk cannot import each
 other, and anything written in both drifts in both.
@@ -177,6 +177,7 @@ class PreviewBridge(HandoffBridge):
     @Deprecation.parameter(
         "texture_format",
         remove_in="0.12.0",
+        since="2026-09-23",
         new="glb_options",
         transform=lambda value: {"texture_file_type": value},
         reason="A push now takes every Scene Exporter GLB row, the "
@@ -404,8 +405,55 @@ class PreviewBridge(HandoffBridge):
             f"bake markers point; see the log for the folders searched.{scope}"
         )
 
+    def share(
+        self,
+        provider: Optional[str] = None,
+        alias: Union[
+            str, os.PathLike, Callable[[Optional[str]], Any], bool, None
+        ] = None,
+        alias_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Give the live preview a link anyone can open -- view-only, and every
+        later push reaches it.
+
+        A guest needs only a browser: desktop, phone or a standalone headset,
+        which gets its VR button because the link is HTTPS. This machine serves
+        files and renders nothing for anyone. Starts serving when no push has
+        yet, so a link can go out before the first model does. See
+        :meth:`PreviewServer.share` for the parameters and what can raise.
+
+        Returns:
+            :meth:`PreviewServer.share_info`; ``["url"]`` is the link to send.
+
+        Raises:
+            RuntimeError: The bridge has no preview deliverer to share.
+        """
+        ensure = getattr(self.deliverer, "ensure_server", None)
+        if not callable(ensure):
+            raise RuntimeError(
+                f"{type(self).__name__} has no preview deliverer to share; "
+                f"share needs a PreviewDeliverer."
+            )
+        info = ensure().share(provider=provider, alias=alias, alias_url=alias_url)
+        self.logger.info(
+            "Sharing the preview at %s (%s, view-only).", info["url"], info["label"]
+        )
+        return info
+
+    def unshare(self) -> None:
+        """Stop sharing; the owner's page and its server are untouched."""
+        server = getattr(self.deliverer, "server", None)
+        if server is not None:
+            server.unshare()
+
+    @property
+    def share_url(self) -> Optional[str]:
+        """The link to send while the preview is shared, else ``None``."""
+        server = getattr(self.deliverer, "server", None)
+        return server.share_url if server is not None else None
+
     def stop(self) -> None:
-        """Stop serving and release the port."""
+        """Stop serving and release the port, ending any share."""
         server = getattr(self.deliverer, "server", None)
         if server is not None:
             server.stop()

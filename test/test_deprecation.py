@@ -7,6 +7,7 @@ Run with:
     python test_deprecation.py
 """
 
+import datetime
 import importlib
 import inspect
 import pkgutil
@@ -92,6 +93,127 @@ class DeprecationRecordTest(BaseTestCase):
         self.assertEqual(record.package, "mayatk")
 
 
+class DeprecationCalendarWindowTest(BaseTestCase):
+    """A notice's window is counted in DAYS as well as releases (BACKLOG 2026-09-19).
+
+    Counted in versions alone, seven releases in two weeks (0.9.35 -> 0.10.1)
+    satisfied "one release of warnings" while an outside caller got 15 days:
+    ``Git``, four ``FileUtils`` JSON methods and ``register_from_class`` first
+    warned 2026-09-04 and fell due on the 0.11.0 bump of 2026-09-19. A name now
+    goes only once the version has reached ``remove_in`` AND
+    ``Deprecation.MIN_WINDOW_DAYS`` have passed since its ``since``.
+    """
+
+    FIRST_WARNED = "2026-09-04"
+
+    def _record(self, since=FIRST_WARNED, remove_in="0.11.0"):
+        return DeprecationRecord("A", "B", remove_in, module="pythontk.x", since=since)
+
+    def test_due_by_version_at_day_15_is_held(self):
+        self.assertEqual(Deprecation.MIN_WINDOW_DAYS, 30)
+        record = self._record()
+        self.assertFalse(record.expired("0.11.0", today=datetime.date(2026, 9, 19)))
+
+    def test_due_by_version_at_day_30_is_expired(self):
+        record = self._record()
+        self.assertFalse(record.expired("0.11.0", today=datetime.date(2026, 10, 3)))
+        self.assertTrue(record.expired("0.11.0", today=datetime.date(2026, 10, 4)))
+
+    def test_time_alone_never_expires_a_name(self):
+        record = self._record()
+        self.assertFalse(record.expired("0.10.9", today=datetime.date(2030, 1, 1)))
+
+    def test_a_record_that_names_no_date_keeps_the_version_rule(self):
+        record = DeprecationRecord("A", "B", "0.11.0")
+        self.assertEqual(record.since, "")
+        self.assertTrue(record.expired("0.11.0", today=datetime.date(2026, 9, 19)))
+
+    def test_the_message_names_the_earliest_removal_date(self):
+        self.assertEqual(self._record().not_before, "2026-10-04")
+        self.assertIn(
+            "pythontk 0.11.0, not before 2026-10-04", self._record().message()
+        )
+        self.assertNotIn("not before", DeprecationRecord("A", "B", "0.11.0").message())
+
+    def test_a_malformed_date_raises_at_construction(self):
+        for bad in ("yesterday", "2026-13-01", "04/09/2026", "2026-9-4", "20260904"):
+            with self.subTest(since=bad):
+                with self.assertRaises(ValueError):
+                    self._record(since=bad)
+
+    def test_a_patch_release_never_removes_a_name(self):
+        with self.assertRaises(ValueError) as caught:
+            DeprecationRecord("A", "B", "0.11.1")
+        self.assertIn("patch", str(caught.exception))
+
+    def test_the_roster_holds_a_name_due_by_version_but_not_by_time(self):
+        Deprecation._register(self._record())
+        early, late = datetime.date(2026, 9, 19), datetime.date(2026, 10, 4)
+        self.assertEqual(
+            Deprecation.expired("0.11.0", module="pythontk.x", today=early), ()
+        )
+        self.assertEqual(
+            [
+                r.what
+                for r in Deprecation.expired("0.11.0", module="pythontk.x", today=late)
+            ],
+            ["A"],
+        )
+        report = Deprecation.report("0.11.0", module="pythontk.x", today=early)
+        self.assertIn("HELD until 2026-10-04", report)
+        self.assertNotIn("EXPIRED", report)
+
+    def test_the_static_gate_and_the_roster_share_one_rule(self):
+        """``window_expired`` is what ``generate_api_registry.py`` loads off
+        disk, the way it loads ``version_key``: one rule, two gates."""
+        early, late = datetime.date(2026, 9, 19), datetime.date(2026, 10, 4)
+        self.assertFalse(
+            Deprecation.window_expired("0.11.0", "0.11.0", "2026-09-04", early)
+        )
+        self.assertTrue(
+            Deprecation.window_expired("0.11.0", "0.11.0", "2026-09-04", late)
+        )
+        self.assertTrue(Deprecation.window_expired("0.11.0", "0.11.0", "", early))
+        self.assertFalse(Deprecation.window_expired("0.11.0", "0.10.9", "", late))
+
+    def test_every_entry_point_records_the_date(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            warned = Deprecation.warn(
+                "W.a", "W.b", remove_in="9.9.0", since="2026-09-01"
+            )
+
+        @Deprecation.symbol("S.new", remove_in="9.9.0", since="2026-09-02")
+        def old():
+            pass
+
+        @Deprecation.parameter("old_kw", remove_in="9.9.0", since="2026-09-03")
+        def fn(**kwargs):
+            pass
+
+        module = types.ModuleType("_dep_since_module")
+        sys.modules[module.__name__] = module
+        self.addCleanup(sys.modules.pop, module.__name__, None)
+        moved = Deprecation.attributes(
+            vars(module),
+            {"gone": "os.path.join"},
+            remove_in="9.9.0",
+            since="2026-09-04",
+        )
+        Deprecation.values(
+            {"since_alias": "live"},
+            what="Dated vocab",
+            remove_in="9.9.0",
+            since="2026-09-05",
+        )
+        dated = {r.what: r.since for r in Deprecation.registered() if r.since}
+        self.assertEqual(warned.since, "2026-09-01")
+        self.assertEqual(moved["gone"].since, "2026-09-04")
+        self.assertIn("2026-09-02", dated.values())
+        self.assertIn("2026-09-03", dated.values())
+        self.assertIn("2026-09-05", dated.values())
+
+
 class DeprecationWarnTest(BaseTestCase):
     """``Deprecation.warn`` -- the escape hatch for shapes the decorators miss.
 
@@ -105,7 +227,7 @@ class DeprecationWarnTest(BaseTestCase):
     def test_it_warns_and_registers(self):
         with self.assertWarns(DeprecationWarning) as caught:
             record = Deprecation.warn(
-                "Owner.legacy_path", "Owner.new_path", remove_in="9.9.9"
+                "Owner.legacy_path", "Owner.new_path", remove_in="9.9.0"
             )
         self.assertIn("Owner.new_path", str(caught.warning))
         self.assertIn(record, Deprecation.registered(module=__name__))
@@ -115,13 +237,13 @@ class DeprecationWarnTest(BaseTestCase):
         caller is what makes 'removed in pythontk 0.11.0' say 'pythontk'."""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
-            record = Deprecation.warn("A.b", "A.c", remove_in="9.9.9")
+            record = Deprecation.warn("A.b", "A.c", remove_in="9.9.0")
         self.assertEqual(record.module, __name__)
 
     def test_stacklevel_1_points_at_this_frame(self):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            Deprecation.warn("A.b", "A.c", remove_in="9.9.9")
+            Deprecation.warn("A.b", "A.c", remove_in="9.9.0")
         self.assertEqual(caught[0].filename, __file__)
 
     def test_stacklevel_counts_out_through_a_consumer_helper(self):
@@ -130,7 +252,7 @@ class DeprecationWarnTest(BaseTestCase):
         At 1 the warning blames the helper; the caller needs 3."""
 
         def helper():
-            Deprecation.warn("A.b", "A.c", remove_in="9.9.9", stacklevel=3)
+            Deprecation.warn("A.b", "A.c", remove_in="9.9.0", stacklevel=3)
 
         def entry_point():
             helper()
@@ -178,7 +300,7 @@ class DeprecationSymbolTest(BaseTestCase):
     def test_behaviour_is_unchanged(self):
         """Warning is not breaking -- the whole point of a one-release alias."""
 
-        @Deprecation.symbol("live_fn", remove_in="9.9.9")
+        @Deprecation.symbol("live_fn", remove_in="9.9.0")
         def old_fn(a, b=2):
             return a + b
 
@@ -188,20 +310,20 @@ class DeprecationSymbolTest(BaseTestCase):
             self.assertEqual(old_fn(1, b=10), 11)
 
     def test_warns_with_the_replacement_and_version(self):
-        @Deprecation.symbol("live_fn", remove_in="9.9.9")
+        @Deprecation.symbol("live_fn", remove_in="9.9.0")
         def old_fn():
             return 1
 
         with self.assertWarns(DeprecationWarning) as caught:
             old_fn()
         self.assertIn("live_fn", str(caught.warning))
-        self.assertIn("9.9.9", str(caught.warning))
+        self.assertIn("9.9.0", str(caught.warning))
 
     def test_attributed_to_the_caller_not_the_machinery(self):
         """A warning pointing at the deprecation module names no line the
         caller can change, which is the one thing the notice is for."""
 
-        @Deprecation.symbol("live_fn", remove_in="9.9.9")
+        @Deprecation.symbol("live_fn", remove_in="9.9.0")
         def old_fn():
             return 1
 
@@ -217,12 +339,12 @@ class DeprecationSymbolTest(BaseTestCase):
 
         class Below:
             @classmethod
-            @Deprecation.symbol("live", remove_in="9.9.9")
+            @Deprecation.symbol("live", remove_in="9.9.0")
             def old(cls):
                 return "below"
 
         class Above:
-            @Deprecation.symbol("live", remove_in="9.9.9")
+            @Deprecation.symbol("live", remove_in="9.9.0")
             @classmethod
             def old(cls):
                 return "above"
@@ -235,7 +357,7 @@ class DeprecationSymbolTest(BaseTestCase):
     def test_staticmethod_is_preserved(self):
         class Owner:
             @staticmethod
-            @Deprecation.symbol("live", remove_in="9.9.9")
+            @Deprecation.symbol("live", remove_in="9.9.0")
             def old(x):
                 return x * 2
 
@@ -247,14 +369,14 @@ class DeprecationSymbolTest(BaseTestCase):
         naively wrapping it builds a member that raises on first access."""
 
         class Over:
-            @Deprecation.symbol("Over.live", remove_in="9.9.9")
+            @Deprecation.symbol("Over.live", remove_in="9.9.0")
             @property
             def value(self):
                 return "over"
 
         class Under:
             @property
-            @Deprecation.symbol("Under.live", remove_in="9.9.9")
+            @Deprecation.symbol("Under.live", remove_in="9.9.0")
             def value(self):
                 return "under"
 
@@ -269,7 +391,7 @@ class DeprecationSymbolTest(BaseTestCase):
                 message = str(caught.warning)
                 self.assertIn(f"{owner.__name__}.value", message)
                 self.assertNotIn("property object at", message)
-                self.assertIn("9.9.9", message)
+                self.assertIn("9.9.0", message)
 
     def test_a_setter_attached_afterwards_needs_its_own_decorator(self):
         """``@value.setter`` builds a FRESH property from the getter, so a
@@ -279,12 +401,12 @@ class DeprecationSymbolTest(BaseTestCase):
 
         class Owner:
             @property
-            @Deprecation.symbol("Owner.live", remove_in="9.9.9")
+            @Deprecation.symbol("Owner.live", remove_in="9.9.0")
             def value(self):
                 return self._v
 
             @value.setter
-            @Deprecation.symbol("Owner.live", remove_in="9.9.9")
+            @Deprecation.symbol("Owner.live", remove_in="9.9.0")
             def value(self, v):
                 self._v = v
 
@@ -305,7 +427,7 @@ class DeprecationSymbolTest(BaseTestCase):
             self._v = v
 
         class Owner:
-            value = Deprecation.symbol("Owner.live", remove_in="9.9.9")(
+            value = Deprecation.symbol("Owner.live", remove_in="9.9.0")(
                 property(get, put)
             )
 
@@ -316,7 +438,7 @@ class DeprecationSymbolTest(BaseTestCase):
             self.assertEqual(owner.value, 7)
 
     def test_class_construction_warns_and_still_builds(self):
-        @Deprecation.symbol("NewThing", remove_in="9.9.9")
+        @Deprecation.symbol("NewThing", remove_in="9.9.0")
         class OldThing:
             def __init__(self, a, b=2):
                 self.total = a + b
@@ -329,7 +451,7 @@ class DeprecationSymbolTest(BaseTestCase):
         """A subclass is a live dependency on the retired class, and the
         hand-written ``__init__`` warn it replaces could not see one."""
 
-        @Deprecation.symbol("NewThing", remove_in="9.9.9")
+        @Deprecation.symbol("NewThing", remove_in="9.9.0")
         class OldThing:
             def __init__(self):
                 self.built = True
@@ -346,7 +468,7 @@ class DeprecationSymbolTest(BaseTestCase):
         reader would otherwise have every reason to strip it as a no-op."""
         import inspect as _inspect
 
-        @Deprecation.symbol("NewThing", remove_in="9.9.9")
+        @Deprecation.symbol("NewThing", remove_in="9.9.0")
         class OldThing:
             def __init__(self):
                 pass
@@ -356,7 +478,7 @@ class DeprecationSymbolTest(BaseTestCase):
         )
 
     def test_marker_is_the_pep_702_message_string(self):
-        @Deprecation.symbol("live_fn", remove_in="9.9.9")
+        @Deprecation.symbol("live_fn", remove_in="9.9.0")
         def old_fn():
             return 1
 
@@ -368,7 +490,7 @@ class DeprecationSymbolTest(BaseTestCase):
         deprecated method read as live in ``help()`` and the registry."""
         import inspect
 
-        @Deprecation.symbol("live_fn", remove_in="9.9.9")
+        @Deprecation.symbol("live_fn", remove_in="9.9.0")
         def old_fn():
             return 1
 
@@ -377,7 +499,7 @@ class DeprecationSymbolTest(BaseTestCase):
     def test_help_mixin_reads_the_marker_and_the_version(self):
         class Owner(ptk.HelpMixin):
             @classmethod
-            @Deprecation.symbol("Owner.live", remove_in="9.9.9")
+            @Deprecation.symbol("Owner.live", remove_in="9.9.0")
             def old(cls):
                 """Retired."""
 
@@ -389,7 +511,7 @@ class DeprecationSymbolTest(BaseTestCase):
             warnings.simplefilter("ignore", DeprecationWarning)
             members = {r["name"]: r for r in Owner.help(as_dict=True)["members"]}
         self.assertTrue(members["old"]["deprecated"])
-        self.assertEqual(members["old"]["remove_in"], "9.9.9")
+        self.assertEqual(members["old"]["remove_in"], "9.9.0")
         self.assertFalse(members["live"]["deprecated"])
         self.assertEqual(members["live"]["remove_in"], "")
 
@@ -400,7 +522,7 @@ class DeprecationSymbolTest(BaseTestCase):
         up. ``inspect.unwrap`` carries it, but only because both halves are
         marked and ``functools.wraps`` set ``__wrapped__``."""
 
-        @Deprecation.symbol("live_fn", remove_in="9.9.9")
+        @Deprecation.symbol("live_fn", remove_in="9.9.0")
         def old_fn():
             return 1
 
@@ -416,7 +538,7 @@ class DeprecationSymbolTest(BaseTestCase):
         gate compares (qualname, kind) -- so nothing caught the disagreement."""
 
         class Owner(ptk.HelpMixin):
-            @Deprecation.symbol("Owner.live", remove_in="9.9.9")
+            @Deprecation.symbol("Owner.live", remove_in="9.9.0")
             @property
             def value(self):
                 """Retired."""
@@ -427,7 +549,7 @@ class DeprecationSymbolTest(BaseTestCase):
             members = {r["name"]: r for r in Owner.help(as_dict=True)["members"]}
         self.assertEqual(members["value"]["kind"], "property")
         self.assertTrue(members["value"]["deprecated"])
-        self.assertEqual(members["value"]["remove_in"], "9.9.9")
+        self.assertEqual(members["value"]["remove_in"], "9.9.0")
 
     def test_registry_row_carries_the_deadline(self):
         record = ptk.SymbolRecord(
@@ -438,9 +560,9 @@ class DeprecationSymbolTest(BaseTestCase):
             summary="",
             line=1,
             deprecated=True,
-            remove_in="9.9.9",
+            remove_in="9.9.0",
         )
-        self.assertIn("**DEPRECATED (remove in 9.9.9)**", record.to_registry_row())
+        self.assertIn("**DEPRECATED (remove in 9.9.0)**", record.to_registry_row())
 
 
 class DeprecationParameterTest(BaseTestCase):
@@ -453,7 +575,7 @@ class DeprecationParameterTest(BaseTestCase):
             "use_object_axes",
             new="axis_frame",
             transform=lambda v: "world" if v is False else "auto",
-            remove_in="9.9.9",
+            remove_in="9.9.0",
         )
         def mirror(obj, axis_frame="auto"):
             return (obj, axis_frame)
@@ -489,7 +611,7 @@ class DeprecationParameterTest(BaseTestCase):
         meant the retired spelling -- and for a pure rename the position did
         not move, so such a call needs no migration at all."""
 
-        @Deprecation.parameter("old_name", new="new_name", remove_in="9.9.9")
+        @Deprecation.parameter("old_name", new="new_name", remove_in="9.9.0")
         def fn(a, new_name=None):
             return (a, new_name)
 
@@ -500,7 +622,7 @@ class DeprecationParameterTest(BaseTestCase):
         self.assertEqual(caught, [])
 
     def test_drop_discards_a_no_effect_parameter(self):
-        @Deprecation.parameter("as_strings", drop=True, remove_in="9.9.9")
+        @Deprecation.parameter("as_strings", drop=True, remove_in="9.9.0")
         def names(x):
             return [x]
 
@@ -511,15 +633,15 @@ class DeprecationParameterTest(BaseTestCase):
         """Three cases, three different things a caller must do. A forwarded
         parameter described as having "no effect" is a false instruction."""
 
-        @Deprecation.parameter("a", new="live", remove_in="9.9.9")
+        @Deprecation.parameter("a", new="live", remove_in="9.9.0")
         def renamed(live=None):
             return live
 
-        @Deprecation.parameter("b", drop=True, remove_in="9.9.9")
+        @Deprecation.parameter("b", drop=True, remove_in="9.9.0")
         def dropped(**kwargs):
             return None
 
-        @Deprecation.parameter("c", remove_in="9.9.9")
+        @Deprecation.parameter("c", remove_in="9.9.0")
         def forwarded(c=None):
             return c
 
@@ -537,7 +659,7 @@ class DeprecationParameterTest(BaseTestCase):
         """Warning is not breaking: with no replacement keyword and no
         ``drop``, this release behaves exactly as it did."""
 
-        @Deprecation.parameter("legacy", remove_in="9.9.9")
+        @Deprecation.parameter("legacy", remove_in="9.9.0")
         def fn(legacy=None):
             return legacy
 
@@ -548,14 +670,14 @@ class DeprecationParameterTest(BaseTestCase):
         """The method stays; only the keyword goes. Marking the owner would
         make the registry announce the removal of a live method."""
 
-        @Deprecation.parameter("old_kw", new="new_kw", remove_in="9.9.9")
+        @Deprecation.parameter("old_kw", new="new_kw", remove_in="9.9.0")
         def fn(new_kw=None):
             return new_kw
 
         self.assertFalse(getattr(fn, "__deprecated__", False))
 
     def test_it_is_registered_as_a_parameter(self):
-        @Deprecation.parameter("rostered_kw", new="live_kw", remove_in="9.9.9")
+        @Deprecation.parameter("rostered_kw", new="live_kw", remove_in="9.9.0")
         def fn(live_kw=None):
             return live_kw
 
@@ -582,19 +704,19 @@ class DeprecationAttributesTest(BaseTestCase):
         Deprecation.attributes(
             module.__dict__,
             {"SymbolRecord": "pythontk.core_utils.symbol_record.SymbolRecord"},
-            remove_in="9.9.9",
+            remove_in="9.9.0",
         )
         with self.assertWarns(DeprecationWarning) as caught:
             resolved = module.SymbolRecord
         self.assertIs(resolved, ptk.SymbolRecord)
-        self.assertIn("9.9.9", str(caught.warning))
+        self.assertIn("9.9.0", str(caught.warning))
 
     def test_a_live_name_is_untouched(self):
         module = self._module()
         Deprecation.attributes(
             module.__dict__,
             {"Gone": "pythontk.core_utils.symbol_record.SymbolRecord"},
-            remove_in="9.9.9",
+            remove_in="9.9.0",
         )
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -606,7 +728,7 @@ class DeprecationAttributesTest(BaseTestCase):
         Deprecation.attributes(
             module.__dict__,
             {"Gone": "pythontk.core_utils.symbol_record.SymbolRecord"},
-            remove_in="9.9.9",
+            remove_in="9.9.0",
         )
         with self.assertRaises(AttributeError):
             module.no_such_name
@@ -626,7 +748,7 @@ class DeprecationAttributesTest(BaseTestCase):
         Deprecation.attributes(
             module.__dict__,
             {"Gone": "pythontk.core_utils.symbol_record.SymbolRecord"},
-            remove_in="9.9.9",
+            remove_in="9.9.0",
         )
         self.assertEqual(module.LazyName, "lazily-built")
         with self.assertWarns(DeprecationWarning):
@@ -639,7 +761,7 @@ class DeprecationAttributesTest(BaseTestCase):
         Deprecation.attributes(
             module.__dict__,
             {"Gone": "pythontk.core_utils.symbol_record.SymbolRecord"},
-            remove_in="9.9.9",
+            remove_in="9.9.0",
         )
         listed = dir(module)
         self.assertIn("Gone", listed)
@@ -652,7 +774,7 @@ class DeprecationAttributesTest(BaseTestCase):
         Deprecation.attributes(
             sys.modules["_dep_test_unused"].__dict__,
             {"NeverTouched": "pythontk.core_utils.symbol_record.SymbolRecord"},
-            remove_in="9.9.9",
+            remove_in="9.9.0",
         )
         found = [
             r
@@ -667,14 +789,14 @@ class DeprecationValuesTest(BaseTestCase):
 
     def test_alias_resolves_to_the_live_value(self):
         resolve = Deprecation.values(
-            {"stretch": "orbit"}, what="ShadowRig mode", remove_in="9.9.9"
+            {"stretch": "orbit"}, what="ShadowRig mode", remove_in="9.9.0"
         )
         with self.assertWarns(DeprecationWarning):
             self.assertEqual(resolve("stretch"), "orbit")
 
     def test_a_live_value_passes_through_silently(self):
         resolve = Deprecation.values(
-            {"stretch": "orbit"}, what="ShadowRig mode", remove_in="9.9.9"
+            {"stretch": "orbit"}, what="ShadowRig mode", remove_in="9.9.0"
         )
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -684,13 +806,13 @@ class DeprecationValuesTest(BaseTestCase):
 
     def test_an_unhashable_value_cannot_be_an_alias(self):
         resolve = Deprecation.values(
-            {"stretch": "orbit"}, what="ShadowRig mode", remove_in="9.9.9"
+            {"stretch": "orbit"}, what="ShadowRig mode", remove_in="9.9.0"
         )
         self.assertEqual(resolve(["a"]), ["a"])
 
     def test_registered_at_construction(self):
         Deprecation.values(
-            {"never_passed": "live"}, what="Rostered vocabulary", remove_in="9.9.9"
+            {"never_passed": "live"}, what="Rostered vocabulary", remove_in="9.9.0"
         )
         found = [
             r for r in Deprecation.registered(kind="value") if "never_passed" in r.what
@@ -708,7 +830,7 @@ class DeprecationSinkTest(BaseTestCase):
         Deprecation.sink = self.seen.append
 
     def _fresh(self, what):
-        record = DeprecationRecord(what, "live", "9.9.9", module="pythontk.test")
+        record = DeprecationRecord(what, "live", "9.9.0", module="pythontk.test")
         Deprecation._announced.discard(record.key)
         self.addCleanup(Deprecation._announced.discard, record.key)
         return record
@@ -758,13 +880,13 @@ class DeprecationRosterTest(BaseTestCase):
         must not grow a duplicate row each time."""
         before = len(Deprecation.registered())
         for _ in range(3):
-            Deprecation._register(DeprecationRecord("Idempotent.one", "live", "9.9.9"))
+            Deprecation._register(DeprecationRecord("Idempotent.one", "live", "9.9.0"))
         self.assertEqual(len(Deprecation.registered()), before + 1)
 
     def test_module_filter_matches_the_package_prefix(self):
         Deprecation._register(
             DeprecationRecord(
-                "Filtered.one", "live", "9.9.9", module="madeuppkg.sub.mod"
+                "Filtered.one", "live", "9.9.0", module="madeuppkg.sub.mod"
             )
         )
         self.assertTrue(Deprecation.registered(module="madeuppkg"))
@@ -777,7 +899,7 @@ class DeprecationRosterTest(BaseTestCase):
 
     def test_report_marks_the_overdue(self):
         Deprecation._register(
-            DeprecationRecord("Overdue.one", "live", "0.0.1", module="madeuppkg")
+            DeprecationRecord("Overdue.one", "live", "0.1.0", module="madeuppkg")
         )
         self.assertIn("EXPIRED", Deprecation.report("1.0.0", module="madeuppkg"))
         self.assertNotIn("EXPIRED", Deprecation.report("0.0.0", module="madeuppkg"))
@@ -827,6 +949,14 @@ class PythontkRetirementDebtTest(BaseTestCase):
         for record in Deprecation.registered(module="pythontk"):
             with self.subTest(what=record.what):
                 self.assertTrue(record.remove_in)
+
+    def test_every_pythontk_deprecation_names_the_date_it_first_shipped(self):
+        """The calendar half of the window reads ``since``; a notice without one
+        can retire days after it first warned, the defect it exists to stop."""
+        self._import_every_module()
+        for record in Deprecation.registered(module="pythontk"):
+            with self.subTest(what=record.what):
+                self.assertTrue(record.since, f"{record.what}: no since= date")
 
 
 if __name__ == "__main__":

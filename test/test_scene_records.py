@@ -9,6 +9,7 @@ decided here, once.
 """
 
 import json
+import os
 import pathlib
 import unittest
 from typing import Any, Dict
@@ -1319,6 +1320,187 @@ class TestStoreCrossings(unittest.TestCase):
         _CarrierStore.reset()
         _CarrierStore.receive_sections(sections, source="send")
         self.assertIn("g", SR.EMISSIVE_REGISTRY.load(_CarrierStore)["groups"])
+
+
+class TestLightmapDirs(SceneRecordsCase):
+    """The folder each baked lightmap was written to (BACKLOG 2026-09-19).
+    It rode every per-object marker, and a marker rides the FBX -- so the
+    hint moved to a PRIVATE record: never on a deliverable, still crossing a
+    hand-off so a pulled scene finds its maps."""
+
+    def test_it_never_ships_and_it_crosses_a_handoff(self):
+        for spec in (SR.LIGHTMAP_DIRS, SR.LIGHTMAP_WRITERS):
+            self.assertIs(spec.scope, Scope.PRIVATE)
+            self.assertNotIn(spec, SR.deliverable())
+            self.assertIn(spec, SR.portable())
+        SR.LIGHTMAP_DIRS.save(DictStore, {"floor_lightmap.exr": "sourceimages/lm"})
+        out = RecordTransfer.sections(DictStore, TransferContext())
+        self.assertEqual(
+            out["records"]["lightmap_dirs"], {"floor_lightmap.exr": "sourceimages/lm"}
+        )
+
+    def test_a_crossing_keeps_this_scenes_folder_and_adopts_the_rest(self):
+        """File names, not scene names: a rename context must not touch a key,
+        and this scene's own hint for a map wins over the arriving one."""
+        SR.LIGHTMAP_DIRS.save(DictStore, {"a.exr": "mine", "c.exr": "mine"})
+        manifest = {"records": {"lightmap_dirs": {"a.exr": "theirs", "b.exr": "x"}}}
+        RecordTransfer.receive(
+            manifest,
+            DictStore,
+            TransferContext(rename=lambda n: "renamed.exr" if n == "a.exr" else n),
+        )
+        self.assertEqual(
+            SR.LIGHTMAP_DIRS.load(DictStore),
+            {"a.exr": "mine", "b.exr": "x", "c.exr": "mine"},
+        )
+
+
+class TestProjectRelativePaths(SceneRecordsCase):
+    """BACKLOG 2026-09-22 (decided 2026-09-23): a path record stores its files
+    relative to the SCENE'S OWN project, ``../`` chains included, so it has to
+    follow the scene -- a Save As into another project re-spells it, a hand-off
+    ships it absolute, and a module's copy arrives spelled from the host."""
+
+    OLD = os.path.abspath("/work/proj")
+    NEW = os.path.abspath("/work/shows/copy")
+    LIB = os.path.abspath("/work/library")
+
+    @staticmethod
+    def _abs(base, spelled):
+        return os.path.normpath(os.path.join(base, spelled)).replace("\\", "/")
+
+    def test_the_audio_and_lightmap_records_are_the_path_records(self):
+        self.assertEqual(
+            SR.with_paths(),
+            [SR.AUDIO_FILE_MAP, SR.LIGHTMAP_DIRS, SR.LIGHTMAP_WRITERS],
+        )
+
+    def test_a_copy_saved_into_another_project_still_names_the_writer(self):
+        """What keeps a Save As copy's re-bake from deleting the maps its
+        source still reads: the writer is the source file wherever the copy
+        lands."""
+        SR.LIGHTMAP_WRITERS.save(DictStore, {"a.exr": "scenes/room.ma"})
+        self.assertEqual(SR.rebase_paths(DictStore, self.OLD, self.NEW), 1)
+        landed = SR.LIGHTMAP_WRITERS.load(DictStore)["a.exr"]
+        self.assertEqual(
+            self._abs(self.NEW, landed), self._abs(self.OLD, "scenes/room.ma")
+        )
+
+    def test_a_save_into_another_project_respells_every_path(self):
+        SR.LIGHTMAP_DIRS.save(DictStore, {"a.exr": "sourceimages/lm", "b.exr": "."})
+        SR.AUDIO_FILE_MAP.save(DictStore, {"t1": "../library/hit.wav"})
+        self.assertEqual(SR.rebase_paths(DictStore, self.OLD, self.NEW), 3)
+        dirs = SR.LIGHTMAP_DIRS.load(DictStore)
+        audio = SR.AUDIO_FILE_MAP.load(DictStore)
+        self.assertEqual(
+            self._abs(self.NEW, dirs["a.exr"]), self._abs(self.OLD, "sourceimages/lm")
+        )
+        self.assertEqual(self._abs(self.NEW, dirs["b.exr"]), self._abs(self.OLD, "."))
+        self.assertEqual(audio["t1"], "../../library/hit.wav")
+        # Saved again where it already lives: nothing moves, nothing is written.
+        with mock.patch.object(DictStore, "write", wraps=DictStore.write) as write:
+            self.assertEqual(SR.rebase_paths(DictStore, self.NEW, self.NEW), 0)
+        write.assert_not_called()
+
+    def test_the_same_project_normalizes_an_absolute_entry(self):
+        """Written before the rule, or arrived across a hand-off."""
+        legacy = os.path.join(self.LIB, "hit.wav")
+        SR.AUDIO_FILE_MAP.save(DictStore, {"t1": legacy, "t2": "sound/vo.wav"})
+        self.assertEqual(SR.rebase_paths(DictStore, self.OLD, self.OLD), 1)
+        self.assertEqual(
+            SR.AUDIO_FILE_MAP.load(DictStore),
+            {"t1": "../library/hit.wav", "t2": "sound/vo.wav"},
+        )
+
+    def test_a_handoff_ships_absolute_and_lands_spelled_from_this_scene(self):
+        SR.LIGHTMAP_DIRS.save(DictStore, {"a.exr": "sourceimages/lm"})
+        out = RecordTransfer.sections(DictStore, TransferContext(path_base=self.OLD))
+        shipped = out["records"]["lightmap_dirs"]["a.exr"]
+        self.assertEqual(shipped, self._abs(self.OLD, "sourceimages/lm"))
+
+        DictStore.reset()
+        RecordTransfer.receive(out, DictStore, TransferContext(path_base=self.NEW))
+        landed = SR.LIGHTMAP_DIRS.load(DictStore)["a.exr"]
+        self.assertEqual(landed, "../../proj/sourceimages/lm")
+        self.assertEqual(self._abs(self.NEW, landed), shipped)
+        # An unsaved receiving scene has no project yet: it keeps them absolute
+        # (its first save re-spells them).
+        DictStore.reset()
+        RecordTransfer.receive(out, DictStore, TransferContext())
+        self.assertEqual(SR.LIGHTMAP_DIRS.load(DictStore)["a.exr"], shipped)
+
+    def test_the_store_crossings_spell_paths_from_its_own_project(self):
+        """``SceneStoreBase`` supplies the bases: the store's
+        :meth:`project_root` for a hand-off either way, and a module merge's
+        own project passed by the importer (the DCC knows the file)."""
+        module = os.path.abspath("/work/modules/office")
+        _CarrierStore.reset()
+        self.addCleanup(_CarrierStore.reset)
+        with mock.patch.object(
+            _CarrierStore, "project_root", classmethod(lambda cls: self.OLD)
+        ):
+            SR.LIGHTMAP_DIRS.save(_CarrierStore, {"a.exr": "sourceimages/lm"})
+            shipped = _CarrierStore.transfer_sections()["records"]["lightmap_dirs"]
+            self.assertEqual(shipped["a.exr"], self._abs(self.OLD, "sourceimages/lm"))
+            _CarrierStore.reset()
+            _CarrierStore.receive_sections(
+                {"records": {"lightmap_dirs": {"b.exr": shipped["a.exr"]}}}
+            )
+            self.assertEqual(
+                SR.LIGHTMAP_DIRS.load(_CarrierStore), {"b.exr": "sourceimages/lm"}
+            )
+            _CarrierStore.merge_carriers(
+                {
+                    Scope.PRIVATE: {
+                        "lightmap_dirs": json.dumps({"m.exr": "sourceimages/lm"})
+                    }
+                },
+                source="MOD",
+                source_path_base=module,
+            )
+        self.assertEqual(
+            SR.LIGHTMAP_DIRS.load(_CarrierStore)["m.exr"],
+            "../modules/office/sourceimages/lm",
+        )
+
+    def test_an_entry_written_while_unsaved_never_crosses(self):
+        """A writer entry of ``""`` is "this scene, while unsaved": it names no
+        file, so it cannot leave its scene -- landed, it would claim the maps
+        for the scene it lands in (``FileDependencies.written_here``), whose
+        re-bake then deletes what the other scene still reads."""
+        room = self._abs(self.OLD, "scenes/room.ma")
+        SR.LIGHTMAP_WRITERS.save(DictStore, {"a.exr": "", "b.exr": "scenes/room.ma"})
+        out = RecordTransfer.sections(DictStore, TransferContext(path_base=self.OLD))
+        self.assertEqual(out["records"]["lightmap_writers"], {"b.exr": room})
+
+        DictStore.reset()
+        arriving = {"records": {"lightmap_writers": {"a.exr": "", "b.exr": room}}}
+        RecordTransfer.receive(arriving, DictStore, TransferContext())
+        self.assertEqual(SR.LIGHTMAP_WRITERS.load(DictStore), {"b.exr": room})
+
+        DictStore.reset()
+        RecordTransfer.merge_record(
+            DictStore,
+            SR.LIGHTMAP_WRITERS,
+            {"m.exr": ""},
+            TransferContext(source_path_base=self.NEW, path_base=self.OLD),
+        )
+        self.assertIsNone(SR.LIGHTMAP_WRITERS.load(DictStore))
+
+    def test_a_modules_copy_arrives_spelled_from_the_host(self):
+        """A referenced module's paths are spelled from ITS project."""
+        module = os.path.abspath("/work/modules/office")
+        RecordTransfer.merge_record(
+            DictStore,
+            SR.LIGHTMAP_DIRS,
+            {"m.exr": "sourceimages/lm"},
+            TransferContext(source_path_base=module, path_base=self.OLD),
+        )
+        landed = SR.LIGHTMAP_DIRS.load(DictStore)["m.exr"]
+        self.assertEqual(landed, "../modules/office/sourceimages/lm")
+        self.assertEqual(
+            self._abs(self.OLD, landed), self._abs(module, "sourceimages/lm")
+        )
 
 
 if __name__ == "__main__":

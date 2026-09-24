@@ -390,6 +390,72 @@ class TestAppInstaller(unittest.TestCase):
         finally:
             os.environ["PATH"] = original_path
 
+    def test_ensure_puts_an_already_installed_tool_on_path_too(self):
+        """Regression (2026-09-23): add_to_path was honoured only by the call
+        that DOWNLOADED the tool. A second ensure() found it in the catalog and
+        returned early, leaving it on no PATH -- so a caller that then ran the
+        command by name got "not found" for a tool ensure() had just vouched
+        for."""
+        tool_dir = os.path.join(self.tmp, "tools", "catalogued")
+        os.makedirs(tool_dir)
+        exe = os.path.join(tool_dir, "catalogued.exe")
+        with open(exe, "wb") as fh:
+            fh.write(b"FAKE")
+        AppInstaller._catalog_write(self.tmp, "catalogued", exe, None)
+
+        original_path = os.environ.get("PATH", "")
+        try:
+            with (
+                patch("shutil.which", return_value=None),
+                patch.object(AppInstaller, "_resolve_location", return_value=self.tmp),
+                patch.object(AppInstaller, "_download") as download,
+            ):
+                result = AppInstaller.ensure(
+                    "catalogued", platforms=self._make_platforms()
+                )
+            download.assert_not_called()
+            self.assertEqual(result, exe)
+            self.assertIn(tool_dir.lower(), os.environ["PATH"].lower())
+        finally:
+            os.environ["PATH"] = original_path
+
+    def test_ensure_places_a_bare_binary_under_the_tools_name(self):
+        """The ``binary`` type: nothing to unpack, and the file is renamed
+        from its build label (``tool-windows-amd64.exe``) to the command
+        discovery looks for."""
+        download = os.path.join(self.tmp, "payload.bin")
+        with open(download, "wb") as fh:
+            fh.write(b"MZ-fake-binary")
+        resp = self._mock_urlopen(download)
+        install_dir = os.path.join(self.tmp, "managed")
+        url = "https://example.com/releases/tunnelcli-windows-amd64.exe"
+        platforms = {
+            plat: {"url": url, "type": "binary"}
+            for plat in ("windows", "linux", "darwin")
+        }
+        original_path = os.environ.get("PATH", "")
+        try:
+            with patch("pythontk.net_utils.remote_file.urlopen", return_value=resp):
+                with patch.object(
+                    AppInstaller, "_resolve_location", return_value=install_dir
+                ):
+                    with patch("shutil.which", return_value=None):
+                        result = AppInstaller.ensure("tunnelcli", platforms=platforms)
+        finally:
+            os.environ["PATH"] = original_path
+
+        expected = "tunnelcli.exe" if sys.platform == "win32" else "tunnelcli"
+        self.assertEqual(os.path.basename(result), expected)
+        with open(result, "rb") as fh:
+            self.assertEqual(fh.read(), b"MZ-fake-binary")
+        self.assertFalse(
+            os.path.exists(os.path.join(install_dir, "tunnelcli-windows-amd64.exe")),
+            "the download was copied, not moved into place",
+        )
+        self.assertEqual(
+            AppInstaller._catalog_read(install_dir, "tunnelcli")["path"], result
+        )
+
     # ------------------------------------------------------------------
     # ensure (integration, mocked network)
     # ------------------------------------------------------------------

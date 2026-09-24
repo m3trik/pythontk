@@ -1041,6 +1041,58 @@ class ShotStore(_ShotStoreInternal):
             return float(math.ceil(frame - 1e-6))
         return float(round(frame))
 
+    def enclosing_bounds(
+        self,
+        shot_id: int,
+        lo: float,
+        hi: float,
+        seam_keyed: Optional[Callable[[float], bool]] = None,
+    ) -> Tuple[float, float]:
+        """The bounds *shot_id* takes so content landing on ``[lo, hi]`` sits
+        INSIDE it -- the grow a key or clip dragged past a bound asks for.
+
+        Outward to whole frames (:meth:`snap`: a start down, an end up) and
+        never shrinking. And never onto a contiguous seam: two shots that touch
+        share ONE sample, the preceding shot's, so content landing on the frame
+        the grown bound shares with a touching neighbour would take that
+        neighbour's opening pose (measured 2026-09-23: A [0,50], B [50,100],
+        A's key dragged to 60 -- B opened on A's pose and its own slipped a
+        frame). The bound goes one frame past such a landing instead
+        (maintainer decision, 2026-09-23): the shots still touch, and the
+        neighbour keeps its pose. Upstream mirrors it.
+
+        Parameters:
+            shot_id: The shot that grows.
+            lo, hi: Where the moved content lands, earliest and latest.
+            seam_keyed: Whether the moving content holds a key ON a seam
+                frame (called with the frame) -- the shared sample a landing
+                would take. With none there nothing is displaced, and a step
+                would only shift the neighbour a frame for no pose. ``None``
+                assumes a key: the side that never loses a pose.
+
+        Returns:
+            ``(start, end)`` for the shot; its current bounds when the content
+            already fits. An unknown *shot_id* returns ``(lo, hi)`` snapped.
+        """
+        eps = 1e-6
+        shot = self.shot_by_id(shot_id)
+        start, end = self.snap(lo, "down"), self.snap(hi, "up")
+        if shot is None:
+            return start, end
+        start, end = min(shot.start, start), max(shot.end, end)
+        ordered = self.sorted_shots()
+        index = next(i for i, s in enumerate(ordered) if s.shot_id == shot_id)
+        before = ordered[index - 1] if index > 0 else None
+        after = ordered[index + 1] if index + 1 < len(ordered) else None
+        keyed = seam_keyed or (lambda _frame: True)
+        if after is not None and abs(after.start - shot.end) <= eps:
+            if abs(hi - end) <= eps and keyed(shot.end):
+                end += 1.0
+        if before is not None and abs(shot.start - before.end) <= eps:
+            if abs(lo - start) <= eps and keyed(shot.start):
+                start -= 1.0
+        return start, end
+
     # ---- derived queries --------------------------------------------------
 
     def compute_gap(self) -> float:

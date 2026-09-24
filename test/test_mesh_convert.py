@@ -36,6 +36,7 @@ from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
 from pythontk.file_utils.mesh_convert.glb_clips import GlbClips
 from test_fbx_media import build_stingray_fbx, encoded
+from test_glb_tangents import read_tangents, tangent_quads_glb
 
 
 class TestResolveBinary(unittest.TestCase):
@@ -10754,6 +10755,61 @@ class TestGlbSkins(unittest.TestCase):
         self.assertEqual(len(skins), 1)
         self.assertEqual(skins[0]["skeleton"], 1, "a lone joint is its own root")
         self.assertEqual(sorted(rigid), ["POSITION"])
+
+
+class TestGlbTangentRepair(unittest.TestCase):
+    """The conversion session repairs every shipped tangent."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="glb_tangents_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_the_conversion_points_a_mirrored_shells_tangents_image_up(self):
+        """REGRESSION (2026-09-23): FBX2glTF hands over ``w = +1`` on every
+        vertex, and the preview and both Scene Exporters ship what this session
+        leaves -- so the repair has to run inside it (``GlbTangents`` carries
+        the rules and their own tests)."""
+        converted = tangent_quads_glb(
+            os.path.join(self.tmp, "converted.glb"),
+            [("plain", 1.0), ("mirrored", 1.0)],
+        )
+        dst = _convert_prebuilt(self.tmp, converted)
+        self.assertEqual([round(t[3]) for t in read_tangents(dst)], [1] * 4 + [-1] * 4)
+
+
+class TestBinView(unittest.TestCase):
+    """Which accessors' bytes a GLB's BIN chunk actually holds."""
+
+    def _gltf(self):
+        return {
+            "buffers": [{"byteLength": 64}],
+            "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 64}],
+            "accessors": [{"bufferView": 0}],
+        }
+
+    def test_only_a_plain_view_on_the_embedded_buffer_is_in_the_bin(self):
+        """Read at their offsets in the BIN, the others decode to plausible
+        garbage rather than failing: a view on another buffer, an embedded
+        buffer that names an external file instead, a view a compression
+        extension decodes, and an accessor with no view at all."""
+        gltf = self._gltf()
+        self.assertIs(
+            MeshConvert._bin_view(gltf, gltf["accessors"][0]), gltf["bufferViews"][0]
+        )
+        cases = {
+            "another buffer": lambda g: g["bufferViews"][0].update(buffer=1),
+            "external": lambda g: g["buffers"][0].update(uri="scene.bin"),
+            "compressed": lambda g: g["bufferViews"][0].update(
+                extensions={"EXT_meshopt_compression": {}}
+            ),
+            "no view": lambda g: g["accessors"][0].pop("bufferView"),
+            "view out of range": lambda g: g["accessors"][0].update(bufferView=3),
+        }
+        for name, edit in cases.items():
+            with self.subTest(name):
+                gltf = self._gltf()
+                edit(gltf)
+                self.assertIsNone(MeshConvert._bin_view(gltf, gltf["accessors"][0]))
 
 
 class TestCompactGlbAnimations(unittest.TestCase):

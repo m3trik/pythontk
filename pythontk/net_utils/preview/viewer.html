@@ -675,15 +675,29 @@ const CARRIER_SLOTS = new Map([['occlusion', 'aoMap'], ['emissive', 'emissiveMap
 // "no normal effect at all"). The fix modulates the bake by the map: the
 // baked light is taken to arrive along the page's own key-light direction,
 // and the lightmap texel is scaled by how the PERTURBED normal faces that
-// direction relative to how the flat one does -- half-Lambert wrapped so the
-// ratio is well-behaved on a surface facing away, and exactly 1 wherever the
-// map is flat, so normalScale 0 renders the pure bake. Not a second bake and
-// not physically derived: it is the single-direction reduction of the
-// directional-lightmap trick, chosen because it is one uniform and five lines
-// of GLSL, and because it makes `normalTexture.scale` -- the value the file
-// carries -- do in this preview what it does in a runtime that lights. Only
-// installed when the material has a normal map: there is nothing to relieve
-// by otherwise, and the pure bake must stay the pure bake.
+// direction relative to how the flat one does, half-Lambert wrapped.
+//
+// From the surface's OWN side of its plane, though: where it faces away from
+// the key, the direction is mirrored across that plane first. A bake's light
+// reached a surface from its front whichever side of it the key sits on, and
+// taken as it stood, the key lit every surface facing away from it from
+// behind -- the flat response the ratio divides by fell toward zero, so a
+// FLAT map rendered a face turned straight away from the key black (and one
+// 20 degrees off that at 134 where the bake puts 169), and one bump moved a
+// ceiling 40 levels where it moved the floor 6 (measured 2026-09-23, reported
+// as normals rendering wrong). Mirrored, the flat response never falls below
+// 0.5, so the ratio stays within [0, 2] with no clamp, is exactly 1 wherever
+// the map is flat -- normalScale 0 renders the pure bake -- and a surface
+// wears a bump exactly as its mirror image across the key's horizon does. A
+// surface already facing the key renders as it always did.
+//
+// Not a second bake and not physically derived: it is the single-direction
+// reduction of the directional-lightmap trick, chosen because it is one
+// uniform and a few lines of GLSL, and because it makes `normalTexture.scale`
+// -- the value the file carries -- do in this preview what it does in a
+// runtime that lights. Only installed when the material has a normal map:
+// there is nothing to relieve by otherwise, and the pure bake must stay the
+// pure bake.
 //
 // Both edits land in three.js 0.169's `lights_fragment_maps` chunk, at
 // `iblIrradiance += getIBLIrradiance( geometryNormal );` and at
@@ -714,10 +728,13 @@ const bakeLightDir = { value: new THREE.Vector3() };
 const RELIEF_GLSL = [
   '{',
   '  vec3 bakeL = normalize( ( viewMatrix * vec4( bakeLightDir, 0.0 ) ).xyz );',
+  // Onto the surface's own side of its plane (see above) -- a reflection, so
+  // still unit length.
+  '  bakeL -= 2.0 * min( dot( nonPerturbedNormal, bakeL ), 0.0 ) * nonPerturbedNormal;',
   // `flat` is a reserved word in GLSL (an interpolation qualifier).
   '  float bumpLit = dot( normal, bakeL ) * 0.5 + 0.5;',
   '  float baseLit = dot( nonPerturbedNormal, bakeL ) * 0.5 + 0.5;',
-  '  irradiance += lightMapIrradiance * clamp( bumpLit / max( baseLit, 0.05 ), 0.0, 2.0 );',
+  '  irradiance += lightMapIrradiance * ( bumpLit / baseLit );',
   '}',
 ].join('\n');
 
@@ -947,8 +964,19 @@ function syncNormalScale() {
   el.normalSave.textContent = 'Save';
 }
 
+// The dial sets the MAGNITUDE and keeps each material's own sign on y.
+// GLTFLoader negates `normalScale.y` on a material whose mesh carries no
+// TANGENT -- every GLB this pipeline shipped before the DCC hand-offs pinned
+// tangents, and any other producer's that omits them -- because the
+// derivative frame it falls back to runs green the other way, so
+// `set(value, value)` turned green over on every such normal map at the first
+// touch (measured: the loader's (1, -1) became (1.5, 1.5)). `1 / y` rather
+// than `y < 0`: the sign has to survive the dial passing through 0, and
+// -0 < 0 is false.
 function applyNormalScale(value) {
-  for (const material of normalCarriers()) material.normalScale.set(value, value);
+  for (const material of normalCarriers()) {
+    material.normalScale.set(value, Math.sign(1 / material.normalScale.y) * value);
+  }
   el.normalValue.textContent = value.toFixed(2);
   el.normalSave.disabled = false;
   el.normalSave.textContent = 'Save';
@@ -1650,6 +1678,11 @@ const viewer = {
   get bounds() { return modelBounds; },
   /** The live rendering policy, as read from the deliverable. */
   get policy() { return policy; },
+  /**
+   * True on a view-only share (the server's guest listener), which refuses
+   * every write -- so a script that posts to the server should offer nothing.
+   */
+  get guest() { return isGuest; },
   /** The AnimationMixer driving the current model's clips, or null. */
   get mixer() { return mixer; },
   /**
@@ -1845,6 +1878,15 @@ async function loadScripts(urls) {
 
 /* ----------------------------------------------------------------- poll --- */
 
+// This tab's id, on every manifest poll and on the close beacon. A share counts
+// its guests by it -- one per open tab, however many sit behind one address --
+// and the owner's own listener ignores it.
+const VIEWER_ID = Math.random().toString(36).slice(2, 12);
+// Set from the manifest: a view-only share (the server's guest listener) says
+// so, and the page then offers nothing that writes. That listener refuses every
+// write, so each such control would be one that fails.
+let isGuest = false;
+
 let seenVersion = -1;
 let failedVersion = -1;
 let failCount = 0;
@@ -1856,7 +1898,7 @@ let viewerStamp = null;
 
 async function poll() {
   try {
-    const manifest = await (await fetch('manifest.json', { cache: 'no-store' })).json();
+    const manifest = await (await fetch(`manifest.json?id=${VIEWER_ID}`, { cache: 'no-store' })).json();
     if (manifest.viewer) {
       if (viewerStamp !== null && manifest.viewer !== viewerStamp) {
         setStatus('viewer updated - reloading…');
@@ -1866,6 +1908,9 @@ async function poll() {
       viewerStamp = manifest.viewer;
     }
     if (manifest.title) el.title.textContent = manifest.title;
+    // Ahead of the scripts below, which may ask `viewer.guest` as they load.
+    isGuest = manifest.guest === true;
+    el.normalSave.hidden = isGuest;
     // Ahead of the version check, so it lands on the FIRST poll rather than
     // waiting for a publish: this is what turns "connect a headset" into
     // "start Link" for someone who already did connect one.
@@ -1928,7 +1973,7 @@ setInterval(poll, POLL_MS);
 // `pagehide` rather than `unload`: it is the event that still fires on mobile
 // and bfcache paths, and sendBeacon is the only send that survives teardown.
 // A page restored from bfcache simply polls again and re-arms the server.
-addEventListener('pagehide', () => { navigator.sendBeacon('viewer-closed', ''); });
+addEventListener('pagehide', () => { navigator.sendBeacon(`viewer-closed?id=${VIEWER_ID}`, ''); });
 
 /* -------------------------------------------------------------- dialog --- */
 

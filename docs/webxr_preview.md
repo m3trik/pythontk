@@ -50,7 +50,8 @@ format: a third-party glTF tool opens it and gets a sane, if plainer, result.
         |               dedupe, scene sidecar, dead-texture sweep, lightmaps (the host's
         |               live map folders),
         |               shadow rigs, curve-proxy strip, clips, visibility gates, fades,
-        |               animation manifest -- one edit session, and a report back
+        |               skin + tangent repairs, animation manifest -- one edit
+        |               session, and a report back
         |    reduce     MeshConvert.reduce_glb_animations when a key tolerance is
         |               named: each clip keeps only the keys its interpolation needs
         |    optimize   MeshConvert.optimize_glb_textures, last, on the closed file
@@ -81,10 +82,11 @@ Ownership, because it decides where a fix goes:
 
 | Layer | Owns |
 |---|---|
-| `pythontk.PreviewServer` | the loopback server, `/manifest.json` versioning, viewer liveness, materializing the page **and the active viewer scripts** |
+| `pythontk.PreviewServer` | the loopback server, `/manifest.json` versioning, viewer liveness, materializing the page **and the active viewer scripts**, and the **read-only guest listener** a share fronts |
+| `pythontk.ShareTunnel` | a loopback port at a public HTTPS link: the tunnel CLIs (registry), their lifetime, the stable alias -- knows nothing about the preview |
 | `pythontk.GlbPipeline` | **the GLB build** -- downsize, convert, optimize, in that order, for the preview AND the Scene Exporters' GLB output |
 | `pythontk.PreviewDeliverer` | the build's dials (container, scratch, release) and the publish |
-| `pythontk.PreviewBridge` | the glTF-appropriate export defaults, the sidecar attach and the `push()` / `publish_file()` / `url` / `stop()` surface |
+| `pythontk.PreviewBridge` | the glTF-appropriate export defaults, the sidecar attach and the `push()` / `publish_file()` / `url` / `share()` / `stop()` surface |
 | `pythontk.MeshConvert` | every GLB edit, the sidecar envelope schema, the lightmap binding, **the published rendering policy** |
 | `net_utils/preview/viewer.html` | rebinding the carrier slot to a real `lightMap`, scale/framing, and **spending** the rendering policy it reads out of the file |
 | `net_utils/preview/scripts/*.js` | optional behaviour the page gains by activation, never by being edited |
@@ -100,7 +102,8 @@ import mayatk as mtk
 preview = mtk.WebXrPreview()
 preview.push()      # first call opens a tab; later calls swap the model in the open one
 preview.url         # the localhost URL — paste into the headset's browser
-preview.stop()      # release the port
+preview.share()     # a view-only HTTPS link anyone can open -- see *Sharing a link*
+preview.stop()      # release the port (and end any share)
 ```
 
 `btk.WebXrPreview` is the Blender twin, same surface. One `PreviewDeliverer` is shared per class,
@@ -169,6 +172,115 @@ can only fetch what the server hosts, so a path-referencing FBX previews with ev
 animation off, sidecar on, and **triangulation off** — Maya's FBX exporter refuses triangulation
 combined with smoothing groups, and the converter triangulates on the way to glTF anyway.
 
+## Sharing a link
+
+**Press Share Link, send the link, keep pushing.** The person who built the scene serves it; anyone
+with the link opens it in a browser -- desktop, phone, or a standalone headset's browser, which
+gets its VR button because the link is HTTPS. The share is **view-only** and **live**: every push
+reaches every guest on their next poll, and nothing a guest does writes to this machine. Each
+guest downloads the GLB and renders it on their own device; this machine serves files and renders
+nothing for anyone. Guests need no install -- only the builder does (a tunnel client).
+
+```python
+info = preview.share()               # {"url": the link to send, "guests": 0, ...}
+preview.share(provider="tailscale_funnel")
+preview.share_url                    # None once the share ends -- or once its tunnel dies
+preview.unshare()                    # the owner's page and server are untouched
+```
+
+In the WebXR Preview panel: the header menu's **Share Link** (copies the link) and **Stop
+Sharing**, the **Share Via** row, and the footer, which shows the link and how many guests are
+watching.
+
+### How it works
+
+```
+  owner's tab ──► 127.0.0.1:8118  ─┐  the owner listener: every route, as always
+                                   ├─ one serve root, one manifest, one version
+  guest ──HTTPS──► tunnel ──► 127.0.0.1:<ephemeral>  the GUEST listener: read-only
+```
+
+**A second door, and the role is the socket's.** `PreviewServer.share()` opens a second listener
+on loopback (`start_guest`) and fronts *that one* with a `ShareTunnel`. Who may write is decided by
+which listener a request arrived on -- never by a header or a token a client could claim -- so the
+owner's loop is untouched: its tab, its settings saves, its recordings and stills work exactly as
+before. The guest listener:
+
+- **reads an allow-list** -- the page, its manifest, and exactly the files that manifest names (the
+  asset, the active scripts). A scene push's stills and recordings land in the serve root too, a
+  publish passes through a `.part` file, and `scripts/` would list itself; none of it is the share.
+  It never lists a folder -- not even `/` on a root that holds no page.
+- **refuses every write** (`/settings`, `/snapshot`, `/playblast/*`: 403), and takes no body past
+  4 KiB on any route (413, unread): its one write, the close beacon, carries none, and a still's
+  64 MB is the owner's. Its manifest says `"guest": true`, and the page hides
+  what it cannot do: the owner-only scripts (`PreviewServer.OWNER_SCRIPTS`: `playblast`, `snapshot`)
+  are not even served, and the Normals **Save** is hidden. `xrRuntime` is left out -- it describes
+  the builder's machine, not the guest's.
+- **counts guests per tab** (`guest_count`, from the `?id=` each page polls with), never toward
+  `has_viewer` -- a guest watching must not stop the next push from reopening the owner's closed tab.
+  A tab's close beacon retires that tab only, and a poll that crosses its own beacon (each request
+  has its own thread) is ignored for `CLOSED_LINGER` seconds rather than reviving it for 90.
+- **answers only the names admitted**: loopback, plus the tunnel's public name, admitted *before* the
+  link is announced. The owner listener never admits a public name, so even a misconfigured tunnel
+  pointed at it gets 403 for every route.
+
+**The tunnel is generic.** `pythontk.ShareTunnel` exposes any loopback port at an HTTPS link through a
+tunnel CLI and knows nothing about the preview. Its providers are a registry of plain values
+(`ShareTunnel.PROVIDERS`: arguments, the pattern the link is printed in, what "ready" looks like,
+where to install) -- a provider is an entry, not a branch:
+
+| Provider | Link | Trade-off |
+|---|---|---|
+| `cloudflared` (default when installed) | random `https://<words>.trycloudflare.com` per share | no account; fast; TLS ends at Cloudflare's edge, which sees the traffic. The panel offers the download (one executable, `AppInstaller`'s `binary` type) |
+| `tailscale_funnel` | stable `https://<machine>.<tailnet>.ts.net` | bookmark once; TLS ends on this machine; relayed, so large pushes load slower; Funnel must be enabled for the tailnet |
+| `tailscale_serve` | the same name, tailnet only | nothing public; a headset needs the Tailscale app |
+
+`provider=None` takes `PYTHONTK_SHARE_PROVIDER`, else the first installed of `ShareTunnel.PREFERENCE`
+(public providers only). A start returns only once guests can actually reach the link: after the
+provider's own ready line, and -- for a quick tunnel, whose name is new every time -- after a public
+resolver answers it (measured: NXDOMAIN for 6-18 s after the tunnel registers). The resolver is asked
+directly (`NetUtils.resolves_publicly`), never through this machine's DNS, because a lookup made too
+early caches the miss for minutes -- on the builder's machine and, worse, on a guest's.
+
+**Lifetime.** The client runs through `AppLauncher.spawn`, which on Windows puts it in a kill-on-close
+Job Object: it dies with the DCC however the DCC ends, a crash included. An orphaned tunnel would keep
+a public link pointed at a port that whatever binds it next would be published through. `stop()`
+ends any share first, and `unshare()` / `stop()` landing while a share still waits on its provider
+end that one too: its tunnel stops the moment its link arrives, and the share raises. Off Windows a
+crash can still orphan the client; a normal exit is covered by `atexit`.
+
+### A link that never changes (the alias)
+
+A quick tunnel's link changes every share, and typing forty characters into a headset is where
+sharing dies in practice. Point two environment variables at a page your own web server serves:
+
+```
+PYTHONTK_PREVIEW_ALIAS      = me@myserver:/srv/www/vr/index.html   (or a local/UNC path)
+PYTHONTK_PREVIEW_ALIAS_URL  = https://example.com/vr
+```
+
+Every share rewrites that page to redirect to the live link (over the system `scp`, batch mode --
+a missing key fails rather than prompting), and every stop rewrites it to "nothing is being shared",
+which reloads itself -- so a guest who bookmarked `https://example.com/vr` in the headset once opens
+it, waits, and lands on the next share by itself. The alias address is what `share()` hands out,
+but only while its last update landed; a stale alias is never what gets sent (`alias_error` says why).
+
+### First-time setup, and what a failed share says
+
+Each of these fails the share at once with the next step, rather than waiting out a timeout:
+
+- **Tailscale Serve/Funnel not enabled for the tailnet** -- the CLI prints an enable link and waits on
+  it; the share fails naming that link. Enabling it is a tailnet admin change.
+- **An outbound firewall that denies by default** -- the client dies with WinError 10013; the share
+  says the firewall blocked it and names the executable to allow.
+- **The CLI is missing** -- the message names the install; the panel offers cloudflared's download
+  (`ShareTunnel.settle`, the same shape as the KTX2 encoder's).
+
+What a share does not change: the link **is** the deliverable -- a guest can save the GLB, so stop
+sharing when the review is over. The Cloudflare quick tunnel's name is unguessable but not secret
+once sent; the Funnel name is stable and guessable. There is no guest authentication; a share is for
+people you send the link to.
+
 ## Extending it
 
 Two seams, and the rule for choosing is where the work happens: **in the deliverable** (the shared
@@ -223,7 +335,8 @@ default* — the server outlives every push, so a script registered once must no
 next push that simply says nothing about scripts. An explicit `[]` is still an instruction.
 
 A module's default export receives the viewer API: `THREE`, `scene`, `renderer`, `camera`,
-`controls`, `pivot`, `model`, `bounds`, `policy`, `setStatus`, `addButton(label, onClick)`,
+`controls`, `pivot`, `model`, `bounds`, `policy`, `guest` (true on a view-only share, where every
+write is refused -- see *Sharing a link*), `setStatus`, `addButton(label, onClick)`,
 `showDialog({title, fields, confirm})`, and `on(event, fn)` for `'load'` / `'frame'` / `'key'`.
 A script that writes a file through the server gets the page's half of that too:
 `captureSize(maxEdge)` — the size to capture at and the pixel ratio to *render* at for it, clamped
@@ -284,7 +397,7 @@ correct set are named accordingly (`*_Normal_OpenGL`, `*_NRML_OGL`).
 | glTF slot | Source | Notes |
 |---|---|---|
 | `baseColorTexture` | FBX, or the sidecar's `base_color` | A packed `Albedo_Transparency` map passes through **as-is** — its RGB+A layout already *is* glTF's base-colour layout |
-| `normalTexture` | FBX, `texCoord` 0 | Wired by the converter; nothing repairs it because nothing loses it |
+| `normalTexture` | FBX, `texCoord` 0 | Wired by the converter; the map itself travels intact, and its `TANGENT` handedness is repaired (below) |
 | `metallicRoughnessTexture` | the sidecar's `metallic_roughness`, repacked | glTF ORM: **R=occlusion, G=roughness, B=metallic** |
 | `emissiveTexture` / factor | FBX, or the sidecar's `emissive` | Emission weight folded in; magnitude above 1 preserved via `KHR_materials_emissive_strength`. A **highlighted** object's isolated copy drops the map: glTF emission is factor × map, so a mapped material (factor at white) would clamp the additive `highlight` channel to nothing and mask its colour where the map is black — the copy glows from the channel alone |
 | `occlusionTexture` | the packed ORM (`texCoord` 0), displaced by **the lightmap** (`texCoord` 1) on baked materials | glTF has no lightmap slot; see below |
@@ -295,8 +408,20 @@ Measured on a production interior scene: **54 of 57 materials carry a `normalTex
 `texCoord` 0**, all pointing at OpenGL-convention maps. The three without simply have no normal map
 in their source set. Every primitive ships `TEXCOORD_0` and `TEXCOORD_1`.
 
-There is no `TANGENT` attribute, and that is fine — three.js derives the tangent frame from
-screen-space derivatives when one is absent.
+Every normal-mapped primitive also ships a `TANGENT` (the hand-off mixins pin
+`FBXExportTangents` / `use_tspace`): left to the receiver, three.js swaps in a screen-space
+derivative frame and flips green to compensate, which other viewers do not, so the same file read
+differently in each. One repair rides with it. FBX2glTF carries the FBX's tangents but not its
+binormals, where the handedness lives, and writes `w = +1` on every vertex — right on a plain UV
+shell, and green-inverted on every **mirrored** one, because three.js trusts a shipped tangent over
+its own frame. Measured on the first production push to carry tangents: 7 of 61 primitives, each
+wrong on exactly its mirrored triangles (a button and four light fixtures whole, 29% of a table),
+reported as "bad normals" on the button — and 8 zero-length tangents on UV slivers the DCC could
+not orient, which glTF forbids and three.js turns into NaN. `MeshConvert.fix_glb_tangents`
+(`GlbTangents.repair`) sets each vertex's `w` from the way its UVs run, the rule Blender's
+MikkTSpace glTF export follows, and rebuilds a zero tangent along its UVs, inside the conversion
+session both producers share. If a normal map reads inverted on one object only, check whether its
+UV shell is mirrored before suspecting the map.
 
 ### MSAO / mask maps work; you do not have to author ORM
 
@@ -433,6 +558,17 @@ keep direct lighting dynamic, or vertex-bake the low-frequency term.
   environment's diffuse and specular with one number (`envMapIntensity`) and no glTF-level
   setting can express the split, which is why the published policy states it as
   `lightmappedMaterials.envMapTerms: "specular"` for a recipient to act on.
+- **A baked normal map is relieved along the key light.** Specular alone barely moves a matte
+  baked surface (measured: `normalScale` 1 → 4 moved ~1% of pixels by ~0.4/255), so the page
+  also scales each baked texel by how the normal-mapped normal faces the key light's direction
+  against how the surface's own normal does (half-Lambert) — from the surface's own side of its
+  plane: where a surface faces away from the key, the direction is mirrored across that plane
+  first, because a bake's light reached it from its front. A flat map is then exactly the pure
+  bake on every surface, and a bump reads the same on a ceiling as on the floor. Unmirrored (as
+  it first shipped) a face turned straight away from the key rendered black, and one bump moved
+  a ceiling 40 levels where it moved the floor 6 — a lighting artefact that reads as broken
+  normals. The key light's intensity is off on a baked model; its direction still orients this,
+  and the published policy states the rule as `lightmappedMaterials.normalRelief`.
 - **A baked material reflects at the level the export chose.** The environment is a bright studio,
   not the room the bake lit, so at full strength its reflections lift every dark glossy baked
   surface (measured on a production room: the darkest machine surfaces at 0.06 of display baked
@@ -901,7 +1037,11 @@ are capped at 0.75). The deliverable's per-frame animation keys are the third le
   firewall the module never executes — no error event, just a dark page. A classic-script watchdog
   says so after 8 s rather than leaving it silent.
 - **WebXR needs localhost or HTTPS.** Opened over a plain-HTTP LAN address, `navigator.xr` is
-  absent and the VR button simply never appears; the page says which case it is in.
+  absent and the VR button simply never appears; the page says which case it is in. Anything
+  that is not this machine -- a standalone headset, a reviewer -- gets HTTPS from a share.
+- **A first share can need one-time setup, and says which.** A tailnet that has not enabled
+  Serve/Funnel, and a firewall that denies outbound by default, both fail the share at once with
+  the step to take first (see *Sharing a link*).
 - **A missing `TEXCOORD_1` means no lightmap.** The FBX was exported without the lightmap UV set;
   the applier warns per primitive rather than binding something wrong.
 - **Per-object maps on a shared material each bind a copy.** A glTF material carries one lightmap,

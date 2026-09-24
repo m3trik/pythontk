@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.11.2"
+__version__ = "0.11.3"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -354,6 +354,9 @@ DEFAULT_INCLUDE = {
     # Bytes behind an http(s) URL (share links normalized); the seam every
     # path-or-URL loader (manifest CSV, installer download) fetches through.
     "net_utils.remote_file": "RemoteFile",
+    # A loopback port at a public HTTPS link, through a tunnel CLI (Cloudflare,
+    # Tailscale) -- how a preview, or any local server, is shared by link.
+    "net_utils.share_tunnel": "ShareTunnel",
     # Loopback static server + live manifest behind the WebXR/browser preview
     # loop. Localhost is a secure context, so this is all `navigator.xr` needs.
     "net_utils.preview.server": "PreviewServer",

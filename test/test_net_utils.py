@@ -337,5 +337,128 @@ class TestNetUtils(unittest.TestCase):
         self.assertEqual(mock_popen.call_args.args[0], ["mstsc.exe", rdp_path])
 
 
+class _FakeResolver:
+    """A one-port UDP DNS server answering every query the same way.
+
+    *answer* is ``"address"`` (one A record), ``"nxdomain"``, ``"empty"`` (no
+    error, no records), ``"servfail"`` or ``"wrong-id"`` (a reply to some
+    other query) -- the outcomes ``resolves_publicly`` tells apart.
+    """
+
+    def __init__(self, answer, host="127.0.0.1", port=0):
+        import threading
+
+        self.answer = answer
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind((host, port))
+        self.port = self.sock.getsockname()[1]
+        self.queries = []
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self):
+        import struct
+
+        while True:
+            try:
+                query, peer = self.sock.recvfrom(512)
+            except OSError:
+                return
+            self.queries.append(query)
+            query_id = struct.unpack(">H", query[:2])[0]
+            if self.answer == "wrong-id":
+                query_id ^= 0xFFFF
+            rcode = {"nxdomain": 3, "servfail": 2}.get(self.answer, 0)
+            count = 1 if self.answer == "address" else 0
+            reply = struct.pack(">HHHHHH", query_id, 0x8180 | rcode, 1, count, 0, 0)
+            reply += query[12:]
+            if count:
+                reply += struct.pack(">HHHIH", 0xC00C, 1, 1, 60, 4) + bytes(
+                    [192, 0, 2, 1]
+                )
+            self.sock.sendto(reply, peer)
+
+    def close(self):
+        self.sock.close()
+
+
+class TestResolvesPublicly(unittest.TestCase):
+    """A public resolver asked directly -- the check a brand-new tunnel link
+    waits on -- told apart into yes, no, and could-not-ask."""
+
+    def _ask(self, *answers, name="fresh-link.example.test"):
+        resolvers = [_FakeResolver(a) for a in answers]
+        try:
+            ports = {r.port for r in resolvers}
+            self.assertEqual(len(ports), len(resolvers))
+            results = []
+            for resolver in resolvers:
+                results.append(
+                    NetUtils.resolves_publicly(
+                        name, servers=("127.0.0.1",), port=resolver.port, timeout=2
+                    )
+                )
+            return results, resolvers
+        finally:
+            for resolver in resolvers:
+                resolver.close()
+
+    def test_an_address_is_a_yes(self):
+        (result,), (resolver,) = self._ask("address")
+        self.assertIs(result, True)
+        # One A query, for the name asked -- the question is echoed back intact.
+        self.assertIn(
+            b"\x0afresh-link\x07example\x04test\x00\x00\x01\x00\x01",
+            resolver.queries[0],
+        )
+
+    def test_nxdomain_and_no_address_are_a_no(self):
+        results, _ = self._ask("nxdomain", "empty")
+        self.assertEqual(results, [False, False])
+
+    def test_a_resolver_with_no_answer_is_no_answer(self):
+        """SERVFAIL, and a reply to a different query, say nothing either way."""
+        results, _ = self._ask("servfail", "wrong-id")
+        self.assertEqual(results, [None, None])
+
+    def test_nobody_to_ask_is_none_not_a_no(self):
+        """Outbound DNS blocked or offline must not read as "does not exist":
+        a caller waiting on the name would otherwise wait out its whole
+        budget for a question that was never asked."""
+        closed = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        closed.bind(("127.0.0.1", 0))
+        port = closed.getsockname()[1]
+        closed.close()
+        self.assertIsNone(
+            NetUtils.resolves_publicly(
+                "x.example.test", servers=("127.0.0.1",), port=port, timeout=0.5
+            )
+        )
+
+    def test_any_resolver_with_the_name_is_a_yes(self):
+        """Each resolver caches its own misses, so while a name appears one
+        can still say NXDOMAIN after another already has it -- every resolver
+        is asked before the answer is no."""
+        stale = _FakeResolver("nxdomain")
+        try:
+            # A second loopback address, so both share the one port the call
+            # takes. Every 127/8 address is loopback on Windows and Linux.
+            fresh = _FakeResolver("address", host="127.0.0.2", port=stale.port)
+        except OSError:
+            stale.close()
+            self.skipTest("no second loopback address on this host")
+        try:
+            result = NetUtils.resolves_publicly(
+                "fresh-link.example.test",
+                servers=("127.0.0.1", "127.0.0.2"),
+                port=stale.port,
+                timeout=2,
+            )
+            self.assertIs(result, True)
+            self.assertEqual((len(stale.queries), len(fresh.queries)), (1, 1))
+        finally:
+            stale.close()
+            fresh.close()
+
+
 if __name__ == "__main__":
     unittest.main()

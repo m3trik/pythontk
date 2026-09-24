@@ -78,6 +78,7 @@ class PreviewDeliverer(Deliverer):
     @Deprecation.parameter(
         "texture_format",
         remove_in="0.12.0",
+        since="2026-09-23",
         new="glb_options",
         transform=lambda value: {"texture_file_type": value},
         reason="The preview now takes every Scene Exporter GLB row, the "

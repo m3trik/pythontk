@@ -15,6 +15,8 @@ such a record ends up needing the same four answers:
 * which names a new batch of outputs must not take, because something else
   still reads them (:meth:`FileDependencies.claims`, the input to
   :meth:`FileUtils.unique_path`);
+* which files a batch's owners stopped reading, now that nothing reads them
+  (:meth:`FileDependencies.remove_superseded`);
 * how to gather the files into one folder (:meth:`FileDependencies.relocate`).
 
 They take plain values -- ``(owner, name, recorded folder)`` references -- and
@@ -92,6 +94,132 @@ class FileDependencies(LoggingMixin):
             if key:
                 readers.setdefault(key, set()).add(owner)
         return {key: frozenset(owners) for key, owners in readers.items()}
+
+    @classmethod
+    def remove_superseded(
+        cls, before: Iterable[str], after: Iterable[Sequence[Any]]
+    ) -> List[str]:
+        """Delete the files of *before* that nothing in *after* reads; return those deleted.
+
+        The other half of :meth:`claims`: a write that gives its owners new
+        files -- another folder, another name, several maps folded into one
+        -- leaves the old ones behind, read by nobody, and a same-named
+        leftover is what a reader that joins names against folders then finds.
+        *before* is the files the owners read before the write, narrowed by
+        the host to the ones it wrote itself: which files are a scene's own
+        is the host's to know, never this rule's. *after* is every reference
+        the host holds once the write is recorded, each with the file its
+        owner finds NOW.
+
+        A file stays when a reference reads it -- by the filesystem's answer,
+        not the spelling's: a junction, a ``subst`` or mapped drive names one
+        file two ways (:meth:`FileUtils.is_same_file`) -- and when a
+        reference naming a file of the same name found its file nowhere, or
+        names it by a relative spelling only the host could place: a search
+        the host did not run -- a walk of its texture tree -- could still
+        land on this one. Names compare without case. Only an absolute path
+        is ever deleted (a relative one would resolve against the process
+        CWD), never a folder. A file already gone is skipped; one that cannot
+        be deleted (held open) is logged and left out of the result.
+
+        Parameters:
+            before: Absolute paths the owners read before the write.
+            after: ``(owner, file name, path)`` references after it; *path*
+                is ``None`` or ``""`` for a file found nowhere.
+
+        Returns:
+            The files deleted, in *before*'s order.
+        """
+
+        def key(path: str) -> str:
+            return os.path.normcase(os.path.abspath(path))
+
+        read: Dict[str, str] = {}
+        lost = set()
+        for _owner, name, path, *_rest in after:
+            path = str(path or "")
+            if FileUtils.is_rooted_path(path):
+                read.setdefault(key(path), path)
+            else:
+                lost.add(os.path.basename(str(name or path)).lower())
+        identities: Optional[set] = None
+        removed: List[str] = []
+        seen: set = set()
+        for path in before:
+            path = str(path or "")
+            if not FileUtils.is_rooted_path(path):
+                continue
+            spelled = key(path)
+            if spelled in seen:
+                continue
+            seen.add(spelled)
+            if spelled in read or os.path.basename(path).lower() in lost:
+                continue
+            if os.path.isdir(path):
+                continue
+            if identities is None:  # one stat per file read, and only if needed
+                identities = {cls._identity(p) for p in read.values()} - {None}
+            if cls._identity(path) in identities:
+                continue
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                cls.logger.warning(
+                    "Could not delete %s, which nothing reads any more (%s); "
+                    "delete it by hand.",
+                    path,
+                    error,
+                )
+                continue
+            removed.append(path)
+        return removed
+
+    @staticmethod
+    def _identity(path: str) -> Optional[Tuple[int, int]]:
+        """``(device, file id)`` of *path* -- which file a spelling names, the
+        test ``os.path.samefile`` makes -- or ``None`` when it cannot be read."""
+        try:
+            stat = os.stat(path)
+        except (OSError, ValueError):
+            return None
+        return (stat.st_dev, stat.st_ino)
+
+    @staticmethod
+    def written_here(writer: Optional[str], scene: str, base: Optional[str]) -> bool:
+        """Whether a file whose writer record says *writer* is *scene*'s own to delete.
+
+        What narrows :meth:`remove_superseded`'s *before* to a host's own
+        files. It is when *writer* names *scene*; when it is ``""`` -- written
+        while unsaved -- and the scene is STILL unsaved: once saved it can be
+        copied, a Save As writes the same ``""`` into the copy, and nothing
+        tells the two files apart; and when the file it names is gone: the
+        scene was renamed or moved, and nothing can open the old one to read
+        the file. Another scene file that is still there (the source of a Save
+        As copy) reads what it wrote; ``None`` -- no record -- and a relative
+        entry with no *base* to read it from are nobody's to delete.
+
+        Parameters:
+            writer: The record's entry (a :meth:`FileUtils.portable_path`
+                spelling), ``""``, or ``None`` for none.
+            scene: The open scene's file, ``""`` while unsaved.
+            base: The scene's own project, which *writer* is spelled from.
+
+        Returns:
+            bool: True when the file may be deleted as the scene's own.
+        """
+        if writer is None:
+            return False
+        if not writer:
+            return not scene
+        written = FileUtils.resolve_portable_path(writer, base)
+        if not FileUtils.is_rooted_path(written):
+            return False  # unresolvable, which is not gone
+        written = os.path.normcase(os.path.abspath(written))
+        if scene and os.path.normcase(os.path.abspath(scene)) == written:
+            return True
+        return not os.path.isfile(written)
 
     @staticmethod
     def find_files(names: Iterable[str], root: str) -> List[str]:

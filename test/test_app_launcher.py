@@ -306,5 +306,76 @@ class TestAppLauncherSessions(unittest.TestCase):
             self.assertIsNone(AppLauncher.active_console_session_id())
 
 
+class TestSpawn(unittest.TestCase):
+    """The attached launch shape: runs beside this process, and dies with it."""
+
+    def test_output_arrives_merged_on_one_binary_pipe(self):
+        """ProcessReader reads BINARY pipes; stderr rides the same one."""
+        proc = AppLauncher.spawn(
+            sys.executable,
+            [
+                "-c",
+                "import sys; print('out', flush=True); print('err', file=sys.stderr)",
+            ],
+        )
+        out = proc.stdout.read()
+        proc.wait(timeout=30)
+        self.assertIsInstance(out, bytes)
+        self.assertEqual(sorted(out.split()), [b"err", b"out"])
+
+    def test_a_missing_app_raises(self):
+        with self.assertRaises(FileNotFoundError):
+            AppLauncher.spawn("no-such-app-for-spawn-xyz")
+
+    def test_the_binding_can_be_declined(self):
+        proc = AppLauncher.spawn(sys.executable, ["-c", "pass"], bind_lifetime=False)
+        proc.wait(timeout=30)
+        proc.stdout.close()
+        self.assertFalse(proc.bound_to_parent)
+
+    @unittest.skipUnless(sys.platform == "win32", "the binding is a Windows Job Object")
+    def test_the_child_dies_with_its_parent_however_the_parent_ends(self):
+        """The case the binding exists for: a parent that ends WITHOUT running
+        its cleanup -- a crashed DCC -- must not leave its child running. A
+        tunnel orphaned that way keeps a public link on a port whatever binds
+        it next would be published through."""
+        import ctypes
+        import subprocess
+        from ctypes import wintypes
+
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        parent = (
+            "import os, sys\n"
+            f"sys.path.insert(0, {root!r})\n"
+            "from pythontk.core_utils.app_launcher import AppLauncher\n"
+            "child = AppLauncher.spawn(sys.executable, "
+            "['-c', 'import time; time.sleep(120)'])\n"
+            "print(child.pid, child.bound_to_parent, flush=True)\n"
+            "os._exit(0)  # no atexit, no finally: a crash, as the child sees it\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", parent], capture_output=True, text=True, timeout=60
+        )
+        pid, bound = result.stdout.split()
+        self.assertEqual(bound, "True", result.stderr)
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel32.OpenProcess(0x00100000, False, int(pid))  # SYNCHRONIZE
+        if not handle:
+            return  # already gone -- and no longer openable, so not reused yet
+        try:
+            # WAIT_OBJECT_0: exited. OpenProcess succeeding proves nothing.
+            exited = kernel32.WaitForSingleObject(handle, 10000) == 0
+        finally:
+            kernel32.CloseHandle(handle)
+        if not exited:
+            subprocess.run(["taskkill", "/PID", pid, "/F"], capture_output=True)
+        self.assertTrue(exited, "the child outlived its parent")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -342,7 +342,8 @@ class PreviewServerTestCase(unittest.TestCase):
         """The page and the handler agree on one path, or the beacon is a 404."""
         self._serve()
         page = (self.root / "index.html").read_text(encoding="utf-8")
-        self.assertIn(f"sendBeacon('{VIEWER_CLOSED_PATH}'", page)
+        # With the tab's id: a share's guest listener retires THAT tab by it.
+        self.assertIn(f"sendBeacon(`{VIEWER_CLOSED_PATH}?id=", page)
 
     def test_viewer_page_explains_a_failed_enter_vr(self):
         """ "Enter VR does nothing" is a real report, and it was accurate: the
@@ -567,6 +568,27 @@ class PreviewServerTestCase(unittest.TestCase):
         # row), published beside it and read like the other numbers.
         self.assertEqual(policy["lightmappedMaterials"]["envMapTerms"], "specular")
         self.assertIn("published?.lightmappedMaterials?.envMapIntensity", page)
+        # The baked normal relief (patchBakedShader) is part of the look too,
+        # and no number carries it: a recipe that omits it has every baked
+        # normal map read flat in a recipient's runtime where the preview
+        # showed it -- the drift this pairing exists to stop, and how the
+        # relief first shipped. Its behaviour is pinned on the pixels
+        # (test_preview_viewer_live); here, that the recipe states it at all.
+        self.assertIn("const RELIEF_GLSL", page)
+        self.assertTrue(
+            policy["lightmappedMaterials"].get("normalRelief", "").strip(),
+            "the viewer relieves baked normal maps and the recipe does not say so",
+        )
+        # The key light's POSITION as well as its level: its direction orients
+        # that relief even while a baked model holds its intensity at 0, and
+        # nothing else pins the page's placement to the published one.
+        key = re.search(r"keyLight\.position\.set\(([^)]*)\)", page)
+        self.assertIsNotNone(key, "the viewer no longer places its key light")
+        self.assertEqual(
+            [float(v) for v in key.group(1).split(",")],
+            [float(v) for v in policy["keyLight"]["position"]],
+            "the key light the page places disagrees with the published recipe",
+        )
 
         # The named pieces of the rig, spelled as the viewer builds them.
         self.assertIn("THREE.ACESFilmicToneMapping", page)
@@ -767,6 +789,28 @@ class PreviewServerTestCase(unittest.TestCase):
         self._get("manifest.json")
         server.stop()
         self.assertFalse(server.has_viewer())
+
+    def test_a_poll_that_crossed_its_close_beacon_does_not_revive_the_viewer(self):
+        """Each request runs on its own thread, so a poll the page sent just
+        before closing can be answered after its beacon -- and the closed tab
+        read as open for 90 s, so the next push opened no tab. The late poll
+        is replayed here explicitly; another page's poll still counts."""
+        server = self._serve()
+        self._get("manifest.json?id=tabA")
+        self.assertEqual(self._post(f"{VIEWER_CLOSED_PATH}?id=tabA"), 204)
+        self._get("manifest.json?id=tabA")  # the poll that crossed the beacon
+        self.assertFalse(server.has_viewer())
+        self._get("manifest.json?id=tabB")
+        self.assertTrue(server.has_viewer())
+
+    def test_a_closed_page_counts_again_once_the_linger_has_passed(self):
+        """A page restored from the back/forward cache polls with the SAME id:
+        it is only held off for the crossing window, not forever."""
+        server = self._serve()
+        self._post(f"{VIEWER_CLOSED_PATH}?id=tabA")
+        with unittest.mock.patch.object(PreviewServer, "CLOSED_LINGER", 0.0):
+            self._get("manifest.json?id=tabA")
+        self.assertTrue(server.has_viewer())
 
     def test_the_viewer_plays_the_clips_a_deliverable_carries(self):
         """An animated GLB that renders as a still is the whole bug.
@@ -3322,9 +3366,7 @@ class PreviewSnapshotTestCase(unittest.TestCase):
         """An External GLB on a read-only share: the still cannot sit beside
         it, so it goes where the page can collect it -- still named for it."""
         self._publish()
-        with unittest.mock.patch.object(
-            PreviewServer, "_writable", return_value=False
-        ):
+        with unittest.mock.patch.object(PreviewServer, "_writable", return_value=False):
             report = self._post(_png())
         self.assertEqual(Path(report["output"]).parent, self.root)
         self.assertEqual(report["name"], "cube_view_001.png")
@@ -3397,6 +3439,460 @@ class PreviewSnapshotTestCase(unittest.TestCase):
     @staticmethod
     def _script():
         return (PreviewServer.SCRIPTS_DIR / "snapshot.js").read_text(encoding="utf-8")
+
+
+def _raw(port, method, path, host=None, body=None, headers=None):
+    """``(status, body, headers)`` for one request sent exactly as given --
+    Host included, which urllib will not let a test forge."""
+    import http.client
+
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        connection.putrequest(method, path, skip_host=host is not None)
+        if host is not None:
+            connection.putheader("Host", host)
+        for key, value in (headers or {}).items():
+            connection.putheader(key, value)
+        if body is not None:
+            connection.putheader("Content-Length", str(len(body)))
+        connection.endheaders()
+        if body:
+            connection.send(body)
+        response = connection.getresponse()
+        return response.status, response.read(), dict(response.getheaders())
+    finally:
+        connection.close()
+
+
+class PreviewGuestTestCase(unittest.TestCase):
+    """The read-only listener a share fronts.
+
+    Its role is fixed by the socket it listens on, so what is covered is what
+    that socket will and will not do whatever a request says: read exactly
+    what the manifest names, write nothing, answer only the names admitted,
+    and keep its guests' comings and goings out of the owner's tab logic.
+    """
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_preview_guest", policy="scoped")
+        self.root = Path(self.temp.dir_path())
+        self.assets = Path(self.temp.dir_path())
+        self.server = PreviewServer(root=self.root, port=0).start()
+        source = self.assets / "cube.glb"
+        source.write_bytes(b"glTF-guest-stub")
+        self.server.set_scripts(["snapshot", "turntable"])  # owner-only + guest-safe
+        self.server.publish(source)
+        self.port = self.server.start_guest()
+
+    def tearDown(self):
+        self.server.stop()
+        self.temp.cleanup()
+
+    def _guest(self, method, path, **kwargs):
+        return _raw(self.port, method, path, **kwargs)
+
+    def _owner(self, method, path, **kwargs):
+        return _raw(self.server.port, method, path, **kwargs)
+
+    def _manifest(self, viewer_id="tabA"):
+        status, body, _ = self._guest("GET", f"/manifest.json?id={viewer_id}")
+        self.assertEqual(status, 200)
+        return json.loads(body)
+
+    # -- reads ----------------------------------------------------------
+    def test_a_guest_reads_the_page_the_manifest_and_what_it_names(self):
+        status, page, _ = self._guest("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn(b"Live Preview", page)
+
+        manifest = self._manifest()
+        self.assertIs(manifest["guest"], True)
+        # A fact about the OWNER's machine; on a guest's it would only mislead.
+        self.assertNotIn("xrRuntime", manifest)
+        # A still writes through a route the guest listener refuses.
+        self.assertEqual(manifest["scripts"], ["scripts/turntable.js"])
+
+        status, asset, _ = self._guest("GET", f"/{manifest['asset']}?v=1")
+        self.assertEqual((status, asset), (200, b"glTF-guest-stub"))
+        self.assertEqual(self._guest("GET", "/scripts/turntable.js")[0], 200)
+
+    def test_a_guest_reads_nothing_else_in_the_serve_root(self):
+        """A scene push's stills and recordings land in the serve root, and a
+        publish passes through a .part file: none of it is the share."""
+        (self.root / "view_001.png").write_bytes(b"\x89PNG\r\n\x1a\nowner-only")
+        for path in ("/view_001.png", "/scripts/", "/scripts/snapshot.js", "/scripts"):
+            self.assertEqual(self._guest("GET", path)[0], 404, path)
+            self.assertEqual(self._guest("HEAD", path)[0], 404, path)
+        self.assertEqual(self._guest("HEAD", "/scene.glb")[0], 200)
+        # The owner's own listener is unchanged: it serves the whole root.
+        self.assertEqual(self._owner("GET", "/view_001.png")[0], 200)
+
+    def test_a_guest_is_never_handed_a_folder_listing(self):
+        """``/`` is the page -- and on a root holding none (a server started
+        without the viewer), the static handler answered it with a listing of
+        the whole serve root: every still and recording by name."""
+        root = Path(self.temp.dir_path())
+        server = PreviewServer(root=root, port=0, viewer=False).start()
+        self.addCleanup(server.stop)
+        (root / "view_001.png").write_bytes(b"\x89PNG\r\n\x1a\nowner-only")
+        port = server.start_guest()
+        for method in ("GET", "HEAD"):
+            status, body, _headers = _raw(port, method, "/")
+            self.assertEqual(status, 404, method)
+            self.assertNotIn(b"view_001", body, method)
+
+    def test_every_write_is_refused_to_a_guest(self):
+        writes = {
+            f"/{SETTINGS_PATH}": b'{"normal_scale": 2}',
+            f"/{SNAPSHOT_PATH}": _png(),
+            "/playblast/begin": b"{}",
+            "/playblast/frame?token=x&index=0": _png(),
+        }
+        for path, body in writes.items():
+            status, _body, _headers = self._guest("POST", path, body=body)
+            self.assertEqual(status, 403, path)
+        self.assertEqual(self.server._settings, {})
+        self.assertEqual(sorted(p.name for p in self.root.glob("*.png")), [])
+
+    def test_a_guest_body_gets_no_routes_allowance(self):
+        """A still may be 64 MB -- from the owner. A guest's claim past the
+        JSON ceiling is refused unread."""
+        from pythontk.net_utils.preview.server import _PreviewHandler
+
+        huge = str(_PreviewHandler.MAX_JSON_BODY + 1)
+        status, _body, _headers = self._guest(
+            "POST", f"/{SNAPSHOT_PATH}", headers={"Content-Length": huge}
+        )
+        self.assertEqual(status, 413)
+
+    def test_a_guest_body_is_the_size_of_a_beacon(self):
+        """The guest listener is the one a tunnel exposes, and its one write --
+        the close beacon -- carries no body. A body is allocated in full before
+        a byte of it arrives (see ``_read_body``), so the JSON ceiling a guest
+        had let each connection a stranger opened commit a megabyte of the
+        host's memory for as long as it idled. 64 KiB is refused unread."""
+        status, _body, _headers = self._guest(
+            "POST",
+            f"/{VIEWER_CLOSED_PATH}?id=tabA",
+            headers={"Content-Length": str(64 * 1024)},
+        )
+        self.assertEqual(status, 413)
+        # The beacon itself still lands.
+        self._manifest("tabA")
+        status, _body, _headers = self._guest(
+            "POST", f"/{VIEWER_CLOSED_PATH}?id=tabA", body=b""
+        )
+        self.assertEqual(status, 204)
+        self.assertEqual(self.server.guest_count(), 0)
+
+    # -- who is watching ------------------------------------------------
+    def test_a_guest_poll_is_not_the_owners_viewer(self):
+        """A guest watching must not stop the next push from reopening the
+        owner's closed tab."""
+        self._manifest("tabA")
+        self.assertFalse(self.server.has_viewer())
+        self.assertEqual(self.server.guest_count(), 1)
+        self._owner("GET", "/manifest.json")
+        self.assertTrue(self.server.has_viewer())
+
+    def test_guests_are_counted_by_tab_and_their_beacon_retires_only_them(self):
+        self._owner("GET", "/manifest.json")
+        for viewer_id in ("tabA", "tabB", "tabA"):
+            self._manifest(viewer_id)
+        self.assertEqual(self.server.guest_count(), 2)
+
+        status, _body, _headers = self._guest(
+            "POST", f"/{VIEWER_CLOSED_PATH}?id=tabA", body=b""
+        )
+        self.assertEqual(status, 204)
+        self.assertEqual(self.server.guest_count(), 1)
+        # A guest leaving is not the owner leaving.
+        self.assertTrue(self.server.has_viewer())
+
+    def test_a_poll_that_crossed_its_close_beacon_does_not_revive_the_guest(self):
+        """Caught by the live guest test under load: a poll answered after its
+        own tab's beacon kept a departed guest counted for 90 s."""
+        self._manifest("tabA")
+        self._guest("POST", f"/{VIEWER_CLOSED_PATH}?id=tabA", body=b"")
+        self._manifest("tabA")  # the poll that crossed the beacon
+        self.assertEqual(self.server.guest_count(), 0)
+        with unittest.mock.patch.object(PreviewServer, "CLOSED_LINGER", 0.0):
+            self._manifest("tabA")  # later: a back/forward-cache restore
+        self.assertEqual(self.server.guest_count(), 1)
+
+    def test_a_malformed_guest_id_is_not_counted(self):
+        for viewer_id in ("", "..%2Fx", "x" * 65):
+            self._guest("GET", f"/manifest.json?id={viewer_id}")
+        self.assertEqual(self.server.guest_count(), 0)
+
+    def test_the_guest_table_is_bounded_and_forgets_the_stalest(self):
+        with unittest.mock.patch.object(PreviewServer, "MAX_GUESTS", 3):
+            for viewer_id in ("a", "b", "c", "a", "d"):
+                self._manifest(viewer_id)
+        self.assertEqual(list(self.server._guests), ["c", "a", "d"])
+
+    # -- names ----------------------------------------------------------
+    def test_the_guest_listener_answers_admitted_names_only(self):
+        """The Host check is the guest listener's rebinding defence too, so a
+        proxy's public name is admitted by name rather than the check dropped."""
+        self.assertEqual(self._guest("GET", "/", host="share.example.test")[0], 403)
+        self.server.admit_host("share.example.test")
+        self.assertEqual(self._guest("GET", "/", host="share.example.test")[0], 200)
+        # A host name is case-insensitive, and a proxy may forward it as typed.
+        self.assertEqual(self._guest("GET", "/", host="SHARE.Example.test")[0], 200)
+        self.assertEqual(self._guest("GET", "/", host="evil.example")[0], 403)
+
+    def test_the_owners_listener_never_answers_a_public_name(self):
+        """Whatever fronts it, a request under a public name never reaches
+        the routes that write."""
+        self.server.admit_host("share.example.test")
+        for method, path in (("GET", "/"), ("POST", f"/{SETTINGS_PATH}")):
+            status, _body, _headers = self._owner(
+                method, path, host="share.example.test", body=b"{}"
+            )
+            self.assertEqual(status, 403, (method, path))
+
+    def test_head_is_behind_the_host_check_on_the_owners_listener_too(self):
+        """HEAD answers a path's existence, size and date, and had no Host
+        check: a rebound page could probe the serve root through it."""
+        status, _body, _headers = self._owner(
+            "HEAD", "/scene.glb", host=f"evil.example:{self.server.port}"
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(self._owner("HEAD", "/scene.glb")[0], 200)
+
+    # -- lifetime -------------------------------------------------------
+    def test_stop_closes_the_guest_listener(self):
+        port = self.port
+        self.server.stop()
+        self.assertIsNone(self.server.guest_url)
+        with self.assertRaises(OSError):
+            _raw(port, "GET", "/")
+
+    def test_start_guest_is_idempotent(self):
+        self.assertEqual(self.server.start_guest(), self.port)
+        self.assertEqual(self.server.guest_url, f"http://127.0.0.1:{self.port}/")
+
+
+class PreviewShareTestCase(unittest.TestCase):
+    """:meth:`PreviewServer.share` with a fake provider: a real child that
+    prints a link, driven through the real ShareTunnel."""
+
+    LINK = "https://guest-share.example.test"
+
+    def setUp(self):
+        from pythontk.net_utils.share_tunnel import ShareTunnel
+
+        self.temp = TempArtifacts("test_preview_share", policy="scoped")
+        self.root = Path(self.temp.dir_path())
+        self.server = PreviewServer(root=self.root, port=0)
+        self.fake = {
+            "label": "Fake tunnel",
+            "executable": sys.executable,
+            "args": [
+                "-u",
+                "-c",
+                f"import time; print('{self.LINK}', flush=True); time.sleep(600)",
+            ],
+            "url": r"(https://guest-share\.example\.test)",
+            "ready": None,
+            "public": True,
+            "install": "https://example.test/install",
+        }
+        patcher = unittest.mock.patch.dict(
+            ShareTunnel.PROVIDERS,
+            {
+                "fake": self.fake,
+                "fake-exits": {**self.fake, "args": ["-c", "raise SystemExit(2)"]},
+            },
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        env = unittest.mock.patch.dict(
+            os.environ,
+            {PreviewServer.ALIAS_ENV: "", PreviewServer.ALIAS_URL_ENV: ""},
+        )
+        env.start()
+        self.addCleanup(env.stop)
+
+    def tearDown(self):
+        self.server.stop()
+        self.temp.cleanup()
+
+    def _share(self, **kwargs):
+        kwargs.setdefault("provider", "fake")
+        return self.server.share(**kwargs)
+
+    def test_share_fronts_the_guest_listener_and_admits_its_name(self):
+        info = self._share()
+        self.assertEqual((info["url"], info["tunnel_url"]), (self.LINK, self.LINK))
+        self.assertEqual(self.server.share_url, self.LINK)
+        self.assertTrue(self.server.is_running, "sharing starts serving")
+        # What the tunnel forwards -- its public name -- is answered, read-only.
+        status, body, _ = _raw(
+            self.server.guest_port,
+            "GET",
+            "/manifest.json?id=t",
+            host="guest-share.example.test",
+        )
+        self.assertEqual(status, 200)
+        self.assertIs(json.loads(body)["guest"], True)
+        self.assertEqual(self.server.share_info()["guests"], 1)
+
+    def test_unshare_stops_the_tunnel_and_closes_the_guest_listener(self):
+        self._share()
+        tunnel = self.server._tunnel
+        self.server.unshare()
+        self.assertFalse(tunnel.is_running)
+        self.assertIsNone(self.server.guest_port)
+        self.assertIsNone(self.server.share_info())
+        self.assertTrue(self.server.is_running, "the owner's page is untouched")
+
+    def test_stop_ends_the_share(self):
+        """A share cannot outlive the server it fronts."""
+        self._share()
+        tunnel = self.server._tunnel
+        self.server.stop()
+        self.assertFalse(tunnel.is_running)
+        self.assertIsNone(self.server.share_url)
+
+    def test_a_failed_start_leaves_no_guest_listener(self):
+        with self.assertRaises(RuntimeError):
+            self._share(provider="fake-exits")
+        self.assertIsNone(self.server.guest_port)
+        self.assertIsNone(self.server.share_info())
+
+    def test_a_share_that_drops_as_it_begins_raises_and_cleans_up(self):
+        """share() returns share_info(), which is None once the client has
+        exited -- handed on, the bridge failed on info["url"] with a TypeError."""
+        with unittest.mock.patch.object(PreviewServer, "share_info", return_value=None):
+            with self.assertRaises(RuntimeError):
+                self._share()
+        self.assertIsNone(self.server.guest_port)
+        self.assertIsNone(self.server._tunnel)
+
+    def test_a_share_stopped_while_its_link_comes_up_leaves_nothing_running(self):
+        """unshare() or stop() -- the panel's Stop Sharing, Stop Server -- can
+        land while a share still waits on its provider on another thread (a
+        quick tunnel's new name takes 6-18 s to resolve). It found no tunnel
+        to stop yet and closed the guest listener, and the share then
+        installed its tunnel anyway: a live public link in front of a closed
+        port, published through whatever binds that port next."""
+        import threading
+        import time
+
+        from pythontk.core_utils.app_launcher import AppLauncher
+        from pythontk.net_utils.share_tunnel import ShareTunnel
+
+        slow = {
+            **self.fake,
+            "args": [
+                "-u",
+                "-c",
+                "import time; time.sleep(1.5); "
+                f"print('{self.LINK}', flush=True); time.sleep(600)",
+            ],
+        }
+        spawned = []
+        real_spawn = AppLauncher.spawn
+
+        def recording_spawn(*args, **kwargs):
+            process = real_spawn(*args, **kwargs)
+            spawned.append(process)
+            return process
+
+        for stop in ("unshare", "stop"):
+            with self.subTest(stop=stop):
+                spawned.clear()
+                outcome = {}
+
+                def share():
+                    try:
+                        outcome["info"] = self._share(provider="fake-slow")
+                    except Exception as error:  # noqa: BLE001 -- asserted below
+                        outcome["error"] = error
+
+                with (
+                    unittest.mock.patch.dict(
+                        ShareTunnel.PROVIDERS, {"fake-slow": slow}
+                    ),
+                    unittest.mock.patch.object(
+                        AppLauncher, "spawn", side_effect=recording_spawn
+                    ),
+                ):
+                    sharer = threading.Thread(target=share)
+                    sharer.start()
+                    deadline = time.monotonic() + 20
+                    while not spawned and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    getattr(self.server, stop)()  # while the link is coming up
+                    sharer.join(timeout=30)
+
+                self.assertFalse(sharer.is_alive())
+                self.assertIsInstance(outcome.get("error"), RuntimeError, outcome)
+                self.assertIsNone(self.server.share_info())
+                self.assertIsNone(self.server.guest_port)
+                self.assertIsNotNone(spawned[0].poll(), "the tunnel outlived the stop")
+
+    def test_sharing_again_on_the_same_provider_keeps_the_link(self):
+        first = self._share()
+        tunnel = self.server._tunnel
+        self.assertEqual(self._share()["url"], first["url"])
+        self.assertIs(self.server._tunnel, tunnel)
+
+    def test_a_dropped_share_reads_as_not_shared(self):
+        self._share()
+        process = self.server._tunnel._process
+        process.kill()
+        process.wait(timeout=10)
+        self.assertIsNone(self.server.share_info())
+        self.assertIsNone(self.server.share_url)
+
+    def test_the_alias_address_is_handed_out_only_while_the_alias_is_current(self):
+        """A stale alias must never be what gets sent."""
+        heard = []
+        info = self._share(alias=heard.append, alias_url="https://me.example/vr")
+        self.assertEqual(info["url"], "https://me.example/vr")
+        self.assertEqual(heard, [self.LINK])
+        self.server.unshare()
+        self.assertEqual(heard, [self.LINK, None])
+
+        def offline(url):
+            raise OSError("web root offline")
+
+        info = self._share(alias=offline, alias_url="https://me.example/vr")
+        self.assertEqual(info["url"], self.LINK)
+        self.assertIn("web root offline", info["alias_error"])
+        self.server.unshare()
+
+        # An address with no alias to keep it current is not handed out either.
+        info = self._share(alias=False, alias_url="https://me.example/vr")
+        self.assertEqual(info["url"], self.LINK)
+
+    def test_the_machine_config_names_the_alias(self):
+        folder = Path(self.temp.dir_path())
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                PreviewServer.ALIAS_ENV: str(folder),
+                PreviewServer.ALIAS_URL_ENV: "https://me.example/vr",
+            },
+        ):
+            info = self._share()
+        self.assertEqual(info["url"], "https://me.example/vr")
+        self.assertIn(self.LINK, (folder / "index.html").read_text(encoding="utf-8"))
+
+    def test_the_bridge_shares_through_its_deliverer(self):
+        from pythontk.net_utils.preview.bridge import FilePreviewBridge
+
+        bridge = FilePreviewBridge()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        self.assertIsNone(bridge.share_url)
+        info = bridge.share(provider="fake")
+        self.assertEqual((info["url"], bridge.share_url), (self.LINK, self.LINK))
+        bridge.unshare()
+        self.assertIsNone(bridge.share_url)
+        self.assertTrue(self.server.is_running)
 
 
 if __name__ == "__main__":

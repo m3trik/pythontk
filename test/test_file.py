@@ -1199,22 +1199,59 @@ class FileTest(BaseTestCase):
             "sound/vo.wav",
         )
 
-    def test_portable_path_keeps_a_path_outside_the_base_absolute(self):
-        """Never a ``../`` chain: a reader resolves against whatever project
-        its session has set.  Measured 2026-09-22: stored under the default
-        project, ``C:/Audio/VO/line01.wav`` became six ``..`` steps; read with
-        another project set they walked off the drive root to a file that
-        does not exist, and the next write stored THAT for good."""
+    def test_portable_path_spells_a_path_beside_the_base_as_a_chain(self):
+        """Maintainer rule, 2026-09-23: relative to the SCENE'S OWN project
+        wherever a relative spelling reaches -- a shared library beside the
+        project is a ``../`` chain, so a teammate who mounts the project with
+        its neighbours resolves the same file.  (Spelled from the SESSION's
+        project the chain drifted -- measured 2026-09-22 -- which is why the
+        base is the scene's and a Save As re-spells it.)"""
         root = os.path.abspath("/work/proj")
         lib = os.path.join(os.path.abspath("/work/library"), "hit.wav")
-        want = os.path.normpath(lib).replace("\\", "/")
-        self.assertEqual(FileUtils.portable_path(lib, root), want)
-        other = os.path.abspath("/elsewhere/show")
+        self.assertEqual(FileUtils.portable_path(lib, root), "../library/hit.wav")
         self.assertEqual(
-            FileUtils.resolve_portable_path(FileUtils.portable_path(lib, root), other),
-            want,
-            "read under another project it still names the same file",
+            FileUtils.resolve_portable_path("../library/hit.wav", root),
+            os.path.normpath(lib).replace("\\", "/"),
         )
+        # The project itself (a folder record) is ".", never "" -- an empty
+        # spelling reads back as nothing at all.
+        self.assertEqual(FileUtils.portable_path(root, root), ".")
+        self.assertEqual(
+            FileUtils.resolve_portable_path(".", root),
+            os.path.normpath(root).replace("\\", "/"),
+        )
+
+    def test_rebase_portable_path_follows_a_scene_into_another_project(self):
+        """A Save As into another project re-spells what the record names:
+        the same files, spelled from the new project."""
+        old = os.path.abspath("/work/proj")
+        new = os.path.abspath("/work/shows/copy")
+        for picked in (
+            os.path.join(old, "sound", "vo.wav"),
+            os.path.join(os.path.abspath("/work/library"), "hit.wav"),
+        ):
+            stored = FileUtils.portable_path(picked, old)
+            moved = FileUtils.rebase_portable_path(stored, old, new)
+            self.assertEqual(
+                FileUtils.resolve_portable_path(moved, new),
+                os.path.normpath(picked).replace("\\", "/"),
+                moved,
+            )
+        self.assertEqual(
+            FileUtils.rebase_portable_path("../library/hit.wav", old, new),
+            "../../library/hit.wav",
+        )
+        # Equal bases normalize: an absolute value (written before the rule, or
+        # arrived across a hand-off) becomes relative where it can.
+        legacy = os.path.join(old, "sound", "vo.wav")
+        self.assertEqual(
+            FileUtils.rebase_portable_path(legacy, old, old), "sound/vo.wav"
+        )
+        # A relative value with no base to read it from stays as it is.
+        self.assertEqual(
+            FileUtils.rebase_portable_path("sound/vo.wav", None, new), "sound/vo.wav"
+        )
+        self.assertEqual(FileUtils.rebase_portable_path("", old, new), "")
 
     def test_portable_path_keeps_a_path_no_relative_spelling_reaches(self):
         """Across drives no relative spelling exists; nor without a base."""

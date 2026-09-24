@@ -1529,6 +1529,67 @@ class TestSnapEnclosesContent(unittest.TestCase):
             ShotStore().snap(984.556, "outward")
 
 
+class TestEnclosingBounds(unittest.TestCase):
+    """``ShotStore.enclosing_bounds``: the bounds a shot takes so content
+    landing on ``[lo, hi]`` sits inside it -- the grow a key or clip dragged
+    past a bound asks for, and never onto a contiguous seam.
+
+    Two shots that touch share ONE sample, the preceding shot's. Measured
+    2026-09-23 through mayatk's real key handler: A [0,50] and B [50,100],
+    A's key dragged 40 -> 60 grew A to 60 and rippled B to [60,110], so the
+    key landed on B's first frame -- B opened on A's pose, its own a frame
+    late. Decided by the maintainer that day: the shot grows one frame past
+    the seam, so the shots still touch and B keeps its opening pose.
+    Added: 2026-09-23
+    """
+
+    @staticmethod
+    def _store(*spans):
+        return ShotStore(
+            [ShotBlock(i, f"S{i}", s, e, []) for i, (s, e) in enumerate(spans)]
+        )
+
+    def test_a_landing_on_a_contiguous_seam_grows_one_frame_past_it(self):
+        store = self._store((0, 50), (50, 100))
+        self.assertEqual(store.enclosing_bounds(0, 60.0, 60.0), (0.0, 61.0))
+
+    def test_a_landing_on_the_existing_seam_does_too(self):
+        store = self._store((0, 50), (50, 100))
+        self.assertEqual(store.enclosing_bounds(0, 50.0, 50.0), (0.0, 51.0))
+
+    def test_upstream_mirrors_it(self):
+        store = self._store((0, 50), (50, 100))
+        self.assertEqual(store.enclosing_bounds(1, 45.0, 45.0), (44.0, 100.0))
+
+    def test_a_landing_off_the_seam_or_by_a_gap_is_unchanged(self):
+        store = self._store((0, 50), (50, 100))
+        self.assertEqual(store.enclosing_bounds(0, 59.5, 59.5), (0.0, 60.0))
+        self.assertEqual(store.enclosing_bounds(0, 45.0, 45.0), (0.0, 50.0))
+        gapped = self._store((0, 50), (60, 100))
+        self.assertEqual(gapped.enclosing_bounds(0, 60.0, 60.0), (0.0, 60.0))
+
+    def test_the_last_shot_has_no_seam_to_step_past(self):
+        store = self._store((0, 50), (50, 100))
+        self.assertEqual(store.enclosing_bounds(1, 120.0, 120.0), (50.0, 120.0))
+
+    def test_an_unkeyed_seam_has_no_pose_to_protect(self):
+        """With no key ON the seam nothing is displaced: a step would only shift
+        the neighbour a frame. The predicate is asked about the seam frame."""
+        store = self._store((0, 50), (50, 100))
+        asked = []
+
+        def keyed(frame):
+            asked.append(frame)
+            return False
+
+        self.assertEqual(store.enclosing_bounds(0, 60.0, 60.0, keyed), (0.0, 60.0))
+        self.assertEqual(store.enclosing_bounds(1, 45.0, 45.0, keyed), (45.0, 100.0))
+        self.assertEqual(asked, [50.0, 50.0])
+        self.assertEqual(
+            store.enclosing_bounds(0, 60.0, 60.0, lambda f: f == 50.0), (0.0, 61.0)
+        )
+
+
 class TestEditLedgerRemap(unittest.TestCase):
     """``ShotEditLedger.remap`` moves every claim ONCE, all pairs at once.
 
@@ -1578,6 +1639,54 @@ class TestEditLedgerRemap(unittest.TestCase):
         self.assertEqual(led.remap("c", [(5.0, 5.0), (7.0, 9.0)]), 0)
         self.assertEqual(led.remap("other", [(5.0, 6.0)]), 0)
         self.assertEqual(led.key_records("c"), [(5.0, 0, "start")])
+
+
+class TestEditLedgerRelease(unittest.TestCase):
+    """``ShotEditLedger.release`` drops EVERY claim a cut key held.
+
+    A system cut takes the step claim and the sample claim with the key: a
+    move remaps only the claims of keys it finds, so one left on the frame is
+    inherited by whatever lands there next -- measured 2026-09-23, a gap
+    collapse's merge cuts left 66 such claims on a production assembly.  The
+    two halves were released by hand at every cut site of both sequencers.
+    """
+
+    def test_a_frame_drops_both_claims_and_only_there(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_key("c", 50.0, 0, "end")
+        led.record_step("c", 50.0, "auto", "auto")
+        led.record_key("c", 60.0, 1, "start")
+        self.assertEqual(led.release("c", 50.0), 2)
+        self.assertEqual(led.key_times("c"), [60.0])
+        self.assertEqual(led.step_times("c"), [])
+        self.assertEqual(led.release("c", 50.0), 0)
+
+    def test_a_window_drops_every_claim_inside_it_ends_included(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        for t in (10.0, 20.0, 30.0, 40.0):
+            led.record_key("c", t, 0, "start")
+        led.record_step("c", 20.0, "auto", "auto")
+        led.record_step("c", 45.0, "auto", "auto")
+        self.assertEqual(led.release("c", 20.0, 40.0), 4)
+        self.assertEqual(led.key_times("c"), [10.0])
+        self.assertEqual(led.step_times("c"), [45.0])
+
+    def test_owns_key_is_the_sample_twin_of_owns_step(self):
+        """Whether a key is the system's decides whether it may be claimed
+        where it lands (a carried pose stays the animator's when it was)."""
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_key("c", 50.0, 0, "end")
+        self.assertTrue(led.owns_key("c", 50.0))
+        self.assertFalse(led.owns_key("c", 60.0))
+        self.assertFalse(led.owns_key("other", 50.0))
+        led.release("c", 50.0)
+        self.assertFalse(led.owns_key("c", 50.0))
 
 
 class TestBoundaryLedger(unittest.TestCase):
