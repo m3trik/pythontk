@@ -314,9 +314,11 @@ class MeshConvert(HelpMixin):
     #: an unbaked one, not less: its diffuse lighting is already in its
     #: textures, so the viewer's own rig has to be withheld exactly where the
     #: bake already answers (the key light, and the environment's diffuse) and
-    #: kept where it does not (the environment's specular, which is all that
-    #: can show a reflection, a roughness map or a normal map on a baked
-    #: surface). Without it a recipient reasonably adds a normal key light, or
+    #: kept where it does not (the environment's specular, the only term left
+    #: to show a reflection or a roughness map on a baked surface; a normal map
+    #: shows there through the relief, ``lightmappedMaterials.normalRelief``,
+    #: which is why the key light's direction outlives its intensity). Without
+    #: it a recipient reasonably adds a normal key light, or
     #: an ambient term, and washes out every baked surface -- which reads as a
     #: bake regression and sends them back to the baker, where nothing is
     #: wrong.
@@ -349,7 +351,8 @@ class MeshConvert(HelpMixin):
             "disabled_when": "any material in the asset is lightmapped",
             "note": (
                 "Scene-wide, so it cannot be spared the baked geometry it would "
-                "contradict; it goes off entirely once anything is baked."
+                "contradict; it goes off entirely once anything is baked. Its "
+                "direction still orients lightmappedMaterials.normalRelief."
             ),
         },
         "lightmappedMaterials": {
@@ -357,6 +360,19 @@ class MeshConvert(HelpMixin):
             "envMapIntensity": 0.25,
             "lightMapIntensity": (
                 "per material, from extras.lightmap_web.materials[<name>].intensity"
+            ),
+            "normalRelief": (
+                "Where a baked material carries a normal map, its lightmap "
+                "texel is scaled by (dot(N, L) * 0.5 + 0.5) / "
+                "(dot(Ng, L) * 0.5 + 0.5): N the normal-mapped normal, Ng the "
+                "surface's own, L the unit direction toward keyLight.position "
+                "-- reflected across the surface's plane wherever the surface "
+                "faces away from it, since a bake's light reached the surface "
+                "from its front. Exactly 1 where the map is flat, so "
+                "normalTexture.scale 0 is "
+                "the pure bake. A lightmap carries no direction, and without "
+                "this a normal map on a baked surface shows only in its "
+                "reflections."
             ),
             "note": (
                 "The bake already holds the diffuse lighting (every light and "
@@ -1545,6 +1561,16 @@ class MeshConvert(HelpMixin):
                     cls.fix_glb_skin_skeletons(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB skin skeleton repair skipped: %s", exc)
+                # Every shipped tangent, against its UVs: FBX2glTF writes w = +1
+                # on every vertex, so each mirrored UV shell read its normal
+                # map with green inverted, and passes a DCC's zero tangents
+                # through. Structural like the skin repairs, and here for their
+                # reason -- its in-place rewrite copies the smallest BIN this
+                # session holds.
+                try:
+                    cls.fix_glb_tangents(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB tangent repair skipped: %s", exc)
                 # Unconditional and self-feeding, like the lightmap pass: it
                 # reads the take list out of the file and no-ops on a GLB with
                 # no animation, so there is no flag for a caller to forget.
@@ -6076,6 +6102,29 @@ class MeshConvert(HelpMixin):
             return repaired
 
     @classmethod
+    def fix_glb_tangents(cls, glb: GlbTarget) -> Dict[str, int]:
+        """Point every shipped TANGENT the way its UVs run, and give a
+        zero-length one a direction.
+
+        FBX2glTF ships ``w = +1`` on every vertex, and three.js takes a shipped
+        TANGENT over its own frame, so every mirrored UV shell rendered its
+        normal map with green inverted; a DCC writes a zero tangent where it
+        cannot orient one, which glTF forbids and three.js turns into NaN --
+        see :class:`~pythontk.file_utils.mesh_convert.glb_tangents.GlbTangents`.
+
+        Parameters:
+            glb: Path to a ``.glb``, modified in place, or an open session.
+
+        Returns:
+            ``{"primitives": n, "signs": n, "directions": n}`` -- primitives
+            reading a rewritten TANGENT, vertices whose ``w`` was set, and
+            vertices whose direction was rebuilt.
+        """
+        from pythontk.file_utils.mesh_convert.glb_tangents import GlbTangents
+
+        return GlbTangents.repair(glb)
+
+    @classmethod
     def apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
         """Realize authored opacity ramps as animated material alpha.
 
@@ -6266,6 +6315,33 @@ class MeshConvert(HelpMixin):
         "MAT4": 16,
     }
 
+    @staticmethod
+    def _bin_view(gltf: Dict[str, Any], accessor: Dict[str, Any]) -> Optional[dict]:
+        """The bufferView *accessor* reads, when its bytes are this GLB's BIN.
+
+        A GLB embeds exactly one buffer -- buffer 0, with no ``uri`` -- so a
+        view on another buffer, on a buffer 0 that names an external file, or
+        one a compression extension decodes (``EXT_meshopt_compression``) does
+        not describe the bytes at its offsets in the BIN chunk. Read there
+        anyway it decodes to plausible garbage rather than an error. ``None``
+        for those, and for an accessor with no (valid) ``bufferView``; the one
+        definition every accessor reader and writer here checks against.
+        """
+        views = gltf.get("bufferViews") or []
+        view_index = accessor.get("bufferView")
+        if not isinstance(view_index, int) or not 0 <= view_index < len(views):
+            return None
+        view = views[view_index] or {}
+        buffers = gltf.get("buffers") or []
+        if (
+            view.get("buffer", 0) != 0
+            or view.get("extensions")
+            or not buffers
+            or (buffers[0] or {}).get("uri")
+        ):
+            return None
+        return view
+
     @classmethod
     def _accessor_elements(
         cls, edit: "MeshConvert.GlbEdit", index: int
@@ -6278,9 +6354,10 @@ class MeshConvert(HelpMixin):
         bit patterns equal (or two equal ones different).
 
         None whenever the layout is anything but tightly packed and
-        self-contained -- sparse, interleaved (``byteStride``), or no
-        bufferView at all. Those are legal glTF that this pass has no business
-        rewriting, and refusing them is what keeps it safe to run on any file.
+        self-contained -- sparse, interleaved (``byteStride``), no bufferView,
+        or bytes that are not this file's BIN (:meth:`_bin_view`). Those are
+        legal glTF that this pass has no business rewriting, and refusing them
+        is what keeps it safe to run on any file.
         """
         accessors = edit.gltf.get("accessors") or []
         if not 0 <= index < len(accessors):
@@ -6288,14 +6365,8 @@ class MeshConvert(HelpMixin):
         accessor = accessors[index] or {}
         if accessor.get("sparse"):
             return None
-        view_index = accessor.get("bufferView")
-        if not isinstance(view_index, int):
-            return None
-        views = edit.gltf.get("bufferViews") or []
-        if not 0 <= view_index < len(views):
-            return None
-        view = views[view_index] or {}
-        if view.get("byteStride"):
+        view = cls._bin_view(edit.gltf, accessor)
+        if view is None or view.get("byteStride"):
             return None
         spec = cls.ACCESSOR_COMPONENT_TYPES.get(accessor.get("componentType"))
         count = cls.ACCESSOR_TYPE_COUNT.get(accessor.get("type"))

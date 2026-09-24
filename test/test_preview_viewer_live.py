@@ -46,11 +46,9 @@ export default function probe(viewer) {
   const report = { ready: false, errors: [] };
   window.__probe = report;
   window.__api = viewer;
-  // Display luminance (0-255) at the centre of the fixture's one face, read
-  // back off the page's own canvas after a render -- so what is measured is
-  // the picture, tone mapping and all, rather than a material property.
-  window.__sample = () => {
-    const { renderer, scene, camera, THREE } = viewer;
+  // The centre of the fixture's one face, in world space.
+  const faceCentre = () => {
+    const { THREE } = viewer;
     let mesh = null;
     viewer.model.traverse((n) => { if (!mesh && n.isMesh) mesh = n; });
     const position = mesh.geometry.attributes.position;
@@ -60,7 +58,14 @@ export default function probe(viewer) {
     }
     centroid.divideScalar(position.count);
     mesh.updateWorldMatrix(true, false);
-    const ndc = centroid.applyMatrix4(mesh.matrixWorld).project(camera);
+    return centroid.applyMatrix4(mesh.matrixWorld);
+  };
+  // Display luminance (0-255) at the centre of the fixture's one face, read
+  // back off the page's own canvas after a render -- so what is measured is
+  // the picture, tone mapping and all, rather than a material property.
+  window.__sample = () => {
+    const { renderer, scene, camera } = viewer;
+    const ndc = faceCentre().project(camera);
     renderer.render(scene, camera);
     const gl = renderer.getContext();
     const x = Math.round((ndc.x + 1) / 2 * gl.drawingBufferWidth);
@@ -72,6 +77,28 @@ export default function probe(viewer) {
       sum += 0.2126 * pixels[4 * i] + 0.7152 * pixels[4 * i + 1] + 0.0722 * pixels[4 * i + 2];
     }
     return sum / 9;
+  };
+  // The same face turned to point along `normal` (world) with its +U along
+  // `tangent`, then read head-on. The key light stays where the page put it,
+  // so this is how a surface facing that way renders under it. The turn rides
+  // the pivot, the group every viewer script is handed to spin.
+  window.__sampleFacing = (normal, tangent) => {
+    const { THREE, camera, pivot } = viewer;
+    const n = new THREE.Vector3(...normal).normalize();
+    const t = new THREE.Vector3(...tangent).normalize();
+    const b = new THREE.Vector3().crossVectors(n, t);
+    pivot.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(t, b, n));
+    // Clear of the page's floor grid: a turn can leave the face lying in the
+    // grid's plane, where the two z-fight, or crossing it edge-on, where a grid
+    // line runs through the sample.
+    pivot.position.y += 10 - faceCentre().y;
+    const centre = faceCentre();
+    camera.position.copy(centre).addScaledVector(n, 1);
+    camera.up.set(0, 1, 0);
+    if (Math.abs(n.y) > 0.99) camera.up.set(0, 0, 1);
+    camera.lookAt(centre);
+    camera.updateMatrixWorld();
+    return window.__sample();
   };
   viewer.on('load', (detail) => {
     try {
@@ -246,6 +273,29 @@ def bake_face_level(irradiance, albedo=1.0):
     fit = min(max(fit, 0.0), 1.0)
     srgb = 12.92 * fit if fit <= 0.0031308 else 1.055 * fit ** (1 / 2.4) - 0.055
     return 255.0 * srgb
+
+
+def normal_texel_png(degrees):
+    """A 1x1 tangent-space normal map leaning *degrees* toward +U, as a data URI.
+
+    0 is a FLAT map. The lean rides red alone, so it tips the normal along the
+    fixture's U direction whichever convention the map's green follows.
+    """
+    import base64
+
+    import cv2
+    import numpy as np
+
+    lean = math.radians(degrees)
+    rgb = [round((c * 0.5 + 0.5) * 255) for c in (math.sin(lean), 0.0, math.cos(lean))]
+    ok, png = cv2.imencode(".png", np.array([[rgb[::-1]]], dtype=np.uint8))
+    assert ok, "cv2 could not encode the normal texel"
+    return "data:image/png;base64," + base64.b64encode(png.tobytes()).decode("ascii")
+
+
+def _unit(vector):
+    length = math.sqrt(sum(c * c for c in vector))
+    return tuple(c / length for c in vector)
 
 
 def _runtime_available():
@@ -1101,7 +1151,9 @@ class TestPreviewViewerLive(unittest.TestCase):
         `apply_glb_lightmaps` produces the block the viewer reads.
 
         *normal_map* also gives the material a normal map, which is what
-        turns on the page's bake-relief shader patch. *bake_value* is the
+        turns on the page's bake-relief shader patch: True for a stock pixel,
+        or a data URI for a texel of the test's own (`normal_texel_png`).
+        *bake_value* is the
         bake's irradiance (default `BAKE_VALUE`); *pbr* a
         `pbrMetallicRoughness` block for the material, which otherwise takes
         glTF's defaults -- a ROUGH METAL, which no lightmap can light, so a
@@ -1176,7 +1228,8 @@ class TestPreviewViewerLive(unittest.TestCase):
         if pbr:
             gltf["materials"][0]["pbrMetallicRoughness"] = dict(pbr)
         if normal_map:
-            gltf["images"] = [{"name": "room_N", "uri": self.PIXEL_PNG}]
+            uri = normal_map if isinstance(normal_map, str) else self.PIXEL_PNG
+            gltf["images"] = [{"name": "room_N", "uri": uri}]
             gltf["textures"] = [{"source": 0}]
             gltf["materials"][0]["normalTexture"] = {"index": 0}
         rendering = {}
@@ -1844,6 +1897,142 @@ class TestPreviewViewerLive(unittest.TestCase):
         plain = self._lit(self._load(self._lightmapped_glb()))
         self.assertEqual(plain["programKey"], "baked")
 
+    #: The key light the relief takes a bake's light to arrive along, as the
+    #: published recipe states it (`test_preview_server` pins the page to it).
+    KEY_LIGHT = tuple(ptk.MeshConvert.RENDERING_POLICY["keyLight"]["position"])
+    #: A matte dielectric: with the environment published at zero, the bake --
+    #: and the relief on it -- is the whole picture.
+    MATTE = {"metallicFactor": 0.0, "roughnessFactor": 1.0}
+    #: The least a 20-degree bump must move a face that faces the key light,
+    #: so a relief made inert cannot pass the symmetry check by moving nothing
+    #: anywhere (measured: 6 levels on the floor, 10-12 on the walls).
+    RELIEF_FLOOR = 3
+
+    def _turn(self, direction):
+        """(normal, tangent) that turn the fixture face to point along
+        *direction*, its +U along the key light's component in the face's
+        plane -- so a bump toward +U leans toward the light's side on every
+        face, and a face and its mirror image across the light's horizon wear
+        it alike. Straight at or away from the light, any horizontal
+        perpendicular does."""
+        normal = _unit(direction)
+        key = _unit(self.KEY_LIGHT)
+        facing = sum(k * n for k, n in zip(key, normal))
+        along = tuple(k - facing * n for k, n in zip(key, normal))
+        if math.hypot(*along) < 1e-3:
+            along = (normal[2], 0.0, -normal[0])
+        return [normal, _unit(along)]
+
+    def _baked_face_levels(self, degrees, facings):
+        """Display level of the baked fixture face turned each way in *facings*
+        (label -> world direction), wearing a normal map leaning *degrees*,
+        sampled head-on under the page's own key light."""
+        glb = self._lightmapped_glb(
+            normal_map=normal_texel_png(degrees),
+            bake_value=1.0,
+            pbr=self.MATTE,
+            environment=0.0,
+        )
+        turns = {label: self._turn(direction) for label, direction in facings.items()}
+
+        def sample(server, page):
+            return {
+                "levels": {
+                    label: page.evaluate(
+                        "(turn) => window.__sampleFacing(...turn)", turn
+                    )
+                    for label, turn in turns.items()
+                }
+            }
+
+        found = self._load(glb, then=sample)
+        self.assertEqual(found["console_errors"], [])
+        self.assertEqual(self._lit(found)["programKey"], "baked-relief")
+        return found["levels"]
+
+    def test_a_flat_normal_map_is_the_pure_bake_whichever_way_the_face_points(self):
+        """REGRESSION (2026-09-23), reported as the preview rendering some
+        normals wrong. The relief took a bake's light to arrive along the
+        page's key light as it stood, so on a surface facing AWAY from the
+        light the flat response it divides by fell toward zero: a FLAT normal
+        map -- which must leave the bake exactly alone -- rendered a face
+        turned straight away from the key black (0 where the bake alone puts
+        169), 10 degrees off that at 50 and 20 off at 134. The fixture's own
+        face points along +Z, where the relief was always right, which is how
+        it shipped; so here the face is turned every way under the key light.
+        """
+        key = _unit(self.KEY_LIGHT)
+        away = tuple(-c for c in key)
+        aside = _unit((-key[2], 0.0, key[0]))  # perpendicular to the key
+
+        def off_away(degrees):
+            lean = math.radians(degrees)
+            return tuple(
+                a * math.cos(lean) + s * math.sin(lean) for a, s in zip(away, aside)
+            )
+
+        levels = self._baked_face_levels(
+            0.0,
+            {
+                "toward the key": key,
+                "straight away from the key": away,
+                "10 degrees off away": off_away(10),
+                "20 degrees off away": off_away(20),
+                "floor": (0, 1, 0),
+                "ceiling": (0, -1, 0),
+                "+X wall": (1, 0, 0),
+                "-X wall": (-1, 0, 0),
+                "+Z wall": (0, 0, 1),
+                "-Z wall": (0, 0, -1),
+            },
+        )
+        expected = bake_face_level(1.0)
+        for label, level in levels.items():
+            self.assertLess(
+                abs(level - expected),
+                self.BAKE_PATH_TOLERANCE,
+                f"a flat normal map moved the face {label} to {level:.0f} from "
+                f"the {expected:.0f} its bake dictates: {levels}",
+            )
+
+    def test_a_bump_reads_alike_on_either_side_of_the_key_light(self):
+        """REGRESSION (2026-09-23), the other half: the relief's contrast grew
+        as a surface turned away from the key light, so one normal map read
+        faint on a floor and harsh on the ceiling above it -- the same
+        20-degree bump moved the ceiling 40 levels where it moved the floor 6.
+        A bake's light reached a surface from its FRONT whichever side of it
+        the key sits on, so a face wears a bump exactly as its mirror image
+        across the key light's horizon does."""
+        levels = self._baked_face_levels(
+            20.0,
+            {
+                "floor": (0, 1, 0),
+                "ceiling": (0, -1, 0),
+                "+X wall": (1, 0, 0),
+                "-X wall": (-1, 0, 0),
+                "+Z wall": (0, 0, 1),
+                "-Z wall": (0, 0, -1),
+            },
+        )
+        flat = bake_face_level(1.0)
+        for toward, away in (
+            ("floor", "ceiling"),
+            ("+X wall", "-X wall"),
+            ("+Z wall", "-Z wall"),
+        ):
+            self.assertGreater(
+                levels[toward] - flat,
+                self.RELIEF_FLOOR,
+                f"the bump barely moved the {toward} ({flat:.0f} -> "
+                f"{levels[toward]:.0f}): the relief has gone inert",
+            )
+            self.assertLess(
+                abs(levels[away] - levels[toward]),
+                self.BAKE_PATH_TOLERANCE,
+                f"one bump reads {levels[toward] - flat:+.0f} on the {toward} and "
+                f"{levels[away] - flat:+.0f} on the {away}: {levels}",
+            )
+
     def test_the_lookdev_area_ships_hidden(self):
         """The normals dial is finished and wired, and deliberately not offered:
         `LOOKDEV_ENABLED` holds the whole lookdev area back until there is a set
@@ -1865,6 +2054,46 @@ class TestPreviewViewerLive(unittest.TestCase):
             "the dial hid itself, so this fixture cannot prove the gate closed it",
         )
         self.assertTrue(found["lookdevHidden"], "the lookdev area is being offered")
+
+    def test_the_normals_dial_keeps_the_loaders_green_orientation(self):
+        """REGRESSION (2026-09-23): the dial wrote `normalScale.set(value,
+        value)`, but GLTFLoader negates `normalScale.y` on a material whose mesh
+        carries no TANGENT -- every GLB this pipeline shipped before the DCC
+        hand-offs pinned tangents, and this fixture -- because the derivative
+        frame it falls back to runs green the other way. So the first touch of
+        the dial turned green over on every such baked normal map
+        (measured: the loader's (1, -1) became (1.5, 1.5)), which reads as
+        inverted normals. Driven through the dial's own input: the area is
+        held back behind LOOKDEV_ENABLED, but its wiring is live and ships the
+        moment the gate opens. Through 0 as well, where a sign read off the
+        value itself is lost."""
+        read = """() => {
+          const scales = [];
+          window.__api.model.traverse((n) => {
+            if (n.isMesh) scales.push(n.material.normalScale.toArray());
+          });
+          return scales;
+        }"""
+
+        def drive(server, page):
+            loaded = page.evaluate(read)
+            for value in ("0", "1.5"):
+                page.evaluate(
+                    """(value) => {
+                      const dial = document.getElementById('normalScale');
+                      dial.value = value;
+                      dial.dispatchEvent(new Event('input'));
+                    }""",
+                    value,
+                )
+            return {"loaded": loaded, "dialled": page.evaluate(read)}
+
+        found = self._load(self._lightmapped_glb(normal_map=True), then=drive)
+        self.assertEqual(found["console_errors"], [])
+        self.assertEqual(
+            found["loaded"], [[1, -1]], "the fixture no longer loads tangent-less"
+        )
+        self.assertEqual(found["dialled"], [[1.5, -1.5]])
 
     # ------------------------------------------------------- authored fades
     def _faded_glb(self, manifest=True):
@@ -2283,6 +2512,78 @@ export default function probe(viewer) {
         # Not on the un-faded mesh: it keeps its own opaque material, and
         # hooking it would be claiming it fades.
         self.assertFalse(found["depthHooked"]["untouched"])
+
+    # ------------------------------------------------------------ a share
+    def test_a_guest_sees_the_model_and_nothing_that_writes(self):
+        """The page as a share delivers it: through the guest listener, under
+        a public name, in a secure context -- which is what a tunnel adds, so
+        the flags stand in for one with no network. The guest loads the model
+        and can enter VR (``navigator.xr``), is marked a guest, never receives
+        the owner-only script (no Export Image button), is counted while open
+        and retired by its own close beacon -- and none of it touches the
+        owner's viewer state."""
+        import time
+
+        from playwright.sync_api import sync_playwright
+
+        server = ptk.PreviewServer(viewer=True, title="live-test", port=0).start()
+        server.set_scripts(["snapshot"])
+        server.add_script("probe", self.probe)
+        server.publish(self._animated_glb())
+        port = server.start_guest()
+        server.admit_host(f"share.example.test:{port}")
+        origin = f"http://share.example.test:{port}"
+        console = []
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    channel="msedge",
+                    headless=True,
+                    args=[
+                        "--enable-unsafe-swiftshader",
+                        "--host-resolver-rules=MAP share.example.test 127.0.0.1",
+                        f"--unsafely-treat-insecure-origin-as-secure={origin}",
+                    ],
+                )
+                page = browser.new_page()
+                page.on("pageerror", lambda e: console.append(f"[pageerror] {e}"))
+                page.goto(origin + "/", wait_until="domcontentloaded", timeout=120_000)
+                page.wait_for_function(
+                    "() => window.__probe && window.__probe.ready === true",
+                    timeout=180_000,
+                )
+                found = page.evaluate(
+                    """() => ({
+                      guest: window.__api.guest,
+                      secure: window.isSecureContext,
+                      xr: 'xr' in navigator,
+                      meshes: window.__probe.meshes,
+                      buttons: [...document.querySelectorAll('#controls button')]
+                        .filter((b) => !b.closest('[hidden]'))
+                        .map((b) => b.textContent.trim()),
+                      saveHidden: document.getElementById('normalSave').hidden,
+                    })"""
+                )
+                found["guests_open"] = server.guest_count()
+                page.close(run_before_unload=True)
+                deadline = time.monotonic() + 10  # the beacon is asynchronous
+                while server.guest_count() and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                found["guests_closed"] = server.guest_count()
+                found["owner_viewer"] = server.has_viewer()
+                browser.close()
+        finally:
+            server.stop()
+
+        self.assertEqual(console, [])
+        self.assertIs(found["guest"], True)
+        self.assertIs(found["secure"], True)
+        self.assertIs(found["xr"], True, "a secure-context guest must get WebXR")
+        self.assertEqual(found["meshes"], 1)
+        self.assertNotIn("Export Image", found["buttons"])
+        self.assertIs(found["saveHidden"], True)
+        self.assertEqual((found["guests_open"], found["guests_closed"]), (1, 0))
+        self.assertIs(found["owner_viewer"], False)
 
 
 if __name__ == "__main__":

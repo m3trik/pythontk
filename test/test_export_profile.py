@@ -127,9 +127,13 @@ class TestLegacyRegexFoldsIntoThePattern(unittest.TestCase):
         """The whole point: same file, whether the rule came from the retired
         field or from an inline modifier."""
         ctx = {"scene": "test_scene", "name": "test_scene"}
-        from_field = ExportProfile.resolve_output_path(
-            "WIP_*", ctx, name_regex="test_->prod_"
-        )
+        # Retired (2026-09-23): still honoured, warning, until 0.12.0.
+        with self.assertWarns(DeprecationWarning) as retired:
+            from_field = ExportProfile.resolve_output_path(
+                "WIP_*", ctx, name_regex="test_->prod_"
+            )
+        self.assertIn("'name_regex'", str(retired.warning))
+        self.assertIn("0.12.0", str(retired.warning))
         inline = ExportProfile.resolve_output_path("WIP_{scene:test_->prod_}", ctx)
         self.assertEqual(from_field["stem"], "WIP_prod_scene")
         self.assertEqual(from_field["stem"], inline["stem"])
@@ -314,7 +318,18 @@ class TestOutputPath(unittest.TestCase):
         self.assertIn("error", levels)
 
     def test_retired_version_and_timestamp_inputs_fold_into_the_same_file(self):
-        legacy = self.resolve("WIP_*", version_format="{stem}_v{n:03d}", timestamp=True)
+        """Retired 2026-09-23 (the exporters fold them once, at their entry
+        point): still honoured here, each warning, until 0.12.0."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            legacy = self.resolve(
+                "WIP_*", version_format="{stem}_v{n:03d}", timestamp=True
+            )
+        retired = [str(w.message) for w in caught if w.category is DeprecationWarning]
+        for name in ("'version_format'", "'timestamp'"):
+            self.assertTrue(any(name in m for m in retired), retired)
         # the wildcard expands to the CANONICAL name token (ExportProfile.NAME_KEY)
         self.assertEqual(legacy["folded"], "WIP_{scene}_{date}_{time}_v{n:03d}")
         self.assertEqual(legacy["stem"], "WIP_hero_2026-09-13_10-00-00_v001")
@@ -368,10 +383,27 @@ class TestExportRun(unittest.TestCase):
     button's dict, once for both DCC exporters. Added: 2026-09-13
     """
 
+    def test_a_version_pattern_warns_and_still_reaches_the_run(self):
+        """Retired 2026-09-23: a headless ``tasks["version"]`` warns (removed in
+        0.12.0) and is carried on the run for the exporter to fold into the
+        name once; a blank one is no request and says nothing."""
+        import warnings
+
+        with self.assertWarns(DeprecationWarning) as retired:
+            run = ExportRun.from_tasks({"version": "{stem}_v{n:03d}"})[0]
+        self.assertIn("tasks['version']", str(retired.warning))
+        self.assertIn("0.12.0", str(retired.warning))
+        self.assertEqual(run.version_format, "{stem}_v{n:03d}")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ExportRun.from_tasks({"version": ""})
+        self.assertEqual([w for w in caught if w.category is DeprecationWarning], [])
+
     def test_every_mode_key_is_popped_and_no_task_is(self):
         tasks = {key: True for key in ExportRun.MODE_KEYS}
         tasks.update({"smart_bake": True, "check_framerate": "ntsc"})
-        run, remaining, _notes = ExportRun.from_tasks(tasks)
+        with self.assertWarns(DeprecationWarning):  # "version", retired
+            run, remaining, _notes = ExportRun.from_tasks(tasks)
         self.assertEqual(set(remaining), {"smart_bake", "check_framerate"})
         self.assertEqual(remaining["check_framerate"], "ntsc")
         self.assertTrue(run.texture_write_back)

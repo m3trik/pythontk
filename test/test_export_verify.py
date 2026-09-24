@@ -300,6 +300,25 @@ class TestGlbReader(_FixtureCase):
         translations = self.reader.accessor(1)
         self.assertEqual(translations, [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)])
 
+    def test_an_accessor_whose_bytes_are_not_in_the_bin_is_unreadable(self):
+        """Added 2026-09-23: a view on another buffer, an embedded buffer that
+        names an external file, or a compressed view decoded the BIN's bytes
+        at its offsets -- plausible numbers, none of them the accessor's. Now
+        the "unreadable" None every caller already handles."""
+        view = self.reader.gltf["accessors"][1]["bufferView"]
+        cases = {
+            "another buffer": lambda g: g["bufferViews"][view].update(buffer=1),
+            "external": lambda g: g["buffers"][0].update(uri="asset.bin"),
+            "compressed": lambda g: g["bufferViews"][view].update(
+                extensions={"EXT_meshopt_compression": {}}
+            ),
+        }
+        for name, edit in cases.items():
+            with self.subTest(name):
+                reader = GlbReader.load(self.path("asset.glb"))
+                edit(reader.gltf)
+                self.assertIsNone(reader.accessor(1))
+
     def test_motion_span_drops_a_trailing_hold(self):
         """A held pose occupies frames without animating them."""
         reader = GlbReader.load(

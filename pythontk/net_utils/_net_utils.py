@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import socket
 import subprocess
-from typing import Optional, Dict
+from typing import Optional, Dict, Sequence
 
 
 class NetUtils:
@@ -151,6 +151,71 @@ class NetUtils:
             return False
         finally:
             s.close()
+
+    @staticmethod
+    def resolves_publicly(
+        name: str,
+        servers: Sequence[str] = ("1.1.1.1", "8.8.8.8", "9.9.9.9"),
+        timeout: float = 3.0,
+        port: int = 53,
+    ) -> Optional[bool]:
+        """Whether public DNS answers *name* right now, asked of *servers* directly.
+
+        Deliberately NOT through this machine's resolver. A name that does not
+        exist yet -- a tunnel's brand-new hostname -- is cached as a miss when
+        looked up too early, by the OS and the browser alike, and goes on
+        failing for minutes after it appears. One A-record query over UDP to a
+        public resolver leaves no such trace here.
+
+        Every server is asked until one has the name, because each caches its
+        own misses: polled while a name is appearing, one resolver goes on
+        answering NXDOMAIN from its cache after the record exists (measured
+        2026-09-23: 6 s one run, 18 s the next, asking 1.1.1.1 alone), and a
+        second, asked in the same breath, has often already expired its miss.
+
+        Parameters:
+            name: The host name.
+            servers: Resolver IPs.
+            timeout: Seconds to wait for each.
+            port: The resolvers' port.
+
+        Returns:
+            True when any resolver has an address for it; False when those
+            that answered do not (NXDOMAIN, or no address); ``None`` when none
+            could be asked -- offline, or outbound DNS blocked. ``None`` is no
+            answer, not a "no".
+        """
+        import random
+        import struct
+
+        query_id = random.randrange(1 << 16)
+        # Header: id, flags (recursion desired), one question.
+        packet = struct.pack(">HHHHHH", query_id, 0x0100, 1, 0, 0, 0)
+        for label in name.rstrip(".").encode("idna").split(b"."):
+            packet += bytes([len(label)]) + label
+        packet += b"\x00" + struct.pack(">HH", 1, 1)  # type A, class IN
+        answer = None
+        for server in servers:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.settimeout(timeout)
+                    sock.sendto(packet, (server, port))
+                    reply = sock.recv(4096)
+            except OSError:
+                continue
+            if (
+                len(reply) < 12
+                or struct.unpack(">H", reply[:2])[0] != query_id
+                or not reply[2] & 0x80  # not a response
+            ):
+                continue
+            rcode = reply[3] & 0x0F
+            if rcode == 0 and struct.unpack(">H", reply[6:8])[0] > 0:
+                return True
+            if rcode in (0, 3):  # no address / NXDOMAIN
+                answer = False
+            # SERVFAIL, REFUSED ...: this resolver has no answer either way.
+        return answer
 
     @staticmethod
     def get_local_ip() -> Optional[str]:

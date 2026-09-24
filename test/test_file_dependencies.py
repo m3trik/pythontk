@@ -9,6 +9,7 @@ references, so real files in a scratch folder are all a test needs -- no host.
 
 import os
 import unittest
+import unittest.mock
 
 import pythontk as ptk
 from pythontk import FileDependencies
@@ -69,6 +70,152 @@ class TestClaims(unittest.TestCase):
             "out", "Crate", ".exr", claims=claims, owners=["|b"]
         )
         self.assertEqual(os.path.basename(mine), "Crate_1.exr")
+
+
+class TestRemoveSuperseded(_FilesCase):
+    """What a re-bake may delete: the files its owners read before, once
+    nothing reads them. Every keep rule is a reader the delete would strand."""
+
+    def test_a_file_nothing_reads_is_deleted_and_a_read_one_kept(self):
+        old = self._file("old", "Crate_Lightmap.exr")
+        shared = self._file("old", "Floor_Lightmap.exr")
+        new = self._file("new", "Crate_Lightmap.exr")
+        after = [
+            ("|crate", "Crate_Lightmap.exr", new),  # moved to the new folder
+            ("|floor", "Floor_Lightmap.exr", shared),  # still reads its file
+        ]
+
+        removed = FileDependencies.remove_superseded([old, shared, new], after)
+
+        self.assertEqual(removed, [old])
+        self.assertFalse(os.path.exists(old))
+        self.assertTrue(os.path.exists(shared))
+        self.assertTrue(os.path.exists(new))
+
+    def test_a_name_found_nowhere_keeps_every_file_of_that_name(self):
+        """A reader whose file resolved nowhere may still find this one by a
+        search the host did not run -- a walk of its texture tree."""
+        old = self._file("old", "Crate_Lightmap.exr")
+        after = [("|crate", "CRATE_lightmap.exr", None)]
+        self.assertEqual(FileDependencies.remove_superseded([old], after), [])
+        self.assertTrue(os.path.exists(old))
+
+    def test_each_file_is_deleted_once_however_it_is_spelled(self):
+        old = self._file("old", "Crate_Lightmap.exr")
+        spelled = os.path.join(self.tmp, "old", ".", "Crate_Lightmap.exr")
+        removed = FileDependencies.remove_superseded([old, spelled], [])
+        self.assertEqual(removed, [old])
+
+    def test_a_file_already_gone_or_held_open_is_not_reported_deleted(self):
+        gone = os.path.join(self.tmp, "old", "Gone_Lightmap.exr")
+        held = self._file("old", "Held_Lightmap.exr")
+        real_remove = os.remove
+
+        def remove(path):
+            if os.path.basename(path) == "Held_Lightmap.exr":
+                raise PermissionError(13, "held open", path)
+            real_remove(path)
+
+        with unittest.mock.patch("os.remove", side_effect=remove):
+            with self.assertLogs(FileDependencies.logger, level="WARNING") as caught:
+                removed = FileDependencies.remove_superseded([gone, held], [])
+
+        self.assertEqual(removed, [])
+        self.assertTrue(os.path.exists(held))
+        self.assertTrue(any("Held_Lightmap.exr" in m for m in caught.output))
+        self.assertFalse(any("Gone_Lightmap.exr" in m for m in caught.output))
+
+    def _link_dir(self, target, link):
+        """*link* naming the folder *target*: a junction on Windows (no
+        privilege needed), a symlink elsewhere; removed before the scratch."""
+        try:
+            if os.name == "nt":
+                import _winapi
+
+                _winapi.CreateJunction(target, link)
+            else:
+                os.symlink(target, link, target_is_directory=True)
+        except (ImportError, AttributeError, OSError) as error:
+            self.skipTest(f"no folder link here ({error})")
+        self.addCleanup(os.unlink if os.path.islink(link) else os.rmdir, link)
+
+    def test_a_file_read_under_another_spelling_is_kept(self):
+        """A junction, a ``subst`` or mapped drive names one file two ways,
+        and no comparison of spellings sees it: a re-bake that reaches its old
+        folder under another spelling wrote its NEW map over the old path, and
+        deleting that path deletes what every reader reads."""
+        old = self._file("old", "Crate_Lightmap.exr")
+        alias = os.path.join(self.tmp, "alias")
+        self._link_dir(os.path.dirname(old), alias)
+        after = [
+            ("|crate", "Crate_Lightmap.exr", os.path.join(alias, "Crate_Lightmap.exr"))
+        ]
+        self.assertEqual(FileDependencies.remove_superseded([old], after), [])
+        self.assertTrue(os.path.exists(old))
+
+    def test_a_relative_spelling_is_never_deleted(self):
+        """Relative to what? Against the process CWD -- in a DCC, wherever it
+        was launched from -- it could name any file: never a guess."""
+        old = self._file("old", "Crate_Lightmap.exr")
+        cwd = os.getcwd()
+        os.chdir(self.tmp)
+        self.addCleanup(os.chdir, cwd)
+        relative = os.path.join("old", "Crate_Lightmap.exr")
+        self.assertEqual(FileDependencies.remove_superseded([relative], []), [])
+        self.assertTrue(os.path.exists(old))
+
+    def test_a_reader_spelled_relative_keeps_every_file_of_its_name(self):
+        """A reader the host could not place is one found nowhere: whatever
+        the CWD, its name keeps the file."""
+        old = self._file("old", "Crate_Lightmap.exr")
+        after = [("|crate", "Crate_Lightmap.exr", "new/Crate_Lightmap.exr")]
+        self.assertEqual(FileDependencies.remove_superseded([old], after), [])
+        self.assertTrue(os.path.exists(old))
+
+    def test_a_folder_is_neither_deleted_nor_reported(self):
+        folder = self._dir("old", "Crate_Lightmap.exr")  # named like a map
+        with unittest.mock.patch.object(FileDependencies.logger, "warning") as warn:
+            removed = FileDependencies.remove_superseded([folder], [])
+        self.assertEqual(removed, [])
+        self.assertTrue(os.path.isdir(folder))
+        warn.assert_not_called()
+
+
+class TestWrittenHere(_FilesCase):
+    """Whether a writer record's entry makes a file the scene's own to delete:
+    the one rule both DCCs' re-bakes apply before deleting anything."""
+
+    def test_the_writer_decides_whose_file_it_is(self):
+        here = self._file("proj", "scenes", "room.ma")
+        source = self._file("proj", "scenes", "source.ma")
+        base = os.path.join(self.tmp, "proj")
+        own = FileDependencies.written_here
+        self.assertFalse(own(None, here, base), "no entry: nobody's to delete")
+        self.assertTrue(own("", "", None), "written while unsaved, still unsaved")
+        self.assertTrue(
+            own("scenes/room.ma", here, base), "this scene, spelled from its project"
+        )
+        self.assertTrue(own(here, here, base), "this scene, absolute")
+        self.assertFalse(
+            own("scenes/source.ma", here, base), "a copy's source, still there"
+        )
+        os.remove(source)
+        self.assertTrue(
+            own("scenes/source.ma", here, base), "renamed: the old file is gone"
+        )
+
+    def test_an_entry_made_unsaved_is_own_only_until_the_first_save(self):
+        """Saved, the scene can be copied: a Save As writes the same ``""``
+        into the copy, and nothing tells the two files apart -- each would
+        delete the maps the other still reads."""
+        here = self._file("proj", "scenes", "room.ma")
+        base = os.path.join(self.tmp, "proj")
+        self.assertFalse(FileDependencies.written_here("", here, base))
+
+    def test_a_relative_writer_with_no_project_to_read_it_from_is_nobodys(self):
+        """Unresolvable is not gone: against the CWD it names nothing, and
+        "the writer is gone" would hand its maps to this scene."""
+        self.assertFalse(FileDependencies.written_here("scenes/source.ma", "", None))
 
 
 class TestResolve(_FilesCase):

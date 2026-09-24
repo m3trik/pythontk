@@ -26,8 +26,8 @@ shows X but the export ships Y" of the last month was a gap between those two.
                  live lightmap folders and a *report*: one edit session running
                  the alpha repair, image dedupe, sidecar, dead-texture sweep,
                  lightmaps, shadow rigs, curve-proxy strip, clips, visibility
-                 gates, fades and the animation manifest, in the order their
-                 own docstrings justify;
+                 gates, fades, the skin and tangent repairs and the animation
+                 manifest, in the order their own docstrings justify;
     reduce    -- ``MeshConvert.reduce_glb_animations`` when the caller names a
                  key tolerance: the converter bakes a key on every frame, and
                  each clip keeps only the keys its interpolation needs to

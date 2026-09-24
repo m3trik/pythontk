@@ -16,11 +16,14 @@ reverse proxy and no tunnel. That covers every PC-tethered headset (Quest over
 Link / Air Link, Index, WMR), because there the browser runs on *this* machine
 and the headset is just the display.
 
-Serving the same page to a *standalone* headset browsing over the LAN is the
-only case that needs more, and it needs real HTTPS -- a plain LAN IP is not a
-secure context and silently yields no VR button at all. That is deliberately
-out of scope here: ``host`` is the single seam, so fronting the port with a
-tunnel that terminates TLS is a configuration change rather than a redesign.
+Serving the same page to anyone else -- a standalone headset, a reviewer in
+another city -- needs real HTTPS: a plain LAN IP is not a secure context and
+silently yields no VR button at all. :meth:`PreviewServer.share` provides it
+without giving up the loopback bind. It opens a SECOND listener that can only
+read (:meth:`PreviewServer.start_guest`) and fronts that one with a
+:class:`pythontk.ShareTunnel`, whose provider terminates TLS on a name it owns.
+Who may write is decided by which socket a request arrived on, never by a
+header: the owner's listener answers no public name, whatever fronts it.
 
 Example (publish a GLB and open it):
     >>> with PreviewServer(title="Selection") as server:
@@ -43,6 +46,10 @@ Served surface:
                                 (see :mod:`pythontk.net_utils.preview.playblast`)
     ``POST /snapshot``       -> a still of the page's view, as a PNG body
                                 (see :meth:`PreviewServer.save_snapshot`)
+
+The guest listener serves ``GET /``, ``/manifest.json`` (marked
+``"guest": true``, without the owner-only scripts) and exactly the files that
+manifest names; it takes the close beacon and refuses every other write.
 """
 
 from __future__ import annotations
@@ -50,7 +57,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -69,7 +78,7 @@ from typing import (
     Union,
     TYPE_CHECKING,
 )
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.file_utils._file_utils import FileUtils
@@ -105,6 +114,11 @@ PLAYBLAST_ACTIONS = ("begin", "frame", "finish", "cancel")
 #: Path the viewer posts a still of its view to. One request, raw image bytes:
 #: a still is a single frame, so it needs none of a recording's token dance.
 SNAPSHOT_PATH = "snapshot"
+
+#: What a page's id may look like -- the ``?id=`` on its manifest polls and its
+#: close beacon. Anything else is ignored rather than stored: a share counts its
+#: guests by id, and the id is the one value a guest chooses.
+_VIEWER_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 def _mesh_convert():
@@ -143,6 +157,22 @@ class _PreviewHTTPServer(ThreadingHTTPServer):
     #: captured. Cheap to raise: an entry is a pending socket, not a thread.
     request_queue_size = 128
 
+    def handle_error(self, request, client_address):
+        """A peer that vanished mid-connection is routine here, not an error.
+
+        A tunnel client holds kept-alive connections to the guest listener,
+        and stopping a share kills it, resetting every one of them. The stock
+        handler printed a traceback per connection to stderr -- a DCC's script
+        editor -- for a stop that went exactly as asked. Anything else still
+        reports as before.
+        """
+        if isinstance(
+            sys.exc_info()[1],
+            (ConnectionResetError, ConnectionAbortedError, BrokenPipeError),
+        ):
+            return
+        super().handle_error(request, client_address)
+
 
 class _PreviewHandler(SimpleHTTPRequestHandler):
     """Static handler with a live ``/manifest.json`` and caching disabled.
@@ -176,14 +206,21 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
     #: life of the server -- the cost keep-alive brings with it.
     timeout = 30
 
-    def __init__(self, *args, owner: "PreviewServer" = None, **kwargs):
+    def __init__(self, *args, owner: "PreviewServer" = None, guest=False, **kwargs):
         self._owner = owner
+        #: Serving the read-only guest listener (see PreviewServer.start_guest).
+        #: Fixed per listener, never read from the request: a role taken from
+        #: a header is a role a client can claim.
+        self._guest = guest
         super().__init__(*args, **kwargs)
 
     def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler API)
         if self._foreign_host():
             return
         route = self.path.split("?", 1)[0].lstrip("/")
+        if self._guest:
+            self._guest_get(route)
+            return
         if route.startswith(f"{PLAYBLAST_PATH}/"):
             # A finished recording, by token. It exists so the download works
             # wherever the movie landed: a recording of a real deliverable is
@@ -197,19 +234,81 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
             # timer for as long as a page is open, whereas an asset GET happens
             # once per publish and a stray favicon request proves nothing.
             if self._owner is not None:
-                self._owner._touch_viewer()
+                self._owner._touch_viewer(self._viewer_id())
             self._send_json(self._owner.manifest() if self._owner else {})
             return
         super().do_GET()
 
-    def _allowed_hosts(self) -> tuple:
-        """Host header spellings this loopback bind answers to.
+    def do_HEAD(self):  # noqa: N802 (BaseHTTPRequestHandler API)
+        """The static handler's HEAD, behind the same gates as GET.
 
-        Read off the live socket rather than the owner, so it is correct before
-        the owner is attached and on an ephemeral port.
+        HEAD answers a path's existence, size and date, and it had no Host
+        check at all: a rebound page could probe the serve root through it.
+        """
+        if self._foreign_host():
+            return
+        if self._guest and not self._guest_may_read(self._route()):
+            self.send_error(404)
+            return
+        super().do_HEAD()
+
+    def _route(self) -> str:
+        """The request path without its query or leading slash, decoded."""
+        return unquote(self.path.split("?", 1)[0].lstrip("/"))
+
+    def _viewer_id(self) -> str:
+        """The page's id, from its ``?id=``; empty when it sent none."""
+        return (parse_qs(urlparse(self.path).query).get("id") or [""])[0]
+
+    def _guest_may_read(self, route: str) -> bool:
+        """Whether a guest may fetch *route*: the page and what its manifest names."""
+        return route in ("", "index.html") or route in self._owner._guest_files()
+
+    def _guest_get(self, route: str) -> None:
+        """Answer a guest: the page, its manifest, and the files that names.
+
+        An allow-list rather than the static handler's run of the serve root,
+        because the root holds more than the share: a scene push's stills and
+        recordings land there, a publish passes through a ``.part`` file, and
+        ``scripts/`` would list itself. A guest sees exactly the files the
+        manifest it was handed names.
+        """
+        owner = self._owner
+        if route == "manifest.json":
+            owner._touch_guest(self._viewer_id())
+            self._send_json(owner.manifest(guest=True))
+            return
+        if self._guest_may_read(self._route()):
+            super().do_GET()
+            return
+        self.send_error(404)
+
+    def list_directory(self, path):
+        """The static handler's folder listing -- never a guest's.
+
+        A guest's allowed ``/`` is the page; on a root holding none (a server
+        started without the viewer) the static handler answered it with a
+        listing of the whole serve root instead, every still and recording
+        named -- the files :meth:`_guest_get` exists to keep out of a share.
+        """
+        if self._guest:
+            self.send_error(404)
+            return None
+        return super().list_directory(path)
+
+    def _allowed_hosts(self) -> tuple:
+        """Host header spellings this bind answers to.
+
+        The loopback spellings are read off the live socket rather than the
+        owner, so they are correct before the owner is attached and on an
+        ephemeral port. The guest listener adds the public names the owner
+        admitted (:meth:`PreviewServer.admit_host`); the owner's never does.
         """
         port = self.server.server_address[1]
-        return (f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}")
+        hosts = (f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}")
+        if self._guest and self._owner is not None:
+            hosts += self._owner._admitted_hosts()
+        return hosts
 
     def _foreign_host(self) -> bool:
         """Refuse, and say so, when Host is not one this server answers to.
@@ -225,7 +324,9 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         hand-rolled probes legitimately omit it.
         """
         host = self.headers.get("Host")
-        if host and host not in self._allowed_hosts():
+        # Lowercased: a host name is case-insensitive, and a proxy may forward
+        # the one a person typed.
+        if host and host.lower() not in self._allowed_hosts():
             self.send_error(403, "Unrecognized Host")
             return True
         return False
@@ -235,8 +336,19 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
     #: gets before its 404. Each is a few hundred bytes from the page.
     MAX_JSON_BODY: int = 1024 * 1024
 
+    #: The largest body the GUEST listener takes, whatever the route. Its one
+    #: write, the close beacon, carries none, and it is the listener a tunnel
+    #: exposes: a body is allocated in full before a byte of it arrives (see
+    #: :meth:`_read_body`), so each idle connection a stranger opens holds
+    #: this much of the host's memory until it times out.
+    MAX_GUEST_BODY: int = 4 * 1024
+
     def _body_ceiling(self, route: str) -> int:
         """The most bytes a POST to *route* may carry (see :meth:`_read_body`)."""
+        if self._guest:
+            # A guest writes nothing, so it gets no route's allowance -- a
+            # still's 64 MB is the owner's.
+            return self.MAX_GUEST_BODY
         owner = self._owner
         if owner is not None and route == SNAPSHOT_PATH:
             return int(owner.MAX_SNAPSHOT_BYTES)
@@ -305,6 +417,12 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         body = self._read_body(route)
         if body is None:
             return
+        if self._guest and route != VIEWER_CLOSED_PATH:
+            # The guest listener has no write routes at all, whatever the route
+            # would be on the owner's -- after the drain, like every refusal
+            # here, and with the guest's small body allowance (_body_ceiling).
+            self.send_error(403, "This is a view-only share")
+            return
         playblast_action = (
             route.split("/", 1)[1] if route.startswith(f"{PLAYBLAST_PATH}/") else None
         )
@@ -351,7 +469,12 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             return
         if route == VIEWER_CLOSED_PATH:
-            self._owner._clear_viewer()
+            if self._guest:
+                # A guest's tab says it closed; the owner's viewer is untouched
+                # -- a guest leaving must never make the next push pop a tab.
+                self._owner._drop_guest(self._viewer_id())
+            else:
+                self._owner._clear_viewer(self._viewer_id())
             self.send_response(204)
             self.end_headers()
             return
@@ -724,6 +847,14 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         "playblast": "animation_web",
     }
 
+    #: Viewer scripts that write through the owner's routes -- a recording, a
+    #: still -- and are therefore withheld from a guest (:meth:`start_guest`).
+    #: The guest listener refuses every write, so served to a guest each would
+    #: be a button that fails; withheld, the guest never downloads it either. A
+    #: script registered under another name is served to guests: an overlay
+    #: that only reads needs nothing here.
+    OWNER_SCRIPTS = frozenset({"playblast", "snapshot"})
+
     #: Delivery dials the served page may write into the published GLB:
     #: name -> (:class:`MeshConvert` writer, coercion). An allow-list, because
     #: this is the only route by which the page reaches a file on disk.
@@ -760,6 +891,27 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
     #: relaunch it set out to fix. Prompt detection of a genuinely closed tab
     #: comes from the unload beacon instead, not from shortening this.
     VIEWER_TIMEOUT = 90.0
+
+    #: Guest tabs a share tracks at once (:meth:`guest_count`); past it the one
+    #: seen longest ago is forgotten. The ids are the guests' own choosing, so
+    #: the table has to be bounded by this side.
+    MAX_GUESTS = 256
+
+    #: Seconds a page's poll is ignored after that page beaconed that it
+    #: closed. Every request is answered on its own thread, so a poll the page
+    #: sent just before closing can be answered AFTER the beacon -- and brought
+    #: the page back from the dead for a whole :attr:`VIEWER_TIMEOUT` (caught
+    #: 2026-09-23 by the live guest test, under load). A page restored from the
+    #: back/forward cache polls again once this has passed.
+    CLOSED_LINGER = 5.0
+
+    #: Environment variables a share reads when its caller names no alias: where
+    #: to keep the stable redirect to the link (``ShareTunnel``'s *alias*: a
+    #: path or ``user@host:/path``), and the public address that is served at
+    #: -- the link to hand out instead of the tunnel's own. Machine config, so a
+    #: web root's hostname never lands in a repo.
+    ALIAS_ENV = "PYTHONTK_PREVIEW_ALIAS"
+    ALIAS_URL_ENV = "PYTHONTK_PREVIEW_ALIAS_URL"
 
     #: How often the serving thread wakes to check for a stop, in seconds.
     #: ``shutdown`` returns only after the next wake, so this bounds how long
@@ -808,6 +960,25 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         #: at once (a desktop tab and a headset) would otherwise both pick the
         #: same free number. Its own lock, so a write never holds up a poll.
         self._snapshot_lock = threading.Lock()
+        #: The read-only listener a share fronts (see :meth:`start_guest`).
+        self._guest_httpd: Optional[ThreadingHTTPServer] = None
+        self._guest_thread: Optional[threading.Thread] = None
+        #: Public names the guest listener answers to (:meth:`admit_host`).
+        self._admitted: set = set()
+        #: Guest tabs, page id -> last poll; oldest first (see _touch_guest).
+        self._guests: Dict[str, float] = {}
+        #: Pages that beaconed they closed, page id -> when (CLOSED_LINGER).
+        self._closed: Dict[str, float] = {}
+        #: The tunnel in front of the guest listener while sharing, and the
+        #: public address of its alias, when there is one.
+        self._tunnel = None
+        self._alias_url: Optional[str] = None
+        #: Held while a share sets up or installs its tunnel and while
+        #: :meth:`unshare` runs -- never across a provider's wait -- and the
+        #: count of unshares, so a share whose wait an unshare interrupted can
+        #: tell (see :meth:`share`).
+        self._share_lock = threading.Lock()
+        self._share_generation = 0
 
         if root is None:
             # "session": a detached consumer (the browser) reads these while
@@ -856,15 +1027,37 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
             seen = self._viewer_seen
         return seen is not None and (time.time() - seen) <= self.VIEWER_TIMEOUT
 
-    def _touch_viewer(self) -> None:
-        """Record that a viewer is known to exist as of now."""
+    def _touch_viewer(self, viewer_id: str = "") -> None:
+        """Record that a viewer is known to exist as of now -- unless *viewer_id*
+        is a page that just said it closed (:attr:`CLOSED_LINGER`)."""
         with self._lock:
+            if self._closed_recently(viewer_id):
+                return
             self._viewer_seen = time.time()
 
-    def _clear_viewer(self) -> None:
+    def _clear_viewer(self, viewer_id: str = "") -> None:
         """Record that no viewer is attached (it beaconed on unload)."""
         with self._lock:
             self._viewer_seen = None
+            self._mark_closed(viewer_id)
+
+    def _mark_closed(self, viewer_id: str) -> None:
+        """Remember that page *viewer_id* closed; call under the lock."""
+        if not _VIEWER_ID.fullmatch(viewer_id or ""):
+            return
+        now = time.time()
+        for stale in [
+            k for k, t in self._closed.items() if now - t >= self.CLOSED_LINGER
+        ]:
+            del self._closed[stale]
+        self._closed[viewer_id] = now
+        while len(self._closed) > self.MAX_GUESTS:  # ids are the pages' own
+            self._closed.pop(next(iter(self._closed)))
+
+    def _closed_recently(self, viewer_id: str) -> bool:
+        """Whether *viewer_id* closed within :attr:`CLOSED_LINGER`; under the lock."""
+        when = self._closed.get(viewer_id) if viewer_id else None
+        return when is not None and time.time() - when < self.CLOSED_LINGER
 
     @property
     def scripts(self) -> tuple:
@@ -1027,13 +1220,21 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         with self._lock:
             return dict(self._scripts)
 
-    def manifest(self) -> Dict[str, Any]:
-        """The payload served at ``/manifest.json``."""
+    def manifest(self, guest: bool = False) -> Dict[str, Any]:
+        """The payload served at ``/manifest.json``.
+
+        Parameters:
+            guest: The guest listener's version (see :meth:`start_guest`):
+                marked ``"guest": true`` so the page hides what only the owner
+                can do, without :attr:`OWNER_SCRIPTS`, and without
+                ``xrRuntime`` -- a fact about THIS machine, which would only
+                mislead a page open on someone else's.
+        """
         # Read OUTSIDE the lock: a registry lookup has no business holding up a
         # publish, and this is not part of the published state.
-        xr_runtime = self._xr_runtime() is not None
+        xr_runtime = None if guest else self._xr_runtime() is not None
         with self._lock:
-            return {
+            manifest = {
                 "version": self._version,
                 # Page fingerprint; the viewer reloads when it changes.
                 "viewer": self._viewer_stamp,
@@ -1043,14 +1244,20 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
                 # URLs rather than names: the page imports these directly, and
                 # the route is this module's business, not the viewer's.
                 "scripts": [
-                    f"{self.SCRIPTS_ROUTE}/{name}.js" for name in self._scripts
+                    f"{self.SCRIPTS_ROUTE}/{name}.js"
+                    for name in self._scripts
+                    if not (guest and name in self.OWNER_SCRIPTS)
                 ],
-                # Whether an XR runtime is INSTALLED, which the page cannot see
-                # and the machine can. It is the difference between "no headset
-                # here" and "a headset that is not presenting", and the page
-                # says something useful for each -- see the viewer's XR block.
-                "xrRuntime": xr_runtime,
             }
+        if guest:
+            manifest["guest"] = True
+        else:
+            # Whether an XR runtime is INSTALLED, which the page cannot see
+            # and the machine can. It is the difference between "no headset
+            # here" and "a headset that is not presenting", and the page
+            # says something useful for each -- see the viewer's XR block.
+            manifest["xrRuntime"] = xr_runtime
+        return manifest
 
     def start(self) -> "PreviewServer":
         """Bind the port and serve on a daemon thread. Idempotent."""
@@ -1083,7 +1290,11 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         return self
 
     def stop(self) -> None:
-        """Stop serving and release the port. Idempotent."""
+        """Stop serving and release the port, ending any share. Idempotent."""
+        # First, and ahead of the early return: a share cannot outlive the
+        # server it fronts -- its tunnel would keep a public link alive in
+        # front of a closed port, for whatever binds that port next.
+        self.unshare()
         if self._httpd is None:
             return
         self._httpd.shutdown()
@@ -1098,6 +1309,304 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         # the flag over would suppress the tab a restarted server most needs.
         self._clear_viewer()
         self.logger.debug("Preview server stopped.")
+
+    # ------------------------------------------------------------------
+    # Sharing
+    # ------------------------------------------------------------------
+    @property
+    def guest_port(self) -> Optional[int]:
+        """The guest listener's port, or ``None`` while it is closed."""
+        httpd = self._guest_httpd
+        return None if httpd is None else httpd.server_address[1]
+
+    @property
+    def guest_url(self) -> Optional[str]:
+        """The guest listener on loopback: what a guest sees, from this machine."""
+        port = self.guest_port
+        return None if port is None else f"http://{self.host}:{port}/"
+
+    def start_guest(self, port: int = 0) -> int:
+        """Open the read-only listener a share points at; its port. Idempotent.
+
+        A second door onto the same serve root, and the only one a share ever
+        fronts. Its role is fixed by the socket rather than read from a
+        request, so nothing a guest sends can make it the owner's:
+
+        * reads are an allow-list -- the page, its manifest, and exactly what
+          that names (the asset, the scripts outside :attr:`OWNER_SCRIPTS`);
+        * every write is refused, and a guest's close beacon retires only
+          that guest's tab;
+        * its polls count toward :meth:`guest_count`, never toward
+          :meth:`has_viewer` -- a guest watching must not stop the next push
+          from reopening the owner's closed tab;
+        * it answers the loopback spellings plus the names :meth:`admit_host`
+          lets in.
+
+        Parameters:
+            port: ``0`` (the default) takes an ephemeral port: a guest arrives
+                through a tunnel, so the number is never seen. Pin one for a
+                transport configured ahead of time (a reverse proxy of your
+                own).
+
+        Returns:
+            The bound port.
+        """
+        self.start()
+        if self._guest_httpd is None:
+            handler = partial(
+                _PreviewHandler, directory=str(self.root), owner=self, guest=True
+            )
+            self._guest_httpd = _PreviewHTTPServer((self.host, int(port)), handler)
+            self._guest_thread = threading.Thread(
+                target=partial(
+                    self._guest_httpd.serve_forever, poll_interval=self.POLL_INTERVAL
+                ),
+                name="ptk-preview-guest",
+                daemon=True,
+            )
+            self._guest_thread.start()
+            self.logger.info("View-only listener on %s", self.guest_url)
+        return self.guest_port
+
+    def stop_guest(self) -> None:
+        """Close the read-only listener, forgetting its admitted names and its
+        guests. Idempotent."""
+        httpd, self._guest_httpd = self._guest_httpd, None
+        thread, self._guest_thread = self._guest_thread, None
+        if httpd is not None:
+            httpd.shutdown()
+            httpd.server_close()
+        if thread is not None:
+            thread.join(timeout=5)
+        with self._lock:
+            self._admitted.clear()
+            self._guests.clear()
+
+    def admit_host(self, netloc: str) -> None:
+        """Let the guest listener answer requests addressed to *netloc*.
+
+        *netloc* is the public name a proxy forwards (``name``, or
+        ``name:port`` off the default port -- as a ``Host`` header spells it).
+        The Host check is the guest listener's DNS-rebinding defence too, so a
+        proxy's name is named rather than the check dropped. :meth:`share`
+        admits its tunnel's name itself; this is for a transport of your own.
+        The owner's listener never admits one.
+        """
+        with self._lock:
+            self._admitted.add(str(netloc).strip().lower())
+
+    def _admitted_hosts(self) -> tuple:
+        with self._lock:
+            return tuple(self._admitted)
+
+    def guest_count(self) -> int:
+        """How many guest tabs are watching: polled within :attr:`VIEWER_TIMEOUT`."""
+        cutoff = time.time() - self.VIEWER_TIMEOUT
+        with self._lock:
+            return sum(1 for seen in self._guests.values() if seen >= cutoff)
+
+    def _touch_guest(self, viewer_id: str) -> None:
+        """Record a poll from guest tab *viewer_id*; a malformed id is ignored."""
+        if not _VIEWER_ID.fullmatch(viewer_id or ""):
+            return
+        with self._lock:
+            if self._closed_recently(viewer_id):
+                return  # a poll that crossed its own close beacon
+            # Re-inserted, so the dict runs oldest-seen first and the cap below
+            # forgets the stalest tab rather than an arbitrary one.
+            self._guests.pop(viewer_id, None)
+            self._guests[viewer_id] = time.time()
+            while len(self._guests) > self.MAX_GUESTS:
+                self._guests.pop(next(iter(self._guests)))
+
+    def _drop_guest(self, viewer_id: str) -> None:
+        with self._lock:
+            self._guests.pop(viewer_id or "", None)
+            self._mark_closed(viewer_id)
+
+    def _guest_files(self) -> set:
+        """Served paths a guest may fetch besides the page: what its manifest names."""
+        with self._lock:
+            files = {
+                f"{self.SCRIPTS_ROUTE}/{name}.js"
+                for name in self._scripts
+                if name not in self.OWNER_SCRIPTS
+            }
+            if self._asset:
+                files.add(self._asset)
+        return files
+
+    def share(
+        self,
+        provider: Optional[str] = None,
+        alias: Union[
+            str, os.PathLike, Callable[[Optional[str]], Any], bool, None
+        ] = None,
+        alias_url: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Give this preview a link anyone can open: view-only, and live.
+
+        Every later publish reaches the guests too -- the share is a second,
+        read-only door onto the same serve root (:meth:`start_guest`), fronted
+        by a :class:`pythontk.ShareTunnel`. The owner's page, its writes and its
+        tab are untouched. Starts serving if nothing is yet; a share already
+        running on the same provider and alias is returned as it stands.
+
+        Each guest's browser downloads the deliverable and renders it on its
+        own device -- a standalone headset included, since the link is HTTPS --
+        so this machine serves files and renders nothing for anyone. The link
+        is therefore the deliverable itself: a guest can save the GLB.
+
+        Parameters:
+            provider: A :attr:`ShareTunnel.PROVIDERS` name; ``None`` or
+                ``"auto"`` takes this machine's default
+                (:meth:`ShareTunnel.resolve_provider`).
+            alias: Where to keep a stable redirect to the link -- a path,
+                ``user@host:/path`` or a callable (see :class:`ShareTunnel`).
+                ``None`` reads :attr:`ALIAS_ENV`; ``False`` keeps none.
+            alias_url: The public address the alias is served at, handed out
+                while the alias is current. ``None`` reads :attr:`ALIAS_URL_ENV`.
+            timeout: Seconds to wait for the provider's link; ``None`` keeps
+                :class:`ShareTunnel`'s default.
+
+        Returns:
+            :meth:`share_info`.
+
+        Raises:
+            FileNotFoundError: The provider's CLI is not installed; the message
+                names the install (:meth:`ShareTunnel.settle` offers it).
+            RuntimeError: The provider exited without a link; the message
+                carries what it printed. Also when :meth:`unshare` or
+                :meth:`stop` ran while the provider was starting: its tunnel
+                is stopped rather than kept.
+            TimeoutError: The provider printed no link in time.
+        """
+        from pythontk.net_utils.share_tunnel import ShareTunnel
+
+        if alias is None:
+            alias = os.environ.get(self.ALIAS_ENV, "").strip() or None
+        elif alias is False:
+            alias = None
+        if alias_url is None:
+            alias_url = os.environ.get(self.ALIAS_URL_ENV, "").strip() or None
+        name = ShareTunnel.resolve_provider(provider)
+        with self._share_lock:
+            with self._lock:
+                current = self._tunnel
+            if (
+                current is not None
+                and current.is_running
+                and current.provider == name
+                and current.alias == alias
+            ):
+                with self._lock:
+                    self._alias_url = alias_url
+                return self.share_info()
+            generation = self._end_share()
+            port = self.start_guest()
+        options = {} if timeout is None else {"timeout": timeout}
+        # The provider's wait (seconds -- a quick tunnel's name takes 6-18 s
+        # to resolve) is the one step taken outside the share lock, so an
+        # unshare() or stop() on another thread lands at once. It then finds
+        # no tunnel yet and closes the listener this one fronts; the check
+        # below is how the share learns of it.
+        try:
+            tunnel = ShareTunnel(
+                port,
+                provider=name,
+                host=self.host,
+                alias=alias,
+                on_url=self._on_share_url,
+                **options,
+            )
+            tunnel.start()
+        except BaseException:
+            with self._share_lock:
+                if self._share_generation == generation:
+                    self.stop_guest()
+            raise
+        with self._share_lock:
+            superseded = self._share_generation != generation
+            if superseded:
+                # Kept, the link would stay public in front of a closed port,
+                # for whatever binds that port next.
+                tunnel.stop()
+            else:
+                with self._lock:
+                    self._tunnel = tunnel
+                    self._alias_url = alias_url
+        if superseded:
+            raise RuntimeError(
+                f"{tunnel.label}: the share was stopped before its link was ready."
+            )
+        info = self.share_info()
+        if info is None:  # the client exited in the moment after its link
+            output = "\n".join(tunnel.output(12))
+            self.unshare()
+            raise RuntimeError(f"{tunnel.label} stopped as the share began:\n{output}")
+        return info
+
+    def _on_share_url(self, url: Optional[str]) -> None:
+        """The tunnel's link hook: admit its public name BEFORE the alias
+        announces it, so the first guest through never meets a 403."""
+        if url:
+            self.admit_host(urlparse(url).netloc)
+
+    def unshare(self) -> None:
+        """Stop sharing: the tunnel stops (an alias then says the share ended)
+        and the guest listener closes. The owner's page is untouched.
+        Idempotent; a share still waiting on its provider stops as its link
+        arrives."""
+        with self._share_lock:
+            self._end_share()
+
+    def _end_share(self) -> int:
+        """:meth:`unshare`'s work, under the share lock; the new generation."""
+        with self._lock:
+            tunnel, self._tunnel = self._tunnel, None
+            self._alias_url = None
+        self._share_generation += 1
+        if tunnel is not None:
+            tunnel.stop()
+        self.stop_guest()
+        return self._share_generation
+
+    def share_info(self) -> Optional[Dict[str, Any]]:
+        """What is being shared, or ``None`` -- also once the provider exited
+        on its own, which is how a dropped share shows.
+
+        Returns:
+            ``{"url", "tunnel_url", "provider", "label", "public", "guests",
+            "guest_url", "alias_error"}``. ``url`` is the link to hand out:
+            the alias's address when there is an alias AND its last update
+            landed, else the tunnel's own -- a stale alias must never be what
+            gets sent.
+        """
+        with self._lock:
+            tunnel, alias_url = self._tunnel, self._alias_url
+        if tunnel is None or not tunnel.is_running:
+            return None
+        tunnel_url = tunnel.url
+        alias_live = (
+            bool(alias_url) and tunnel.alias is not None and not tunnel.alias_error
+        )
+        return {
+            "url": alias_url if alias_live else tunnel_url,
+            "tunnel_url": tunnel_url,
+            "provider": tunnel.provider,
+            "label": tunnel.label,
+            "public": tunnel.public,
+            "guests": self.guest_count(),
+            "guest_url": self.guest_url,
+            "alias_error": tunnel.alias_error,
+        }
+
+    @property
+    def share_url(self) -> Optional[str]:
+        """The link to hand out while sharing, else ``None``."""
+        info = self.share_info()
+        return info["url"] if info else None
 
     def publish(
         self,

@@ -1,60 +1,91 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ 412df2e)._
+_Diff vs the last release (origin/main @ 12c1d6f)._
 
-## Added (36)
+## Added (49)
 
-- `core_utils/app_handoff.py::HandoffBridge.child_sys_path(entries: Optional[Sequence[str]] = None) -> List[str]`
-- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.dominant_texture_set(cls, paths: Iterable[str]) -> Optional[Tuple[str, str]]`
-- `core_utils/export_profile.py::ExportProfile.baked_reflections_default(cls) -> str`
-- `core_utils/export_profile.py::ExportProfile.glb_defaults(cls) -> Dict[str, Any]`
-- `core_utils/export_profile.py::ExportProfile.glb_options(cls) -> Dict[str, Dict[str, Any]]`
-- `core_utils/export_profile.py::ExportProfile.optimize_textures_tasks(choice: Any, template: Optional[str] = None) -> Dict[str, Any]`
-- `core_utils/export_profile.py::ExportRun.baked_reflection_level(cls, value: Any) -> Optional[float]`
-- `core_utils/export_profile.py::ExportRun.for_glb(cls, values: Mapping[str, Any]) -> Tuple['ExportRun', List[Tuple[str, str]]]`
-- `core_utils/export_profile.py::ExportRun.glb_max_size(self, logger: Any = None) -> int`
-- `core_utils/export_profile.py::ExportRun.glb_texture_params(self, logger: Any = None) -> Dict[str, Any]`
-- `core_utils/export_profile.py::ExportRun.rendering(self) -> Dict[str, Dict[str, Any]]`
-- `core_utils/upstream_patch.py::UpstreamPatch(class)`
-- `core_utils/upstream_patch.py::UpstreamPatch.applied(self)`
-- `core_utils/upstream_patch.py::UpstreamPatch.available(self) -> bool`
-- `core_utils/upstream_patch.py::UpstreamPatch.detects(self, func: Callable[[], bool]) -> Callable[[], bool]`
-- `core_utils/upstream_patch.py::UpstreamPatch.registry(cls) -> List['UpstreamPatch']`
-- `core_utils/upstream_patch.py::UpstreamPatch.replaces(self, func: Callable) -> Callable`
-- `core_utils/upstream_patch.py::UpstreamPatch.still_needed(self) -> bool`
-- `file_utils/_file_utils.py::FileUtils.has_same_content(path_a: str, path_b: str) -> bool`
-- `file_utils/_file_utils.py::FileUtils.is_same_file(path_a: str, path_b: str) -> bool`
-- `file_utils/_file_utils.py::FileUtils.portable_path(cls, path: str, base: Optional[str]) -> str`
-- `file_utils/_file_utils.py::FileUtils.resolve_portable_path(cls, stored: str, base: Optional[str]) -> str`
-- `file_utils/_file_utils.py::FileUtils.unique_path(folder: str, stem: str, ext: str, taken: Optional[set] = None, claims: Optional[Union[Mapping, Iterable[str]]] = None, owners: Iterable[str] = (), avoid: Iterable[str] = ()) -> str`
-- `file_utils/file_dependencies.py::FileDependencies(class)`
-- `file_utils/file_dependencies.py::FileDependencies.claims(refs: Iterable[Sequence[str]]) -> Dict[str, FrozenSet[str]]`
-- `file_utils/file_dependencies.py::FileDependencies.copy_files(cls, sources: Iterable[str], dest_dir: str, mode: str = 'copy') -> List[Tuple[str, str]]`
-- `file_utils/file_dependencies.py::FileDependencies.find_files(names: Iterable[str], root: str) -> List[str]`
-- `file_utils/file_dependencies.py::FileDependencies.relocate(cls, deps: Sequence[Dict[str, Any]], dest_dir: str, source_dir: str = '', mode: str = 'copy', dry_run: bool = False, find_files: Optional[Callable[[List[str], str], List[str]]] = None, copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None) -> Dict[str, Any]`
-- `file_utils/file_dependencies.py::FileDependencies.resolve(cls, refs: Iterable[Sequence[str]], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, resolve_hint: Optional[Callable[[str, str], str]] = None) -> List[Dict[str, Any]]`
-- `file_utils/file_dependencies.py::FileDependencies.search_dirs(deps: Iterable[Dict[str, Any]], then: Iterable[str] = ()) -> List[str]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.rendering_policy(cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]`
-- `img_utils/_img_utils.py::ImgUtils.compose_rect(outer: Optional[Sequence[float]], inner: Sequence[float]) -> List[float]`
-- `img_utils/_img_utils.py::ImgUtils.denoise_image(cls, image: 'np.ndarray', mask: Optional['np.ndarray'] = None, radius: int = 2, strength: float = 3.0, noise: Optional[float] = None, outliers: float = 5.0) -> 'np.ndarray'`
-- `net_utils/preview/deliverer.py::PreviewDeliverer.preflight(self, bridge, request: HandoffRequest) -> bool`
-- `net_utils/preview/server.py::PreviewServer.save_snapshot(self, data: bytes, content_type: str = 'image/png') -> Dict[str, Any]`
-- `net_utils/preview/server.py::SNAPSHOT_PATH(constant)`
+- `core_utils/app_launcher.py::AppLauncher.spawn(app_identifier, args=None, cwd=None, env=None, hide_window=True, bind_lifetime=True)`
+- `core_utils/deprecation.py::Deprecation.window_expired(remove_in: str, version: str, since: str = '', today: Optional[datetime.date] = None) -> bool`
+- `core_utils/deprecation.py::DeprecationRecord.not_before(self) -> str`
+- `core_utils/deprecation.py::MIN_WINDOW_DAYS(constant)`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.owns_key(self, curve: str, time: float) -> bool`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.release(self, curve: str, lo: float, hi: Optional[float] = None) -> int`
+- `core_utils/engines/shots/shot_model.py::ShotStore.enclosing_bounds(self, shot_id: int, lo: float, hi: float, seam_keyed: Optional[Callable[[float], bool]] = None) -> Tuple[float, float]`
+- `core_utils/scene_records.py::RecordTransfer.absolute_paths(payload: Any, ctx: TransferContext) -> Any`
+- `core_utils/scene_records.py::RecordTransfer.arriving_paths(payload: Any, ctx: TransferContext) -> Any`
+- `core_utils/scene_records.py::SceneRecords.map_paths(payload: Any, spell: Callable[[str], str]) -> Any`
+- `core_utils/scene_records.py::SceneRecords.rebase_paths(cls, store, old_base: Optional[str], new_base: Optional[str]) -> int`
+- `core_utils/scene_records.py::SceneRecords.with_paths(cls) -> List[RecordSpec]`
+- `core_utils/scene_records.py::SceneStoreBase.project_root(cls) -> Optional[str]`
+- `core_utils/scene_records.py::SceneStoreBase.project_root_of(scene_path: Optional[str]) -> Optional[str]`
+- `core_utils/scene_records.py::SceneStoreBase.rebase_paths(cls, old_base: Optional[str], new_base: Optional[str]) -> int`
+- `file_utils/_file_utils.py::FileUtils.rebase_portable_path(cls, stored: str, old_base: Optional[str], new_base: Optional[str]) -> str`
+- `file_utils/file_dependencies.py::FileDependencies.remove_superseded(cls, before: Iterable[str], after: Iterable[Sequence[Any]]) -> List[str]`
+- `file_utils/file_dependencies.py::FileDependencies.written_here(writer: Optional[str], scene: str, base: Optional[str]) -> bool`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fix_glb_tangents(cls, glb: GlbTarget) -> Dict[str, int]`
+- `file_utils/mesh_convert/glb_tangents.py::GlbTangents(class)`
+- `file_utils/mesh_convert/glb_tangents.py::GlbTangents.repair(cls, glb: GlbTarget) -> Dict[str, int]`
+- `net_utils/_net_utils.py::NetUtils.resolves_publicly(name: str, servers: Sequence[str] = ('1.1.1.1', '8.8.8.8', '9.9.9.9'), timeout: float = 3.0, port: int = 53) -> Optional[bool]`
+- `net_utils/preview/bridge.py::PreviewBridge.share(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None) -> Dict[str, Any]`
+- `net_utils/preview/bridge.py::PreviewBridge.share_url(self) -> Optional[str]`
+- `net_utils/preview/bridge.py::PreviewBridge.unshare(self) -> None`
+- `net_utils/preview/server.py::PreviewServer.admit_host(self, netloc: str) -> None`
+- `net_utils/preview/server.py::PreviewServer.guest_count(self) -> int`
+- `net_utils/preview/server.py::PreviewServer.guest_port(self) -> Optional[int]`
+- `net_utils/preview/server.py::PreviewServer.guest_url(self) -> Optional[str]`
+- `net_utils/preview/server.py::PreviewServer.share(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, timeout: Optional[float] = None) -> Dict[str, Any]`
+- `net_utils/preview/server.py::PreviewServer.share_info(self) -> Optional[Dict[str, Any]]`
+- `net_utils/preview/server.py::PreviewServer.share_url(self) -> Optional[str]`
+- `net_utils/preview/server.py::PreviewServer.start_guest(self, port: int = 0) -> int`
+- `net_utils/preview/server.py::PreviewServer.stop_guest(self) -> None`
+- `net_utils/preview/server.py::PreviewServer.unshare(self) -> None`
+- `net_utils/share_tunnel.py::ShareTunnel(class)`
+- `net_utils/share_tunnel.py::ShareTunnel.alias_error(self) -> Optional[str]`
+- `net_utils/share_tunnel.py::ShareTunnel.executable(cls, provider: str) -> Optional[str]`
+- `net_utils/share_tunnel.py::ShareTunnel.is_running(self) -> bool`
+- `net_utils/share_tunnel.py::ShareTunnel.label(self) -> str`
+- `net_utils/share_tunnel.py::ShareTunnel.netloc(self) -> Optional[str]`
+- `net_utils/share_tunnel.py::ShareTunnel.not_installed_error(cls, provider: str, detail: str = '') -> FileNotFoundError`
+- `net_utils/share_tunnel.py::ShareTunnel.output(self, lines: int = 40) -> List[str]`
+- `net_utils/share_tunnel.py::ShareTunnel.public(self) -> bool`
+- `net_utils/share_tunnel.py::ShareTunnel.resolve_provider(cls, provider: Optional[str] = None) -> str`
+- `net_utils/share_tunnel.py::ShareTunnel.settle(cls, provider: Optional[str] = None, prompt: Union[bool, Callable[[str], bool]] = True, refused: Optional[Callable[[str], Any]] = None, installed: Optional[Callable[[str], Any]] = None) -> Optional[str]`
+- `net_utils/share_tunnel.py::ShareTunnel.start(self) -> str`
+- `net_utils/share_tunnel.py::ShareTunnel.stop(self) -> None`
+- `net_utils/share_tunnel.py::ShareTunnel.url(self) -> Optional[str]`
 
-## Signature changed (5)
+## Signature changed (11)
 
-- `core_utils/scene_records.py::SceneRecords.handoff_block`
-  - was: `(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None) -> Dict[str, Any]`
-  - now: `(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]`
-- `core_utils/scene_records.py::SceneRecords.rendering_policy`
-  - was: `() -> Dict[str, Any]`
-  - now: `(overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.build_scene_sidecar`
-  - was: `(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None) -> Dict[str, Any]`
-  - now: `(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]`
-- `file_utils/mesh_convert/glb_pipeline.py::GlbPipeline.envelope`
-  - was: `(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, logger: Any = None) -> Dict[str, Any]`
-  - now: `(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Dict[str, Dict[str, Any]]] = None, logger: Any = None) -> Dict[str, Any]`
-- `net_utils/preview/bridge.py::PreviewBridge.push`
-  - was: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, texture_format: Optional[str] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, data_export: Optional[Dict[str, Any]] = None, **params: Any) -> Optional[Dict[str, Any]]`
-  - now: `(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, glb_options: Optional[Dict[str, Any]] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, data_export: Optional[Dict[str, Any]] = None, **params: Any) -> Optional[Dict[str, Any]]`
+- `core_utils/deprecation.py::Deprecation.attributes`
+  - was: `(cls, module_globals: Dict[str, Any], moved: Mapping[str, str], *, remove_in: str, reason: Optional[str] = None) -> Dict[str, DeprecationRecord]`
+  - now: `(cls, module_globals: Dict[str, Any], moved: Mapping[str, str], *, remove_in: str, reason: Optional[str] = None, since: Optional[str] = None) -> Dict[str, DeprecationRecord]`
+- `core_utils/deprecation.py::Deprecation.expired`
+  - was: `(cls, version: str, *, module: Optional[str] = None) -> Tuple[DeprecationRecord, ...]`
+  - now: `(cls, version: str, *, module: Optional[str] = None, today: Optional[datetime.date] = None) -> Tuple[DeprecationRecord, ...]`
+- `core_utils/deprecation.py::Deprecation.parameter`
+  - was: `(cls, old: str, *, remove_in: str, new: Optional[str] = None, transform: Optional[Callable[[Any], Any]] = None, drop: bool = False, reason: Optional[str] = None) -> Callable[[Callable], Callable]`
+  - now: `(cls, old: str, *, remove_in: str, new: Optional[str] = None, transform: Optional[Callable[[Any], Any]] = None, drop: bool = False, reason: Optional[str] = None, since: Optional[str] = None) -> Callable[[Callable], Callable]`
+- `core_utils/deprecation.py::Deprecation.report`
+  - was: `(cls, version: Optional[str] = None, *, module: Optional[str] = None) -> str`
+  - now: `(cls, version: Optional[str] = None, *, module: Optional[str] = None, today: Optional[datetime.date] = None) -> str`
+- `core_utils/deprecation.py::Deprecation.symbol`
+  - was: `(cls, replacement: str, *, remove_in: str, reason: Optional[str] = None) -> Callable[[Any], Any]`
+  - now: `(cls, replacement: str, *, remove_in: str, reason: Optional[str] = None, since: Optional[str] = None) -> Callable[[Any], Any]`
+- `core_utils/deprecation.py::Deprecation.values`
+  - was: `(cls, aliases: Mapping[Any, Any], *, what: str, remove_in: str, module: Optional[str] = None, reason: Optional[str] = None) -> Callable[[Any], Any]`
+  - now: `(cls, aliases: Mapping[Any, Any], *, what: str, remove_in: str, module: Optional[str] = None, reason: Optional[str] = None, since: Optional[str] = None) -> Callable[[Any], Any]`
+- `core_utils/deprecation.py::Deprecation.warn`
+  - was: `(cls, what: str, replacement: str, *, remove_in: str, reason: Optional[str] = None, module: Optional[str] = None, kind: str = 'symbol', stacklevel: int = 1) -> DeprecationRecord`
+  - now: `(cls, what: str, replacement: str, *, remove_in: str, reason: Optional[str] = None, module: Optional[str] = None, kind: str = 'symbol', stacklevel: int = 1, since: Optional[str] = None) -> DeprecationRecord`
+- `core_utils/deprecation.py::DeprecationRecord.expired`
+  - was: `(self, version: str) -> bool`
+  - now: `(self, version: str, today: Optional[datetime.date] = None) -> bool`
+- `core_utils/scene_records.py::SceneStoreBase.discard_carriers`
+  - was: `(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None) -> 'TransferContext'`
+  - now: `(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None, source_path_base: Optional[str] = None) -> 'TransferContext'`
+- `core_utils/scene_records.py::SceneStoreBase.merge_carriers`
+  - was: `(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None) -> 'TransferContext'`
+  - now: `(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None, source_path_base: Optional[str] = None) -> 'TransferContext'`
+- `net_utils/preview/server.py::PreviewServer.manifest`
+  - was: `(self) -> Dict[str, Any]`
+  - now: `(self, guest: bool = False) -> Dict[str, Any]`

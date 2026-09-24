@@ -238,9 +238,11 @@ class GlbReader(_GlbReaderInternal):
         Every component type is supported (unlike :class:`GlbClips`'
         deliberately FLOAT-only fast path); interleaved ``byteStride`` is
         honored. ``None`` for a sparse accessor, an out-of-range index, a
-        missing bufferView, or a BIN too short for the promised count —
-        callers treat ``None`` as "unreadable", never as empty. Integer
-        values are returned raw (``normalized`` is not applied).
+        missing bufferView, a view whose bytes are not this file's BIN (another
+        buffer, an external buffer 0, a compressed view --
+        :meth:`MeshConvert._bin_view`), or a BIN too short for the promised
+        count — callers treat ``None`` as "unreadable", never as empty.
+        Integer values are returned raw (``normalized`` is not applied).
         """
         accessors = self.gltf.get("accessors") or []
         if not isinstance(index, int) or not 0 <= index < len(accessors):
@@ -250,17 +252,13 @@ class GlbReader(_GlbReaderInternal):
             return None
         spec = MeshConvert.ACCESSOR_COMPONENT_TYPES.get(acc.get("componentType"))
         width = MeshConvert.ACCESSOR_TYPE_COUNT.get(acc.get("type"))
-        view_index = acc.get("bufferView")
-        if spec is None or width is None or not isinstance(view_index, int):
-            return None
-        views = self.gltf.get("bufferViews") or []
-        if not 0 <= view_index < len(views):
+        view = MeshConvert._bin_view(self.gltf, acc)
+        if spec is None or width is None or view is None:
             return None
         blob = self._edit.bin_data
         if blob is None:
             return None
         fmt, size = spec
-        view = views[view_index] or {}
         base = int(view.get("byteOffset", 0)) + int(acc.get("byteOffset", 0))
         count = int(acc.get("count", 0))
         stride = int(view.get("byteStride") or 0) or width * size

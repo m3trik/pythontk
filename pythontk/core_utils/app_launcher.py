@@ -6,6 +6,7 @@ import subprocess
 import shutil
 import platform
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,132 @@ class _AppLauncherInternal(object):
     #: A grandchild that inherited the handle can hold the pipe open forever, so
     #: end-of-file alone is not a safe exit condition.
     _EXIT_DRAIN_GRACE = 2.0
+
+    #: The kill-on-close Job Object every :meth:`AppLauncher.spawn` child joins
+    #: on Windows. Created on first use and deliberately never closed: its
+    #: handle closes when THIS process ends -- a crash or a kill included -- and
+    #: closing the last handle to such a job terminates everything in it. That
+    #: is the whole mechanism; there is no watchdog or reaper to keep running.
+    _lifetime_job = None
+    _lifetime_lock = threading.Lock()
+
+    @staticmethod
+    def _command(executable_path, args) -> list:
+        """``[executable, *args]``; *args* may be one string or a sequence."""
+        cmd = [executable_path]
+        if args:
+            if isinstance(args, str):
+                cmd.append(args)
+            elif isinstance(args, (list, tuple)):
+                cmd.extend(args)
+        return cmd
+
+    @staticmethod
+    def _bind_lifetime(pid: int) -> bool:
+        """Make process *pid* die with this one; False where that cannot be arranged.
+
+        Windows only (see :attr:`_lifetime_job`). Elsewhere there is no
+        portable equivalent -- ``PR_SET_PDEATHSIG`` is Linux-only and needs a
+        ``preexec_fn``, which is unsafe in a threaded host -- so a caller keeps
+        its own stop and ``atexit`` for a normal exit, and a crash can orphan
+        the child.
+        """
+        if os.name != "nt":
+            return False
+        import ctypes
+        from ctypes import wintypes
+
+        class _IoCounters(ctypes.Structure):
+            _fields_ = [
+                (name, ctypes.c_ulonglong)
+                for name in (
+                    "ReadOperationCount",
+                    "WriteOperationCount",
+                    "OtherOperationCount",
+                    "ReadTransferCount",
+                    "WriteTransferCount",
+                    "OtherTransferCount",
+                )
+            ]
+
+        class _BasicLimits(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class _ExtendedLimits(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _BasicLimits),
+                ("IoInfo", _IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        extended_limit_information = 9  # JobObjectExtendedLimitInformation
+        kill_on_job_close = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        set_quota_and_terminate = 0x0100 | 0x0001  # PROCESS_SET_QUOTA | _TERMINATE
+
+        # A private handle on kernel32, so the argtypes declared here cannot
+        # leak into another caller's use of the shared `ctypes.windll.kernel32`.
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.SetInformationJobObject.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.POINTER(_ExtendedLimits),
+            wintypes.DWORD,
+        )
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+
+        with _AppLauncherInternal._lifetime_lock:
+            job = _AppLauncherInternal._lifetime_job
+            if job is None:
+                job = kernel32.CreateJobObjectW(None, None)
+                if not job:
+                    logger.debug(f"CreateJobObject failed: {ctypes.get_last_error()}")
+                    return False
+                limits = _ExtendedLimits()
+                limits.BasicLimitInformation.LimitFlags = kill_on_job_close
+                if not kernel32.SetInformationJobObject(
+                    job,
+                    extended_limit_information,
+                    ctypes.byref(limits),
+                    ctypes.sizeof(limits),
+                ):
+                    logger.debug(
+                        f"SetInformationJobObject failed: {ctypes.get_last_error()}"
+                    )
+                    kernel32.CloseHandle(job)
+                    return False
+                _AppLauncherInternal._lifetime_job = job
+        process = kernel32.OpenProcess(set_quota_and_terminate, False, pid)
+        if not process:
+            return False  # already gone, or not ours to manage
+        try:
+            if kernel32.AssignProcessToJobObject(job, process):
+                return True
+            logger.debug(
+                f"AssignProcessToJobObject({pid}) failed: {ctypes.get_last_error()}"
+            )
+            return False
+        finally:
+            kernel32.CloseHandle(process)
 
     @staticmethod
     def _kill(proc) -> None:
@@ -117,12 +244,7 @@ class AppLauncher(_AppLauncherInternal):
             logger.warning(f"Application '{app_identifier}' not found.")
             return None
 
-        cmd = [executable_path]
-        if args:
-            if isinstance(args, str):
-                cmd.append(args)
-            elif isinstance(args, (list, tuple)):
-                cmd.extend(args)
+        cmd = AppLauncher._command(executable_path, args)
 
         try:
             logger.debug(f"Launching: {cmd} (Detached: {detached})")
@@ -296,12 +418,7 @@ class AppLauncher(_AppLauncherInternal):
         if not executable_path:
             raise FileNotFoundError(f"Application '{app_identifier}' not found.")
 
-        cmd = [executable_path]
-        if args:
-            if isinstance(args, str):
-                cmd.append(args)
-            elif isinstance(args, (list, tuple)):
-                cmd.extend(args)
+        cmd = AppLauncher._command(executable_path, args)
 
         creationflags = (
             subprocess.CREATE_NO_WINDOW if hide_window and os.name == "nt" else 0
@@ -334,6 +451,70 @@ class AppLauncher(_AppLauncherInternal):
             env=env,
             creationflags=creationflags,
         )
+
+    @staticmethod
+    def spawn(
+        app_identifier,
+        args=None,
+        cwd=None,
+        env=None,
+        hide_window=True,
+        bind_lifetime=True,
+    ):
+        """Start a helper process that runs beside this one and dies with it.
+
+        The third shape beside :meth:`launch` (detached -- it outlives this
+        process by design) and :meth:`run` (blocks until the child exits): the
+        child keeps running while the caller reads its output, and it must not
+        outlive the caller. A tunnel, a watcher, a local service a feature
+        fronts -- anything that, orphaned by a crashed host, would go on
+        serving (or exposing) something nobody is looking after any more.
+
+        Parameters:
+            app_identifier: Name or path of the executable.
+            args: Arguments (a string, list or tuple).
+            cwd: Working directory for the child.
+            env: Environment mapping for the child; ``None`` inherits.
+            hide_window: Windows -- no console window for a console child of a
+                GUI host (a DCC).
+            bind_lifetime: Tie the child to this process, so it is killed
+                however this process ends, crash included (Windows: a
+                kill-on-close Job Object). Off Windows there is no portable
+                equivalent; the caller's own stop and ``atexit`` cover a
+                normal exit.
+
+        Returns:
+            The ``subprocess.Popen``, with ``bound_to_parent`` set to whether
+            the lifetime binding took. Its ``stdout`` is a BINARY pipe carrying
+            stdout and stderr merged in order: pair it with
+            :class:`pythontk.ProcessReader` and :class:`pythontk.OutputStream`,
+            and keep it drained -- a child writing into a full pipe blocks.
+
+        Raises:
+            FileNotFoundError: The application cannot be found.
+        """
+        executable_path = AppLauncher.find_app(app_identifier)
+        if not executable_path:
+            raise FileNotFoundError(f"Application '{app_identifier}' not found.")
+        cmd = AppLauncher._command(executable_path, args)
+        creationflags = (
+            subprocess.CREATE_NO_WINDOW if hide_window and os.name == "nt" else 0
+        )
+        logger.debug(f"Spawning: {cmd}")
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            shell=False,
+            creationflags=creationflags,
+        )
+        proc.bound_to_parent = bool(bind_lifetime) and AppLauncher._bind_lifetime(
+            proc.pid
+        )
+        return proc
 
     # ------------------------------------------------------------------ sessions
     @staticmethod

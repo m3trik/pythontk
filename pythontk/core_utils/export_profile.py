@@ -29,6 +29,13 @@ from typing import Any, ClassVar, Dict, Iterable, List, Mapping, Optional, Tuple
 from pythontk.core_utils.deprecation import Deprecation
 from pythontk.str_utils._str_utils import StrUtils
 
+#: What a caller of a retired naming input does instead: the exporters fold
+#: them into the pattern once, at their entry point, and pass only the pattern.
+_FOLD_FIRST = (
+    "Fold it into the name pattern first: "
+    "ExportProfile.fold_legacy_naming(pattern, version_format, timestamp, name_regex)."
+)
+
 
 class ExportProfile:
     """Pure helpers over Scene Exporter task / check definitions."""
@@ -295,7 +302,11 @@ class ExportProfile:
     ) -> Optional[str]:
         """Fold the retired Version pattern and Timestamp flag into a name pattern.
 
-        DEPRECATED inputs, still honoured (no removal release is set yet).
+        The one fold for the retired naming inputs. An exporter folds a
+        caller's ``perform_export(timestamp=, name_regex=)`` and
+        ``tasks["version"]`` through it ONCE, at its entry point -- those
+        inputs warn and go in pythontk 0.12.0 (mayatk 0.20.0, blendertk
+        0.12.0) -- and each panel migrates a saved RegEx field through it.
         *name_regex* is the retired
         free-standing RegEx field, which shaped the name token wherever the
         pattern used it; it folds to an inline modifier on that token
@@ -327,6 +338,18 @@ class ExportProfile:
             folded = version_format.replace("{stem}", folded)
         return folded
 
+    @Deprecation.parameter(
+        "version_format",
+        remove_in="0.12.0",
+        since="2026-09-23",
+        reason=_FOLD_FIRST,
+    )
+    @Deprecation.parameter(
+        "timestamp", remove_in="0.12.0", since="2026-09-23", reason=_FOLD_FIRST
+    )
+    @Deprecation.parameter(
+        "name_regex", remove_in="0.12.0", since="2026-09-23", reason=_FOLD_FIRST
+    )
     @classmethod
     def resolve_output_path(
         cls,
@@ -354,10 +377,12 @@ class ExportProfile:
             export_dir: The folder written to; the counter scans it. Blank
                 scans nothing and numbers from 1.
             output_format: An :attr:`OUTPUT_EXTENSIONS` key.
-            version_format: DEPRECATED -- see :meth:`fold_legacy_naming`.
-            timestamp: DEPRECATED -- see :meth:`fold_legacy_naming`.
-            name_regex: DEPRECATED -- the retired free-standing RegEx field;
-                write ``{scene:PATTERN->REPLACEMENT}`` into the pattern instead.
+            version_format: DEPRECATED (warns; removed in 0.12.0) -- fold it
+                into *pattern* first (:meth:`fold_legacy_naming`).
+            timestamp: DEPRECATED (warns; removed in 0.12.0), likewise.
+            name_regex: DEPRECATED (warns; removed in 0.12.0) -- the retired
+                free-standing RegEx field; write
+                ``{scene:PATTERN->REPLACEMENT}`` into the pattern instead.
 
         Returns:
             ``resolve_name_pattern``'s dict plus ``"stem"`` (the final name),
@@ -412,7 +437,9 @@ class ExportProfile:
             "counter_error": counter_error,
         }
 
-    @Deprecation.parameter("version_suffix", drop=True, remove_in="0.12.0")
+    @Deprecation.parameter(
+        "version_suffix", drop=True, remove_in="0.12.0", since="2026-09-23"
+    )
     @classmethod
     def naming_report(
         cls,
@@ -440,8 +467,8 @@ class ExportProfile:
             report.append(
                 (
                     "warning",
-                    "The Version and Timestamp settings are retired: write them "
-                    "into the Output Filename instead — this export resolves as "
+                    "The Version, Timestamp and RegEx inputs are retired: write "
+                    "them into the Output Filename instead — this export resolves as "
                     f"{resolved['folded']!r}.",
                 )
             )
@@ -976,8 +1003,9 @@ class ExportRun:
     export_path: str = ""
     #: An :attr:`OUTPUT_FORMATS` token.
     output_format: str = "fbx"
-    #: The retired Version pattern (a headless ``tasks["version"]``), folded
-    #: into the name by :meth:`ExportProfile.fold_legacy_naming`.
+    #: The retired Version pattern (a headless ``tasks["version"]``, which
+    #: warns and goes in 0.12.0), carried to the exporter's entry point to be
+    #: folded into the name once (:meth:`ExportProfile.fold_legacy_naming`).
     version_format: str = ""
     #: The Texture File Type dial -- the container every texture the export
     #: ships is written in (each destination clamps what it cannot carry).
@@ -1340,6 +1368,15 @@ class ExportRun:
         notes: List[Tuple[str, str]] = []
 
         version_format = tasks.pop("version", "") or ""
+        if version_format:
+            Deprecation.warn(
+                "tasks['version']",
+                "a {n} counter in the Output Filename, e.g. '*_v{n:03d}'",
+                remove_in="0.12.0",
+                kind="parameter",
+                since="2026-09-23",
+                reason="Until then the exporter folds it into the name once.",
+            )
         output_format = str(tasks.pop("output_format", "") or "").lower()
         if not output_format:
             output_format = "fbx_glb" if tasks.pop("create_glb", False) else "fbx"

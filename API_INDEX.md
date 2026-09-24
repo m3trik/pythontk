@@ -41,7 +41,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/app_launcher.py`
 - `class AppLauncher(_AppLauncherInternal)`
-  - methods: launch, process_environ, handoff_env, run, current_session_id, active_console_session_id, is_interactive_session, find_session_launcher, launch_in_session, wait_for_ready, get_window_titles, append_to_path, scan_for_executables, is_path_persisted, scan_install_dirs, resolve_app_path, find_app, get_running_processes, close_process
+  - methods: launch, process_environ, handoff_env, run, spawn, current_session_id, active_console_session_id, is_interactive_session, find_session_launcher, launch_in_session, wait_for_ready, get_window_titles, append_to_path, scan_for_executables, is_path_persisted, scan_install_dirs, resolve_app_path, find_app, get_running_processes, close_process
 
 ### `core_utils/cancel_scope.py` — Cooperative cancellation — one scope shared by every cancel affordance.
 - constants: T
@@ -68,10 +68,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: update, setdefault, copy, alias, override, status, axes, channels, ui, diff
 
 ### `core_utils/deprecation.py` — Deprecation - retiring public surface through one mechanism, with a clock.
+- constants: MIN_WINDOW_DAYS
 - `class DeprecationRecord`
-  - methods: key, package, message, expired
+  - methods: key, package, not_before, message, expired
 - `class Deprecation(_DeprecationInternal)`
-  - methods: version_key, warn, symbol, parameter, attributes, values, registered, expired, report
+  - methods: window_expired, version_key, warn, symbol, parameter, attributes, values, registered, expired, report
 
 ### `core_utils/doc_audit.py` — Audit markdown code examples against the live package surface.
 - `class DocAudit(help_mixin.HelpMixin)`
@@ -184,7 +185,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/shots/shot_ledger.py` — Ledger of the edits the shot system authors on a scene's animation.
 - constants: NO_OWNER
 - `class ShotEditLedger(_ShotEditLedgerInternal)`
-  - methods: step_count, key_count, curves, record_step, owns_step, release_step, step_times, stepped_curves, record_key, release_key, key_times, key_records, keyed_curves, disown_shot, shift, remap, forget_curve, to_dict, from_dict
+  - methods: step_count, key_count, curves, record_step, owns_step, release_step, step_times, stepped_curves, record_key, owns_key, release_key, release, key_times, key_records, keyed_curves, disown_shot, shift, remap, forget_curve, to_dict, from_dict
 
 ### `core_utils/engines/shots/shot_model.py` — DCC-agnostic shot data model and persistent store.
 - constants: CLIP_NAME_STRATEGIES
@@ -201,7 +202,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class BatchComplete(StoreEvent)`
 - `class StoreInvalidated(StoreEvent)`
 - `class ShotStore(_ShotStoreInternal)`
-  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, is_empty, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, invalidate, flush_pending, snap, compute_gap, sorted_shots, shot_by_id, shot_by_name, name_error, unique_among, unique_name, default_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, export_records, produce_export_records, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs, declared_range
+  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, is_empty, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, invalidate, flush_pending, snap, enclosing_bounds, compute_gap, sorted_shots, shot_by_id, shot_by_name, name_error, unique_among, unique_name, default_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, export_records, produce_export_records, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs, declared_range
 
 ### `core_utils/engines/shots/shot_plan.py` — Pure planning layer for multi-shot topology transformations.
 - `class ShotBoundaryConflict(RuntimeError)`
@@ -442,9 +443,9 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class RecordSpec`
   - methods: make, encode, decode, read_text, write_text, load, save, clear, is_present
 - `class SceneRecords`
-  - methods: resolve_class, codec, portable, rendering_policy, all, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
+  - methods: resolve_class, codec, portable, rendering_policy, all, with_paths, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
 - `class SceneStoreBase`
-  - methods: name, read, write, values, keys, channels, dump, format_dump, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
+  - methods: name, read, write, values, keys, channels, dump, project_root, project_root_of, rebase_paths, format_dump, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
 - `class ExportContext`
   - methods: record, refreshes
 - `class ExportSnapshot`
@@ -452,7 +453,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class TransferContext`
   - methods: note, adapter, spell, respell
 - `class RecordTransfer`
-  - methods: between, incoming, rederive, is_empty, summary, payloads, apply, merge_record, respell, union, sections, receive
+  - methods: between, incoming, rederive, is_empty, summary, payloads, apply, merge_record, absolute_paths, arriving_paths, respell, union, sections, receive
 
 ### `core_utils/schema_spec.py` — Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 - constants: MISSING
@@ -516,11 +517,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/_file_utils.py`
 - `class FileUtils(HelpMixin)`
-  - methods: is_valid, is_cloud_placeholder, is_under, is_same_file, has_same_content, is_rooted_path, resolve_output_dir, relativize_output_dir, portable_path, resolve_portable_path, path_length_limit, exceeds_path_length, free_space, is_locked, locking_processes, describe_lock, format_bytes, format_bytes_delta, create_dir, next_version_path, next_version_number, unique_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, read_json, write_json, atomic_write_text, atomic_write, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path
+  - methods: is_valid, is_cloud_placeholder, is_under, is_same_file, has_same_content, is_rooted_path, resolve_output_dir, relativize_output_dir, portable_path, rebase_portable_path, resolve_portable_path, path_length_limit, exceeds_path_length, free_space, is_locked, locking_processes, describe_lock, format_bytes, format_bytes_delta, create_dir, next_version_path, next_version_number, unique_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, read_json, write_json, atomic_write_text, atomic_write, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path
 
 ### `file_utils/file_dependencies.py` — File dependencies -- files a record names by *name*, found where they are NOW.
 - `class FileDependencies(LoggingMixin)`
-  - methods: claims, find_files, resolve, search_dirs, copy_files, relocate
+  - methods: claims, remove_superseded, written_here, find_files, resolve, search_dirs, copy_files, relocate
 
 ### `file_utils/file_naming.py` — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - `class RenamePlan(LoggingMixin)`
@@ -531,7 +532,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `file_utils/mesh_convert/_mesh_convert.py`
 - constants: FBX2GLTF_VERSION, FBX2GLTF_PLATFORMS
 - `class MeshConvert(HelpMixin)`
-  - methods: conversion_timeout, bake_node_frames, rendering_policy, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, effect_preview_channels, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, apply_glb_fades, prune_glb_animations, compact_glb_animations, reduce_glb_animations, drop_glb_texture_fallbacks, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
+  - methods: conversion_timeout, bake_node_frames, rendering_policy, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, effect_preview_channels, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fix_glb_tangents, apply_glb_fades, prune_glb_animations, compact_glb_animations, reduce_glb_animations, drop_glb_texture_fallbacks, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
 
 ### `file_utils/mesh_convert/export_verify.py` — Deliverable verification for exported FBX / GLB pairs.
 - `class Finding`
@@ -571,6 +572,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `file_utils/mesh_convert/glb_reader.py` — Read-only structured access to a GLB: accessors, animation sampling, worlds.
 - `class GlbReader(_GlbReaderInternal)`
   - methods: load, counts, image_mimes, extensions, skins_summary, accessor, animations, animation, clip_spans, motion_span, channel_table, sample, nan_findings, node_index, parent_of, local_matrix, world_matrix, world_position, walk
+
+### `file_utils/mesh_convert/glb_tangents.py` — Repair a GLB's shipped tangents against the UVs they describe.
+- `class GlbTangents(_GlbTangentsInternal)`
+  - methods: repair
 
 ### `file_utils/mesh_ops.py` — File-level mesh processing via PyMeshLab (optional dependency).
 - constants: PYMESHLAB_PYPI_URL, SUPPORTED_EXTS, SAVE_EXTS, OPS
@@ -718,7 +723,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `net_utils/_net_utils.py`
 - `class NetUtils`
-  - methods: connect_rdp, is_port_open, is_port_bindable, get_local_ip
+  - methods: connect_rdp, is_port_open, is_port_bindable, resolves_publicly, get_local_ip
 
 ### `net_utils/credentials.py`
 - `class Credentials`
@@ -726,7 +731,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `net_utils/preview/bridge.py` — The hand-off bridge whose target is a live preview page.
 - `class PreviewBridge(HandoffBridge)`
-  - methods: lightmap_search_dirs, params_defaults, url, scope_objects, push, publish_file, sidecar_summary, lightmap_summary, stop
+  - methods: lightmap_search_dirs, params_defaults, url, scope_objects, push, publish_file, sidecar_summary, lightmap_summary, share, unshare, share_url, stop
 - `class FilePreviewBridge(PreviewBridge)`
   - methods: lightmap_search_dirs
 
@@ -741,7 +746,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `net_utils/preview/server.py` — Localhost static-file server for live browser / WebXR previews.
 - constants: VIEWER_CLOSED_PATH, SETTINGS_PATH, PLAYBLAST_PATH, PLAYBLAST_ACTIONS, SNAPSHOT_PATH
 - `class PreviewServer(LoggingMixin, _PreviewServerInternal)`
-  - methods: port, url, version, is_running, has_viewer, scripts, add_script, remove_script, set_scripts, manifest, start, stop, publish, apply_settings, playblast, begin_playblast, finish_playblast, recording_path, save_snapshot, webxr_browser, open_in_browser
+  - methods: port, url, version, is_running, has_viewer, scripts, add_script, remove_script, set_scripts, manifest, start, stop, guest_port, guest_url, start_guest, stop_guest, admit_host, guest_count, share, unshare, share_info, share_url, publish, apply_settings, playblast, begin_playblast, finish_playblast, recording_path, save_snapshot, webxr_browser, open_in_browser
 
 ### `net_utils/remote_file.py` — Read a file by ``http(s)`` URL with the same surface as a local read.
 - `class RemoteFile(_RemoteFileInternal)`
@@ -768,6 +773,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: is_active, run
 - `class RpcPlugin(object)`
   - methods: import_ops, port, is_hosted, is_running, address, start, stop, autostart, autostart_safely
+
+### `net_utils/share_tunnel.py` — Expose a local HTTP port at a public HTTPS link, through a tunnel CLI.
+- `class ShareTunnel(LoggingMixin, _ShareTunnelInternal)`
+  - methods: resolve_provider, executable, not_installed_error, settle, label, public, is_running, url, netloc, alias_error, output, start, stop
 
 ### `net_utils/ssh_client.py`
 - `class SSHClient`

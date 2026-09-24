@@ -196,6 +196,11 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         self._keys[curve] = self._sorted(recs)
         return True
 
+    def owns_key(self, curve: str, time: float) -> bool:
+        """True when the system created the sample at ``(curve, time)``."""
+        recs = self._keys.get(curve)
+        return bool(recs) and self._index_of(recs, time, self.eps) is not None
+
     def release_key(self, curve: str, time: float) -> bool:
         """Drop the claim on a sample.  ``True`` when one was held."""
         recs = self._keys.get(curve)
@@ -207,6 +212,34 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         recs.pop(i)
         self._drop_if_empty(self._keys, curve)
         return True
+
+    def release(self, curve: str, lo: float, hi: Optional[float] = None) -> int:
+        """Drop every claim at *lo*, or within ``[lo, hi]`` -- step and sample alike.
+
+        What a system CUT calls: the key is gone, and a move remaps only the
+        claims of keys it finds, so a claim left on the frame would be
+        inherited by whatever lands there next.
+
+        Parameters:
+            curve: Anim curve node name (or a DCC's stand-in key).
+            lo: The cut key's time (matched within :attr:`eps`), or a
+                window's start.
+            hi: A window's end: every claim in ``[lo, hi]``, ends included
+                and matched EXACTLY -- unlike :meth:`shift`, never inflated,
+                because the window is the cut's own: a caller that cut an
+                open end (a neighbour's shared sample) deflated it already.
+
+        Returns:
+            The number of claims dropped.
+        """
+        if hi is None:
+            stepped = self.release_step(curve, lo) is not None
+            return int(stepped) + int(self.release_key(curve, lo))
+        steps = [t for t in self.step_times(curve) if lo <= t <= hi]
+        keys = [t for t in self.key_times(curve) if lo <= t <= hi]
+        return sum(self.release_step(curve, t) is not None for t in steps) + sum(
+            self.release_key(curve, t) for t in keys
+        )
 
     def key_times(self, curve: str) -> List[float]:
         """Every time the system created a sample on *curve*, ascending."""

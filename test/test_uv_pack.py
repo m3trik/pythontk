@@ -6,6 +6,7 @@ The engine is an optional dependency, so the packing tests skip cleanly when
 xatlas is absent; the resolve/availability contract is testable either way.
 """
 
+import time
 import unittest
 
 import pythontk as ptk
@@ -151,6 +152,84 @@ class TestPackIslands(unittest.TestCase):
             used.add(int(pg[0]))
             self.assertTrue((uv >= -1e-6).all() and (uv <= 1 + 1e-6).all())
         self.assertEqual(used, {0, 1})
+
+    def test_seam_touching_islands_keep_their_gutter(self):
+        """User-reported (tentacle Pack, xatlas + Preserve UV): two islands of
+        ONE mesh touching along a cut seam -- coincident coordinates, distinct
+        indices -- were welded by the engine into a single chart, so they came
+        back 0.0 apart with no gutter, and a per-island write-back then drifted
+        them into overlap. Each topological island must pack as its own chart,
+        ``2 x padding`` texels apart like any other pair."""
+        uvs = np.array(
+            [[0, 0], [1, 0], [1, 1], [0, 1], [1, 0], [2, 0], [2, 1], [1, 1]],
+            dtype=np.float64,
+        )
+        tris = np.array([[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]], dtype=np.uint32)
+
+        result = ptk.UvPack.pack_islands(
+            [(uvs, tris)], padding=4, rotate=False, resolution=256
+        )
+
+        out = result.uvs[0]
+        (lo_a, hi_a), (lo_b, hi_b) = (
+            (out[:4].min(0), out[:4].max(0)),
+            (
+                out[4:].min(0),
+                out[4:].max(0),
+            ),
+        )
+        gap = float(max((lo_b - hi_a).max(), (lo_a - hi_b).max()))
+        self.assertGreater(gap, 4 / 256, f"islands only {gap * 256:.2f} texels apart")
+
+    @staticmethod
+    def _shuffled_strips(quads=10000, seed=0):
+        """Two long strip islands whose UV indices are shuffled across one
+        index space -- the order an edited mesh's cuts, sews and merges leave."""
+        rows, q = np.arange(quads + 1), np.arange(quads)
+        per = 2 * (quads + 1)
+        uvs, tris = [], []
+        for s in range(2):
+            uvs.append(
+                np.column_stack(
+                    [np.repeat(rows, 2) * 0.01, np.tile([0.0, 0.01], quads + 1) + s]
+                )
+            )
+            a = s * per + 2 * q
+            tris += [
+                np.column_stack([a, a + 1, a + 3]),
+                np.column_stack([a, a + 3, a + 2]),
+            ]
+        perm = np.random.RandomState(seed).permutation(2 * per)
+        shuffled = np.empty((2 * per, 2))
+        shuffled[perm] = np.vstack(uvs)
+        return shuffled, perm[np.vstack(tris)]
+
+    def test_island_detection_stays_fast_on_scattered_indices(self):
+        """Guard against a pathological regression, not drift. Island detection
+        hooked each triangle's corners onto the smallest label among them, which
+        crept about a triangle per pass along a long island whose indices are
+        scattered: 7.5 s on this 40k-triangle fixture (a 40k-triangle strip took
+        5753 passes, 11.8 s). Hooking the tree each corner hangs from as well
+        merges whole trees at once -- about a dozen passes, measured 60 ms here;
+        the budget is 25x that."""
+        uvs, tris = self._shuffled_strips()
+
+        t0 = time.perf_counter()
+        out = ptk.UvPack._separate_islands(uvs, tris)
+        self.assertLess(time.perf_counter() - t0, 1.5)
+        # Still exactly two islands, each moved as one piece.
+        self.assertEqual(len(np.unique(np.round(out - uvs, 9), axis=0)), 2)
+
+    def test_triangle_indexing_past_its_uvs_raises_value_error(self):
+        """Refused with the documented error before anything reads it: island
+        detection indexes the UVs ahead of the engine, where an out-of-range
+        corner surfaced as a bare numpy IndexError -- past a caller catching the
+        documented errors (the engine itself refused it as a RuntimeError)."""
+        uvs, tris = self._quad()
+        bad = np.vstack([tris, [[0, 2, 4]]]).astype(np.uint32)
+
+        with self.assertRaises(ValueError):
+            ptk.UvPack.pack_islands([(uvs, bad)])
 
     def test_empty_input_raises(self):
         with self.assertRaises(ValueError):

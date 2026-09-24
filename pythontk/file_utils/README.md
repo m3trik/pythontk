@@ -11,7 +11,7 @@ The path-plumbing workhorse, in five clusters:
 - **Validation & environment sanity** — `is_valid`, `is_under`, `is_rooted_path`, `exceeds_path_length`, `free_space` / `format_bytes`, and `is_cloud_placeholder`, which reads the Windows OFFLINE / RECALL_ON_OPEN file attributes to flag dehydrated OneDrive/Dropbox/Drive files *without triggering a recall*.
 - **Traversal & filesystem ops** — `get_dir_contents` (content-type selection `file`/`filename`/`filepath`/`dir`/`dirpath`, recursion, include/exclude wildcard filters for files and dirs), `create_dir`, `next_version_path`, `copy_file` / `move_file`, `open_explorer` / `reveal_in_file_manager`.
 - **Reads / writes** — `get_file_contents`, `write_to_file`, and `atomic_write_text`: temp file in the same directory then `os.replace`, so a concurrent reader (or a cloud-sync client) sees old-or-complete, never partial.
-- **Path formatting / remapping** — `format_path`, `convert_to_relative_path`, `remap_file_paths`, `append_path`.
+- **Path formatting / remapping** — `format_path`, `convert_to_relative_path`, `remap_file_paths`, `append_path`; `portable_path` / `resolve_portable_path` / `rebase_portable_path`, the spelling a scene record stores: relative to the scene file's own project (`../` chains included, absolute only on another drive or share), re-spelled when the scene moves to another project.
 - **Introspection & JSON** — `get_classes_from_path` (plugin discovery from a directory or `.py` file — uses the canonical package import when an `__init__.py` chain exists so returned class objects match a normal import), plus a small JSON key/value store (`set_json` / `get_json`).
 
 ## Temp artifacts (`temp_artifacts.py`)
@@ -29,7 +29,7 @@ The path-plumbing workhorse, in five clusters:
 - **Scene sidecar** — `build_scene_sidecar` / `apply_scene_sidecar` / `read_scene_sidecar`: a versioned envelope embedded into the glTF root `extras`, making the deliverable self-describing to any glTF tool with no side files. The schema has exactly one home here, so producers (DCC exporters, WebXR bridges) cannot fork it.
 - **Lightmaps** — `apply_glb_lightmaps` encodes baked HDR EXRs for web and binds them as `occlusionTexture` on `TEXCOORD_1` (glTF has no lightmap slot; occlusion is the shared convention, and naive viewers degrade to grey AO). No manifest = clean no-op. `fix_glb_lightmap_metadata` gives a GLB the applier never touched (a native DCC export) the same correction: every lightmap marker and manifest copy says what the file ships.
 - **`GlbPipeline`** (`glb_pipeline.py`) — the one FBX → GLB build every deliverable goes through (downsize embedded textures to the ceiling → `fbx_to_glb` with the sidecar, live lightmap folders and a report → `optimize_glb_textures` last). The Scene Exporters' GLB output and the WebXR preview both call it and hand it dials only, so the two cannot disagree on a channel.
-- **GLB passes** — `optimize_glb_textures` (WebP default, or KTX2/Basis via `KHR_texture_basisu`; KTX2 needs the external `toktx` encoder), `check_glb_materials`, `fix_glb_phantom_opaque_alpha`, `fix_glb_skin_skeletons` / `prune_glb_unused_skins` (spec-valid skeleton roots, no skinning data nothing binds; both run on every conversion), `set_glb_base_color` / `set_glb_metallic_roughness` / `set_glb_emissive`.
+- **GLB passes** — `optimize_glb_textures` (WebP default, or KTX2/Basis via `KHR_texture_basisu`; KTX2 needs the external `toktx` encoder), `check_glb_materials`, `fix_glb_phantom_opaque_alpha`, `fix_glb_skin_skeletons` / `prune_glb_unused_skins` (spec-valid skeleton roots, no skinning data nothing binds; both run on every conversion), `fix_glb_tangents` (`GlbTangents`: each shipped tangent's handedness from its UVs -- FBX2glTF writes `w = +1`, inverting a normal map on every mirrored UV shell -- and no zero-length one; runs on every conversion), `set_glb_base_color` / `set_glb_metallic_roughness` / `set_glb_emissive`.
 
 The end-to-end DCC → GLB → headset pipeline this serves is documented in [Live WebXR preview](../../docs/webxr_preview.md).
 
@@ -60,6 +60,7 @@ Shared project-workspace model plus a `workspace.mel` codec — pure Python, no 
 ## Others
 
 - **`metadata.py`** — `Metadata`: cross-platform file metadata/tag read-write, native where possible (Windows property system via pywin32) with an opt-in hidden JSON sidecar; works sidecar-only without pywin32.
+- **`file_dependencies.py`** — `FileDependencies`: the rules over files a record names by name plus the folder it was written from — where each is now (`resolve`, `search_dirs`), which names a write must not take (`claims`), which files a re-write left unread and may delete (`remove_superseded`, narrowed by the host through `written_here`), and gathering them into one folder (`relocate`).
 
 ## Dependency gating
 

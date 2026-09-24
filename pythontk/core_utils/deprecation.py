@@ -47,6 +47,13 @@ Two rules the mechanism enforces rather than documents:
     * **Warning is not breaking.** Every shape leaves this release's behaviour
       exactly as it was; only the notice is new.
 
+The window is counted in calendar days as well as releases. ``since`` names
+the date a notice first ships, and a name is due only once the version has
+reached ``remove_in`` AND :data:`MIN_WINDOW_DAYS` have passed -- measured
+2026-09-19, seven back-to-back releases retired names 15 days after their
+first warning. A ``remove_in`` naming a patch release is refused: a patch
+never removes a name.
+
 ``DeprecationWarning`` is invisible by default outside ``__main__``, which is
 every DCC session the ecosystem runs in. :attr:`Deprecation.sink` is the escape
 hatch: set it to ``cmds.warning`` (or a logger) and each record is *also*
@@ -57,6 +64,7 @@ working regardless of the sink.
 
 from __future__ import annotations
 
+import datetime
 import functools
 import importlib
 import inspect
@@ -109,6 +117,55 @@ def _version_key(version: str) -> Tuple[int, int, int]:
     return (parts[0], parts[1], parts[2])
 
 
+#: The shortest CALENDAR window a notice gets between the release it first
+#: warns in (``since``) and its removal. Counted in versions alone, seven
+#: releases in two weeks (0.9.35 -> 0.10.1) satisfied "one release of
+#: warnings" while an outside caller got 15 days (BACKLOG 2026-09-19).
+MIN_WINDOW_DAYS = 30
+
+#: ``YYYY-MM-DD`` and nothing looser: ``date.fromisoformat`` also takes the
+#: basic ``20260904`` form on 3.11+, which the static gate's reader must not
+#: have to know about.
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z", re.ASCII)
+
+
+def _date_of(since: str) -> datetime.date:
+    """The ``YYYY-MM-DD`` date *since* names.
+
+    Raises:
+        ValueError: Not an ISO calendar date -- at decoration time, like an
+            unparseable ``remove_in``: a date that cannot be read is a window
+            that cannot be counted.
+    """
+    text = str(since).strip()
+    try:
+        if not _DATE_RE.match(text):
+            raise ValueError
+        return datetime.date.fromisoformat(text)
+    except ValueError:
+        raise ValueError(
+            f"since must be the ISO date the notice first ships, like "
+            f"'2026-09-23', got {since!r}."
+        ) from None
+
+
+def _window_expired(
+    remove_in: str,
+    version: str,
+    since: str = "",
+    today: Optional[datetime.date] = None,
+) -> bool:
+    """Whether a notice is due: *version* has reached *remove_in* AND, when
+    the notice names the date it first shipped, :data:`MIN_WINDOW_DAYS` have
+    passed since. A notice naming no date keeps the version rule alone."""
+    if _version_key(version) < _version_key(remove_in):
+        return False
+    if not since:
+        return True
+    today = today or datetime.date.today()
+    return (today - _date_of(since)).days >= MIN_WINDOW_DAYS
+
+
 @dataclass(frozen=True)
 class DeprecationRecord:
     """One retired name, what replaces it, and the release it stops working in.
@@ -124,13 +181,18 @@ class DeprecationRecord:
     kind: str = "symbol"  # symbol|parameter|attribute|value
     module: str = ""
     reason: str = ""
+    #: The ISO date the notice first ships (``"2026-09-23"``); the window runs
+    #: :data:`MIN_WINDOW_DAYS` from it. Empty keeps the version rule alone.
+    since: str = ""
 
     def __post_init__(self) -> None:
-        """Validate the three load-bearing fields at construction.
+        """Validate the load-bearing fields at construction.
 
         Raises:
-            ValueError: ``what`` or ``replacement`` is empty, or ``remove_in``
-                is not a comparable release version.
+            ValueError: ``what`` or ``replacement`` is empty, ``remove_in`` is
+                not a comparable release version or names a PATCH release (a
+                patch never removes a name: a removal is a minor bump's
+                business), or ``since`` is not an ISO date.
         """
         if not str(self.what).strip():
             raise ValueError("a deprecation must name what is deprecated")
@@ -140,7 +202,14 @@ class DeprecationRecord:
                 "or the free text that stands in for one. A notice the caller "
                 "cannot act on is noise."
             )
-        _version_key(self.remove_in)
+        if _version_key(self.remove_in)[2]:
+            raise ValueError(
+                f"{self.what}: remove_in={self.remove_in!r} is a patch release, "
+                "and a patch never removes a name -- name the minor it goes in "
+                "(e.g. '0.12.0')."
+            )
+        if self.since:
+            _date_of(self.since)
 
     @property
     def key(self) -> Tuple[str, str]:
@@ -157,26 +226,40 @@ class DeprecationRecord:
         """Top-level package the deprecated name belongs to (may be empty)."""
         return self.module.split(".", 1)[0] if self.module else ""
 
+    @property
+    def not_before(self) -> str:
+        """The earliest date the name may go (``since`` + :data:`MIN_WINDOW_DAYS`),
+        as ``YYYY-MM-DD``; empty when the notice names no ``since``."""
+        if not self.since:
+            return ""
+        due = _date_of(self.since) + datetime.timedelta(days=MIN_WINDOW_DAYS)
+        return due.isoformat()
+
     def message(self) -> str:
         """The warning text: what went, when it goes, what to use instead."""
         where = f"{self.package} {self.remove_in}" if self.package else self.remove_in
+        if self.since:
+            where = f"{where}, not before {self.not_before}"
         text = (
             f"{self.what} is deprecated and will be removed in {where}; "
             f"use {self.replacement} instead."
         )
         return f"{text} {self.reason}" if self.reason else text
 
-    def expired(self, version: str) -> bool:
-        """True once *version* has reached the release this was to be removed in.
+    def expired(self, version: str, today: Optional[datetime.date] = None) -> bool:
+        """True once the alias has outlived its window: *version* has reached
+        ``remove_in`` AND, for a notice that names ``since``,
+        :data:`MIN_WINDOW_DAYS` have passed (:meth:`Deprecation.window_expired`).
 
         Parameters:
             version (str): The version to test against, normally the package's
                 own ``__version__``.
+            today (date): The day to judge on; defaults to today.
 
         Returns:
             (bool) True when the alias has outlived its window.
         """
-        return _version_key(version) >= _version_key(self.remove_in)
+        return _window_expired(self.remove_in, version, self.since, today)
 
 
 class _DeprecationInternal:
@@ -378,7 +461,9 @@ class Deprecation(_DeprecationInternal):
 
         class UvUtils:
             @classmethod
-            @Deprecation.symbol("UvUtils.mirror_uvs", remove_in="0.16.0")
+            @Deprecation.symbol(
+                "UvUtils.mirror_uvs", remove_in="0.16.0", since="2026-09-23"
+            )
             def flip_uvs(cls, objects, **kwargs):
                 return cls.mirror_uvs(objects, **kwargs)
     """
@@ -390,7 +475,38 @@ class Deprecation(_DeprecationInternal):
     #: ``warnings.warn`` call happens either way.
     sink: Optional[Callable[[str], None]] = None
 
+    #: The shortest calendar window between a notice's ``since`` and its
+    #: removal (see :func:`_window_expired`).
+    MIN_WINDOW_DAYS: int = MIN_WINDOW_DAYS
+
     # ------------------------------------------------------------------- emit
+
+    @staticmethod
+    def window_expired(
+        remove_in: str,
+        version: str,
+        since: str = "",
+        today: Optional[datetime.date] = None,
+    ) -> bool:
+        """Whether a retirement is due -- THE rule, for both gates.
+
+        Due once *version* has reached *remove_in* AND, when the notice names
+        the date it first shipped (*since*), :attr:`MIN_WINDOW_DAYS` have
+        passed; a notice naming no date keeps the version rule alone. Public
+        for the reason :meth:`version_key` is: ``generate_api_registry.py``
+        loads this module off disk and judges ``--check`` with this function,
+        so the static gate and the runtime roster cannot disagree.
+
+        Parameters:
+            remove_in (str): The release the name goes in.
+            version (str): The version to judge, normally ``__version__``.
+            since (str): ISO date the notice first shipped, or empty.
+            today (date): The day to judge on; defaults to today.
+
+        Returns:
+            (bool) True when the name has outlived its window.
+        """
+        return _window_expired(remove_in, version, since, today)
 
     @staticmethod
     def version_key(version: str) -> Tuple[int, int, int]:
@@ -425,6 +541,7 @@ class Deprecation(_DeprecationInternal):
         module: Optional[str] = None,
         kind: str = "symbol",
         stacklevel: int = 1,
+        since: Optional[str] = None,
     ) -> DeprecationRecord:
         """Emit a deprecation notice from inside a function body.
 
@@ -443,6 +560,8 @@ class Deprecation(_DeprecationInternal):
             stacklevel (int): 1 attributes the warning to the caller of this
                 method, 2 to that caller's caller. Raise it by one per helper
                 the consumer wraps this call in.
+            since (str): ISO date the notice first ships; starts the calendar
+                window (:meth:`window_expired`).
 
         Returns:
             (DeprecationRecord) The registered record.
@@ -459,6 +578,7 @@ class Deprecation(_DeprecationInternal):
                 kind=kind,
                 module=module,
                 reason=reason or "",
+                since=since or "",
             )
         )
         cls._emit(record, stacklevel=stacklevel)
@@ -473,6 +593,7 @@ class Deprecation(_DeprecationInternal):
         *,
         remove_in: str,
         reason: Optional[str] = None,
+        since: Optional[str] = None,
     ) -> Callable[[Any], Any]:
         """Deprecate a whole function, method or class.
 
@@ -491,6 +612,7 @@ class Deprecation(_DeprecationInternal):
             replacement (str): What to use instead. Required.
             remove_in (str): The release it stops working in.
             reason (str): Optional extra sentence appended to the message.
+            since (str): ISO date the notice first ships.
 
         Returns:
             (callable) The decorator.
@@ -508,6 +630,7 @@ class Deprecation(_DeprecationInternal):
                     kind="symbol",
                     module=module,
                     reason=reason or "",
+                    since=since or "",
                 )
             )
             return cls._decorate_symbol(target, record)
@@ -524,6 +647,7 @@ class Deprecation(_DeprecationInternal):
         transform: Optional[Callable[[Any], Any]] = None,
         drop: bool = False,
         reason: Optional[str] = None,
+        since: Optional[str] = None,
     ) -> Callable[[Callable], Callable]:
         """Deprecate one keyword argument of a function that stays.
 
@@ -546,6 +670,7 @@ class Deprecation(_DeprecationInternal):
             drop (bool): With no *new*, discard the value instead of forwarding
                 it -- for a parameter documented as having no effect.
             reason (str): Optional extra sentence appended to the message.
+            since (str): ISO date the notice first ships.
 
         Returns:
             (callable) The decorator.
@@ -572,6 +697,7 @@ class Deprecation(_DeprecationInternal):
                     kind="parameter",
                     module=module,
                     reason=reason or "",
+                    since=since or "",
                 )
             )
 
@@ -621,6 +747,7 @@ class Deprecation(_DeprecationInternal):
         *,
         remove_in: str,
         reason: Optional[str] = None,
+        since: Optional[str] = None,
     ) -> Dict[str, DeprecationRecord]:
         """Serve module attributes that moved, through a module ``__getattr__``.
 
@@ -639,6 +766,7 @@ class Deprecation(_DeprecationInternal):
                 home, e.g. ``{"PreviewServer": "pythontk.net_utils.preview.server.PreviewServer"}``.
             remove_in (str): The release the aliases stop working in.
             reason (str): Optional extra sentence appended to each message.
+            since (str): ISO date the notices first ship.
 
         Returns:
             (dict) Attribute name -> its registered record.
@@ -656,6 +784,7 @@ class Deprecation(_DeprecationInternal):
                     kind="attribute",
                     module=module_name,
                     reason=reason or "",
+                    since=since or "",
                 )
             )
             for name, path in moved.items()
@@ -690,6 +819,7 @@ class Deprecation(_DeprecationInternal):
         remove_in: str,
         module: Optional[str] = None,
         reason: Optional[str] = None,
+        since: Optional[str] = None,
     ) -> Callable[[Any], Any]:
         """Build a resolver mapping retired members of a value vocabulary onto live ones.
 
@@ -704,6 +834,7 @@ class Deprecation(_DeprecationInternal):
             remove_in (str): The release the aliases stop working in.
             module (str): Owning module; defaults to the caller's ``__name__``.
             reason (str): Optional extra sentence appended to each message.
+            since (str): ISO date the notices first ship.
 
         Returns:
             (callable) ``resolve(value)`` -> the live value, warning on a hit
@@ -723,6 +854,7 @@ class Deprecation(_DeprecationInternal):
                     kind="value",
                     module=module,
                     reason=reason or "",
+                    since=since or "",
                 )
             )
             for old, live in aliases.items()
@@ -782,6 +914,7 @@ class Deprecation(_DeprecationInternal):
         version: str,
         *,
         module: Optional[str] = None,
+        today: Optional[datetime.date] = None,
     ) -> Tuple[DeprecationRecord, ...]:
         """Registered deprecations that should already have been deleted.
 
@@ -789,14 +922,16 @@ class Deprecation(_DeprecationInternal):
             version (str): The version to judge against, normally the package's
                 own ``__version__``.
             module (str): Optional module filter, as per :meth:`registered`.
+            today (date): The day to judge on; defaults to today.
 
         Returns:
-            (tuple) Records whose ``remove_in`` is at or below *version*.
+            (tuple) Records past their window (:meth:`window_expired`): at or
+            below *version* AND, where they name ``since``, old enough.
         """
         return tuple(
             record
             for record in cls.registered(module=module)
-            if record.expired(version)
+            if record.expired(version, today)
         )
 
     @classmethod
@@ -805,13 +940,16 @@ class Deprecation(_DeprecationInternal):
         version: Optional[str] = None,
         *,
         module: Optional[str] = None,
+        today: Optional[datetime.date] = None,
     ) -> str:
         """Render the roster as lines, marking anything already overdue.
 
         Parameters:
-            version (str): When given, records at or past their removal version
-                are marked ``EXPIRED``.
+            version (str): When given, records past their window are marked
+                ``EXPIRED``, and one due by version but not yet by date
+                ``HELD until <date>``.
             module (str): Optional module filter, as per :meth:`registered`.
+            today (date): The day to judge on; defaults to today.
 
         Returns:
             (str) One line per record, or a single line saying there are none.
@@ -821,8 +959,11 @@ class Deprecation(_DeprecationInternal):
             return "No deprecations registered."
         lines = []
         for record in records:
-            overdue = version is not None and record.expired(version)
-            mark = "EXPIRED " if overdue else ""
+            mark = ""
+            if version is not None and record.expired(version, today):
+                mark = "EXPIRED "
+            elif version is not None and record.expired(version, datetime.date.max):
+                mark = f"HELD until {record.not_before} "
             lines.append(
                 f"{mark}{record.remove_in}  {record.kind:<9} {record.what} "
                 f"-> {record.replacement}"

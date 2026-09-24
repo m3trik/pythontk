@@ -1233,6 +1233,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "rebase_portable_path",
+    "qualname": "FileUtils.rebase_portable_path",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.math_utils._math_utils",
     "name": "reduce_samples",
     "qualname": "MathUtils.reduce_samples",
@@ -3042,6 +3049,13 @@
     "module": "pythontk.geo_utils.shadow_projection",
     "name": "ShadowRaster",
     "qualname": "ShadowRaster",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.share_tunnel",
+    "name": "ShareTunnel",
+    "qualname": "ShareTunnel",
     "tier": "root"
   },
   {

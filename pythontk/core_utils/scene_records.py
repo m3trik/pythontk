@@ -192,6 +192,13 @@ class RecordSpec:
             whole (``"shots"`` -- the section it had before records were
             generic, which older producers still write); ``None`` rides the
             one generic ``records`` section, keyed by :attr:`key`.
+        paths: Whether the payload is a mapping whose string VALUES are file
+            or folder paths, each spelled relative to the scene's own project
+            (``FileUtils.portable_path``).  Such a record is re-spelled when
+            its scene is saved into another project
+            (:meth:`SceneRecords.rebase_paths`), leaves a hand-off absolute
+            and arrives spelled from the receiving scene's project
+            (:class:`TransferContext`).
     """
 
     key: str
@@ -211,6 +218,7 @@ class RecordSpec:
     respell: bool = True
     portable: bool = False
     section: Optional[str] = None
+    paths: bool = False
 
     # ------------------------------------------------------------------ codec
     def make(self, payload: Any) -> Record:
@@ -487,6 +495,47 @@ class SceneRecords:
         envelope=False,
         merge=Merge.UNION,
         respell=False,
+        paths=True,
+    )
+    #: Where each baked lightmap was written, by lower-case file name -- the
+    #: build-time hint a GLB build and the texture tools locate a map by.  It
+    #: rode every per-object ``lightmapInfo`` marker as ``dir`` until
+    #: 2026-09-23, and a marker is a node attribute, so every FBX carried the
+    #: authoring folder: build-setup data on the deliverable.  Portable, so a
+    #: scene pulled across the bridge still finds its maps; file names, never
+    #: scene names, so a crossing does not respell it.
+    LIGHTMAP_DIRS = RecordSpec(
+        "lightmap_dirs",
+        Scope.PRIVATE,
+        1,
+        owner="Lightmap Baker",
+        description="lightmap file name to the folder it was written to",
+        envelope=False,
+        merge=Merge.UNION,
+        respell=False,
+        portable=True,
+        paths=True,
+    )
+    #: Which scene file wrote each baked lightmap, by lower-case file name --
+    #: what lets a re-bake delete the maps it superseded
+    #: (``FileDependencies.remove_superseded``) and never one another scene
+    #: file still reads: a Save As copy carries its source's markers and
+    #: folder record, so those alone cannot tell the two scenes apart.  A
+    #: path record like ``lightmap_dirs``, so a copy saved into another
+    #: project still names its source.  ``""`` is a map written while the
+    #: scene was unsaved: the scene's own only until its first save (a Save
+    #: As copy carries the same ``""``), and it never crosses to another.
+    LIGHTMAP_WRITERS = RecordSpec(
+        "lightmap_writers",
+        Scope.PRIVATE,
+        1,
+        owner="Lightmap Baker",
+        description="lightmap file name to the scene file that wrote it",
+        envelope=False,
+        merge=Merge.UNION,
+        respell=False,
+        portable=True,
+        paths=True,
     )
 
     #: The domain codecs: record key -> (module, class) whose classmethod
@@ -581,6 +630,65 @@ class SceneRecords:
     def all(cls) -> List[RecordSpec]:
         """Every declared record, in declaration order."""
         return [v for v in vars(cls).values() if isinstance(v, RecordSpec)]
+
+    @classmethod
+    def with_paths(cls) -> List[RecordSpec]:
+        """The records whose values are project-relative paths
+        (:attr:`RecordSpec.paths`), in declaration order."""
+        return [s for s in cls.all() if s.paths]
+
+    @staticmethod
+    def map_paths(payload: Any, spell: Callable[[str], str]) -> Any:
+        """*payload* (a :attr:`RecordSpec.paths` mapping) with every string
+        value put through *spell*; anything else -- a non-mapping, a
+        non-string value -- as it is.  A new mapping, never a mutation."""
+        if not isinstance(payload, Mapping):
+            return payload
+        return {
+            key: spell(value) if isinstance(value, str) and value else value
+            for key, value in payload.items()
+        }
+
+    @classmethod
+    def rebase_paths(
+        cls, store, old_base: Optional[str], new_base: Optional[str]
+    ) -> int:
+        """Re-spell every :attr:`RecordSpec.paths` record in *store* from
+        *old_base* to *new_base* -- the scene's own project before and after a
+        save moved it (the DCC's save hook) -- and return how many entries
+        changed.  The same files, spelled from where the scene lives now
+        (``FileUtils.rebase_portable_path``).
+
+        With the two bases equal it normalizes: an absolute entry (written
+        before the rule, or one that arrived across a hand-off) is re-spelled
+        relative wherever a relative spelling reaches.  A record that does not
+        change is not written.
+
+        Parameters:
+            store: The scene store (a :class:`SceneStoreBase`).
+            old_base: The project the records are spelled from now; ``None``
+                while the scene was unsaved (its entries are absolute).
+            new_base: The project they are spelled from after the save.
+
+        Returns:
+            int: How many entries changed.
+        """
+        from pythontk.file_utils._file_utils import FileUtils
+
+        changed = 0
+        for spec in cls.with_paths():
+            payload = spec.load(store)
+            if not payload:
+                continue
+            moved = cls.map_paths(
+                payload,
+                lambda v: FileUtils.rebase_portable_path(v, old_base, new_base),
+            )
+            diff = sum(1 for k in payload if moved.get(k) != payload.get(k))
+            if diff:
+                spec.save(store, moved)
+                changed += diff
+        return changed
 
     @classmethod
     def deliverable(cls) -> List[RecordSpec]:
@@ -869,6 +977,42 @@ class SceneStoreBase:
         }
 
     @classmethod
+    def project_root(cls) -> Optional[str]:
+        """This scene's own project root -- what its :attr:`RecordSpec.paths`
+        records are spelled from (``FileUtils.portable_path``): the project
+        the scene FILE lives in (:meth:`project_root_of`), never the one a
+        session has set.  ``None`` while the scene is unsaved, and in this
+        base: a DCC store answers for its open file."""
+        return None
+
+    @staticmethod
+    def project_root_of(scene_path: Optional[str]) -> Optional[str]:
+        """The project *scene_path* lives in: its nearest marked ancestor, else
+        its own folder (``Workspace.for_path``).  ``None`` without a path, or
+        when its folder does not exist."""
+        if not scene_path:
+            return None
+        from pythontk.file_utils.workspace import Workspace
+
+        workspace = Workspace.for_path(scene_path)
+        return workspace.root if workspace is not None else None
+
+    @classmethod
+    def rebase_paths(cls, old_base: Optional[str], new_base: Optional[str]) -> int:
+        """Re-spell this scene's path records from *old_base* to *new_base*
+        (:meth:`SceneRecords.rebase_paths`) -- what a DCC's save hook calls
+        when a save moves the scene into another project.  Returns how many
+        entries changed."""
+        changed = SceneRecords.rebase_paths(cls, old_base, new_base)
+        if changed:
+            logger.info(
+                "%d scene-record path(s) re-spelled for the project %s.",
+                changed,
+                new_base or "(none)",
+            )
+        return changed
+
+    @classmethod
     def format_dump(cls, decode: bool = True) -> str:
         """Pretty JSON of :meth:`dump`, or ``""`` when nothing is stored."""
         data = cls.dump(decode=decode)
@@ -930,6 +1074,7 @@ class SceneStoreBase:
         ctx = TransferContext(
             rename=spell,
             objects=None if objects is None else [str(o) for o in objects],
+            path_base=cls.project_root(),
         )
         cls.flush_owners()
         sections = RecordTransfer.sections(cls, ctx, cls.owners())
@@ -950,7 +1095,12 @@ class SceneStoreBase:
         imported object; *adapters* are what an owner asks for by name
         (``converted``, ``frame_offset``).  Best-effort per record: the
         returned context's notes are the report, each logged as well."""
-        ctx = TransferContext(rename=resolve, source=source, adapters=adapters)
+        ctx = TransferContext(
+            rename=resolve,
+            source=source,
+            adapters=adapters,
+            path_base=cls.project_root(),
+        )
         cls.flush_owners()
         RecordTransfer.receive(manifest or {}, cls, ctx, cls.owners())
         cls._log_notes(ctx)
@@ -999,6 +1149,7 @@ class SceneStoreBase:
         rename=None,
         source: str = "",
         adapters: Optional[Mapping[str, Any]] = None,
+        source_path_base: Optional[str] = None,
     ) -> "TransferContext":
         """Merge another scene's *carriers* -- an imported reference's, made
         local -- into this scene's, then remove them.
@@ -1022,13 +1173,21 @@ class SceneStoreBase:
                 (:attr:`TransferContext.adapters`) -- what the crossing knows
                 and the records do not, such as which datablocks the other
                 scene brought.
+            source_path_base: The other scene's own project root -- its
+                :attr:`RecordSpec.paths` records are spelled from it, and
+                arrive re-spelled from this scene's (:meth:`project_root`).
 
         Returns:
             TransferContext: its ``notes`` are what the merge changed or could
             not keep -- the report the caller shows (each is logged too).
         """
         return cls._settle_carriers(
-            carriers, rename, source, keep=True, adapters=adapters
+            carriers,
+            rename,
+            source,
+            keep=True,
+            adapters=adapters,
+            source_path_base=source_path_base,
         )
 
     @classmethod
@@ -1038,6 +1197,7 @@ class SceneStoreBase:
         rename=None,
         source: str = "",
         adapters: Optional[Mapping[str, Any]] = None,
+        source_path_base: Optional[str] = None,
     ) -> "TransferContext":
         """Remove another scene's *carriers* without merging their records --
         the answer "don't merge" to :meth:`merge_plan`'s question.  Owners
@@ -1048,7 +1208,12 @@ class SceneStoreBase:
         importer calls :meth:`flush_owners` before the other scene's nodes
         land -- an owner reloads what it holds from the records left."""
         return cls._settle_carriers(
-            carriers, rename, source, keep=False, adapters=adapters
+            carriers,
+            rename,
+            source,
+            keep=False,
+            adapters=adapters,
+            source_path_base=source_path_base,
         )
 
     @classmethod
@@ -1059,10 +1224,15 @@ class SceneStoreBase:
         source: str,
         keep: bool,
         adapters: Optional[Mapping[str, Any]] = None,
+        source_path_base: Optional[str] = None,
     ) -> "TransferContext":
         """:meth:`merge_carriers` (*keep*) / :meth:`discard_carriers`."""
         ctx = TransferContext(
-            rename=rename, source=source, adapters=dict(adapters or {})
+            rename=rename,
+            source=source,
+            adapters=dict(adapters or {}),
+            path_base=cls.project_root(),
+            source_path_base=source_path_base,
         )
         live = cls._foreign_carriers(carriers) if keep else cls._live_carriers(carriers)
         if not live:
@@ -1512,6 +1682,13 @@ class TransferContext:
         notes: What the crossing changed or could not keep, one sentence
             each -- the report the caller shows, so nothing is renamed or
             dropped silently.
+        path_base: This scene's own project root: a
+            :attr:`RecordSpec.paths` record leaving is resolved absolute from
+            it (the other scene lives elsewhere), and one arriving is spelled
+            from it.  ``None`` (an unsaved scene) keeps arrivals absolute.
+        source_path_base: The other scene's own project root, when its paths
+            arrive spelled from it (a referenced module's carrier); a
+            hand-off's arrive absolute and need none.
     """
 
     rename: Optional[Callable[[str], Optional[str]]] = None
@@ -1520,6 +1697,8 @@ class TransferContext:
     adapters: Dict[str, Any] = field(default_factory=dict)
     remaps: Dict[str, Dict[Any, Any]] = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)
+    path_base: Optional[str] = None
+    source_path_base: Optional[str] = None
 
     def note(self, text: str) -> None:
         """Record one sentence for the report."""
@@ -1783,6 +1962,8 @@ class RecordTransfer:
             return None
         if not respelled:
             other = cls.respell(spec, other, ctx)
+        if spec.paths:
+            other = cls.arriving_paths(other, ctx)
         own = spec.load(store)
         if spec.merge is Merge.CODEC:
             codec = SceneRecords.codec(spec)
@@ -1793,6 +1974,41 @@ class RecordTransfer:
             merged = cls.union(own, other, spec, ctx)
         spec.save(store, merged)
         return merged
+
+    @staticmethod
+    def absolute_paths(payload: Any, ctx: TransferContext) -> Any:
+        """A :attr:`RecordSpec.paths` *payload* resolved absolute from
+        ``ctx.path_base`` -- how it leaves the scene it is spelled for."""
+        from pythontk.file_utils._file_utils import FileUtils
+
+        return RecordTransfer._crossing_paths(
+            payload, lambda v: FileUtils.resolve_portable_path(v, ctx.path_base)
+        )
+
+    @staticmethod
+    def arriving_paths(payload: Any, ctx: TransferContext) -> Any:
+        """A :attr:`RecordSpec.paths` *payload* from the other scene spelled
+        from this one's project: resolved from ``ctx.source_path_base`` (an
+        absolute value needs none), re-spelled from ``ctx.path_base``."""
+        from pythontk.file_utils._file_utils import FileUtils
+
+        return RecordTransfer._crossing_paths(
+            payload,
+            lambda v: FileUtils.rebase_portable_path(
+                v, ctx.source_path_base, ctx.path_base
+            ),
+        )
+
+    @staticmethod
+    def _crossing_paths(payload: Any, spell: Callable[[str], str]) -> Any:
+        """:meth:`SceneRecords.map_paths` for a crossing, less every EMPTY
+        value: a writer entry made while its scene was unsaved means "this
+        scene" and names no file, so it cannot leave that scene -- landed, it
+        would name the scene it lands in (``FileDependencies.written_here``),
+        whose re-bake would then delete what the other still reads."""
+        if isinstance(payload, Mapping):
+            payload = {k: v for k, v in payload.items() if v != ""}
+        return SceneRecords.map_paths(payload, spell)
 
     @staticmethod
     def respell(spec: RecordSpec, payload: Any, ctx: TransferContext) -> Any:
@@ -1888,6 +2104,10 @@ class RecordTransfer:
                     payload = section_out(spec.load(store), ctx)
                 else:
                     payload = cls.respell(spec, spec.load(store), ctx)
+                if spec.paths:
+                    # Spelled from THIS scene's project, which the other side
+                    # does not share: the far side spells them from its own.
+                    payload = cls.absolute_paths(payload, ctx)
             except Exception as error:  # noqa: BLE001 - one record never costs the rest
                 logger.warning("Scene record %r was not sent.", spec.key, exc_info=True)
                 ctx.note(f"{spec.owner}: not sent ({error}).")
