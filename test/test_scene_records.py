@@ -436,6 +436,25 @@ class TestSnapshot(SceneRecordsCase):
         snap = ExportSnapshot.assemble({SR.VISIBILITY: _visibility}, ctx)
         self.assertEqual(list(snap.record(SR.VISIBILITY)["clip_span"]), ["*"])
 
+    def test_a_producers_notes_are_logged_and_kept_for_one_assembly(self):
+        """What a producer leaves out of a deliverable is said, never silent:
+        logged on every route, and kept on the context for an exporter's own
+        report -- one assembly's worth, like its records."""
+
+        def noting(ctx):
+            ctx.note("2 shot(s) left out")
+            return None
+
+        ctx = ExportContext()
+        with self.assertLogs("pythontk.core_utils.scene_records", "WARNING") as log:
+            snap = ExportSnapshot.assemble({SR.SHOTS: noting}, ctx)
+        self.assertIn("2 shot(s) left out", log.output[0])
+        self.assertEqual(snap.ctx.notes, ["2 shot(s) left out"])
+        # By the record that noted it, so a host can offer its remedy.
+        self.assertEqual(snap.noted, {SR.SHOTS.key: ["2 shot(s) left out"]})
+        ExportSnapshot.assemble({SR.SHOTS: _nothing}, ctx)
+        self.assertEqual(ctx.notes, [], "a reused context starts without notes")
+
     def test_a_producer_returning_a_bare_payload_is_isolated(self):
         """A producer that forgets ``spec.make`` fails ITS record, not the
         assembly -- the isolation contract covers a wrong return too."""
@@ -1369,10 +1388,44 @@ class TestProjectRelativePaths(SceneRecordsCase):
     def _abs(base, spelled):
         return os.path.normpath(os.path.join(base, spelled)).replace("\\", "/")
 
-    def test_the_audio_and_lightmap_records_are_the_path_records(self):
+    def test_the_path_records(self):
+        """The audio and lightmap records, and the hierarchy baseline's writer
+        stamp -- the one path in a record that is otherwise data."""
         self.assertEqual(
             SR.with_paths(),
-            [SR.AUDIO_FILE_MAP, SR.LIGHTMAP_DIRS, SR.LIGHTMAP_WRITERS],
+            [
+                SR.HIERARCHY_BASELINE,
+                SR.AUDIO_FILE_MAP,
+                SR.LIGHTMAP_DIRS,
+                SR.LIGHTMAP_WRITERS,
+            ],
+        )
+        self.assertEqual(SR.HIERARCHY_BASELINE.path_keys, ("scene",))
+        self.assertIsNone(SR.LIGHTMAP_DIRS.path_keys, "every value is a path")
+
+    def test_a_key_scoped_record_respells_its_path_keys_alone(self):
+        """2026-09-24: the hierarchy baseline names the scene that recorded it,
+        and a copy saved into another project resolved that stamp from the
+        wrong project -- to a file not there, read as "renamed" -- and trusted
+        its source's baseline. Its hash is a string too, and must not move."""
+        spec = SR.HIERARCHY_BASELINE
+        record = {
+            "format": 1,
+            "paths": ["GRP", "GRP|part"],
+            "hash": "e3b0c442",
+            "object_count": 2,
+            "scene": "scenes/source.ma",
+        }
+        spec.save(DictStore, record)
+        self.assertEqual(SR.rebase_paths(DictStore, self.OLD, self.NEW), 1)
+        moved = spec.load(DictStore)
+        self.assertEqual(
+            self._abs(self.NEW, moved["scene"]),
+            self._abs(self.OLD, "scenes/source.ma"),
+        )
+        self.assertEqual(
+            {k: v for k, v in moved.items() if k != "scene"},
+            {k: v for k, v in record.items() if k != "scene"},
         )
 
     def test_a_copy_saved_into_another_project_still_names_the_writer(self):
@@ -1501,6 +1554,53 @@ class TestProjectRelativePaths(SceneRecordsCase):
         self.assertEqual(
             self._abs(self.OLD, landed), self._abs(module, "sourceimages/lm")
         )
+
+
+class TestWriterStamp(SceneRecordsCase):
+    """A store's writer stamp (2026-09-24): what a record stores to say which
+    scene file made it -- a Save As copy carries every record verbatim -- and
+    whether a stamp is the open scene's. A DCC store answers ``scene_path``;
+    the rest is decided once, here."""
+
+    def setUp(self):
+        super().setUp()
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        temp = TempArtifacts("ptk_writer_stamp", policy="scoped")
+        self.addCleanup(temp.cleanup)
+        self.proj = os.path.join(temp.dir_path(), "proj")
+        os.makedirs(os.path.join(self.proj, "scenes"))
+        pathlib.Path(self.proj, "workspace.mel").write_text("")
+        self.source = os.path.join(self.proj, "scenes", "source.ma")
+        self.copy = os.path.join(self.proj, "scenes", "copy.ma")
+        for path in (self.source, self.copy):
+            pathlib.Path(path).write_text("")
+        test = self
+        self.scene = ""
+
+        class Store(DictStore):
+            @classmethod
+            def scene_path(cls):
+                return test.scene
+
+        self.store = Store
+
+    def test_an_unsaved_scene_stamps_empty_and_owns_only_that(self):
+        self.assertEqual(self.store.writer_stamp(), "")
+        self.assertIsNone(self.store.project_root())
+        self.assertTrue(self.store.written_here(""))
+        self.assertFalse(self.store.written_here(None), "no stamp is nobody's")
+
+    def test_a_saved_scene_stamps_itself_from_its_own_project(self):
+        self.scene = self.source
+        self.assertEqual(self.store.writer_stamp(), "scenes/source.ma")
+        self.assertTrue(self.store.written_here("scenes/source.ma"))
+
+    def test_a_save_as_copy_does_not_own_its_sources_stamp(self):
+        self.scene = self.copy
+        self.assertFalse(self.store.written_here("scenes/source.ma"))
+        os.remove(self.source)  # ...until the source is gone: a rename
+        self.assertTrue(self.store.written_here("scenes/source.ma"))
 
 
 if __name__ == "__main__":

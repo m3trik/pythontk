@@ -93,6 +93,48 @@ class ModuleResolverBootstrapTests(BaseTestCase):
         self.assertEqual(pkg.Demo().foo(), "demo")
         self.assertIsNotNone(pkg.PACKAGE_RESOLVER)
 
+    def test_a_wildcard_namespace_takes_only_the_classes_its_modules_define(
+        self,
+    ) -> None:
+        """``"pkg->Name": "*"`` took every public class a submodule merely
+        IMPORTED: blendertk's Diagnostics gained typing.Any, CoreUtils and
+        XformUtils as bases, and a module's ``Doc = ReportDoc`` alias leaked as
+        the package-level ``btk.Doc``."""
+        pkg = self._make_package(
+            "resolver_pkg_ns",
+            init_body="""
+                from pythontk.core_utils.module_resolver import bootstrap_package
+
+                DEFAULT_INCLUDE = {"other": ["Helper"], "diag->Diag": "*"}
+
+                bootstrap_package(globals(), include=DEFAULT_INCLUDE)
+            """,
+            modules={
+                "other.py": """
+                    class Helper:
+                        def helps(self):
+                            return True
+                """,
+                "diag/__init__.py": '"""Diagnostics."""\n',
+                "diag/mesh.py": """
+                    from typing import Any
+                    from resolver_pkg_ns.other import Helper
+
+                    Doc = Helper
+
+                    class MeshDiag:
+                        def check(self):
+                            return "mesh"
+                """,
+            },
+        )
+
+        self.assertEqual([b.__name__ for b in pkg.Diag.__bases__], ["MeshDiag"])
+        self.assertEqual(pkg.Diag().check(), "mesh")
+        self.assertFalse(hasattr(pkg, "Any"))
+        self.assertFalse(hasattr(pkg, "Doc"))
+        self.assertIs(pkg.Helper, sys.modules["resolver_pkg_ns.other"].Helper)
+
     def test_configure_replace_include(self) -> None:
         pkg = self._make_package(
             "resolver_pkg_b",

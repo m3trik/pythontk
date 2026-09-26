@@ -1041,12 +1041,6 @@ export default function probe(viewer) {
 #: layer so the grid and the rest of the scene do not blend in.
 HORIZON_SAMPLES_JS = """
       {
-        // Real scale first: the page's fit mode scales the model to 1.5 m of
-        // HEIGHT, and this fixture is a flat quad (height 0), so fitted it is a
-        // million times too large and the sampling camera sits past its far
-        // clip. The page's own 'r' shortcut is the documented switch.
-        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r' }));
-        await nextFrames(1);
         const renderer = viewer.renderer;
         const scene = viewer.scene;
         const plane = session.planes.find((p) => p.record.type === 'horizon');
@@ -1158,7 +1152,9 @@ class TestShadowRigLive(unittest.TestCase):
         with open(probe, "w", encoding="utf-8") as fh:
             fh.write(source)
 
-        server = ptk.PreviewServer(viewer=True, title="shadow-test")
+        # port=0: the default is the production port, and a real preview tab
+        # the user has open would poll this test server.
+        server = ptk.PreviewServer(viewer=True, title="shadow-test", port=0)
         server.start()
         # The shim BEFORE the probe, and the page up before the publish. The
         # page imports the manifest's scripts in order and does not await them

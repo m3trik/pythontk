@@ -139,6 +139,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`str_utils/_str_utils.py`](#str_utils--_str_utils)
 - [`str_utils/fuzzy_matcher.py`](#str_utils--fuzzy_matcher)
 - [`str_utils/hotkey_utils.py`](#str_utils--hotkey_utils) — Portable hotkey-token helpers shared by the ecosystem's macro managers.
+- [`str_utils/report_doc.py`](#str_utils--report_doc) — ``ReportDoc`` -- a report built once as blocks, rendered as HTML or plain text.
 - [`vid_utils/_vid_utils.py`](#vid_utils--_vid_utils)
 - [`vid_utils/frame_extractor.py`](#vid_utils--frame_extractor) — Extract still frames from a video file via OpenCV.
 - [`vid_utils/sequence_exporter.py`](#vid_utils--sequence_exporter) — Image-sequence capture planning and encoding, with no idea what drew the frames.
@@ -716,22 +717,22 @@ Ledger of the edits the shot system authors on a scene's animation.
 
 DCC-agnostic shot data model and persistent store.
 
-- [`CLIP_NAME_STRATEGIES`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L177) — constant
-- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L70)** — Interface for saving / loading ShotStore data.
+- [`CLIP_NAME_STRATEGIES`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L178) — constant
+- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L71)** — Interface for saving / loading ShotStore data.
   - `ScenePersistence.save(self, data: Dict[str, Any]) -> None`
   - `ScenePersistence.load(self) -> Optional[Dict[str, Any]]`
-- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L107)** — Represents a single shot (contiguous animation range).
+- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L108)** — Represents a single shot (contiguous animation range).
   - `ShotBlock.duration(self) -> float` *(property)*
   - `ShotBlock.classify_objects(self) -> Dict[str, str]` — Return ``{obj_name: status_key}`` using stored metadata.
-- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L189)** — Base class for typed :class:`ShotStore` events.
-- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L201)** — A new shot was created and added to the store.
-- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L209)** — An existing shot's fields were modified.
-- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L217)** — A shot was removed from the store.
-- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L225)** — The active (selected) shot changed.
-- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L233)** — Detection-relevant settings were modified.
-- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L240)** — A :meth:`ShotStore.batch_update` context has exited.
-- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L247)** — The active store was discarded (scene change / new scene).
-- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L301)** — Central store for shot data with pluggable persistence.
+- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L190)** — Base class for typed :class:`ShotStore` events.
+- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L202)** — A new shot was created and added to the store.
+- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L210)** — An existing shot's fields were modified.
+- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L218)** — A shot was removed from the store.
+- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L226)** — The active (selected) shot changed.
+- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L234)** — Detection-relevant settings were modified.
+- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L241)** — A :meth:`ShotStore.batch_update` context has exited.
+- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L248)** — The active store was discarded (scene change / new scene).
+- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L302)** — Central store for shot data with pluggable persistence.
   - `ShotStore.snapshot_bounds(self) -> list` — Return the current shot state for the boundary ledger.
   - `ShotStore.push_boundary_snapshot(self, tag: Any = None) -> None` — Record the current bounds as an undo restore point.
   - `ShotStore.tag_boundary_snapshot(self, tag: Any) -> bool` — Attach *tag* to the newest restore point.
@@ -785,6 +786,8 @@ DCC-agnostic shot data model and persistent store.
   - `ShotStore.set_object_pinned(self, obj_name: str, pinned: bool = True) -> None` — Pin or unpin *obj_name*.
   - `ShotStore.remove_object_from_shots(self, obj_name: str) -> None` — Remove *obj_name* from every shot's object list.
   - `ShotStore.to_dict(self) -> Dict[str, Any]` — Serialise shots and settings to a plain dict.
+  - `ShotStore.stale_shots(self) -> List[ShotBlock]` — The shots that no longer describe anything in the scene, in order.
+  - `ShotStore.remove_stale_shots(self) -> List[ShotBlock]` — Remove every stale shot (:meth:`stale_shots`);
   - `ShotStore.to_export_view(self, strategy: str = 'name') -> Dict[str, Any]` — Build the FBX/Unity export view from the current shots.
   - `ShotStore.export_records(self, ctx: Optional[ExportContext] = None, strategy: Optional[str] = None) -> Optional[List[Record]]` — This store's shot records, ready to store -- ``None`` when empty.
   - `ShotStore.produce_export_records(cls, ctx: Optional[ExportContext] = None) -> Optional[List[Record]]` *(class)* — The Shots PRODUCER: the active store's records, or ``None``.
@@ -1080,6 +1083,7 @@ Plan, assess, and apply map (texture) optimizations.
   - `MapRegistry.get_resolution_critical_types(self) -> List[str]` — Get list of map types whose surface detail requires full resolution.
   - `MapRegistry.is_resolution_critical(self, name: str) -> bool` — True when surface detail for ``name`` requires full resolution.
   - `MapRegistry.is_lossy_safe(self, name: str) -> bool` — True when ``name`` may be written to a lossy container.
+  - `MapRegistry.estimate_gpu_bytes(self, width: int, height: int, name: Optional[str] = None, tiles: int = 1) -> Tuple[float, float]` — Estimated GPU memory of a *width* x *height* map of type *name*.
   - `MapRegistry.get_passthrough_maps(self) -> List[str]` — Get list of maps that should be passed through if not consumed.
   - `MapRegistry.get_map_backgrounds(self) -> Dict[str, Tuple[int, int, int, int]]` — Generate the map backgrounds dictionary.
   - `MapRegistry.get_map_modes(self) -> Dict[str, str]` — Generate the map modes dictionary.
@@ -1289,16 +1293,18 @@ HelpMixin - Enhanced help system leveraging Python's built-in help infrastructur
 
 The change-detection baseline an exporter diffs a scene's hierarchy against.
 
-- **[`class HierarchyBaseline`](pythontk/pythontk/core_utils/hierarchy_baseline.py#L33)** — Pure set algebra over ``|``-delimited hierarchy paths.
+- **[`class HierarchyBaseline`](pythontk/pythontk/core_utils/hierarchy_baseline.py#L40)** — Pure set algebra over ``|``-delimited hierarchy paths.
   - `HierarchyBaseline.top_level(cls, paths: Iterable[str]) -> List[str]` *(class)* — The shallowest paths in *paths* -- those with no ancestor also present.
   - `HierarchyBaseline.in_scope(cls, paths: Iterable[str], roots: Sequence[str]) -> Set[str]` *(class)* — The subset of *paths* at or under any of *roots*.
   - `HierarchyBaseline.relevant_roots(cls, baseline: Iterable[str], current: Iterable[str], roots: Optional[Sequence[str]] = None) -> List[str]` *(class)* — The baseline roots THIS export is answerable for.
   - `HierarchyBaseline.compare(cls, baseline: Iterable[str], current: Iterable[str], roots: Optional[Sequence[str]] = None) -> Tuple[bool, List[str], List[str], bool]` *(class)* — Diff *current* against the part of *baseline* in the same scope.
   - `HierarchyBaseline.merge(cls, baseline: Iterable[str], current: Iterable[str], roots: Optional[Sequence[str]] = None) -> Set[str]` *(class)* — *baseline* with this export's scope replaced by *current*.
+  - `HierarchyBaseline.adopt(cls, baseline: Iterable[str], shipped: Optional[Iterable[str]]) -> Optional[Set[str]]` *(class)* — *baseline* with a deliverable's last-*shipped* hierarchy adopted,
   - `HierarchyBaseline.paths_hash(paths: Iterable[str]) -> str` *(static)* — SHA-256 over the sorted paths -- the fast-path equality check.
-  - `HierarchyBaseline.encode(cls, paths: Iterable[str]) -> Dict` *(class)* — The stored record for *paths*.
+  - `HierarchyBaseline.encode(cls, paths: Iterable[str], scene: Optional[str] = None) -> Dict` *(class)* — The stored record for *paths*.
   - `HierarchyBaseline.is_record(cls, record) -> bool` *(class)* — *record* is a recognisable baseline, even an empty one.
   - `HierarchyBaseline.decode(cls, record) -> Set[str]` *(class)* — The path set in *record*;
+  - `HierarchyBaseline.recorded_by(cls, record) -> Optional[str]` *(class)* — The scene file *record* was recorded by, as :meth:`encode` stored it.
 
 <a id="core_utils--hierarchy_utils--hierarchy_analyzer"></a>
 ### `core_utils/hierarchy_utils/hierarchy_analyzer.py`
@@ -1386,18 +1392,18 @@ Class-scoped logging toolkit.
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1492)** — A generic logging handler that writes logs to any widget supporting
+- **[`class DefaultTextLogHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1532)** — A generic logging handler that writes logs to any widget supporting
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class RingBufferHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1548)** — In-memory capped ring buffer of log records.
+- **[`class RingBufferHandler(internal_logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin.py#L1593)** — In-memory capped ring buffer of log records.
   - `RingBufferHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `RingBufferHandler.clear(self) -> None`
   - `RingBufferHandler.format_records(self, formatter: internal_logging.Formatter = None) -> str` — Render buffered records to a single plain-text string.
-- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1586)** — Mixin for formatting data as ASCII tables.
-  - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str` — Formats a list of lists as an ASCII table.
+- **[`class TableMixin`](pythontk/pythontk/core_utils/logging_mixin.py#L1631)** — Mixin for formatting data as ASCII tables.
+  - `TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160, wrap: bool = False, markup: bool = True) -> str` — Formats a list of lists as an ASCII table.
   - `TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None` — Logs a formatted table.
   - `TableMixin.log_group(self, title: str, items: List[str], level: str = 'info') -> None` — Log a titled list of related lines as a single record.
-- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1761)** — Mixin class for logging utilities.
+- **[`class LoggingMixin(TableMixin)`](pythontk/pythontk/core_utils/logging_mixin.py#L1854)** — Mixin class for logging utilities.
   - `LoggingMixin.logger(cls) -> internal_logging.Logger` — The patched logger for this class (one per class, created lazily).
   - `LoggingMixin.use_logger(self, logger: Optional[internal_logging.Logger]) -> None` — Route THIS instance's log output through *logger*.
   - `LoggingMixin.class_logger(cls) -> internal_logging.Logger` — A manager-registered sibling of ``logger`` (``<name>.class``).
@@ -1435,8 +1441,8 @@ Helpers for hot-reloading packages and their submodules.
 
 Reusable module attribute resolver for package-style imports.
 
-- [`bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L803) — Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
-- [`create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L891) — Create multi-inheritance namespace classes from groups of related classes.
+- [`bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L814) — Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
+- [`create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L902) — Create multi-inheritance namespace classes from groups of related classes.
 - **[`class ModuleAttributeResolver`](pythontk/pythontk/core_utils/module_resolver.py#L35)** — Discover and resolve attributes exposed from package submodules lazily.
   - `ModuleAttributeResolver.build(self) -> 'ModuleAttributeResolver'` — Populate resolver dictionaries based on current include spec.
   - `ModuleAttributeResolver.rebuild(self, include: Optional[Mapping[str, Union[Sequence[str], str]]] = None) -> 'ModuleAttributeResolver'` — Reset include spec (optional) and rebuild dictionaries.
@@ -1525,7 +1531,7 @@ Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 <a id="core_utils--package_manager"></a>
 ### `core_utils/package_manager.py`
 
-- **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L557)** — A class that encapsulates package management functionalities using pip.
+- **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L559)** — A class that encapsulates package management functionalities using pip.
   - `PackageManager.pip(self, command, output_as_string=False)` — Execute a pip command and return the output.
   - `PackageManager.install_targeted(self, specs, target_dir, upgrade=False) -> List[str]` — Resolver-aware install into a directory an embedded host imports from.
   - `PackageManager.get_local_dependency_order(paths: List[Union[str, Path]]) -> List[Path]` *(static)* — Sort a list of local repository paths based on their pyproject.toml dependencies.
@@ -1630,6 +1636,7 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `Record.text(self) -> str` *(property)* — The stored form (JSON).
   - `Record.save(self, store) -> Optional[str]` — Write this record through *store*;
 - **[`class RecordSpec`](pythontk/pythontk/core_utils/scene_records.py#L146)** — The one declaration of a record: identity, contract and codec.
+  - `RecordSpec.path_keys(self) -> Optional[Tuple[str, ...]]` *(property)* — The payload keys whose values are paths (:attr:`paths`): the named
   - `RecordSpec.make(self, payload: Any) -> Record` — A :class:`Record` of *payload*, the envelope's ``version`` applied.
   - `RecordSpec.encode(self, payload: Any) -> str` — The stored text for *payload*.
   - `RecordSpec.decode(self, text: Optional[str], default: Any = None) -> Any` — *text* parsed, or *default* when absent, cleared, not JSON, or newer
@@ -1639,14 +1646,14 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `RecordSpec.save(self, store, payload: Any) -> Optional[str]` — Publish *payload* (the publish / clear idiom in one call).
   - `RecordSpec.clear(self, store) -> Optional[str]` — Clear the record;
   - `RecordSpec.is_present(self, store) -> bool` — Whether *store* holds a non-empty value for this record.
-- **[`class SceneRecords`](pythontk/pythontk/core_utils/scene_records.py#L317)** — The registry: every record, declared once, and what derives from it.
+- **[`class SceneRecords`](pythontk/pythontk/core_utils/scene_records.py#L325)** — The registry: every record, declared once, and what derives from it.
   - `SceneRecords.resolve_class(module: str, name: str) -> Any` *(static)* — The class a ``(module, name)`` row names -- :attr:`CODECS`',
   - `SceneRecords.codec(cls, spec: RecordSpec) -> Optional[Any]` *(class)* — The codec class of a :attr:`Merge.CODEC` record, else ``None``.
   - `SceneRecords.portable(cls) -> List[RecordSpec]` *(class)* — The records that cross a DCC hand-off, in declaration order.
   - `SceneRecords.rendering_policy(overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(static)* — What a deliverable claims about how it should be lit.
   - `SceneRecords.all(cls) -> List[RecordSpec]` *(class)* — Every declared record, in declaration order.
   - `SceneRecords.with_paths(cls) -> List[RecordSpec]` *(class)* — The records whose values are project-relative paths
-  - `SceneRecords.map_paths(payload: Any, spell: Callable[[str], str]) -> Any` *(static)* — *payload* (a :attr:`RecordSpec.paths` mapping) with every string
+  - `SceneRecords.map_paths(payload: Any, spell: Callable[[str], str], keys: Optional[Tuple[str, ...]] = None) -> Any` *(static)* — *payload* (a :attr:`RecordSpec.paths` mapping) with every string
   - `SceneRecords.rebase_paths(cls, store, old_base: Optional[str], new_base: Optional[str]) -> int` *(class)* — Re-spell every :attr:`RecordSpec.paths` record in *store* from
   - `SceneRecords.deliverable(cls) -> List[RecordSpec]` *(class)*
   - `SceneRecords.private(cls) -> List[RecordSpec]` *(class)*
@@ -1657,7 +1664,7 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `SceneRecords.declared_takes(cls, read: Callable[[str], Any]) -> List[Dict[str, Any]]` *(class)* — The take list a deliverable declares, however old the file.
   - `SceneRecords.handoff_block(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* — The standalone-reader contract for an FBX, ready to store.
   - `SceneRecords.describe(cls) -> List[Dict[str, Any]]` *(class)* — One row per record, for the docs generator and the gates.
-- **[`class SceneStoreBase`](pythontk/pythontk/core_utils/scene_records.py#L887)** — The storage contract a DCC implements -- strings per scope, nothing more.
+- **[`class SceneStoreBase`](pythontk/pythontk/core_utils/scene_records.py#L906)** — The storage contract a DCC implements -- strings per scope, nothing more.
   - `SceneStoreBase.name(cls, scope: Scope) -> str` *(class)* — The carrier name *scope* reports under (:attr:`NAMES`).
   - `SceneStoreBase.read(cls, scope: Scope, key: str) -> Optional[str]` *(class)* — The string channel *key* in *scope*, or ``None`` when the carrier,
   - `SceneStoreBase.write(cls, scope: Scope, key: str, text: Optional[str]) -> Optional[str]` *(class)* — Store *text* on *key*;
@@ -1665,7 +1672,10 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `SceneStoreBase.keys(cls, scope: Scope) -> List[str]` *(class)* — The names of everything :meth:`values` reports for *scope*.
   - `SceneStoreBase.channels(cls, scope: Scope) -> Dict[str, str]` *(class)* — The non-empty STRING channels of *scope* -- what a handoff describes.
   - `SceneStoreBase.dump(cls, decode: bool = True) -> Dict[str, Dict[str, Any]]` *(class)* — Every channel the scene actually carries, grouped by carrier name.
+  - `SceneStoreBase.scene_path(cls) -> str` *(class)* — The open scene's file, ``""`` while it is unsaved -- and in this
   - `SceneStoreBase.project_root(cls) -> Optional[str]` *(class)* — This scene's own project root -- what its :attr:`RecordSpec.paths`
+  - `SceneStoreBase.writer_stamp(cls) -> str` *(class)* — This scene's file as a record stamps its writer: spelled from the
+  - `SceneStoreBase.written_here(cls, stamp: Optional[str]) -> bool` *(class)* — Whether a record stamped *stamp* (:meth:`writer_stamp`) is this
   - `SceneStoreBase.project_root_of(scene_path: Optional[str]) -> Optional[str]` *(static)* — The project *scene_path* lives in: its nearest marked ancestor, else
   - `SceneStoreBase.rebase_paths(cls, old_base: Optional[str], new_base: Optional[str]) -> int` *(class)* — Re-spell this scene's path records from *old_base* to *new_base*
   - `SceneStoreBase.format_dump(cls, decode: bool = True) -> str` *(class)* — Pretty JSON of :meth:`dump`, or ``""`` when nothing is stored.
@@ -1676,10 +1686,11 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `SceneStoreBase.merge_plan(cls, carriers: Mapping[Any, Any]) -> 'RecordTransfer'` *(class)* — *carriers* (another scene's, by scope) against this scene's own:
   - `SceneStoreBase.merge_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None, source_path_base: Optional[str] = None) -> 'TransferContext'` *(class)* — Merge another scene's *carriers* -- an imported reference's, made
   - `SceneStoreBase.discard_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None, source_path_base: Optional[str] = None) -> 'TransferContext'` *(class)* — Remove another scene's *carriers* without merging their records --
-- **[`class ExportContext`](pythontk/pythontk/core_utils/scene_records.py#L1323)** — What an export DECIDES, handed to every producer as input.
+- **[`class ExportContext`](pythontk/pythontk/core_utils/scene_records.py#L1376)** — What an export DECIDES, handed to every producer as input.
+  - `ExportContext.note(self, text: str) -> None` — Record one sentence for the report.
   - `ExportContext.record(self, spec: Union[RecordSpec, str], store=None, default: Any = None) -> Any` — The payload of *spec* as produced in THIS assembly, else -- when a
   - `ExportContext.refreshes(self, spec: RecordSpec) -> bool` — Whether this context's mode refreshes *spec*.
-- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/scene_records.py#L1396)** — The records one export ships, assembled once and committed once.
+- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/scene_records.py#L1459)** — The records one export ships, assembled once and committed once.
   - `ExportSnapshot.assemble(cls, producers: Mapping[Union[RecordSpec, str], Producer], ctx: Optional[ExportContext] = None, only: Optional[Iterable[Union[RecordSpec, str]]] = None) -> 'ExportSnapshot'` *(class)* — Run *producers* in dependency order and collect their records.
   - `ExportSnapshot.publish(cls, store, records: Mapping[Union[RecordSpec, str], Any], ctx: Optional[ExportContext] = None) -> 'ExportSnapshot'` *(class)* — Commit *records* that are already in hand -- the AUTHORING-time
   - `ExportSnapshot.commit(self, store) -> Dict[str, Optional[str]]` — Write every produced record to *store* in one pass, then stamp the
@@ -1687,12 +1698,12 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `ExportSnapshot.record(self, spec: Union[RecordSpec, str], default: Any = None) -> Any` — The payload produced for *spec*, or *default*.
   - `ExportSnapshot.channels(self, scope: Scope = Scope.DELIVERABLE) -> Dict[str, Any]` — Produced payloads of *scope*, by key -- the sidecar's snapshot.
   - `ExportSnapshot.summary(self) -> str` — One line for the export log: each record that shipped and how
-- **[`class TransferContext`](pythontk/pythontk/core_utils/scene_records.py#L1654)** — What a record crossing between scenes needs from the DCC, and what the
+- **[`class TransferContext`](pythontk/pythontk/core_utils/scene_records.py#L1728)** — What a record crossing between scenes needs from the DCC, and what the
   - `TransferContext.note(self, text: str) -> None` — Record one sentence for the report.
   - `TransferContext.adapter(self, name: str, default: Any = None) -> Any` — The DCC adapter *name*, else *default*.
   - `TransferContext.spell(self, name: str) -> str` — *name* as this side spells it -- :attr:`rename`'s answer, else
   - `TransferContext.respell(self, value: Any) -> Any` — *value* with every string -- mapping keys included -- put through
-- **[`class RecordTransfer`](pythontk/pythontk/core_utils/scene_records.py#L1737)** — Another scene's records meeting this scene's -- one engine for every
+- **[`class RecordTransfer`](pythontk/pythontk/core_utils/scene_records.py#L1811)** — Another scene's records meeting this scene's -- one engine for every
   - `RecordTransfer.between(cls, store, other: Mapping[Any, Mapping[str, Any]]) -> 'RecordTransfer'` *(class)* — *store*'s channels, per scope, against *other*'s (``{scope: values}``).
   - `RecordTransfer.incoming(self) -> List[Tuple[Scope, str]]` *(property)* — What a merge would bring in: every :attr:`Merge.UNION` /
   - `RecordTransfer.rederive(self) -> List[RecordSpec]` *(property)* — The deliverables to produce again once the merge is applied: every
@@ -1701,8 +1712,8 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `RecordTransfer.payloads(self, ctx: Optional[TransferContext] = None) -> Dict[RecordSpec, Any]` — The other scene's declared records, decoded -- and respelled through
   - `RecordTransfer.apply(self, store, ctx: Optional[TransferContext] = None) -> TransferContext` — Merge the other scene's records into *store*, each by its rule.
   - `RecordTransfer.merge_record(cls, store, spec: RecordSpec, other: Any, ctx: TransferContext, respelled: bool = False) -> Any` *(class)* — Merge *other* (another scene's decoded payload of *spec*) into
-  - `RecordTransfer.absolute_paths(payload: Any, ctx: TransferContext) -> Any` *(static)* — A :attr:`RecordSpec.paths` *payload* resolved absolute from
-  - `RecordTransfer.arriving_paths(payload: Any, ctx: TransferContext) -> Any` *(static)* — A :attr:`RecordSpec.paths` *payload* from the other scene spelled
+  - `RecordTransfer.absolute_paths(payload: Any, ctx: TransferContext, keys: Optional[Tuple[str, ...]] = None) -> Any` *(static)* — A :attr:`RecordSpec.paths` *payload* resolved absolute from
+  - `RecordTransfer.arriving_paths(payload: Any, ctx: TransferContext, keys: Optional[Tuple[str, ...]] = None) -> Any` *(static)* — A :attr:`RecordSpec.paths` *payload* from the other scene spelled
   - `RecordTransfer.respell(spec: RecordSpec, payload: Any, ctx: TransferContext) -> Any` *(static)* — *payload* of *spec* with its names put through ``ctx.rename``.
   - `RecordTransfer.union(own: Any, other: Any, spec: RecordSpec, ctx: TransferContext) -> Any` *(static)* — The :attr:`Merge.UNION` rule: entries by identity, the scene's own
   - `RecordTransfer.sections(cls, store, ctx: TransferContext, owners: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]` *(class)* — What a hand-off producer adds to its sidecar: every portable record
@@ -1971,9 +1982,9 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
-- [`FBX2GLTF_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L46) — constant
-- [`FBX2GLTF_PLATFORMS`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L47) — constant
-- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L66)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+- [`FBX2GLTF_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L47) — constant
+- [`FBX2GLTF_PLATFORMS`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L48) — constant
+- **[`class MeshConvert(HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L67)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.conversion_timeout(cls, src: str) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
   - `MeshConvert.bake_node_frames(cls, src: str) -> int` *(class)* — Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
   - `MeshConvert.rendering_policy(cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* — :attr:`RENDERING_POLICY` with a deliverable's own choices laid over it.
@@ -2129,7 +2140,7 @@ Reduce a GLB's animation keys to what its interpolation needs.
 
 FBX -> GLB: the one build every GLB deliverable goes through.
 
-- **[`class GlbPipeline(LoggingMixin)`](pythontk/pythontk/file_utils/mesh_convert/glb_pipeline.py#L63)** — FBX -> GLB, with every deliverable's passes, for every deliverable.
+- **[`class GlbPipeline(LoggingMixin)`](pythontk/pythontk/file_utils/mesh_convert/glb_pipeline.py#L65)** — FBX -> GLB, with every deliverable's passes, for every deliverable.
   - `GlbPipeline.envelope(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Dict[str, Dict[str, Any]]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — The scene-sidecar envelope a build applies, from a host's reader.
   - `GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — Build the GLB for *src* and report what each stage did.
 
@@ -2738,7 +2749,7 @@ Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 
 The hand-off bridge whose target is a live preview page.
 
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L26)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L27)** — Hand-off bridge whose target is a live preview page rather than an application.
   - `PreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Extra directories the lightmap pass resolves the manifest's EXRs against.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
@@ -2746,12 +2757,13 @@ The hand-off bridge whose target is a live preview page.
   - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, glb_options: Optional[Dict[str, Any]] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, data_export: Optional[Dict[str, Any]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
   - `PreviewBridge.publish_file(self, path: Union[str, Path], open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Publish a GLB that already exists on disk, unchanged.
   - `PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line describing what the scene sidecar did.
-  - `PreviewBridge.lightmap_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line on the lightmaps: bound, or how many came back unlit.
-  - `PreviewBridge.share(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None) -> Dict[str, Any]` — Give the live preview a link anyone can open -- view-only, and every
+  - `PreviewBridge.lightmap_summary(cls, result: Optional[Dict[str, Any]]) -> str` *(class)* — One plain-text line on the lightmaps: bound, or how many came back unlit.
+  - `PreviewBridge.timing_summary(cls, result: Optional[Dict[str, Any]]) -> str` *(class)* — One plain-text line on where a push's time went.
+  - `PreviewBridge.share(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, on_step: Optional[Callable[[Any], Any]] = None) -> Dict[str, Any]` — Give the live preview a link anyone can open -- view-only, and every
   - `PreviewBridge.unshare(self) -> None` — Stop sharing;
   - `PreviewBridge.share_url(self) -> Optional[str]` *(property)* — The link to send while the preview is shared, else ``None``.
   - `PreviewBridge.stop(self) -> None` — Stop serving and release the port, ending any share.
-- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L462)** — Preview bridge whose source is a file on disk rather than a host selection.
+- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L583)** — Preview bridge whose source is a file on disk rather than a host selection.
   - `FilePreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Where to look for the EXRs a lightmap manifest names.
 
 <a id="net_utils--preview--deliverer"></a>
@@ -2759,7 +2771,7 @@ The hand-off bridge whose target is a live preview page.
 
 FBX -> GLB -> publish: the hand-off strategy behind every live preview.
 
-- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview/deliverer.py#L29)** — Hand-off strategy: build the GLB and publish it to the preview page.
+- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview/deliverer.py#L30)** — Hand-off strategy: build the GLB and publish it to the preview page.
   - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
   - `PreviewDeliverer.publish(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Put *glb* on the server and report what the viewer now sees.
   - `PreviewDeliverer.preflight(self, bridge, request: HandoffRequest) -> bool` — Resolve this push's GLB rows BEFORE the export is paid for.
@@ -2784,12 +2796,12 @@ Record a clip playing in the preview page to a movie file.
 
 Localhost static-file server for live browser / WebXR previews.
 
-- [`VIEWER_CLOSED_PATH`](pythontk/pythontk/net_utils/preview/server.py#L96) — constant
-- [`SETTINGS_PATH`](pythontk/pythontk/net_utils/preview/server.py#L101) — constant
-- [`PLAYBLAST_PATH`](pythontk/pythontk/net_utils/preview/server.py#L107) — constant
-- [`PLAYBLAST_ACTIONS`](pythontk/pythontk/net_utils/preview/server.py#L112) — constant
-- [`SNAPSHOT_PATH`](pythontk/pythontk/net_utils/preview/server.py#L116) — constant
-- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview/server.py#L790)** — Serve a directory of preview assets on loopback, with a live manifest.
+- [`VIEWER_CLOSED_PATH`](pythontk/pythontk/net_utils/preview/server.py#L97) — constant
+- [`SETTINGS_PATH`](pythontk/pythontk/net_utils/preview/server.py#L102) — constant
+- [`PLAYBLAST_PATH`](pythontk/pythontk/net_utils/preview/server.py#L108) — constant
+- [`PLAYBLAST_ACTIONS`](pythontk/pythontk/net_utils/preview/server.py#L113) — constant
+- [`SNAPSHOT_PATH`](pythontk/pythontk/net_utils/preview/server.py#L117) — constant
+- **[`class PreviewServer(LoggingMixin, _PreviewServerInternal)`](pythontk/pythontk/net_utils/preview/server.py#L847)** — Serve a directory of preview assets on loopback, with a live manifest.
   - `PreviewServer.port(self) -> Optional[int]` *(property)* — The bound port, or ``None`` before :meth:`start`.
   - `PreviewServer.url(self) -> Optional[str]` *(property)* — The viewer URL, or ``None`` before :meth:`start`.
   - `PreviewServer.version(self) -> int` *(property)* — Number of published revisions;
@@ -2808,7 +2820,7 @@ Localhost static-file server for live browser / WebXR previews.
   - `PreviewServer.stop_guest(self) -> None` — Close the read-only listener, forgetting its admitted names and its
   - `PreviewServer.admit_host(self, netloc: str) -> None` — Let the guest listener answer requests addressed to *netloc*.
   - `PreviewServer.guest_count(self) -> int` — How many guest tabs are watching: polled within :attr:`VIEWER_TIMEOUT`.
-  - `PreviewServer.share(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, timeout: Optional[float] = None) -> Dict[str, Any]` — Give this preview a link anyone can open: view-only, and live.
+  - `PreviewServer.share(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, timeout: Optional[float] = None, on_step: Optional[Callable[[Any], Any]] = None) -> Dict[str, Any]` — Give this preview a link anyone can open: view-only, and live.
   - `PreviewServer.unshare(self) -> None` — Stop sharing: the tunnel stops (an alias then says the share ended)
   - `PreviewServer.share_info(self) -> Optional[Dict[str, Any]]` — What is being shared, or ``None`` -- also once the provider exited
   - `PreviewServer.share_url(self) -> Optional[str]` *(property)* — The link to hand out while sharing, else ``None``.
@@ -2898,7 +2910,7 @@ The in-application half of the RPC pair: registry + marshaller + server.
 
 Expose a local HTTP port at a public HTTPS link, through a tunnel CLI.
 
-- **[`class ShareTunnel(LoggingMixin, _ShareTunnelInternal)`](pythontk/pythontk/net_utils/share_tunnel.py#L382)** — Expose ``http://<host>:<port>`` at a public HTTPS link while running.
+- **[`class ShareTunnel(LoggingMixin, _ShareTunnelInternal)`](pythontk/pythontk/net_utils/share_tunnel.py#L427)** — Expose ``http://<host>:<port>`` at a public HTTPS link while running.
   - `ShareTunnel.resolve_provider(cls, provider: Optional[str] = None) -> str` *(class)* — The provider a share uses.
   - `ShareTunnel.executable(cls, provider: str) -> Optional[str]` *(class)* — Path to *provider*'s CLI, or ``None`` when it is not installed.
   - `ShareTunnel.not_installed_error(cls, provider: str, detail: str = '') -> FileNotFoundError` *(class)* — The fix-shaped error for a provider whose CLI is missing.
@@ -2912,6 +2924,7 @@ Expose a local HTTP port at a public HTTPS link, through a tunnel CLI.
   - `ShareTunnel.output(self, lines: int = 40) -> List[str]` — The client's most recent output -- where a provider says what is wrong.
   - `ShareTunnel.start(self) -> str` — Start the client; the link, once guests can reach it.
   - `ShareTunnel.stop(self) -> None` — Stop the client and retire the link;
+  - `ShareTunnel.cancel(self) -> None` — Retire this tunnel before its link is up, from any thread, without
 
 <a id="net_utils--ssh_client"></a>
 ### `net_utils/ssh_client.py`
@@ -2994,6 +3007,27 @@ Portable hotkey-token helpers shared by the ecosystem's macro managers.
   - `HotkeyUtils.qt_sequence_to_key(cls, sequence: str) -> str` *(class)* — Convert a Qt key-sequence string (``"Ctrl+Shift+I"``) to this
   - `HotkeyUtils.key_to_qt_sequence(cls, key: str) -> str` *(class)* — Convert this convention's token (``"ctl+sht+i"``) to a Qt
   - `HotkeyUtils.humanize_label(name: str, prefix: str = '', acronyms: Optional[Dict[str, str]] = None) -> str` *(static)* — Humanize a ``snake_case`` name for display, e.g.
+
+<a id="str_utils--report_doc"></a>
+### `str_utils/report_doc.py`
+
+``ReportDoc`` -- a report built once as blocks, rendered as HTML or plain text.
+
+- **[`class ReportDoc`](pythontk/pythontk/str_utils/report_doc.py#L24)** — A report as an ordered list of blocks, rendered to HTML or plain text.
+  - `ReportDoc.heading(self, text: Any, level: int = 2, tone: Optional[str] = 'heading') -> 'ReportDoc'` — A heading.
+  - `ReportDoc.text(self, text: Any, tone: Optional[str] = None) -> 'ReportDoc'` — A paragraph.
+  - `ReportDoc.fields(self, rows: Iterable[Tuple[Any, Any]]) -> 'ReportDoc'` — Label/value pairs, rendered as an aligned two-column grid.
+  - `ReportDoc.table(self, headers: Sequence[Any], rows: Iterable[Sequence[Any]], align: Optional[Union[str, Sequence[str]]] = None, title: Optional[Any] = None, footer: Optional[Any] = None, wrap: Optional[Iterable[int]] = None) -> 'ReportDoc'` — A table with a header row.
+  - `ReportDoc.items(self, items: Iterable[Any], tone: Optional[str] = None) -> 'ReportDoc'` — A bullet list;
+  - `ReportDoc.extend(self, other: 'ReportDoc') -> 'ReportDoc'` — Append *other*'s blocks to this document.
+  - `ReportDoc.color(cls, tone: Optional[str]) -> Optional[str]` *(class)* — The CSS colour for *tone* (a :attr:`TONES` key, else used verbatim).
+  - `ReportDoc.span(cls, text: Any, tone: Optional[str] = None, bold: bool = False) -> Inline` *(class)* — *text* in a tone and/or bold.
+  - `ReportDoc.link(cls, text: Any, href: str, tone: Optional[str] = 'link') -> Inline` *(class)* — *text* linked to *href* (any scheme;
+  - `ReportDoc.action(cls, text: Any, verb: str, /, **params: Any) -> Inline` *(class)* — An ``action://VERB?k=v`` link -- the host dispatches the verb.
+  - `ReportDoc.file(cls, path: str, text: Optional[Any] = None) -> Inline` *(class)* — A ``file:`` link to *path*, shown as *text* (default: the path).
+  - `ReportDoc.join(cls, parts: Iterable[Any], sep: str = ', ') -> Inline` *(class)* — Concatenate values (strings and/or :class:`Inline`) with *sep*.
+  - `ReportDoc.to_html(self) -> str` — The document as newline-free HTML for a Qt rich-text viewer.
+  - `ReportDoc.to_text(self) -> str` — The document as plain text for a console or a log file.
 
 <a id="vid_utils--_vid_utils"></a>
 ### `vid_utils/_vid_utils.py`

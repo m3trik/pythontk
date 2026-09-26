@@ -82,7 +82,7 @@ TAILSCALE_OK = [
 #: The fake CLI: prints the fixture its first argument names, then behaves as
 #: the real client would -- keeps running, or exits.
 FAKE_CLI = f"""
-import sys, time
+import os, sys, time
 FIXTURES = {{
     "cloudflared": {CLOUDFLARED!r},
     "blocked": {BLOCKED!r},
@@ -105,6 +105,17 @@ elif mode == "blocked":
 elif mode == "exit":
     print("Logged out.", flush=True)
     sys.exit(3)
+elif mode == "tailscale-later":
+    # Waits on the user the way Tailscale does, and carries on by itself once
+    # the step is taken -- here, once the file named next exists.
+    say(FIXTURES["tailscale-disabled"])
+    while not os.path.exists(sys.argv[2]):
+        time.sleep(0.05)
+    say(["Success."] + FIXTURES["tailscale"])
+elif mode == "tailscale-gives-up":
+    # A client that names the step and exits rather than wait on it.
+    say(FIXTURES["tailscale-disabled"])
+    sys.exit(1)
 elif mode in FIXTURES:
     say(FIXTURES[mode])
 time.sleep(600)
@@ -225,17 +236,144 @@ class ShareTunnelTestCase(unittest.TestCase):
 
     def test_a_provider_waiting_on_the_user_fails_at_once_naming_the_step(self):
         """Tailscale prints an enable link and polls until someone follows it;
-        whoever pressed Share sees a busy indicator, not that link."""
+        whoever pressed Share sees a busy indicator, not that link. It fails at
+        once as a StepRequired carrying the page, so a panel can offer it --
+        still a RuntimeError, for a caller catching those."""
         tunnel = self._tunnel("tailscale-disabled", like="tailscale_serve", timeout=30)
         started = time.monotonic()
-        with self.assertRaises(RuntimeError) as caught:
+        with self.assertRaises(ShareTunnel.StepRequired) as caught:
             tunnel.start()
         self.assertLess(time.monotonic() - started, 10, "waited out the timeout")
-        message = str(caught.exception)
-        self.assertIn("one-time step", message)
-        self.assertIn(
-            "https://login.tailscale.com/f/serve?node=nTESTNODE0000CNTRL", message
+        step = caught.exception
+        self.assertIsInstance(step, RuntimeError)
+        self.assertEqual(
+            step.url, "https://login.tailscale.com/f/serve?node=nTESTNODE0000CNTRL"
         )
+        self.assertEqual(step.label, ShareTunnel.PROVIDERS["tailscale_serve"]["label"])
+        self.assertIn("one-time step", str(step))
+        self.assertIn(step.url, str(step))
+        self.assertIsNotNone(self.spawned[0].poll(), "the client was left running")
+
+    def _step_tunnel(self, flag, **kwargs):
+        """A Tailscale-shaped start that waits on its step until *flag* exists."""
+        name = self._provider(
+            "tailscale-later",
+            like="tailscale_funnel",
+            args=["-u", self.cli, "tailscale-later", flag],
+        )
+        tunnel = ShareTunnel(8118, provider=name, **kwargs)
+        self.tunnels.append(tunnel)
+        return tunnel
+
+    def test_a_start_told_of_the_step_waits_for_it_and_returns_the_link(self):
+        """The provider carries on by itself once the step is taken, so a
+        caller that can show the page (``on_step``) keeps the start waiting --
+        past the link's own timeout, since the step is a person's -- and the
+        link arrives without the user pressing anything again."""
+        import threading
+
+        flag = self.temp.path(extension=".step")
+        steps = []
+        tunnel = self._step_tunnel(flag, timeout=1.0, on_step=steps.append)
+
+        def take_the_step():
+            deadline = time.monotonic() + 20
+            while not steps and time.monotonic() < deadline:
+                time.sleep(0.05)
+            time.sleep(1.5)  # longer than the link's own timeout
+            Path(flag).touch()
+
+        taker = threading.Thread(target=take_the_step, daemon=True)
+        taker.start()
+        self.assertEqual(tunnel.start(), "https://studio-pc.tail0000.ts.net")
+        taker.join(20)
+        self.assertEqual(len(steps), 1, "the step was reported more than once")
+        step = steps[0]
+        self.assertIsInstance(step, ShareTunnel.StepRequired)
+        self.assertEqual(
+            step.url, "https://login.tailscale.com/f/serve?node=nTESTNODE0000CNTRL"
+        )
+        self.assertEqual(step.label, ShareTunnel.PROVIDERS["tailscale_funnel"]["label"])
+        self.assertTrue(tunnel.is_running)
+
+    def test_a_step_not_taken_in_time_ends_the_wait_naming_it(self):
+        flag = self.temp.path(extension=".step")  # never created
+        steps = []
+        tunnel = self._step_tunnel(flag, timeout=1.0, on_step=steps.append)
+        with unittest.mock.patch.object(ShareTunnel, "_STEP_WAIT", 1.0):
+            with self.assertRaises(ShareTunnel.StepRequired) as caught:
+                tunnel.start()
+        self.assertEqual([step.url for step in steps], [caught.exception.url])
+        self.assertIn(caught.exception.url, str(caught.exception))
+        self.assertIsNotNone(self.spawned[0].poll(), "the client was left running")
+
+    def test_a_client_that_stops_at_the_step_names_the_step_not_its_exit(self):
+        """A client that will not wait on the user names the step and exits:
+        the step is the reason, not the exit code."""
+        steps = []
+        tunnel = self._tunnel(
+            "tailscale-gives-up", like="tailscale_funnel", on_step=steps.append
+        )
+        with self.assertRaises(ShareTunnel.StepRequired) as caught:
+            tunnel.start()
+        self.assertEqual(
+            caught.exception.url,
+            "https://login.tailscale.com/f/serve?node=nTESTNODE0000CNTRL",
+        )
+
+    def test_stop_cancels_a_start_waiting_on_the_step(self):
+        """A share turned off while it waits on the user ends now, not when the
+        wait runs out -- or its client would bring the link up later, for
+        whoever took the step, in front of nothing."""
+        import threading
+
+        flag = self.temp.path(extension=".step")
+        steps, outcome = [], {}
+        tunnel = self._step_tunnel(flag, timeout=1.0, on_step=steps.append)
+
+        def start():
+            try:
+                outcome["url"] = tunnel.start()
+            except BaseException as error:  # noqa: BLE001 -- asserted below
+                outcome["error"] = error
+
+        starter = threading.Thread(target=start, daemon=True)
+        starter.start()
+        deadline = time.monotonic() + 20
+        while not steps and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(steps, "the start never reported its step")
+        stopped = time.monotonic()
+        tunnel.stop()
+        starter.join(10)
+        self.assertLess(time.monotonic() - stopped, 5, "the stop waited on the step")
+        self.assertIsInstance(outcome.get("error"), RuntimeError, outcome)
+        self.assertNotIsInstance(outcome["error"], ShareTunnel.StepRequired)
+        self.assertIsNotNone(self.spawned[0].poll(), "the client was left running")
+        self.assertFalse(tunnel.is_running)
+
+    def test_an_on_step_that_stops_its_own_tunnel_ends_the_start(self):
+        """The hooks run under the tunnel's re-entrant lock: one that stops the
+        tunnel it was handed must end the start, not leave it polling a
+        client that stop just took away."""
+        flag = self.temp.path(extension=".step")  # never created
+        tunnel = self._step_tunnel(
+            flag, timeout=1.0, on_step=lambda step: tunnel.stop()
+        )
+        with self.assertRaises(RuntimeError) as caught:
+            tunnel.start()
+        self.assertIn("stopped", str(caught.exception))
+        self.assertIsNotNone(self.spawned[0].poll(), "the client was left running")
+
+    def test_an_on_step_that_raises_fails_the_start_and_stops_the_client(self):
+        def refuse(step):
+            raise ValueError("cannot show the page")
+
+        tunnel = self._tunnel(
+            "tailscale-disabled", like="tailscale_serve", on_step=refuse
+        )
+        with self.assertRaises(ValueError):
+            tunnel.start()
         self.assertIsNotNone(self.spawned[0].poll(), "the client was left running")
 
     def test_a_blocked_client_is_diagnosed_as_the_firewall(self):

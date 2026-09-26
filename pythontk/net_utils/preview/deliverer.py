@@ -17,6 +17,7 @@ What the deliverer decides for itself stops at where the scratch files live.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Union
 
@@ -73,6 +74,17 @@ class PreviewDeliverer(Deliverer):
             :attr:`PreviewServer.SCRIPTS`). ``None`` -- the default -- leaves
             whatever the server already has alone, so a script registered
             directly on a long-lived server survives; a list replaces the set.
+        user_pos: Name of the node every view starts at (see
+            :class:`PreviewServer`'s *user_pos*): a camera named so in the
+            pushed scene. Applied to the server on every publish, so this is
+            the one place the name is set -- a bridge reads it here too, to
+            ship that node whatever the push's scope (see
+            :meth:`PreviewBridge.push`). ``None`` starts every view on the
+            whole model.
+        locomotion: Whether a headset gets around on its thumbsticks (see
+            :class:`PreviewServer`'s *locomotion*); ``False`` keeps a session
+            at its start. Applied to the server on every publish, like
+            *user_pos*.
     """
 
     @Deprecation.parameter(
@@ -91,17 +103,23 @@ class PreviewDeliverer(Deliverer):
         title: str = "Preview",
         glb_options: Optional[Mapping[str, Any]] = None,
         scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None,
+        user_pos: Optional[str] = "user_pos",
+        locomotion: bool = True,
     ):
         self.server = server
         self.open_browser = open_browser
         self.title = title
         self.glb_options: Dict[str, Any] = self._glb_rows(glb_options)
         self.scripts = scripts
+        self.user_pos = user_pos
+        self.locomotion = locomotion
 
     def ensure_server(self) -> PreviewServer:
         """The bridge's server, started, creating it on first use."""
         if self.server is None:
-            self.server = PreviewServer(title=self.title)
+            self.server = PreviewServer(
+                title=self.title, user_pos=self.user_pos, locomotion=self.locomotion
+            )
         return self.server.start()
 
     def publish(
@@ -113,11 +131,11 @@ class PreviewDeliverer(Deliverer):
     ) -> Dict[str, Any]:
         """Put *glb* on the server and report what the viewer now sees.
 
-        The tail every delivery shares -- activate the script set, bump the
-        version, decide whether a tab needs opening -- factored out of
-        :meth:`deliver` so the OTHER way an asset reaches the page
-        (:meth:`PreviewBridge.publish_file`, a GLB already on disk) cannot
-        answer those three questions differently. A second copy of this is
+        The tail every delivery shares -- activate the script set, name the
+        start node and set locomotion, bump the version, decide whether a tab
+        needs opening -- factored out of :meth:`deliver` so the OTHER way an
+        asset reaches the page (:meth:`PreviewBridge.publish_file`, a GLB
+        already on disk) cannot answer any of them differently. A second copy of this is
         exactly how a push and a publish end up disagreeing about whether an
         unticked script box turns a script off.
 
@@ -144,6 +162,10 @@ class PreviewDeliverer(Deliverer):
             scripts = self.scripts
         if scripts is not None:
             server.set_scripts(scripts)
+        # Before the version bump, so the manifest that first names this asset
+        # already says where its views start and whether they can move.
+        server.user_pos = self.user_pos
+        server.locomotion = self.locomotion
 
         version = server.publish(glb, move=move)
 
@@ -173,6 +195,10 @@ class PreviewDeliverer(Deliverer):
     #: recipe (:attr:`ExportRun.rendering`) for the host, whose envelope
     #: publishes them (:meth:`PreviewBridge._attach_sidecar` reads it).
     RENDERING_KEY = "rendering"
+    #: Where :meth:`PreviewBridge.push` leaves the moment it began
+    #: (``time.perf_counter``), so :meth:`deliver` can time the host's half
+    #: -- everything before the build, the export chiefly -- as ``"export"``.
+    STARTED_KEY = "_push_started"
 
     @staticmethod
     def _glb_rows(value: Any) -> Dict[str, Any]:
@@ -272,6 +298,7 @@ class PreviewDeliverer(Deliverer):
         if not payload.primary:
             bridge.logger.error("Preview delivery got no exported file to convert.")
             return None
+        delivering = time.perf_counter()
 
         # Eagerly, though `publish` below ensures it too: binding the port is
         # the one failure here that has nothing to do with the model, and it
@@ -367,6 +394,7 @@ class PreviewDeliverer(Deliverer):
                 else "requested",
             )
 
+        publishing = time.perf_counter()
         published = self.publish(
             glb,
             # The GLB is this bridge's own scratch artifact and nothing reads
@@ -379,6 +407,26 @@ class PreviewDeliverer(Deliverer):
             # `publish` owns that fallback for both entry points.
             open_browser=request.get("open_browser", self.open_browser),
             scripts=request.get("scripts"),
+        )
+        finished = time.perf_counter()
+
+        # Seconds per stage, in the order the push ran them: the host's half
+        # (from the stamp `push` left, when it left one), the build's own
+        # stages, the publish. `PreviewBridge.timing_summary` renders it.
+        started = request.get(self.STARTED_KEY)
+        if not isinstance(started, (int, float)):
+            started = None
+        timings: Dict[str, float] = {}
+        if started is not None:
+            timings["export"] = round(max(delivering - started, 0.0), 3)
+        timings.update(
+            (stage, seconds)
+            for stage, seconds in (built.get("timings") or {}).items()
+            if stage != "total"
+        )
+        timings["publish"] = round(finished - publishing, 3)
+        timings["total"] = round(
+            finished - (started if started is not None else delivering), 3
         )
 
         return {
@@ -405,4 +453,8 @@ class PreviewDeliverer(Deliverer):
             # as it stands, with no error anywhere -- measured 2026-09-13 as a
             # preview that looked the same whatever the panel was set to.
             "data_export": list(built.get("data_export") or []),
+            # ``{stage: seconds}`` in the order they ran, ending in ``total``
+            # -- ``export`` (the host's half), the build's stages
+            # (:meth:`GlbPipeline.build`), ``publish``.
+            "timings": timings,
         }

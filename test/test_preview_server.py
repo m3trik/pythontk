@@ -223,6 +223,37 @@ class PreviewServerTestCase(unittest.TestCase):
         self.assertEqual(manifest["version"], 0)
         self.assertIsNone(manifest["asset"])
 
+    def test_the_manifest_names_where_views_start_live(self):
+        """`user_pos` names the node views start at -- for guests too, since
+        where a view starts is part of the scene -- read on every poll, so a
+        new name needs no publish; ``None`` names none."""
+        server = self._serve()
+
+        def named():
+            return json.loads(self._get("manifest.json")[1])["userPos"]
+
+        self.assertEqual(named(), "user_pos")
+        self.assertEqual(server.manifest(guest=True)["userPos"], "user_pos")
+        server.user_pos = "spawn"
+        self.assertEqual(named(), "spawn")
+        server.user_pos = None
+        self.assertIsNone(named())
+
+    def test_the_manifest_says_whether_a_headset_can_move_live(self):
+        """`locomotion` is the page's switch for the thumbsticks -- on by
+        default, for guests too, and read on every poll, so switching it off
+        stops a headset already in a session."""
+        server = self._serve()
+
+        def moving():
+            return json.loads(self._get("manifest.json")[1])["locomotion"]
+
+        self.assertIs(moving(), True)
+        self.assertIs(server.manifest(guest=True)["locomotion"], True)
+        server.locomotion = False
+        self.assertIs(moving(), False)
+        self.assertIs(server.manifest(guest=True)["locomotion"], False)
+
     def test_publish_bumps_version_and_serves_asset(self):
         server = self._serve(title="Selection")
         version = server.publish(self._asset(data=b"first"))
@@ -1073,26 +1104,21 @@ class PreviewScriptsTestCase(unittest.TestCase):
 
         The packaged ``turntable`` script is exactly ``pivot.rotation.y += ...``
         and every other script is invited to transform the same group. That is
-        only a spin while the pivot's origin sits at the model's centre -- fold
-        the fit-distance offset back into the model's own position (where it
-        used to live) and rotating the pivot swings the model around the viewer
-        at FIT_DISTANCE_M radius: wrong at a desk, sickening in a headset, and
-        invisible to every other test here because the composed world transform
-        is identical while nothing rotates.
+        only a spin while the pivot's origin sits at the model's centre: the
+        model is centred on it, and nothing may move the pivot itself -- an
+        offset on it (the fitted mode's push in front of the viewer lived there)
+        turns rotating it into an orbit. Invisible to every other test here,
+        because the composed world transform is identical while nothing rotates.
+        The centring half is behaviour, and is run rather than read:
+        ``test_preview_viewer_live`` pushes under a turned pivot and measures
+        where the model lands.
         """
         self._serve()
         page = (self.root / "index.html").read_text(encoding="utf-8")
-        layout = page[page.index("function layout()") :]
-        layout = layout[: layout.index("\n}")]
-        self.assertIn("pivot.position.set", layout)
-        # The offset belongs to the pivot; the model carries only the centring.
-        model_position = layout[
-            layout.index("current.position.set") : layout.index("pivot.position.set")
-        ]
         self.assertNotIn(
-            "FIT_DISTANCE_M",
-            model_position,
-            "the fit offset is baked into the model again -- pivot rotation now orbits it",
+            "pivot.position",
+            page,
+            "the page moves the pivot -- rotating it now orbits the model",
         )
 
     def test_the_packaged_scripts_only_use_api_the_page_provides(self):
@@ -1123,7 +1149,22 @@ class PreviewScriptsTestCase(unittest.TestCase):
                 self.assertLessEqual(
                     hooks, emitted, f"{name} subscribes to a hook the page never emits"
                 )
-                for member in set(re.findall(r"viewer\.(\w+)", source)):
+                members = set(re.findall(r"viewer\.(\w+)", source))
+                # And what a script destructures -- `const { THREE, specs } =
+                # viewer` -- which the dotted read above cannot see: a name the
+                # page does not expose arrives undefined and fails only when
+                # called, in a headset.
+                for names in re.findall(r"\{([^{}]*)\}\s*=\s*viewer\b", source):
+                    members.update(
+                        re.match(r"\s*(\w+)", part).group(1)
+                        for part in names.split(",")
+                        if part.strip()
+                    )
+                if name == "inspect":
+                    # The reader itself, pinned where a destructure is known
+                    # to be: a pattern gone blind would pass every script.
+                    self.assertIn("formatBytes", members, "a destructure went unread")
+                for member in members:
                     self.assertRegex(
                         api_block,
                         rf"\b{member}\b",
@@ -1338,6 +1379,32 @@ class _StubPreviewBridge(PreviewBridge):
         )
 
 
+class _StartBridge(_StubPreviewBridge):
+    """A preview bridge whose scene holds a start camera, recording each export.
+
+    ``_resolve_objects`` keeps an empty set empty (the stub's parent invents an
+    object for it), so the "nothing to push" path is the real one.
+    """
+
+    payload_prefix = "test_preview_start"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.exported = []
+        self.asked = []
+
+    def _start_node(self, name):
+        self.asked.append(name)
+        return {"user_pos": "cams|user_pos"}.get(name)
+
+    def _resolve_objects(self, objects):
+        return list(objects or [])
+
+    def _produce(self, objects, request):
+        self.exported.append(list(objects))
+        return super()._produce(objects, request)
+
+
 class PreviewServerBrowserChoiceTestCase(unittest.TestCase):
     """Which browser a push opens.
 
@@ -1541,6 +1608,30 @@ class PreviewDelivererTestCase(unittest.TestCase):
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
         with unittest.mock.patch(target, side_effect=self._fake_convert):
             return self.bridge.send(**extras)
+
+    def test_a_push_reports_what_each_stage_took(self):
+        """The cost table in docs/webxr_preview.md was measured by wrapping the
+        shipped methods by hand; a push now answers it itself. Stages in the
+        order they ran -- the host's export first, the publish last -- none
+        overlapping, and a total that covers them."""
+        bridge = _StubPreviewBridge()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with unittest.mock.patch(target, side_effect=self._fake_convert):
+            result = bridge.push(["stub_object"])
+        timings = result["timings"]
+        stages = list(timings)
+        self.assertEqual(stages[0], "export")
+        self.assertEqual(stages[-2:], ["publish", "total"])
+        # This stub converter reports no split, so the conversion is one stage.
+        self.assertIn("convert", timings)
+        self.assertIn("textures", timings)
+        self.assertLessEqual(
+            sum(seconds for stage, seconds in timings.items() if stage != "total"),
+            timings["total"] + 0.01,
+            "stages overlap: their sum exceeds the total",
+        )
+        self.assertTrue(PreviewBridge.timing_summary(result).startswith("Push took "))
 
     def test_a_push_can_name_the_scripts_for_that_delivery(self):
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
@@ -2400,11 +2491,67 @@ class PreviewDelivererTestCase(unittest.TestCase):
             )
         self.assertEqual(result["sidecar"], {"emissive": "0 of 1 matched"})
 
+    def test_the_deliverer_sets_the_start_and_locomotion_on_every_publish(self):
+        """Its `user_pos` and `locomotion` are the one place each is set:
+        applied with each publish, over whatever the server held -- so the node
+        a bridge ships and the node the page looks for cannot differ."""
+        self.server.user_pos = "stale"
+        self.server.locomotion = True
+        self._deliver(user_pos="spawn", locomotion=False)
+        manifest = self.server.manifest()
+        self.assertEqual(
+            (manifest["userPos"], manifest["locomotion"]), ("spawn", False)
+        )
+        self.bridge.deliverer.user_pos = None
+        self.bridge.deliverer.locomotion = True
+        self._push()
+        manifest = self.server.manifest()
+        self.assertEqual((manifest["userPos"], manifest["locomotion"]), (None, True))
+
+    def test_a_server_the_deliverer_creates_is_named_before_any_publish(self):
+        """A share can open the page on a server that has published nothing
+        yet; its first poll must already name the deliverer's node."""
+        with unittest.mock.patch.object(PreviewServer, "start", lambda server: server):
+            server = PreviewDeliverer(
+                user_pos="spawn", locomotion=False
+            ).ensure_server()
+        manifest = server.manifest()
+        self.assertEqual(
+            (manifest["userPos"], manifest["locomotion"]), ("spawn", False)
+        )
+
+    def test_a_push_ships_the_start_node_whatever_its_scope(self):
+        """The page reads the start camera, so a push that selected around it
+        ships it anyway -- once, however the selection named it -- while a push
+        with nothing in it stays empty rather than becoming a lone camera, and
+        a deliverer that names no start asks the scene for none."""
+        bridge = _StartBridge()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        self.addCleanup(
+            lambda: [Path(p).unlink(missing_ok=True) for p in bridge.payload_paths]
+        )
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with unittest.mock.patch(target, side_effect=self._fake_convert):
+            bridge.push(objects=["box"])
+            bridge.push(objects=["box", "cams|user_pos"])
+            self.assertIsNone(bridge.push(objects=[]))
+            bridge.deliverer.user_pos = None
+            bridge.push(objects=["box"])
+
+        self.assertEqual(
+            bridge.exported,
+            [["box", "cams|user_pos"], ["box", "cams|user_pos"], ["box"]],
+        )
+        self.assertEqual(bridge.asked, ["user_pos", "user_pos"])
+
     def test_ensure_server_creates_one_lazily_and_reuses_it(self):
         deliverer = PreviewDeliverer(title="Lazy")
         self.assertIsNone(deliverer.server)
         try:
-            first = deliverer.ensure_server()
+            # Ephemeral: the default is the production port, where a preview
+            # tab the user has open would start polling this test's server.
+            with unittest.mock.patch.object(PreviewServer, "DEFAULT_PORT", 0):
+                first = deliverer.ensure_server()
             self.assertTrue(first.is_running)
             self.assertIs(deliverer.ensure_server(), first)
         finally:
@@ -2890,10 +3037,16 @@ class LightmapSummaryTestCase(unittest.TestCase):
         )
 
     def test_every_object_bound(self):
+        """Said in words and in the bake's own unit -- objects. "3/3" read as a
+        score against a total the line never named."""
         line = PreviewBridge.lightmap_summary(
             {"lightmaps": {"expected": 3, "bound": 3, "unbound": []}}
         )
-        self.assertEqual(line, "Lightmaps: 3/3 object(s) bound.")
+        self.assertEqual(line, "Lightmaps: all 3 baked objects bound.")
+        single = PreviewBridge.lightmap_summary(
+            {"lightmaps": {"expected": 1, "bound": 1, "unbound": []}}
+        )
+        self.assertEqual(single, "Lightmaps: the baked object bound.")
 
     def test_a_scoped_push_says_what_it_left_out(self):
         """ "3/3 bound" over a 50-object bake is only reassuring once the other
@@ -2913,24 +3066,69 @@ class LightmapSummaryTestCase(unittest.TestCase):
                 }
             }
         )
-        self.assertIn("3/3", line)
-        self.assertIn("47", line)
+        self.assertIn("all 3 baked objects bound", line)
+        self.assertIn("47 more baked objects", line)
         self.assertNotIn("UNLIT", line)
 
         whole_scene = PreviewBridge.lightmap_summary(
             {"lightmaps": {"expected": 3, "bound": 3, "unbound": [], "out_of_scope": 0}}
         )
-        self.assertEqual(whole_scene, "Lightmaps: 3/3 object(s) bound.")
+        self.assertEqual(whole_scene, "Lightmaps: all 3 baked objects bound.")
 
     def test_unbound_objects_are_named_and_called_unlit(self):
         names = [f"wall_{i}" for i in range(7)]
         line = PreviewBridge.lightmap_summary(
             {"lightmaps": {"expected": 9, "bound": 2, "unbound": names}}
         )
-        self.assertIn("2/9", line)
+        self.assertIn("2 of 9 baked objects bound", line)
         self.assertIn("UNLIT", line)
         self.assertIn("wall_0", line)
         self.assertIn("+2 more", line)
+
+
+class TimingSummaryTestCase(unittest.TestCase):
+    """`PreviewBridge.timing_summary`: the panel's one line on where the time went.
+
+    After a slow push the question is which stage, and the answer moves the fix:
+    FBX2glTF's cost is set by what the DCC exports, the passes by pythontk.
+    """
+
+    def test_no_timings_is_not_a_line(self):
+        self.assertEqual(PreviewBridge.timing_summary(None), "")
+        self.assertEqual(PreviewBridge.timing_summary({}), "")
+        self.assertEqual(PreviewBridge.timing_summary({"timings": {}}), "")
+
+    def test_stages_in_order_with_the_slowest_one_s_share(self):
+        line = PreviewBridge.timing_summary(
+            {
+                "timings": {
+                    "export": 6.7,
+                    "takes": 0.4,
+                    "downsize": 7.5,
+                    "fbx2gltf": 290.2,
+                    "passes": 9.1,
+                    "textures": 10.4,
+                    "publish": 0.01,
+                    "total": 333.0,
+                }
+            }
+        )
+        self.assertEqual(
+            line,
+            "Push took 333 s: export 6.7 s, take strip 0.4 s, downsize 7.5 s, "
+            "FBX2glTF 290 s (87%), GLB passes 9.1 s, texture pass 10 s.",
+        )
+
+    def test_a_stage_too_quick_to_matter_is_left_out(self):
+        """ "publish 0.0 s" is noise; the total still covers it."""
+        line = PreviewBridge.timing_summary(
+            {"timings": {"publish": 0.004, "total": 0.004}}
+        )
+        self.assertEqual(line, "Push took 0.0 s.")
+        line = PreviewBridge.timing_summary(
+            {"timings": {"copy": 0.8, "publish": 0.01, "total": 0.82}}
+        )
+        self.assertEqual(line, "Push took 0.8 s: copy 0.8 s.")
 
 
 class PreviewSettingsTestCase(unittest.TestCase):
@@ -3289,6 +3487,36 @@ class PreviewSnapshotTestCase(unittest.TestCase):
         with unittest.mock.patch.object(PreviewServer, "MAX_SNAPSHOT_BYTES", 16):
             self.assertEqual(self._refused(_png()).code, 413)
         self.assertEqual(self._pngs(source.parent), [])
+
+    def test_a_refusal_reaches_a_client_still_sending_its_body(self):
+        """The 413 must be what the client reads, however much body it still
+        had to send. Refused unread and closed at once, the socket held input,
+        and Windows answers that close with a reset that discards the response
+        not yet read: measured, a third of 64 KiB - 1 MiB posts against a
+        16-byte ceiling read ConnectionAbortedError -- in the page, "Failed to
+        fetch" where the status line should say why (``viewer.refusal``)."""
+        import http.client
+
+        self._publish()
+        body = _png() + b"\0" * (1024 * 1024)
+        outcomes = []
+        with unittest.mock.patch.object(PreviewServer, "MAX_SNAPSHOT_BYTES", 16):
+            for _ in range(8):
+                connection = http.client.HTTPConnection(
+                    self.server.host, self.server.port, timeout=5
+                )
+                try:
+                    connection.putrequest("POST", f"/{SNAPSHOT_PATH}")
+                    connection.putheader("Content-Type", "image/png")
+                    connection.putheader("Content-Length", str(len(body)))
+                    connection.endheaders()
+                    connection.send(body)
+                    outcomes.append(connection.getresponse().status)
+                except OSError as error:
+                    outcomes.append(type(error).__name__)
+                finally:
+                    connection.close()
+        self.assertEqual(outcomes, [413] * 8)
 
     def _raw_post(self, headers, body=b""):
         """``(status, reason)`` for a POST whose headers are sent verbatim."""
@@ -3652,6 +3880,29 @@ class PreviewGuestTestCase(unittest.TestCase):
             )
             self.assertEqual(status, 403, (method, path))
 
+    def test_a_body_on_a_read_never_becomes_the_next_request(self):
+        """A GET's body means nothing, but left unread it was the next
+        request's first bytes on the kept-alive connection -- a well-formed
+        second request answered 400 -- and on a refusal's close Windows reset
+        the connection over the response (13 of 400 host-refused GETs carrying
+        two bytes lost their 403)."""
+        import http.client
+
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.server.port, timeout=5
+        )
+        try:
+            for _ in range(2):
+                connection.putrequest("GET", "/manifest.json")
+                connection.putheader("Content-Length", "2")
+                connection.endheaders()
+                connection.send(b"{}")
+                response = connection.getresponse()
+                response.read()
+                self.assertEqual(response.status, 200)
+        finally:
+            connection.close()
+
     def test_head_is_behind_the_host_check_on_the_owners_listener_too(self):
         """HEAD answers a path's existence, size and date, and had no Host
         check: a rebound page could probe the serve root through it."""
@@ -3834,6 +4085,74 @@ class PreviewShareTestCase(unittest.TestCase):
                 self.assertIsNone(self.server.guest_port)
                 self.assertIsNotNone(spawned[0].poll(), "the tunnel outlived the stop")
 
+    def test_a_share_waiting_on_its_step_is_stopped_at_once(self):
+        """A share told of its provider's one-time step (``on_step``) waits for
+        the user to take it -- minutes, not seconds. unshare() or stop() then
+        found no tunnel installed to stop, so the client waited on: whoever
+        took the step later brought a link up in front of nothing."""
+        import threading
+        import time
+
+        from pythontk.core_utils.app_launcher import AppLauncher
+        from pythontk.net_utils.share_tunnel import ShareTunnel
+
+        page = "https://step.example.test/enable"
+        waiting = {
+            **self.fake,
+            "args": [
+                "-u",
+                "-c",
+                f"import time; print('To enable, visit: {page}', flush=True); "
+                "time.sleep(600)",
+            ],
+            "action": r"https://step\.example\.test/\S+",
+        }
+        spawned = []
+        real_spawn = AppLauncher.spawn
+
+        def recording_spawn(*args, **kwargs):
+            process = real_spawn(*args, **kwargs)
+            spawned.append(process)
+            return process
+
+        for stop in ("unshare", "stop"):
+            with self.subTest(stop=stop):
+                spawned.clear()
+                steps, outcome = [], {}
+
+                def share():
+                    try:
+                        outcome["info"] = self._share(
+                            provider="fake-step", on_step=steps.append
+                        )
+                    except Exception as error:  # noqa: BLE001 -- asserted below
+                        outcome["error"] = error
+
+                with (
+                    unittest.mock.patch.dict(
+                        ShareTunnel.PROVIDERS, {"fake-step": waiting}
+                    ),
+                    unittest.mock.patch.object(
+                        AppLauncher, "spawn", side_effect=recording_spawn
+                    ),
+                ):
+                    sharer = threading.Thread(target=share)
+                    sharer.start()
+                    deadline = time.monotonic() + 20
+                    while not steps and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertTrue(steps, f"no step was reported: {outcome}")
+                    stopped = time.monotonic()
+                    getattr(self.server, stop)()
+                    sharer.join(timeout=30)
+
+                self.assertLess(time.monotonic() - stopped, 5, "the stop waited")
+                self.assertEqual(steps[0].url, page)
+                self.assertIsInstance(outcome.get("error"), RuntimeError, outcome)
+                self.assertIsNone(self.server.share_info())
+                self.assertIsNone(self.server.guest_port)
+                self.assertIsNotNone(spawned[0].poll(), "the tunnel outlived the stop")
+
     def test_sharing_again_on_the_same_provider_keeps_the_link(self):
         first = self._share()
         tunnel = self.server._tunnel
@@ -3893,6 +4212,21 @@ class PreviewShareTestCase(unittest.TestCase):
         bridge.unshare()
         self.assertIsNone(bridge.share_url)
         self.assertTrue(self.server.is_running)
+
+    def test_the_bridge_hands_its_caller_the_providers_step(self):
+        """The panel shares through the bridge; a step the provider stops on
+        has to reach it, or it can only fail where it could have offered."""
+        from pythontk.net_utils.preview.bridge import FilePreviewBridge
+
+        bridge = FilePreviewBridge()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        hook = unittest.mock.Mock()
+        info = {"url": self.LINK, "label": "Fake tunnel"}
+        with unittest.mock.patch.object(
+            PreviewServer, "share", return_value=info
+        ) as share:
+            bridge.share(provider="fake", on_step=hook)
+        self.assertIs(share.call_args.kwargs["on_step"], hook)
 
 
 if __name__ == "__main__":

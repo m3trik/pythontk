@@ -19,11 +19,11 @@ Record schema (all keys optional unless noted):
 """
 
 import html as _html
-import urllib.parse as _urlparse
 from typing import Any, Dict, List
 
 # From this package:
 from pythontk.file_utils._file_utils import FileUtils
+from pythontk.str_utils.report_doc import ReportDoc
 
 
 class MatReport:
@@ -43,20 +43,11 @@ class MatReport:
 
     @staticmethod
     def _path_as_link(path: str) -> str:
-        """Wrap *path* in an ``<a href='file:///…'>`` anchor. Display text is the original path
-        (HTML-escaped); the href is a URL-encoded ``file://`` URI so spaces, ``&``, and
-        parentheses in paths survive Qt's link handler. Returns the escaped path verbatim when
-        no anchor target is resolvable (empty input)."""
-        if not path:
-            return ""
-        display = _html.escape(path)
-        href_path = path.replace(
-            "\\", "/"
-        )  # forward slashes are valid on Windows file:// URLs
-        href = "file:///" + _urlparse.quote(href_path.lstrip("/"), safe="/:")
-        return (
-            f"<a href='{href}' style='color:#9cf; text-decoration:none;'>{display}</a>"
-        )
+        """*path* as a ``file:`` anchor (:meth:`ReportDoc.file` -- the one builder):
+        the display text is the original path, HTML-escaped; the href is URL-encoded
+        so spaces, ``&`` and parentheses survive Qt's link handler. Empty for an
+        empty path."""
+        return ReportDoc.file(path).html if path else ""
 
     # ---- texture info ------------------------------------------------------
     @classmethod

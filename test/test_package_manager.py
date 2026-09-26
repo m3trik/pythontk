@@ -26,6 +26,30 @@ from pythontk.core_utils.package_manager import (
 from conftest import BaseTestCase
 
 
+def _pip_argv(cmd, kwargs):
+    """The ``<python> [flags] -m pip <args>`` a :meth:`PackageManager._run_pip` call stands for.
+
+    pip's arguments travel in the environment, not on the command line (see ``_run_pip``),
+    so a recorded ``subprocess.run`` call is decoded back into the form it replaces.
+    """
+    import json
+
+    shim = cmd.index("-c")
+    args = json.loads(kwargs["env"][PackageManager._PIP_ARGV_VAR])
+    return cmd[:shim] + ["-m", "pip"] + args
+
+
+def _find_mayapy():
+    """A mayapy.exe on this machine, else None (Windows default install layout)."""
+    if sys.platform != "win32":
+        return None
+    from pathlib import Path
+
+    root = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Autodesk"
+    found = sorted(root.glob("Maya20*/bin/mayapy.exe")) if root.is_dir() else []
+    return str(found[-1]) if found else None
+
+
 class PackageManagerTest(BaseTestCase):
     """Tests for PackageManager class."""
 
@@ -486,7 +510,8 @@ class InstallTargetedTest(BaseTestCase):
             returncode = 0
 
         def run(cmd, **kwargs):
-            calls.append((list(cmd), kwargs))
+            cmd = _pip_argv(list(cmd), kwargs)
+            calls.append((cmd, kwargs))
             if "--report" in cmd:
                 report = cmd[cmd.index("--report") + 1]
                 payload = {
@@ -579,7 +604,8 @@ class InstallTargetedTest(BaseTestCase):
             returncode = 0
 
         def run(cmd, **kwargs):
-            calls.append((list(cmd), kwargs))
+            cmd = _pip_argv(list(cmd), kwargs)
+            calls.append((cmd, kwargs))
             if "--report" in cmd:
                 payload = {
                     "install": [
@@ -614,6 +640,122 @@ class InstallTargetedTest(BaseTestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 self.pm.install_targeted("x", target_dir="X:/t")
         self.assertIn("no install report", str(ctx.exception))
+
+    def test_an_upgrade_leaves_one_dist_info_per_dist(self):
+        """``pip install --target --upgrade`` replaces what it moves in by top-level NAME,
+        and a dist-info's name carries its version: upgrading QtPy 2.4.2 -> 2.4.3 left both
+        dist-infos in the target (measured, pip 23.2 under mayapy). pip then read the STALE
+        one as installed -- so the next plan re-applied the same release -- and
+        ``pip uninstall`` removed that copy by its RECORD and left the current dist-info
+        behind. The superseded copy goes; another dist sharing the directory never does."""
+        from unittest import mock
+        from pythontk.core_utils import package_manager as pm_mod
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        def dist_info(target, name, version):
+            info = os.path.join(target, f"{name}-{version}.dist-info")
+            os.makedirs(info)
+            with open(os.path.join(info, "METADATA"), "w") as fh:
+                fh.write(f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n")
+
+        with TempArtifacts("install_targeted_prune", policy="scoped") as tmp:
+            target = tmp.dir_path("target")
+            dist_info(target, "QtPy", "2.4.2")  # the release being upgraded
+            dist_info(target, "other_addon", "1.0")  # another add-on's
+            plan = self._fake_run([("QtPy", "2.4.3")])
+
+            def run(cmd, **kwargs):
+                result = plan(cmd, **kwargs)
+                if "--target" in _pip_argv(list(cmd), kwargs):  # what pip's move leaves
+                    dist_info(target, "QtPy", "2.4.3")
+                return result
+
+            with mock.patch.object(pm_mod.subprocess, "run", side_effect=run):
+                self.pm.install_targeted("qtpy", target_dir=target, upgrade=True)
+            left = sorted(e for e in os.listdir(target) if e.endswith(".dist-info"))
+        self.assertEqual(left, ["QtPy-2.4.3.dist-info", "other_addon-1.0.dist-info"])
+
+    def test_pip_arguments_travel_in_the_environment_not_argv(self):
+        """mayapy.exe decodes its ANSI command line as UTF-8.
+
+        Measured on Maya 2025: an argument "José" arrived as "Jos\\udce9" and "Жук" as
+        "???", while the environment and the working directory arrived intact. So a
+        ``--target`` path through a prefs dir with a non-ASCII letter made pip install
+        into a DIFFERENT directory, and nothing imported from the real one afterwards.
+        No path may reach pip through argv.
+        """
+        from unittest import mock
+        from pythontk.core_utils import package_manager as pm_mod
+
+        target = "X:/Users/Jos\u00e9/site"
+        seen = []
+
+        class _Result:
+            stdout = ""
+            stderr = ""
+            returncode = 0
+
+        def run(cmd, **kwargs):
+            seen.append((list(cmd), kwargs))
+            args = _pip_argv(list(cmd), kwargs)
+            if "--report" in args:
+                import json
+
+                with open(args[args.index("--report") + 1], "w") as fh:
+                    json.dump(
+                        {"install": [{"metadata": {"name": "six", "version": "1"}}]}, fh
+                    )
+            return _Result()
+
+        with mock.patch.object(pm_mod.subprocess, "run", side_effect=run):
+            self.pm.install_targeted("six", target_dir=target)
+
+        self.assertEqual(len(seen), 2)
+        for cmd, kwargs in seen:
+            self.assertEqual(cmd[-2:], ["-c", PackageManager._PIP_SHIM], cmd)
+            self.assertTrue(all(part.isascii() for part in cmd), cmd)
+            self.assertTrue(kwargs["env"][PackageManager._PIP_ARGV_VAR].isascii())
+        apply_args = _pip_argv(*seen[1])
+        self.assertEqual(apply_args[apply_args.index("--target") + 1], target)
+
+    def test_a_failed_pip_is_reported_as_the_command_it_stands_for(self):
+        """The error names ``-m pip <args>``, not the shim that carried them."""
+        from unittest import mock
+        from pythontk.core_utils import package_manager as pm_mod
+
+        failure = pm_mod.subprocess.CalledProcessError(1, "x", stderr="no network")
+        with mock.patch.object(pm_mod.subprocess, "run", side_effect=failure):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.pm._run_pip(["install", "six"])
+        self.assertIn("-m pip install six", str(ctx.exception))
+        self.assertIn("no network", str(ctx.exception))
+
+    def test_pip_really_runs_with_the_arguments_from_the_environment(self):
+        """The shim is ``python -m pip``: a real pip, offline, lists a dist in a non-ASCII dir."""
+        self._assert_lists_a_dist_in_a_non_ascii_dir(sys.executable)
+
+    @unittest.skipUnless(_find_mayapy(), "mayapy.exe not installed")
+    def test_mayapy_receives_a_non_ascii_path_intact(self):
+        """The measured failure itself: through mayapy, a path pip is handed must arrive
+        as written. On the argv route pip listed an EMPTY, mangled directory."""
+        self._assert_lists_a_dist_in_a_non_ascii_dir(_find_mayapy())
+
+    def _assert_lists_a_dist_in_a_non_ascii_dir(self, python):
+        import json
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        with TempArtifacts("pip_argv", policy="scoped") as tmp:
+            where = tmp.dir_path("Jos\u00e9 \u00c5ngstr\u00f6m")
+            info = os.path.join(where, "probe_dist-1.0.dist-info")
+            os.makedirs(info)
+            with open(os.path.join(info, "METADATA"), "w") as fh:
+                fh.write("Metadata-Version: 2.1\nName: probe-dist\nVersion: 1.0\n")
+            flags = ["--format", "json", "--disable-pip-version-check"]
+            result = PackageManager(python_path=python)._run_pip(
+                ["list", "--path", where] + flags, python_flags=["-s"]
+            )
+        names = [row["name"].lower() for row in json.loads(result.stdout)]
+        self.assertEqual(names, ["probe-dist"], result.stdout)
 
 
 class PkgVersionCheckThreadTest(BaseTestCase):

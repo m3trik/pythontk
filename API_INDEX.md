@@ -202,7 +202,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class BatchComplete(StoreEvent)`
 - `class StoreInvalidated(StoreEvent)`
 - `class ShotStore(_ShotStoreInternal)`
-  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, is_empty, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, invalidate, flush_pending, snap, enclosing_bounds, compute_gap, sorted_shots, shot_by_id, shot_by_name, name_error, unique_among, unique_name, default_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, to_export_view, export_records, produce_export_records, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs, declared_range
+  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, has_animation, detect_regions, assess, publish_export_view, active_shot_id, set_active_shot, is_empty, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, invalidate, flush_pending, snap, enclosing_bounds, compute_gap, sorted_shots, shot_by_id, shot_by_name, name_error, unique_among, unique_name, default_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, to_dict, stale_shots, remove_stale_shots, to_export_view, export_records, produce_export_records, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, resolve_clip_specs, declared_range
 
 ### `core_utils/engines/shots/shot_plan.py` — Pure planning layer for multi-shot topology transformations.
 - `class ShotBoundaryConflict(RuntimeError)`
@@ -268,7 +268,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class MapType`
   - methods: compose_aliases, carried_types
 - `class MapRegistry(SingletonMixin)`
-  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, split_duplicate_token, resolve_type_from_path, get_suffix_strip_pattern, split_map_suffix, shares_workflow, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, packed_precedence, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, is_lossy_safe, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_missing_map_rule, allow_incomplete_pack, resolve_config
+  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, split_duplicate_token, resolve_type_from_path, get_suffix_strip_pattern, split_map_suffix, shares_workflow, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, packed_precedence, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, is_lossy_safe, estimate_gpu_bytes, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_missing_map_rule, allow_incomplete_pack, resolve_config
 
 ### `core_utils/engines/textures/mat_report.py` — DCC-agnostic formatters for material / texture info reports.
 - `class MatReport`
@@ -327,7 +327,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/hierarchy_baseline.py` — The change-detection baseline an exporter diffs a scene's hierarchy against.
 - `class HierarchyBaseline`
-  - methods: top_level, in_scope, relevant_roots, compare, merge, paths_hash, encode, is_record, decode
+  - methods: top_level, in_scope, relevant_roots, compare, merge, adopt, paths_hash, encode, is_record, decode, recorded_by
 
 ### `core_utils/hierarchy_utils/hierarchy_analyzer.py`
 - `class DifferenceType(Enum)`
@@ -441,13 +441,13 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class Record`
   - methods: key, text, save
 - `class RecordSpec`
-  - methods: make, encode, decode, read_text, write_text, load, save, clear, is_present
+  - methods: path_keys, make, encode, decode, read_text, write_text, load, save, clear, is_present
 - `class SceneRecords`
   - methods: resolve_class, codec, portable, rendering_policy, all, with_paths, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
 - `class SceneStoreBase`
-  - methods: name, read, write, values, keys, channels, dump, project_root, project_root_of, rebase_paths, format_dump, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
+  - methods: name, read, write, values, keys, channels, dump, scene_path, project_root, writer_stamp, written_here, project_root_of, rebase_paths, format_dump, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
 - `class ExportContext`
-  - methods: record, refreshes
+  - methods: note, record, refreshes
 - `class ExportSnapshot`
   - methods: assemble, publish, commit, records, record, channels, summary
 - `class TransferContext`
@@ -731,7 +731,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `net_utils/preview/bridge.py` — The hand-off bridge whose target is a live preview page.
 - `class PreviewBridge(HandoffBridge)`
-  - methods: lightmap_search_dirs, params_defaults, url, scope_objects, push, publish_file, sidecar_summary, lightmap_summary, share, unshare, share_url, stop
+  - methods: lightmap_search_dirs, params_defaults, url, scope_objects, push, publish_file, sidecar_summary, lightmap_summary, timing_summary, share, unshare, share_url, stop
 - `class FilePreviewBridge(PreviewBridge)`
   - methods: lightmap_search_dirs
 
@@ -776,7 +776,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `net_utils/share_tunnel.py` — Expose a local HTTP port at a public HTTPS link, through a tunnel CLI.
 - `class ShareTunnel(LoggingMixin, _ShareTunnelInternal)`
-  - methods: resolve_provider, executable, not_installed_error, settle, label, public, is_running, url, netloc, alias_error, output, start, stop
+  - methods: resolve_provider, executable, not_installed_error, settle, label, public, is_running, url, netloc, alias_error, output, start, stop, cancel
 
 ### `net_utils/ssh_client.py`
 - `class SSHClient`
@@ -794,6 +794,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `str_utils/hotkey_utils.py` — Portable hotkey-token helpers shared by the ecosystem's macro managers.
 - `class HotkeyUtils`
   - methods: parse_key, qt_sequence_to_key, key_to_qt_sequence, humanize_label
+
+### `str_utils/report_doc.py` — ``ReportDoc`` -- a report built once as blocks, rendered as HTML or plain text.
+- `class ReportDoc`
+  - methods: heading, text, fields, table, items, extend, color, span, link, action, file, join, to_html, to_text
 
 ### `vid_utils/_vid_utils.py`
 - `class VidUtils(HelpMixin)`

@@ -152,6 +152,20 @@ class TestAppLauncher(unittest.TestCase):
         if process.poll() is None:
             subprocess.call(["taskkill", "/F", "/T", "/PID", str(process.pid)])
 
+    def test_get_running_processes_accepts_the_bare_name(self):
+        """``get_running_processes("maya")`` finds maya.exe -- the documented form.
+
+        Regression: on Windows the bare name went to tasklist's IMAGENAME filter and
+        the row check verbatim, so it matched nothing -- and MayaConnection's
+        "is our PID still a Maya?" guard never let it close the stale instance it
+        had launched before relaunching.
+        """
+        image = os.path.basename(sys.executable)
+        if os.getpid() not in AppLauncher.get_running_processes(image):
+            self.skipTest(f"this process is not listed under {image}")
+        bare = os.path.splitext(image)[0]
+        self.assertIn(os.getpid(), AppLauncher.get_running_processes(bare))
+
     def test_find_system_apps(self):
         """Test finding OS specific apps."""
         if sys.platform == "win32":

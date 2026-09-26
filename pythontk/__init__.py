@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.11.3"
+__version__ = "0.11.4"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -379,6 +379,7 @@ DEFAULT_INCLUDE = {
     "net_utils.rpc.plugin_core": ["OpRegistry", "MainThreadMarshaller", "RpcPlugin"],
     "str_utils.fuzzy_matcher": "FuzzyMatcher",
     "str_utils.hotkey_utils": "HotkeyUtils",
+    "str_utils.report_doc": ["ReportDoc"],
 }
 
 

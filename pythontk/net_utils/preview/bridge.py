@@ -15,6 +15,7 @@ other, and anything written in both drifts in both.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
@@ -60,6 +61,17 @@ class PreviewBridge(HandoffBridge):
         hook shape the rest of this class uses to stay host-independent.
         """
         return ()
+
+    def _start_node(self, name: str) -> Optional[Any]:
+        """The scene's node named *name* -- where every view starts -- or ``None``.
+
+        A host hook, the shape of ``_scene_objects``: pythontk cannot read a
+        scene, so the DCC bridge answers (mayatk's and blendertk's look the
+        name up in the live scene, namespaces included). ``None`` here, which
+        leaves a push exactly as scoped -- right for a bridge with no scene,
+        such as :class:`FilePreviewBridge`.
+        """
+        return None
 
     def params_defaults(self) -> Dict[str, Any]:
         """glTF-appropriate export defaults, read by both DCC export mixins.
@@ -249,9 +261,28 @@ class PreviewBridge(HandoffBridge):
                 without writing it into the scene first. Named for the same
                 reason as the knobs above: ``**params`` is the EXPORT bag.
             **params: Export param overrides (see :meth:`params_defaults`).
+
+        The start node -- the scene's camera named by the deliverer's
+        ``user_pos`` -- joins any push that has something in it, whatever
+        *scope* chose: the page reads it, so a selection that left it out
+        would start every view on the whole model with nothing to say why
+        (the reason the data-export carrier is joined too). A push with
+        nothing in it stays empty, and fails as one.
+
+        The result carries ``"timings"``, the seconds each stage took --
+        ``export`` (the host's half), the build's stages, ``publish``,
+        ``total`` -- which :meth:`timing_summary` renders.
         """
+        # The push's own clock, left on the request for the deliverer: only it
+        # sees where the host's half (the export, chiefly) ends and the build
+        # begins.
+        started = time.perf_counter()
         if objects is None:
             objects = self.scope_objects(scope)
+        name = getattr(self.deliverer, "user_pos", None)
+        start = self._start_node(name) if objects and name else None
+        if start is not None and start not in objects:
+            objects = [*objects, start]
         # setdefault, not assignment: an explicit SCOPE in the param bag is a
         # caller who resolved the objects themselves and is naming what they
         # mean, which must outrank the convenience default.
@@ -264,6 +295,7 @@ class PreviewBridge(HandoffBridge):
             scripts=scripts,
             progress=progress,
             data_export=data_export,
+            **{PreviewDeliverer.STARTED_KEY: started},
         )
 
     def publish_file(
@@ -297,7 +329,9 @@ class PreviewBridge(HandoffBridge):
                 set alone.
 
         Returns:
-            ``{"url", "version", "asset", "opened_browser", "source"}``.
+            ``{"url", "version", "asset", "opened_browser", "source",
+            "timings"}`` -- ``timings`` as :meth:`push` reports them, here
+            only ``publish`` and ``total``.
 
         Raises:
             RuntimeError: The bridge has no deliverer to publish through.
@@ -326,13 +360,19 @@ class PreviewBridge(HandoffBridge):
                 f"{path.name}"
             )
 
+        publishing = time.perf_counter()
         record = self.deliverer.publish(
             path, move=False, open_browser=open_browser, scripts=scripts
         )
+        elapsed = round(time.perf_counter() - publishing, 3)
         self.logger.info(
             "Published %s to the preview as v%s.", path.name, record["version"]
         )
-        return {**record, "source": str(path)}
+        return {
+            **record,
+            "source": str(path),
+            "timings": {"publish": elapsed, "total": elapsed},
+        }
 
     @staticmethod
     def sidecar_summary(result: Optional[Dict[str, Any]]) -> str:
@@ -363,8 +403,8 @@ class PreviewBridge(HandoffBridge):
             f"{name} {outcome}" for name, outcome in sorted(applied.items())
         )
 
-    @staticmethod
-    def lightmap_summary(result: Optional[Dict[str, Any]]) -> str:
+    @classmethod
+    def lightmap_summary(cls, result: Optional[Dict[str, Any]]) -> str:
         """One plain-text line on the lightmaps: bound, or how many came back unlit.
 
         The sibling of :meth:`sidecar_summary`, for the same reason: a bake
@@ -390,20 +430,96 @@ class PreviewBridge(HandoffBridge):
         # until the other 47 are accounted for.
         left_out = int(report.get("out_of_scope") or 0)
         scope = (
-            f" {left_out} more object(s) in the scene's bake were not in this push."
+            f" {left_out} more baked {cls._objects(left_out)} in the scene "
+            f"{'was' if left_out == 1 else 'were'} not in this push."
             if left_out
             else ""
         )
+        # Counted in the unit the bake is made in -- objects -- and said as
+        # words rather than "n/m", which read as a score against a total the
+        # line never named. The viewer's HUD counts the same unit.
         if not unbound:
-            return f"Lightmaps: {bound}/{expected} object(s) bound.{scope}"
+            every = "the" if expected == 1 else f"all {expected}"
+            return f"Lightmaps: {every} baked {cls._objects(expected)} bound.{scope}"
         listed = ", ".join(unbound[:5])
         if len(unbound) > 5:
             listed += f", +{len(unbound) - 5} more"
         return (
-            f"Lightmaps: {bound}/{expected} object(s) bound - {len(unbound)} "
-            f"preview UNLIT ({listed}). Their maps were not found where the "
-            f"bake markers point; see the log for the folders searched.{scope}"
+            f"Lightmaps: {bound} of {expected} baked {cls._objects(expected)} "
+            f"bound - {len(unbound)} preview UNLIT ({listed}). Their maps were "
+            f"not found where the bake markers point; see the log for the "
+            f"folders searched.{scope}"
         )
+
+    @staticmethod
+    def _objects(count: int) -> str:
+        """``object`` or ``objects``, for *count*."""
+        return "object" if count == 1 else "objects"
+
+    #: What :meth:`timing_summary` calls each stage the push result times.
+    #: A stage missing here is shown under its own key.
+    TIMING_LABELS: Dict[str, str] = {
+        "export": "export",
+        "takes": "take strip",
+        "downsize": "downsize",
+        "fbx2gltf": "FBX2glTF",
+        "passes": "GLB passes",
+        "convert": "conversion",
+        "reduce": "key reduction",
+        "textures": "texture pass",
+        "copy": "copy",
+        "publish": "publish",
+    }
+    #: A stage quicker than this is left out of :meth:`timing_summary`: a
+    #: line of "publish 0.0 s" entries buries the one stage that matters.
+    TIMING_FLOOR: float = 0.05
+
+    @classmethod
+    def timing_summary(cls, result: Optional[Dict[str, Any]]) -> str:
+        """One plain-text line on where a push's time went.
+
+        The sibling of :meth:`sidecar_summary` and :meth:`lightmap_summary`.
+        After a slow push the question is WHICH stage, and the answer decides
+        where the fix goes: FBX2glTF's cost is set by what the DCC exports
+        (the take range, the node count -- docs/webxr_preview.md, *Cost and
+        budget*), the passes and the texture pass by this package, the export
+        by the host. So each stage that took measurable time is named in the
+        order it ran, the slowest carries its share of the total, and a stage
+        too quick to matter is left out rather than printed as 0.0 s.
+
+        Parameters:
+            result: A :meth:`push` or :meth:`publish_file` result; its
+                ``"timings"`` is ``{stage: seconds}`` ending in ``"total"``.
+
+        Returns:
+            The line, or ``""`` when the result carries no timings (a failed
+            push, or a deliverer that records none).
+        """
+        timings = (result or {}).get("timings") or {}
+        total = timings.get("total")
+        if not isinstance(total, (int, float)) or total <= 0:
+            return ""
+        shown = [
+            (stage, seconds)
+            for stage, seconds in timings.items()
+            if stage != "total"
+            and isinstance(seconds, (int, float))
+            and seconds >= cls.TIMING_FLOOR
+        ]
+        slowest = max(shown, key=lambda pair: pair[1])[0] if len(shown) > 1 else None
+        parts = []
+        for stage, seconds in shown:
+            part = f"{cls.TIMING_LABELS.get(stage, stage)} {cls._seconds(seconds)}"
+            if stage == slowest:
+                part += f" ({round(100 * seconds / total)}%)"
+            parts.append(part)
+        head = f"Push took {cls._seconds(total)}"
+        return f"{head}: {', '.join(parts)}." if parts else f"{head}."
+
+    @staticmethod
+    def _seconds(value: float) -> str:
+        """*value* seconds as the summaries print it: tenths under 10 s."""
+        return f"{value:.1f} s" if value < 10 else f"{value:.0f} s"
 
     def share(
         self,
@@ -412,6 +528,7 @@ class PreviewBridge(HandoffBridge):
             str, os.PathLike, Callable[[Optional[str]], Any], bool, None
         ] = None,
         alias_url: Optional[str] = None,
+        on_step: Optional[Callable[[Any], Any]] = None,
     ) -> Dict[str, Any]:
         """Give the live preview a link anyone can open -- view-only, and every
         later push reaches it.
@@ -420,7 +537,9 @@ class PreviewBridge(HandoffBridge):
         which gets its VR button because the link is HTTPS. This machine serves
         files and renders nothing for anyone. Starts serving when no push has
         yet, so a link can go out before the first model does. See
-        :meth:`PreviewServer.share` for the parameters and what can raise.
+        :meth:`PreviewServer.share` for the parameters -- *on_step* is how a
+        panel hears of a one-time step to offer while the share waits on it --
+        and for what can raise.
 
         Returns:
             :meth:`PreviewServer.share_info`; ``["url"]`` is the link to send.
@@ -434,7 +553,9 @@ class PreviewBridge(HandoffBridge):
                 f"{type(self).__name__} has no preview deliverer to share; "
                 f"share needs a PreviewDeliverer."
             )
-        info = ensure().share(provider=provider, alias=alias, alias_url=alias_url)
+        info = ensure().share(
+            provider=provider, alias=alias, alias_url=alias_url, on_step=on_step
+        )
         self.logger.info(
             "Sharing the preview at %s (%s, view-only).", info["url"], info["label"]
         )

@@ -88,7 +88,7 @@ Ownership, because it decides where a fix goes:
 | `pythontk.PreviewDeliverer` | the build's dials (container, scratch, release) and the publish |
 | `pythontk.PreviewBridge` | the glTF-appropriate export defaults, the sidecar attach and the `push()` / `publish_file()` / `url` / `share()` / `stop()` surface |
 | `pythontk.MeshConvert` | every GLB edit, the sidecar envelope schema, the lightmap binding, **the published rendering policy** |
-| `net_utils/preview/viewer.html` | rebinding the carrier slot to a real `lightMap`, scale/framing, and **spending** the rendering policy it reads out of the file |
+| `net_utils/preview/viewer.html` | rebinding the carrier slot to a real `lightMap`, framing, headset locomotion, and **spending** the rendering policy it reads out of the file |
 | `net_utils/preview/scripts/*.js` | optional behaviour the page gains by activation, never by being edited |
 | `mayatk` / `blendertk` | reading the host's selection, exporting the FBX inside the export bracket, reading scene state |
 
@@ -155,17 +155,169 @@ it is a *source*, not a scope, and every other hand-off bridge would inherit a c
 to honour. The viewer-script rows still apply — those describe the page, and the page is the same
 one either source publishes to.
 
-In the page: **Scale** toggles fitted (normalized to 1.5 m) vs. true scale and **Frame** re-frames
-the camera (`r` / `f`). A third slot, `#lookdev`, is the area for dials that tune how the model
-*reads*: the **Normals** dial (`normalTexture.scale`, saved into the GLB through `POST /settings`).
+In the page, the model stands at its true size, centred on the floor; the view opens through the
+scene's start camera when it has one (see *Where a view starts*), and **Frame** frames the whole
+model (`f`). A second slot, `#lookdev`, is the area for dials that tune how the model *reads*: the **Normals** dial (`normalTexture.scale`, saved into the GLB through `POST /settings`).
 Each dial hides itself when the model gives it nothing to do, and the area follows them;
 `LOOKDEV_ENABLED` holds the whole area back until there is a SET of dials worth a permanent
 seat. Adding the next dial is markup inside `#lookdev`, a sync called from `syncLookdev`, and
 its element in that function's `controls` list.
 
-Fitted mode exists because exported units are rarely metres — a centimetre scene
-arrives 100× too large, and "my model is invisible because I am standing inside it" is the most
-common first-run failure.
+### What the page tells you
+
+The overlay in the corner says what the deliverable on screen **is**, in the units you author in:
+
+```
+Maya
+● v12 · 9.5 MB · updated 3:04:24 PM            the version live, and the file's size
+757 objects · 98,212 tris · 12.4 × 3.1 × 8.2 m
+46 of 50 objects lightmapped · 13 clips · 3 animated materials
+⚠ 2 baked objects render unlit — no lightmap bound: wall_A, wall_B
+```
+
+- **Objects** are the file's mesh nodes -- what the DCC exported. three.js draws each *primitive*
+  as a mesh of its own, so an object wearing three materials is three draws; that count is
+  Inspect's.
+- **Size** is in metres: glTF's unit, and what a headset shows 1:1 -- to hundredths below 10 m,
+  tenths below 100 m, whole metres past that. It is the model's own, however a script has turned
+  it.
+- **Lightmapped** counts objects, never materials, and never as a bare fraction. It once read
+  "51/57 lightmapped materials": a fraction of three.js material *instances* -- the lightmap pass
+  gives every baked object its own copy of its material (`<name>~lm<N>`), and the loader clones one
+  per vertex-colour or tangent variant -- over a denominator that included every material nobody
+  meant to bake. Right numbers, misleading sentence. How much of the model its bake lights is the
+  fact the lighting policy turns on (see *Are they combined with the viewer's default lighting?*),
+  counted in the unit the bake is made in and the panel's push report uses.
+- **Animated materials** are the materials a fade or highlight track drives. A track that is not
+  being driven looks like an object that simply pops, so the count is how you know they are.
+- **The warning line** is what the load found wrong, because the render cannot show it. Every
+  baked object carries its bake's `lightmapInfo` marker in the file, so the page compares what the
+  bake meant to light with what bound: a **baked object with no lightmap** renders unlit, exactly
+  like one never baked; an **object wearing a lightmap it was never baked with** renders another
+  object's lighting (a deliverable built before the applier stopped binding over a material an
+  unbaked object shares -- see *Where the maps are found*); a **lightmapped object without the UV
+  set its bake is sampled on** (the second, unless the file's `lightmap_web.uv` names another) reads
+  one texel of its map. A lightmap carrier the page does not read, a material the
+  manifest names that the model lacks, and a lightmapped material that arrived without its map are
+  said the same way. The first issue is on the HUD; every one, with every name, goes to the console.
+
+The same measurement is `viewer.specs` for a script (and the `specs` of the `'load'` event).
+
+**Inspect** -- tick it among the WebXR Preview's viewer scripts, then press `i` or its button --
+opens a panel of what the preview *costs*, measured on the device rendering it:
+
+| Section | Reads |
+|---|---|
+| **Frame** | frame time (average, 95th percentile, worst) against the display's budget -- the headset's own rate in a session -- and the frames that missed it; the page's CPU time and the part spent submitting the draw; the GPU's time where the browser exposes a timer query (desktop Chromium does; many mobile and headset browsers do not, and the row says so); draw calls and triangles per frame |
+| **Model** | objects, draws, triangles, materials in the file and in three.js, lightmap coverage, animation |
+| **GPU memory** | estimated from what the model uploads: block-compressed KTX2 at its transcoded size, a mip chain where one is generated, and an image several materials share once (every lightmapped object samples its atlas through a texture of its own, and all of them share one image) |
+| **File** | what the GLB's bytes are: images, geometry, animation, its JSON |
+| **Load** | download, parse, setup, and the first frame's program compile and texture upload |
+| **Issues** | the warning line's list, whole |
+
+**Copy report** puts all of it on the clipboard as JSON for a bug report, and every load logs a
+summary table to the console. In a headset, where the page's own chrome is not drawn at all, the
+panel rides beside your view as a card: open it on the desktop before entering, or press **B** or
+**Y** in the session. How long the *push* took is the panel's business rather than the page's --
+see *Cost and budget*.
+
+### In the headset
+
+**Enter VR and you are standing in the model, at its true size**, under the scene's start camera
+(see *Where a view starts*); a scene without one starts you at its origin -- the centre of the
+model's footprint, on its floor. Getting around -- *locomotion*, which can be switched off (see
+below) -- is on the thumbsticks, the scheme most VR apps default to:
+
+| Control | Does |
+|---|---|
+| **Left stick** | walk where you look -- eased in and out, with a comfort vignette narrowing the view while you move; it follows the floor up a step (0.45 m) or down a drop (1 m), and a ledge taller than a step holds your height |
+| **Right stick, sideways** | snap-turn 45° about your head; one turn per flick |
+| **Right stick, forward** | aim a teleport arc -- cyan where you can land, red where you cannot (a wall, anything steeper than 40°); **release** to jump through a short blink, **pull back** to cancel |
+
+A jump puts your *head* over the landing, at its height, facing the way you already were -- the
+ring's arrow shows it before you commit. A controls card appears once per session where you first
+look, and fades as soon as you use them. The controllers are drawn from the WebXR input-profiles
+CDN (`cdn.jsdelivr.net`); unreachable, they are simply not drawn and nothing else changes.
+
+**Locomotion off** keeps a session where it starts: under the start camera when the scene has one,
+free to look round and step about the room -- the headset tracks the head, and locking that is what
+makes people sick -- but not to go anywhere, and nothing of locomotion is drawn. It is the
+deliverer's switch, like the start's name, applied with every publish:
+`mtk.WebXrPreview.deliverer.locomotion = False`, or the **Locomotion** box in the panel's Viewer
+section, which applies at once without a push. Either way the manifest carries it (`locomotion`)
+and the page reads it on every poll, so a headset already in a session -- a share's guests
+included -- stops within a second, and a viewer the sticks had already carried off is taken back
+to where the session started, through the blink.
+
+**A recenter** (holding the headset's system button) resets the tracked space under the viewer.
+One still standing where the start put them -- always, with locomotion off -- is put back there,
+facing its way, so the viewpoint holds wherever they have stepped to in the room; one who has
+walked off with the sticks keeps their place while locomotion is on.
+
+The page keeps three concerns apart, and they meet in one place:
+
+| | Owns | Viewer API |
+|---|---|---|
+| **rig** | where the headset stands in the scene, and the blink that hides a cut | `viewer.rig` -- `place`, `toScene`, `directionToScene`, `fade` |
+| **start** | where views begin: the desktop view through the start camera, and a session's first place | `viewer.headset.start` |
+| **locomotion** | the sticks, and everything drawn for them (arc, ring, card, vignette); moves only the rig | `viewer.locomotion` -- `enabled`, `aiming`, `arc`, `target` |
+
+`viewer.headset` is the meeting point, and the page's whole headset behaviour on plain values:
+`begin()` as a session starts, `step(delta, input)` each frame -- poses in the tracked space and
+each stick's `[x, y]` -- `end()`, `recenter()`, and `read(frame)`, which reads an XRFrame into
+that input (a stick from xr-standard's axes 2-3, or 0-1 on a controller with only a touchpad). It
+is how `test_preview_viewer_live` drives every behaviour above in a headless browser. The viewer
+moves, never the scene: the rig re-anchors the tracked space through an offset reference space, so
+the headset, the controllers and every camera three.js derives from them move together while the
+model stays put. three.js drives the desktop camera from the headset while a session runs; the
+page keeps the desktop view aside -- where the orbit camera stood, its field of view, its clip
+planes and what it turned about -- and puts it back as the session ends (a push landing
+mid-session, or **Frame**, re-frames the view that comes back). The session draws with a
+headset's near plane, 2 cm, whatever the model's size: the desktop's is sized to the model -- 23 cm
+for a 150 m ground framed whole -- and would cut away the blink, the comfort vignette and a
+controller brought near the face. The surfaces a walk and an arc strike are indexed per mesh as the
+session starts, so a frame tests the few dozen triangles near its casts however dense the mesh is
+(a skinned, morphed, instanced or multi-material mesh keeps three.js's own raycast). The packaged
+`turntable` holds still while a headset is presenting: at true scale a turning model is the world
+turning around you.
+
+### Where a view starts
+
+**Put a camera named `user_pos` where the viewer should stand, looking where they should look.** A
+camera rather than a locator or an Empty: you can look through it in Maya or Blender and see the
+start before you push, and it carries the field of view the desktop view opens with.
+
+| View | What it takes from the camera |
+|---|---|
+| **Headset** | where it stands and which way it looks. You arrive on the floor under it (the first walkable surface below, so a camera at eye height stands you where its feet would be), facing its view direction, through a short fade-in. Its height, tilt and field of view are the headset's own: the floor has to stay where your feet are. With locomotion off, it is where you stay |
+| **Desktop** | all of it. The page opens looking through it with its *horizontal* field of view (the one Maya's film-gate fill and Blender's sensor fit both hold for a landscape frame), orbiting about what it looks at. **Frame** (`f`) still frames the whole model |
+
+- **The push ships it whatever the scope.** The page reads it, so a selection that left it out would
+  start every view on the whole model with nothing to say why -- the reason the data-export carrier
+  ships too. Cameras are otherwise kept out of a hand-off (a receiving DCC has its own); the preview
+  is the one receiver that reads one, so any other camera in the pushed set rides along and the page
+  ignores it.
+- **The name** is `PreviewDeliverer.user_pos` -- `"user_pos"` by default, `None` for no start --
+  applied to the server with every publish, so the node a bridge ships and the node the page looks
+  for cannot differ: `mtk.WebXrPreview.deliverer.user_pos = "shot_start"`. The server's own
+  `user_pos` is live: a new name reaches the next session without a publish, and leaves a session
+  under way (and the desktop view) where it is.
+- **A Maya namespace is looked through**: a referenced set's `set:user_pos` answers when no node is
+  named `user_pos` exactly.
+- **Keep it visible in Blender.** Blender's export ships only what it can select, so a hidden start
+  camera (or one in an excluded collection) is left out with the export's own "cannot be selected
+  and will be DROPPED" warning, and the views start on the whole model. Maya ships a hidden one.
+- **A push with materials off** (`INCLUDE_MATERIALS=False`) still finds it: the strip copies only
+  what holds a material, so the camera ships as itself rather than as a renamed copy.
+- **A locator or an Empty** with the name places the headset too, and only the headset -- a marker
+  on the floor is no place to put an eye, so the desktop view frames the model as usual. It faces
+  the way a camera with the same rotation would look, or, for one that would look straight down, the
+  way the top of that view points: an unturned Blender Empty (whose -Z points down) faces its +Y,
+  Blender's forward.
+- **Verified through the real push** in fresh Maya 2025 and Blender 5.1 sessions: an *unselected*
+  camera under an offset, turned parent (namespaced, in Maya) arrives where it stood, looking its
+  way, with its field of view -- Maya's vertical and Blender's horizontal to 0.01 degrees. The clip
+  planes arrive in the wrong units and are not used.
 
 Export defaults (`PreviewBridge.params_defaults`): materials on, **textures embedded** (the browser
 can only fetch what the server hosts, so a path-referencing FBX previews with every map missing),
@@ -174,7 +326,7 @@ combined with smoothing groups, and the converter triangulates on the way to glT
 
 ## Sharing a link
 
-**Press Share Link, send the link, keep pushing.** The person who built the scene serves it; anyone
+**Turn sharing on, send the link, keep pushing.** The person who built the scene serves it; anyone
 with the link opens it in a browser -- desktop, phone, or a standalone headset's browser, which
 gets its VR button because the link is HTTPS. The share is **view-only** and **live**: every push
 reaches every guest on their next poll, and nothing a guest does writes to this machine. Each
@@ -188,9 +340,22 @@ preview.share_url                    # None once the share ends -- or once its t
 preview.unshare()                    # the owner's page and server are untouched
 ```
 
-In the WebXR Preview panel: the header menu's **Share Link** (copies the link) and **Stop
-Sharing**, the **Share Via** row, and the footer, which shows the link and how many guests are
-watching.
+In the WebXR Preview panel the **Sharing** row is the switch: **Off**, **Auto** or a provider.
+Picking one brings the link up at once and copies it; it then stays up across pushes, and every push
+logs it -- the same link each time, since a guest's page picks each push up by itself and a new link
+per push would strand everyone holding the last one. A share that dropped is brought back by the
+next push; one that cannot come up is logged there rather than put in a dialog. **Off** takes it
+down. A provider that needs a one-time step first (Tailscale, until the tailnet enables Funnel) is
+offered -- **Open Page** -- and the share waits for it in the background, the panel free meanwhile:
+once the step is taken the link comes up by itself, and the footer says what it waits on until then.
+The row's option box carries **Share Now** (also the retry after a failed share), **Copy Link**
+(which brings the link up when the row is on and it is not) and **Stop Sharing**, and the footer
+shows the link and how many guest tabs have it open right now (`guest_count`: polled within the
+viewer timeout), re-read every two seconds while the panel shows. Every address the panel logs --
+the link, the page a step takes, where to install a missing client -- is a link in the log.
+The row starts **Off** each session and is never restored: a link is a door to this machine, and a
+session opens it only when asked -- a row left on yesterday would otherwise share today's first
+push unprompted.
 
 ### How it works
 
@@ -211,7 +376,7 @@ before. The guest listener:
   publish passes through a `.part` file, and `scripts/` would list itself; none of it is the share.
   It never lists a folder -- not even `/` on a root that holds no page.
 - **refuses every write** (`/settings`, `/snapshot`, `/playblast/*`: 403), and takes no body past
-  4 KiB on any route (413, unread): its one write, the close beacon, carries none, and a still's
+  4 KiB on any route (413, never buffered): its one write, the close beacon, carries none, and a still's
   64 MB is the owner's. Its manifest says `"guest": true`, and the page hides
   what it cannot do: the owner-only scripts (`PreviewServer.OWNER_SCRIPTS`: `playblast`, `snapshot`)
   are not even served, and the Normals **Save** is hidden. `xrRuntime` is left out -- it describes
@@ -236,7 +401,15 @@ where to install) -- a provider is an entry, not a branch:
 | `tailscale_serve` | the same name, tailnet only | nothing public; a headset needs the Tailscale app |
 
 `provider=None` takes `PYTHONTK_SHARE_PROVIDER`, else the first installed of `ShareTunnel.PREFERENCE`
-(public providers only). A start returns only once guests can actually reach the link: after the
+(public providers only) -- what the machine has, rather than a download it did not ask for. A
+provider that stops on a one-time step in a browser -- Tailscale, until the tailnet enables Funnel
+-- prints the page that takes it and waits, carrying on by itself once someone does. `share(on_step=)`
+hands that page to the caller as a `ShareTunnel.StepRequired` (`url`, `label`) and keeps waiting --
+up to ten minutes, the step being a person's; with no `on_step`, or once the wait runs out, the
+share raises that `StepRequired` instead. Tailscale's step needs two things on
+the tailnet -- HTTPS certificates, and the `funnel` node attribute in its policy -- and the client
+waits until the machine holds both (`tailscale status --json`: `https` and `funnel` in
+`Self.CapMap`). A start returns only once guests can actually reach the link: after the
 provider's own ready line, and -- for a quick tunnel, whose name is new every time -- after a public
 resolver answers it (measured: NXDOMAIN for 6-18 s after the tunnel registers). The resolver is asked
 directly (`NetUtils.resolves_publicly`), never through this machine's DNS, because a lookup made too
@@ -246,7 +419,8 @@ early caches the miss for minutes -- on the builder's machine and, worse, on a g
 Job Object: it dies with the DCC however the DCC ends, a crash included. An orphaned tunnel would keep
 a public link pointed at a port that whatever binds it next would be published through. `stop()`
 ends any share first, and `unshare()` / `stop()` landing while a share still waits on its provider
-end that one too: its tunnel stops the moment its link arrives, and the share raises. Off Windows a
+end that one too, without waiting on it (`ShareTunnel.cancel()`): the waiting start stops its client
+at its next check and raises, and one whose link was already in stops its tunnel. Off Windows a
 crash can still orphan the client; a normal exit is covered by `atexit`.
 
 ### A link that never changes (the alias)
@@ -335,9 +509,22 @@ default* — the server outlives every push, so a script registered once must no
 next push that simply says nothing about scripts. An explicit `[]` is still an instruction.
 
 A module's default export receives the viewer API: `THREE`, `scene`, `renderer`, `camera`,
-`controls`, `pivot`, `model`, `bounds`, `policy`, `guest` (true on a view-only share, where every
+`controls`, `pivot`, `model`, `bounds`, `policy`, `specs` (the load's measurement -- see *What the
+page tells you*), `guest` (true on a view-only share, where every
 write is refused -- see *Sharing a link*), `setStatus`, `addButton(label, onClick)`,
-`showDialog({title, fields, confirm})`, and `on(event, fn)` for `'load'` / `'frame'` / `'key'`.
+`addPanel(title)` (a panel of label/value rows in the page's chrome, stacked top-right --
+`setRows`, `show`, and an `addButton` of its own; hidden until shown, written as text),
+`addHeadsetCard({name, width, height, metres, radius, over})` (a card of text in the headset,
+where the page's chrome is not drawn -- a canvas in its colours on a plane in the headset's layer,
+hidden until shown, `over` the model when asked; `draw(paint)` repaints it and hands
+`paint(context, width, height)` the canvas, `place(head, look, {ahead, aside, below, ease},
+delta)` stands it in front of a head and eases it after one, and `mesh` shows, hides and fades
+it -- the page's controls card and `inspect`'s ride it),
+`formatBytes(bytes)` (a size as the status line quotes one) and `materialsOf(node)` (a node's
+materials as a list, whether it carries one, an array or none),
+`showDialog({title, fields, confirm})`, and `on(event, fn)` for `'load'` / `'frame'` /
+`'rendered'` / `'key'` -- `'rendered'` fires after each frame is drawn, with the page's CPU time
+for it (`cpuMs`) and the part spent inside `renderer.render` (`renderMs`).
 A script that writes a file through the server gets the page's half of that too:
 `captureSize(maxEdge)` — the size to capture at and the pixel ratio to *render* at for it, clamped
 to what the GPU allocates, the one sizing rule a playblast and a still share — `refusal(response)`,
@@ -363,9 +550,11 @@ logged and contained —
 an optional module must never make a good preview *look* broken, because the one place this is read
 is a headset where the console is not visible.
 
-Five ship in the box: **`turntable`** (hands-free rotation, on the pivot so it survives a push),
-**`inspect`** (draw calls, materials and *decoded* texture memory read off the renderer — the two
-numbers a GLB's size does not tell you) and **`shadow_rig`** (the runtime half of the DCC shadow
+Five ship in the box: **`turntable`** (hands-free rotation on the desktop, on the pivot so it
+survives a push; it holds still in a headset),
+**`inspect`** (the profiler: frame time against the display's budget, CPU and GPU time, draw calls,
+estimated GPU memory, the file's composition and the load's phases -- the numbers a GLB's size does
+not tell you; see *What the page tells you*) and **`shadow_rig`** (the runtime half of the DCC shadow
 rigs: reads the `extras.shadow_web` manifest `MeshConvert.apply_glb_shadows` writes during the
 conversion, gives every plane one `ShaderMaterial` — projected silhouettes and horizon maps in one
 program — batches the projected planes that share an atlas and carry no fade into an
@@ -493,7 +682,11 @@ so they ride a **material clone carrying `KHR_texture_transform`** — pure JSON
 accessors and the same embedded texture, so any compliant viewer renders the rect with no custom
 code. A map the shared material cannot carry takes the same route: when objects baked into
 DIFFERENT maps share a material (a secondary material on two machine bodies, or a Per-Object bake
-of instances), each object after the first binds its own clone.
+of instances), each object after the first binds its own clone. So does a material the bake does
+not light everywhere it is worn: when an object the bake never saw -- or one whose map was lost --
+shares a baked object's material, each baked object binds its own copy and the material stays as
+authored. Bound in place, it lit the unbaked object with the other's lightmap (through its own
+second UV set, or one texel of it with none), and the page counted the material as lightmapped.
 
 ### Why a lightmap and not a fused unlit bake?
 
@@ -952,6 +1145,24 @@ Viewer Scripts row; the HUD and the control bar are page markup over the canvas 
 
 ## Cost and budget
 
+**Every push reports where its time went.** The result carries `timings` -- seconds per stage, in
+the order they ran and never overlapping: `export` (the host's half: the selection, the FBX write,
+the sidecar read), then the build's own (`GlbPipeline.build` reports the same for the Scene
+Exporters' GLB task) -- `takes`, `downsize`, `fbx2gltf` and `passes` (the conversion's two halves:
+the converter, and the edit session every repair runs in), `reduce`, `textures` -- then `publish`,
+and `total`. `PreviewBridge.timing_summary` renders it, and the panel logs it after every push:
+
+```
+Push took 333 s: export 6.7 s, downsize 7.5 s, FBX2glTF 290 s (87%), GLB passes 9.1 s, texture pass 10 s.
+```
+
+(The shape of the line, with the stage figures measured on the production assembly below.)
+
+The split matters because the fixes live in different places: FBX2glTF's share moves with what the
+scene exports (below), the passes and the texture pass with pythontk. The page's own costs --
+frame time, draw calls, GPU memory, download and parse -- are **Inspect**'s (see *What the page
+tells you*).
+
 Timings, measured end to end on a production assembly (366 MB FBX, 2485 nodes over 757 mesh
 transforms and 537 instanced shapes, 98k triangles, one 1591-frame take, 47 baked objects, 353 MB
 of embedded 4096² PNG), with the shipped methods wrapped and the machine otherwise idle:
@@ -1047,7 +1258,9 @@ are capped at 0.75). The deliverable's per-frame animation keys are the third le
 - **Per-object maps on a shared material each bind a copy.** A glTF material carries one lightmap,
   so the first object binds the shared material and every later object with a different map binds
   its own clone of it (and its own mesh entry when instanced). This used to be refused — and the
-  refused object wore the first one's lighting anyway, which reads as a bad bake.
+  refused object wore the first one's lighting anyway, which reads as a bad bake. A material an
+  UNBAKED object also wears is never bound at all: every baked object binds a copy, so the
+  unbaked one keeps it as authored rather than wearing someone else's lightmap.
 - **Draco-compressed GLBs do not load** in the bundled viewer (no decoder wired in). Don't pass
   `--draco`. If that changes it should arrive as a *script*, not a viewer edit.
 - **A viewer script that names a hook the page does not emit is inert, silently.** Nothing throws;

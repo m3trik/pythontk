@@ -1,6 +1,8 @@
 /*
-  Turntable — rotate the model for a hands-free look, or for a headset the user
-  is not holding a controller in.
+  Turntable — rotate the model for a hands-free look on the desktop. It holds
+  still while a headset is presenting: the model is shown at its true size, so
+  there a turning model is the world turning around the viewer, and the button
+  that stops it is out of reach in the page behind the headset.
 
   One of the two scripts packaged with `PreviewServer.SCRIPTS`, and the smaller
   of the pair on purpose: it is the reference for what a viewer script IS. A
@@ -33,6 +35,7 @@ export default function turntable(viewer) {
   // across loads, so the rotation survives a push instead of being reset to
   // zero with the new model — the whole point of a preview that stays open.
   viewer.on('frame', ({ delta }) => {
-    if (spinning) viewer.pivot.rotation.y += (DEGREES_PER_SECOND * Math.PI / 180) * delta;
+    if (!spinning || viewer.renderer.xr.isPresenting) return;
+    viewer.pivot.rotation.y += (DEGREES_PER_SECOND * Math.PI / 180) * delta;
   });
 }
