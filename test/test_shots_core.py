@@ -1227,6 +1227,11 @@ class TestStoreHooks(_ShotTest):
         self.assertEqual(s.assess(), {1: "valid"})
         self.assertEqual(s._resolve_long_names(["a", "b"]), ["a", "b"])
         self.assertEqual(s._scene_fps(), s.scene_fps)
+        # No scene to lose anything from: every member held, every window
+        # keyed, so the pure store never calls a shot stale.
+        self.assertEqual(s._existing_objects(["a", "b"]), {"a", "b"})
+        self.assertEqual(s._keyed_windows([(0, 10), (20, 30)]), [True, True])
+        self.assertEqual(s.stale_shots(), [])
 
     def test_flush_pending_stores_what_the_active_store_holds_unwritten(self):
         """A DCC store writes on idle (Maya coalesces a mutation into one
@@ -1399,6 +1404,149 @@ class TestExportViewRefresh(_ShotTest):
         self.assertEqual(len(store.published), 2)
         self.assertEqual(store.published[0]["shot_metadata"]["shots"], [])
         self.assertEqual(len(store.published[1]["shot_metadata"]["shots"]), 1)
+
+
+class _SceneStore(ShotStore):
+    """A DCC stand-in whose scene holds :attr:`held` objects and keys the
+    frames in :attr:`keys` -- the two facts ``stale_shots`` asks a DCC for."""
+
+    held: frozenset = frozenset()
+    keys: tuple = ()
+
+    def _existing_objects(self, names):
+        return {n for n in names if n in self.held}
+
+    def _keyed_windows(self, windows):
+        return [any(a <= t <= b for t in self.keys) for a, b in windows]
+
+
+class TestStaleShots(_ShotTest):
+    """A shot whose objects AND keys are gone describes nothing in the scene:
+    what a Save As copy keeps of animation it deleted (2026-09-24, a module
+    forked from an 18-shot assembly declared all 18 as takes and its GLB
+    carried none).  The store keeps it; what an export declares leaves it out."""
+
+    def _store(self, shots, held=(), keys=()):
+        store = _SceneStore(list(shots))
+        store.snap_whole_frames = False
+        store.held, store.keys = frozenset(held), tuple(keys)
+        return store
+
+    def test_a_shot_whose_objects_and_keys_are_gone_is_stale(self):
+        store = self._store(
+            [
+                ShotBlock(0, "A", 0, 10, ["|g|x", "|g|y"]),
+                ShotBlock(1, "B", 20, 30, ["z"]),
+            ]
+        )
+        self.assertEqual([s.name for s in store.stale_shots()], ["A", "B"])
+
+    def test_one_surviving_member_keeps_the_shot(self):
+        store = self._store([ShotBlock(0, "A", 0, 10, ["x", "gone"])], held={"x"})
+        self.assertEqual(store.stale_shots(), [])
+
+    def test_keys_in_the_window_keep_a_shot_whose_members_were_renamed(self):
+        """A rename leaves the member unresolvable but its keys where they
+        were -- the exporter's own name repairs rename mid-export."""
+        store = self._store(
+            [ShotBlock(0, "A", 0, 10, ["old"]), ShotBlock(1, "B", 20, 30, ["old"])],
+            keys=(5,),
+        )
+        self.assertEqual([s.name for s in store.stale_shots()], ["B"])
+
+    def test_a_shot_naming_no_members_is_never_stale(self):
+        """Nothing tells it from a hold, which keys nothing in its window."""
+        store = self._store([ShotBlock(0, "Hold", 0, 10)])
+        self.assertEqual(store.stale_shots(), [])
+
+    def test_export_records_leave_stale_shots_out_and_say_so(self):
+        from pythontk.core_utils.scene_records import ExportContext
+
+        store = self._store(
+            [
+                ShotBlock(0, "Gone", 0, 10, ["lost"]),
+                ShotBlock(1, "Kept", 20, 30, ["x", "lost"]),
+            ],
+            held={"x"},
+        )
+        store.clip_name_strategy = "sequence"
+        ctx = ExportContext(clip_mode="shots")
+        (record,) = store.export_records(ctx)
+        (entry,) = record.payload["shots"]
+        # Named BEFORE the stale shot is left out: "sequence" numbers clips
+        # by position, and the survivor must keep the name it shipped under.
+        self.assertEqual(entry["clip"], "020_Kept")
+        self.assertEqual(entry["objects"], ["x"], "a member the scene lost")
+        (note,) = ctx.notes
+        self.assertIn("Gone (0-10)", note)
+        self.assertNotIn("Kept", note)
+        # The store and its plain view are untouched: only the export scopes.
+        self.assertEqual(len(store.shots), 2)
+        self.assertEqual(len(store.to_export_view()["shot_metadata"]["shots"]), 2)
+
+    def test_a_wholly_stale_store_clears_its_record_and_its_range(self):
+        store = self._store([ShotBlock(0, "A", 0, 10, ["lost"])])
+        with self.assertLogs(shot_model._log, "INFO") as logged:
+            self.assertIsNone(
+                store.export_records(), "a commit turns None into a clear"
+            )
+        self.assertIn("1 shot(s) left out", logged.output[0])
+        ShotStore.set_active(store)
+        self.assertIsNone(ShotStore.declared_range())
+
+    def test_remove_stale_shots_takes_only_the_stale_and_moves_nothing(self):
+        """Records only -- a Sequencer delete ripples the shots after it
+        upstream, which would retime the live ones."""
+        store = self._store(
+            [
+                ShotBlock(0, "Gone", 0, 10, ["lost"]),
+                ShotBlock(1, "Live", 20, 30, ["x"]),
+                ShotBlock(2, "AlsoGone", 40, 50, ["lost"]),
+            ],
+            held={"x"},
+        )
+        ledger = store.edit_ledger
+        ledger.record_key("lostCurve", 10, owner=0, edge="end")
+        ledger.record_key("xCurve", 30, owner=1, edge="end")
+        store.set_active_shot(2)
+
+        removed = store.remove_stale_shots()
+
+        self.assertEqual([s.name for s in removed], ["Gone", "AlsoGone"])
+        (live,) = store.shots
+        self.assertEqual((live.name, live.start, live.end), ("Live", 20, 30))
+        # Dropped, not disowned: an ownerless claim would be inherited by the
+        # next key set on that curve and frame.
+        self.assertEqual(ledger.key_records("lostCurve"), [])
+        self.assertEqual(ledger.key_records("xCurve"), [(30.0, 1, "end")])
+        self.assertIsNone(store.active_shot_id)
+        self.assertEqual(store.remove_stale_shots(), [], "nothing left to remove")
+
+    def test_a_scene_check_that_raises_declares_every_shot(self):
+        """The check must never cost the shot record: a producer that raised
+        would leave the carrier's stored (stale) record to ship instead."""
+
+        class Broken(_SceneStore):
+            def _existing_objects(self, names):
+                raise RuntimeError("scene unreadable")
+
+        store = Broken([ShotBlock(0, "A", 0, 10, ["lost"])])
+        store.snap_whole_frames = False
+        with self.assertLogs(shot_model._log, "WARNING"):
+            (record,) = store.export_records()
+        (entry,) = record.payload["shots"]
+        self.assertEqual((entry["clip"], entry["objects"]), ("A", ["lost"]))
+
+    def test_the_declared_range_spans_only_the_declared_shots(self):
+        store = self._store(
+            [
+                ShotBlock(0, "Live", 20, 30, ["x"]),
+                ShotBlock(1, "Stale", 40, 90, ["lost"]),
+            ],
+            held={"x"},
+        )
+        ShotStore.set_active(store)
+        self.assertEqual(ShotStore.declared_range(), (20, 30))
 
 
 # ===========================================================================

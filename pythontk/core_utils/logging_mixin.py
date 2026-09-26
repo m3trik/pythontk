@@ -101,6 +101,13 @@ class LoggerExt:
 
     DEFAULT_BOX_WIDTH = 100
 
+    # CSS font stack for markup whose columns must line up (boxes, and the
+    # text handler's records). Real families first: the generic ``monospace``
+    # names no installed family on Windows, so Qt substitutes by the widget
+    # font's style hint -- the proportional UI font when there is none. uitk's
+    # TextEditLogHandler measures its columns in this same stack.
+    MONOSPACE_FAMILIES = "'Consolas','Courier New',Monaco,monospace"
+
     # Default log colors (Hex)
     LOG_COLORS = {
         "DEBUG": "#AAAAAA",  # Neutral gray
@@ -743,21 +750,41 @@ class LoggerExt:
     def _hard_wrap_word(word: str, max_display_width: int) -> tuple:
         """Hard-wrap a single word that exceeds *max_display_width*.
 
+        A line ends after its last path separator (:attr:`_WORD_BREAKS`) when
+        it holds one, and at the width only when it does not: cut at the width,
+        a path split mid-name (``.../gone_Rough`` over ``ness.png``) -- no longer
+        readable, copyable or findable, at a point that moved with the length of
+        its folders.
+
         Returns ``(complete_lines, remaining_fragment, remaining_width)``.
         """
+        width_of = LoggerExt._char_width
         lines = []
         chars = []
         w = 0
         for ch in word:
-            ch_w = LoggerExt._char_width(ch)
-            if w + ch_w > max_display_width:
-                lines.append("".join(chars))
-                chars = [ch]
-                w = ch_w
-            else:
-                chars.append(ch)
-                w += ch_w
+            ch_w = width_of(ch)
+            while chars and w + ch_w > max_display_width:
+                cut = next(
+                    (
+                        i + 1
+                        # Never at index 0: that cut emits a line holding
+                        # only the separator.
+                        for i in range(len(chars) - 1, 0, -1)
+                        if chars[i] in LoggerExt._WORD_BREAKS
+                    ),
+                    len(chars),
+                )
+                lines.append("".join(chars[:cut]))
+                chars = chars[cut:]
+                w = sum(map(width_of, chars))
+            chars.append(ch)
+            w += ch_w
         return lines, "".join(chars), w
+
+    #: Characters a word too long for its line breaks AFTER before it is cut
+    #: mid-character (:meth:`_hard_wrap_word`): path separators.
+    _WORD_BREAKS = frozenset("/\\")
 
     # Sentinel that never appears in real text, used to protect spaces
     # inside HTML tags from being split by _wrap_text.
@@ -829,17 +856,24 @@ class LoggerExt:
         return lines
 
     @staticmethod
+    def _reported_width(self) -> Optional[int]:
+        """``self.box_width`` if set; else the narrowest column count
+        reported by attached handlers (see ``get_redirect_width``); ``None``
+        when neither says."""
+        width = getattr(self, "box_width", None)
+        if width is None:
+            width = LoggerExt._get_redirect_width(self)
+        return width
+
+    @staticmethod
     def _resolve_width(self, width: Optional[int]) -> int:
         """Column budget for raw block output (boxes, dividers).
 
-        *width* when given; else ``self.box_width`` if set; else the
-        narrowest column count reported by attached handlers (see
-        ``get_redirect_width``); else ``DEFAULT_BOX_WIDTH``.
+        *width* when given; else :meth:`_reported_width`; else
+        ``DEFAULT_BOX_WIDTH``.
         """
         if width is None:
-            width = getattr(self, "box_width", None)
-        if width is None:
-            width = LoggerExt._get_redirect_width(self)
+            width = LoggerExt._reported_width(self)
         if width is None:
             width = LoggerExt.DEFAULT_BOX_WIDTH
         return width
@@ -968,9 +1002,7 @@ class LoggerExt:
         # a proportional font from outer wrappers, which collapses the
         # column math. Carry the font-family inline on each span so the
         # boxes render correctly regardless of enclosing context.
-        mono_css = (
-            "font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre"
-        )
+        mono_css = f"font-family:{LoggerExt.MONOSPACE_FAMILIES};white-space:pre"
 
         if bg_color:
             # Per-line wrapping: a single span across "\n" does not extend its
@@ -1018,14 +1050,22 @@ class LoggerExt:
                 logger.info(f"Missing object: {link}")
         """
         import html
-        from urllib.parse import urlencode
 
         safe_text = html.escape(text, quote=False)
-        query = urlencode(params) if params else ""
-        href = f"action://{action}?{query}" if query else f"action://{action}"
+        href = html.escape(LoggerExt._action_url(action, **params))
         # No spaces in the tag — _wrap_text splits on spaces and would
         # break the tag if any are present inside attributes.
         return f'<a href="{href}" style="text-decoration:underline">{safe_text}</a>'
+
+    @staticmethod
+    def _action_url(action: str, /, **params: Any) -> str:
+        """``action://ACTION?k=v&...`` -- the one builder of the link grammar the
+        DCC dispatchers parse (``UiUtils.dispatch_log_link``): values are
+        URL-encoded, so a node path's ``|`` or a name's ``&`` round-trips."""
+        from urllib.parse import urlencode
+
+        query = urlencode({k: str(v) for k, v in params.items()})
+        return f"action://{action}?{query}" if query else f"action://{action}"
 
     @staticmethod
     def _log_group(
@@ -1512,10 +1552,15 @@ class DefaultTextLogHandler(internal_logging.Handler):
 
     def emit(self, record: internal_logging.LogRecord) -> None:
         try:
+            families = LoggerExt.MONOSPACE_FAMILIES
             if getattr(record, "raw", False):
                 msg = record.getMessage()
-                if self.monospace:
-                    msg = f'<span style="font-family:monospace; white-space:pre;">{msg}</span>'
+                # A raw record is a preformatted block (box, group, table): an
+                # HTML sink needs it monospace with its whitespace kept whatever
+                # ``monospace`` says -- bare, a group's line breaks collapse. A
+                # plain-text sink gets the block bare: markup means nothing there.
+                if self.use_html:
+                    msg = f'<span style="font-family:{families}; white-space:pre;">{msg}</span>'
             else:
                 msg = self.format(record)
                 if self.use_html:
@@ -1525,7 +1570,7 @@ class DefaultTextLogHandler(internal_logging.Handler):
                         msg, record.levelname, preset
                     )
                     if self.monospace:
-                        msg = f'<span style="font-family:monospace; white-space:pre-wrap;">{msg}</span>'
+                        msg = f'<span style="font-family:{families}; white-space:pre-wrap;">{msg}</span>'
             self._safe_append(msg)
         except Exception as e:
             print(f"DefaultTextLogHandler emit error: {e}")
@@ -1593,6 +1638,8 @@ class TableMixin:
         title: Optional[str] = None,
         col_max_width: int = 60,
         max_width: int = 160,
+        wrap: bool = False,
+        markup: bool = True,
     ) -> str:
         """Formats a list of lists as an ASCII table.
 
@@ -1605,12 +1652,32 @@ class TableMixin:
             title: Optional title for the table.
             col_max_width: Maximum width for any single column.
             max_width: Maximum total table width in display columns.
+            wrap: Continue a cell wider than its column on the lines below
+                (word-wrapped, the other cells blank) instead of clipping it
+                with an ellipsis -- for columns of prose, where the clipped
+                tail is the part that says what to do. A newline in a cell
+                starts a new line there.
+            markup: Cells may carry log markup (``<span ...>``), which takes
+                no width. ``False`` for plain text, where ``wood_<UDIM>.png``
+                is fifteen visible characters, not a tag.
 
         Returns:
             Formatted table string.
         """
         if not data:
             return ""
+        if not markup:
+            # The width math strips anything tag-shaped: stand "<" / ">" in with
+            # private-use code points (one column each, never a tag), put back after.
+            enc, dec = {60: "\ue000", 62: "\ue001"}, {0xE000: "<", 0xE001: ">"}
+            return self.format_table(
+                [[str(c).translate(enc) for c in row] for row in data],
+                [str(h).translate(enc) for h in headers],
+                title.translate(enc) if title else title,
+                col_max_width,
+                max_width,
+                wrap,
+            ).translate(dec)
 
         dw = LoggerExt._display_width
 
@@ -1626,11 +1693,12 @@ class TableMixin:
                 row = row[:num_cols]
             processed_data.append([str(item) for item in row])
 
-        # Calculate column widths
+        # Calculate column widths (wrapping, a cell's widest line)
         col_widths = [dw(h) for h in headers]
         for row in processed_data:
             for i, val in enumerate(row):
-                col_widths[i] = max(col_widths[i], dw(val))
+                width = max(map(dw, val.split("\n"))) if wrap else dw(val)
+                col_widths[i] = max(col_widths[i], width)
 
         # Clamp per-column widths
         col_widths = [min(w, col_max_width) for w in col_widths]
@@ -1677,7 +1745,21 @@ class TableMixin:
         lines.append(render_row(headers))
         lines.append("-+-".join("-" * w for w in col_widths))
         for row in processed_data:
-            lines.append(render_row(row))
+            if not wrap:
+                lines.append(render_row(row))
+                continue
+            wrapped = [
+                [
+                    line
+                    for part in c.split("\n")
+                    for line in LoggerExt._wrap_text(part, w) or [""]
+                ]
+                for c, w in zip(row, col_widths)
+            ]
+            for i in range(max(len(cell) for cell in wrapped)):
+                lines.append(
+                    render_row([cell[i] if i < len(cell) else "" for cell in wrapped])
+                )
 
         return "\n".join(lines)
 
@@ -1693,7 +1775,9 @@ class TableMixin:
         On a LoggerExt-patched logger the whole table goes through a single
         ``log_raw`` record — one monospace block in widget handlers, exactly
         like ``log_box``/``log_group`` — instead of one prefixed record per
-        line. *level* applies only on the plain-logger fallback path.
+        line, capped at the width a box would take (``box_width``, else the
+        narrowest attached handler's ``get_redirect_width``). *level* applies
+        only on the plain-logger fallback path.
 
         Args:
             data: List of rows.
@@ -1701,11 +1785,20 @@ class TableMixin:
             title: Optional title.
             level: Logging level (info, warning, error, etc.)
         """
-        table_str = self.format_table(data, headers, title)
+        logger = getattr(self, "logger", None)
+        # A width nothing reports -- or a stand-in that is no real logger --
+        # leaves format_table's own cap standing.
+        width = (
+            LoggerExt._reported_width(logger)
+            if isinstance(logger, internal_logging.Logger)
+            else None
+        )
+        table_str = self.format_table(
+            data, headers, title, **({"max_width": width} if width else {})
+        )
         if not table_str:
             return
 
-        logger = getattr(self, "logger", None)
         if logger is None:
             print(table_str)
         elif hasattr(logger, "log_raw"):

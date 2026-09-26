@@ -1413,11 +1413,12 @@ class ImgUtils(HelpMixin):
 
     @staticmethod
     def _image_size_from_header(image_path: str) -> Optional[Tuple[int, int]]:
-        """``(width, height)`` from a JPEG/PNG header using only the stdlib.
+        """``(width, height)`` from a JPEG/PNG/DDS/TGA header using only the stdlib.
 
         Reads the dimensions out of the file header — no PIL, numpy, or cv2 — so
         it works in dependency-light interpreters (e.g. Metashape's bundled
-        Python). ``None`` for an unrecognized or truncated file.
+        Python, or Blender's, where the fallback decodes the whole image).
+        ``None`` for an unrecognized or truncated file.
         """
         try:
             with open(image_path, "rb") as f:
@@ -1426,6 +1427,24 @@ class ImgUtils(HelpMixin):
                 if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
                     w, h = struct.unpack(">II", head[16:24])
                     return int(w), int(h)
+                # DDS: "DDS " + DDS_HEADER (size 124), height then width, LE u32.
+                if head[:4] == b"DDS " and len(head) >= 20:
+                    if struct.unpack("<I", head[4:8])[0] == 124:
+                        h, w = struct.unpack("<II", head[12:20])
+                        return int(w), int(h)
+                    return None
+                # TGA has no signature: trust the extension, then the header's own
+                # sanity (a known image type and pixel depth, a non-zero size).
+                if str(image_path).lower().endswith((".tga", ".targa")):
+                    if (
+                        len(head) >= 18
+                        and head[2] in (1, 2, 3, 9, 10, 11)
+                        and head[16] in (8, 15, 16, 24, 32)
+                    ):
+                        w, h = struct.unpack("<HH", head[12:16])
+                        if w and h:
+                            return int(w), int(h)
+                    return None
                 # JPEG: SOI 0xFFD8, then scan segments for a Start-Of-Frame marker.
                 if head[:2] == b"\xff\xd8":
                     f.seek(2)

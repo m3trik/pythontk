@@ -1572,6 +1572,44 @@ class MapRegistry(SingletonMixin):
             return False
         return m.color_space == "sRGB" and not m.is_packed
 
+    def estimate_gpu_bytes(
+        self, width: int, height: int, name: Optional[str] = None, tiles: int = 1
+    ) -> Tuple[float, float]:
+        """Estimated GPU memory of a *width* x *height* map of type *name*.
+
+        What a scene's textures cost once a game build loads them -- the
+        number a texture budget is about, which neither the file size (PNG
+        compression) nor the pixel count alone gives.
+
+        The compressed figure assumes the block format a build gives the map,
+        keyed off the type's own :attr:`MapType.mode` so a new map type needs
+        no entry: single-channel and RGB maps take BC4 / BC1 (0.5 B/px),
+        normal maps BC5 and maps with alpha BC7 / BC3 (1 B/px); an unknown
+        type is assumed BC7. A packed type that keeps its packer's mode
+        (``mode=None``) has alpha when its channel layout names an ``A``
+        channel. An estimate for budgeting, not a promise: the
+        engine picks per platform (ASTC on mobile; a KTX2 pipeline transcodes
+        UASTC to whichever the GPU takes).
+
+        Parameters:
+            width: Map width in pixels.
+            height: Map height in pixels.
+            name: Canonical map-type key, or None when unknown.
+            tiles: Tiles a UDIM / tile set holds (each the given size).
+
+        Returns:
+            tuple[float, float]: ``(block_compressed, uncompressed_rgba8)``
+            bytes, both with a full mip chain (x 4/3).
+        """
+        texels = max(0, width) * max(0, height) * max(1, tiles) * (4.0 / 3.0)
+        m = self._maps.get(name) if name else None
+        if m is None or "Normal" in name:  # the NORMAL_TYPES and Bent_Normal
+            bytes_per_texel = 1.0
+        else:
+            mode = m.mode or ("RGBA" if "A" in m.channels else "RGB")
+            bytes_per_texel = 0.5 if mode in ("L", "RGB") else 1.0
+        return texels * bytes_per_texel, texels * 4.0
+
     def get_passthrough_maps(self) -> List[str]:
         """Get list of maps that should be passed through if not consumed."""
         # Return all registered maps so anything not consumed by a handler is passed through

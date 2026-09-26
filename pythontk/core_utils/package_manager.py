@@ -1,10 +1,13 @@
 # !/usr/bin/python
 # coding=utf-8
+import os
 import sys
 import re
 import json
+import shutil
 import subprocess
 import threading
+from importlib.metadata import PathDistribution
 from pathlib import Path
 from typing import List, Optional, Union
 from pythontk.core_utils import help_mixin
@@ -502,7 +505,6 @@ class _PkgVersionUtils:
             list: Updated requirements with their versions.
                  Example: ['package1==1.0.0', 'package2==2.3.4']
         """
-        import os
         import inspect
         from importlib import metadata
         from pythontk.iter_utils._iter_utils import IterUtils
@@ -626,7 +628,6 @@ class PackageManager(
         Raises:
             RuntimeError: A pip invocation failed, or pip produced no report.
         """
-        import os
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
         if isinstance(specs, str):
@@ -663,37 +664,95 @@ class PackageManager(
             return []
 
         # --no-deps: the plan IS the resolution; --upgrade overwrites an older
-        # copy already sitting in the target dir.
+        # copy already sitting in the target dir -- all but its dist-info, which
+        # _prune_superseded drops.
         self._run_pip(
             ["install", "--no-deps", "--upgrade", "--target", target_dir] + pins,
             python_flags=["-s"],
             env=env,
         )
+        self._prune_superseded(target_dir, pins)
         return pins
+
+    @staticmethod
+    def _prune_superseded(target_dir, pins):
+        """Delete the dist-info an upgrade into *target_dir* left beside each dist in *pins*.
+
+        ``pip install --target --upgrade`` replaces what it moves in by top-level NAME,
+        and a dist-info's name carries its version: upgrading QtPy 2.4.2 -> 2.4.3 left
+        both ``QtPy-2.4.2.dist-info`` and ``QtPy-2.4.3.dist-info`` (measured, pip 23.2
+        under mayapy). pip then read the STALE copy as installed -- so the next plan
+        re-applied the same release -- and ``pip uninstall`` removed that copy by its
+        RECORD and left the current dist-info behind. Only the dists in *pins* are
+        touched: the directory may be shared (Blender's ``addons/modules``).
+        """
+
+        def key(name):
+            return re.sub(r"[-_.]+", "-", name or "").lower()
+
+        wanted = {key(pin.partition("==")[0]): pin.partition("==")[2] for pin in pins}
+        try:
+            entries = os.listdir(target_dir)
+        except OSError:  # nothing there to tidy -- never a reason to fail the install
+            return
+        for entry in entries:
+            if not entry.endswith(".dist-info"):
+                continue
+            path = os.path.join(target_dir, entry)
+            try:
+                meta = PathDistribution(Path(path)).metadata
+                name, version = meta["Name"], meta["Version"]
+            except Exception:  # unreadable metadata names nothing we installed
+                continue
+            if key(name) in wanted and version != wanted[key(name)]:
+                # Housekeeping after an install that succeeded: a copy that will not
+                # go (a file held open) leaves the directory as pip left it.
+                shutil.rmtree(path, ignore_errors=True)
+
+    #: The environment variable :meth:`_run_pip` hands pip's arguments over in (JSON).
+    _PIP_ARGV_VAR = "PYTHONTK_PIP_ARGV"
+    #: What :meth:`_run_pip` runs with ``-c``: exactly ``python -m pip <args>``, the
+    #: arguments read from :attr:`_PIP_ARGV_VAR` (dropped again before pip starts, so
+    #: nothing pip spawns inherits it).
+    _PIP_SHIM = (
+        "import json, os, runpy, sys; "
+        "sys.argv[1:] = json.loads(os.environ.pop('PYTHONTK_PIP_ARGV')); "
+        "runpy.run_module('pip', run_name='__main__', alter_sys=True)"
+    )
 
     def _run_pip(self, args, python_flags=None, env=None):
         """Run pip, returning the :class:`subprocess.CompletedProcess`.
 
         The single subprocess seam for this class: :meth:`pip` keeps its public
         string-command signature on top of it, and :meth:`install_targeted` uses
-        the *python_flags* / *env* it adds (interpreter flags land before ``-m``,
+        the *python_flags* / *env* it adds (interpreter flags land before ``-c``,
         which is the only place ``-s`` is honoured).
+
+        pip's arguments travel in the environment (:attr:`_PIP_ARGV_VAR`, JSON --
+        ASCII whatever they hold), never on the command line. mayapy.exe decodes its
+        ANSI command line as UTF-8: measured on Maya 2025, "José" arrived as
+        "Jos\\udce9" and "Жук" as "???", while the environment and the working
+        directory arrived intact. So a ``--target`` or ``--report`` path through a
+        user folder with a non-ASCII letter sent pip to a different directory, and
+        an install then imported nothing. A plain python.exe reads either route.
         """
-        full_command = (
-            [self.python_path] + list(python_flags or []) + ["-m", "pip"] + list(args)
-        )
+        args = [str(arg) for arg in args]
+        prefix = [self.python_path] + list(python_flags or [])
+        run_env = dict(os.environ if env is None else env)
+        run_env[self._PIP_ARGV_VAR] = json.dumps(args)
         try:
             return subprocess.run(
-                full_command,
+                prefix + ["-c", self._PIP_SHIM],
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                env=env,
+                env=run_env,
                 startupinfo=self._get_startupinfo(),
             )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Command '{' '.join(full_command)}' failed: {e.stderr}")
+            shown = " ".join(prefix + ["-m", "pip"] + args)
+            raise RuntimeError(f"Command '{shown}' failed: {e.stderr}")
 
     def _parse_command(self, command):
         """Parse the pip command from string to list format."""

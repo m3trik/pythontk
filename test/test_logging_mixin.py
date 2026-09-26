@@ -209,6 +209,9 @@ class LoggerExtTest(BaseTestCase):
         self.assertIn("text=a+b", link)
         self.assertIn("action=x", link)
         self.assertIn(">copy</a>", link)
+        # Between parameters the "&" is escaped inside the attribute, so a
+        # rich-text viewer hands the handler every parameter, not the first.
+        self.assertIn('?a=1&amp;b=2"', self.logger.log_link("x", "act", a=1, b=2))
 
     def test_spam_prevention_enabled(self):
         """Test spam prevention is enabled by default."""
@@ -973,6 +976,67 @@ class LoggingMixinBugfixRegressionTest(BaseTestCase):
                 f"row overflows narrow column: {ln!r} ({len(ln)} > {header_len})",
             )
 
+    def test_format_table_wrap_continues_long_cells(self):
+        """``wrap=True`` keeps a long prose cell whole across lines.
+
+        Clipping the scene audit's Fix First column cut every instruction off
+        at "...", i.e. exactly the part that said what to do.
+        """
+        from pythontk.core_utils.logging_mixin import TableMixin
+
+        prose = "Relink the missing texture files before you export the scene"
+        out = TableMixin().format_table(
+            [["1", prose], ["2", "ok"]], ["#", "Issue"], col_max_width=20, wrap=True
+        )
+        header, rule, *rows = out.split("\n")
+        # Every word survives, in order, and no line outgrows the header.
+        issue = " ".join(r.split("|", 1)[1].strip() for r in rows[:-1])
+        self.assertEqual(issue, prose)
+        self.assertNotIn("...", out)
+        self.assertTrue(all(len(r.rstrip()) <= len(header) for r in rows))
+        # The continuation lines leave the other columns blank.
+        self.assertEqual([r.split("|")[0].strip() for r in rows], ["1", "", "", "2"])
+
+        clipped = TableMixin().format_table(
+            [["1", prose]], ["#", "Issue"], col_max_width=20
+        )
+        self.assertIn("...", clipped)  # the default is unchanged
+
+    def test_a_wrapped_path_breaks_at_its_separators(self):
+        """A path wider than its column breaks after a folder separator, so a
+        file name that fits the column stays whole. Cut at the column width, the
+        scene audit's missing-file table printed ``.../gone_Rough`` over
+        ``ness.png`` -- unreadable, uncopyable, and invisible to a search -- and
+        where the cut landed moved with the length of the temp folder (red
+        under the blendertk runner's sandbox, green without it)."""
+        from pythontk.core_utils.logging_mixin import LoggerExt, TableMixin
+
+        path = "C:/Users/artist/AppData/Local/Temp/sandbox_18d85e21eb6d97bc/gone_Roughness.png"
+        lines = LoggerExt._wrap_text(path, 40)
+        self.assertEqual("".join(lines), path, "the path survives, in order")
+        self.assertTrue(all(len(line) <= 40 for line in lines), lines)
+        self.assertEqual(lines[-1], "gone_Roughness.png")
+        self.assertTrue(all(line.endswith("/") for line in lines[:-1]), lines)
+        # Backslashes too, and a word with no separator still hard-wraps.
+        self.assertEqual(
+            LoggerExt._wrap_text("D:\\maps\\baked\\floor_Lightmap.exr", 20),
+            ["D:\\maps\\baked\\", "floor_Lightmap.exr"],
+        )
+        self.assertEqual(LoggerExt._wrap_text("x" * 25, 10), ["x" * 10] * 2 + ["x" * 5])
+        # A folder wider than the column never leaves a line holding only
+        # the separator the next cut would have started at.
+        wrapped = LoggerExt._wrap_text("abcdefghij/klmnopqrstuvwxyz", 10)
+        self.assertNotIn("/", wrapped)
+        self.assertEqual("".join(wrapped), "abcdefghij/klmnopqrstuvwxyz")
+
+        out = TableMixin().format_table(
+            [[path, "CrateMat"]],
+            ["Missing file", "Materials"],
+            col_max_width=40,
+            wrap=True,
+        )
+        self.assertIn("gone_Roughness.png", out)
+
 
 class LoggingMixinQualityPassRegressionTest(BaseTestCase):
     """Regression tests for the logging_mixin quality pass (2026-07-18)."""
@@ -1383,6 +1447,102 @@ class LoggingMixinReviewRegressionTest(BaseTestCase):
 
         self.logger.log_divider()
         self.assertEqual(self.stream.getvalue().strip(), "─" * 40)
+
+    def test_log_table_fits_the_handler_width(self):
+        """``log_table`` capped every table at a fixed 160 columns while
+        ``log_box``/``log_divider`` fit the narrowest handler, so a report's
+        table wrapped in the 60-column panel its box fit."""
+
+        class NarrowHandler(logging.StreamHandler):
+            def available_columns(self):
+                return 60
+
+        class Report(LoggingMixin):
+            pass
+
+        stream = io.StringIO()
+        narrow = NarrowHandler(stream)
+        narrow.setLevel(logging.DEBUG)
+        Report.logger.handlers = [narrow]
+        self.addCleanup(setattr, Report.logger, "handlers", [])
+
+        Report().log_table(
+            [["a" * 50, "b" * 50, "c" * 50]], ["one", "two", "three"], title="Totals"
+        )
+        lines = stream.getvalue().strip().split("\n")
+        widest = max(LoggerExt._display_width(ln) for ln in lines)
+        self.assertLessEqual(widest, 60, "\n".join(lines))
+
+        # And like a box, an explicit ``box_width`` wins over the handler.
+        Report.logger.box_width = 40
+        stream.seek(0)
+        stream.truncate()
+        Report().log_table([["a" * 50, "b" * 50]], ["one", "two"])
+        lines = stream.getvalue().strip().split("\n")
+        widest = max(LoggerExt._display_width(ln) for ln in lines)
+        self.assertLessEqual(widest, 40, "\n".join(lines))
+
+    def test_default_text_handler_asks_for_the_log_box_font_stack(self):
+        """The Qt-free handler marked records up ``font-family:monospace``.
+        No family has that name on Windows, so a Qt pane substituted its UI
+        font (Tahoma, proportional) and a box's borders missed each other.
+        It must ask for the concrete stack ``log_box`` pins its own rows to."""
+        import re
+
+        class Panel(LoggingMixin):
+            pass
+
+        widget = MockTextWidget()
+        handler = DefaultTextLogHandler(widget, monospace=True)
+        handler.setLevel(logging.DEBUG)
+        Panel.logger.handlers = [handler]
+        self.addCleanup(setattr, Panel.logger, "handlers", [])
+
+        Panel.logger.log_box("Plain", ["row"])  # the handler's span alone
+        Panel.logger.log_box("Tinted", ["row"], level="SUCCESS")  # + log_box's
+        Panel.logger.warning("a regular record")
+        stacks = {
+            stack
+            for message in widget.messages
+            for stack in re.findall(r"font-family:([^;\"]+)", message)
+        }
+        self.assertEqual(len(stacks), 1, stacks)
+
+    def test_default_text_handler_keeps_raw_blocks_preformatted(self):
+        """With ``monospace=False`` -- its constructor default -- the handler
+        appended raw records bare, so an HTML pane collapsed a ``log_group``'s
+        line breaks (measured in a QTextBrowser: "Totals ▎ alpha ▎ beta" on
+        ONE line) and drew boxes proportional. A raw record is a preformatted
+        block: an HTML sink always gets it monospace with its whitespace kept,
+        as uitk's TextEditLogHandler does; a plain-text sink gets it bare."""
+
+        class Panel(LoggingMixin):
+            pass
+
+        widget = MockTextWidget()
+        handler = DefaultTextLogHandler(widget)  # use_html=True, monospace=False
+        handler.setLevel(logging.DEBUG)
+        Panel.logger.handlers = [handler]
+        self.addCleanup(setattr, Panel.logger, "handlers", [])
+
+        Panel.logger.log_group("Totals", ["alpha", "beta"])
+        self.assertIn("white-space:pre;", widget.messages[0])
+        self.assertIn(LoggerExt.MONOSPACE_FAMILIES, widget.messages[0])
+
+        widget.messages.clear()
+        plain = DefaultTextLogHandler(widget, use_html=False)
+        plain.setLevel(logging.DEBUG)
+        Panel.logger.handlers = [plain]
+        Panel.logger.log_divider(width=10)
+        self.assertEqual(widget.messages, ["─" * 10])
+
+        # monospace names a font, which a plain-text sink cannot use either.
+        widget.messages.clear()
+        plain_mono = DefaultTextLogHandler(widget, use_html=False, monospace=True)
+        plain_mono.setLevel(logging.DEBUG)
+        Panel.logger.handlers = [plain_mono]
+        Panel.logger.log_divider(width=10)
+        self.assertEqual(widget.messages, ["─" * 10])
 
 
 class CharWidthTest(BaseTestCase):

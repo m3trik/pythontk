@@ -110,6 +110,13 @@ export default function probe(viewer) {
       report.clipCount = detail.clips;
       report.meshes = 0;
       detail.model.traverse((n) => { if (n.isMesh) report.meshes += 1; });
+      // What the HUD SAYS, line by line, and the page's own measurement: the
+      // wording is the contract here, since the numbers were once right and
+      // the sentence still misled.
+      report.specs = detail.specs;
+      report.statLines = [...document.getElementById('stats').children].map((n) => n.textContent);
+      const issues = document.getElementById('issues');
+      report.issueLine = issues.hidden ? null : issues.textContent;
       report.playedNamed = viewer.playClip(report.namedTarget || 'MOVES');
       report.playedMissing = viewer.playClip('__nope__');
       report.hasMixer = !!viewer.mixer;
@@ -162,6 +169,11 @@ export default function probe(viewer) {
         present: !!viewer.scene.environment,
         intensity: viewer.scene.environmentIntensity,
       };
+      // Where a session would start, as a 'load' subscriber is told it -- one
+      // entry per load: the model just loaded, laid out on the floor, never
+      // the one it replaced.
+      const start = viewer.headset.start;
+      report.startsAtLoad = (report.startsAtLoad || []).concat([start && start.point.toArray()]);
       // One entry per model swap, so a test can assert what the SECOND push
       // rendered. `disposeModel` frees the outgoing model's textures; a
       // second push rendering unlit is a failure no first-push check can see.
@@ -296,6 +308,622 @@ def normal_texel_png(degrees):
 def _unit(vector):
     length = math.sqrt(sum(c * c for c in vector))
     return tuple(c / length for c in vector)
+
+
+def _yaw_pitch(yaw_deg, pitch_deg):
+    """The glTF quaternion ``[x, y, z, w]`` of a yaw about +y, then a pitch.
+
+    R_y(yaw) * R_x(pitch): how both DCCs' cameras arrive in the GLB (a Maya
+    camera and a Blender one aimed alike come out as the same quaternion).
+    """
+    sy, cy = math.sin(math.radians(yaw_deg) / 2), math.cos(math.radians(yaw_deg) / 2)
+    sx, cx = (
+        math.sin(math.radians(pitch_deg) / 2),
+        math.cos(math.radians(pitch_deg) / 2),
+    )
+    return [cy * sx, sy * cx, -sy * sx, cy * cx]
+
+
+def _floor(x0, x1, z0, z1, y):
+    """Two triangles covering ``[x0, x1] x [z0, z1]`` at height *y*, facing +y
+    (counter-clockwise from above)."""
+    return [(x0, y, z0), (x0, y, z1), (x1, y, z0),
+            (x1, y, z0), (x0, y, z1), (x1, y, z1)]  # fmt: skip
+
+
+#: Drives the headset through the page's own frame, `headset.step(delta,
+#: input)` -- the step the page runs from each XRFrame -- on synthetic input
+#: over the walkable fixture (`_walkable_glb`), and reports what the rig did.
+#: Poses are in the TRACKED space, as the headset reports them; a stick's y is
+#: negative pushed forward. One page for every scenario, each a fresh session
+#: (`headset.begin()`).
+LOCOMOTION_JS = """
+() => {
+  const api = window.__api;
+  const H = api.headset;
+  const R = api.rig;
+  const L = api.locomotion;
+  const THREE = api.THREE;
+  const DT = 1 / 72;
+  const out = {};
+  // Yaw (about +y, positive turning left) then pitch (positive looking up).
+  const quat = (yawDeg, pitchDeg = 0) => new THREE.Quaternion()
+    .setFromEuler(new THREE.Euler(
+      THREE.MathUtils.degToRad(pitchDeg), THREE.MathUtils.degToRad(yawDeg), 0, 'YXZ'))
+    .toArray();
+  const run = (frames, input) => {
+    const events = [];
+    for (let i = 0; i < frames; i++) events.push(...H.step(DT, input));
+    return events;
+  };
+  const rig = () => R.place;
+  const inScene = (pose) => R.toScene(pose.position).toArray();
+  const boxOf = (object) => {
+    const box = new THREE.Box3().setFromObject(object);
+    return [box.min.toArray(), box.max.toArray()];
+  };
+
+  // --- where the model stands: true scale, centred, on the floor ---------
+  out.layout = {
+    scaleToggle: !!document.getElementById('scaleToggle'),
+    scale: api.model.scale.toArray(),
+    box: boxOf(api.model),
+  };
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r' }));
+  out.layout.boxAfterR = boxOf(api.model);
+
+  // --- snap turn: one per flick, about the head ---------------------------
+  H.begin();
+  const head = { position: [0.4, 1.6, -0.3], orientation: quat(0) };
+  const before = inScene(head);
+  out.turn = { events: run(20, { head, right: [1, 0] }) };
+  out.turn.yaw = rig().yaw;
+  out.turn.headBefore = before;
+  out.turn.headAfter = inScene(head);
+  run(3, { head, right: [0, 0] });
+  run(3, { head, right: [-1, 0] });
+  out.turn.yawBack = rig().yaw;
+
+  // --- a jump onto the floor ahead ---------------------------------------
+  H.begin();
+  const aim = { position: [0.2, 1.2, -0.3], orientation: quat(0, -35) };
+  out.teleport = { aimEvents: run(3, { head, right: [0, -1], aim }) };
+  out.teleport.arcPoints = L.arc.length;
+  out.teleport.target = L.target && { point: L.target.point.toArray(), valid: L.target.valid };
+  const released = run(2, { head, right: [0, 0], aim });
+  out.teleport.fadeWhileLeaving = R.fade;
+  out.teleport.rigWhileLeaving = rig();
+  out.teleport.events = released.concat(run(40, { head, right: [0, 0], aim }));
+  out.teleport.headAfter = inScene(head);
+  out.teleport.rigAfter = rig();
+  out.teleport.fadeAfter = R.fade;
+
+  // --- a jump onto the raised platform: the first pitch whose arc lands on it
+  H.begin();
+  const east = { position: [0, 1.6, 0], orientation: quat(-90) };
+  let onPlatform = null;
+  for (let pitch = -60; pitch <= 30 && !onPlatform; pitch += 1) {
+    const ray = { position: [0, 1.2, 0], orientation: quat(-90, pitch) };
+    run(1, { head: east, right: [0, -1], aim: ray });
+    const found = L.target;
+    if (found && found.valid && Math.abs(found.point.y - 0.3) < 1e-3) {
+      onPlatform = { ray, point: found.point.toArray() };
+    }
+    run(1, { head: east, right: [0, 0.9], aim: ray });  // pulled back: cancelled
+  }
+  out.platform = { found: !!onPlatform };
+  if (onPlatform) {
+    run(2, { head: east, right: [0, -1], aim: onPlatform.ray });
+    run(40, { head: east, right: [0, 0], aim: onPlatform.ray });
+    out.platform.point = onPlatform.point;
+    out.platform.rig = rig();
+    out.platform.headAfter = inScene(east);
+  }
+
+  // --- the wall: struck, and no landing ----------------------------------
+  H.begin();
+  const nearWall = { position: [0, 1.6, -2], orientation: quat(0) };
+  const atWall = { position: [0, 1.2, -2.1], orientation: quat(0, 25) };
+  run(3, { head: nearWall, right: [0, -1], aim: atWall });
+  out.wall = { target: L.target && { point: L.target.point.toArray(), valid: L.target.valid } };
+  run(40, { head: nearWall, right: [0, 0], aim: atWall });
+  out.wall.rig = rig();
+
+  // --- pulled back: cancelled, no jump -----------------------------------
+  H.begin();
+  run(3, { head, right: [0, -1], aim });
+  out.cancel = { aimedValid: !!(L.target && L.target.valid) };
+  run(1, { head, right: [0, 0.8], aim });
+  out.cancel.aimingAfterPullBack = L.aiming;
+  run(40, { head, right: [0, 0], aim });
+  out.cancel.rig = rig();
+
+  // --- walking where the head looks: +z, clear of the step and the ledge ---
+  H.begin();
+  const south = { position: [0, 1.6, 0], orientation: quat(180) };
+  run(1, { head: south, left: [0, -1] });
+  out.walk = { firstStep: rig().z };
+  run(71, { head: south, left: [0, -1] });
+  out.walk.oneSecond = rig();
+  out.walk.vignetteMoving = L.vignette;
+  run(36, { head: south, left: [0, 0] });
+  out.walk.stopped = rig();
+  run(72, { head: south, left: [0, 0] });
+  out.walk.settled = rig();
+  out.walk.vignetteStopped = L.vignette;
+
+  // --- the floor follows a step up, not a ledge --------------------------
+  H.begin();
+  run(100, { head: east, left: [0, -1] });
+  run(60, { head: east, left: [0, 0] });
+  out.stepUp = rig();
+  H.begin();
+  const towardLedge = { position: [-3, 1.6, 0], orientation: quat(180) };
+  run(100, { head: towardLedge, left: [0, -1] });
+  run(60, { head: towardLedge, left: [0, 0] });
+  out.ledge = { rig: rig(), head: inScene(towardLedge) };
+
+  // --- the offset reference space is the rig's inverse --------------------
+  H.begin();
+  run(3, { head, right: [1, 0] });
+  run(3, { head, right: [0, 0] });
+  run(40, { head: south, left: [0.5, -1] });
+  const off = R.offset();
+  const rotation = new THREE.Quaternion(
+    off.orientation.x, off.orientation.y, off.orientation.z, off.orientation.w);
+  const tracked = [0.7, 1.3, -0.4];
+  // WebXR: a pose in the offset space is the offset's INVERSE applied to the
+  // tracked one -- which three.js then treats as the scene.
+  out.offset = {
+    viaOffset: new THREE.Vector3(...tracked)
+      .sub(new THREE.Vector3(off.position.x, off.position.y, off.position.z))
+      .applyQuaternion(rotation.clone().invert())
+      .toArray(),
+    toScene: R.toScene(tracked).toArray(),
+  };
+
+  // --- a pivot turned since load: the wall is struck where it NOW stands --
+  H.begin();
+  api.pivot.rotation.y = Math.PI;  // the wall at z -5 now stands at z +5, facing -z
+  const turnedHead = { position: [0, 1.6, 2], orientation: quat(180) };
+  const turnedAim = { position: [0, 1.2, 2.1], orientation: quat(180, 25) };
+  run(3, { head: turnedHead, right: [0, -1], aim: turnedAim });
+  out.turnedPivot = { target: L.target && { point: L.target.point.toArray(), valid: L.target.valid } };
+  run(1, { head: turnedHead, right: [0, 0.9], aim: turnedAim });
+  api.pivot.rotation.y = 0;
+  H.begin();
+  return out;
+}
+"""
+
+#: Where a view starts, over the walkable fixture with its start nodes
+#: (`_walkable_glb(start=True)`): the desktop view the load opened on, the
+#: start the rig reads, and a session's first frames through `update`.
+START_JS = """
+() => {
+  const api = window.__api;
+  const H = api.headset;
+  const R = api.rig;
+  const THREE = api.THREE;
+  const DT = 1 / 72;
+  const quat = (yawDeg, pitchDeg = 0) => new THREE.Quaternion()
+    .setFromEuler(new THREE.Euler(
+      THREE.MathUtils.degToRad(pitchDeg), THREE.MathUtils.degToRad(yawDeg), 0, 'YXZ'))
+    .toArray();
+  const out = {};
+  out.desktop = {
+    position: api.camera.position.toArray(),
+    look: api.camera.getWorldDirection(new THREE.Vector3()).toArray(),
+    target: api.controls.target.toArray(),
+    fov: api.camera.fov,
+    aspect: api.camera.aspect,
+    near: api.camera.near,
+    far: api.camera.far,
+  };
+  const start = H.start;
+  out.start = start && { point: start.point.toArray(), heading: start.heading };
+
+  // A session's first frame with a head: placed at the start, under black.
+  H.begin();
+  R.takeChange();  // the begin's own reset, applied
+  const head = { position: [0.4, 1.6, -0.3], orientation: quat(30, 10) };
+  out.arrive = { events: H.step(DT, { head }), fade: R.fade, changed: R.changed };
+  out.arrive.rig = R.place;
+  out.arrive.head = R.toScene(head.position).toArray();
+  out.arrive.facing = R.directionToScene(head.orientation).toArray();
+  const later = [];
+  for (let i = 0; i < 30; i++) later.push(...H.step(DT, { head }));
+  out.arrive.later = later;
+  out.arrive.fadeAfter = R.fade;
+  out.arrive.rigAfter = R.place;
+  // Re-armed by the next session's begin, and only by it.
+  H.begin();
+  out.again = H.step(DT, { head });
+
+  // A recenter -- the tracked space reset under the viewer, who may be
+  // anywhere in their room, facing anywhere -- while still at the start: put
+  // back there, facing its way. Once they have walked off, it keeps them.
+  for (let i = 0; i < 20; i++) H.step(DT, { head });
+  const elsewhere = { position: [1.2, 1.6, 0.9], orientation: quat(-70) };
+  H.recenter();
+  out.recenter = { events: H.step(DT, { head: elsewhere }) };
+  out.recenter.head = R.toScene(elsewhere.position).toArray();
+  out.recenter.facing = R.directionToScene(elsewhere.orientation).toArray();
+  for (let i = 0; i < 20; i++) H.step(DT, { head: elsewhere });
+  for (let i = 0; i < 36; i++) H.step(DT, { head: elsewhere, left: [0, -1] });
+  H.recenter();
+  out.recenter.afterWalking = H.step(DT, { head: elsewhere });
+  H.begin();
+  return out;
+}
+"""
+
+#: A session's first frame on a page whose manifest names no start node; then a
+#: walk, and locomotion switched off under it (restored before returning).
+NO_START_JS = """
+() => {
+  const H = window.__api.headset;
+  const R = window.__api.rig;
+  const L = window.__api.locomotion;
+  H.begin();
+  const head = { position: [0.4, 1.6, -0.3], orientation: [0, 0, 0, 1] };
+  const events = H.step(1 / 72, { head });
+  const out = { events, rig: R.place, fade: R.fade, start: H.start };
+  for (let i = 0; i < 72; i++) H.step(1 / 72, { head, left: [0, -1] });
+  out.walked = R.place;
+  L.enabled = false;
+  out.switchedOff = { events: H.step(1 / 72, { head }), rig: R.place, fade: R.fade };
+  L.enabled = true;
+  H.begin();
+  return out;
+}
+"""
+
+#: A session with locomotion switched off (the server's switch, read on the
+#: poll): placed at the start, then every stick every way -- a walk, a flick
+#: each way, an aim and its release -- and a recenter from across the room.
+#: Then the switch thrown MID-session, on a viewer the sticks had carried off
+#: while it was still on. Synchronous throughout, so no poll can land between
+#: the scenario's own writes to `enabled`; it ends switched off, as it began.
+LOCKED_JS = """
+() => {
+  const api = window.__api;
+  const H = api.headset;
+  const R = api.rig;
+  const L = api.locomotion;
+  const THREE = api.THREE;
+  const DT = 1 / 72;
+  const quat = (yawDeg, pitchDeg = 0) => new THREE.Quaternion()
+    .setFromEuler(new THREE.Euler(
+      THREE.MathUtils.degToRad(pitchDeg), THREE.MathUtils.degToRad(yawDeg), 0, 'YXZ'))
+    .toArray();
+  const head = { position: [0.4, 1.6, -0.3], orientation: quat(30, 10) };
+  const aim = { position: [0.2, 1.2, -0.3], orientation: quat(30, -35) };
+  const across = { position: [-0.8, 1.6, 1.1], orientation: quat(-120) };
+  const out = { enabled: L.enabled };
+  H.begin();
+  out.arrive = H.step(DT, { head });
+  for (let i = 0; i < 20; i++) H.step(DT, { head });
+  out.placed = R.place;
+  const events = [];
+  for (let i = 0; i < 72; i++) events.push(...H.step(DT, { head, left: [0.3, -1] }));
+  for (const right of [[1, 0], [0, 0], [-1, 0], [0, 0], [0, -1], [0, -1], [0, 0]]) {
+    events.push(...H.step(DT, { head, right, aim }));
+  }
+  for (let i = 0; i < 40; i++) events.push(...H.step(DT, { head }));
+  out.events = events;
+  out.after = R.place;
+  out.aiming = L.aiming;
+  out.arc = L.arc.length;
+  out.vignette = L.vignette;
+  out.head = R.toScene(head.position).toArray();
+  H.recenter();
+  out.recenter = H.step(DT, { head: across });
+  out.recenterHead = R.toScene(across.position).toArray();
+  out.recenterFacing = R.directionToScene(across.orientation).toArray();
+
+  // On while the viewer walks off, then switched off (as the next poll does).
+  L.enabled = true;
+  H.begin();
+  for (let i = 0; i < 21; i++) H.step(DT, { head });
+  const mid = { placed: R.place };
+  for (let i = 0; i < 72; i++) H.step(DT, { head, left: [0, -1] });
+  mid.walked = R.place;
+  L.enabled = false;
+  mid.events = H.step(DT, { head });
+  mid.fade = R.fade;
+  mid.head = R.toScene(head.position).toArray();
+  mid.later = [];
+  for (let i = 0; i < 30; i++) mid.later.push(...H.step(DT, { head }));
+  mid.fadeAfter = R.fade;
+  H.recenter();
+  mid.recenter = H.step(DT, { head: across });
+  mid.recenterHead = R.toScene(across.position).toArray();
+  out.midSession = mid;
+  H.begin();
+  return out;
+}
+"""
+
+#: Two headset sessions over a large ground (`_ground_glb`), begun and ended
+#: the way WebXRManager does it -- `isPresenting` set, THEN the event, and the
+#: reverse at the end -- on a stand-in for the session's reference space, which
+#: is all of a session the page itself touches. Between the two events, what
+#: three.js does to the page's camera on every XR frame is done by hand
+#: (`WebXRManager.updateUserCamera`: the head's pose, the headset's lens and its
+#: projection written in, with the page's loop running `controls.update()` on
+#: top). The second session re-frames from the desktop half-way -- the Frame
+#: button, or a push landing mid-session.
+SESSION_JS = """
+() => {
+  const api = window.__api;
+  const { THREE, camera, controls, renderer } = api;
+  const xr = renderer.xr;
+  const H = api.headset;
+  const R = api.rig;
+  const view = () => ({
+    position: camera.position.toArray(),
+    quaternion: camera.quaternion.toArray(),
+    fov: camera.fov,
+    near: camera.near,
+    far: camera.far,
+    target: controls.target.toArray(),
+    // The projection as drawn: a lens put back but never rebuilt into the
+    // matrix would go on drawing the headset's.
+    focal: camera.projectionMatrix.elements[5],
+  });
+  const heard = [];
+  const space = { addEventListener: (type, fn) => heard.push([type, fn]), removeEventListener() {} };
+  const ownSpace = xr.getReferenceSpace;
+  const begin = () => {
+    xr.getReferenceSpace = () => space;
+    xr.isPresenting = true;
+    xr.dispatchEvent({ type: 'sessionstart' });
+  };
+  const finish = () => {
+    xr.isPresenting = false;
+    xr.dispatchEvent({ type: 'sessionend' });
+    xr.getReferenceSpace = ownSpace;
+  };
+  const headsetFrame = () => {
+    camera.position.set(4, 1.6, -3);
+    camera.quaternion.setFromEuler(new THREE.Euler(0.1, 2.0, 0));
+    camera.fov = 101;
+    camera.projectionMatrix.makePerspective(-0.05, 0.05, 0.05, -0.05, 0.05, 100);
+    controls.update();
+  };
+  const layerShown = () => {
+    const card = api.scene.getObjectByName('controls');
+    return card ? card.parent.visible : null;
+  };
+  const press = (key) => window.dispatchEvent(new KeyboardEvent('keydown', { key }));
+  const out = {};
+  press('f');
+  out.framed = view();
+  // The desktop view orbited somewhere of the user's own before entering.
+  camera.position.set(60, 45, 90);
+  controls.target.set(10, 0, -10);
+  controls.update();
+  out.orbited = view();
+  R.move(2, 3);  // a rig some earlier use left off the origin
+
+  begin();
+  out.started = {
+    near: camera.near,
+    place: R.place,
+    heard: heard.map(([type]) => type),
+    recenters: heard.length === 1 && heard[0][1] === H.recenter,
+    layer: layerShown(),
+  };
+  headsetFrame();
+  headsetFrame();
+  finish();
+  out.ended = { view: view(), layer: layerShown(), place: R.place };
+
+  begin();
+  headsetFrame();
+  press('f');
+  out.reframed = { near: camera.near };
+  headsetFrame();
+  finish();
+  out.reframed.view = view();
+  return out;
+}
+"""
+
+#: A dense rolling ground (`_terrain_glb`) walked and aimed across, counting
+#: the triangle tests each headset frame costs. Every triangle a raycast tests
+#: goes through `Ray.intersectTriangle` -- three.js's own raycast and anything
+#: faster alike -- so the count is the work, independent of how it is found.
+#: The heights are checked against three.js's own raycast straight down.
+DENSE_JS = """
+() => {
+  const api = window.__api;
+  const { THREE } = api;
+  const H = api.headset;
+  const R = api.rig;
+  const L = api.locomotion;
+  const DT = 1 / 72;
+  const FRAMES = 60;
+  const quat = (yawDeg, pitchDeg = 0) => new THREE.Quaternion()
+    .setFromEuler(new THREE.Euler(
+      THREE.MathUtils.degToRad(pitchDeg), THREE.MathUtils.degToRad(yawDeg), 0, 'YXZ'))
+    .toArray();
+  const ground = (x, z) => {
+    const down = new THREE.Raycaster(new THREE.Vector3(x, 50, z), new THREE.Vector3(0, -1, 0));
+    const hit = down.intersectObject(api.model, true)[0];
+    return hit ? hit.point.y : null;
+  };
+  const proto = THREE.Ray.prototype;
+  const stock = proto.intersectTriangle;
+  let tests = 0;
+  proto.intersectTriangle = function (...args) {
+    tests += 1;
+    return stock.apply(this, args);
+  };
+  const out = {};
+  try {
+    const head = { position: [0, 1.6, 0], orientation: quat(0) };
+    H.begin();
+    H.step(DT, { head });
+    tests = 0;
+    let began = performance.now();
+    for (let i = 0; i < FRAMES; i++) H.step(DT, { head, left: [0, -1] });
+    out.walk = { tests: tests / FRAMES, ms: (performance.now() - began) / FRAMES };
+    for (let i = 0; i < 120; i++) H.step(DT, { head });  // coasted to a stop, settled
+    const at = R.toScene(head.position);
+    out.walk.rig = R.place;
+    out.walk.ground = ground(at.x, at.z);
+
+    H.begin();
+    H.step(DT, { head });
+    tests = 0;
+    began = performance.now();
+    let aim = null;
+    for (let i = 0; i < FRAMES; i++) {  // swept slowly: a new arc every frame
+      aim = { position: [0.2, 1.2, -0.3], orientation: quat(15, -30 + i * 0.25) };
+      H.step(DT, { head, right: [0, -1], aim });
+    }
+    out.aim = { tests: tests / FRAMES, ms: (performance.now() - began) / FRAMES };
+    const target = L.target;
+    out.aim.target = target && { point: target.point.toArray(), valid: target.valid };
+    if (target) out.aim.ground = ground(target.point.x, target.point.z);
+    H.step(DT, { head, right: [0, 0.9], aim });  // pulled back: cancelled
+  } finally {
+    proto.intersectTriangle = stock;
+    H.begin();
+  }
+  return out;
+}
+"""
+
+#: The packaged `turntable` on the desktop and while a headset presents --
+#: `renderer.xr.isPresenting` is a plain flag, and the script reads nothing
+#: else of a session -- over real frames.
+TURNTABLE_JS = """
+async () => {
+  const api = window.__api;
+  const xr = api.renderer.xr;
+  const turned = async () => {
+    const from = api.pivot.rotation.y;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return api.pivot.rotation.y - from;
+  };
+  const out = { desktop: await turned() };
+  xr.isPresenting = true;
+  try {
+    out.presenting = await turned();
+  } finally {
+    xr.isPresenting = false;
+  }
+  out.after = await turned();
+  return out;
+}
+"""
+
+#: The packaged `inspect` in a session: B on the right controller -- button 5
+#: of an xr-standard gamepad -- pressed, held and pressed again, over real
+#: frames, through a stand-in session holding just that controller.
+INSPECT_XR_JS = """
+async () => {
+  const api = window.__api;
+  const xr = api.renderer.xr;
+  const frames = (count) => new Promise((resolve) => {
+    let left = count;
+    const tick = () => ((left -= 1) <= 0 ? resolve() : requestAnimationFrame(tick));
+    requestAnimationFrame(tick);
+  });
+  const b = { pressed: false };
+  const session = {
+    frameRate: 90,
+    inputSources: [{ handedness: 'right', gamepad: { buttons: [{}, {}, {}, {}, {}, b], axes: [] } }],
+  };
+  const panel = [...document.querySelectorAll('#panels .panel')]
+    .find((node) => node.querySelector('header').textContent === 'Inspect');
+  const state = () => {
+    const card = api.scene.getObjectByName('inspect');
+    return { panel: !panel.hidden, card: card ? card.visible : null };
+  };
+  const ownSession = xr.getSession;
+  xr.getSession = () => session;
+  xr.isPresenting = true;
+  const out = {};
+  try {
+    await frames(3);
+    out.before = state();
+    b.pressed = true;
+    await frames(3);
+    out.pressed = state();
+    await frames(5);
+    out.held = state();
+    b.pressed = false;
+    await frames(3);
+    b.pressed = true;
+    await frames(3);
+    out.again = state();
+    b.pressed = false;
+  } finally {
+    xr.isPresenting = false;
+    xr.getSession = ownSession;
+  }
+  await frames(2);
+  out.desktop = state();
+  return out;
+}
+"""
+
+#: `headset.read`, the page's XRFrame reader, on stand-in frames: the head and
+#: the right controller's aim in the session's space, and each stick from the
+#: axes the controller reports it on.
+READ_JS = """
+() => {
+  const H = window.__api.headset;
+  const AIM = {};
+  const pose = ([x, y, z]) => ({
+    transform: { position: { x, y, z }, orientation: { x: 0, y: 0, z: 0, w: 1 } },
+  });
+  const frame = (sources) => ({
+    session: { inputSources: sources },
+    getViewerPose: () => pose([0.1, 1.6, 0.2]),
+    getPose: (space) => (space === AIM ? pose([0.3, 1.2, -0.2]) : null),
+  });
+  const source = (handedness, axes) => ({ handedness, targetRaySpace: AIM, gamepad: { axes, buttons: [] } });
+  const plain = (input) => ({
+    head: input.head,
+    left: input.left,
+    right: input.right,
+    aim: input.aim,
+    hands: Object.keys(input.sources).sort(),
+  });
+  return {
+    standard: plain(H.read(frame([
+      source('left', [0.1, 0.2, 0.3, -0.4]),
+      source('right', [0.5, 0.6, -0.7, 0.8]),
+    ]))),
+    touchpad: plain(H.read(frame([source('left', [0.25, -0.5])]))),
+    unhanded: plain(H.read(frame([source('none', [1, 1, 1, 1]), source('right', [0.9])]))),
+  };
+}
+"""
+
+#: The model on screen, read after a push: its world box, the page's own
+#: measurement of it, and the clip planes the view opened with.
+PLACED_JS = """
+() => {
+  const api = window.__api;
+  const { THREE, camera } = api;
+  const box = new THREE.Box3().setFromObject(api.model);
+  return {
+    centre: box.getCenter(new THREE.Vector3()).toArray(),
+    min: box.min.toArray(),
+    size: api.specs.size,
+    position: camera.position.toArray(),
+    near: camera.near,
+    far: camera.far,
+    finite: [camera.near, camera.far, ...camera.projectionMatrix.elements].every(Number.isFinite),
+  };
+}
+"""
 
 
 def _runtime_available():
@@ -1246,6 +1874,88 @@ class TestPreviewViewerLive(unittest.TestCase):
         self.assertTrue(bound, "the fixture itself must carry a bound lightmap")
         return path
 
+    def _baked_room_glb(self, objects):
+        """A room of several objects, baked by the real applier.
+
+        *objects* are ``(name, material indices, map[, rect])``: one mesh node
+        per object with one primitive per material, *map* the EXR its bake
+        names (``None``: never baked; a file that does not exist: baked, with
+        its map lost) and *rect* its atlas ``scaleOffset``. Every baked object
+        carries the bake's ``lightmapInfo`` marker in its node extras, shaped as
+        FBX2glTF transcribes it -- which is what lets the page tell an object
+        the bake meant to light from one it merely wears a lit material.
+        """
+        import cv2
+        import numpy as np
+
+        exr_dir = self.temp.dir_path()
+        cv2.imwrite(
+            os.path.join(exr_dir, "room_Lightmap.exr"),
+            np.full((8, 8, 3), self.BAKE_VALUE, dtype=np.float32),
+        )
+        attrs = {"POSITION": 1, "TEXCOORD_0": 3, "TEXCOORD_1": 3}
+        entries, nodes, meshes = [], [], []
+        for name, materials, lightmap, *rect in objects:
+            node = {"name": name, "mesh": len(meshes)}
+            meshes.append(
+                {
+                    "primitives": [
+                        {"attributes": dict(attrs), "material": m} for m in materials
+                    ]
+                }
+            )
+            if lightmap:
+                scale_offset = rect[0] if rect else [1.0, 1.0, 0.0, 0.0]
+                entries.append(
+                    {
+                        "name": name,
+                        "map": lightmap,
+                        "uvIndex": 1,
+                        "intensity": 1.0,
+                        "scaleOffset": scale_offset,
+                    }
+                )
+                marker = {"map": lightmap, "uvIndex": 1, "scaleOffset": scale_offset}
+                node["extras"] = {
+                    "fromFBX": {
+                        "userProperties": {
+                            "lightmapInfo": {
+                                "type": "eFbxString",
+                                "value": json.dumps(marker),
+                            }
+                        }
+                    }
+                }
+            nodes.append(node)
+        manifest = {"version": 1, "objects": entries}
+        nodes.append(
+            {
+                "name": "data_export",
+                "extras": {
+                    "fromFBX": {
+                        "userProperties": {
+                            "lightmap_metadata": {
+                                "type": "eFbxString",
+                                "value": json.dumps(manifest),
+                            }
+                        }
+                    }
+                },
+            }
+        )
+        count = 1 + max(m for _name, materials, *_rest in objects for m in materials)
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scenes": [{"nodes": list(range(len(nodes)))}],
+            "scene": 0,
+            "nodes": nodes,
+            "meshes": meshes,
+            "materials": [{"name": f"mat{i}"} for i in range(count)],
+        }
+        path = self._write(gltf, uvs=True)
+        ptk.MeshConvert.apply_glb_lightmaps(path, search_dirs=[exr_dir])
+        return path
+
     def _write(self, gltf, uvs=False):
         """A minimal but VALID binary glTF: JSON chunk plus a real BIN chunk.
 
@@ -1717,6 +2427,243 @@ class TestPreviewViewerLive(unittest.TestCase):
             "the environment was disposed with the outgoing model",
         )
         self.assertGreater(found["environment"]["intensity"], 0)
+        self.assertEqual(found["console_errors"], [])
+
+    # ------------------------------------------------------ what the HUD says
+    # The HUD once read "51/57 lightmapped materials": a fraction of three.js
+    # material INSTANCES -- one per lightmapped object after the applier's
+    # copies, one per loader variant -- against a denominator of every
+    # material, baked or never meant to be. Right numbers, misleading
+    # sentence. It now counts OBJECTS, and says what disagrees with the bake.
+
+    @staticmethod
+    def _rewire(path, edit):
+        """Rewrite the GLB at *path* in place through ``edit(gltf)``."""
+        with ptk.MeshConvert.open_glb(path) as session:
+            edit(session.gltf)
+            session.dirty = True
+        return path
+
+    def test_the_HUD_counts_objects_lightmapped_not_material_instances(self):
+        """A baked machine wearing two materials beside an unbaked prop: the old
+        line read "2/3 lightmapped materials"; it is one of two OBJECTS."""
+        found = self._load(
+            self._baked_room_glb(
+                [("machine", [0, 1], "room_Lightmap.exr"), ("prop", [2], None)]
+            )
+        )
+        self.assertEqual(found["errors"], [])
+        self.assertEqual(found["lightmapped"], 2, "two material instances bound")
+        specs = found["specs"]
+        self.assertEqual((specs["objects"], specs["meshes"]), (2, 3))
+        self.assertEqual(specs["materials"]["file"], 3)
+        self.assertEqual(
+            {
+                k: specs["lightmaps"][k]
+                for k in ("lit", "objects", "baked", "unlit", "foreign")
+            },
+            {"lit": 1, "objects": 2, "baked": 1, "unlit": [], "foreign": []},
+        )
+        self.assertEqual(
+            found["statLines"],
+            ["2 objects · 3 tris · 1.00 × 1.00 × 0.00 m", "1 of 2 objects lightmapped"],
+        )
+        self.assertIsNone(found["issueLine"])
+        self.assertEqual(found["console_errors"], [])
+
+    def test_a_fully_baked_room_says_so_in_words(self):
+        """Every object lit -- "all 2 objects", never "2/2"."""
+        found = self._load(
+            self._baked_room_glb(
+                [
+                    ("floor", [0], "room_Lightmap.exr"),
+                    ("wall", [1], "room_Lightmap.exr"),
+                ]
+            )
+        )
+        self.assertEqual(found["statLines"][1], "all 2 objects lightmapped")
+        self.assertIsNone(found["issueLine"])
+
+    def test_an_unbaked_model_has_no_lightmap_clause(self):
+        found = self._load(self._animated_glb())
+        self.assertIsNone(found["specs"]["lightmaps"])
+        self.assertEqual(found["statLines"][1], "2 clips")
+        self.assertFalse(any("lightmap" in line for line in found["statLines"]))
+
+    def test_a_baked_object_whose_lightmap_did_not_bind_is_named(self):
+        """Its map was lost: it renders exactly like an object never baked,
+        which is why the page -- not the render -- has to say which."""
+        found = self._load(
+            self._baked_room_glb(
+                [("floor", [0], "room_Lightmap.exr"), ("wall", [1], "gone.exr")]
+            )
+        )
+        self.assertEqual(found["specs"]["lightmaps"]["unlit"], ["wall"])
+        self.assertEqual(
+            found["issueLine"],
+            "⚠ 1 baked object renders unlit — no lightmap bound: wall",
+        )
+        self.assertEqual(found["console_errors"], [], "a warning, not an error")
+
+    def test_an_object_lit_by_a_bake_it_was_never_in_is_named(self):
+        """What a deliverable built before the applier stopped binding in place
+        over a material an unbaked object wears looks like: the prop renders
+        the floor's lighting, and the old HUD counted that material as
+        lightmapped. The bake's own markers say the prop was never baked."""
+
+        def share_the_floors_material(gltf):
+            floor = gltf["meshes"][0]["primitives"][0]["material"]
+            gltf["meshes"][1]["primitives"][0]["material"] = floor
+
+        glb = self._rewire(
+            self._baked_room_glb(
+                [("floor", [0], "room_Lightmap.exr"), ("prop", [1], None)]
+            ),
+            share_the_floors_material,
+        )
+        found = self._load(glb)
+        self.assertEqual(found["specs"]["lightmaps"]["foreign"], ["prop"])
+        self.assertIn("never baked with: prop", found["issueLine"])
+
+    def test_an_unreadable_carrier_is_reported_not_swallowed(self):
+        """A carrier the page does not read binds nothing -- deliberately -- and
+        used to say nothing either, so the room just rendered unlit."""
+
+        def unknown_carrier(gltf):
+            gltf["extras"]["lightmap_web"]["carrier"] = "sheen"
+
+        found = self._load(self._rewire(self._lightmapped_glb(), unknown_carrier))
+        self.assertEqual(found["lightmapped"], 0)
+        self.assertIn("'sheen'", found["issueLine"])
+        self.assertTrue(
+            any("does not read" in line for line in found["console_errors"]),
+            found["console_errors"],
+        )
+
+    @staticmethod
+    def _drop_second_uv(gltf):
+        for mesh in gltf["meshes"]:
+            for primitive in mesh["primitives"]:
+                primitive["attributes"].pop("TEXCOORD_1", None)
+
+    def test_the_uv_warning_checks_the_set_the_bake_is_sampled_on(self):
+        """A bake is sampled on the UV set its manifest names
+        (`lightmap_web.uv`), and the warning for a mesh without it looked for
+        the SECOND set whatever the manifest said: a bake laid out on the
+        first -- which the page renders correctly -- was reported as reading
+        one texel. It is checked against the set actually sampled."""
+
+        def on_the_first_set(gltf):
+            gltf["extras"]["lightmap_web"]["uv"] = 0
+            self._drop_second_uv(gltf)
+
+        found = self._load(self._rewire(self._lightmapped_glb(), on_the_first_set))
+        self.assertEqual(self._lit(found)["lightMapChannel"], 0)
+        texts = [issue["text"] for issue in found["specs"]["issues"]]
+        self.assertFalse(any("UV set" in text for text in texts), texts)
+
+    def test_a_mesh_without_its_bakes_uv_set_is_named(self):
+        """The other half: the manifest's set (the second, here) missing from
+        the mesh reads one texel of the bake, and the load says so."""
+        found = self._load(self._rewire(self._lightmapped_glb(), self._drop_second_uv))
+        self.assertEqual(self._lit(found)["lightMapChannel"], 1)
+        self.assertIn("no second UV set", found["issueLine"])
+        self.assertIn("room", found["issueLine"])
+
+    def test_the_page_measures_the_file_and_its_load(self):
+        """Download and parse are timed apart -- a share link's slow first view
+        is the download, a big GLB's is the parse -- and the first frame after
+        the load, where the programs compile, once it has drawn."""
+        glb = self._lightmapped_glb()
+
+        def after_a_frame(server, page):
+            page.wait_for_function(
+                "() => window.__api.specs && window.__api.specs.load.firstFrameMs !== null",
+                timeout=60_000,
+            )
+            return {
+                "later": page.evaluate("() => window.__api.specs.load"),
+                "status": page.evaluate(
+                    "() => document.getElementById('status').textContent"
+                ),
+            }
+
+        found = self._load(glb, then=after_a_frame)
+        specs = found["specs"]
+        self.assertEqual(specs["file"]["bytes"], os.path.getsize(glb))
+        self.assertGreater(specs["file"]["jsonBytes"], 0)
+        for phase in ("fetchMs", "parseMs", "setupMs"):
+            self.assertGreaterEqual(specs["load"][phase], 0, phase)
+        self.assertGreater(found["later"]["firstFrameMs"], 0)
+        self.assertRegex(found["status"], r"^v1 · \d+(\.\d)? KB · updated ")
+
+    def test_inspect_measures_frames_memory_and_the_file(self):
+        """The packaged profiler, opened as a user opens it (the `i` key). The
+        atlas both objects bake into is ONE image in GPU memory: each object
+        samples it through its own rect, on its own texture, and counted per
+        texture one atlas read as two."""
+        glb = self._baked_room_glb(
+            [
+                ("left", [0], "room_Lightmap.exr", [0.5, 1.0, 0.0, 0.0]),
+                ("right", [0], "room_Lightmap.exr", [0.5, 1.0, 0.5, 0.0]),
+            ]
+        )
+
+        def open_inspect(server, page):
+            page.keyboard.press("i")
+            page.wait_for_function(
+                "() => [...document.querySelectorAll('#panels .panel')]"
+                ".some((p) => !p.hidden && p.textContent.includes('fps'))",
+                timeout=60_000,
+            )
+            return {
+                "panel": page.evaluate(
+                    "() => [...document.querySelectorAll('#panels .panel .rows > div')]"
+                    ".map((n) => n.textContent)"
+                )
+            }
+
+        found = self._load(glb, scripts=["inspect"], then=open_inspect)
+        self.assertEqual(found["console_errors"], [])
+        rows = found["panel"]
+        pairs = dict(zip(rows, rows[1:]))  # each label cell, to the cell after it
+        for heading in ("Frame", "Model", "GPU memory (estimated)", "File", "Load"):
+            self.assertIn(heading, rows)
+        self.assertIn("2 of 2 objects lit", pairs["lightmaps"])
+        self.assertIn("1 map", pairs["lightmaps"])
+        self.assertRegex(pairs["textures"], r"· 1 image$")
+        self.assertRegex(pairs["rate"], r"^\d+ fps")
+
+    def test_copy_report_without_a_clipboard_logs_it_instead(self):
+        """The clipboard exists only in a secure context, and the page is as
+        validly opened over a plain-HTTP LAN address (where it says WebXR needs
+        HTTPS). There `navigator.clipboard` is undefined: Copy Report threw in
+        its click handler and said nothing. It logs the report and says so."""
+        panel = "[...document.querySelectorAll('#panels .panel')][0]"
+
+        def copy_without_a_clipboard(server, page):
+            page.evaluate(
+                "() => Object.defineProperty(navigator, 'clipboard',"
+                " { value: undefined, configurable: true })"
+            )
+            page.keyboard.press("i")
+            page.wait_for_function(f"() => !{panel}.hidden", timeout=30_000)
+            page.click("#panels .panel footer button")
+            page.wait_for_function(
+                f"() => {panel}.querySelector('footer button').textContent"
+                " !== 'Copy report'",
+                timeout=10_000,
+            )
+            return {
+                "label": page.evaluate(
+                    f"() => {panel}.querySelector('footer button').textContent"
+                )
+            }
+
+        found = self._load(
+            self._lightmapped_glb(), scripts=["inspect"], then=copy_without_a_clipboard
+        )
+        self.assertEqual(found["label"], "Logged to console")
         self.assertEqual(found["console_errors"], [])
 
     #: Display levels (0-255) a BAKED rough dielectric's face may sit above or
@@ -2584,6 +3531,754 @@ export default function probe(viewer) {
         self.assertIs(found["saveHidden"], True)
         self.assertEqual((found["guests_open"], found["guests_closed"]), (1, 0))
         self.assertIs(found["owner_viewer"], False)
+
+    # ------------------------------------------------- getting around in VR
+    # The page's headset locomotion, driven through the same `update(delta,
+    # input)` the page feeds from each XRFrame -- a headless browser has no
+    # headset, but the rig's behaviour is all in that step, on plain values.
+    # One page serves every scenario (`_locomotion`), the rig reset between.
+
+    def _walkable_glb(self, start=False):
+        """A floor to walk on, a 0.3 m step, a 1 m ledge and a wall facing +z.
+
+        Authored away from the origin and off the floor (every point shifted
+        by SHIFT), so the page has to centre it and stand it down: laid out,
+        the scene coordinates are the ones written here.
+
+        *start* adds the nodes a view starts at, as the DCCs deliver them: a
+        camera ``user_pos`` 1.6 m above the platform, looking back along -x
+        and 20 degrees down, its clip planes in the wrong units the way a
+        Blender one arrives; and, under a group, a namespaced
+        ``set:spawn_empty`` on the floor the way a Blender Empty arrives --
+        turned -90 degrees about x and scaled 100, so its -z points down and
+        its +y, Blender's forward, along its heading of -45 degrees.
+        """
+
+        def facing_z(x0, x1, y0, y1, z):
+            return [(x0, y0, z), (x1, y0, z), (x0, y1, z),
+                    (x1, y0, z), (x1, y1, z), (x0, y1, z)]  # fmt: skip
+
+        shift = (10.0, 2.0, -7.0)
+        gltf, blob = self._parts_gltf(
+            {
+                "floor": _floor(-6, 6, -6, 6, 0),
+                "platform": _floor(2, 4, -1, 1, 0.3),
+                "ledge": _floor(-4, -2, 1, 3, 1.0),
+                "wall": facing_z(-3, 3, 0, 3, -5),
+            },
+            shift,
+        )
+        if start:
+            first = len(gltf["nodes"])
+            gltf["cameras"] = [
+                {
+                    "type": "perspective",
+                    "perspective": {
+                        "yfov": 0.5,
+                        "aspectRatio": 1.5,
+                        "znear": 10.0,
+                        "zfar": 100000.0,
+                    },
+                }
+            ]
+            gltf["nodes"] += [
+                {
+                    "name": "user_pos",
+                    "camera": 0,
+                    "translation": [3 + shift[0], 1.9 + shift[1], 0 + shift[2]],
+                    "rotation": _yaw_pitch(90, -20),
+                },
+                {
+                    "name": "set_grp",
+                    "translation": list(shift),
+                    "children": [first + 2],
+                },
+                {
+                    "name": "set:spawn_empty",
+                    "translation": [-5, 0, -4],
+                    "rotation": _yaw_pitch(-45, -90),
+                    "scale": [100, 100, 100],
+                },
+            ]
+            gltf["scenes"][0]["nodes"] += [first, first + 1]
+        return self._pack_glb(
+            gltf, blob, "walkable_start.glb" if start else "walkable.glb"
+        )
+
+    @staticmethod
+    def _parts_gltf(parts, shift=(0.0, 0.0, 0.0)):
+        """A glTF of one mesh node per ``name: triangles`` in *parts*, every
+        point moved by *shift*; returns ``(gltf, blob)`` for :meth:`_pack_glb`."""
+        blob = b""
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scene": 0,
+            "scenes": [{"nodes": list(range(len(parts)))}],
+            "nodes": [],
+            "meshes": [],
+            "accessors": [],
+            "bufferViews": [],
+        }
+        for index, (name, triangles) in enumerate(parts.items()):
+            points = [tuple(c + s for c, s in zip(p, shift)) for p in triangles]
+            data = struct.pack(f"<{len(points) * 3}f", *(c for p in points for c in p))
+            gltf["bufferViews"].append(
+                {"buffer": 0, "byteOffset": len(blob), "byteLength": len(data)}
+            )
+            gltf["accessors"].append(
+                {
+                    "bufferView": index,
+                    "componentType": 5126,
+                    "count": len(points),
+                    "type": "VEC3",
+                    "min": [min(p[axis] for p in points) for axis in range(3)],
+                    "max": [max(p[axis] for p in points) for axis in range(3)],
+                }
+            )
+            gltf["meshes"].append(
+                {"name": name, "primitives": [{"attributes": {"POSITION": index}}]}
+            )
+            gltf["nodes"].append({"name": name, "mesh": index})
+            blob += data
+        return gltf, blob
+
+    def _pack_glb(self, gltf, blob, name):
+        """*gltf* and its binary *blob* as the GLB *name*, in a tracked folder.
+
+        No BIN chunk (and no buffer) when *blob* is empty: a file carrying
+        nothing but nodes is a valid GLB, and a zero-length buffer is not.
+        """
+        if blob:
+            gltf["buffers"] = [{"byteLength": len(blob)}]
+        json_bytes = json.dumps(gltf).encode("utf-8")
+        json_bytes += b" " * ((4 - len(json_bytes) % 4) % 4)
+        blob += b"\0" * ((4 - len(blob) % 4) % 4)
+        chunks = struct.pack("<I4s", len(json_bytes), b"JSON") + json_bytes
+        if blob:
+            chunks += struct.pack("<I4s", len(blob), b"BIN\0") + blob
+        out = os.path.join(self.temp.dir_path(), name)
+        with open(out, "wb") as fh:
+            fh.write(struct.pack("<4sII", b"glTF", 2, 12 + len(chunks)))
+            fh.write(chunks)
+        return out
+
+    def _ground_glb(self, size=150.0):
+        """One flat ground *size* m square: framed whole, the desktop camera
+        stands ~230 m off, and the near plane sized to that is 0.23 m."""
+        half = size / 2
+        gltf, blob = self._parts_gltf({"ground": _floor(-half, half, -half, half, 0)})
+        return self._pack_glb(gltf, blob, "ground.glb")
+
+    def _terrain_glb(self, cells=200, span=40.0, amplitude=1.0, wavelength=12.0):
+        """Dense rolling ground: *cells* x *cells* quads -- 80,000 triangles by
+        default, as ONE indexed mesh -- over *span* m, at height
+        ``amplitude * (1 - cos(kx) cos(kz))``: 0 at the origin, where a session
+        with no start stands, rising to twice *amplitude*, and walkable
+        everywhere (28 degrees at its steepest). Symmetric about the origin
+        and lowest there, so the page's layout leaves it where it is written.
+        """
+        import numpy as np
+
+        axis = np.linspace(-span / 2, span / 2, cells + 1)
+        x, z = np.meshgrid(axis, axis)  # rows run along z, columns along x
+        k = 2 * np.pi / wavelength
+        y = amplitude * (1 - np.cos(k * x) * np.cos(k * z))
+        positions = np.stack([x, y, z], axis=-1).reshape(-1, 3).astype(np.float32)
+        column, row = np.meshgrid(np.arange(cells), np.arange(cells))
+        a = (row * (cells + 1) + column).ravel()
+        b, c = a + 1, a + cells + 1
+        # (a, c, b) and (b, c, d) face +y, as `_floor`'s pair does.
+        indices = np.stack([a, c, b, b, c, c + 1], axis=1).astype(np.uint32).ravel()
+        vertex_bytes = positions.tobytes()
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scene": 0,
+            "scenes": [{"nodes": [0]}],
+            "nodes": [{"name": "terrain", "mesh": 0}],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+            "bufferViews": [
+                {"buffer": 0, "byteOffset": 0, "byteLength": len(vertex_bytes)},
+                {
+                    "buffer": 0,
+                    "byteOffset": len(vertex_bytes),
+                    "byteLength": indices.nbytes,
+                },
+            ],
+            "accessors": [
+                {
+                    "bufferView": 0,
+                    "componentType": 5126,
+                    "count": len(positions),
+                    "type": "VEC3",
+                    "min": positions.min(axis=0).tolist(),
+                    "max": positions.max(axis=0).tolist(),
+                },
+                {
+                    "bufferView": 1,
+                    "componentType": 5125,
+                    "count": len(indices),
+                    "type": "SCALAR",
+                },
+            ],
+        }
+        return self._pack_glb(gltf, vertex_bytes + indices.tobytes(), "terrain.glb")
+
+    def _camera_only_glb(self):
+        """A push holding the start camera and nothing drawable: ``user_pos``
+        1.6 m up, 4 m back along +z, looking down -z."""
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scene": 0,
+            "scenes": [{"nodes": [0]}],
+            "cameras": [
+                {
+                    "type": "perspective",
+                    "perspective": {"yfov": 0.8, "aspectRatio": 1.5, "znear": 0.1},
+                }
+            ],
+            "nodes": [{"name": "user_pos", "camera": 0, "translation": [0, 1.6, 4]}],
+        }
+        return self._pack_glb(gltf, b"", "camera_only.glb")
+
+    _locomotion_found = None
+
+    def _locomotion(self):
+        """Every scenario's findings, from one page load shared by the class."""
+        cls = type(self)
+        if cls._locomotion_found is None:
+            found = self._load(
+                self._walkable_glb(),
+                then=lambda server, page: {"motion": page.evaluate(LOCOMOTION_JS)},
+            )
+            cls._locomotion_found = found
+        return cls._locomotion_found
+
+    def test_the_model_stands_at_true_scale_centred_on_the_floor(self):
+        """No fitted mode: the model keeps its size, and only moves to stand
+        centred on the floor. Fitted, this 3 m fixture would be 1.5 m tall."""
+        found = self._locomotion()
+        layout = found["motion"]["layout"]
+
+        self.assertEqual(found["console_errors"], [])
+        self.assertIs(layout["scaleToggle"], False, "the Scale toggle is gone")
+        self.assertEqual(layout["scale"], [1, 1, 1])
+        for got, want in zip(layout["box"], ([-6, 0, -6], [6, 3, 6])):
+            for g, w in zip(got, want):
+                self.assertAlmostEqual(g, w, places=4)
+        self.assertEqual(layout["boxAfterR"], layout["box"], "'r' still rescales")
+
+    def test_a_flick_turns_45_degrees_once_about_the_head(self):
+        """A held stick is one turn, not one a frame, and the view pivots
+        where you stand instead of swinging you round the play space."""
+        turn = self._locomotion()["motion"]["turn"]
+
+        self.assertEqual(turn["events"], ["turn"])
+        self.assertAlmostEqual(turn["yaw"], -math.pi / 4)  # right: clockwise
+        for before, after in zip(turn["headBefore"], turn["headAfter"]):
+            self.assertAlmostEqual(before, after, places=9)
+        self.assertAlmostEqual(turn["yawBack"], 0.0, places=12)
+
+    def test_forward_aims_and_release_jumps_through_a_blink(self):
+        """The jump waits for black, then puts the HEAD over the landing (not
+        the play space's centre) at the landing's height, heading unchanged."""
+        tp = self._locomotion()["motion"]["teleport"]
+
+        self.assertEqual(tp["aimEvents"], ["aim"])
+        self.assertGreater(tp["arcPoints"], 2)
+        self.assertIs(tp["target"]["valid"], True)
+        self.assertAlmostEqual(tp["target"]["point"][1], 0.0, places=5)
+        self.assertGreater(tp["fadeWhileLeaving"], 0.0)
+        self.assertEqual(
+            (tp["rigWhileLeaving"]["x"], tp["rigWhileLeaving"]["z"]),
+            (0, 0),
+            "the jump happened before the view went black",
+        )
+        self.assertEqual(tp["events"].count("land"), 1)
+        self.assertAlmostEqual(tp["headAfter"][0], tp["target"]["point"][0], places=6)
+        self.assertAlmostEqual(tp["headAfter"][2], tp["target"]["point"][2], places=6)
+        self.assertAlmostEqual(tp["rigAfter"]["y"], 0.0, places=5)
+        self.assertEqual(tp["rigAfter"]["yaw"], 0)
+        self.assertEqual(tp["fadeAfter"], 0)
+
+    def test_a_jump_onto_a_raised_floor_stands_you_on_it(self):
+        platform = self._locomotion()["motion"]["platform"]
+
+        self.assertIs(platform["found"], True, "no aim landed on the platform")
+        self.assertAlmostEqual(platform["rig"]["y"], 0.3, places=5)
+        self.assertAlmostEqual(platform["headAfter"][1], 1.9, places=5)
+        self.assertAlmostEqual(platform["headAfter"][0], platform["point"][0], places=6)
+
+    def test_a_wall_is_no_landing(self):
+        wall = self._locomotion()["motion"]["wall"]
+
+        self.assertIsNotNone(wall["target"], "the arc never reached the wall")
+        self.assertAlmostEqual(wall["target"]["point"][2], -5.0, places=5)
+        self.assertIs(wall["target"]["valid"], False)
+        self.assertEqual(wall["rig"], {"x": 0, "y": 0, "z": 0, "yaw": 0})
+
+    def test_a_pivot_turned_since_load_is_struck_where_it_now_stands(self):
+        """A script turning the pivot (the turntable, before a session) moves
+        every mesh; surfaces read only at load would leave each box where its
+        mesh used to be, and the arc would pass through the wall."""
+        turned = self._locomotion()["motion"]["turnedPivot"]
+
+        self.assertIsNotNone(turned["target"], "the arc struck nothing")
+        self.assertAlmostEqual(turned["target"]["point"][2], 5.0, places=4)
+        self.assertIs(turned["target"]["valid"], False)
+
+    def test_pulling_back_cancels_the_aim(self):
+        cancel = self._locomotion()["motion"]["cancel"]
+
+        self.assertIs(cancel["aimedValid"], True)
+        self.assertIs(cancel["aimingAfterPullBack"], False)
+        self.assertEqual(cancel["rig"], {"x": 0, "y": 0, "z": 0, "yaw": 0})
+
+    def test_the_left_stick_walks_where_you_look_eased_in_and_out(self):
+        walk = self._locomotion()["motion"]["walk"]
+        full_step = 2.0 / 72  # a frame at full speed
+
+        self.assertGreater(walk["firstStep"], 0.0)
+        self.assertLess(walk["firstStep"], full_step / 2, "it starts at full speed")
+        self.assertAlmostEqual(walk["oneSecond"]["x"], 0.0, places=6)
+        self.assertTrue(1.7 < walk["oneSecond"]["z"] < 1.9, walk["oneSecond"])
+        self.assertGreater(walk["vignetteMoving"], 0.3)
+        coasted = walk["stopped"]["z"] - walk["oneSecond"]["z"]
+        self.assertTrue(0.0 < coasted < 0.3, f"coasted {coasted} m to a stop")
+        self.assertLess(walk["settled"]["z"] - walk["stopped"]["z"], 0.01)
+        self.assertLess(walk["vignetteStopped"], 0.02)
+
+    def test_walking_follows_a_step_up_but_not_a_ledge(self):
+        found = self._locomotion()["motion"]
+
+        self.assertTrue(2 < found["stepUp"]["x"] < 4, found["stepUp"])
+        self.assertAlmostEqual(found["stepUp"]["y"], 0.3, places=3)
+        self.assertTrue(1 < found["ledge"]["head"][2] < 3, "never reached the ledge")
+        self.assertAlmostEqual(found["ledge"]["rig"]["y"], 0.0, places=6)
+
+    def test_the_reference_offset_is_the_rigs_inverse(self):
+        """What the page hands WebXR must put tracked poses exactly where the
+        rig says they are -- an error here moves the world, not the viewer."""
+        offset = self._locomotion()["motion"]["offset"]
+
+        for via, direct in zip(offset["viaOffset"], offset["toScene"]):
+            self.assertAlmostEqual(via, direct, places=9)
+
+    # --------------------------------------------------- where a view starts
+    # The start node the server names (`user_pos` by default): a camera the
+    # desktop view opens through and a headset session stands under. One page
+    # for every scenario, as above; the server's name changed live on it.
+
+    _start_found = None
+
+    def _start(self):
+        """The start scenarios' findings, from one page load shared by the class."""
+        cls = type(self)
+        if cls._start_found is None:
+
+            def scenario(server, page):
+                found = {"first": page.evaluate(START_JS)}
+                server.locomotion = False
+                page.wait_for_function(
+                    "() => window.__api.locomotion.enabled === false", timeout=30_000
+                )
+                found["locked"] = page.evaluate(LOCKED_JS)
+                server.locomotion = True
+                page.wait_for_function(
+                    "() => window.__api.locomotion.enabled === true", timeout=30_000
+                )
+                server.user_pos = "spawn_empty"
+                page.wait_for_function(
+                    "() => { const s = window.__api.headset.start;"
+                    " return !!s && Math.abs(s.point.x + 5) < 1e-6; }",
+                    timeout=30_000,
+                )
+                found["renamed"] = page.evaluate(
+                    "() => { const s = window.__api.headset.start;"
+                    " return { point: s.point.toArray(), heading: s.heading,"
+                    " camera: window.__api.camera.position.toArray() }; }"
+                )
+                server.user_pos = None
+                page.wait_for_function(
+                    "() => window.__api.headset.start === null", timeout=30_000
+                )
+                found["none"] = page.evaluate(NO_START_JS)
+                return found
+
+            cls._start_found = self._load(self._walkable_glb(start=True), then=scenario)
+        return cls._start_found
+
+    def test_a_start_camera_opens_the_desktop_view_through_it(self):
+        """Its position, the way it looks, and its HORIZONTAL field of view --
+        the one both DCCs hold for a landscape frame -- with the orbit turning
+        about what it looks at: the floor 1.9 m below, 20 degrees down."""
+        found = self._start()
+        desktop = found["first"]["desktop"]
+
+        self.assertEqual(found["console_errors"], [])
+        for got, want in zip(desktop["position"], (3, 1.9, 0)):
+            self.assertAlmostEqual(got, want, places=4)
+        down = math.radians(20)
+        for got, want in zip(desktop["look"], (-math.cos(down), -math.sin(down), 0)):
+            self.assertAlmostEqual(got, want, places=4)
+        reach = 1.9 / math.sin(down)
+        for got, want in zip(desktop["target"], (3 - reach * math.cos(down), 0, 0)):
+            self.assertAlmostEqual(got, want, places=3)
+        across = math.tan(0.25) * 1.5  # the file's yfov and aspect: tan(hfov / 2)
+        want_fov = math.degrees(2 * math.atan(across / desktop["aspect"]))
+        self.assertAlmostEqual(desktop["fov"], want_fov, places=4)
+        self.assertLess(desktop["far"], 1000, "the file's clip planes were used")
+        self.assertLess(desktop["near"], 0.05)
+
+    def test_a_session_starts_on_the_floor_under_the_start_facing_where_it_looks(self):
+        """Only where and which way: the camera's height is the viewer's eyes,
+        not their floor, and its pitch is the headset's to decide. The first
+        frame goes out black -- it was posed from where the viewer stood -- and
+        the view fades in at the start."""
+        first = self._start()["first"]
+        start, arrive = first["start"], first["arrive"]
+
+        for got, want in zip(start["point"], (3, 0.3, 0)):
+            self.assertAlmostEqual(got, want, places=5)
+        self.assertAlmostEqual(start["heading"], math.pi / 2, places=6)
+        self.assertEqual(arrive["events"], ["arrive"])
+        self.assertEqual(arrive["fade"], 1)
+        self.assertIs(arrive["changed"], True)
+        for got, want in zip(arrive["head"], (3, 1.9, 0)):
+            self.assertAlmostEqual(got, want, places=6)
+        facing = arrive["facing"]
+        self.assertAlmostEqual(
+            math.atan2(-facing[0], -facing[2]), math.pi / 2, places=6
+        )
+        self.assertAlmostEqual(arrive["rig"]["y"], 0.3, places=6)
+        self.assertEqual(arrive["later"], [], "a session arrives once")
+        self.assertEqual(arrive["fadeAfter"], 0)
+        self.assertEqual(arrive["rigAfter"], arrive["rig"])
+        self.assertEqual(
+            first["again"], ["arrive"], "the next session starts there too"
+        )
+
+    def test_the_start_name_is_live_and_finds_a_namespaced_empty(self):
+        """A name set on the server reaches the page without a publish; a
+        namespace prefix is looked through; an Empty's heading is its +y
+        (its -z points at the floor); and the desktop view stays put."""
+        found = self._start()
+        renamed = found["renamed"]
+
+        for got, want in zip(renamed["point"], (-5, 0, -4)):
+            self.assertAlmostEqual(got, want, places=4)
+        self.assertAlmostEqual(renamed["heading"], -math.pi / 4, places=6)
+        for got, want in zip(renamed["camera"], found["first"]["desktop"]["position"]):
+            self.assertAlmostEqual(got, want, places=9)
+
+    def test_a_recenter_puts_a_viewer_still_at_the_start_back_there(self):
+        """The headset's own recenter resets the tracked space under the viewer:
+        one still standing where the start put them is put back -- head over
+        it, facing its way -- while one who has walked off keeps their place."""
+        recenter = self._start()["first"]["recenter"]
+
+        self.assertEqual(recenter["events"], ["arrive"])
+        self.assertAlmostEqual(recenter["head"][0], 3, places=6)
+        self.assertAlmostEqual(recenter["head"][2], 0, places=6)
+        facing = recenter["facing"]
+        self.assertAlmostEqual(
+            math.atan2(-facing[0], -facing[2]), math.pi / 2, places=6
+        )
+        self.assertEqual(recenter["afterWalking"], [])
+
+    def test_with_locomotion_off_a_start_camera_holds_the_viewer(self):
+        """Switched off on the server, live: the session still arrives under
+        the camera, then no stick moves it -- no walk, turn, aim or jump, and
+        nothing of it drawn -- and a recenter from across the room puts the
+        viewer back on the viewpoint."""
+        locked = self._start()["locked"]
+
+        self.assertIs(locked["enabled"], False)
+        self.assertEqual(locked["arrive"], ["arrive"])
+        self.assertEqual(locked["events"], [])
+        self.assertEqual(locked["after"], locked["placed"])
+        self.assertIs(locked["aiming"], False)
+        self.assertEqual(locked["arc"], 0)
+        self.assertEqual(locked["vignette"], 0)
+        for got, want in ((locked["head"][0], 3), (locked["head"][2], 0)):
+            self.assertAlmostEqual(got, want, places=6)
+        self.assertEqual(locked["recenter"], ["arrive"])
+        self.assertAlmostEqual(locked["recenterHead"][0], 3, places=6)
+        self.assertAlmostEqual(locked["recenterHead"][2], 0, places=6)
+        facing = locked["recenterFacing"]
+        self.assertAlmostEqual(
+            math.atan2(-facing[0], -facing[2]), math.pi / 2, places=6
+        )
+
+    def test_switched_off_mid_session_the_viewer_is_taken_back_to_the_start(self):
+        """Locomotion off keeps a session where it started -- also when the
+        switch is thrown on a viewer the sticks already carried off. They are
+        taken back under the camera on the next frame, through the blink, and
+        a recenter still returns them. Before, they stayed wherever they had
+        walked to, and a recenter -- which re-arrived only a viewer still
+        standing at the start -- left them there too."""
+        mid = self._start()["locked"]["midSession"]
+
+        walked = math.hypot(
+            mid["walked"]["x"] - mid["placed"]["x"],
+            mid["walked"]["z"] - mid["placed"]["z"],
+        )
+        self.assertGreater(walked, 1.0, "the fixture walk went nowhere")
+        self.assertEqual(mid["events"], ["arrive"])
+        self.assertEqual(mid["fade"], 1, "the move was not hidden")
+        for got, want in ((mid["head"][0], 3), (mid["head"][2], 0)):
+            self.assertAlmostEqual(got, want, places=6)
+        self.assertEqual(mid["later"], [], "taken back once, then held")
+        self.assertEqual(mid["fadeAfter"], 0)
+        self.assertEqual(mid["recenter"], ["arrive"])
+        self.assertAlmostEqual(mid["recenterHead"][0], 3, places=6)
+        self.assertAlmostEqual(mid["recenterHead"][2], 0, places=6)
+
+    def test_without_a_start_a_session_starts_where_the_headset_stands(self):
+        none = self._start()["none"]
+
+        self.assertIsNone(none["start"])
+        self.assertEqual(none["events"], [])
+        self.assertEqual(none["rig"], {"x": 0, "y": 0, "z": 0, "yaw": 0})
+        self.assertEqual(none["fade"], 0)
+
+    def test_without_a_start_locomotion_off_holds_where_the_rig_began(self):
+        """With no start node a session starts where the headset stands, and
+        that is where switching locomotion off holds it: a viewer walked off
+        is taken back to it, from black."""
+        none = self._start()["none"]
+
+        self.assertLess(none["walked"]["z"], -1.0, "the fixture walk went nowhere")
+        self.assertEqual(none["switchedOff"]["events"], ["arrive"])
+        self.assertEqual(none["switchedOff"]["rig"], none["rig"])
+        self.assertEqual(none["switchedOff"]["fade"], 1)
+
+    # ------------------------------------------------ a push, as it lands
+    # What a push does to the page around it: where the new model stands when
+    # a script has turned the pivot, and what a 'load' subscriber is told.
+
+    _repush_found = None
+
+    def _repush(self):
+        """A room with a start camera, then -- the pivot turned 45 degrees in
+        between, as the turntable leaves it -- the same room without one."""
+        cls = type(self)
+        if cls._repush_found is None:
+            second = self._walkable_glb()
+
+            def turn_then_push(server, page):
+                page.evaluate("() => { window.__api.pivot.rotation.y = Math.PI / 4; }")
+                server.publish(second)
+                page.wait_for_function(
+                    "() => window.__probe.loads >= 2", timeout=180_000
+                )
+                return {"placed": page.evaluate(PLACED_JS)}
+
+            cls._repush_found = self._load(
+                self._walkable_glb(start=True), then=turn_then_push
+            )
+        return cls._repush_found
+
+    def test_a_push_under_a_turned_pivot_lands_centred_at_its_own_size(self):
+        """The turntable keeps its angle across pushes, and the model is laid
+        out in the PIVOT's frame -- but was measured in the world's, so under
+        a turned pivot an off-origin model landed off-centre (measured: a
+        quarter turn stood one at [3.0, 0.5, -17.0]) and the HUD quoted the
+        size of its turned bounding box. Laid out right, the room turns about
+        its own centre: its world box stays centred on the axis, on the floor."""
+        found = self._repush()
+        placed = found["placed"]
+
+        self.assertEqual(found["errors"], [])
+        self.assertEqual(found["console_errors"], [])
+        self.assertAlmostEqual(placed["centre"][0], 0.0, places=4)
+        self.assertAlmostEqual(placed["centre"][2], 0.0, places=4)
+        self.assertAlmostEqual(placed["min"][1], 0.0, places=4)
+        for axis, want in zip("xyz", (12, 3, 12)):
+            self.assertAlmostEqual(placed["size"][axis], want, places=4, msg=axis)
+
+    def test_a_load_subscriber_is_told_the_start_of_the_model_just_loaded(self):
+        """`'load'` fired before the page had found the new model's start node
+        or laid it out, so `viewer.headset.start` read during it answered from
+        the model before -- nothing on the first push, and the REPLACED model's
+        node (disposed with it) on the next. Now it is the model just loaded,
+        standing on the floor: the first push's camera, the second's none."""
+        starts = self._repush()["startsAtLoad"]
+
+        self.assertEqual(len(starts), 2, starts)
+        self.assertIsNotNone(starts[0], "the first push's start was not found")
+        for got, want in zip(starts[0], (3, 0.3, 0)):
+            self.assertAlmostEqual(got, want, places=5)
+        self.assertIsNone(starts[1], "the second push answered with the first's")
+
+    def test_a_push_of_the_start_camera_alone_keeps_finite_clip_planes(self):
+        """Nothing drawable is an EMPTY box, whose distance to any point is
+        Infinity: the view opened through the camera with a far plane of
+        Infinity and a NaN projection -- in a session three.js hands that far
+        plane to `updateRenderState`, which refuses it and stops the XR loop."""
+        found = self._load(
+            self._camera_only_glb(),
+            then=lambda server, page: {"placed": page.evaluate(PLACED_JS)},
+        )
+        placed = found["placed"]
+
+        self.assertEqual(found["errors"], [])
+        self.assertIs(placed["finite"], True, placed)
+        for got, want in zip(placed["position"], (0, 1.6, 4)):
+            self.assertAlmostEqual(got, want, places=5)
+        self.assertLess(placed["near"], 0.05)
+        self.assertGreater(placed["far"], 10, "the floor grid is out of reach")
+
+    # ------------------------------------------------- a session, begun and ended
+    _session_found = None
+
+    def _session(self):
+        """The session scenarios' findings (`SESSION_JS`) over a 150 m ground."""
+        cls = type(self)
+        if cls._session_found is None:
+            cls._session_found = self._load(
+                self._ground_glb(),
+                then=lambda server, page: {"session": page.evaluate(SESSION_JS)},
+            )
+        return cls._session_found
+
+    def _assertSameView(self, got, want):
+        for key in ("position", "quaternion", "target"):
+            for g, w in zip(got[key], want[key]):
+                self.assertAlmostEqual(g, w, places=6, msg=key)
+        for key in ("fov", "near", "far", "focal"):
+            self.assertAlmostEqual(got[key], want[key], places=6, msg=key)
+
+    def test_a_large_scene_does_not_clip_the_headsets_overlay(self):
+        """three.js hands `camera.near` to a session as its depthNear, and the
+        page sizes it to the model: 0.23 m for a 150 m ground framed whole --
+        past the blink, the arrival fade and the comfort vignette, one quad at
+        0.1 m, and past a controller brought near the face. A session draws
+        with a headset's near plane, also after a re-frame mid-session."""
+        found = self._session()
+        session = found["session"]
+
+        self.assertEqual(found["console_errors"], [])
+        self.assertGreater(session["framed"]["near"], 0.2, "the fixture is too small")
+        self.assertLess(session["started"]["near"], 0.1)
+        self.assertLess(session["reframed"]["near"], 0.1)
+
+    def test_the_desktop_view_comes_back_after_a_session(self):
+        """three.js writes each XR frame's head pose, lens and projection into
+        the page's camera and puts none of it back, so a session left the
+        desktop view where the headset last was, at the headset's field of
+        view. It comes back as it was -- or, re-framed mid-session, as framed,
+        on the desktop's lens -- with its near plane the desktop's again."""
+        session = self._session()["session"]
+
+        self._assertSameView(session["ended"]["view"], session["orbited"])
+        self._assertSameView(session["reframed"]["view"], session["framed"])
+
+    def test_a_session_start_and_end_are_wired(self):
+        """The session's own events: it begins the headset afresh (the rig at
+        the origin), listens for the headset's recenter on the session's space,
+        shows the headset's layer -- and at the end hides it and resets."""
+        session = self._session()["session"]
+        started, ended = session["started"], session["ended"]
+        origin = {"x": 0, "y": 0, "z": 0, "yaw": 0}
+
+        self.assertEqual(started["place"], origin)
+        self.assertEqual(started["heard"], ["reset"])
+        self.assertIs(started["recenters"], True)
+        self.assertIs(started["layer"], True)
+        self.assertIs(ended["layer"], False)
+        self.assertEqual(ended["place"], origin)
+
+    # ------------------------------------------------------ dense surfaces
+    def test_walking_and_aiming_over_a_dense_mesh_test_only_nearby_triangles(self):
+        """Every headset frame casts at the model -- a walk once for the floor
+        underfoot, an aimed arc once per segment -- and each cast tested every
+        triangle of every mesh its segment's box touched: 10 ms a frame on a
+        320k-triangle mesh, the whole 90 Hz budget. The surfaces are indexed
+        now, so a frame tests the triangles near the segment. Counted in
+        triangle tests (`Ray.intersectTriangle`), not milliseconds: the work,
+        not the machine. And the answers are three.js's own raycast's."""
+        found = self._load(
+            self._terrain_glb(),
+            then=lambda server, page: {"dense": page.evaluate(DENSE_JS)},
+        )
+        dense = found["dense"]
+        walk, aim = dense["walk"], dense["aim"]
+
+        self.assertEqual(found["console_errors"], [])
+        self.assertLess(walk["tests"], 500, f"walking: {walk}")
+        self.assertLess(aim["tests"], 3000, f"aiming: {aim}")
+        self.assertGreater(walk["ground"], 0.1, "the walk stayed on the flat")
+        self.assertAlmostEqual(walk["rig"]["y"], walk["ground"], places=3)
+        self.assertIsNotNone(aim["target"], "the arc struck nothing")
+        self.assertIs(aim["target"]["valid"], True)
+        self.assertAlmostEqual(aim["target"]["point"][1], aim["ground"], places=4)
+
+    # ------------------------------------------- the scripts, in a session
+    _scripts_found = None
+
+    def _scripts_in_session(self):
+        """`turntable` and `inspect` on one page, each driven as a session
+        drives it; and the page's XRFrame reader, on stand-in frames."""
+        cls = type(self)
+        if cls._scripts_found is None:
+
+            def scenario(server, page):
+                return {
+                    "turntable": page.evaluate(TURNTABLE_JS),
+                    "inspect": page.evaluate(INSPECT_XR_JS),
+                    "read": page.evaluate(READ_JS),
+                }
+
+            cls._scripts_found = self._load(
+                self._walkable_glb(), scripts=["turntable", "inspect"], then=scenario
+            )
+        return cls._scripts_found
+
+    def test_the_turntable_holds_still_while_a_headset_presents(self):
+        """At true scale a turning model is the world turning round the viewer,
+        with the button that stops it out of reach behind the headset."""
+        turntable = self._scripts_in_session()["turntable"]
+
+        self.assertGreater(turntable["desktop"], 0.0, "it never turned")
+        self.assertEqual(turntable["presenting"], 0.0)
+        self.assertGreater(turntable["after"], 0.0, "it did not resume")
+
+    def test_inspect_toggles_on_B_in_a_session_and_rides_a_card(self):
+        """The page's chrome is not drawn in a session, so Inspect's toggle is
+        a controller button and its panel a card beside the view: one toggle
+        per press, however long it is held, and no card off the headset."""
+        found = self._scripts_in_session()
+        inspect = found["inspect"]
+
+        self.assertEqual(found["console_errors"], [])
+        self.assertEqual(inspect["before"], {"panel": False, "card": False})
+        self.assertEqual(inspect["pressed"], {"panel": True, "card": True})
+        self.assertEqual(inspect["held"], {"panel": True, "card": True})
+        self.assertEqual(inspect["again"], {"panel": False, "card": False})
+        self.assertEqual(inspect["desktop"], {"panel": False, "card": False})
+
+    def test_the_headset_reader_takes_each_stick_from_its_own_axes(self):
+        """xr-standard reports a thumbstick on axes 2-3 (0-1 is a touchpad, on
+        controllers that have one); a controller with only a touchpad reports
+        its stick on 0-1; an unhanded source is no hand, and fewer than two
+        axes no stick. Poses come through in the session's own space."""
+        read = self._scripts_in_session()["read"]
+        standard = read["standard"]
+
+        self.assertEqual(standard["left"], [0.3, -0.4])
+        self.assertEqual(standard["right"], [-0.7, 0.8])
+        self.assertEqual(standard["hands"], ["left", "right"])
+        self.assertEqual(
+            standard["head"], {"position": [0.1, 1.6, 0.2], "orientation": [0, 0, 0, 1]}
+        )
+        self.assertEqual(standard["aim"]["position"], [0.3, 1.2, -0.2])
+        self.assertEqual(read["touchpad"]["left"], [0.25, -0.5])
+        self.assertIsNone(read["touchpad"]["right"])
+        self.assertIsNone(read["touchpad"]["aim"])
+        self.assertEqual(read["unhanded"]["hands"], ["right"])
+        self.assertIsNone(read["unhanded"]["left"])
+        self.assertIsNone(read["unhanded"]["right"], "one axis is no stick")
+        self.assertEqual(read["unhanded"]["aim"]["position"], [0.3, 1.2, -0.2])
 
 
 if __name__ == "__main__":

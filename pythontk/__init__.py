@@ -379,6 +379,7 @@ DEFAULT_INCLUDE = {
     "net_utils.rpc.plugin_core": ["OpRegistry", "MainThreadMarshaller", "RpcPlugin"],
     "str_utils.fuzzy_matcher": "FuzzyMatcher",
     "str_utils.hotkey_utils": "HotkeyUtils",
+    "str_utils.report_doc": ["ReportDoc"],
 }
 
 

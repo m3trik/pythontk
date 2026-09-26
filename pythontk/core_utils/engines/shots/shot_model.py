@@ -7,8 +7,9 @@ shared foundation both mayatk and blendertk consume: the model is engine-free,
 and every place that would otherwise reach into a DCC scene is exposed as an
 **overridable hook with a pure default** (see :meth:`ShotStore._scene_fps`,
 :meth:`ShotStore.has_animation`, :meth:`ShotStore.detect_regions`,
-:meth:`ShotStore.assess`, :meth:`ShotStore.publish_export_view`, and
-:meth:`ShotStore._resolve_long_names`).  DCC toolkits subclass ``ShotStore``
+:meth:`ShotStore.assess`, :meth:`ShotStore.publish_export_view`,
+:meth:`ShotStore._resolve_long_names`, :meth:`ShotStore._existing_objects` and
+:meth:`ShotStore._keyed_windows`).  DCC toolkits subclass ``ShotStore``
 and override those hooks; the pure core never imports ``maya`` or ``bpy``.
 
 Persistence is pluggable: call :meth:`ShotStore.set_persistence` with a backend
@@ -304,7 +305,8 @@ class ShotStore(_ShotStoreInternal):
     The pure, DCC-agnostic core.  Scene-reaching behaviour lives in the
     overridable hooks (:meth:`_scene_fps`, :meth:`has_animation`,
     :meth:`detect_regions`, :meth:`assess`, :meth:`publish_export_view`,
-    :meth:`_resolve_long_names`, :meth:`_schedule_flush`), each with a pure
+    :meth:`_resolve_long_names`, :meth:`_existing_objects`,
+    :meth:`_keyed_windows`, :meth:`_schedule_flush`), each with a pure
     default; mayatk / blendertk subclass this and override them.
 
     Parameters:
@@ -658,6 +660,27 @@ class ShotStore(_ShotStoreInternal):
         chokepoint for name disambiguation so per-site copies stay out.
         """
         return list(names) if names else []
+
+    def _existing_objects(self, names: Iterable[str]) -> set:
+        """Which of *names* the scene still holds (overridable hook).
+
+        Pure default: every one -- the pure model has no scene to lose an
+        object from, so :meth:`stale_shots` never finds one here.  DCC
+        subclasses override to look each name up as the export view names
+        it: a Maya member is a long DAG path, and one whose parent was
+        renamed or reparented is still the object its leaf names.
+        """
+        return set(names)
+
+    def _keyed_windows(self, windows: List[Tuple[float, float]]) -> List[bool]:
+        """Per ``(start, end)`` window, whether anything in the scene is keyed
+        inside it (overridable hook).
+
+        Pure default: every window is -- the pure model cannot tell, and a
+        shot is never called stale on a guess.  DCC subclasses override to
+        ask every animation curve in the scene, whatever it drives.
+        """
+        return [True] * len(windows)
 
     def publish_export_view(self, strategy: Optional[str] = None) -> Optional[str]:
         """Project the export view onto a DCC carrier (overridable hook).
@@ -1540,6 +1563,108 @@ class ShotStore(_ShotStoreInternal):
             "edit_ledger": self.edit_ledger.to_dict(),
         }
 
+    def stale_shots(self) -> List[ShotBlock]:
+        """The shots that no longer describe anything in the scene, in order.
+
+        A shot names the objects it animates.  One whose every member is gone
+        from the scene (:meth:`_existing_objects`), and inside whose window
+        nothing at all is keyed (:meth:`_keyed_windows`), holds what the scene
+        USED to animate: a Save As copy whose animated objects were deleted
+        keeps its source's shots verbatim (2026-09-24: a module forked from an
+        18-shot assembly declared all 18 as takes, and its GLB -- nothing in
+        it animated -- carried none of them).
+
+        Both halves must hold.  A keyed shot whose members were renamed away
+        keeps its keys in the window, so it is not stale.  A hold shot keys
+        nothing there, so only its members say it is live -- and members are
+        stored by name: a rename the store is not told about (by
+        :meth:`update_shot`, as a host's own renaming pass must) leaves it
+        naming nothing, and it reads as stale unless the members' lookup
+        still finds them (:meth:`_existing_objects`).  A shot that names no
+        members is never stale: nothing tells it from a hold.  Asking changes
+        nothing: :meth:`export_records` and :meth:`declared_range` leave stale
+        shots out of what an export declares, and only
+        :meth:`remove_stale_shots` -- the user's call -- takes them out of the
+        store.
+        """
+        stale, _present = self._scene_scope()
+        return [s for s in self.sorted_shots() if s.shot_id in stale]
+
+    def remove_stale_shots(self) -> List[ShotBlock]:
+        """Remove every stale shot (:meth:`stale_shots`); return what went.
+
+        Records only.  A stale shot keys nothing in its window and names no
+        object the scene holds, so there is nothing of it to cut and nothing
+        moves -- where a Shot Sequencer delete cuts a shot's keys and ripples
+        every later shot upstream into the space it leaves, which would retime
+        the shots that ARE live.  The samples each removed shot claimed go
+        with it rather than being disowned: they name keys the scene no longer
+        holds, and a claim left behind is inherited by any key later set on
+        that curve and frame.  The gap locks re-key onto the shots that remain
+        (:meth:`remove_shot`), and listeners hear one batch.
+        """
+        stale = self.stale_shots()
+        if not stale:
+            return []
+        ids = {s.shot_id for s in stale}
+        ledger = self.edit_ledger
+        with self.batch_update():
+            for curve in ledger.keyed_curves():
+                for time, owner, _edge in ledger.key_records(curve):
+                    if owner in ids:
+                        ledger.release_key(curve, time)
+            for shot in stale:
+                self.remove_shot(shot.shot_id)
+            if self.active_shot_id in ids:
+                self.set_active_shot(None)
+        return stale
+
+    def _scene_scope(self) -> Tuple[set, Optional[set]]:
+        """``(stale shot ids, members the scene still holds)`` -- each hook
+        asked once, for :meth:`stale_shots` and the export view it scopes.
+
+        ``None`` for the members means "keep them all".  A hook that raises
+        leaves the export as it was before the check -- nothing stale, every
+        member kept -- and says so: the check must never cost the shot record,
+        or the stale one on the carrier ships in its place.
+        """
+        listed = [s for s in self.shots if s.objects]
+        if not listed:
+            return set(), None
+        try:
+            present = self._existing_objects({o for s in listed for o in s.objects})
+            orphaned = [s for s in listed if not any(o in present for o in s.objects)]
+            keyed = (
+                self._keyed_windows([(s.start, s.end) for s in orphaned])
+                if orphaned
+                else []
+            )
+        except Exception:  # a DCC lookup; the record must still be produced
+            _log.warning(
+                "Shots: could not check the shots against the scene; every shot "
+                "is declared as held.",
+                exc_info=True,
+            )
+            return set(), None
+        return {s.shot_id for s, k in zip(orphaned, keyed) if not k}, present
+
+    @staticmethod
+    def _stale_note(stale: List[ShotBlock]) -> str:
+        """One sentence naming the shots an export left out as stale."""
+        named = [f"{s.name} ({s.start:g}-{s.end:g})" for s in stale]
+        shown = ", ".join(named[:8])
+        if len(named) > 8:
+            shown += f" and {len(named) - 8} more"
+        # The remedy is named by what it does, not where a host offers it: a
+        # host links its own remedy onto the note (``ExportSnapshot.noted``).
+        return (
+            f"{len(stale)} shot(s) left out of the export -- every object they "
+            f"name is gone from the scene and nothing is keyed in their frames: "
+            f"{shown}. A scene saved from another keeps that scene's shots; if "
+            "these no longer apply, remove their records "
+            "(ShotStore.remove_stale_shots) -- no key or other shot moves."
+        )
+
     def to_export_view(self, strategy: str = "name") -> Dict[str, Any]:
         """Build the FBX/Unity export view from the current shots.
 
@@ -1558,7 +1683,27 @@ class ShotStore(_ShotStoreInternal):
         the scene (``MeshConvert.apply_glb_animations`` is one -- it reads the
         published view back out of the deliverable).  Additive, so the schema
         version stands: a reader that does not know the key is unaffected.
+
+        Every shot, as the store holds it.  What an export publishes is
+        :meth:`export_records`, scoped to the scene: stale shots
+        (:meth:`stale_shots`) and members the scene no longer holds left out.
         """
+        return self._export_view(strategy)
+
+    def _export_view(
+        self,
+        strategy: str,
+        stale: Iterable[int] = (),
+        present: Optional[set] = None,
+    ) -> Dict[str, Any]:
+        """:meth:`to_export_view`, less the *stale* shot ids and -- when
+        *present* is given -- every member it does not hold.
+
+        Every shot is NAMED before any is left out: the ``sequence`` strategy
+        numbers clips by position, and leaving one out first would renumber
+        every clip after it.
+        """
+        stale = set(stale)
         sorted_s = self.sorted_shots()
         specs = ShotStore.resolve_clip_specs(sorted_s, strategy=strategy)
         # The store refuses a name the carrier would respell, so a respelling
@@ -1567,8 +1712,8 @@ class ShotStore(_ShotStoreInternal):
         wanted = [fn(i, shot) for i, shot in enumerate(sorted_s)]
         respelled = [
             f"{want!r} -> {clip!r}"
-            for want, (clip, _s, _e) in zip(wanted, specs)
-            if clip != want
+            for want, (clip, _s, _e), shot in zip(wanted, specs, sorted_s)
+            if clip != want and shot.shot_id not in stale
         ]
         if respelled:
             _log.warning(
@@ -1580,11 +1725,16 @@ class ShotStore(_ShotStoreInternal):
             )
         shots_meta = []
         for (clip, start, end), shot in zip(specs, sorted_s):
+            if shot.shot_id in stale:
+                continue
             entry: Dict[str, Any] = {"clip": clip, "start": start, "end": end}
             if shot.description:
                 entry["description"] = shot.description
+            members = shot.objects
+            if present is not None:
+                members = [o for o in members if o in present]
             # Always present, even empty: Unity's ShotRecord reads it as an array.
-            entry["objects"] = [ShotStore.leaf_name(o) for o in shot.objects]
+            entry["objects"] = [ShotStore.leaf_name(o) for o in members]
             section = (shot.metadata or {}).get("section")
             if section:
                 entry["section"] = section
@@ -1616,13 +1766,33 @@ class ShotStore(_ShotStoreInternal):
         the next export.  Either way the commit also clears a legacy
         ``fbx_takes`` a scene still holds (its successor was produced).
 
+        Scoped to the scene as it is NOW, since the record is the deliverable's
+        take list: a stale shot (:meth:`stale_shots`) is left out -- its take
+        would carry nothing -- and so is each member the scene no longer holds.
+        What was left out is said once, on *ctx* (``ExportContext.note``) or,
+        publishing without one, in the log; a store whose every shot is stale
+        yields ``None`` like an empty one.
+
         Returns:
-            ``[shot record]``, or ``None`` for an empty store.
+            ``[shot record]``, or ``None`` for an empty or wholly stale store.
         """
         if not self.shots:
             return None
-        view = self.to_export_view(strategy=strategy or self.clip_name_strategy)
+        stale, present = self._scene_scope()
+        view = self._export_view(
+            strategy or self.clip_name_strategy, stale=stale, present=present
+        )
+        if stale:
+            note = self._stale_note(
+                [s for s in self.sorted_shots() if s.shot_id in stale]
+            )
+            if ctx is not None:
+                ctx.note(note)
+            else:  # an authoring publish, after every shot edit: not a warning
+                _log.info(note)
         meta = view["shot_metadata"]
+        if not meta["shots"]:
+            return None
         if ctx is not None and ctx.clip_mode:
             meta[self.CLIP_MODE_KEY] = ctx.clip_mode
         return [SceneRecords.SHOTS.make(meta)]
@@ -1939,17 +2109,25 @@ class ShotStore(_ShotStoreInternal):
         an exporter asking "what do the shots span?" is computing a number, and
         must not stamp a metadata node to find out (the carrier is a
         projection, and publishing it is a scene mutation the user may have
-        deliberately switched off).
+        deliberately switched off).  Stale shots (:meth:`stale_shots`) are no
+        part of it, as they are no part of what :meth:`export_records`
+        declares: the range covers the takes the export ships.
 
         Returns:
-            The union of every shot, or None when no store is active or it
-            declares no shots -- so a caller can fall back rather than treat an
-            empty scene as the range ``(0, 0)``.
+            The union of every shot the export declares, or None when no store
+            is active or it declares none -- so a caller can fall back rather
+            than treat an empty scene as the range ``(0, 0)``.
         """
         store = cls.active()
         if store is None:
             return None
-        specs = cls.resolve_clip_specs(store.sorted_shots(), strategy=strategy)
+        shots = store.sorted_shots()
+        stale, _present = store._scene_scope()
+        specs = [
+            spec
+            for spec, shot in zip(cls.resolve_clip_specs(shots, strategy), shots)
+            if shot.shot_id not in stale
+        ]
         if not specs:
             return None
         return min(s for _, s, _ in specs), max(e for _, _, e in specs)

@@ -2745,6 +2745,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.str_utils.report_doc",
+    "name": "ReportDoc",
+    "qualname": "ReportDoc",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.rig_graph.rig_plan",
     "name": "ReportEntry",
     "qualname": "ReportEntry",

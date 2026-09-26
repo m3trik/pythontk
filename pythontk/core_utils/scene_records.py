@@ -198,7 +198,9 @@ class RecordSpec:
             its scene is saved into another project
             (:meth:`SceneRecords.rebase_paths`), leaves a hand-off absolute
             and arrives spelled from the receiving scene's project
-            (:class:`TransferContext`).
+            (:class:`TransferContext`).  A tuple of keys names the only values
+            that are paths, in a payload that is otherwise data: the hierarchy
+            baseline's writer stamp, beside a path set and a hash.
     """
 
     key: str
@@ -218,7 +220,13 @@ class RecordSpec:
     respell: bool = True
     portable: bool = False
     section: Optional[str] = None
-    paths: bool = False
+    paths: Union[bool, Tuple[str, ...]] = False
+
+    @property
+    def path_keys(self) -> Optional[Tuple[str, ...]]:
+        """The payload keys whose values are paths (:attr:`paths`): the named
+        ones, or ``None`` -- every value -- for a whole path mapping."""
+        return self.paths if isinstance(self.paths, tuple) else None
 
     # ------------------------------------------------------------------ codec
     def make(self, payload: Any) -> Record:
@@ -462,6 +470,7 @@ class SceneRecords:
         description="the export hierarchy baseline (a HierarchyBaseline record)",
         envelope=False,
         merge=Merge.OWN,
+        paths=("scene",),
     )
     EMISSIVE_REGISTRY = RecordSpec(
         "emissive_groups",
@@ -638,14 +647,23 @@ class SceneRecords:
         return [s for s in cls.all() if s.paths]
 
     @staticmethod
-    def map_paths(payload: Any, spell: Callable[[str], str]) -> Any:
+    def map_paths(
+        payload: Any,
+        spell: Callable[[str], str],
+        keys: Optional[Tuple[str, ...]] = None,
+    ) -> Any:
         """*payload* (a :attr:`RecordSpec.paths` mapping) with every string
-        value put through *spell*; anything else -- a non-mapping, a
+        value put through *spell* -- only those under *keys* when given
+        (:attr:`RecordSpec.path_keys`); anything else -- a non-mapping, a
         non-string value -- as it is.  A new mapping, never a mutation."""
         if not isinstance(payload, Mapping):
             return payload
         return {
-            key: spell(value) if isinstance(value, str) and value else value
+            key: (
+                spell(value)
+                if isinstance(value, str) and value and (keys is None or key in keys)
+                else value
+            )
             for key, value in payload.items()
         }
 
@@ -683,6 +701,7 @@ class SceneRecords:
             moved = cls.map_paths(
                 payload,
                 lambda v: FileUtils.rebase_portable_path(v, old_base, new_base),
+                spec.path_keys,
             )
             diff = sum(1 for k in payload if moved.get(k) != payload.get(k))
             if diff:
@@ -977,13 +996,47 @@ class SceneStoreBase:
         }
 
     @classmethod
+    def scene_path(cls) -> str:
+        """The open scene's file, ``""`` while it is unsaved -- and in this
+        base: a DCC store answers for its open file.  What the project root
+        and the writer stamp derive from."""
+        return ""
+
+    @classmethod
     def project_root(cls) -> Optional[str]:
         """This scene's own project root -- what its :attr:`RecordSpec.paths`
         records are spelled from (``FileUtils.portable_path``): the project
-        the scene FILE lives in (:meth:`project_root_of`), never the one a
-        session has set.  ``None`` while the scene is unsaved, and in this
-        base: a DCC store answers for its open file."""
-        return None
+        the scene FILE lives in (:meth:`project_root_of` of
+        :meth:`scene_path`), never the one a session has set.  ``None`` while
+        the scene is unsaved."""
+        return cls.project_root_of(cls.scene_path())
+
+    @classmethod
+    def writer_stamp(cls) -> str:
+        """This scene's file as a record stamps its writer: spelled from the
+        scene's own project (``FileUtils.portable_path``), ``""`` while
+        unsaved.  What a record stores to say which scene file made it -- a
+        Save As copy carries every record verbatim (the lightmap writers, the
+        hierarchy baseline) -- read back by :meth:`written_here`.  The record
+        declares the stamp a path (:attr:`RecordSpec.paths`), so a save into
+        another project re-spells it and the copy still names its source."""
+        from pythontk.file_utils._file_utils import FileUtils
+
+        scene = cls.scene_path()
+        return FileUtils.portable_path(scene, cls.project_root()) if scene else ""
+
+    @classmethod
+    def written_here(cls, stamp: Optional[str]) -> bool:
+        """Whether a record stamped *stamp* (:meth:`writer_stamp`) is this
+        scene's own (``FileDependencies.written_here``): this file, a file
+        that is gone (the scene was renamed or moved), or ``""`` while the
+        scene is still unsaved -- never a Save As copy's source, which is
+        still on disk.  ``None`` (no stamp) is nobody's."""
+        from pythontk.file_utils.file_dependencies import FileDependencies
+
+        return FileDependencies.written_here(
+            stamp, cls.scene_path(), cls.project_root()
+        )
 
     @staticmethod
     def project_root_of(scene_path: Optional[str]) -> Optional[str]:
@@ -1348,6 +1401,11 @@ class ExportContext:
         records: Every record produced so far in this assembly, by key --
             how a producer reads another's output (the audio manifest scopes
             its events against the takes the shots producer just built).
+        notes: What a producer left out of its record, or could not keep,
+            one sentence each (:meth:`note`) -- the report an exporter shows,
+            so nothing is dropped from a deliverable silently (the shots
+            producer names the stale shots it did not declare).  One
+            assembly's, like :attr:`records`.
     """
 
     PIPELINE = "pipeline"
@@ -1360,6 +1418,11 @@ class ExportContext:
     source: Dict[str, Any] = field(default_factory=dict)
     rendering: Dict[str, Any] = field(default_factory=dict)
     records: Dict[str, Optional[Record]] = field(default_factory=dict)
+    notes: List[str] = field(default_factory=list)
+
+    def note(self, text: str) -> None:
+        """Record one sentence for the report."""
+        self.notes.append(text)
 
     def record(
         self, spec: Union[RecordSpec, str], store=None, default: Any = None
@@ -1411,6 +1474,9 @@ class ExportSnapshot:
         #: rather than cleared -- a failing subsystem must not erase what the
         #: scene last published.
         self.failed: Set[str] = set()
+        #: ``ctx.notes`` by the record whose producer noted them, so a host can
+        #: offer each note's remedy where it can be acted on.
+        self.noted: Dict[str, List[str]] = {}
         #: What :meth:`commit` wrote, key -> text (``None`` = cleared).
         self.written: Dict[str, Optional[str]] = {}
 
@@ -1436,9 +1502,10 @@ class ExportSnapshot:
         than records, is logged and recorded in :attr:`failed`, and every other
         still runs.  A producer may return records for keys other than its own
         (the shots producer also writes the legacy take list); those ride the
-        snapshot like any other.  *ctx* holds ONE assembly's records: a reused
-        context starts empty, so no producer reads what an earlier assembly
-        produced.
+        snapshot like any other.  *ctx* holds ONE assembly's records and
+        notes: a reused context starts empty, so no producer reads what an
+        earlier assembly produced.  Each note is logged as a warning, and
+        stays on ``snapshot.ctx`` for an exporter's own report.
 
         Returns:
             The snapshot, not yet committed.
@@ -1449,6 +1516,7 @@ class ExportSnapshot:
         """
         ctx = ctx or ExportContext()
         ctx.records.clear()
+        ctx.notes.clear()
         snapshot = cls(ctx)
         table = dict(zip(SceneRecords.check_producers(producers), producers.values()))
         wanted = None if only is None else {SceneRecords.resolve(k).key for k in only}
@@ -1458,6 +1526,7 @@ class ExportSnapshot:
             if (wanted is None or spec.key in wanted) and ctx.refreshes(spec)
         ]
         for spec in SceneRecords.ordered(selected):
+            before = len(ctx.notes)
             try:
                 result = table[spec](ctx)
                 records = [
@@ -1480,6 +1549,9 @@ class ExportSnapshot:
                 )
                 snapshot.failed.add(spec.key)
                 continue
+            finally:
+                if len(ctx.notes) > before:
+                    snapshot.noted[spec.key] = ctx.notes[before:]
             own = next((r for r in records if r.spec.key == spec.key), None)
             # The producer's own record first, then any it returned for other
             # keys (the shots producer also writes the legacy take list), so
@@ -1493,6 +1565,8 @@ class ExportSnapshot:
                 if record is not own:
                     snapshot.produced[record.spec.key] = record
                     ctx.records[record.spec.key] = record
+        for note in ctx.notes:
+            logger.warning(note)
         return snapshot
 
     @classmethod
@@ -1963,7 +2037,7 @@ class RecordTransfer:
         if not respelled:
             other = cls.respell(spec, other, ctx)
         if spec.paths:
-            other = cls.arriving_paths(other, ctx)
+            other = cls.arriving_paths(other, ctx, spec.path_keys)
         own = spec.load(store)
         if spec.merge is Merge.CODEC:
             codec = SceneRecords.codec(spec)
@@ -1976,20 +2050,30 @@ class RecordTransfer:
         return merged
 
     @staticmethod
-    def absolute_paths(payload: Any, ctx: TransferContext) -> Any:
+    def absolute_paths(
+        payload: Any,
+        ctx: TransferContext,
+        keys: Optional[Tuple[str, ...]] = None,
+    ) -> Any:
         """A :attr:`RecordSpec.paths` *payload* resolved absolute from
-        ``ctx.path_base`` -- how it leaves the scene it is spelled for."""
+        ``ctx.path_base`` -- how it leaves the scene it is spelled for.  *keys*
+        as :meth:`SceneRecords.map_paths` takes them."""
         from pythontk.file_utils._file_utils import FileUtils
 
         return RecordTransfer._crossing_paths(
-            payload, lambda v: FileUtils.resolve_portable_path(v, ctx.path_base)
+            payload, lambda v: FileUtils.resolve_portable_path(v, ctx.path_base), keys
         )
 
     @staticmethod
-    def arriving_paths(payload: Any, ctx: TransferContext) -> Any:
+    def arriving_paths(
+        payload: Any,
+        ctx: TransferContext,
+        keys: Optional[Tuple[str, ...]] = None,
+    ) -> Any:
         """A :attr:`RecordSpec.paths` *payload* from the other scene spelled
         from this one's project: resolved from ``ctx.source_path_base`` (an
-        absolute value needs none), re-spelled from ``ctx.path_base``."""
+        absolute value needs none), re-spelled from ``ctx.path_base``.  *keys*
+        as :meth:`SceneRecords.map_paths` takes them."""
         from pythontk.file_utils._file_utils import FileUtils
 
         return RecordTransfer._crossing_paths(
@@ -1997,18 +2081,27 @@ class RecordTransfer:
             lambda v: FileUtils.rebase_portable_path(
                 v, ctx.source_path_base, ctx.path_base
             ),
+            keys,
         )
 
     @staticmethod
-    def _crossing_paths(payload: Any, spell: Callable[[str], str]) -> Any:
+    def _crossing_paths(
+        payload: Any,
+        spell: Callable[[str], str],
+        keys: Optional[Tuple[str, ...]] = None,
+    ) -> Any:
         """:meth:`SceneRecords.map_paths` for a crossing, less every EMPTY
-        value: a writer entry made while its scene was unsaved means "this
+        path: a writer entry made while its scene was unsaved means "this
         scene" and names no file, so it cannot leave that scene -- landed, it
         would name the scene it lands in (``FileDependencies.written_here``),
         whose re-bake would then delete what the other still reads."""
         if isinstance(payload, Mapping):
-            payload = {k: v for k, v in payload.items() if v != ""}
-        return SceneRecords.map_paths(payload, spell)
+            payload = {
+                k: v
+                for k, v in payload.items()
+                if v != "" or (keys is not None and k not in keys)
+            }
+        return SceneRecords.map_paths(payload, spell, keys)
 
     @staticmethod
     def respell(spec: RecordSpec, payload: Any, ctx: TransferContext) -> Any:
@@ -2107,7 +2200,7 @@ class RecordTransfer:
                 if spec.paths:
                     # Spelled from THIS scene's project, which the other side
                     # does not share: the far side spells them from its own.
-                    payload = cls.absolute_paths(payload, ctx)
+                    payload = cls.absolute_paths(payload, ctx, spec.path_keys)
             except Exception as error:  # noqa: BLE001 - one record never costs the rest
                 logger.warning("Scene record %r was not sent.", spec.key, exc_info=True)
                 ctx.note(f"{spec.owner}: not sent ({error}).")

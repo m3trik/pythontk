@@ -40,6 +40,11 @@
   #title { font-weight: 600; margin-bottom: 2px; }
   #stats, #hint { color: #9aa0a6; font-size: 12px; }
   #hint { margin-top: 6px; }
+  /* What the load found wrong with the deliverable, in the page's warning
+     amber: the render cannot show it (a baked object that bound nothing looks
+     like an unbaked one), so the HUD has to. */
+  #issues { color: #f2b84b; font-size: 12px; margin-top: 4px; }
+  #issues[hidden] { display: none; }
   #status::before {
     content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     background: #7a7f85; margin-right: 7px; vertical-align: middle;
@@ -130,6 +135,36 @@
      not a toggle the way a checkbox row's is. */
   #dialogFields label.choice { align-items: center; justify-content: space-between; cursor: default; }
   #dialogButtons { display: flex; gap: 8px; justify-content: flex-end; }
+  /* Script panels (`viewer.addPanel`): rows of label and value in the HUD's
+     chrome, stacked top-right where nothing of the page's own sits. Takes
+     pointer events, unlike the HUD, so a value can be selected and copied. */
+  #panels {
+    position: fixed; top: 12px; right: 12px; display: flex; flex-direction: column;
+    gap: 8px; width: min(44ch, calc(100vw - 24px)); max-height: calc(100vh - 120px);
+    pointer-events: none;
+  }
+  /* A column whose ROWS scroll, so the title and the footer's buttons stay in
+     view however long the panel grows. */
+  .panel {
+    pointer-events: auto; display: flex; flex-direction: column; min-height: 0;
+    overflow: hidden; padding: 10px 14px; font-size: 12px;
+    background: rgba(20, 22, 26, .9); border: 1px solid rgba(255, 255, 255, .1);
+    border-radius: 8px; backdrop-filter: blur(8px);
+  }
+  .panel[hidden] { display: none; }
+  .panel header { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .panel .rows {
+    display: grid; grid-template-columns: max-content 1fr; gap: 1px 12px;
+    min-height: 0; overflow: auto;
+  }
+  .panel .key { color: #9aa0a6; }
+  .panel .value { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .panel .heading { grid-column: 1 / -1; margin-top: 7px; font-weight: 600; }
+  .panel .line { grid-column: 1 / -1; color: #9aa0a6; }
+  .panel .warn { color: #f2b84b; }
+  .panel footer { display: flex; gap: 8px; margin-top: 8px; }
+  .panel footer:empty { display: none; }
+  .panel footer button.ui { padding: 4px 10px; }
   /* VRButton positions itself bottom-center with inline styles; leave it be. */
 </style>
 <script type="importmap">
@@ -147,8 +182,11 @@
   <div id="title">Preview</div>
   <div id="status">connecting…</div>
   <div id="stats"></div>
+  <div id="issues" hidden></div>
   <div id="hint"></div>
 </div>
+
+<div id="panels"></div>
 
 <div id="anim" hidden>
   <select class="ui" id="clipSelect" title="Which animation clip to play. Shots declared in the DCC are listed first; a clip marked (full range) is the whole timeline the exporter kept alongside them. On a deliverable that ships only shots, FULL SEQUENCE plays them all in order on the timeline they were cut from."></select>
@@ -159,7 +197,6 @@
 </div>
 
 <div id="controls">
-  <button class="ui" id="scaleToggle" title="Toggle between a fitted preview size and the model's true scale">Scale: fit</button>
   <button class="ui" id="frameBtn" title="Re-frame the camera on the model">Frame</button>
   <div id="lookdev" hidden>
     <span class="ui" id="normals" hidden
@@ -207,25 +244,21 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 window.__viewerBooted = true; // imports resolved — stand the boot watchdog down
 
 const POLL_MS = 1000;
 const LOAD_RETRIES = 3;
-// Fitted mode normalizes the model to a human-readable size in the headset.
-// It exists because exported units are rarely meters: a Maya scene authored in
-// centimeters arrives 100x too large, and "my model is invisible because I am
-// standing inside it" is the single most common first-run failure.
-const FIT_HEIGHT_M = 1.5;
-const FIT_DISTANCE_M = 1.6;
 
 const el = {
   title: document.getElementById('title'),
   status: document.getElementById('status'),
   stats: document.getElementById('stats'),
+  issues: document.getElementById('issues'),
   hint: document.getElementById('hint'),
-  scaleToggle: document.getElementById('scaleToggle'),
+  panels: document.getElementById('panels'),
   frameBtn: document.getElementById('frameBtn'),
   anim: document.getElementById('anim'),
   clipSelect: document.getElementById('clipSelect'),
@@ -385,17 +418,88 @@ const keyLight = new THREE.DirectionalLight(0xffffff, DEFAULT_KEY_INTENSITY);
 keyLight.position.set(3, 6, 4);
 scene.add(keyLight);
 
-const grid = new THREE.GridHelper(20, 40, 0x3a3f45, 0x25292e);
+const GRID_SIZE = 20;  // m across, centred on the origin
+const grid = new THREE.GridHelper(GRID_SIZE, 40, 0x3a3f45, 0x25292e);
 grid.material.transparent = true;
 grid.material.opacity = 0.55;
 scene.add(grid);
+// What a view frames when the model has nothing drawable in it (see homeView).
+const GRID_BOX = new THREE.Box3(
+  new THREE.Vector3(-GRID_SIZE / 2, 0, -GRID_SIZE / 2),
+  new THREE.Vector3(GRID_SIZE / 2, 0, GRID_SIZE / 2),
+);
 
-const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 500);
+// Degrees, vertical: the desktop view's own, whenever no start camera sets one.
+const DEFAULT_FOV = 55;
+const camera = new THREE.PerspectiveCamera(DEFAULT_FOV, innerWidth / innerHeight, 0.01, 500);
 camera.position.set(2.2, 1.8, 2.8);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.target.set(0, 0.8, 0);
+
+// The nearest a headset session draws, at most. The desktop view sizes its near
+// plane to the model -- 0.23 m for a 150 m ground framed whole, for the depth
+// precision a view from 230 m away wants -- and three.js hands `camera.near` to
+// the session as its depthNear. In a session the viewer stands IN the model at
+// human scale, and that plane cut away the blink, the arrival fade and the
+// comfort vignette (one quad, OVERLAY_DISTANCE in front of each eye) and a
+// controller brought within a hand of the face.
+const HEADSET_NEAR = 0.02;
+
+// The desktop view -- where the orbit camera stands and looks, its lens, its
+// clip planes and what it orbits -- kept aside while a headset presents, and
+// put back as the session ends. three.js drives the page's camera from the
+// headset meanwhile (WebXRManager.updateUserCamera writes each XR frame's head
+// pose, field of view and projection into it) and restores none of it, so a
+// session otherwise left the desktop view where the headset last was, at the
+// headset's field of view. Null outside a session.
+let desktopView = null;
+
+function viewOf() {
+  return {
+    position: camera.position.clone(),
+    quaternion: camera.quaternion.clone(),
+    fov: camera.fov,
+    zoom: camera.zoom,
+    near: camera.near,
+    far: camera.far,
+    target: controls.target.clone(),
+  };
+}
+
+function applyView(view) {
+  camera.position.copy(view.position);
+  camera.quaternion.copy(view.quaternion);
+  camera.fov = view.fov;
+  camera.zoom = view.zoom;
+  camera.near = view.near;
+  camera.far = view.far;
+  controls.target.copy(view.target);
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+// The near plane a session draws with: the desktop's, down to HEADSET_NEAR.
+function holdHeadsetNear() {
+  if (camera.near <= HEADSET_NEAR) return;
+  camera.near = HEADSET_NEAR;
+  camera.updateProjectionMatrix();
+}
+
+// The clip planes a framing chose (frameCamera, homeView), and the view as it
+// then stands. Mid-session -- a push landing, the Frame button -- the framing is
+// the view the session hands back at its end, and the camera keeps the
+// headset's near plane meanwhile.
+function settleView(near, far) {
+  camera.near = near;
+  camera.far = far;
+  camera.updateProjectionMatrix();
+  controls.update();
+  if (!desktopView) return;
+  desktopView = viewOf();
+  holdHeadsetNear();
+}
 
 // Everything loaded hangs off this pivot, so swapping models and re-scaling
 // never touches the lights, grid or camera rig.
@@ -540,7 +644,6 @@ const ktx2Loader = new KTX2Loader()
   .detectSupport(renderer);
 loader.setKTX2Loader(ktx2Loader);
 let current = null;
-let realScale = false;
 let modelBounds = null;
 
 // `node.material` is a single material, an ARRAY of them (a multi-material mesh), or
@@ -574,46 +677,45 @@ function disposeModel(root) {
 function layout() {
   if (!current || !modelBounds) return;
   const { size, center } = modelBounds;
-  const height = Math.max(size.y, 1e-6);
-  const scale = realScale ? 1 : FIT_HEIGHT_M / height;
-
-  current.scale.setScalar(scale);
-  // Center on the floor plane. The model is centred on the PIVOT's origin in X
-  // and Z and stood on its floor plane in Y, and the "push it out in front of
-  // the standing position" offset is carried by the pivot itself rather than
-  // folded in here. The composed world transform is identical -- the pivot has
-  // no rotation of its own -- but the split is what makes `pivot.rotation.y` a
-  // spin instead of an orbit: with the offset baked into the model, rotating
-  // the pivot swung the model around the viewer at FIT_DISTANCE_M radius,
-  // which is wrong on a desk and sickening in a headset. `viewer.pivot` is
-  // handed to every viewer script (the packaged `turntable` is exactly this
-  // rotation), so the group they are given has to spin about the model.
-  current.position.set(
-    -center.x * scale,
-    -(center.y - size.y / 2) * scale,
-    -center.z * scale,
-  );
-  pivot.position.set(0, 0, realScale ? 0 : -FIT_DISTANCE_M);
-
-  el.scaleToggle.textContent = `Scale: ${realScale ? 'real' : 'fit'}`;
-  frameCamera();
+  // At its true size, centred on the pivot in X and Z and stood on the floor in
+  // Y. The pivot stays at the origin and carries nothing of its own, which is
+  // what makes rotating it a spin rather than an orbit: `viewer.pivot` is handed
+  // to every viewer script (the packaged `turntable` is exactly that rotation),
+  // so the group they are given has to turn about the model.
+  current.position.set(-center.x, -(center.y - size.y / 2), -center.z);
 }
 
-function frameCamera() {
+// *model*'s box in the PIVOT's frame -- the frame layout() places it in --
+// rather than the world's. A script may have turned the pivot (the turntable
+// keeps its angle across pushes, on purpose), and the world box of a turned
+// model is neither its size nor, applied as the pivot-local offset above, its
+// centre: measured, a push under a quarter turn stood an off-origin slab at
+// [3.0, 0.5, -17.0], and the HUD quoted the size of the turned box. Measured
+// detached, so the world matrices it is read through are the model's own.
+function boxInPivot(model) {
+  pivot.remove(model);
+  const box = new THREE.Box3().setFromObject(model);
+  pivot.add(model);
+  return box;
+}
+
+// The whole model, framed from the front, right and above, on the lens `fov`
+// (degrees, vertical): by default the desktop view's -- mid-session the camera
+// holds the headset's (see desktopView), and the framing is the one the
+// session hands back. A model with nothing drawable leaves the view alone.
+function frameCamera(fov = desktopView ? desktopView.fov : camera.fov) {
   if (!current) return;
   const box = new THREE.Box3().setFromObject(current);
   if (box.isEmpty()) return;
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
   const radius = Math.max(size.length() / 2, 0.05);
-  const distance = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2));
+  const distance = radius / Math.sin(THREE.MathUtils.degToRad(fov / 2));
 
+  camera.fov = fov;
   controls.target.copy(center);
   camera.position.copy(center).add(new THREE.Vector3(0.7, 0.5, 1).normalize().multiplyScalar(distance * 1.3));
-  camera.near = Math.max(distance / 1000, 0.01);
-  camera.far = distance * 100;
-  camera.updateProjectionMatrix();
-  controls.update();
+  settleView(Math.max(distance / 1000, 0.01), distance * 100);
 }
 
 /* ------------------------------------------------------------- lightmaps --- */
@@ -773,7 +875,10 @@ function patchBakedShader(material) {
   material.customProgramCacheKey = () => (relieve ? 'baked-relief' : 'baked');
 }
 
-function applyLightmaps(gltf) {
+// `issues` collects what the pass had to skip, for the load's report (see
+// measureModel): each skip leaves a material rendering unlit, which on screen is
+// indistinguishable from a material that was never baked.
+function applyLightmaps(gltf, issues = []) {
   const manifest = readExtras(gltf, 'lightmap_web');
   if (!manifest || !manifest.materials) return 0;
 
@@ -782,20 +887,36 @@ function applyLightmaps(gltf) {
   // sent everything else to aoMap, so the only branch it had was dead while any future or
   // misspelled carrier would be rebound under the interpretation it is least likely to
   // want. Not binding leaves the map in the slot it arrived in, where it still reads as
-  // plausible occlusion.
+  // plausible occlusion -- and is SAID, since that is all anyone would see.
   const carrier = manifest.carrier || 'occlusion';
   const slot = CARRIER_SLOTS.get(carrier);
-  if (!slot) return 0;
+  if (!slot) {
+    issues.push({
+      level: 'error',
+      text: `no lightmap bound: the file carries them as '${carrier}', which this page does not read`,
+    });
+    return 0;
+  }
 
   const uv = manifest.uv ?? 1;
   let bound = 0;
+  const answered = new Set();  // manifest names some loaded material wears
+  const emptied = new Set();   // ... whose map was not in the carrier slot
 
   gltf.scene.traverse((node) => {
     for (const material of materialsOf(node)) {
+      // Own keys only: the manifest is parsed JSON, and a material named
+      // 'constructor' would otherwise find Object's and bind whatever sits in
+      // its occlusion slot as light -- the reason CARRIER_SLOTS is a Map.
+      if (!Object.hasOwn(manifest.materials, material.name)) continue;
       const entry = manifest.materials[material.name];
+      answered.add(material.name);
       if (!entry || material.userData.lightmapBound) continue;
       const texture = material[slot];
-      if (!texture) continue;
+      if (!texture) {
+        emptied.add(material.name);
+        continue;
+      }
 
       texture.colorSpace = manifest.encoding === 'srgb' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
       texture.channel = uv;
@@ -817,6 +938,21 @@ function applyLightmaps(gltf) {
       bound += 1;
     }
   });
+  const unworn = Object.keys(manifest.materials).filter((name) => !answered.has(name));
+  if (unworn.length) {
+    issues.push({
+      level: 'warning',
+      text: `${plural(unworn.length, 'lightmapped material')} the file names ${unworn.length === 1 ? 'is' : 'are'} not in the model`,
+      names: unworn,
+    });
+  }
+  if (emptied.size) {
+    issues.push({
+      level: 'warning',
+      text: `${plural(emptied.size, 'lightmapped material')} arrived without ${emptied.size === 1 ? 'its' : 'their'} map`,
+      names: [...emptied],
+    });
+  }
   return bound;
 }
 
@@ -870,34 +1006,256 @@ function applyLighting() {
   keyLight.intensity = lightmapped ? 0 : policy.keyIntensity;
 }
 
-// Distinct materials on the model, by identity — the denominator for the HUD's baked
-// fraction. Counted by Set rather than by mesh: a room shares one material across dozens
-// of meshes, and an atlas bake clones it per rect, so a per-mesh tally would report a
-// denominator with no relation to the number of materials the manifest can name.
+/* ----------------------------------------------------------------- specs --- */
+
+// What the deliverable on screen IS, measured once per load -- the HUD's lines,
+// the 'load' event's `specs`, and `viewer.specs` for a script that reports more
+// (the packaged `inspect`). One pass, one set of units, so the HUD, the console
+// and a script cannot disagree about what "objects" or "lightmapped" means.
 //
-// Nothing branches on this. It once gated the key light ("off only when FULLY baked"),
-// which put a scene-wide light on top of every partly-baked room; the count is worth
-// REPORTING but is not a safe thing to make lighting policy out of (see applyLighting).
-function countMaterials(root) {
-  const seen = new Set();
-  root.traverse((node) => {
-    for (const material of materialsOf(node)) seen.add(material);
-  });
-  return seen.size;
+// The units are the author's, not three.js's, because every three.js count here
+// is inflated by the pipeline rather than by the scene:
+//
+//   * OBJECTS are the file's mesh nodes -- what the DCC exported. three.js makes
+//     one Mesh per glTF PRIMITIVE, so a machine body with glass and metal is two
+//     "meshes", and the count tracks materials per object, not objects.
+//   * MATERIALS are the file's, by glTF index. GLTFLoader clones a material per
+//     vertex-colour / tangent variant, and the lightmap pass clones one per baked
+//     object (`<name>~lm<N>`), so the count grows with the bake, not the scene.
+//   * LIGHTMAPPED is said of objects. The HUD once read "51/57 lightmapped
+//     materials": a fraction of those inflated instances, against a denominator
+//     that included every material nobody meant to bake, and blind to an object
+//     wearing a baked material it was never baked with. How much of the MODEL is
+//     lit by its bake is the fact the lighting policy turns on (applyLighting),
+//     and it is counted in objects -- the unit the bake is made in, and the one
+//     the DCC panel's push report (`PreviewBridge.lightmap_summary`) uses.
+//
+// Where the file says which objects were BAKED -- each carries its bake's
+// `lightmapInfo` marker in its node extras -- intent and outcome are compared,
+// and every disagreement is an issue: a baked object with no lightmap bound
+// renders unlit, an object with one it was never baked with renders someone
+// else's lighting, and both look like a plausible, merely-wrong room.
+let specs = null;
+// The first frame after a load compiles its programs and uploads its textures;
+// the loop times it into `specs.load.firstFrameMs` (see the render loop).
+let firstFramePending = false;
+
+function plural(count, word) {
+  return `${count.toLocaleString()} ${word}${count === 1 ? '' : 's'}`;
 }
 
-function describe(root) {
-  let triangles = 0;
+// A size as the page quotes one -- tenths below 10 of a unit. Scripts get it as
+// `viewer.formatBytes`, so a panel (the packaged `inspect`) and the status line
+// quote one file one way: two spellings disagreed once ("7 KB" / "6.6 KB").
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  const [value, unit] = bytes < 1024 * 1024 ? [bytes / 1024, 'KB'] : [bytes / (1024 * 1024), 'MB'];
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${unit}`;
+}
+
+// The JSON chunk's length from a GLB's header (0 for anything else): what the
+// file spends describing itself rather than carrying data.
+function glbJsonBytes(buffer) {
+  if (buffer.byteLength < 20) return 0;
+  const view = new DataView(buffer);
+  return view.getUint32(0, true) === 0x46546c67 ? view.getUint32(12, true) : 0;
+}
+
+// The object a Mesh belongs to: the glTF node it came from. GLTFLoader makes a
+// single-primitive node's Mesh the node itself and groups a multi-primitive
+// node's Meshes under a Group standing for it, and records which is which in
+// the parser's associations (`nodes`); a file the parser did not annotate falls
+// back to the Mesh.
+function objectOf(mesh, associations) {
+  if (associations?.get(mesh)?.nodes !== undefined) return mesh;
+  const parent = mesh.parent;
+  if (parent && associations?.get(parent)?.nodes !== undefined) return parent;
+  return mesh;
+}
+
+// The name the file gives *object* (three.js sanitises its own copy: a Maya
+// namespace's ':' is dropped), for the lists an issue names.
+function nameOf(object) {
+  return object.userData?.name || object.name || '(unnamed)';
+}
+
+// Whether the file marks *object* as baked: the bake's per-object marker, in
+// either shape it rides (FBX2glTF nests user properties under `fromFBX`; a
+// native glTF export writes them at the top of the node's extras), read the way
+// MeshConvert._reconcile_node_markers reads them. A cleared marker is empty.
+function carriesBakeMarker(object) {
+  const data = object.userData || {};
+  const raw = data.fromFBX?.userProperties?.lightmapInfo ?? data.lightmapInfo;
+  const value = raw && typeof raw === 'object' && 'value' in raw ? raw.value : raw;
+  return typeof value === 'string' ? value.trim().length > 0 : Boolean(value);
+}
+
+// Measure *gltf* as loaded. `load` carries what only the load path knows: the
+// file's bytes, its phases' timings, the clip count and the animated materials.
+function measureModel(gltf, load, issues) {
+  const associations = gltf.parser?.associations;
+  const objects = new Map();  // object -> {name, baked, lit}
+  const materials = new Set();
+  const instances = new Set();
+  const lightmaps = new Set();
+  const noBakeUv = new Set();
+  let bakeChannel = 1;
   let meshes = 0;
-  root.traverse((node) => {
+  let triangles = 0;
+  let vertices = 0;
+  gltf.scene.traverse((node) => {
     if (!node.isMesh || !node.geometry) return;
     meshes += 1;
-    const geometry = node.geometry;
-    triangles += (geometry.index ? geometry.index.count : geometry.attributes.position.count) / 3;
+    const { geometry } = node;
+    const copies = node.isInstancedMesh ? node.count : 1;
+    const position = geometry.attributes.position;
+    const drawn = geometry.index ? geometry.index.count : position ? position.count : 0;
+    triangles += Math.floor(drawn / 3) * copies;
+    vertices += (position ? position.count : 0) * copies;
+    const owner = objectOf(node, associations);
+    let entry = objects.get(owner);
+    if (!entry) {
+      entry = { name: nameOf(owner), baked: carriesBakeMarker(owner), lit: false };
+      objects.set(owner, entry);
+    }
+    // The primitive too: a marker on mesh DATA (a native glTF export's mesh
+    // extras) lands on each primitive's Mesh rather than on the node's Group.
+    if (node !== owner && carriesBakeMarker(node)) entry.baked = true;
+    for (const material of materialsOf(node)) {
+      instances.add(material);
+      materials.add(associations?.get(material)?.materials ?? material);
+      if (!material.lightMap) continue;
+      entry.lit = true;
+      lightmaps.add(material.lightMap.source ?? material.lightMap);
+      // three.js samples a lightMap on the UV set its channel names -- `uv`
+      // for 0, `uvN` past it -- and applyLightmaps sets that channel from the
+      // manifest (`uv`, the second set unless it says otherwise). Without that
+      // attribute every fragment reads one texel -- flat, plausible, wrong.
+      bakeChannel = material.lightMap.channel;
+      if (!geometry.attributes[bakeChannel ? `uv${bakeChannel}` : 'uv']) noBakeUv.add(entry.name);
+    }
   });
+
+  const all = [...objects.values()];
+  const lit = all.filter((object) => object.lit);
+  const baked = all.filter((object) => object.baked);
+  const coverage = lit.length || baked.length
+    ? {
+      lit: lit.length,
+      objects: all.length,
+      // null where the file marks nothing: intent unknown, so unclaimed.
+      baked: baked.length || null,
+      unlit: baked.filter((object) => !object.lit).map((object) => object.name),
+      foreign: baked.length ? lit.filter((object) => !object.baked).map((object) => object.name) : [],
+      maps: lightmaps.size,
+    }
+    : null;
+  if (coverage?.unlit.length) {
+    issues.push({
+      level: 'warning',
+      text: `${plural(coverage.unlit.length, 'baked object')} ${coverage.unlit.length === 1 ? 'renders' : 'render'} unlit — no lightmap bound`,
+      names: coverage.unlit,
+    });
+  }
+  if (coverage?.foreign.length) {
+    issues.push({
+      level: 'warning',
+      text: `${plural(coverage.foreign.length, 'object')} ${coverage.foreign.length === 1 ? 'wears a lightmap it was' : 'wear a lightmap they were'} never baked with`,
+      names: coverage.foreign,
+    });
+  }
+  if (noBakeUv.size) {
+    const set = bakeChannel === 1 ? 'second UV set' : `UV set ${bakeChannel} (TEXCOORD_${bakeChannel})`;
+    issues.push({
+      level: 'warning',
+      text: `${plural(noBakeUv.size, 'lightmapped object')} ${noBakeUv.size === 1 ? 'has' : 'have'} no ${set}, so the bake reads one texel`,
+      names: [...noBakeUv],
+    });
+  }
+
   const { size } = modelBounds;
-  const dims = [size.x, size.y, size.z].map((n) => n.toFixed(2)).join(' × ');
-  return `${meshes} mesh${meshes === 1 ? '' : 'es'} · ${Math.round(triangles).toLocaleString()} tris · ${dims} source units`;
+  return {
+    file: { bytes: load.bytes, jsonBytes: load.jsonBytes },
+    load: {
+      fetchMs: load.fetchMs,
+      parseMs: load.parseMs,
+      setupMs: load.setupMs,
+      firstFrameMs: null,
+    },
+    objects: objects.size,
+    meshes,
+    triangles,
+    vertices,
+    size: { x: size.x, y: size.y, z: size.z },
+    materials: { file: materials.size, instances: instances.size },
+    lightmaps: coverage,
+    animation: { clips: load.clips, materials: load.animated.materials, tracks: load.animated.tracks },
+    issues,
+  };
+}
+
+// Size in metres: glTF's unit, and the one a headset presents 1:1 -- which is
+// the whole reason the page shows the model at its true size.
+function formatSize({ x, y, z }) {
+  const largest = Math.max(x, y, z);
+  const places = largest < 10 ? 2 : largest < 100 ? 1 : 0;
+  return `${[x, y, z].map((n) => n.toFixed(places)).join(' × ')} m`;
+}
+
+// The HUD's lines, short enough for its 46ch: what the model is, then how it is
+// lit and animated. Objects, not meshes; lightmapped as a count of objects, not
+// a fraction of material instances (see the section comment above).
+function specLines(measured) {
+  const lines = [
+    [
+      plural(measured.objects, 'object'),
+      plural(measured.triangles, 'tri'),
+      formatSize(measured.size),
+    ].join(' · '),
+  ];
+  const detail = [];
+  const coverage = measured.lightmaps;
+  if (coverage?.lit) {
+    // "n of m", never "n/m": a bare fraction reads as a score against a total
+    // it does not name, which is how "51/57 lightmapped materials" misled.
+    if (coverage.lit < coverage.objects) {
+      detail.push(`${coverage.lit} of ${plural(coverage.objects, 'object')} lightmapped`);
+    } else {
+      detail.push(coverage.objects === 1 ? 'lightmapped' : `all ${coverage.objects} objects lightmapped`);
+    }
+  }
+  const { clips, materials } = measured.animation;
+  if (clips) detail.push(plural(clips, 'clip'));
+  // Invisible from the render when it fails: a fade that is not being driven
+  // looks like an object that simply pops, which is how the fades went
+  // unnoticed for as long as they did.
+  if (materials) detail.push(plural(materials, 'animated material'));
+  if (detail.length) lines.push(detail.join(' · '));
+  return lines;
+}
+
+function issueText(issue, cap = 3) {
+  const names = issue.names || [];
+  if (!names.length) return issue.text;
+  const listed = names.slice(0, cap).join(', ');
+  return `${issue.text}: ${listed}${names.length > cap ? `, +${names.length - cap} more` : ''}`;
+}
+
+function showSpecs(measured) {
+  el.stats.replaceChildren(...specLines(measured).map((text) => {
+    const line = document.createElement('div');
+    line.textContent = text;
+    return line;
+  }));
+  const { issues } = measured;
+  el.issues.hidden = !issues.length;
+  el.issues.textContent = issues.length
+    ? `⚠ ${issueText(issues[0])}${issues.length > 1 ? ` (+${issues.length - 1} more in the console)` : ''}`
+    : '';
+  // Every one, whole, where a bug report is copied from; the HUD holds one line.
+  for (const issue of issues) {
+    (issue.level === 'error' ? console.error : console.warn)(`preview: ${issueText(issue, Infinity)}`);
+  }
 }
 
 /* --------------------------------------------------------------- lookdev --- */
@@ -1157,10 +1515,13 @@ function installDepthRule(scene, materials) {
   });
 }
 
+// Returns `{tracks, materials}`: the tracks wired (one per clip, channel and
+// material instance) and the distinct glTF materials they animate -- the HUD's
+// count, since a fade in twelve shots is one faded material, not twelve.
 async function wirePointerTracks(gltf) {
   const parser = gltf.parser;
   const defs = parser.json.animations || [];
-  if (!defs.length) return 0;
+  if (!defs.length) return { tracks: 0, materials: 0 };
 
   // glTF material index -> the three.js materials the loader built from it.
   // Through the loader's own association map, which it carries onto the
@@ -1185,6 +1546,7 @@ async function wirePointerTracks(gltf) {
 
   let wired = 0;
   const blended = new Set();
+  const animated = new Set();  // glTF material indices a track now drives
   for (let i = 0; i < defs.length; i += 1) {
     const clip = gltf.animations[i];
     if (!clip) continue;
@@ -1201,6 +1563,7 @@ async function wirePointerTracks(gltf) {
       if (!binding) continue;
       const owners = byIndex.get(Number(match[1]));
       if (!owners) continue;
+      animated.add(Number(match[1]));
       const sampler = defs[i].samplers[channel.sampler];
       const [input, output] = await Promise.all([
         parser.getDependency('accessor', sampler.input),
@@ -1224,7 +1587,7 @@ async function wirePointerTracks(gltf) {
     clip.resetDuration();
   }
   installDepthRule(gltf.scene, blended);
-  return wired;
+  return { tracks: wired, materials: animated.size };
 }
 
 // Shots laid back onto the timeline they were cut from. The clips carry their
@@ -1564,13 +1927,28 @@ let loadGeneration = 0;
 async function load(url, version) {
   const generation = ++loadGeneration;
   let gltf;
+  // Fetched and parsed as two steps rather than one `loadAsync`, so each is
+  // timed on its own and the file's size is known: "the preview is slow to
+  // appear" is a download on a share link and a parse on a big GLB, and the
+  // two want different fixes.
+  const loadTiming = { bytes: 0, jsonBytes: 0 };
   try {
-    gltf = await loader.loadAsync(url);
+    const fetching = performance.now();
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`.trim());
+    const buffer = await response.arrayBuffer();
+    const parsing = performance.now();
+    loadTiming.fetchMs = parsing - fetching;
+    loadTiming.bytes = buffer.byteLength;
+    loadTiming.jsonBytes = glbJsonBytes(buffer);
+    gltf = await loader.parseAsync(buffer, THREE.LoaderUtils.extractUrlBase(url));
+    loadTiming.parseMs = performance.now() - parsing;
   } catch (error) {
     if (generation !== loadGeneration) return null; // superseded — newer load owns the status line
     setStatus(`load failed: ${error.message || error}`, 'error');
     return false;
   }
+  const settingUp = performance.now();
   if (generation !== loadGeneration) {
     disposeModel(gltf.scene); // parsed but never shown; free it rather than leak it
     return null;
@@ -1599,40 +1977,51 @@ async function load(url, version) {
   // that failed or was superseded above must not leave the previous model's materials
   // being driven by the toggle.
   lightmappedMaterials = [];
+  // What this load finds wrong with the deliverable, gathered as the passes run
+  // (see measureModel). Local, not module state: a newer load can start while
+  // this one awaits, and must not clear what this one found.
+  const issues = [];
   // Before setupAnimation: the mixer binds a clip's tracks when its action is
   // created, so tracks added afterwards would never be played.
-  const fadeCount = await wirePointerTracks(gltf);
-  materialCount = countMaterials(gltf.scene);
+  const animated = await wirePointerTracks(gltf);
   // Read before applying: the deliverable's own policy is what applyLighting
   // then spends, so a load that read nothing must fall back BEFORE the lights
   // are set rather than after.
   readRenderingPolicy(gltf);
-  lightmapped = applyLightmaps(gltf);
+  lightmapped = applyLightmaps(gltf, issues);
   applyLighting();
   syncLookdev();
   const clipCount = setupAnimation(gltf);
 
-  const box = new THREE.Box3().setFromObject(current);
+  const box = boxInPivot(current);
   modelBounds = {
     size: box.getSize(new THREE.Vector3()),
     center: box.getCenter(new THREE.Vector3()),
   };
 
-  // Reported as a FRACTION: "how much of this model is baked" is the fact that
-  // decides whether the viewer's own lighting is in play, and it is invisible
-  // from the render -- a mostly-baked room and a fully-baked one look alike
-  // until the difference is blamed on the baker.
-  // The fade count is stated for the same reason the lightmapped fraction is:
-  // it is invisible from the render. A pointer channel that is NOT being driven
-  // looks exactly like an object that simply pops, which is how the fades went
-  // unnoticed for as long as they did.
-  el.stats.textContent = describe(current)
-    + (lightmapped ? ` · ${lightmapped}/${materialCount} lightmapped materials` : '')
-    + (clipCount ? ` · ${clipCount} clip${clipCount === 1 ? '' : 's'}` : '')
-    + (fadeCount ? ` · ${fadeCount} material track${fadeCount === 1 ? '' : 's'}` : '');
-  emit('load', { model: current, gltf, lightmapped, materialCount, clips: clipCount });
-  setStatus(`v${version} · updated ${new Date().toLocaleTimeString()}`, 'live');
+  // What the model is and how much of it is lit by its bake, in objects --
+  // invisible from the render, where a mostly-baked room and a fully-baked one
+  // look alike until the difference is blamed on the baker. See measureModel
+  // for the units, and why the count is no longer a fraction of materials.
+  loadTiming.setupMs = performance.now() - settingUp;
+  specs = measureModel(gltf, { ...loadTiming, clips: clipCount, animated }, issues);
+  materialCount = specs.materials.instances;
+  firstFramePending = true;
+  showSpecs(specs);
+  // Laid out, its start found, its surfaces read and the view opened BEFORE
+  // the event: a 'load' subscriber is told the model is in, and asking
+  // `viewer.headset.start` then answered from the model it replaced -- nothing
+  // on the first push, the disposed model's node on the next -- or from this
+  // one before it stood on the floor.
   layout();
+  startNode = findStartNode(current, userPosName);
+  surfaces.setRoot(current);
+  homeView();
+  emit('load', { model: current, gltf, lightmapped, materialCount, clips: clipCount, specs });
+  setStatus(
+    `v${version} · ${formatBytes(loadTiming.bytes)} · updated ${new Date().toLocaleTimeString()}`,
+    'live',
+  );
   return true;
 }
 
@@ -1648,6 +2037,1203 @@ function setStatus(text, cls = '') {
   el.status.className = cls;
 }
 
+/* ------------------------------------------------------------------- rig --- */
+
+// Where the headset stands in the scene -- the one thing every headset
+// behaviour moves. The viewer moves, never the scene: the tracked space is
+// re-anchored through an offset reference space, so the headset, the
+// controllers and every camera three.js derives from them move as one while
+// the model stays put (and the desktop view, which three.js drives from the
+// headset meanwhile, is put back as the session ends -- see desktopView).
+// `place` is that anchor -- a scene point is R(yaw) * tracked + (x, y, z) --
+// so `y` is the height of the floor under the viewer: 0 on the page's floor, a
+// platform's top after a jump onto it.
+//
+// The rig decides nothing. Where a session begins is the start's to say (the
+// start section), and getting around is locomotion's, which is optional:
+// switched off, the viewer stays where the session started. Both move it
+// through the calls below, and a cut -- a session's first place, a jump, a
+// return to the start -- goes through the blink, to black and back, so it is
+// never seen.
+//
+// Poses are plain values in the TRACKED space, as the headset reports them:
+// `{position: [x, y, z], orientation: [x, y, z, w]}`.
+const BLINK_OUT = 0.08;       // s to black before a jump ...
+const BLINK_IN = 0.14;        // ... and back after it
+
+const rig = (() => {
+  const UP = new THREE.Vector3(0, 1, 0);
+  const FORWARD = new THREE.Vector3(0, 0, -1);
+  const place = { x: 0, y: 0, z: 0, yaw: 0 };
+  let blink = null;                      // {phase: 'out' | 'in', t, to}
+  let fade = 0;
+  let changed = false;
+
+  function toScene(position) {
+    const c = Math.cos(place.yaw), s = Math.sin(place.yaw);
+    const [x, y, z] = position;
+    return new THREE.Vector3(c * x + s * z + place.x, y + place.y, -s * x + c * z + place.z);
+  }
+
+  function directionToScene(orientation) {
+    return FORWARD.clone()
+      .applyQuaternion(new THREE.Quaternion().fromArray(orientation))
+      .applyAxisAngle(UP, place.yaw);
+  }
+
+  // The way a rotation faces, as a turn about +Y from -Z: its view axis
+  // flattened -- or, looking straight down (or up), the way the top of its view
+  // points. That second case is not only a camera aimed at the floor: a Blender
+  // Empty arrives turned -90 degrees about X, its -Z pointing down and its +Y,
+  // Blender's forward, pointing the way it faces.
+  function headingOf(quaternion) {
+    for (const axis of [FORWARD, UP]) {
+      const d = axis.clone().applyQuaternion(quaternion);
+      if (d.x * d.x + d.z * d.z > 0.01) return Math.atan2(-d.x, -d.z);
+    }
+    return 0;
+  }
+
+  // Turn by `angle` about the vertical through `about` -- the head, so the
+  // view pivots where the viewer stands instead of swinging them round.
+  function turn(angle, about) {
+    const c = Math.cos(angle), s = Math.sin(angle);
+    const dx = place.x - about.x, dz = place.z - about.z;
+    place.x = about.x + c * dx + s * dz;
+    place.z = about.z - s * dx + c * dz;
+    place.yaw += angle;
+    changed = true;
+  }
+
+  // Move across the floor by (dx, dz): a walk.
+  function move(dx, dz) {
+    place.x += dx;
+    place.z += dz;
+    changed = true;
+  }
+
+  // Stand on a floor `y` high: a walk over a step.
+  function setFloor(y) {
+    place.y = y;
+    changed = true;
+  }
+
+  // Put the head -- a scene point, or null for the rig's own origin -- over
+  // `point`, and the floor at its height; the heading holds.
+  function land(point, head) {
+    place.x += point.x - (head ? head.x : place.x);
+    place.z += point.z - (head ? head.z : place.z);
+    place.y = point.y;
+    changed = true;
+  }
+
+  // The back half of a blink, from black: the frame being drawn was posed from
+  // where the viewer was (three.js poses it before the loop runs), so a cut
+  // made now goes out black and the view fades in where it lands.
+  function blinkIn() {
+    blink = { phase: 'in', t: 0 };
+    fade = 1;
+  }
+
+  // Stand the head (`pose`) over `point`, facing `heading`, from black.
+  function arrive(point, heading, pose) {
+    const facing = place.yaw + headingOf(new THREE.Quaternion().fromArray(pose.orientation));
+    turn(heading - facing, toScene(pose.position));
+    land(point, toScene(pose.position));
+    blinkIn();
+  }
+
+  // Stand the rig back at `at`, a `place` it had, from black.
+  function restore(at) {
+    Object.assign(place, { x: at.x, y: at.y, z: at.z, yaw: at.yaw });
+    changed = true;
+    blinkIn();
+  }
+
+  // Jump the head over `point`, the heading kept, through a whole blink: the
+  // move waits for black, since a visible cut is what makes a teleport jarring.
+  // Refused (false) while a blink is under way.
+  function jump(point) {
+    if (blink) return false;
+    blink = { phase: 'out', t: 0, to: point.clone() };
+    return true;
+  }
+
+  /**
+   * Advance the blink a frame, landing a jump -- over wherever the head
+   * (`pose`) is by then -- once the view is black. Returns ['land'] on the
+   * frame a jump lands.
+   */
+  function step(delta, pose) {
+    if (!blink) return [];
+    const events = [];
+    // A hitch (a tab regaining focus, a long collection) must not become a leap.
+    blink.t += Math.min(Math.max(delta, 0), 0.1);
+    if (blink.phase === 'out') {
+      fade = Math.min(blink.t / BLINK_OUT, 1);
+      if (blink.t >= BLINK_OUT) {
+        land(blink.to, pose ? toScene(pose.position) : null);
+        events.push('land');
+        blink = { phase: 'in', t: 0 };
+      }
+    } else {
+      fade = Math.max(1 - blink.t / BLINK_IN, 0);
+      if (blink.t >= BLINK_IN) {
+        blink = null;
+        fade = 0;
+      }
+    }
+    return events;
+  }
+
+  // The rig as the XRRigidTransform an offset reference space is built from.
+  // WebXR places the new space's origin at the transform, so poses in it are
+  // the transform's INVERSE applied to tracked ones -- and a scene point is
+  // R(yaw) * tracked + (x, y, z), so the transform is that map's inverse:
+  // R(-yaw) applied to -(x, y, z), then R(-yaw).
+  function offset() {
+    const c = Math.cos(place.yaw), s = Math.sin(place.yaw);
+    return {
+      position: { x: -(c * place.x - s * place.z), y: -place.y, z: -(s * place.x + c * place.z), w: 1 },
+      orientation: { x: 0, y: -Math.sin(place.yaw / 2), z: 0, w: Math.cos(place.yaw / 2) },
+    };
+  }
+
+  function reset() {
+    Object.assign(place, { x: 0, y: 0, z: 0, yaw: 0 });
+    blink = null;
+    fade = 0;
+    changed = true;
+  }
+
+  return {
+    /** Where the tracked space stands in the scene: `{x, y, z, yaw}` (a copy). */
+    get place() { return { ...place }; },
+    /** 0-1: the blink's black. */
+    get fade() { return fade; },
+    /** Whether a blink is under way; a jump is refused until it ends. */
+    get blinking() { return blink !== null; },
+    /** Whether the rig has moved since the loop last re-anchored to it. */
+    get changed() { return changed; },
+    /** `changed`, cleared: the loop, re-anchoring. */
+    takeChange() {
+      const was = changed;
+      changed = false;
+      return was;
+    },
+    toScene,
+    directionToScene,
+    headingOf,
+    turn,
+    move,
+    setFloor,
+    land,
+    arrive,
+    restore,
+    jump,
+    step,
+    offset,
+    reset,
+  };
+})();
+
+/* -------------------------------------------------------------- surfaces --- */
+
+// What can be stood on -- the model's visible meshes, each with its scene-space
+// box -- and the one question asked of them: what does a segment strike first?
+// Shared by the start, which stands a session on the floor under its node, and
+// locomotion, which throws its arc at them and follows them underfoot.
+const WALKABLE = Math.cos(THREE.MathUtils.degToRad(40));  // the steepest floor
+
+// Triangles to a cell of a mesh's triangle grid, were they spread evenly: the
+// grid's resolution (see `gridOf`).
+const CELL_TRIANGLES = 8;
+const MAX_GRID_CELLS = 1 << 21;
+
+const surfaces = (() => {
+  const UP = new THREE.Vector3(0, 1, 0);
+  const raycaster = new THREE.Raycaster();
+  const normalMatrix = new THREE.Matrix3();
+  const instanceMatrix = new THREE.Matrix4();
+  let list = [];                           // [{mesh, box, gridded}]
+  let root = null;                         // the model they were read from ...
+  const rootMatrix = new THREE.Matrix4();  // ... and its world matrix then
+
+  // Every headset frame casts at these -- a walk once, for the floor underfoot;
+  // an aimed arc once per segment -- and a raycast tests EVERY triangle of a
+  // mesh whose bounds its ray crosses: measured, 10 ms a frame on a
+  // 320k-triangle mesh, the whole of a 90 Hz budget, for a question about the
+  // metre around the viewer. So each mesh's triangles are bucketed, in the
+  // mesh's own space, on a uniform grid over its box -- CELL_TRIANGLES to a
+  // cell -- and a segment is tested against the triangles in the cells its own
+  // box overlaps: a few dozen, however dense the mesh. Built once per geometry,
+  // on first use or as a session starts (`warm`), and kept beside it; the
+  // model's moves (a turned pivot) need no rebuild, the segment is taken into
+  // the mesh's space instead. What the stock raycast knows and a grid of the
+  // stored positions does not -- a skinned or morphed mesh draws positions the
+  // buffer does not hold, a multi-material one gives each group its own side,
+  // an instanced one is many meshes -- keeps the stock raycast.
+  const grids = new WeakMap();  // geometry -> its grid
+
+  function griddable(mesh) {
+    const { geometry, material } = mesh;
+    return !mesh.isSkinnedMesh && !mesh.isInstancedMesh && !mesh.isBatchedMesh
+      && !!material && !Array.isArray(material)
+      && !!geometry.attributes.position
+      && !(geometry.morphAttributes.position && mesh.morphTargetInfluences);
+  }
+
+  function gridOf(geometry) {
+    let grid = grids.get(geometry);
+    if (grid) return grid;
+    const position = geometry.attributes.position;
+    const order = geometry.index;
+    const first = Math.max(0, geometry.drawRange.start);
+    const end = Math.min(order ? order.count : position.count,
+      geometry.drawRange.start + geometry.drawRange.count);
+    const count = Math.max(0, Math.floor((end - first) / 3));
+    const corner = order ? (t, k) => order.getX(first + 3 * t + k) : (t, k) => first + 3 * t + k;
+    if (!geometry.boundingBox) geometry.computeBoundingBox();
+    const box = geometry.boundingBox.clone();
+    const low = box.min.toArray();
+    const extent = box.getSize(new THREE.Vector3()).toArray();
+    // Cubic cells shared out by the box's proportions. An axis thinner than a
+    // cell (a floor's height) gets one, and the edge is sized over the rest --
+    // rounded up to a cell of its own first, it would multiply the others.
+    const wanted = Math.min(Math.max(1, count / CELL_TRIANGLES), MAX_GRID_CELLS);
+    let axes = [0, 1, 2].filter((axis) => extent[axis] > 1e-6);
+    let edge = 1;
+    for (;;) {
+      const measure = axes.reduce((product, axis) => product * extent[axis], 1);
+      edge = axes.length ? (measure / wanted) ** (1 / axes.length) : 1;
+      const thick = axes.filter((axis) => extent[axis] >= edge);
+      if (thick.length === axes.length) break;
+      axes = thick;
+    }
+    let dims = extent.map((e, axis) => (axes.includes(axis) ? Math.max(1, Math.ceil(e / edge)) : 1));
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const span = new Int32Array(6);  // a triangle's cells: x0 y0 z0 x1 y1 z1
+    let scale, cells, starts, total;
+
+    const cellAt = (axis, value) =>
+      Math.min(dims[axis] - 1, Math.max(0, Math.floor((value - low[axis]) * scale[axis])));
+    const spanOf = (t) => {
+      a.fromBufferAttribute(position, corner(t, 0));
+      b.fromBufferAttribute(position, corner(t, 1));
+      c.fromBufferAttribute(position, corner(t, 2));
+      for (let axis = 0; axis < 3; axis++) {
+        const p = a.getComponent(axis), q = b.getComponent(axis), r = c.getComponent(axis);
+        span[axis] = cellAt(axis, Math.min(p, q, r));
+        span[axis + 3] = cellAt(axis, Math.max(p, q, r));
+      }
+    };
+    const eachCell = (visit) => {
+      for (let z = span[2]; z <= span[5]; z++) {
+        for (let y = span[1]; y <= span[4]; y++) {
+          for (let x = span[0]; x <= span[3]; x++) visit(x + dims[0] * (y + dims[1] * z));
+        }
+      }
+    };
+    // Counted first, coarsened while the long thin triangles of a pathological
+    // mesh would file one triangle in thousands of cells.
+    for (;;) {
+      scale = dims.map((d, axis) => (extent[axis] > 1e-6 ? d / extent[axis] : 0));
+      cells = dims[0] * dims[1] * dims[2];
+      starts = new Uint32Array(cells + 1);
+      total = 0;
+      for (let t = 0; t < count; t++) {
+        spanOf(t);
+        eachCell((cell) => { starts[cell + 1] += 1; total += 1; });
+      }
+      if (total <= 16 * count + cells || cells === 1) break;
+      dims = dims.map((d) => Math.max(1, d >> 1));
+    }
+    for (let cell = 0; cell < cells; cell++) starts[cell + 1] += starts[cell];
+    const refs = new Uint32Array(total);
+    const filled = starts.slice(0, cells);
+    for (let t = 0; t < count; t++) {
+      spanOf(t);
+      eachCell((cell) => { refs[filled[cell]++] = t; });
+    }
+    grid = { count, corner, position, box, low, dims, scale, starts, refs, seen: new Uint32Array(count), stamp: 0 };
+    grids.set(geometry, grid);
+    return grid;
+  }
+
+  const toLocal = new THREE.Matrix4();
+  const localRay = new THREE.Ray();
+  const localSpan = new THREE.Box3();
+  const localTo = new THREE.Vector3();
+  const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
+  const struck = new THREE.Vector3();
+  const struckWorld = new THREE.Vector3();
+
+  // The nearest triangle of `mesh` the scene segment `from` -> `to` (`length`
+  // long) strikes, as a stock raycast reports it (`point`, `distance`, `face`
+  // and `object`, the sides the material culls culled), or null.
+  function strike(mesh, from, to, length) {
+    const grid = gridOf(mesh.geometry);
+    if (!grid.count) return null;
+    toLocal.copy(mesh.matrixWorld).invert();
+    localRay.origin.copy(from).applyMatrix4(toLocal);
+    localTo.copy(to).applyMatrix4(toLocal);
+    localSpan.setFromPoints([localRay.origin, localTo]);
+    if (!localSpan.intersectsBox(grid.box)) return null;
+    localRay.direction.subVectors(localTo, localRay.origin).normalize();
+    const { dims, low, scale, starts, refs, seen, corner, position } = grid;
+    const cellAt = (axis, value) =>
+      Math.min(dims[axis] - 1, Math.max(0, Math.floor((value - low[axis]) * scale[axis])));
+    const lo = localSpan.min.toArray().map((value, axis) => cellAt(axis, value));
+    const hi = localSpan.max.toArray().map((value, axis) => cellAt(axis, value));
+    const side = mesh.material.side;
+    // A triangle filed in several of the cells visited is tested once.
+    grid.stamp += 1;
+    let best = null;
+    for (let z = lo[2]; z <= hi[2]; z++) {
+      for (let y = lo[1]; y <= hi[1]; y++) {
+        for (let x = lo[0]; x <= hi[0]; x++) {
+          const cell = x + dims[0] * (y + dims[1] * z);
+          for (let k = starts[cell]; k < starts[cell + 1]; k++) {
+            const t = refs[k];
+            if (seen[t] === grid.stamp) continue;
+            seen[t] = grid.stamp;
+            va.fromBufferAttribute(position, corner(t, 0));
+            vb.fromBufferAttribute(position, corner(t, 1));
+            vc.fromBufferAttribute(position, corner(t, 2));
+            const hit = side === THREE.BackSide
+              ? localRay.intersectTriangle(vc, vb, va, true, struck)
+              : localRay.intersectTriangle(va, vb, vc, side === THREE.FrontSide, struck);
+            if (!hit) continue;
+            struckWorld.copy(struck).applyMatrix4(mesh.matrixWorld);
+            const distance = from.distanceTo(struckWorld);
+            if (distance > length || (best && distance >= best.distance)) continue;
+            best = {
+              distance,
+              point: struckWorld.clone(),
+              face: { normal: THREE.Triangle.getNormal(va, vb, vc, new THREE.Vector3()) },
+              object: mesh,
+            };
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  function read() {
+    list = [];
+    if (!root) return;
+    root.updateWorldMatrix(true, true);
+    rootMatrix.copy(root.matrixWorld);
+    root.traverseVisible((node) => {
+      if (!node.isMesh) return;
+      list.push({ mesh: node, box: new THREE.Box3().setFromObject(node), gridded: griddable(node) });
+    });
+  }
+
+  // Every grid the model's surfaces need, built now rather than on the frame
+  // that first casts at them: as a session starts, and as a model lands in one.
+  function warm() {
+    for (const { mesh, gridded } of list) if (gridded) gridOf(mesh.geometry);
+  }
+
+  // Re-read whenever the model has moved as a whole since: a script turning the
+  // pivot -- the turntable, before a session -- would otherwise leave every box
+  // where its mesh used to be, and the arc would pass straight through a wall.
+  // Cheap to redo (a box is the geometry's own, transformed), and asked once a
+  // frame rather than per cast: an arc casts dozens of segments.
+  function refresh() {
+    if (!root) return;
+    root.updateWorldMatrix(true, false);
+    if (!root.matrixWorld.equals(rootMatrix)) read();
+  }
+
+  // The model to read them from; each load hands its own over.
+  function setRoot(model) {
+    root = model || null;
+    read();
+    if (renderer.xr.isPresenting) warm();
+  }
+
+  // The first surface the segment `from` -> `to` strikes, or null. `valid` when
+  // it can be stood on: facing up within WALKABLE, and struck from above.
+  function cast(from, to) {
+    const direction = new THREE.Vector3().subVectors(to, from);
+    const length = direction.length();
+    if (!length) return null;
+    raycaster.set(from, direction.divideScalar(length));
+    raycaster.far = length;
+    const span = new THREE.Box3().setFromPoints([from, to]);
+    let best = null;
+    for (const { mesh, box, gridded } of list) {
+      // The segment's box first: a raycast tests each mesh's bounds against the
+      // whole INFINITE ray, so every mesh behind the segment would otherwise pay
+      // its triangle tests on every segment of an arc, every frame.
+      if (!box.intersectsBox(span)) continue;
+      const hit = gridded ? strike(mesh, from, to, length) : raycaster.intersectObject(mesh, false)[0];
+      if (hit && (!best || hit.distance < best.distance)) best = hit;
+    }
+    let normal = null;
+    if (best) {
+      let world = best.object.matrixWorld;
+      if (best.instanceId !== undefined) {
+        best.object.getMatrixAt(best.instanceId, instanceMatrix);
+        world = instanceMatrix.premultiply(world);
+      }
+      normal = best.face.normal.clone().applyMatrix3(normalMatrix.getNormalMatrix(world)).normalize();
+    }
+    // The page's own floor, which a model need not carry: a room shipped
+    // without one still has somewhere to land, where the grid is drawn.
+    if (from.y >= 0 && to.y < 0) {
+      const along = from.y / (from.y - to.y);
+      if (!best || along * length < best.distance) {
+        best = { point: from.clone().lerp(to, along), distance: along * length };
+        normal = UP.clone();
+      }
+    }
+    if (!best) return null;
+    return {
+      point: best.point.clone(),
+      normal,
+      valid: normal.y >= WALKABLE && raycaster.ray.direction.dot(normal) < 0,
+    };
+  }
+
+  return { setRoot, refresh, cast, warm };
+})();
+
+/* --------------------------------------------------------------- headset --- */
+
+// The session's own reference space. The rig always offsets THIS one, never an
+// offset of an offset, so nothing accumulates across a session's moves.
+let headsetSpace = null;
+
+const OVERLAY_DISTANCE = 0.1;  // m in front of each eye
+const OVERLAY_ORDER = 1e6;     // drawn last: over everything, cards included
+
+// Everything below draws only in a headset; on the desktop it stays hidden, so
+// a still or a playblast never carries it.
+const headsetLayer = new THREE.Group();
+headsetLayer.visible = false;
+scene.add(headsetLayer);
+
+// A card of text in the headset, where the page's own chrome is not drawn at
+// all: a canvas in that chrome's colours on a plane in the headset layer --
+// the controls card below, and any script's (the packaged `inspect` rides
+// one). See `viewer.addHeadsetCard` for the contract.
+const CARD_FILL = 'rgba(21, 23, 26, 0.88)';
+const CARD_UP = new THREE.Vector3(0, 1, 0);
+
+function addHeadsetCard({ name = '', width = 720, height = 400, metres = 0.36, radius = 28, over = false } = {}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(metres, (metres * height) / width),  // the canvas's aspect
+    new THREE.MeshBasicMaterial({
+      map: texture, transparent: true, depthTest: !over, depthWrite: false, toneMapped: false,
+    }),
+  );
+  mesh.name = name;
+  if (over) {
+    // Over the model, under the blink, which then fades it too.
+    mesh.renderOrder = OVERLAY_ORDER - 1;
+    mesh.frustumCulled = false;
+  }
+  mesh.visible = false;
+  headsetLayer.add(mesh);
+  const facing = new THREE.Vector3();
+  const target = new THREE.Vector3();
+  return {
+    mesh,
+    draw(paint) {
+      context.clearRect(0, 0, width, height);
+      context.fillStyle = CARD_FILL;
+      if (context.roundRect) {
+        context.beginPath();
+        context.roundRect(0, 0, width, height, radius);
+        context.fill();
+      } else {
+        context.fillRect(0, 0, width, height);
+      }
+      paint(context, width, height);
+      texture.needsUpdate = true;
+    },
+    place(head, look, { ahead, aside = 0, below = 0, ease = 0 }, delta = 0) {
+      facing.copy(look).setY(0);
+      if (facing.lengthSq() < 1e-6) facing.set(0, 0, -1);
+      facing.normalize().applyAxisAngle(CARD_UP, aside);
+      target.copy(head).addScaledVector(facing, ahead);
+      target.y = head.y - below;
+      if (ease && mesh.visible) mesh.position.lerp(target, 1 - Math.exp(-Math.max(delta, 0) / ease));
+      else mesh.position.copy(target);
+      mesh.lookAt(head);
+    },
+  };
+}
+
+// The controllers themselves, modelled after the real ones. The models load on
+// connect from the WebXR input-profiles CDN; with it unreachable they are just
+// not drawn, and everything else here still works.
+const controllerModels = new XRControllerModelFactory();
+for (const index of [0, 1]) {
+  const grip = renderer.xr.getControllerGrip(index);
+  grip.add(controllerModels.createControllerModel(grip));
+  scene.add(grip);
+}
+
+// The rig's blink and locomotion's vignette: one quad drawn in front of EACH
+// eye, placed in `onBeforeRender` from the eye camera being drawn -- a child of
+// the camera would trail the head by a frame, which in a headset reads as the
+// view smearing. Radial for the vignette (dark from 25 degrees off the eye's
+// axis to black at 50), flat for the blink. Each writes its own uniform.
+const overlay = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.6, 0.6),  // +-0.3 m at 0.1 m: 71 degrees each way
+  new THREE.ShaderMaterial({
+    uniforms: { fade: { value: 0 }, vignette: { value: 0 } },
+    vertexShader: `
+      varying vec2 vPosition;
+      void main() {
+        vPosition = position.xy;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform float fade;
+      uniform float vignette;
+      varying vec2 vPosition;
+      void main() {
+        float offAxis = length(vPosition) / ${OVERLAY_DISTANCE.toFixed(3)};  // tan of the angle
+        float alpha = max(fade, vignette * smoothstep(0.466, 1.192, offAxis));
+        if (alpha < 0.002) discard;
+        gl_FragColor = vec4(0.0, 0.0, 0.0, alpha);
+      }`,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  }),
+);
+overlay.frustumCulled = false;
+overlay.renderOrder = OVERLAY_ORDER;
+overlay.visible = false;
+const overlayOffset = new THREE.Matrix4().makeTranslation(0, 0, -OVERLAY_DISTANCE);
+overlay.onBeforeRender = (_renderer, _scene, eye) => {
+  overlay.matrixWorld.multiplyMatrices(eye.matrixWorld, overlayOffset);
+};
+headsetLayer.add(overlay);
+
+const poseArrays = ({ position: p, orientation: q }) => ({
+  position: [p.x, p.y, p.z],
+  orientation: [q.x, q.y, q.z, q.w],
+});
+
+// The head, the sticks and the right controller's aim ray, all in the
+// session's own space: the rig maps them into the scene, so they must not be
+// read through the offset space the rig itself builds. Returns what
+// `headset.step` takes -- `{head, left, right, aim}`, each pose
+// `{position, orientation}` as arrays and each stick `[x, y]`, or null -- and
+// `sources`, the controller behind each hand.
+function readHeadsetInput(frame) {
+  const input = { head: null, left: null, right: null, aim: null, sources: {} };
+  const viewerPose = frame.getViewerPose(headsetSpace);
+  if (viewerPose) input.head = poseArrays(viewerPose.transform);
+  for (const source of frame.session.inputSources) {
+    const hand = source.handedness;
+    if (hand !== 'left' && hand !== 'right') continue;
+    input.sources[hand] = source;
+    const axes = source.gamepad?.axes;
+    // xr-standard puts the thumbstick on axes 2-3; a touchpad-only controller
+    // reports on 0-1.
+    if (axes && axes.length >= 2) input[hand] = axes.length >= 4 ? [axes[2], axes[3]] : [axes[0], axes[1]];
+    if (hand === 'right') {
+      const aim = frame.getPose(source.targetRaySpace, headsetSpace);
+      if (aim) input.aim = poseArrays(aim.transform);
+    }
+  }
+  return input;
+}
+
+/* ----------------------------------------------------------------- start --- */
+
+// Where views start. The server names a node (`manifest.userPos`, "user_pos"
+// unless the DCC side chose another) -- a camera, so the start can be looked
+// through in Maya or Blender before it is ever pushed. The desktop view opens
+// through it (homeView), and a headset session stands under it, facing where
+// it looks (stepStart). Where the viewer goes from there is locomotion's
+// business; with locomotion off, they stay.
+
+let startNode = null;  // the current model's start node, or null
+
+// Matched on the name the file carries rather than three.js's sanitised copy,
+// which drops the ':' a Maya namespace hangs on; a namespaced one
+// ("set:user_pos") answers when no node has the name exactly. Null when the
+// model has none.
+function findStartNode(root, name) {
+  if (!root || !name) return null;
+  let exact = null;
+  let spaced = null;
+  root.traverse((node) => {
+    const own = node.userData.name ?? node.name;
+    if (exact || typeof own !== 'string') return;
+    if (own === name) exact = node;
+    else if (!spaced && own.slice(own.lastIndexOf(':') + 1) === name) spaced = node;
+  });
+  return exact || spaced;
+}
+
+const viewRay = new THREE.Raycaster();
+
+// The desktop view a load opens on: through the start camera when the model
+// has one, else the whole model, framed. Through it means its position, the
+// way it looks, and its HORIZONTAL field of view -- the one Maya (film gate
+// fill) and Blender (sensor fit auto) both hold for a landscape frame, and the
+// one the file keeps faithfully (the vertical it stores assumes the sensor's
+// 3:2, not the render's aspect; the clip planes arrive in the wrong units and
+// are not used). The orbit then turns about what the camera looks at. A start
+// node that is not a camera places only the headset: a marker on the floor is
+// no place to put an eye.
+function homeView() {
+  const start = startNode?.isPerspectiveCamera ? startNode : null;
+  if (!start) {
+    frameCamera(DEFAULT_FOV);
+    return;
+  }
+  const across = Math.tan(THREE.MathUtils.degToRad(start.fov) / 2) * start.aspect;
+  camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(across / camera.aspect));
+  current.updateWorldMatrix(true, true);
+  const eye = start.getWorldPosition(new THREE.Vector3());
+  const look = new THREE.Vector3(0, 0, -1).applyQuaternion(start.getWorldQuaternion(new THREE.Quaternion()));
+  const box = new THREE.Box3().setFromObject(current);
+  // A model with nothing drawable -- a push of the start camera alone -- is an
+  // EMPTY box, and an empty box lies at Infinity from every point: the far
+  // plane came out Infinity and the projection NaN, and in a session three.js
+  // hands that plane to `updateRenderState`, which refuses a non-finite
+  // depthFar and stops the XR loop. The page's floor grid is all there is to
+  // see then, so the planes reach that.
+  if (box.isEmpty()) box.copy(GRID_BOX);
+  const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.05);
+  viewRay.set(eye, look);
+  const hit = viewRay.intersectObject(current, true).find((h) => h.object.isMesh && h.object.visible);
+  const toCenter = box.getCenter(new THREE.Vector3()).sub(eye).dot(look);
+  camera.position.copy(eye);
+  controls.target.copy(eye).addScaledVector(look, hit ? hit.distance : Math.max(toCenter, radius / 10, 0.1));
+  settleView(Math.max(radius / 2000, 0.005), (box.distanceToPoint(eye) + 2 * radius) * 2 + 1);
+}
+
+const START_LIFT = 0.05;  // m above the start node its floor is sought from
+
+// Where a session starts: `{point, heading}`, read from the start node as it
+// stands NOW (a script may have turned the model since it loaded), the point
+// dropped to the floor under it -- so a camera at eye height stands the viewer
+// where its feet would be -- or kept at the node's own height with nothing
+// walkable below. Only where and which way: the height of the eyes, the tilt of
+// the head and the field of view are the headset's, because the floor has to
+// stay where the viewer's feet are. Null without a start node.
+function startPlace() {
+  if (!startNode) return null;
+  surfaces.refresh();
+  startNode.updateWorldMatrix(true, false);
+  const point = startNode.getWorldPosition(new THREE.Vector3());
+  const heading = rig.headingOf(startNode.getWorldQuaternion(new THREE.Quaternion()));
+  const floor = surfaces.cast(
+    point.clone().setY(point.y + START_LIFT),
+    point.clone().setY(Math.min(point.y, 0) - 1),
+  );
+  if (floor && floor.valid) point.y = floor.point.y;
+  return { point, heading };
+}
+
+// Whether this session has been placed at its start (true between sessions:
+// nothing is due), and the rig as that left it -- the origin, on a model with
+// no start -- which is how a recenter, and locomotion switched off, tell a
+// viewer still standing there from one who has moved on.
+let arrived = true;
+let arrivedAt = null;
+
+// Whether the rig still stands where this session was placed.
+function atStart() {
+  if (!arrivedAt) return false;
+  const place = rig.place;
+  return Object.keys(arrivedAt).every((key) => place[key] === arrivedAt[key]);
+}
+
+// Due back at the start on the next frame with a head -- once there has been
+// one to go back to.
+function returnToStart() {
+  if (arrivedAt) arrived = false;
+}
+
+// A session's first frame with a head and a model: to the start, if the model
+// has one, under black. It waits for both, so a session begun while the model
+// is still downloading lands at the start when it arrives, rather than never.
+// Due again later (`returnToStart`), it goes back the same way: under the start
+// again, facing its way, or -- with no start -- to where the rig began.
+function stepStart(input) {
+  if (arrived || !input.head || !current) return [];
+  arrived = true;
+  const start = startPlace();
+  if (start) {
+    rig.arrive(start.point, start.heading, input.head);
+  } else if (arrivedAt && !atStart()) {
+    rig.restore(arrivedAt);
+  } else {
+    arrivedAt = arrivedAt || rig.place;
+    return [];
+  }
+  arrivedAt = rig.place;
+  return ['arrive'];
+}
+
+// A recenter (holding the headset's system button) resets the session's space
+// under the viewer. One still standing where the start put them -- always, with
+// locomotion off -- is put back there, facing its way: the viewpoint holds. One
+// who has moved on keeps their place.
+function recenter() {
+  if (!locomotion.enabled || atStart()) returnToStart();
+}
+
+/* ------------------------------------------------------------ locomotion --- */
+
+// Getting around in a headset, on the thumbsticks of the two controllers every
+// standalone headset ships with -- the scheme most VR apps default to:
+//
+//   left stick    walk where you look: eased in and out, a comfort vignette
+//                 narrowing the view while moving, and following the floor up a
+//                 step or down a ledge
+//   right stick   flick sideways to snap-turn 45 degrees about your head, one
+//                 turn per flick; push forward to aim a teleport arc, release
+//                 to jump there through a short blink, pull back to cancel
+//
+// Optional, and live: the server's switch (`locomotion` in the manifest, read
+// on every poll) turns it off, and then the sticks do nothing and nothing of it
+// is drawn -- the viewer stays where the session started, free to look round
+// and step about their room but not to go anywhere; one it had carried off
+// before the switch is taken back there (see `headset.step`). All it moves is
+// the rig.
+const MOVE_SPEED = 2.0;       // m/s at full deflection: a brisk walk
+const MOVE_EASE = 0.1;        // s: time constant of speeding up and slowing down
+const STICK_DEADZONE = 0.15;  // a resting stick drifts; this much reads as zero
+const SNAP_TURN = THREE.MathUtils.degToRad(45);
+const FLICK_ON = 0.7;         // a turn fires past this sideways ...
+const FLICK_OFF = 0.35;       // ... and re-arms once the stick is back inside this
+const AIM_ON = 0.6;           // forward past this starts aiming
+const AIM_RELEASE = 0.3;      // back inside this jumps
+const AIM_CANCEL = 0.5;       // pulled back past this cancels
+const ARC_SPEED = 7.5;        // m/s launch: about 6 m of reach on the level
+const ARC_GRAVITY = 9.81;
+const ARC_STEP = 0.04;        // s of flight per traced segment
+const ARC_SEGMENTS = 45;      // 1.8 s of flight, then the throw is lost below
+const STEP_UP = 0.45;         // m a walk climbs onto without a teleport
+const STEP_DOWN = 1.0;        // m a walk steps down; past it, the floor holds
+const FLOOR_EASE = 0.08;      // s: a step up or down, smoothed
+const VIGNETTE_MAX = 0.6;
+const VIGNETTE_EASE = 0.12;   // s
+const ARC_VALID = 0x4fc3f7;
+const ARC_INVALID = 0xf2504b;  // the page's error red
+const ARC_DOT_SPACING = 0.16;  // m between the arc's dots ...
+const ARC_DOT_SPEED = 0.5;     // ... flowing at this m/s toward the landing
+const ARC_DOTS = 64;
+const HINT_SECONDS = 8;
+const HINT_FADE_MS = 400;
+
+const locomotion = (() => {
+  let enabled = true;
+  const velocity = new THREE.Vector2();  // scene x and z, m/s
+  let floorTarget = null;                // the height a walk's floor eases to
+  let turnArmed = true;
+  let aiming = false;
+  let target = null;                     // {point, normal, valid} while aiming
+  let arc = [];                          // the aimed arc, scene points, to its end
+  let vignette = 0;
+
+  // The arc: dots flowing along it toward the landing -- cyan where a jump would
+  // land, red where it would not.
+  const arcDots = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(0.012, 8, 6),
+    new THREE.MeshBasicMaterial({ color: ARC_VALID, transparent: true, opacity: 0.9, depthWrite: false }),
+    ARC_DOTS,
+  );
+  arcDots.count = 0;
+  arcDots.frustumCulled = false;
+  headsetLayer.add(arcDots);
+  const arcDot = new THREE.Object3D();
+
+  function drawArc(points, valid, time) {
+    arcDots.material.color.setHex(valid ? ARC_VALID : ARC_INVALID);
+    let count = 0;
+    let next = ((time / 1000) * ARC_DOT_SPEED) % ARC_DOT_SPACING;  // the next dot, along the arc
+    let walked = 0;
+    for (let i = 1; i < points.length && count < ARC_DOTS; i++) {
+      const length = points[i - 1].distanceTo(points[i]);
+      while (length && next <= walked + length && count < ARC_DOTS) {
+        arcDot.position.lerpVectors(points[i - 1], points[i], (next - walked) / length);
+        arcDot.updateMatrix();
+        arcDots.setMatrixAt(count++, arcDot.matrix);
+        next += ARC_DOT_SPACING;
+      }
+      walked += length;
+    }
+    arcDots.count = count;
+    arcDots.instanceMatrix.needsUpdate = true;
+  }
+
+  // The landing: a ring laid on the surface, and an arrow on the way you will
+  // face -- a jump keeps your heading, and the arrow says so before you commit.
+  const reticle = new THREE.Group();
+  {
+    const line = new THREE.MeshBasicMaterial({
+      color: ARC_VALID, transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const fill = new THREE.MeshBasicMaterial({
+      color: ARC_VALID, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const arrow = new THREE.Shape();
+    arrow.moveTo(0, 0.34);
+    arrow.lineTo(-0.07, 0.26);
+    arrow.lineTo(0.07, 0.26);
+    arrow.closePath();
+    reticle.add(new THREE.Mesh(new THREE.RingGeometry(0.2, 0.235, 48), line));
+    reticle.add(new THREE.Mesh(new THREE.CircleGeometry(0.2, 48), fill));
+    reticle.add(new THREE.Mesh(new THREE.ShapeGeometry(arrow), line));
+  }
+  reticle.visible = false;
+  headsetLayer.add(reticle);
+  const reticleBasis = new THREE.Matrix4();
+
+  function placeReticle(landing, facing, time) {
+    const normal = landing.normal;
+    const ahead = facing.clone().addScaledVector(normal, -facing.dot(normal));
+    if (ahead.lengthSq() < 1e-6) ahead.set(normal.y, -normal.x, 0);  // any tangent
+    ahead.normalize();
+    const side = new THREE.Vector3().crossVectors(ahead, normal);
+    reticle.quaternion.setFromRotationMatrix(reticleBasis.makeBasis(side, ahead, normal));
+    reticle.position.copy(landing.point).addScaledVector(normal, 0.01);
+    reticle.scale.setScalar(1 + 0.05 * Math.sin(time * 0.006));
+  }
+
+  // The controls, said once per session where the viewer first looks. World-
+  // locked, a little below eye level: text that follows the head is hard to
+  // read. It fades after HINT_SECONDS, or as soon as the controls are in use.
+  const hint = addHeadsetCard({ name: 'controls', width: 1024, height: 300, metres: 0.64, radius: 36 });
+  hint.draw((g) => {
+    g.font = '600 42px system-ui, sans-serif';
+    const rows = [
+      ['Left stick', 'walk'],
+      ['Right stick sideways', 'turn'],
+      ['Right stick forward', 'aim, release to teleport'],
+    ];
+    rows.forEach(([control, action], row) => {
+      const y = 90 + row * 74;
+      g.fillStyle = '#9aa0a6';
+      g.fillText(control, 56, y);
+      g.fillStyle = '#e8eaed';
+      g.fillText(action, 520, y);
+    });
+  });
+  let hintUntil = 0;  // ms the card holds until; 0 until it is placed this session
+
+  function updateHint(input, events, time) {
+    if (!hint.mesh.visible) {
+      if (hintUntil || !input.head) return;  // gone for this session, or no head yet
+      hint.place(
+        rig.toScene(input.head.position),
+        rig.directionToScene(input.head.orientation),
+        { ahead: 1.2, below: 0.25 },
+      );
+      hint.mesh.visible = true;
+      hintUntil = time + HINT_SECONDS * 1000;
+    }
+    // The first move says the controls are known: fade then, rather than hold.
+    if (events.some((event) => event !== 'arrive') || vignette > 0.02) {
+      hintUntil = Math.min(hintUntil, time + HINT_FADE_MS);
+    }
+    const remaining = hintUntil - time;
+    hint.mesh.material.opacity = Math.min(1, remaining / HINT_FADE_MS);
+    if (remaining <= 0) hint.mesh.visible = false;
+  }
+
+  // A tick in the hand for a turn and a landing: a move the body registers is
+  // much of what makes a snap turn feel intended rather than done to you.
+  function pulse(source, intensity, milliseconds) {
+    try {
+      source?.gamepad?.hapticActuators?.[0]?.pulse?.(intensity, milliseconds);
+    } catch { /* a controller without rumble */ }
+  }
+
+  // The teleport arc: a throw along the aim ray, traced segment by segment
+  // until it strikes something or has fallen for ARC_SEGMENTS * ARC_STEP s.
+  function trace(origin, direction) {
+    const points = [origin.clone()];
+    let from = origin;
+    for (let step = 1; step <= ARC_SEGMENTS; step++) {
+      const t = step * ARC_STEP;
+      const to = new THREE.Vector3(
+        origin.x + direction.x * ARC_SPEED * t,
+        origin.y + direction.y * ARC_SPEED * t - 0.5 * ARC_GRAVITY * t * t,
+        origin.z + direction.z * ARC_SPEED * t,
+      );
+      const hit = surfaces.cast(from, to);
+      if (hit) {
+        points.push(hit.point);
+        return { points, hit };
+      }
+      points.push(to);
+      from = to;
+    }
+    return { points, hit: null };
+  }
+
+  // The floor under (x, z) a walk can follow: a step up to STEP_UP, a drop down
+  // to STEP_DOWN. A ledge taller than a step is not a floor -- the downward cast
+  // starts below its top -- so the height holds, and a wall is walked through.
+  function floorUnder(x, z) {
+    const y = rig.place.y;
+    const hit = surfaces.cast(
+      new THREE.Vector3(x, y + STEP_UP, z),
+      new THREE.Vector3(x, y - STEP_DOWN, z),
+    );
+    return hit && hit.valid ? hit.point.y : null;
+  }
+
+  // One frame of the sticks. `events` are the frame's so far: a jump that just
+  // landed, or a session just placed at its start -- a frame that moves nothing
+  // else. Returns its own: 'aim' as the arc comes up, 'turn' on a snap turn.
+  function update(delta, input, events) {
+    const own = [];
+    // A hitch (a tab regaining focus, a long collection) must not become a leap.
+    const dt = Math.min(Math.max(delta, 0), 0.1);
+    if (events.includes('land') || events.includes('arrive')) {
+      velocity.set(0, 0);
+      floorTarget = null;
+    }
+    if (events.includes('arrive')) return own;
+    const head = input.head ? rig.toScene(input.head.position) : null;
+    const [rx, ry] = input.right || [0, 0];
+    const [lx, ly] = input.left || [0, 0];
+
+    // Right stick: aim, jump or cancel -- or, while not aiming, turn.
+    if (aiming) {
+      if (ry > AIM_CANCEL || !input.aim) {
+        aiming = false;
+      } else if (Math.hypot(rx, ry) < AIM_RELEASE) {
+        aiming = false;
+        if (target && target.valid) rig.jump(target.point);
+      }
+    } else if (ry < -AIM_ON && Math.abs(rx) < AIM_ON && input.aim && !rig.blinking) {
+      aiming = true;
+      own.push('aim');
+    }
+    if (aiming) {
+      const thrown = trace(rig.toScene(input.aim.position), rig.directionToScene(input.aim.orientation));
+      arc = thrown.points;
+      target = thrown.hit;
+    } else {
+      arc = [];
+      target = null;
+      if (turnArmed && Math.abs(rx) > FLICK_ON && Math.abs(ry) < FLICK_ON) {
+        const { x, y, z } = rig.place;
+        rig.turn(-Math.sign(rx) * SNAP_TURN, head || new THREE.Vector3(x, y, z));
+        turnArmed = false;
+        own.push('turn');
+      } else if (Math.abs(rx) < FLICK_OFF) {
+        turnArmed = true;
+      }
+    }
+
+    // Left stick: walk where the head looks, eased in and out. The response
+    // curve keeps the first half of the throw for creeping up to something.
+    const deflection = Math.min(Math.hypot(lx, ly), 1);
+    const amount = deflection > STICK_DEADZONE
+      ? ((deflection - STICK_DEADZONE) / (1 - STICK_DEADZONE)) ** 1.5
+      : 0;
+    let wantX = 0, wantZ = 0;
+    if (amount && input.head) {
+      const forward = rig.directionToScene(input.head.orientation).setY(0);
+      if (forward.lengthSq() > 1e-6) {
+        forward.normalize();
+        // Right of forward, seen from above, is (-forward.z, forward.x).
+        const scale = (amount * MOVE_SPEED) / Math.hypot(lx, ly);
+        wantX = (forward.x * -ly - forward.z * lx) * scale;
+        wantZ = (forward.z * -ly + forward.x * lx) * scale;
+      }
+    }
+    const ease = 1 - Math.exp(-dt / MOVE_EASE);
+    velocity.x += (wantX - velocity.x) * ease;
+    velocity.y += (wantZ - velocity.y) * ease;
+    if (!amount && velocity.lengthSq() < 1e-4) velocity.set(0, 0);
+    if (velocity.x || velocity.y) {
+      rig.move(velocity.x * dt, velocity.y * dt);
+      if (head) {
+        const floor = floorUnder(head.x + velocity.x * dt, head.z + velocity.y * dt);
+        if (floor !== null) floorTarget = floor;
+      }
+    }
+    // The floor follows a walk over a step, smoothed so it reads as a step.
+    if (floorTarget !== null) {
+      const y = rig.place.y;
+      const gap = floorTarget - y;
+      const next = Math.abs(gap) < 1e-3 ? floorTarget : y + gap * (1 - Math.exp(-dt / FLOOR_EASE));
+      rig.setFloor(next);
+      if (next === floorTarget) floorTarget = null;
+    }
+
+    // The comfort vignette narrows the view with the walking speed: movement
+    // the eyes see but the body does not feel is what the periphery objects to.
+    const speed = Math.min(velocity.length() / MOVE_SPEED, 1);
+    vignette += (speed * VIGNETTE_MAX - vignette) * (1 - Math.exp(-dt / VIGNETTE_EASE));
+    if (!speed && vignette < 1e-3) vignette = 0;
+    return own;
+  }
+
+  // What the frame shows of it, and the ticks in the hand.
+  function draw(input, events, time) {
+    if (events.includes('turn')) pulse(input.sources?.right, 0.2, 14);
+    if (events.includes('land')) pulse(input.sources?.right, 0.35, 26);
+    if (aiming) drawArc(arc, !!(target && target.valid), time);
+    else arcDots.count = 0;
+    reticle.visible = !!(target && target.valid);
+    if (reticle.visible) {
+      const facing = input.head
+        ? rig.directionToScene(input.head.orientation).setY(0)
+        : new THREE.Vector3(0, 0, -1);
+      if (facing.lengthSq() < 1e-6) facing.set(0, 0, -1);
+      placeReticle(target, facing.normalize(), time);
+    }
+    overlay.material.uniforms.vignette.value = vignette;
+    // Said again where the viewer now stands: a card placed while the model was
+    // still loading would be left behind at the origin.
+    if (events.includes('arrive')) {
+      hint.mesh.visible = false;
+      hintUntil = 0;
+    }
+    updateHint(input, events, time);
+  }
+
+  // One headset frame of it, while on. `events` are the frame's so far.
+  function step(delta, input, events, time) {
+    if (!enabled) return [];
+    const own = update(delta, input, events);
+    draw(input, [...events, ...own], time);
+    return own;
+  }
+
+  // Idle, with nothing of it drawn: a session's start and end, and switching off.
+  function reset() {
+    velocity.set(0, 0);
+    floorTarget = null;
+    turnArmed = true;
+    aiming = false;
+    target = null;
+    arc = [];
+    vignette = 0;
+    arcDots.count = 0;
+    reticle.visible = false;
+    hint.mesh.visible = false;
+    hintUntil = 0;
+    overlay.material.uniforms.vignette.value = 0;
+  }
+
+  return {
+    /** Whether the sticks move the viewer. The server's switch sets it on every poll. */
+    get enabled() { return enabled; },
+    set enabled(on) {
+      if (enabled && !on) reset();
+      enabled = !!on;
+    },
+    /** The aimed landing, `{point, normal, valid}`, while aiming; else null. */
+    get target() { return target; },
+    /** The aimed arc's scene points, up to where it ends; empty unless aiming. */
+    get arc() { return arc; },
+    get aiming() { return aiming; },
+    /** 0-1: the walking vignette's strength. */
+    get vignette() { return vignette; },
+    step,
+    reset,
+  };
+})();
+
+/* ---------------------------------------------------------- headset loop --- */
+
+// A headset frame on plain values -- what the page runs from each XRFrame, and
+// the tests on synthetic input. The rig's blink first, then the start (a
+// session's first place), then locomotion while it is on: the one place the
+// three meet, and none of them knows the others are there.
+const headset = {
+  /** As a session starts: the rig at the origin, locomotion idle, the start due. */
+  begin() {
+    rig.reset();
+    locomotion.reset();
+    arrived = false;
+    arrivedAt = null;
+  },
+  /**
+   * One frame. `input` is `{head, left, right, aim}` in the tracked space, each
+   * stick `[x, y]` with y negative pushed forward, as XR gamepads report it.
+   * Returns the frame's events: 'arrive' as a session is placed at its start,
+   * 'aim', 'turn', and 'land' as a jump arrives.
+   */
+  step(delta, input = {}, time = 0) {
+    const events = rig.step(delta, input.head);
+    surfaces.refresh();
+    // Locomotion off keeps a session where it started -- so a viewer it had
+    // carried off before it was switched off, mid-session, is taken back.
+    if (!locomotion.enabled && !atStart()) returnToStart();
+    events.push(...stepStart(input));
+    events.push(...locomotion.step(delta, input, events, time));
+    overlay.material.uniforms.fade.value = rig.fade;
+    overlay.visible = rig.fade > 0 || overlay.material.uniforms.vignette.value > 0;
+    return events;
+  },
+  /** As a session ends: everything back, and nothing due. */
+  end() {
+    rig.reset();
+    locomotion.reset();
+    arrived = true;
+    arrivedAt = null;
+  },
+  /** What a recenter does: see `recenter`. */
+  recenter,
+  /** An XRFrame read into what `step` takes: see `readHeadsetInput`. */
+  read: readHeadsetInput,
+  /** Where a session starts, `{point, heading}`, as the model stands now; null without a start node. */
+  get start() { return startPlace(); },
+};
+
+// The XRFrame side: the poses read, the frame stepped, and the session's space
+// re-anchored whenever the rig moved.
+function stepHeadset(frame, delta, time) {
+  headset.step(delta, headset.read(frame), time);
+  if (rig.takeChange()) {
+    const { position, orientation } = rig.offset();
+    renderer.xr.setReferenceSpace(
+      headsetSpace.getOffsetReferenceSpace(new XRRigidTransform(position, orientation)),
+    );
+  }
+}
+
+// Each session starts afresh -- at the model's start node, on its first frame
+// with a model in -- and everything drawn for it goes when the session does.
+// The desktop view is kept aside for its end (see desktopView), and the
+// session draws with a headset's near plane.
+renderer.xr.addEventListener('sessionstart', () => {
+  desktopView = viewOf();
+  holdHeadsetNear();
+  headsetSpace = renderer.xr.getReferenceSpace();
+  headsetSpace.addEventListener('reset', headset.recenter);
+  headset.begin();
+  headsetLayer.visible = true;
+  surfaces.warm();
+});
+renderer.xr.addEventListener('sessionend', () => {
+  headsetSpace = null;
+  headset.end();
+  headsetLayer.visible = false;
+  if (desktopView) applyView(desktopView);
+  desktopView = null;
+});
+
 /* -------------------------------------------------------------- scripts --- */
 
 // The extension seam. `PreviewServer` names a set of ES modules in the
@@ -1662,7 +3248,53 @@ function setStatus(text, cls = '') {
 // broken, because the one place this is read is a headset where the console is
 // not visible. It is logged, and the model keeps rendering.
 const loadedScripts = new Set();
-const scriptHooks = { load: [], frame: [], key: [] };
+const scriptHooks = { load: [], frame: [], rendered: [], key: [] };
+
+// A panel of rows in the page's chrome, for a script with more to say than a
+// status line (see `viewer.addPanel`). Hidden until shown; written as TEXT,
+// never markup, since every value a panel shows can come out of the deliverable.
+function addPanel(title) {
+  const panel = document.createElement('section');
+  panel.className = 'panel';
+  panel.hidden = true;
+  const header = document.createElement('header');
+  header.textContent = title;
+  const rows = document.createElement('div');
+  rows.className = 'rows';
+  const footer = document.createElement('footer');
+  panel.append(header, rows, footer);
+  el.panels.append(panel);
+  const cell = (className, text) => {
+    const node = document.createElement('div');
+    node.className = className;
+    node.textContent = text;
+    return node;
+  };
+  return {
+    element: panel,
+    get shown() { return !panel.hidden; },
+    show(on = true) { panel.hidden = !on; },
+    setRows(entries) {
+      rows.replaceChildren(...entries.flatMap((entry) => {
+        if (Array.isArray(entry)) {
+          const [key, value, level] = entry;
+          return [cell('key', key), cell(`value${level === 'warn' ? ' warn' : ''}`, String(value ?? ''))];
+        }
+        if (entry.heading) return [cell('heading', entry.heading)];
+        return [cell(`line${entry.level === 'warn' ? ' warn' : ''}`, entry.text ?? '')];
+      }));
+    },
+    addButton(label, onClick) {
+      const button = document.createElement('button');
+      button.className = 'ui';
+      button.type = 'button';
+      button.textContent = label;
+      button.addEventListener('click', onClick);
+      footer.append(button);
+      return button;
+    },
+  };
+}
 
 const viewer = {
   THREE,
@@ -1672,10 +3304,48 @@ const viewer = {
   controls,
   pivot,
   setStatus,
+  /**
+   * Where the headset stands in the scene (see the rig section): `place` is
+   * `{x, y, z, yaw}`, `toScene(position)` and `directionToScene(orientation)`
+   * map a tracked pose into the scene, and `fade` is the blink's black.
+   */
+  rig,
+  /**
+   * The headset's frame on plain values -- what the page runs from each
+   * XRFrame, so it runs as well on synthetic input: `begin()` as a session
+   * starts, `step(delta, input)` each frame, `end()` as it ends, `recenter()`
+   * as the headset's own recenter does, and `read(frame)` the XRFrame read
+   * into the input `step` takes. `start` is where a session starts,
+   * `{point, heading}`, or null.
+   */
+  headset,
+  /**
+   * Getting around (see the locomotion section): `enabled`, which the server's
+   * switch sets on every poll, and the aim -- `aiming`, `arc`, `target` -- and
+   * the walking `vignette`.
+   */
+  locomotion,
   /** The model currently on screen, or null between loads. */
   get model() { return current; },
-  /** `{size, center}` of the current model, in source units. */
+  /** `{size, center}` of the current model, in metres (glTF's unit). */
   get bounds() { return modelBounds; },
+  /**
+   * What the model on screen is, measured once per load (see measureModel),
+   * or null before the first: `file` `{bytes, jsonBytes}`; `load`
+   * `{fetchMs, parseMs, setupMs, firstFrameMs}` (the last filled once the
+   * first frame after the load has drawn); `objects` (the file's mesh nodes),
+   * `meshes` (three.js Meshes -- one per primitive, each its own draw),
+   * `triangles`, `vertices`; `size` `{x, y, z}` in metres; `materials`
+   * `{file, instances}` (the file's, and the three.js copies made of them);
+   * `lightmaps` -- null when nothing is baked -- `{lit, objects, baked,
+   * unlit, foreign, maps}`: objects lit by a lightmap, of all objects;
+   * objects the file marks as baked (null when it marks none), those of them
+   * with no lightmap bound, and objects lit by one they were never baked
+   * with, by name; and the distinct lightmap images; `animation` `{clips,
+   * materials, tracks}`; and `issues` `[{level, text, names?}]` -- what the
+   * load found wrong, as the HUD's warning line reports the first.
+   */
+  get specs() { return specs; },
   /** The live rendering policy, as read from the deliverable. */
   get policy() { return policy; },
   /**
@@ -1747,9 +3417,15 @@ const viewer = {
   },
   /**
    * Subscribe to a page event.
-   *  'load'  ({model, gltf, lightmapped, materialCount, clips}) after each model swap
-   *  'frame' ({delta, time}) once per rendered frame
-   *  'key'   (KeyboardEvent) for keydown, after the page's own shortcuts
+   *  'load'     ({model, gltf, lightmapped, materialCount, clips, specs}) after
+   *             each model swap -- `specs` as `viewer.specs`; `lightmapped` and
+   *             `materialCount` count three.js material INSTANCES (the lighting
+   *             policy's gate, and its old denominator), not the file's
+   *  'frame'    ({delta, time}) once per frame, before it is drawn
+   *  'rendered' ({delta, time, cpuMs, renderMs}) once per frame, after it is
+   *             drawn: the page's CPU time for the frame, and the part of it
+   *             inside `renderer.render` (CPU-side; the GPU's is not measured)
+   *  'key'      (KeyboardEvent) for keydown, after the page's own shortcuts
    */
   on(event, fn) { (scriptHooks[event] || (scriptHooks[event] = [])).push(fn); },
   /**
@@ -1766,6 +3442,46 @@ const viewer = {
     document.getElementById('controls').appendChild(button);
     return button;
   },
+  /**
+   * A panel of rows in the page's chrome, stacked top-right, for a script
+   * with more to report than a status line -- the reason `addButton` exists,
+   * for output: one look, one place. Hidden until `show()`.
+   *
+   * Returns `{element, shown, show(on), setRows(rows), addButton(label,
+   * onClick)}`. `rows` are `[label, value, level]` pairs, `{heading}` for a
+   * section title, or `{text, level}` for a line of its own; `level: 'warn'`
+   * tints it. Everything is written as text, never markup.
+   */
+  addPanel,
+  /**
+   * A card of text in the headset, for a script with something to say where
+   * the page's chrome is not drawn -- the reason `addPanel` exists, for a
+   * session: one look, one place. `{name, width, height, metres, radius,
+   * over}`: a `width` x `height` canvas on a plane `metres` wide (the canvas's
+   * aspect), its corners rounded by `radius` px, drawn `over` the model (never
+   * behind a wall) when asked. It rides the headset's layer, so a still or a
+   * playblast never carries it, and starts hidden.
+   *
+   * Returns `{mesh, draw(paint), place(head, look, where, delta)}`: `mesh` to
+   * show, hide or fade; `draw` repaints the card and hands `paint(context,
+   * width, height)` the canvas to write on; `place` stands it `where.ahead` m
+   * in front of `head` (a scene point) looking along `look`, `where.aside`
+   * radians to its left and `where.below` m under the eyes, facing them --
+   * easing a shown card there over `where.ease` s when given, since text
+   * locked to the head is hard to read.
+   */
+  addHeadsetCard,
+  /**
+   * *bytes* as the page quotes a size (`B`, `KB`, `MB`; tenths below 10), so
+   * a script's figures read the way the status line's do.
+   */
+  formatBytes,
+  /**
+   * A node's materials as a list: `node.material` is one material, an ARRAY
+   * of them (a multi-material mesh) or absent, and a walk that forgets a case
+   * skips half a mesh's materials -- one normalization, the page's own.
+   */
+  materialsOf,
   /**
    * Ask for options before an action, in a modal wearing the page's chrome.
    *
@@ -1886,6 +3602,8 @@ const VIEWER_ID = Math.random().toString(36).slice(2, 12);
 // so, and the page then offers nothing that writes. That listener refuses every
 // write, so each such control would be one that fails.
 let isGuest = false;
+// Set from the manifest: the name of the node views start at (null: none).
+let userPosName = null;
 
 let seenVersion = -1;
 let failedVersion = -1;
@@ -1908,6 +3626,16 @@ async function poll() {
       viewerStamp = manifest.viewer;
     }
     if (manifest.title) el.title.textContent = manifest.title;
+    // Ahead of the load, which looks the node up by it. Live: a new name finds
+    // its node for the NEXT session without a publish, while the desktop view
+    // and a session under way stay where they are.
+    if ((manifest.userPos ?? null) !== userPosName) {
+      userPosName = manifest.userPos ?? null;
+      if (current) startNode = findStartNode(current, userPosName);
+    }
+    // Live too, and at once: switched off, a headset mid-session stops going
+    // anywhere on this poll -- a guest's included.
+    locomotion.enabled = manifest.locomotion !== false;
     // Ahead of the scripts below, which may ask `viewer.guest` as they load.
     isGuest = manifest.guest === true;
     el.normalSave.hidden = isGuest;
@@ -2078,8 +3806,7 @@ el.dialog.addEventListener('mousedown', (event) => {
 
 /* ------------------------------------------------------------------ ui  --- */
 
-el.scaleToggle.addEventListener('click', () => { realScale = !realScale; layout(); });
-el.frameBtn.addEventListener('click', frameCamera);
+el.frameBtn.addEventListener('click', () => frameCamera());
 el.normalScale.addEventListener('input', () => applyNormalScale(Number(el.normalScale.value)));
 el.normalSave.addEventListener('click', saveNormalScale);
 el.clipSelect.addEventListener('change', () => selectClip(Number(el.clipSelect.value)));
@@ -2102,7 +3829,6 @@ addEventListener('keydown', (event) => {
   // the picker: the sliders use arrows, which this page has no shortcut for,
   // and excluding them would cost Space-to-pause after a scrub.
   if (event.target === el.clipSelect) return;
-  if (event.key === 'r') { realScale = !realScale; layout(); }
   if (event.key === 'f') frameCamera();
   // Guarded on there being a mixer: with no clips these keys mean nothing, and
   // Space would otherwise flip a play state the next animated push inherits.
@@ -2126,9 +3852,12 @@ addEventListener('resize', () => {
 // desktop's 60.
 const frameClock = new THREE.Clock();
 
-renderer.setAnimationLoop((time) => {
+// `frame` is the XRFrame while a headset is presenting, and absent otherwise.
+renderer.setAnimationLoop((time, frame) => {
+  const began = performance.now();
   controls.update();
   const delta = frameClock.getDelta();
+  if (frame && headsetSpace) stepHeadset(frame, delta, time);
   // Before the hook, so a script's 'frame' callback sees the model posed for
   // THIS frame rather than the previous one.
   if (mixer) {
@@ -2147,7 +3876,21 @@ renderer.setAnimationLoop((time) => {
     updateTransport();
   }
   emit('frame', { delta, time });
+  const rendering = performance.now();
   renderer.render(scene, camera);
+  const rendered = performance.now();
+  // The first frame after a load is where its programs compile and its
+  // textures upload -- the hitch a big deliverable costs before it moves.
+  if (firstFramePending && specs) {
+    firstFramePending = false;
+    specs.load.firstFrameMs = rendered - rendering;
+  }
+  // After the draw, for a script that measures one (the packaged `inspect`
+  // brackets it with a GPU timer query between 'frame' and here). The times
+  // are the page's CPU time for the frame and the part of it spent inside
+  // `renderer.render` submitting the draw; the GPU works asynchronously, and
+  // its own time is only what a query reads back.
+  emit('rendered', { delta, time, cpuMs: rendered - began, renderMs: rendered - rendering });
 });
 </script>
 </body>

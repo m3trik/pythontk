@@ -32,7 +32,7 @@
            off world matrices the renderer has already refreshed.
 
   Everything is placed in MODEL space (the glTF root's frame, metres): the page
-  fits and spins the pivot and the model, and a placement in that frame is
+  centres the model and spins the pivot, and a placement in that frame is
   unaffected. The record's lengths are DCC units times `unit_scale`. A plane's
   UVs are brought back to the unit square first (the DCC remaps a packed plane's
   UVs into its atlas rect so a fallback viewer needs no transform; here the

@@ -118,6 +118,27 @@ class ImgTest(BaseTestCase):
             self.assertIsNone(ImgUtils._image_size_from_header(bad))
             self.assertIsNone(ImgUtils.get_image_size(bad))
 
+    def test_the_header_parse_reads_tga_and_dds(self):
+        """The common game formats too: an interpreter with no PIL (Blender's)
+        otherwise sizes a TGA or DDS map by decoding the whole image."""
+        import struct
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tga = os.path.join(tmp, "size_probe.tga")
+            ImgUtils.create_image("RGBA", (320, 200), (1, 2, 3, 4)).save(tga, "TGA")
+            self.assertEqual(ImgUtils._image_size_from_header(tga), (320, 200))
+            dds = os.path.join(tmp, "size_probe.dds")
+            with open(dds, "wb") as f:  # "DDS ", size 124, flags, height, width
+                f.write(b"DDS " + struct.pack("<IIII", 124, 0x1007, 256, 512))
+                f.write(b"\0" * 108)
+            self.assertEqual(ImgUtils._image_size_from_header(dds), (512, 256))
+            # No signature to go on: a .tga that fails the header's own sanity
+            # is refused, never read as a size.
+            fake = os.path.join(tmp, "fake.tga")
+            with open(fake, "wb") as f:
+                f.write(b"not an image at all")
+            self.assertIsNone(ImgUtils._image_size_from_header(fake))
+
     def test_create_image_rgb(self):
         """Test create_image with RGB mode."""
         img = ImgUtils.create_image("RGB", (100, 100), (255, 0, 0))
@@ -1423,7 +1444,7 @@ class DenoiseImageTest(unittest.TestCase):
                 )
 
     def test_a_bad_sample_outside_the_mask_stays_outside_it(self):
-        """"Only mask texels are read or written" held for finite gutters
+        """ "Only mask texels are read or written" held for finite gutters
         only: a NaN two texels off an island poisoned the island through the
         zero-weighted window sums."""
         clean = self._ramp_with_a_shadow()

@@ -120,9 +120,12 @@ class PytestLeakGateTest(unittest.TestCase):
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
         # In test/ so the repo conftest -- the thing under test -- is in scope.
-        # The prefix must keep pytest's test_*.py shape or nothing is collected.
+        # Named outside test_*.py: pytest still collects a path it is handed,
+        # while neither collector's own discovery ever sees it -- a run killed
+        # before cleanup would otherwise leave a test that fails every later run
+        # (it leaks a browser launch by design) until the age sweep takes it.
         scratch = TempArtifacts(
-            "test_leakgate", policy="scoped", dir=os.path.dirname(__file__)
+            "_leakgate", policy="scoped", dir=os.path.dirname(__file__)
         )
         self.addCleanup(scratch.cleanup)
         path = scratch.path(extension=".py")

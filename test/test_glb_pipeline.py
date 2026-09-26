@@ -141,6 +141,31 @@ class GlbPipelineTestCase(unittest.TestCase):
         self.assertEqual(sorted(finished), sorted(self._build(self._stub_fbx())))
         self.assertIsNone(finished["animation"])
 
+    def test_every_stage_is_timed_in_the_order_it_ran(self):
+        """The push's cost table was measured by wrapping these methods by
+        hand; the build now reports it. The conversion is split where the
+        converter says where -- FBX2glTF against the passes, which answer to
+        different fixes -- and stays whole where it does not."""
+
+        def split(src, dst=None, **kwargs):
+            out = self._fake_convert(src, dst, **kwargs)
+            kwargs["report"]["timings"] = {"fbx2gltf": 0.0, "passes": 0.0}
+            return out
+
+        with (
+            unittest.mock.patch(CONVERT, side_effect=split),
+            unittest.mock.patch(OPTIMIZE, side_effect=self._fake_optimize),
+        ):
+            built = GlbPipeline.build(self._stub_fbx())
+        self.assertEqual(
+            list(built["timings"]),
+            ["takes", "downsize", "fbx2gltf", "passes", "textures", "total"],
+        )
+        whole = self._build(self._stub_fbx(), downsize=False)["timings"]
+        self.assertEqual(list(whole), ["takes", "convert", "textures", "total"])
+        stages = sum(v for k, v in whole.items() if k != "total")
+        self.assertLessEqual(stages, whole["total"] + 0.01, "stages overlap")
+
     def test_no_texture_params_means_the_shared_web_delivery_policy(self):
         self._build(self._stub_fbx())
         _, _glb, params = self.calls[-1]

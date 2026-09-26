@@ -104,6 +104,12 @@ class _ShareTunnelInternal:
     #: connection registered on one run, 18 s on the next.
     _DNS_WAIT = 30.0
 
+    #: Seconds a start that handed its provider's one-time step to ``on_step``
+    #: waits for the user to take it. The step is a person's -- a sign-in, a
+    #: switch in an admin console -- so the link's own ``timeout`` does not
+    #: bound it.
+    _STEP_WAIT = 600.0
+
     #: ``[user@]host:/path`` -- scp's own spelling. The host needs two
     #: characters, so a Windows drive (``C:\\``) is never read as one, and a
     #: ``scheme://`` is not a host either.
@@ -136,18 +142,45 @@ class _ShareTunnelInternal:
                 f"{', '.join(sorted(cls.PROVIDERS))}."
             ) from None
 
-    def _await_link(self, spec: Dict[str, Any]) -> str:
+    def _check_stopped(self, stops: int) -> None:
+        """Raise when :meth:`stop` ran since the start that read *stops* began,
+        or :meth:`cancel` ever did."""
+        if self._cancelled or self._stops != stops:
+            raise RuntimeError(
+                f"{self.label}: the share was stopped before its link was ready."
+            )
+
+    def _step_required(
+        self, spec: Dict[str, Any], url: str, waited: bool = False
+    ) -> "ShareTunnel.StepRequired":
+        """The :class:`StepRequired` for the page *url*: a step still to take,
+        or -- *waited* -- one a start waited on in vain."""
+        what = (
+            "did not get past its one-time step"
+            if waited
+            else "needs a one-time step first"
+        )
+        return self.StepRequired(
+            self._failed(f"{spec['label']} {what}: open {url} , then share again."),
+            url=url,
+            label=spec["label"],
+        )
+
+    def _await_link(self, spec: Dict[str, Any], stops: int) -> str:
         """Block until the client prints its link (and, where the provider
         says what "ready" looks like, that too); the link.
 
-        Watches the process and the provider's own "do this first" line as
-        well as the clock. A client that exits -- not logged in, a flag it does
-        not know -- fails at once with what it printed. One that stops to wait
-        on the user (Tailscale, when Serve or Funnel is not yet enabled for the
-        tailnet, prints an enable link and polls until someone uses it) fails
-        at once too, naming that link: whoever pressed Share is looking at a
-        busy indicator, not at the client's output, so waiting out the timeout
-        would only hide the one step that unblocks it.
+        Watches the process, the provider's own "do this first" line and
+        :meth:`stop` as well as the clock. A client that exits -- not logged
+        in, a flag it does not know -- fails at once with what it printed. One
+        that stops to wait on the user (Tailscale, when Serve or Funnel is not
+        yet enabled for the tailnet, prints an enable link and waits until
+        someone uses it) carries on by itself once the step is taken, so the
+        step goes to ``on_step`` and the start waits on -- up to
+        :attr:`_STEP_WAIT`, the step being a person's. With no ``on_step`` it
+        fails at once instead, naming the page: whoever pressed Share is
+        looking at a busy indicator, not at the client's output, so waiting
+        out the timeout would only hide the one step that unblocks it.
         """
         link_pattern = re.compile(spec["url"], re.IGNORECASE)
         ready_pattern = re.compile(spec["ready"]) if spec.get("ready") else None
@@ -175,25 +208,32 @@ class _ShareTunnelInternal:
 
         unsubscribe = self._stream.subscribe(watch, replay_history=True)
         deadline = time.monotonic() + self.timeout
+        told = False  # on_step has the step: the wait is the user's now
         try:
             for event, what in ((link, "link"), (ready, "connection")):
                 if event is ready and ready_pattern is None:
                     continue
                 while not event.wait(0.1):
-                    if blocked.is_set():
+                    self._check_stopped(stops)
+                    if blocked.is_set() and not told:
                         time.sleep(0.2)  # the rest of the provider's message
-                        raise RuntimeError(
-                            self._failed(
-                                f"{spec['label']} needs a one-time step first: "
-                                f"open {found['action']} , then share again."
-                            )
-                        )
+                        step = self._step_required(spec, found["action"])
+                        if self.on_step is None:
+                            raise step
+                        self.on_step(step)
+                        self._check_stopped(stops)  # a hook that stopped it
+                        told = True
+                        deadline = time.monotonic() + self._STEP_WAIT
                     if self._process.poll() is not None:
                         # Its last lines may still be in the pipe; the reader
                         # ends at the pipe's end, which the exit brings.
                         self._reader.join(timeout=2)
                         if event.is_set():
                             break
+                        if blocked.is_set():  # named the step, then gave up on it
+                            raise self._step_required(
+                                spec, found["action"], waited=True
+                            )
                         raise RuntimeError(
                             self._failed(
                                 f"{spec['label']} exited (code "
@@ -201,6 +241,10 @@ class _ShareTunnelInternal:
                             )
                         )
                     if time.monotonic() > deadline:
+                        if told:
+                            raise self._step_required(
+                                spec, found["action"], waited=True
+                            )
                         raise TimeoutError(
                             self._failed(
                                 f"{spec['label']} reported no {what} within "
@@ -211,8 +255,8 @@ class _ShareTunnelInternal:
             unsubscribe()
         return found["url"]
 
-    def _await_dns(self, url: str) -> None:
-        """Hold a brand-new link until public DNS answers it.
+    def _await_dns(self, url: str, stops: int) -> None:
+        """Hold a brand-new link until public DNS answers it, or until a stop.
 
         A guest who opens the link sooner gets "site can't be reached" -- and
         keeps getting it after the name appears, because the miss is cached by
@@ -241,6 +285,7 @@ class _ShareTunnelInternal:
                 )
                 return
             time.sleep(1.0)
+            self._check_stopped(stops)
 
     def _failed(self, message: str) -> str:
         """*message* and the client's last lines, led by the fix when its
@@ -398,6 +443,13 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
             on start fails the start. It and a callable *alias* run under the
             tunnel's lock, so a stop from another thread cannot interleave
             with them; neither may wait on a thread that stops this tunnel.
+        on_step: Handed a :class:`StepRequired` when the provider stops on a
+            one-time step in a browser (Tailscale, before the tailnet enables
+            Funnel), so a caller can show its ``url``; the start then waits on,
+            up to :attr:`_STEP_WAIT`, and returns the link once the step is
+            taken. ``None``: such a start fails at once as that
+            :class:`StepRequired`. Runs on the thread running :meth:`start`,
+            under the same lock as *on_url*; a raise fails the start.
     """
 
     #: The tunnel CLIs this class drives: name -> plain values.
@@ -408,8 +460,9 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
     #: and ``{port}``; ``url`` is the pattern the link is printed in (group 1
     #: when it has one); ``ready`` is the line that says guests can connect, or
     #: None when the link itself says so; ``action``, optional, is the link a
-    #: provider prints when it stops to wait on the user (a start then fails at
-    #: once, naming it); ``propagates`` marks a provider that mints a new DNS
+    #: provider prints when it stops to wait on the user (handed to
+    #: ``on_step`` and waited on, else a start fails at once naming it);
+    #: ``propagates`` marks a provider that mints a new DNS
     #: name per start, which a start waits to see resolve in public DNS before
     #: announcing it; ``public`` is whether anyone can open
     #: the link or only members of a private network; ``install`` is where to
@@ -489,6 +542,21 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
     #: The environment variable naming this machine's default provider.
     PROVIDER_ENV = "PYTHONTK_SHARE_PROVIDER"
 
+    class StepRequired(RuntimeError):
+        """A share waiting on a one-time step in a browser: Tailscale, when the
+        tailnet has not enabled Serve or Funnel yet, prints the page that does
+        it and waits. ``url`` is that page and ``label`` the provider's; the
+        message, its first line the step, is user-facing -- so a panel can
+        offer to open the page rather than only report it.
+
+        What ``on_step`` is handed; raised by a start with no ``on_step``, and
+        by one whose step was not taken in time."""
+
+        def __init__(self, message: str, url: str, label: str):
+            super().__init__(message)
+            self.url = url
+            self.label = label
+
     def __init__(
         self,
         port: int,
@@ -497,6 +565,7 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
         timeout: float = 45.0,
         alias: Optional[AliasTarget] = None,
         on_url: Optional[Callable[[Optional[str]], Any]] = None,
+        on_step: Optional[Callable[["ShareTunnel.StepRequired"], Any]] = None,
     ):
         self.port = int(port)
         self.host = host
@@ -504,6 +573,13 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
         self.timeout = float(timeout)
         self.alias = alias
         self.on_url = on_url
+        self.on_step = on_step
+        #: Counts stops, read without the lock: a start compares it to the
+        #: count it began with, so a stop from another thread ends a start
+        #: that is still waiting -- which holds the lock -- at its next check.
+        self._stops = 0
+        #: Set by :meth:`cancel`, for good: this tunnel starts no more.
+        self._cancelled = False
         #: Re-entrant: :meth:`start` and :meth:`stop` call *on_url* and the
         #: alias under it, and either may stop this tunnel.
         self._lock = threading.RLock()
@@ -703,15 +779,23 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
         Raises:
             FileNotFoundError: The provider's CLI is not installed; the message
                 names the install.
+            ShareTunnel.StepRequired: The provider waits on a one-time step in
+                a browser (Funnel not enabled for the tailnet) and there is no
+                :attr:`on_step` to hand it to -- or it was not taken within
+                :attr:`_STEP_WAIT`. ``url`` is the page that takes it. A
+                ``RuntimeError``, so a caller catching those still does.
             RuntimeError: The client exited before it was ready; the message
                 carries its last lines, which is where a provider says why
-                (not logged in, Funnel not enabled, a blocked network).
+                (not logged in, a blocked network). Also when :meth:`stop` or
+                :meth:`cancel` ran while it waited.
             TimeoutError: No link within :attr:`timeout`; the client is stopped.
         """
+        stops = self._stops  # a stop() from here on ends this start
         with self._lock:
             if self.is_running:
                 return self._url
             self._teardown()  # a client that exited on its own
+            self._check_stopped(stops)
             executable = self.executable(self.provider)
             if not executable:
                 raise self.not_installed_error(
@@ -727,9 +811,10 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
             )
             self._reader.start()
             try:
-                url = self._await_link(spec)
+                url = self._await_link(spec, stops)
                 if spec.get("propagates"):
-                    self._await_dns(url)
+                    self._await_dns(url, stops)
+                self._check_stopped(stops)  # one that landed as the link did
             except BaseException:
                 self._teardown()
                 raise
@@ -756,7 +841,10 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
 
     def stop(self) -> None:
         """Stop the client and retire the link; an alias then says the share
-        ended. Idempotent."""
+        ended. Idempotent. A :meth:`start` still waiting on another thread
+        ends first, rather than holding this until its wait runs out; a later
+        start starts afresh."""
+        self._stops += 1
         with self._lock:
             was_live = self._url is not None
             self._teardown()
@@ -770,6 +858,14 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
                 except Exception as error:  # noqa: BLE001 -- stopping must finish
                     self.logger.warning("on_url raised while stopping: %s", error)
             self._announce(None)
+
+    def cancel(self) -> None:
+        """Retire this tunnel before its link is up, from any thread, without
+        waiting: a :meth:`start` still waiting stops its client and raises,
+        and one that has not begun raises before it spawns anything. Never
+        blocks, so a caller holding a lock of its own can use it; a link
+        already up is :meth:`stop`'s to take down."""
+        self._cancelled = True
 
     def __enter__(self) -> "ShareTunnel":
         self.start()

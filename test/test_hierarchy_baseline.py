@@ -104,6 +104,42 @@ class TestMerge(unittest.TestCase):
         self.assertEqual(base, A | B)
 
 
+class TestAdopt(unittest.TestCase):
+    """A deliverable's sidecar fills the scope the scene's record lacks."""
+
+    def test_a_scene_with_no_record_takes_what_the_deliverable_shipped(self):
+        self.assertEqual(HB.adopt(set(), A), A)
+
+    def test_a_second_deliverable_is_adopted_beside_the_first(self):
+        """REGRESSION: adoption ran only into an EMPTY record. A scene
+        exporting A and B, its baseline set aside (a legacy unstamped record),
+        adopted A's sidecar at A's export and then refused B's -- B's next
+        export had nothing to diff and passed a deleted child."""
+        record = HB.adopt(set(), A)
+        record = HB.adopt(record, B)
+        self.assertEqual(record, A | B)
+        _, missing, _, new = HB.compare(record, B - {"assetB_grp|meshB1"})
+        self.assertFalse(new)
+        self.assertEqual(missing, ["assetB_grp|meshB1"])
+
+    def test_a_scope_the_record_holds_is_never_overwritten(self):
+        """The scene's record is newer than the sidecar: a stale sidecar merged
+        over it would resurrect paths the scene has since dropped."""
+        dropped = A - {"assetA_grp|meshA2"}
+        self.assertIsNone(HB.adopt(dropped | B, A))
+
+    def test_a_moved_scope_counts_as_held(self):
+        """The same scope rule compare uses: a record holding the root wrapped
+        in a new group still holds it."""
+        wrapped = {"Wrapper", "Wrapper|assetA_grp", "Wrapper|assetA_grp|meshA1"}
+        self.assertIsNone(HB.adopt(A, wrapped))
+
+    def test_nothing_shipped_adopts_nothing(self):
+        for shipped in (None, set(), []):
+            with self.subTest(shipped=shipped):
+                self.assertIsNone(HB.adopt(A, shipped))
+
+
 class TestRecord(unittest.TestCase):
     def test_encode_decode_round_trips(self):
         self.assertEqual(HB.decode(HB.encode(A)), A)
@@ -131,6 +167,36 @@ class TestRecord(unittest.TestCase):
     def test_the_hash_covers_the_paths_and_nothing_else(self):
         self.assertEqual(HB.encode(A)["hash"], HB.paths_hash(A))
         self.assertNotEqual(HB.paths_hash(A), HB.paths_hash(B))
+
+    def test_a_record_names_the_scene_that_recorded_it(self):
+        """A Save As copy carries its source's record verbatim, so only the
+        record itself can say which scene file recorded it (2026-09-24: a
+        module scene saved as a new module failed its first export against
+        the SOURCE's hierarchy)."""
+        record = HB.encode(A, scene="scenes/room.ma")
+        self.assertEqual(HB.recorded_by(record), "scenes/room.ma")
+        # The stamp is neither a path nor hashed: it changes no diff.
+        self.assertEqual(HB.decode(record), A)
+        self.assertEqual(record["hash"], HB.paths_hash(A))
+        self.assertTrue(HB.is_record(record))
+
+    def test_an_unsaved_scene_stamps_empty_and_no_stamp_is_none(self):
+        """``""`` is a stamp -- recorded while unsaved; ``None`` is its absence,
+        a record written before records were stamped."""
+        self.assertEqual(HB.recorded_by(HB.encode(A, scene="")), "")
+        self.assertIsNone(HB.recorded_by(HB.encode(A)))
+
+    def test_recorded_by_is_none_for_anything_unreadable(self):
+        unknown = {"format": 99, "paths": [], "scene": "x.ma"}
+        for value in (None, "", "not json", [], {}, unknown):
+            with self.subTest(value=value):
+                self.assertIsNone(HB.recorded_by(value))
+
+    def test_recorded_by_accepts_a_raw_json_string(self):
+        import json
+
+        raw = json.dumps(HB.encode(A, scene="a.ma"))
+        self.assertEqual(HB.recorded_by(raw), "a.ma")
 
 
 if __name__ == "__main__":

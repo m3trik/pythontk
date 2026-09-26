@@ -54,7 +54,9 @@ from __future__ import annotations
 
 import os
 import shutil
-from typing import Any, Callable, Dict, Optional, Sequence
+import time
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Iterator, Optional, Sequence
 
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.file_utils.temp_artifacts import TempArtifacts
@@ -69,6 +71,17 @@ class GlbPipeline(LoggingMixin):
         from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
         return MeshConvert
+
+    @staticmethod
+    @contextmanager
+    def _timed(timings: Dict[str, float], stage: str) -> Iterator[None]:
+        """Add the block's wall time to ``timings[stage]``, in seconds."""
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            elapsed = time.perf_counter() - started
+            timings[stage] = round(timings.get(stage, 0.0) + elapsed, 3)
 
     @classmethod
     def envelope(
@@ -178,16 +191,22 @@ class GlbPipeline(LoggingMixin):
 
         Returns:
             ``{"glb", "src", "scratch", "takes", "downsized", "sidecar",
-            "lightmaps", "animation", "textures", "data_export"}`` -- the GLB
-            written, the FBX the converter actually read, the scratch files
-            minted, the split-take strip's :meth:`FbxMedia.drop_takes` report
-            (``None`` when the strip did not run), the downsize report (or
-            ``None``), the sidecar's per-section outcome, the lightmap coverage
+            "lightmaps", "animation", "textures", "data_export", "timings"}``
+            -- the GLB written, the FBX the converter actually read, the
+            scratch files minted, the split-take strip's
+            :meth:`FbxMedia.drop_takes` report (``None`` when the strip did
+            not run), the downsize report (or ``None``), the sidecar's
+            per-section outcome, the lightmap coverage
             (:meth:`MeshConvert.lightmap_report`), the key-reduction summary
-            (``None`` without a tolerance), the texture-pass summary, and the
+            (``None`` without a tolerance), the texture-pass summary, the
             in-band channel keys a *data_export* overlay replaced (``[]`` when
-            none landed). A ``.glb`` source reports under the same keys, with
-            every stage as not run.
+            none landed), and the seconds each stage took, in the order they
+            ran and never overlapping: ``"takes"``, ``"downsize"``,
+            ``"fbx2gltf"`` and ``"passes"`` (the conversion's two halves --
+            ``"convert"`` whole when the converter reports no split),
+            ``"reduce"``, ``"textures"``, and ``"total"``. A ``.glb`` source
+            reports under the same keys, with every stage as not run and only
+            its ``"copy"`` timed.
 
         Raises:
             OSError, RuntimeError, ValueError: from the conversion or the
@@ -212,7 +231,14 @@ class GlbPipeline(LoggingMixin):
             # previewing something the scene does not carry reads this to know
             # whether what it published shows it.
             "data_export": [],
+            # Seconds per stage, as they ran. Recorded rather than left to a
+            # profiler: the push's cost table in docs/webxr_preview.md was
+            # measured by wrapping these methods by hand, and a question that
+            # is asked after every slow push should be answered by the push.
+            "timings": {},
         }
+        timings: Dict[str, float] = report["timings"]
+        started = time.perf_counter()
 
         def _say(message: str) -> None:
             if progress is not None:
@@ -242,10 +268,12 @@ class GlbPipeline(LoggingMixin):
                     ", ".join(sorted(data_export)),
                 )
             if dst and os.path.abspath(dst) != os.path.abspath(src):
-                shutil.copyfile(src, dst)
+                with cls._timed(timings, "copy"):
+                    shutil.copyfile(src, dst)
                 report["glb"] = dst
             else:
                 report["glb"] = src
+            timings["total"] = round(time.perf_counter() - started, 3)
             return report
 
         own_scratch = (
@@ -266,15 +294,20 @@ class GlbPipeline(LoggingMixin):
                 elif own_scratch is not None:
                     own_scratch.release(path)  # our intermediate: peak is one copy
 
-            cls._drop_split_takes(src, allocate, supersede, report, log, _say)
+            # Timed whether or not it strips anything: deciding means reading
+            # the FBX's take list, which is not free on a production payload.
+            with cls._timed(timings, "takes"):
+                cls._drop_split_takes(src, allocate, supersede, report, log, _say)
             if downsize:
-                cls._downsize(
-                    report["src"], params, allocate, supersede, report, log, _say
-                )
+                with cls._timed(timings, "downsize"):
+                    cls._downsize(
+                        report["src"], params, allocate, supersede, report, log, _say
+                    )
 
             _say("GLB: converting the FBX…")
             log.info("Converting FBX to GLB...")
             conversion: Dict[str, Any] = {}
+            converting = time.perf_counter()
             glb = MeshConvert.fbx_to_glb(
                 report["src"],
                 # Beside the CALLER's file, not the converter's input: a payload
@@ -292,6 +325,17 @@ class GlbPipeline(LoggingMixin):
                 clip_mode=clip_mode,
                 report=conversion,
             )
+            convert = time.perf_counter() - converting
+            # The converter's own split, when it reports one: the subprocess
+            # and the passes answer different questions (the first moves with
+            # what the DCC exports, the second with this package). Whatever
+            # the split leaves out -- resolving the binary -- is the converter's.
+            passes = (conversion.get("timings") or {}).get("passes")
+            if passes is None:
+                timings["convert"] = round(convert, 3)
+            else:
+                timings["fbx2gltf"] = round(max(convert - passes, 0.0), 3)
+                timings["passes"] = round(passes, 3)
             report["glb"] = glb
             report["sidecar"] = conversion.get("sidecar") or {}
             report["lightmaps"] = conversion.get("lightmaps")
@@ -299,13 +343,15 @@ class GlbPipeline(LoggingMixin):
 
             if key_tolerance:
                 _say("GLB: reducing animation keys…")
-                report["animation"] = MeshConvert.reduce_glb_animations(
-                    glb, key_tolerance
-                )
+                with cls._timed(timings, "reduce"):
+                    report["animation"] = MeshConvert.reduce_glb_animations(
+                        glb, key_tolerance
+                    )
 
             carrier = params.get("image_format") or "WEBP"
             _say(f"GLB: {carrier} texture pass…")
-            summary = MeshConvert.optimize_glb_textures(glb, **params)
+            with cls._timed(timings, "textures"):
+                summary = MeshConvert.optimize_glb_textures(glb, **params)
             report["textures"] = summary
             log.info(
                 MeshConvert.describe_texture_pass(
@@ -320,6 +366,7 @@ class GlbPipeline(LoggingMixin):
         finally:
             if own_scratch is not None:
                 own_scratch.cleanup(force=True)
+        timings["total"] = round(time.perf_counter() - started, 3)
         return report
 
     @classmethod

@@ -656,9 +656,16 @@ class PackageResolverHandle:
                                     )
                                     for name in dir(submodule):
                                         obj = getattr(submodule, name)
-                                        if isinstance(
-                                            obj, type
-                                        ) and not name.startswith("_"):
+                                        # Defined HERE, as _register_all_classes
+                                        # requires: a name the submodule only
+                                        # imports (typing.Any, a sibling utils
+                                        # class, a `Doc = ReportDoc` alias) is
+                                        # no member of the namespace.
+                                        if (
+                                            isinstance(obj, type)
+                                            and not name.startswith("_")
+                                            and obj.__module__ == submodule.__name__
+                                        ):
                                             if (
                                                 name not in expanded_class_names
                                             ):  # Avoid duplicates
@@ -671,7 +678,11 @@ class PackageResolverHandle:
                         # It's a regular module - get classes directly
                         for name in dir(module):
                             obj = getattr(module, name)
-                            if isinstance(obj, type) and not name.startswith("_"):
+                            if (
+                                isinstance(obj, type)
+                                and not name.startswith("_")
+                                and obj.__module__ == module.__name__
+                            ):
                                 expanded_class_names.append(name)
 
                     if not expanded_class_names:

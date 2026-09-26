@@ -6033,6 +6033,128 @@ class TestGlbLightmaps(unittest.TestCase):
         with MeshConvert.open_glb(glb) as edit:
             self.assertEqual(len(edit.gltf["images"]), 1, "atlas embeds once")
 
+    def test_an_UNBAKED_object_sharing_the_material_keeps_it_unlit(self):
+        """A bind IN PLACE lights every primitive wearing the material, and a
+        bake is per OBJECT: a prop the bake never saw, sharing the wall's
+        material, wore the wall's lightmap through its own second UV set (one
+        texel of it, with none) -- and the viewer counted the material as
+        lightmapped, 1/1. The baked object now binds its own copy whenever an
+        object the bind leaves unlit wears the material too."""
+        exr = self._exr()
+        glb = self._glb(
+            self._scene(
+                self._manifest([{"name": "room", "map": os.path.basename(exr)}]),
+                objects=("room", "prop"),
+                material=0,  # both meshes wear materials[0]; only room is baked
+            )
+        )
+        records = MeshConvert.apply_glb_lightmaps(glb)
+        self.assertEqual([r["object"] for r in records], ["room"])
+        with MeshConvert.open_glb(glb) as edit:
+            gltf = edit.gltf
+        self.assertEqual(self._bound_map(gltf, 0), "room_Lightmap.png")
+        self.assertIsNone(
+            self._bound_map(gltf, 1), "the unbaked prop wears the room's lighting"
+        )
+        prop = gltf["meshes"][gltf["nodes"][1]["mesh"]]["primitives"][0]["material"]
+        self.assertEqual(prop, 0, "the prop keeps the material as authored")
+        self.assertNotIn("occlusionTexture", gltf["materials"][0])
+
+    def test_an_UNBAKED_instance_of_a_baked_mesh_keeps_it_unlit(self):
+        """The same leak through instancing: FBX2glTF keeps one mesh -- one
+        material -- behind every instance node, so a bind in place lit the
+        instances the bake never saw. The baked one takes its own mesh entry
+        and material copy (JSON only); the rest keep the original."""
+        a, b = ("RootNode", "FLOOR_A"), ("RootNode", "FLOOR_B")
+        exr = self._exr("FLOOR_A_Lightmap.exr")
+        manifest = self._manifest([{"name": "FLOOR_A", "map": os.path.basename(exr)}])
+        gltf, index = self._tree_scene(manifest, [a, b], share_mesh={b: a})
+        glb = self._glb(gltf)
+        MeshConvert.apply_glb_lightmaps(glb)
+        with MeshConvert.open_glb(glb) as edit:
+            g = edit.gltf
+        self.assertEqual(self._bound_map(g, index[a]), "FLOOR_A_Lightmap.png")
+        self.assertIsNone(self._bound_map(g, index[b]), "FLOOR_B was never baked")
+
+    def test_a_baked_object_whose_map_is_missing_is_not_lit_by_its_neighbour(self):
+        """An object whose map was not found is reported UNLIT -- and wore the
+        neighbour's lighting instead whenever the two share a material,
+        because the neighbour bound that material in place. What the report
+        says is now what renders."""
+        self._exr("room_Lightmap.exr")
+        glb = self._glb(
+            self._scene(
+                self._manifest(
+                    [
+                        {"name": "room", "map": "room_Lightmap.exr"},
+                        {"name": "prop", "map": "gone.exr"},
+                    ]
+                ),
+                objects=("room", "prop"),
+                material=0,
+            )
+        )
+        records = MeshConvert.apply_glb_lightmaps(glb)
+        self.assertEqual([r["object"] for r in records], ["room"])
+        with MeshConvert.open_glb(glb) as edit:
+            gltf = edit.gltf
+        self.assertEqual(self._bound_map(gltf, 0), "room_Lightmap.png")
+        self.assertIsNone(self._bound_map(gltf, 1))
+
+    def test_a_baked_object_whose_map_is_UNREADABLE_is_not_lit_by_its_neighbour(
+        self,
+    ):
+        """The same for a map that is found but cannot be read (a truncated
+        EXR from an interrupted bake): it counted as lit once found, so its
+        failed encode left the material to the neighbour's in-place bind."""
+        self._exr("room_Lightmap.exr")
+        with open(os.path.join(self.tmp, "prop_Lightmap.exr"), "wb") as f:
+            f.write(b"not an exr")
+        glb = self._glb(
+            self._scene(
+                self._manifest(
+                    [
+                        {"name": "prop", "map": "prop_Lightmap.exr"},
+                        {"name": "room", "map": "room_Lightmap.exr"},
+                    ]
+                ),
+                objects=("room", "prop"),
+                material=0,
+            )
+        )
+        records = MeshConvert.apply_glb_lightmaps(glb)
+        self.assertEqual([r["object"] for r in records], ["room"])
+        with MeshConvert.open_glb(glb) as edit:
+            gltf = edit.gltf
+        self.assertEqual(self._bound_map(gltf, 0), "room_Lightmap.png")
+        self.assertIsNone(self._bound_map(gltf, 1), "prop wears the room's map")
+
+    def test_baked_objects_on_one_map_share_one_copy_beside_an_unbaked_one(self):
+        """An unbaked object on the material sends every baked one through a
+        copy -- one per map, not one per object."""
+        exr = self._exr("atlas.exr")
+        glb = self._glb(
+            self._scene(
+                self._manifest(
+                    [{"name": n, "map": os.path.basename(exr)} for n in ("a", "b", "c")]
+                ),
+                objects=("a", "b", "c", "prop"),
+                material=0,
+            )
+        )
+        records = MeshConvert.apply_glb_lightmaps(glb)
+        self.assertEqual([r["object"] for r in records], ["a", "b", "c"])
+        with MeshConvert.open_glb(glb) as edit:
+            gltf = edit.gltf
+        self.assertEqual(len(gltf["materials"]), 3, "roomMat, propMat, ONE copy")
+        worn = {
+            gltf["meshes"][gltf["nodes"][i]["mesh"]]["primitives"][0]["material"]
+            for i in range(3)
+        }
+        self.assertEqual(worn, {2})
+        self.assertIsNone(self._bound_map(gltf, 3), "the unbaked prop stays unlit")
+        self.assertEqual(len({r["material"] for r in records}), 1)
+
     def test_per_instance_rects_ride_khr_texture_transform(self):
         """Instances (one shared glTF mesh, many nodes -- what FBX2glTF emits,
         probe-measured) each end with their OWN mesh entry over the same

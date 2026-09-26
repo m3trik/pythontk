@@ -200,6 +200,9 @@ cython_debug/
 
 test/temp_tests/
 
+# test_test_sandbox's synthetic pytest file, left behind when its run is killed
+test/_leakgate_*.py
+
 # Test runner output (regenerated each run)
 test/logs/
 

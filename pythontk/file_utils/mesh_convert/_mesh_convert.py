@@ -15,6 +15,7 @@ import struct
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from time import perf_counter
 from typing import (
     Any,
     Callable,
@@ -1183,7 +1184,11 @@ class MeshConvert(HelpMixin):
                            ``"lightmaps"`` (:meth:`lightmap_report`
                            -- what the manifest wanted of THIS file against
                            what bound) and ``"data_export"`` (the channel keys
-                           the overlay replaced; set when one was given).
+                           the overlay replaced; set when one was given), and
+                           ``"timings"`` -- seconds spent in ``"fbx2gltf"``
+                           (staging the input, the converter, placing its
+                           GLB) and in ``"passes"`` (the edit session every
+                           repair above runs in).
                            The return value stays the path, so
                            every existing caller is unchanged.
 
@@ -1286,6 +1291,11 @@ class MeshConvert(HelpMixin):
         # as soon as it is done reading. Expanded inside the try: an interrupted
         # expansion must not strand a full-size copy, or the stores above.
         staged = TempArtifacts("fbx2gltf_input", policy="scoped")
+        # Timed in two halves, because they answer different questions: the
+        # converter is the push on a production assembly (87% of it, measured
+        # by hand before this was recorded), and what moves it lives on the
+        # DCC side -- the take, the node count -- while the passes are ours.
+        started = perf_counter()
         try:
             cmd[cmd.index("-i") + 1] = cls._expand_grayscale_embeds(src_abs, staged)
             logger.debug("FBX2glTF: %s", shlex.join(cmd))
@@ -1332,6 +1342,7 @@ class MeshConvert(HelpMixin):
             converted.cleanup()
             media.cleanup()
             staged.cleanup()
+        converted_at = perf_counter()
 
         # One post-conversion edit session for everything that touches the
         # JSON chunk: the alpha repair and (when given) the scene sidecar.
@@ -1592,6 +1603,11 @@ class MeshConvert(HelpMixin):
         except Exception as exc:  # noqa: BLE001 — never let post-process kill a successful conversion
             logger.warning("GLB post-process skipped: %s", exc)
 
+        if report is not None:
+            report["timings"] = {
+                "fbx2gltf": round(converted_at - started, 3),
+                "passes": round(perf_counter() - converted_at, 3),
+            }
         return dst_abs
 
     # ------------------------------------------------------------------ #
@@ -3532,7 +3548,8 @@ class MeshConvert(HelpMixin):
         secondary material two objects share, or a Per-Object bake of instances)
         binds a copy per object after the first, like a per-instance rect below
         -- it used to be refused, and the object wore the first claimant's
-        lighting.
+        lighting. The copies are one per (material, map, rect), shared by every
+        object baked into that patch of that map.
 
         Parameters:
             glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
@@ -3670,8 +3687,10 @@ class MeshConvert(HelpMixin):
             #: scene into 47 warnings saying it shipped unlit).
             out_of_scope: List[str] = []
 
-            # exr abspath -> encode scalar; ``None`` records a failed encode so a map
-            # shared by several objects is not retried (and re-logged) per object.
+            # exr abspath -> ``(png bytes, scalar)``, ``None`` for a failed encode:
+            # one attempt (and one warning) per map, however many objects share it.
+            encodes: Dict[str, Optional[tuple]] = {}
+            # exr abspath -> encode scalar, recorded as the map is EMBEDDED.
             scalars: Dict[str, Optional[float]] = {}
             #: Unfindable map -> how many manifest entries wanted it. Counted
             #: rather than warned inline for two reasons: an atlas is shared by
@@ -3706,7 +3725,73 @@ class MeshConvert(HelpMixin):
             # lightmaps (once each; see the copy site).
             shared_reported: Set[int] = set()
             web_materials: Dict[str, Dict[str, Any]] = {}
+            # (material, map, rect) -> the material copy binding it.
+            clones: Dict[tuple, int] = {}
             used_transform = False
+
+            located: Dict[Optional[str], Optional[str]] = {}
+
+            def _locate(basename: Optional[str]) -> Optional[str]:
+                """*basename*'s first hit in *dirs*, or ``None`` -- once per map."""
+                if basename not in located:
+                    located[basename] = next(
+                        (
+                            p
+                            for d in dirs
+                            for p in [os.path.join(d, basename or "")]
+                            if basename and os.path.isfile(p)
+                        ),
+                        None,
+                    )
+                return located[basename]
+
+            def _encode(src: str) -> Optional[tuple]:
+                """*src* encoded for the web -- once per map."""
+                if src not in encodes:
+                    try:
+                        encodes[src] = ImgUtils.encode_hdr_for_web(src, percentile)
+                    except (ImportError, ValueError) as error:
+                        logger.warning(
+                            "Lightmap %r not encoded: %s", os.path.basename(src), error
+                        )
+                        encodes[src] = None
+                return encodes[src]
+
+            def _lights(entry: dict) -> bool:
+                """Whether *entry*'s map is found AND encodes -- a map that
+                cannot be read lights nothing, like one that cannot be found."""
+                found = _locate(entry.get("map"))
+                return bool(found) and _encode(os.path.abspath(found)) is not None
+
+            # Material index -> how many primitives wearing it this bind leaves
+            # UNLIT: a node no bindable entry resolves to (never baked, or its
+            # map is missing or unreadable), or a primitive with no lightmap UV
+            # set. A bind
+            # IN PLACE lights every primitive wearing the material, and a bake
+            # is per object -- so a prop the bake never saw, sharing the wall's
+            # material, wore the wall's lighting, while every report counted it
+            # unbaked. Such a material is bound through a copy per baked object
+            # instead (the clone path below), and stays as authored for the rest.
+            lit_nodes = {
+                id(node)
+                for entry, (nodes, status, _leaves) in zip(entries, resolutions)
+                if isinstance(entry, dict)
+                and status not in ("ambiguous", "absent")
+                and _lights(entry)
+                for node in nodes
+            }
+            unlit_users: Dict[int, int] = {}
+            for node in gltf.get("nodes") or []:
+                mesh = node.get("mesh") if isinstance(node, dict) else None
+                if not isinstance(mesh, int) or not 0 <= mesh < len(gltf["meshes"]):
+                    continue
+                for prim in gltf["meshes"][mesh].get("primitives", []):
+                    mi = prim.get("material")
+                    if mi is not None and (
+                        id(node) not in lit_nodes
+                        or "TEXCOORD_1" not in (prim.get("attributes") or {})
+                    ):
+                        unlit_users[mi] = unlit_users.get(mi, 0) + 1
             for entry_index, (entry, (nodes, status, leaves)) in enumerate(
                 zip(entries, resolutions)
             ):
@@ -3741,15 +3826,7 @@ class MeshConvert(HelpMixin):
                         ", ".join(sorted(nodes_by_name)) or "<none>",
                     )
                     continue
-                src = next(
-                    (
-                        p
-                        for d in dirs
-                        for p in [os.path.join(d, basename or "")]
-                        if basename and os.path.isfile(p)
-                    ),
-                    None,
-                )
+                src = _locate(basename)
                 if src is None:
                     missing[basename] = missing.get(basename, 0) + 1
                     continue
@@ -3771,22 +3848,17 @@ class MeshConvert(HelpMixin):
 
                 png_name = os.path.splitext(basename)[0] + ".png"
 
-                def _scalar(src=src, basename=basename, png_name=png_name):
-                    """Encode + embed *src* on FIRST use (never for an entry whose
+                def _scalar(src=src, png_name=png_name):
+                    """Embed *src* on FIRST use (never for an entry whose
                     primitives all fail the guards -- an orphan texture otherwise)."""
                     if src not in scalars:
-                        try:
-                            png, encoded = ImgUtils.encode_hdr_for_web(src, percentile)
-                        except (ImportError, ValueError) as error:
-                            logger.warning(
-                                "Lightmap %r not encoded: %s", basename, error
-                            )
-                            scalars[src] = None
-                        else:
-                            scalars[src] = encoded
+                        encoded = _encode(src)
+                        scalars[src] = None if encoded is None else encoded[1]
+                        if encoded is not None:
                             cls._embed_image_bytes(
-                                edit, src, png, name=png_name, clamp=True
+                                edit, src, encoded[0], name=png_name, clamp=True
                             )
+                            encodes[src] = (None, encoded[1])  # bytes are in
                     return scalars[src]
 
                 for node in nodes:
@@ -3798,9 +3870,12 @@ class MeshConvert(HelpMixin):
                     # which FBX2glTF keeps as one mesh and one material behind
                     # every instance node. That used to be refused ("atlas
                     # packing prevents this" -- it does not prevent either), and
-                    # the object wore the first claimant's lighting.
+                    # the object wore the first claimant's lighting. Likewise a
+                    # material an object this bind leaves unlit wears too
+                    # (``unlit_users``), or that object wears this one's.
                     own = has_rect or any(
                         claimed.get(p.get("material"), src) != src
+                        or unlit_users.get(p.get("material"))
                         for p in gltf["meshes"][node["mesh"]].get("primitives", [])
                         if p.get("material") is not None
                         and "TEXCOORD_1" in (p.get("attributes") or {})
@@ -3832,7 +3907,11 @@ class MeshConvert(HelpMixin):
                         if mi is None:
                             continue
 
-                        if has_rect or claimed.get(mi, src) != src:
+                        if (
+                            has_rect
+                            or claimed.get(mi, src) != src
+                            or unlit_users.get(mi)
+                        ):
                             # The binding is this object's alone, and the material
                             # is shared -- so it rides a material CLONE: a rect as
                             # a glTF-standard KHR_texture_transform (any compliant
@@ -3876,43 +3955,60 @@ class MeshConvert(HelpMixin):
                                     )
                             if not has_rect and mi not in shared_reported:
                                 shared_reported.add(mi)
-                                logger.info(
-                                    "Material %r is worn by objects baked into "
-                                    "different lightmaps; each after the first binds "
-                                    "its own copy of it.",
-                                    base_name,
-                                )
+                                if unlit_users.get(mi):
+                                    logger.info(
+                                        "Material %r is also worn by %d primitive(s) "
+                                        "this bake leaves unlit; the baked objects "
+                                        "bind a copy of it (one per map), so they "
+                                        "keep it as authored.",
+                                        base_name,
+                                        unlit_users[mi],
+                                    )
+                                else:
+                                    logger.info(
+                                        "Material %r is worn by objects baked into "
+                                        "different lightmaps; each map after the "
+                                        "first binds its own copy of it.",
+                                        base_name,
+                                    )
                             scalar = _scalar()
                             if scalar is None:  # encode failed, already logged
                                 continue
-                            clone = copy.deepcopy(base)
-                            clone["name"] = (
-                                f"{base_name}{cls.LIGHTMAP_CLONE_SUFFIX}"
-                                f"{len(gltf['materials'])}"
-                            )
-                            binding: Dict[str, Any] = {
-                                "index": edit.embedded[src],
-                                "texCoord": 1,
-                            }
-                            if has_rect:
-                                g_rect = ImgUtils.flip_rect_v(rect)
-                                binding["extensions"] = {
-                                    "KHR_texture_transform": {
-                                        "offset": [g_rect[2], g_rect[3]],
-                                        "scale": [g_rect[0], g_rect[1]],
-                                    }
+                            # One copy per (material, map, rect): objects baked
+                            # into the same patch of the same map light alike, so
+                            # they share it -- a 46-piece room on one material
+                            # made 46 identical copies.
+                            key = (mi, src, tuple(rect))
+                            if key not in clones:
+                                clone = copy.deepcopy(base)
+                                clone["name"] = (
+                                    f"{base_name}{cls.LIGHTMAP_CLONE_SUFFIX}"
+                                    f"{len(gltf['materials'])}"
+                                )
+                                binding: Dict[str, Any] = {
+                                    "index": edit.embedded[src],
+                                    "texCoord": 1,
                                 }
-                                used_transform = True
-                            clone[slot] = binding
-                            gltf["materials"].append(clone)
-                            prim["material"] = len(gltf["materials"]) - 1
-                            web_materials[clone["name"]] = {
-                                "map": png_name,
-                                "intensity": round(scalar, 6),
-                            }
+                                if has_rect:
+                                    g_rect = ImgUtils.flip_rect_v(rect)
+                                    binding["extensions"] = {
+                                        "KHR_texture_transform": {
+                                            "offset": [g_rect[2], g_rect[3]],
+                                            "scale": [g_rect[0], g_rect[1]],
+                                        }
+                                    }
+                                    used_transform = True
+                                clone[slot] = binding
+                                gltf["materials"].append(clone)
+                                clones[key] = len(gltf["materials"]) - 1
+                                web_materials[clone["name"]] = {
+                                    "map": png_name,
+                                    "intensity": round(scalar, 6),
+                                }
+                            prim["material"] = clones[key]
                             records.append(
                                 {
-                                    "material": clone["name"],
+                                    "material": gltf["materials"][clones[key]]["name"],
                                     "object": name,
                                     "map": basename,
                                     "intensity": scalar,

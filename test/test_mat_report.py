@@ -31,8 +31,15 @@ class TestPathLink(unittest.TestCase):
             "a &amp; b.png", link
         )  # display escaped (keeps the original path text)
         self.assertIn("%20", link)  # space url-encoded in href
-        href = link.split("href='", 1)[1].split("'", 1)[0]
+        href = link.split('href="', 1)[1].split('"', 1)[0]
         self.assertNotIn("\\", href)  # backslashes normalized in the href only
+
+    def test_a_unc_path_keeps_its_host(self):
+        """``\\\\srv\\share\\a.png`` was linked as ``file:///srv/share/a.png``
+        -- a folder at the local drive's root, not the share."""
+        link = MatReport._path_as_link(r"\\srv\share\maps\a.png")
+        href = link.split('href="', 1)[1].split('"', 1)[0]
+        self.assertTrue(href.startswith("file://srv/share/"), href)
 
 
 class TestMatInfoFormatters(unittest.TestCase):

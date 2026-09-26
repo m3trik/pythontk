@@ -34,7 +34,8 @@ Example (publish a GLB and open it):
 Served surface:
     ``GET /``                -> the viewer page (materialized into the serve root)
     ``GET /manifest.json``   -> ``{"version", "viewer", "asset", "updated",
-                                "title", "scripts", "xrRuntime"}``;
+                                "title", "userPos", "locomotion", "scripts",
+                                "xrRuntime"}``;
                                 also the heartbeat behind :meth:`PreviewServer.has_viewer`
     ``GET /scripts/<name>.js`` -> an active viewer script (see :attr:`PreviewServer.SCRIPTS`)
     ``GET /<name>``          -> any published asset, by name
@@ -215,7 +216,7 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler API)
-        if self._foreign_host():
+        if not self._discard_body() or self._foreign_host():
             return
         route = self.path.split("?", 1)[0].lstrip("/")
         if self._guest:
@@ -245,12 +246,28 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         HEAD answers a path's existence, size and date, and it had no Host
         check at all: a rebound page could probe the serve root through it.
         """
-        if self._foreign_host():
+        if not self._discard_body() or self._foreign_host():
             return
         if self._guest and not self._guest_may_read(self._route()):
             self.send_error(404)
             return
         super().do_HEAD()
+
+    def _discard_body(self) -> bool:
+        """Take a read's body off the socket; False once it has been refused.
+
+        A body means nothing on a GET or HEAD, but one left unread is the next
+        request's first bytes on a kept-alive connection, and on a refusal's
+        close Windows answers it with a reset that discards the response
+        (measured: 13 of 400 host-refused GETs carrying two bytes lost their
+        403). Read -- or refused and drained -- as a POST's is
+        (:meth:`_read_body`), within the same ceiling.
+        """
+        if not (
+            self.headers.get("Content-Length") or self.headers.get("Transfer-Encoding")
+        ):
+            return True
+        return self._read_body(self._route()) is not None
 
     def _route(self) -> str:
         """The request path without its query or leading slash, decoded."""
@@ -364,7 +381,9 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         *n* up front, so ``Content-Length: 8000000000`` committed 8 GB of the
         host DCC's memory while the read waited for bytes that never came. A
         body refused unread goes with its connection (every ``send_error``
-        closes it), so it cannot desynchronise a next request.
+        closes it), so it cannot desynchronise a next request -- once what the
+        client still sends of it is read and dropped (:meth:`_drain_refused`),
+        so the refusal is what the client reads rather than a reset.
         """
         if self.headers.get("Transfer-Encoding"):
             # The page always sends a length; a chunked body has no bound.
@@ -383,8 +402,46 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
             self.send_error(
                 413, f"A body of {length} bytes is over this route's {ceiling}"
             )
+            self._drain_refused(length)
             return None
         return self.rfile.read(length)
+
+    #: The most of a refused body :meth:`_drain_refused` reads and drops: the
+    #: owner's page on loopback, where a still a little over its 64 MB ceiling
+    #: drains in a fraction of a second -- and a guest, owed nothing past a
+    #: beacon. Either way within DRAIN_SECONDS.
+    DRAIN_OWNER_BYTES: int = 256 * 1024 * 1024
+    DRAIN_GUEST_BYTES: int = 64 * 1024
+    DRAIN_SECONDS: float = 2.0
+
+    def _drain_refused(self, length: int) -> None:
+        """Read and drop what the client still sends of a body just refused.
+
+        The refusal has been sent; closing now, with the rest of the body in
+        the socket, makes Windows answer with a reset that discards the
+        response the client has not read yet -- a client still sending met
+        ConnectionAbortedError instead of the 413 (measured: a third of 64 KiB -
+        1 MiB posts against a 16-byte ceiling), which in the page reads "Failed
+        to fetch" where the status line should say why. Read in chunks and
+        dropped, never buffered, so a false Content-Length still commits no
+        memory; bounded in bytes and time, and over at the client's own close.
+
+        Parameters:
+            length: The body's declared Content-Length.
+        """
+        budget = min(
+            length, self.DRAIN_GUEST_BYTES if self._guest else self.DRAIN_OWNER_BYTES
+        )
+        deadline = time.monotonic() + self.DRAIN_SECONDS
+        try:
+            self.connection.settimeout(self.DRAIN_SECONDS)
+            while budget > 0 and time.monotonic() < deadline:
+                chunk = self.rfile.read1(min(budget, 64 * 1024))
+                if not chunk:
+                    break
+                budget -= len(chunk)
+        except OSError:
+            pass  # the client gave up first, or went quiet: close as before
 
     def send_response_only(self, code, message=None):
         """The status line, with a reason it can carry.
@@ -801,6 +858,18 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
             port must bind or :meth:`start` raises ``OSError``.
         viewer: Materialize the packaged WebXR viewer as ``index.html``.
         title: Label shown in the viewer's status line.
+        user_pos: Name of the node a view starts at -- a camera named so in
+            the published scene: a headset session stands on the floor under
+            it, facing where it looks, and the desktop view opens through it.
+            ``None`` starts every view on the whole model. Live: read into the
+            manifest on each poll, so a new name reaches the page's next
+            session without a publish. See ``docs/webxr_preview.md``.
+        locomotion: Whether a headset gets around on its thumbsticks (walk,
+            snap-turn, teleport). ``False`` keeps a session where it started --
+            under the *user_pos* camera when there is one, free to look round
+            and step about the room but not to go anywhere. Live like
+            *user_pos*, and at once: an open page, a guest's included, stops
+            on its next poll.
     """
 
     DEFAULT_PORT = 8118
@@ -928,9 +997,13 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         port: Optional[int] = None,
         viewer: bool = True,
         title: str = "Preview",
+        user_pos: Optional[str] = "user_pos",
+        locomotion: bool = True,
     ):
         self.host = host
         self.title = title
+        self.user_pos = user_pos
+        self.locomotion = locomotion
         self._requested_port = port
         self._viewer = viewer
         self._lock = threading.Lock()
@@ -973,6 +1046,9 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         #: public address of its alias, when there is one.
         self._tunnel = None
         self._alias_url: Optional[str] = None
+        #: A share's tunnel while it still waits on its provider, so an
+        #: unshare can end that wait (:meth:`ShareTunnel.cancel`).
+        self._starting = None
         #: Held while a share sets up or installs its tunnel and while
         #: :meth:`unshare` runs -- never across a provider's wait -- and the
         #: count of unshares, so a share whose wait an unshare interrupted can
@@ -1241,6 +1317,10 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
                 "asset": self._asset,
                 "updated": self._updated,
                 "title": self.title,
+                # For guests too: where a view starts, and whether it can go
+                # anywhere from there, are how the scene is meant to be seen.
+                "userPos": self.user_pos,
+                "locomotion": bool(self.locomotion),
                 # URLs rather than names: the page imports these directly, and
                 # the route is this module's business, not the viewer's.
                 "scripts": [
@@ -1444,6 +1524,7 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         ] = None,
         alias_url: Optional[str] = None,
         timeout: Optional[float] = None,
+        on_step: Optional[Callable[[Any], Any]] = None,
     ) -> Dict[str, Any]:
         """Give this preview a link anyone can open: view-only, and live.
 
@@ -1469,6 +1550,11 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
                 while the alias is current. ``None`` reads :attr:`ALIAS_URL_ENV`.
             timeout: Seconds to wait for the provider's link; ``None`` keeps
                 :class:`ShareTunnel`'s default.
+            on_step: Handed the :class:`ShareTunnel.StepRequired` of a one-time
+                step the provider stops on (Tailscale before the tailnet
+                enables Funnel), on the thread running this call -- which then
+                waits for the user to take it and returns the link. ``None``:
+                such a share fails at once as that ``StepRequired``.
 
         Returns:
             :meth:`share_info`.
@@ -1476,10 +1562,13 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         Raises:
             FileNotFoundError: The provider's CLI is not installed; the message
                 names the install (:meth:`ShareTunnel.settle` offers it).
+            ShareTunnel.StepRequired: The provider waits on a one-time step
+                and there is no *on_step* -- or it was not taken in time.
             RuntimeError: The provider exited without a link; the message
                 carries what it printed. Also when :meth:`unshare` or
                 :meth:`stop` ran while the provider was starting: its tunnel
-                is stopped rather than kept.
+                is stopped rather than kept, and a start still waiting --
+                on a step above all -- ends at once.
             TimeoutError: The provider printed no link in time.
         """
         from pythontk.net_utils.share_tunnel import ShareTunnel
@@ -1507,10 +1596,12 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
             port = self.start_guest()
         options = {} if timeout is None else {"timeout": timeout}
         # The provider's wait (seconds -- a quick tunnel's name takes 6-18 s
-        # to resolve) is the one step taken outside the share lock, so an
-        # unshare() or stop() on another thread lands at once. It then finds
-        # no tunnel yet and closes the listener this one fronts; the check
-        # below is how the share learns of it.
+        # to resolve; minutes, when a user has a step to take) is the one step
+        # taken outside the share lock, so an unshare() or stop() on another
+        # thread lands at once. It cancels the tunnel still starting and closes
+        # the listener it fronts; the check below is how the share learns of it
+        # when the link was already in.
+        tunnel = None
         try:
             tunnel = ShareTunnel(
                 port,
@@ -1518,14 +1609,25 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
                 host=self.host,
                 alias=alias,
                 on_url=self._on_share_url,
+                on_step=on_step,
                 **options,
             )
+            with self._share_lock:
+                if self._share_generation == generation:
+                    with self._lock:
+                        self._starting = tunnel
+                else:  # stopped already: the start ends before it spawns
+                    tunnel.cancel()
             tunnel.start()
         except BaseException:
             with self._share_lock:
                 if self._share_generation == generation:
                     self.stop_guest()
             raise
+        finally:
+            with self._lock:
+                if self._starting is tunnel:
+                    self._starting = None
         with self._share_lock:
             superseded = self._share_generation != generation
             if superseded:
@@ -1565,8 +1667,11 @@ class PreviewServer(LoggingMixin, _PreviewServerInternal):
         """:meth:`unshare`'s work, under the share lock; the new generation."""
         with self._lock:
             tunnel, self._tunnel = self._tunnel, None
+            starting, self._starting = self._starting, None
             self._alias_url = None
         self._share_generation += 1
+        if starting is not None:
+            starting.cancel()  # never blocks: that start holds its own lock
         if tunnel is not None:
             tunnel.stop()
         self.stop_guest()

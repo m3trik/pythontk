@@ -1049,7 +1049,8 @@ class AppLauncher(_AppLauncherInternal):
         Returns a list of PIDs of running processes matching the given name.
         Uses tasklist (Windows) or pgrep (Linux/Unix) to avoid external dependencies like psutil.
 
-        :param process_name: The name of the process (e.g. 'notepad.exe', 'maya').
+        :param process_name: The name of the process (e.g. 'notepad.exe', 'maya'); on
+            Windows a bare name means its ``.exe`` image.
         :return: List of integer PIDs.
         """
         pids = []
@@ -1057,6 +1058,9 @@ class AppLauncher(_AppLauncherInternal):
 
         try:
             if system == "windows":
+                # tasklist matches the whole image name: "maya" is "maya.exe".
+                if not process_name.lower().endswith(".exe"):
+                    process_name += ".exe"
                 # 'tasklist /FO CSV /NH' returns "Image Name","PID","Session Name","Session#","Mem Usage"
                 # Filter by name using /FI to rely on system filter.
                 # List args (no shell=True): immune to quoting/injection issues
