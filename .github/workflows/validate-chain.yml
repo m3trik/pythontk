@@ -141,13 +141,18 @@ jobs:
           pytest --tb=short -v --timeout=300 --timeout-method=thread test/ \
             --ignore=test/test_marking_menu_integration.py 2>&1 | tee pytest_out.txt
           RC=${PIPESTATUS[0]}
-          OUTPUT=$(cat pytest_out.txt)
-          FAILED=$(echo "$OUTPUT" | grep -oP '\d+(?= failed)' | head -1 || echo "0")
-          PASSED=$(echo "$OUTPUT" | grep -oP '\d+(?= passed)' | head -1 || echo "0")
+          # Counts come off pytest's FINAL summary line only; errors count too
+          # (a collection or fixture error leaves "failed" at 0). Mirrors the
+          # gate in uitk/.github/workflows/tests.yml.
+          SUMMARY=$(grep -E '^=+ .* in [0-9.]+s.*=+$' pytest_out.txt | tail -1)
+          FAILED=$(echo "$SUMMARY" | grep -oE '[0-9]+ failed' | head -1 | cut -d' ' -f1)
+          PASSED=$(echo "$SUMMARY" | grep -oE '[0-9]+ passed' | head -1 | cut -d' ' -f1)
+          ERRORS=$(echo "$SUMMARY" | grep -oE '[0-9]+ errors?' | head -1 | cut -d' ' -f1)
           FAILED=${FAILED:-0}
           PASSED=${PASSED:-0}
-          if [ "$FAILED" -gt 0 ]; then
-            echo "::error::$FAILED uitk test(s) failed against this pythontk"
+          ERRORS=${ERRORS:-0}
+          if [ "$FAILED" -gt 0 ] || [ "$ERRORS" -gt 0 ]; then
+            echo "::error::$FAILED uitk test(s) failed, $ERRORS error(s) against this pythontk"
             exit 1
           fi
           # No summary line at all means pytest DIED mid-run rather than
@@ -297,13 +302,18 @@ jobs:
           pytest --tb=short -v --timeout=300 --timeout-method=thread test/ \
             2>&1 | tee pytest_out.txt
           RC=${PIPESTATUS[0]}
-          OUTPUT=$(cat pytest_out.txt)
-          FAILED=$(echo "$OUTPUT" | grep -oP '\d+(?= failed)' | head -1 || echo "0")
-          PASSED=$(echo "$OUTPUT" | grep -oP '\d+(?= passed)' | head -1 || echo "0")
+          # Counts come off pytest's FINAL summary line only; errors count too
+          # (a collection or fixture error leaves "failed" at 0). The same
+          # parse as uitk's `test` gate (uitk/.github/workflows/tests.yml).
+          SUMMARY=$(grep -E '^=+ .* in [0-9.]+s.*=+$' pytest_out.txt | tail -1)
+          FAILED=$(echo "$SUMMARY" | grep -oE '[0-9]+ failed' | head -1 | cut -d' ' -f1)
+          PASSED=$(echo "$SUMMARY" | grep -oE '[0-9]+ passed' | head -1 | cut -d' ' -f1)
+          ERRORS=$(echo "$SUMMARY" | grep -oE '[0-9]+ errors?' | head -1 | cut -d' ' -f1)
           FAILED=${FAILED:-0}
           PASSED=${PASSED:-0}
-          if [ "$FAILED" -gt 0 ]; then
-            echo "::error::$FAILED tentacle test(s) failed against this chain"
+          ERRORS=${ERRORS:-0}
+          if [ "$FAILED" -gt 0 ] || [ "$ERRORS" -gt 0 ]; then
+            echo "::error::$FAILED tentacle test(s) failed, $ERRORS error(s) against this chain"
             exit 1
           fi
           # No summary line at all means pytest DIED mid-run rather than
