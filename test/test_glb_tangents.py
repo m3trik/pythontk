@@ -16,8 +16,8 @@ import struct
 import unittest
 
 from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-from pythontk.file_utils.mesh_convert.glb_reader import GlbReader
-from pythontk.file_utils.mesh_convert.glb_tangents import GlbTangents
+from pythontk.file_utils.mesh_convert.glb.reader import GlbReader
+from pythontk.file_utils.mesh_convert.glb.tangents import GlbTangents
 from pythontk.file_utils.temp_artifacts import TempArtifacts
 
 #: One quad's corners (x, y) in order; the two triangles are (0, 1, 2) and

@@ -31,6 +31,11 @@ FFMPEG_PLATFORMS = {
     "linux": {
         "url": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz",
         "type": "tar.xz",
+        "arch": "x86_64",
+    },
+    "linux-arm64": {
+        "url": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz",
+        "type": "tar.xz",
     },
     "darwin": {
         "url": "https://evermeet.cx/ffmpeg/getrelease/zip",
@@ -96,7 +101,13 @@ class AppInstaller:
                         a bare executable placed under the tool's own name
                         (see :meth:`_place_binary`). Each entry may
                         also include a per-platform ``"executable"``
-                        override.
+                        override, and the ``"arch"`` it is built for
+                        (``"x86_64"``, ``"arm64"``). A ``"linux-arm64"``-style
+                        key wins over the plain platform key; a Linux entry
+                        built for another architecture raises LookupError
+                        rather than installing a binary that cannot run
+                        (Windows and macOS emulate x86_64 on arm64). *sha256*
+                        is keyed the same way.
             executable: Binary name to search for after extraction.
                         Defaults to *name*.  On Windows ``.exe`` is
                         appended automatically during search.
@@ -132,13 +143,7 @@ class AppInstaller:
             LookupError:  If the current platform has no entry in *platforms*.
             RuntimeError:  If download, extraction, or hash verification fails.
         """
-        plat = cls._current_platform()
-        plat_info = platforms.get(plat)
-        if plat_info is None:
-            raise LookupError(
-                f"No download defined for platform '{plat}' "
-                f"(tool={name!r}, available={list(platforms)})"
-            )
+        plat, plat_info = cls._platform_entry(platforms, name)
 
         exe_name = plat_info.get("executable", executable or name)
 
@@ -407,7 +412,9 @@ class AppInstaller:
         """Extract a zip, tar.gz, tar.xz, or tar.bz2 archive -- or, for the
         ``nsis`` type, run the Windows installer silently into *dest*.
 
-        Zip extraction uses :pymethod:`ZipFile.extractall`.
+        Zip extraction uses :pymethod:`ZipFile.extractall`, then (POSIX) gives
+        members back the Unix permission bits the archive recorded, less
+        setuid and group/other write.
         Tar extraction filters members to prevent path-traversal attacks
         (CVE-2007-4559): absolute paths and ``..`` components are rejected.
         """
@@ -434,6 +441,16 @@ class AppInstaller:
                             f"Zip member {member!r} escapes destination directory"
                         )
                 zf.extractall(dest)
+                if os.name != "nt":
+                    # ZipFile drops Unix permission bits, leaving every binary
+                    # of a multi-binary tool (ffmpeg's ffprobe beside ffmpeg)
+                    # unrunnable but the one ensure() marks. Masked to 0o755,
+                    # as the tar path's filter="data" masks: an archive never
+                    # grants setuid, nor group/other write.
+                    for info in zf.infolist():
+                        mode = (info.external_attr >> 16) & 0o755
+                        if mode and not info.is_dir():
+                            os.chmod(os.path.join(dest, info.filename), mode)
         elif at in ("tar.gz", "tgz", "tar.xz", "tar.bz2", "tar"):
             mode = {
                 "tar.gz": "r:gz",
@@ -636,15 +653,51 @@ class AppInstaller:
     def _add_to_process_path(exe_path: str) -> None:
         """Append the parent directory of *exe_path* to ``os.environ["PATH"]``
         if it is not already present."""
-        exe_dir = os.path.dirname(exe_path)
-        current = os.environ.get("PATH", "")
-        if exe_dir.lower() not in current.lower().split(os.pathsep):
-            os.environ["PATH"] = f"{current}{os.pathsep}{exe_dir}"
+        from pythontk.core_utils.app_launcher import AppLauncher
+
+        AppLauncher.append_to_path(os.path.dirname(exe_path), user_scope=False)
 
     @staticmethod
     def _current_platform() -> str:
         """Return normalised platform key: ``windows``, ``linux``, or ``darwin``."""
         return platform.system().lower()
+
+    @staticmethod
+    def _normalise_arch(machine: str) -> str:
+        """``x86_64`` / ``arm64`` for the spellings OSes and vendors use."""
+        machine = machine.lower()
+        aliases = {"amd64": "x86_64", "x64": "x86_64", "aarch64": "arm64"}
+        return aliases.get(machine, machine)
+
+    @classmethod
+    def _platform_entry(cls, platforms: Dict[str, dict], name: str = ""):
+        """``(key, entry)`` of *platforms* for this OS and CPU, else LookupError.
+
+        ``<os>-<arch>`` wins over ``<os>``. An entry that declares its
+        ``"arch"`` serves only that architecture on Linux: an x86_64 build on an
+        arm64 machine installs fine and then fails ``Exec format error`` at its
+        first use, far from the cause. Windows and macOS run x86_64 builds on
+        arm64 under emulation, so there the declaration does not bind.
+        """
+        plat = cls._current_platform()
+        arch = cls._normalise_arch(platform.machine())
+        for key in (f"{plat}-{arch}", plat):
+            entry = platforms.get(key)
+            if entry is None:
+                continue
+            built_for = entry.get("arch")
+            if built_for and plat == "linux":
+                if cls._normalise_arch(built_for) != arch:
+                    raise LookupError(
+                        f"No {arch} download defined for {name!r} on {plat}: "
+                        f"the '{key}' build is {built_for} "
+                        f"(available={list(platforms)})"
+                    )
+            return key, entry
+        raise LookupError(
+            f"No download defined for platform '{plat}' "
+            f"(tool={name!r}, available={list(platforms)})"
+        )
 
     @staticmethod
     def _resolve_location(location: str) -> str:

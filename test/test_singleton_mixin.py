@@ -224,6 +224,37 @@ class SingletonMixinTest(BaseTestCase):
         self.assertEqual(child.name, "child")
         self.assertEqual(child.extra, "data")
 
+    def test_init_wrapper_keeps_the_subclass_signature(self):
+        """The once-only ``__init__`` wrapper must not hide what it wraps.
+
+        ``inspect.signature`` is how callers ask what a class accepts (uitk's
+        launch-code rendering asks whether a handler's ``switchboard`` is
+        optional); a bare wrapper answered ``(*args, **kwargs)`` for every
+        subclass, and dropped its name and docstring with it.
+        """
+        import inspect
+
+        class Configurable(SingletonMixin):
+            def __init__(self, switchboard=None, log_level="WARNING"):
+                """Build with an optional switchboard."""
+                self.switchboard = switchboard
+
+        class Derived(Configurable):
+            pass
+
+        for cls in (Configurable, Derived):
+            params = inspect.signature(cls.__init__).parameters
+            self.assertEqual(list(params), ["self", "switchboard", "log_level"])
+            self.assertIsNone(params["switchboard"].default)
+            self.assertEqual(cls.__init__.__name__, "__init__")
+            self.assertEqual(
+                cls.__init__.__doc__, "Build with an optional switchboard."
+            )
+        # Still once-only.
+        first = Configurable(switchboard="sb")
+        self.assertIs(Configurable(switchboard="other"), first)
+        self.assertEqual(first.switchboard, "sb")
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)

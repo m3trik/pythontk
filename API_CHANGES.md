@@ -1,60 +1,1114 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ 3d7df22)._
+_Diff vs the last release (origin/main @ 86c21bb)._
 
-## Added (27)
+## Removed (30)
 
-- `core_utils/engines/shots/shot_model.py::ShotStore.remove_stale_shots(self) -> List[ShotBlock]`
-- `core_utils/engines/shots/shot_model.py::ShotStore.stale_shots(self) -> List[ShotBlock]`
-- `core_utils/engines/textures/map_registry.py::MapRegistry.estimate_gpu_bytes(self, width: int, height: int, name: Optional[str] = None, tiles: int = 1) -> Tuple[float, float]`
-- `core_utils/hierarchy_baseline.py::HierarchyBaseline.adopt(cls, baseline: Iterable[str], shipped: Optional[Iterable[str]]) -> Optional[Set[str]]`
-- `core_utils/hierarchy_baseline.py::HierarchyBaseline.recorded_by(cls, record) -> Optional[str]`
-- `core_utils/scene_records.py::ExportContext.note(self, text: str) -> None`
-- `core_utils/scene_records.py::RecordSpec.path_keys(self) -> Optional[Tuple[str, ...]]`
-- `core_utils/scene_records.py::SceneStoreBase.scene_path(cls) -> str`
-- `core_utils/scene_records.py::SceneStoreBase.writer_stamp(cls) -> str`
-- `core_utils/scene_records.py::SceneStoreBase.written_here(cls, stamp: Optional[str]) -> bool`
-- `net_utils/preview/bridge.py::PreviewBridge.timing_summary(cls, result: Optional[Dict[str, Any]]) -> str`
-- `net_utils/share_tunnel.py::ShareTunnel.cancel(self) -> None`
-- `str_utils/report_doc.py::ReportDoc(class)`
-- `str_utils/report_doc.py::ReportDoc.action(cls, text: Any, verb: str, /, **params: Any) -> Inline`
-- `str_utils/report_doc.py::ReportDoc.color(cls, tone: Optional[str]) -> Optional[str]`
-- `str_utils/report_doc.py::ReportDoc.extend(self, other: 'ReportDoc') -> 'ReportDoc'`
-- `str_utils/report_doc.py::ReportDoc.fields(self, rows: Iterable[Tuple[Any, Any]]) -> 'ReportDoc'`
-- `str_utils/report_doc.py::ReportDoc.file(cls, path: str, text: Optional[Any] = None) -> Inline`
-- `str_utils/report_doc.py::ReportDoc.heading(self, text: Any, level: int = 2, tone: Optional[str] = 'heading') -> 'ReportDoc'`
-- `str_utils/report_doc.py::ReportDoc.items(self, items: Iterable[Any], tone: Optional[str] = None) -> 'ReportDoc'`
-- `str_utils/report_doc.py::ReportDoc.join(cls, parts: Iterable[Any], sep: str = ', ') -> Inline`
-- `str_utils/report_doc.py::ReportDoc.link(cls, text: Any, href: str, tone: Optional[str] = 'link') -> Inline`
-- `str_utils/report_doc.py::ReportDoc.span(cls, text: Any, tone: Optional[str] = None, bold: bool = False) -> Inline`
-- `str_utils/report_doc.py::ReportDoc.table(self, headers: Sequence[Any], rows: Iterable[Sequence[Any]], align: Optional[Union[str, Sequence[str]]] = None, title: Optional[Any] = None, footer: Optional[Any] = None, wrap: Optional[Iterable[int]] = None) -> 'ReportDoc'`
-- `str_utils/report_doc.py::ReportDoc.text(self, text: Any, tone: Optional[str] = None) -> 'ReportDoc'`
-- `str_utils/report_doc.py::ReportDoc.to_html(self) -> str`
-- `str_utils/report_doc.py::ReportDoc.to_text(self) -> str`
+- `core_utils/app_handoff.py::CARRIER_BY_EXTENSION` — was `(constant)`
+- `core_utils/app_handoff.py::CARRIER_EXTENSIONS` — was `(constant)`
+- `core_utils/app_handoff.py::CARRIER_PARAM` — was `(constant)`
+- `core_utils/app_handoff.py::RIG_MODES` — was `(constant)`
+- `core_utils/app_handoff.py::RIG_MODE_PARAM` — was `(constant)`
+- `core_utils/app_handoff.py::ROUND_TRIP` — was `(constant)`
+- `core_utils/app_handoff.py::SAVE_AS` — was `(constant)`
+- `core_utils/app_handoff.py::SEND_TO` — was `(constant)`
+- `core_utils/preset_store.py::ACTIVE_SENTINEL` — was `(constant)`
+- `core_utils/preset_store.py::JSON_CODEC` — was `(constant)`
+- `core_utils/script_run.py::CREATED` — was `(constant)`
+- `core_utils/script_run.py::REWRITTEN` — was `(constant)`
+- `core_utils/script_template.py::ROUND_TRIP` — was `(constant)`
+- `core_utils/script_template.py::SAVE_AS` — was `(constant)`
+- `core_utils/script_template.py::SEND_TO` — was `(constant)`
+- `file_utils/mesh_convert/glb_fades.py::CHANNELS` — was `(constant)`
+- `file_utils/mesh_convert/glb_fades.py::DEFAULT_COLOR` — was `(constant)`
+- `file_utils/mesh_convert/glb_fades.py::EXTENSION` — was `(constant)`
+- `file_utils/mesh_convert/glb_fades.py::POINTER` — was `(constant)`
+- `file_utils/uv_unwrap/_uv_unwrap.py::BFF_DOWNLOAD_URL` — was `(constant)`
+- `file_utils/uv_unwrap/_uv_unwrap.py::BFF_PLATFORMS` — was `(constant)`
+- `file_utils/uv_unwrap/_uv_unwrap.py::BFF_SHA256` — was `(constant)`
+- `file_utils/uv_unwrap/_uv_unwrap.py::BFF_URL` — was `(constant)`
+- `file_utils/uv_unwrap/_uv_unwrap.py::BFF_VERSION` — was `(constant)`
+- `file_utils/uv_unwrap/_uv_unwrap.py::DEFAULT_TIMEOUT` — was `(constant)`
+- `file_utils/uv_unwrap/_uv_unwrap.py::ENGINES` — was `(constant)`
+- `file_utils/uv_unwrap/_uv_unwrap.py::MOF_DOWNLOAD_URL` — was `(constant)`
+- `file_utils/uv_unwrap/_uv_unwrap.py::MOF_EXE` — was `(constant)`
+- `geo_utils/uv_pack.py::XATLAS_PYPI_URL` — was `(constant)`
+- `geo_utils/uv_pack.py::XATLAS_REPO_URL` — was `(constant)`
 
-## Signature changed (8)
+## Added (683)
 
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher(class)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.active_console_session_id()`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.append_to_path(path, user_scope=True)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.close_process(pid, force=False)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.companion_python(executable: Optional[str] = None) -> Optional[str]`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.current_session_id()`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.desktop_env()`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.find_app(app_identifier)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.find_session_launcher(explicit=None)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.get_running_processes(process_name)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.get_window_titles(pid)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.handoff_env(source_root)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.is_interactive_session()`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.is_path_persisted(path)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.launch(app_identifier, args=None, cwd=None, detached=True, env=None)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.launch_in_session(app_identifier, args=None, session=None, cwd=None, launcher=None, accept_eula=True)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.looks_like_python(path: str) -> bool`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.process_environ()`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.process_tree(pid)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.resolve_app_path(*, env_vars=(), location_env_vars=(), app_names=(), scan_globs=())`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None, hide_window=False, on_output=None, poll_interval=0.1)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.scan_for_executables(root_paths, executable_name, depth=3)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.scan_install_dirs(scan_globs)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.spawn(app_identifier, args=None, cwd=None, env=None, hide_window=True, bind_lifetime=True)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.wait_for_ready(process, timeout=15, check_fn=None)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.write_batch_script(path, lines, shell=None)`
+- `core_utils/engines/instancing/instance_grouping.py::InstanceGrouping(class)`
+- `core_utils/engines/instancing/instance_grouping.py::InstanceGrouping.default_summary(micro_threshold: int) -> Dict[str, object]`
+- `core_utils/engines/instancing/instance_grouping.py::InstanceGrouping.format_summary(summary: Dict[str, object], output_count: int, micro_threshold: int) -> str`
+- `core_utils/engines/instancing/instance_grouping.py::InstanceGrouping.merge_similar_signatures(signature_map: Dict[Tuple, List[Any]], logger: Optional[logging.Logger] = None) -> Dict[Tuple, List[Any]]`
+- `core_utils/engines/instancing/instancing_strategy.py::InstancingStrategy(class)`
+- `core_utils/engines/instancing/instancing_strategy.py::InstancingStrategy.evaluate(self, group_size: int, mesh_node: Optional[object] = None, triangle_count: Optional[int] = None) -> StrategyType`
+- `core_utils/engines/instancing/instancing_strategy.py::StrategyConfig(class)`
+- `core_utils/engines/instancing/instancing_strategy.py::StrategyType(class)`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile(class)`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.baked_reflections_default(cls) -> str`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.fold_legacy_naming(cls, pattern: Optional[str], version_format: str = '', timestamp: bool = False, name_regex: Optional[str] = None) -> Optional[str]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.fold_legacy_regex(cls, name_regex: Optional[str]) -> Optional[str]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.frame_rate_options(cls) -> Dict[str, Optional[str]]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.glb_defaults(cls) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.glb_options(cls) -> Dict[str, Dict[str, Any]]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.legal_name(name: str) -> str`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.naming_report(cls, resolved: Mapping[str, Any], tokens: Mapping[str, str], version_suffix=None) -> List[Tuple[str, str]]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.optimize_textures_options(cls) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.optimize_textures_tasks(choice: Any, template: Optional[str] = None) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.read_values(cls, widgets: Mapping[str, Any], *tables: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.resolve_output_path(cls, pattern: Optional[str], context: Mapping[str, Any], export_dir: str = '', output_format: str = 'fbx', version_format: str = '', timestamp: bool = False, name_regex: Optional[str] = None) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.run_config(cls, values: Mapping[str, Any], task_definitions: Mapping[str, Mapping[str, Any]], check_definitions: Mapping[str, Mapping[str, Any]], override_checks: bool = False, ignore_groups_case_sensitive: bool = False, default_export_mode: str = 'visible') -> Dict[str, Any]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.scoped_tables(cls, manager: type) -> type`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.strip_deliverable_extension(name: Optional[str]) -> str`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.task_order(cls, manager: Any) -> List[str]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.texture_file_type_options(cls) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.texture_size_limit_bytes(max_size_mb: Any) -> Optional[int]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.unimplemented(cls, manager: Any) -> Dict[str, List[str]]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.value_method(cls, spec: Mapping[str, Any]) -> str`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.widget_key(cls, name: str, spec: Mapping[str, Any]) -> str`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun(class)`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.baked_reflection_level(cls, value: Any) -> Optional[float]`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.clip_mode(value: Any) -> str`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.create_glb(self) -> bool`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.for_glb(cls, values: Mapping[str, Any]) -> Tuple['ExportRun', List[Tuple[str, str]]]`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.from_tasks(cls, tasks: Optional[Mapping[str, Any]], texture_file_types: Iterable[Any] = ()) -> Tuple['ExportRun', Dict[str, Any], List[Tuple[str, str]]]`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.glb_max_size(self, logger: Any = None) -> int`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.glb_only(self) -> bool`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.glb_texture_params(self, logger: Any = None) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.rendering(self) -> Dict[str, Dict[str, Any]]`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.replace(self, **changes: Any) -> 'ExportRun'`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.usd(self) -> bool`
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.with_tasks(self, tasks: Mapping[str, Any]) -> 'ExportRun'`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportContext(class)`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportContext.note(self, text: str) -> None`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportContext.record(self, spec: Union[RecordSpec, str], store=None, default: Any = None) -> Any`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportContext.refreshes(self, spec: RecordSpec) -> bool`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportSnapshot(class)`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportSnapshot.assemble(cls, producers: Mapping[Union[RecordSpec, str], Producer], ctx: Optional[ExportContext] = None, only: Optional[Iterable[Union[RecordSpec, str]]] = None) -> 'ExportSnapshot'`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportSnapshot.channels(self, scope: Scope = Scope.DELIVERABLE) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportSnapshot.commit(self, store) -> Dict[str, Optional[str]]`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportSnapshot.publish(cls, store, records: Mapping[Union[RecordSpec, str], Any], ctx: Optional[ExportContext] = None) -> 'ExportSnapshot'`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportSnapshot.record(self, spec: Union[RecordSpec, str], default: Any = None) -> Any`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportSnapshot.records(self) -> Dict[str, Record]`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportSnapshot.summary(self) -> str`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaseline(class)`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaseline.adopt(cls, baseline: Iterable[str], shipped: Optional[Iterable[str]]) -> Optional[Set[str]]`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaseline.compare(cls, baseline: Iterable[str], current: Iterable[str], roots: Optional[Sequence[str]] = None) -> Tuple[bool, List[str], List[str], bool]`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaseline.decode(cls, record) -> Set[str]`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaseline.encode(cls, paths: Iterable[str], scene: Optional[str] = None) -> Dict`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaseline.in_scope(cls, paths: Iterable[str], roots: Sequence[str]) -> Set[str]`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaseline.is_record(cls, record) -> bool`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaseline.merge(cls, baseline: Iterable[str], current: Iterable[str], roots: Optional[Sequence[str]] = None) -> Set[str]`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaseline.paths_hash(paths: Iterable[str]) -> str`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaseline.recorded_by(cls, record) -> Optional[str]`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaseline.relevant_roots(cls, baseline: Iterable[str], current: Iterable[str], roots: Optional[Sequence[str]] = None) -> List[str]`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaseline.top_level(cls, paths: Iterable[str]) -> List[str]`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaselineStore(class)`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaselineStore.adopt_sidecar(cls, export_path: str, *, base_stem: bool = False) -> bool`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaselineStore.compare(cls, current_paths: Set[str], roots: Optional[Sequence[str]] = None) -> Tuple[bool, List[str], List[str], bool]`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaselineStore.inherited_from(cls) -> Optional[str]`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaselineStore.is_unreadable(cls) -> bool`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaselineStore.read(cls) -> Set[str]`
+- `core_utils/engines/scene_export/hierarchy_baseline.py::HierarchyBaselineStore.write(cls, current_paths: Set[str], roots: Optional[Sequence[str]] = None) -> bool`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer(class)`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.absolute_paths(payload: Any, ctx: TransferContext, keys: Optional[Tuple[str, ...]] = None) -> Any`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.apply(self, store, ctx: Optional[TransferContext] = None) -> TransferContext`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.arriving_paths(payload: Any, ctx: TransferContext, keys: Optional[Tuple[str, ...]] = None) -> Any`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.between(cls, store, other: Mapping[Any, Mapping[str, Any]]) -> 'RecordTransfer'`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.incoming(self) -> List[Tuple[Scope, str]]`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.is_empty(self) -> bool`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.merge_record(cls, store, spec: RecordSpec, other: Any, ctx: TransferContext, respelled: bool = False) -> Any`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.payloads(self, ctx: Optional[TransferContext] = None) -> Dict[RecordSpec, Any]`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.receive(cls, manifest: Mapping[str, Any], store, ctx: TransferContext, owners: Optional[Mapping[str, Any]] = None) -> TransferContext`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.rederive(self) -> List[RecordSpec]`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.respell(spec: RecordSpec, payload: Any, ctx: TransferContext) -> Any`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.sections(cls, store, ctx: TransferContext, owners: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.summary(self) -> List[str]`
+- `core_utils/engines/scene_export/record_transfer.py::RecordTransfer.union(own: Any, other: Any, spec: RecordSpec, ctx: TransferContext) -> Any`
+- `core_utils/engines/scene_export/record_transfer.py::TransferContext(class)`
+- `core_utils/engines/scene_export/record_transfer.py::TransferContext.adapter(self, name: str, default: Any = None) -> Any`
+- `core_utils/engines/scene_export/record_transfer.py::TransferContext.note(self, text: str) -> None`
+- `core_utils/engines/scene_export/record_transfer.py::TransferContext.respell(self, value: Any) -> Any`
+- `core_utils/engines/scene_export/record_transfer.py::TransferContext.spell(self, name: str) -> str`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase(class)`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.base_stem(cls, export_path: str) -> str`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.build_clean_path_set(paths) -> set`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.build_full_path_set(cls, objects) -> set`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.clean_stale_diff(cls, export_path: str, *, base_stem: bool = False) -> None`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.compare(cls, export_path: str, current_paths: set, *, base_stem: bool = False) -> Tuple[bool, list, list]`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.count_descendants(top_path: str, all_paths) -> int`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.detect_reparenting(missing: list, extra: list) -> list`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.diff_report_path_for(cls, export_path: str, *, base_stem: bool = False) -> str`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.drop_intermediate(nodes) -> list`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.ensure_base_name(cls, export_path: str) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.expand_to_descendants(objects) -> list`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.find_legacy_manifest(cls, export_path: str) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.format_diff_report(cls, missing: list, extra: list, reparented: list = None) -> str`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.get_top_level(paths) -> list`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.manifest_path_for(cls, export_path: str, *, base_stem: bool = False) -> str`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.migrate_legacy(cls, export_path: str, *, base_stem: bool = False) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.read_data(cls, export_path: str, *, base_stem: bool = False) -> Optional[dict]`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.read_manifest(cls, export_path: str, *, base_stem: bool = False) -> Optional[Set[str]]`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.with_ancestors(paths) -> set`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.write_manifest(cls, export_path: str, paths, *, data: Optional[dict] = None, last_diff: Optional[dict] = None, base_stem: bool = False) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase(class)`
+- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.close_file_handlers(self)`
+- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.confirm(self, question: str) -> bool`
+- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.confirm_check_override(self) -> bool`
+- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.generate_log_file_path(self, export_path: str) -> str`
+- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.run_config_from_values(self, values: Dict[str, Any], override_checks: bool = False, ignore_groups_case_sensitive: bool = False) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.setup_file_logging(self, log_file_path: str)`
+- `core_utils/engines/scene_export/scene_records.py::Kind(class)`
+- `core_utils/engines/scene_export/scene_records.py::Merge(class)`
+- `core_utils/engines/scene_export/scene_records.py::Record(class)`
+- `core_utils/engines/scene_export/scene_records.py::Record.key(self) -> str`
+- `core_utils/engines/scene_export/scene_records.py::Record.save(self, store) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_records.py::Record.text(self) -> str`
+- `core_utils/engines/scene_export/scene_records.py::RecordSpec(class)`
+- `core_utils/engines/scene_export/scene_records.py::RecordSpec.clear(self, store) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_records.py::RecordSpec.decode(self, text: Optional[str], default: Any = None) -> Any`
+- `core_utils/engines/scene_export/scene_records.py::RecordSpec.encode(self, payload: Any) -> str`
+- `core_utils/engines/scene_export/scene_records.py::RecordSpec.is_present(self, store) -> bool`
+- `core_utils/engines/scene_export/scene_records.py::RecordSpec.load(self, store, default: Any = None) -> Any`
+- `core_utils/engines/scene_export/scene_records.py::RecordSpec.make(self, payload: Any) -> Record`
+- `core_utils/engines/scene_export/scene_records.py::RecordSpec.path_keys(self) -> Optional[Tuple[str, ...]]`
+- `core_utils/engines/scene_export/scene_records.py::RecordSpec.read_text(self, store) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_records.py::RecordSpec.save(self, store, payload: Any) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_records.py::RecordSpec.write_text(self, store, text: Optional[str]) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords(class)`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.all(cls) -> List[RecordSpec]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.by_key(cls, key: str, scope: Optional[Scope] = None) -> Optional[RecordSpec]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.check_producers(cls, table: Mapping[Any, Any]) -> List[RecordSpec]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.codec(cls, spec: RecordSpec) -> Optional[Any]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.declared_takes(cls, read: Callable[[str], Any]) -> List[Dict[str, Any]]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.deliverable(cls) -> List[RecordSpec]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.describe(cls) -> List[Dict[str, Any]]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.handoff_block(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.map_paths(payload: Any, spell: Callable[[str], str], keys: Optional[Tuple[str, ...]] = None) -> Any`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.ordered(cls, specs: Iterable[RecordSpec]) -> List[RecordSpec]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.portable(cls) -> List[RecordSpec]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.private(cls) -> List[RecordSpec]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.rebase_paths(cls, store, old_base: Optional[str], new_base: Optional[str]) -> int`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.rendering_policy(overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.resolve(cls, item: Union[RecordSpec, str]) -> RecordSpec`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.resolve_class(module: str, name: str) -> Any`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.with_paths(cls) -> List[RecordSpec]`
+- `core_utils/engines/scene_export/scene_records.py::Scope(class)`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase(class)`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.channels(cls, scope: Scope) -> Dict[str, str]`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.discard_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None, source_path_base: Optional[str] = None) -> 'TransferContext'`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.dump(cls, decode: bool = True) -> Dict[str, Dict[str, Any]]`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.flush_owners(cls) -> None`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.format_dump(cls, decode: bool = True) -> str`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.keys(cls, scope: Scope) -> List[str]`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.merge_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None, source_path_base: Optional[str] = None) -> 'TransferContext'`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.merge_plan(cls, carriers: Mapping[Any, Any]) -> 'RecordTransfer'`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.name(cls, scope: Scope) -> str`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.owners(cls) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.project_root(cls) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.project_root_of(scene_path: Optional[str]) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.read(cls, scope: Scope, key: str) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.rebase_paths(cls, old_base: Optional[str], new_base: Optional[str]) -> int`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.receive_sections(cls, manifest: Optional[Mapping[str, Any]], resolve: Optional[Callable[[str], Optional[str]]] = None, source: str = '', **adapters: Any) -> 'TransferContext'`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.scene_path(cls) -> str`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.transfer_sections(cls, spell: Optional[Callable[[str], str]] = None, objects=None) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.values(cls, scope: Scope) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.write(cls, scope: Scope, key: str, text: Optional[str]) -> Optional[str]`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.writer_stamp(cls) -> str`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.written_here(cls, stamp: Optional[str]) -> bool`
+- `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.describe_read_failure(cls, path: str, exc: OSError) -> str`
+- `core_utils/engines/shots/manifest/manifest_model.py::StepStatus.find_object(results: List['StepStatus'], name: str, step_id: Optional[str] = None) -> Optional[ObjectStatus]`
+- `core_utils/engines/shots/manifest/mapping/_mapping.py::Mapping.seed_user_folder(ts: Optional[TemplateSet] = None) -> bool`
+- `core_utils/engines/shots/manifest/range_resolver.py::RangeResolver.all_ranges_complete(steps: List[BuilderStep], user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]]) -> bool`
+- `core_utils/engines/shots/manifest/range_resolver.py::RangeResolver.cascade_from(steps: List[BuilderStep], user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]], step_idx: int) -> List[str]`
+- `core_utils/engines/shots/manifest/range_resolver.py::RangeResolver.find_collisions(resolved: List[Tuple[str, float, Optional[float], bool]]) -> List[Tuple[str, str]]`
+- `core_utils/engines/shots/manifest/range_resolver.py::RangeResolver.gaps_from_regions(regions: Optional[List[Dict]]) -> Tuple[List[float], Dict[float, float]]`
+- `core_utils/engines/shots/manifest/range_resolver.py::RangeResolver.parse_range_edit(start_text: str, end_text: str) -> Optional[Tuple[float, Optional[float]]]`
+- `core_utils/engines/shots/manifest/range_resolver.py::RangeResolver.previous_end(steps: List[BuilderStep], last_resolved: List[Tuple[str, float, Optional[float], bool]], step_idx: int) -> Optional[float]`
+- `core_utils/engines/shots/manifest/range_resolver.py::RangeResolver.step_index(steps: List[BuilderStep], step_id: str) -> int`
+- `core_utils/engines/shots/shot_detection.py::ShotDetection.cluster_spans(spans: Iterable[Any], gap: float = 0.0, inclusive: bool = False, span: Optional[Callable[[Any], Tuple[float, float]]] = None) -> List[List[Any]]`
+- `core_utils/engines/shots/shot_detection.py::TRANSFORM_CHANNELS(constant)`
+- `core_utils/engines/shots/shot_report.py::EPSILON(constant)`
+- `core_utils/engines/shots/shot_report.py::ShotReport(class)`
+- `core_utils/engines/shots/shot_report.py::ShotReport.delta_summary(cls, label: str, deltas: Sequence[Tuple[float, float]]) -> str`
+- `core_utils/engines/shots/shot_report.py::ShotReport.moved(deltas: Iterable[Tuple[float, float]]) -> bool`
+- `core_utils/engines/shots/shot_report.py::ShotReport.summary(cls, shots: Sequence) -> str`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer(class)`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.add_shot_space(self, shot_id: int, frames: float, edge: str = 'leading') -> Tuple[float, float]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.apply_gap(self, gap: float, scope: str = 'all', shot_id: Optional[int] = None, respect_locks: bool = True) -> bool`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.collect_object_segments(self, shot_id: int, **kwargs) -> List[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.collect_shot_sequences(self, shot_id: int, include_audio: bool = True) -> List[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.define_shot(self, name: str, start: float, end: float, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.delete_shot(self, shot_id: int, delete_contents: bool = True, close_gap: bool = True) -> Dict[str, Any]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.detect_next_shot(self, gap_threshold: float = 5.0, ignore: Optional[str] = None, motion_rate: float = 0.001) -> Optional[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.detect_shots(self, **kwargs) -> List[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.expand_shot(self, shot_id: int, new_end: float) -> float`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.extend_shot_to_fit(self, shot_id: int, edge: str = 'both', reach: Optional[float] = None) -> Tuple[float, float]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.fit_shot_to_content(self, shot_id: int, mode: str = 'fit', edge: str = 'both', reach: Optional[float] = None) -> Tuple[float, float]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.from_dict(cls, data: Dict[str, Any]) -> 'ShotSequencer'`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.hidden_objects(self) -> set`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.insert_shot(self, name: str, duration: float, after_shot_id: Optional[int] = None, at_position: Optional[int] = None, gap: Optional[float] = None, objects: Optional[List[str]] = None, description: str = '') -> ShotBlock`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.is_object_hidden(self, obj_name: str) -> bool`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.ledger(self)`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.markers(self) -> List[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.merge_shots(self, shot_ids: List[int], name: Optional[str] = None) -> ShotBlock`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.move_attribute_keys(self, obj: str, attr: Optional[str], delta: float, times: Optional[List[float]] = None, window: Optional[tuple] = None) -> int`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.move_object_in_shot(self, shot_id: int, obj: str, old_start: float, old_end: float, new_start: float) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.move_object_keys(self, obj: str, old_start: float, old_end: float, new_start: float) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.move_sequences_to_shot(self, sequences: List[Dict[str, Any]], dest_shot_id: int) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.move_shot(self, shot_id: int, new_start: float) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.move_shot_to_position(self, shot_id: int, target_pos: int) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.reconcile_system_edits(self, follow: bool = True) -> Dict[str, int]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.resize_object(self, shot_id: int, obj: str, old_start: float, old_end: float, new_start: float, new_end: float) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.resize_shot(self, shot_id: int, new_start: float, new_end: float, _enforce: bool = True) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.resize_shot_bounds(self, shot_id: int, new_start: float, new_end: float, _enforce: bool = True, clamp: bool = True) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.respace(self, gap: float = 0, start_frame: float = 1, respect_locks: bool = True) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.ripple_downstream(self, shot_id: int, after_frame: float, delta: float, carry_gap: bool = True) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.ripple_upstream(self, shot_id: int, before_frame: float, delta: float, carry_gap: bool = True) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.scale_object_keys(self, obj: str, old_start: float, old_end: float, new_start: float, new_end: float) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.scale_shot_keys(self, old_start: float, old_end: float, new_start: float, new_end: float) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.sequence_separation(self) -> float`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.set_object_hidden(self, obj_name: str, hidden: bool = True) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.set_shot_duration(self, shot_id: int, new_duration: float) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.set_shot_start(self, shot_id: int, new_start: float, ripple: bool = True) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.shot_by_id(self, shot_id: int) -> Optional[ShotBlock]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.shot_by_name(self, name: str) -> Optional[ShotBlock]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.shots(self) -> List[ShotBlock]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.slide_shot(self, shot_id: int, new_start: float, direction: str = 'downstream', _enforce: bool = True) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.sorted_shots(self) -> List[ShotBlock]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.split_shot(self, shot_id: int, at_frame: float, name: Optional[str] = None, gap: float = 0.0) -> ShotBlock`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.trim_shot_to_content(self, shot_id: int, edge: str = 'both') -> Tuple[float, float]`
+- `core_utils/handoff/app_handoff.py::AppSpec(class)`
+- `core_utils/handoff/app_handoff.py::AppSpec.available(self) -> bool`
+- `core_utils/handoff/app_handoff.py::AppSpec.not_found_message(self) -> str`
+- `core_utils/handoff/app_handoff.py::AppSpec.path(self) -> Optional[str]`
+- `core_utils/handoff/app_handoff.py::AppSpec.refresh(self) -> Optional[str]`
+- `core_utils/handoff/app_handoff.py::AppSpec.resolve(self) -> Optional[str]`
+- `core_utils/handoff/app_handoff.py::CARRIER_BY_EXTENSION(constant)`
+- `core_utils/handoff/app_handoff.py::CARRIER_EXTENSIONS(constant)`
+- `core_utils/handoff/app_handoff.py::CARRIER_PARAM(constant)`
+- `core_utils/handoff/app_handoff.py::Deliverer(class)`
+- `core_utils/handoff/app_handoff.py::Deliverer.deliver(self, bridge: 'HandoffBridge', payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
+- `core_utils/handoff/app_handoff.py::Deliverer.preflight(self, bridge: 'HandoffBridge', request: HandoffRequest) -> bool`
+- `core_utils/handoff/app_handoff.py::HandoffBridge(class)`
+- `core_utils/handoff/app_handoff.py::HandoffBridge.app_path(self) -> Optional[str]`
+- `core_utils/handoff/app_handoff.py::HandoffBridge.carrier(self, request: HandoffRequest) -> str`
+- `core_utils/handoff/app_handoff.py::HandoffBridge.carrier_of(path: str) -> str`
+- `core_utils/handoff/app_handoff.py::HandoffBridge.child_sys_path(entries: Optional[Sequence[str]] = None) -> List[str]`
+- `core_utils/handoff/app_handoff.py::HandoffBridge.headless_app_path(self) -> Optional[str]`
+- `core_utils/handoff/app_handoff.py::HandoffBridge.import_roots(*packages: str) -> List[str]`
+- `core_utils/handoff/app_handoff.py::HandoffBridge.merge_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]`
+- `core_utils/handoff/app_handoff.py::HandoffBridge.params_defaults(self) -> Dict[str, Any]`
+- `core_utils/handoff/app_handoff.py::HandoffBridge.payload_extension(self, request: HandoffRequest) -> str`
+- `core_utils/handoff/app_handoff.py::HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]`
+- `core_utils/handoff/app_handoff.py::HandoffRequest(class)`
+- `core_utils/handoff/app_handoff.py::HandoffRequest.get(self, key: str, default: Any = None) -> Any`
+- `core_utils/handoff/app_handoff.py::Payload(class)`
+- `core_utils/handoff/app_handoff.py::RIG_MODES(constant)`
+- `core_utils/handoff/app_handoff.py::RIG_MODE_PARAM(constant)`
+- `core_utils/handoff/app_handoff.py::ROUND_TRIP(constant)`
+- `core_utils/handoff/app_handoff.py::SAVE_AS(constant)`
+- `core_utils/handoff/app_handoff.py::SEND_TO(constant)`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchBridge(class)`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchBridge.list_template_modes(self) -> List[Tuple[str, str]]`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchBridge.list_templates(self) -> List[Path]`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchBridge.modes(self) -> Tuple[str, ...]`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchBridge.render_template(self, template: str, payload_path: str, params: Dict[str, Any]) -> Optional[str]`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchBridge.resolve_save_path(cls, out_path: str) -> str`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchDeliverer(class)`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]`
+- `core_utils/handoff/app_handoff.py::ScriptLaunchSpec(class)`
+- `core_utils/handoff/app_handoff.py::ScriptRoundTripDeliverer(class)`
+- `core_utils/handoff/app_handoff.py::ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
+- `core_utils/handoff/app_handoff.py::ScriptRunDeliverer(class)`
+- `core_utils/handoff/app_handoff.py::ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
+- `core_utils/handoff/app_handoff.py::ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)`
+- `core_utils/handoff/handoff_scope.py::HandoffScope(class)`
+- `core_utils/handoff/handoff_scope.py::HandoffScope.resolve(cls, scope: Any, *, selected: Lookup, **widening: Union[Lookup, Sequence[Lookup]]) -> Optional[List[Any]]`
+- `core_utils/handoff/handoff_scope.py::HandoffScope.word(cls, scope: Any) -> str`
+- `core_utils/handoff/manifest.py::HandoffManifest(class)`
+- `core_utils/handoff/manifest.py::HandoffManifest.build(cls, **sections: Any) -> 'HandoffManifest'`
+- `core_utils/handoff/manifest.py::HandoffManifest.carries(self, section: str) -> bool`
+- `core_utils/handoff/manifest.py::HandoffManifest.data(self) -> Dict[str, Any]`
+- `core_utils/handoff/manifest.py::HandoffManifest.format(self) -> Any`
+- `core_utils/handoff/manifest.py::HandoffManifest.path(self) -> Optional[str]`
+- `core_utils/handoff/manifest.py::HandoffManifest.path_for(cls, payload_path: str) -> str`
+- `core_utils/handoff/manifest.py::HandoffManifest.payload_path(self) -> Optional[str]`
+- `core_utils/handoff/manifest.py::HandoffManifest.plan(self, *, on_error: Optional[OnError] = None, cancel_prefix: Optional[str] = None) -> ManifestPlan`
+- `core_utils/handoff/manifest.py::HandoffManifest.read(cls, payload_path: str) -> 'HandoffManifest'`
+- `core_utils/handoff/manifest.py::HandoffManifest.unreadable(self) -> bool`
+- `core_utils/handoff/manifest.py::HandoffManifest.version(self) -> Any`
+- `core_utils/handoff/manifest.py::HandoffManifest.write(self, path: Optional[str] = None, *, indent: Optional[int] = 1) -> str`
+- `core_utils/handoff/manifest_plan.py::ManifestPlan(class)`
+- `core_utils/handoff/manifest_plan.py::ManifestPlan.add(self, section: Optional[str], label: str, apply: Apply, *, when: bool = True, best_effort: bool = False) -> 'ManifestPlan'`
+- `core_utils/handoff/manifest_plan.py::ManifestPlan.labels(self) -> List[str]`
+- `core_utils/handoff/manifest_plan.py::ManifestPlan.run(self, *, progress: Optional[Progress] = None, done_label: Optional[str] = None) -> List[Any]`
+- `core_utils/handoff/script_run.py::CREATED(constant)`
+- `core_utils/handoff/script_run.py::ProgressRelay(class)`
+- `core_utils/handoff/script_run.py::ProgressRelay.line(cls, step: int, steps: int, text: str = '') -> str`
+- `core_utils/handoff/script_run.py::ProgressRelay.parse(cls, line: Optional[str]) -> Optional[Tuple[int, int, str]]`
+- `core_utils/handoff/script_run.py::ProgressRelay.reader(self, stage: int, label: str = '') -> Callable[[Optional[str]], bool]`
+- `core_utils/handoff/script_run.py::ProgressRelay.report(self, stage: int, step: float, steps: float, text: Optional[str] = None) -> bool`
+- `core_utils/handoff/script_run.py::ProgressRelay.tick(self) -> bool`
+- `core_utils/handoff/script_run.py::ProgressRelay.value(self) -> int`
+- `core_utils/handoff/script_run.py::REWRITTEN(constant)`
+- `core_utils/handoff/script_run.py::ScriptRunResult(class)`
+- `core_utils/handoff/script_run.py::ScriptRunner(class)`
+- `core_utils/handoff/script_run.py::ScriptRunner.run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None, expect: str = CREATED, on_output: Optional[Callable[[Optional[str]], Optional[bool]]] = None) -> ScriptRunResult`
+- `core_utils/handoff/script_template.py::ROUND_TRIP(constant)`
+- `core_utils/handoff/script_template.py::SAVE_AS(constant)`
+- `core_utils/handoff/script_template.py::SEND_TO(constant)`
+- `core_utils/handoff/script_template.py::ScriptTemplate(class)`
+- `core_utils/handoff/script_template.py::ScriptTemplate.declared_modes(template_path, field: str = 'BRIDGE_MODES') -> Optional[Tuple[str, ...]]`
+- `core_utils/handoff/script_template.py::ScriptTemplate.declared_values(template_path, field: str) -> Optional[Tuple[str, ...]]`
+- `core_utils/handoff/script_template.py::ScriptTemplate.list_template_modes(template_dir, extension: str = '.py', allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> List[Tuple[str, str]]`
+- `core_utils/handoff/script_template.py::ScriptTemplate.list_templates(template_dir, extension: str = '.py') -> List[Path]`
+- `core_utils/handoff/script_template.py::ScriptTemplate.normalize_modes(modes: Optional[Sequence[str]]) -> Tuple[str, ...]`
+- `core_utils/handoff/script_template.py::ScriptTemplate.render_template(template_path, context: Dict[str, str]) -> str`
+- `core_utils/handoff/script_template.py::ScriptTemplate.template_modes(template_path, allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> Tuple[str, ...]`
+- `core_utils/hierarchy_utils/hierarchy_analyzer.py::HierarchyAnalyzer.detect_fuzzy_renames(missing: List[str], extra: List[str], score_threshold: float = 0.7, path_separator: str = '|') -> Tuple[List[Dict[str, Any]], List[str], List[str]]`
+- `core_utils/hierarchy_utils/hierarchy_analyzer.py::HierarchyAnalyzer.detect_reparented(missing: List[str], extra: List[str], compatible: Optional[Callable[[str, str], bool]] = None, path_separator: str = '|') -> Tuple[List[Dict[str, str]], List[str], List[str]]`
+- `core_utils/hierarchy_utils/hierarchy_analyzer.py::HierarchyAnalyzer.detect_suffix_flattening(missing: List[str], extra: List[str], path_separator: str = '|') -> Tuple[List[Dict[str, Any]], List[str], List[str]]`
+- `core_utils/logging_mixin/_logging_mixin.py::LoggingMixin(class)`
+- `core_utils/logging_mixin/_logging_mixin.py::LoggingMixin.class_logger(cls) -> internal_logging.Logger`
+- `core_utils/logging_mixin/_logging_mixin.py::LoggingMixin.clear_log_buffer(cls) -> None`
+- `core_utils/logging_mixin/_logging_mixin.py::LoggingMixin.disable_log_buffer(cls) -> None`
+- `core_utils/logging_mixin/_logging_mixin.py::LoggingMixin.dump_log(cls, target: Union[str, object, None] = None, mode: str = 'w', encoding: str = 'utf-8') -> str`
+- `core_utils/logging_mixin/_logging_mixin.py::LoggingMixin.enable_log_buffer(cls, capacity: int = 2000, level: Union[int, str] = internal_logging.NOTSET) -> None`
+- `core_utils/logging_mixin/_logging_mixin.py::LoggingMixin.logger(cls) -> internal_logging.Logger`
+- `core_utils/logging_mixin/_logging_mixin.py::LoggingMixin.logging(cls)`
+- `core_utils/logging_mixin/_logging_mixin.py::LoggingMixin.set_log_file(cls, filename: Optional[str], level: Union[int, str] = internal_logging.NOTSET) -> None`
+- `core_utils/logging_mixin/_logging_mixin.py::LoggingMixin.set_log_level(cls, level: int | str)`
+- `core_utils/logging_mixin/_logging_mixin.py::LoggingMixin.use_logger(self, logger: Optional[internal_logging.Logger]) -> None`
+- `core_utils/logging_mixin/_text_layout.py::TextLayout(class)`
+- `core_utils/logging_mixin/_text_layout.py::TextLayout.box(self, title: str, items: Optional[List[str]], max_width: int, align: str = 'left') -> Tuple[List[str], int]`
+- `core_utils/logging_mixin/_text_layout.py::TextLayout.char_width(self, ch: str) -> int`
+- `core_utils/logging_mixin/_text_layout.py::TextLayout.display_width(self, text: str) -> int`
+- `core_utils/logging_mixin/_text_layout.py::TextLayout.pad(self, text: str, target_width: int, fill: str = ' ', align: str = 'left') -> str`
+- `core_utils/logging_mixin/_text_layout.py::TextLayout.split_lines(values: List[Any]) -> List[str]`
+- `core_utils/logging_mixin/_text_layout.py::TextLayout.strip_html(cls, text: str) -> str`
+- `core_utils/logging_mixin/_text_layout.py::TextLayout.table(self, data: List[List[Any]], headers: List[str], title: Optional[str], col_max_width: int, max_width: int, wrap: bool, markup: bool) -> str`
+- `core_utils/logging_mixin/_text_layout.py::TextLayout.truncate(self, text: str, max_display_width: int, ellipsis: str = '…') -> str`
+- `core_utils/logging_mixin/_text_layout.py::TextLayout.wrap_text(self, text: str, max_display_width: int) -> List[str]`
+- `core_utils/logging_mixin/logger_ext.py::DefaultTextLogHandler(class)`
+- `core_utils/logging_mixin/logger_ext.py::DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
+- `core_utils/logging_mixin/logger_ext.py::DefaultTextLogHandler.get_color(self, level: str) -> str`
+- `core_utils/logging_mixin/logger_ext.py::LevelAwareFormatter(class)`
+- `core_utils/logging_mixin/logger_ext.py::LevelAwareFormatter.format(self, record)`
+- `core_utils/logging_mixin/logger_ext.py::LoggerExt(class)`
+- `core_utils/logging_mixin/logger_ext.py::LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str`
+- `core_utils/logging_mixin/logger_ext.py::LoggerExt.get_color(cls, level: str) -> str`
+- `core_utils/logging_mixin/logger_ext.py::LoggerExt.get_html_preset(cls, name: str) -> str`
+- `core_utils/logging_mixin/logger_ext.py::LoggerExt.patch(cls, logger: internal_logging.Logger) -> None`
+- `core_utils/logging_mixin/logger_ext.py::LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None`
+- `core_utils/logging_mixin/logger_ext.py::LoggerExt.set_default_text_handler(handler: Union[type, object, None]) -> None`
+- `core_utils/logging_mixin/logger_ext.py::LoggerExt.strip_html(cls, text: str) -> str`
+- `core_utils/logging_mixin/logger_ext.py::RingBufferHandler(class)`
+- `core_utils/logging_mixin/logger_ext.py::RingBufferHandler.clear(self) -> None`
+- `core_utils/logging_mixin/logger_ext.py::RingBufferHandler.emit(self, record: internal_logging.LogRecord) -> None`
+- `core_utils/logging_mixin/logger_ext.py::RingBufferHandler.format_records(self, formatter: internal_logging.Formatter = None) -> str`
+- `core_utils/logging_mixin/logger_ext.py::StripHtmlFormatter(class)`
+- `core_utils/logging_mixin/logger_ext.py::StripHtmlFormatter.format(self, record)`
+- `core_utils/logging_mixin/table_mixin.py::TableMixin(class)`
+- `core_utils/logging_mixin/table_mixin.py::TableMixin.format_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160, wrap: bool = False, markup: bool = True) -> str`
+- `core_utils/logging_mixin/table_mixin.py::TableMixin.log_group(self, title: str, items: List[str], level: str = 'info') -> None`
+- `core_utils/logging_mixin/table_mixin.py::TableMixin.log_table(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, level: str = 'info') -> None`
+- `core_utils/module_resolver.py::lazy_exports(module_globals: MutableMapping[str, Any], sources: IncludeMapping) -> None`
+- `core_utils/naming_convention.py::AffixRule.matches(self, name: str, *, case_sensitive: bool = False, default: str = 'suffix') -> bool`
+- `core_utils/naming_convention.py::NamingConvention.as_dict(cls) -> Dict[str, Dict[str, str]]`
+- `core_utils/naming_convention.py::NamingConvention.matches(cls, name: str, key: str, *, case_sensitive: bool = False, default: str = 'suffix') -> bool`
+- `core_utils/naming_convention.py::NamingConvention.preset_store() -> PresetStore`
+- `core_utils/presets/library.py::AUTO_BACKUP_KEEP(constant)`
+- `core_utils/presets/library.py::BACKUPS_DIR(constant)`
+- `core_utils/presets/library.py::BUNDLE_FORMAT(constant)`
+- `core_utils/presets/library.py::BUNDLE_HEADER(constant)`
+- `core_utils/presets/library.py::BUNDLE_ROOT(constant)`
+- `core_utils/presets/library.py::COLLECTIONS_DIR(constant)`
+- `core_utils/presets/library.py::ImportItem(class)`
+- `core_utils/presets/library.py::ImportItem.choices(self) -> Tuple[str, ...]`
+- `core_utils/presets/library.py::ImportItem.label(self) -> str`
+- `core_utils/presets/library.py::ImportPlan(class)`
+- `core_utils/presets/library.py::ImportPlan.counts(self) -> Dict[str, int]`
+- `core_utils/presets/library.py::ImportPlan.kind(self) -> str`
+- `core_utils/presets/library.py::ImportPlan.pending(self) -> List[ImportItem]`
+- `core_utils/presets/library.py::ImportResult(class)`
+- `core_utils/presets/library.py::PresetDomain(class)`
+- `core_utils/presets/library.py::PresetDomain.package(self) -> str`
+- `core_utils/presets/library.py::PresetDomain.store(self) -> PresetStore`
+- `core_utils/presets/library.py::PresetEntry(class)`
+- `core_utils/presets/library.py::PresetEntry.collection(self) -> Optional[str]`
+- `core_utils/presets/library.py::PresetEntry.id(self) -> Optional[str]`
+- `core_utils/presets/library.py::PresetEntry.label(self) -> str`
+- `core_utils/presets/library.py::PresetEntry.modified(self) -> Optional[float]`
+- `core_utils/presets/library.py::PresetEntry.read_only(self) -> bool`
+- `core_utils/presets/library.py::PresetEntry.tags(self) -> Tuple[str, ...]`
+- `core_utils/presets/library.py::PresetLibrary(class)`
+- `core_utils/presets/library.py::PresetLibrary.apply(self, plan: ImportPlan, *, backup: bool = True) -> ImportResult`
+- `core_utils/presets/library.py::PresetLibrary.assign(self, entries: Iterable[PresetEntry], collection: Optional[str]) -> int`
+- `core_utils/presets/library.py::PresetLibrary.backup(self, path: Optional[Union[str, os.PathLike]] = None, *, reason: str = 'manual') -> Optional[Path]`
+- `core_utils/presets/library.py::PresetLibrary.backups(self) -> List[Path]`
+- `core_utils/presets/library.py::PresetLibrary.clean_up(self) -> Dict[str, int]`
+- `core_utils/presets/library.py::PresetLibrary.collection(self, collection_id: str) -> Optional[Dict[str, Any]]`
+- `core_utils/presets/library.py::PresetLibrary.collection_named(self, name: str, exclude: Optional[str] = None) -> Optional[Dict[str, Any]]`
+- `core_utils/presets/library.py::PresetLibrary.collections(self) -> List[Dict[str, Any]]`
+- `core_utils/presets/library.py::PresetLibrary.create_collection(self, name: str, description: str = '') -> Dict[str, Any]`
+- `core_utils/presets/library.py::PresetLibrary.delete(self, entries: Iterable[PresetEntry], *, force: bool = False) -> int`
+- `core_utils/presets/library.py::PresetLibrary.delete_collection(self, collection_id: str, *, delete_members: bool = False) -> Dict[str, int]`
+- `core_utils/presets/library.py::PresetLibrary.domain(self, key: str) -> PresetDomain`
+- `core_utils/presets/library.py::PresetLibrary.domains(self, inc: Optional[Patterns] = None, exc: Optional[Patterns] = None) -> List[PresetDomain]`
+- `core_utils/presets/library.py::PresetLibrary.duplicate(self, entry: PresetEntry, name: Optional[str] = None) -> PresetEntry`
+- `core_utils/presets/library.py::PresetLibrary.entries(self, key: Optional[str] = None, *, builtin: bool = True, collection: Optional[str] = None, inc: Optional[Patterns] = None, exc: Optional[Patterns] = None) -> List[PresetEntry]`
+- `core_utils/presets/library.py::PresetLibrary.entry(self, key: str, name: str) -> Optional[PresetEntry]`
+- `core_utils/presets/library.py::PresetLibrary.export(self, path: Union[str, os.PathLike], *, collection: Optional[str] = None, keys: Optional[Iterable[str]] = None, name: Optional[str] = None) -> Path`
+- `core_utils/presets/library.py::PresetLibrary.find(self, preset_id: str) -> Optional[PresetEntry]`
+- `core_utils/presets/library.py::PresetLibrary.hash_bytes(data: bytes) -> str`
+- `core_utils/presets/library.py::PresetLibrary.in_scope(keys: Iterable[str], inc: Optional[Patterns] = None, exc: Optional[Patterns] = None) -> List[str]`
+- `core_utils/presets/library.py::PresetLibrary.is_modified(self, entry: PresetEntry) -> bool`
+- `core_utils/presets/library.py::PresetLibrary.members(self, collection_id: str) -> List[PresetEntry]`
+- `core_utils/presets/library.py::PresetLibrary.plan_import(self, path: Union[str, os.PathLike]) -> ImportPlan`
+- `core_utils/presets/library.py::PresetLibrary.read_header(path: Union[str, os.PathLike]) -> Dict[str, Any]`
+- `core_utils/presets/library.py::PresetLibrary.rename(self, entry: PresetEntry, new_name: str) -> bool`
+- `core_utils/presets/library.py::PresetLibrary.root(self) -> Path`
+- `core_utils/presets/library.py::PresetLibrary.set_read_only(self, entries: Iterable[PresetEntry], flag: bool = True) -> int`
+- `core_utils/presets/library.py::PresetLibrary.set_tags(self, entries: Iterable[PresetEntry], tags: Iterable[str]) -> int`
+- `core_utils/presets/library.py::PresetLibrary.update_collection(self, collection_id: str, **fields: Any) -> Dict[str, Any]`
+- `core_utils/presets/store.py::ACTIVE_SENTINEL(constant)`
+- `core_utils/presets/store.py::Codec(class)`
+- `core_utils/presets/store.py::DOMAIN_MARKER(constant)`
+- `core_utils/presets/store.py::INFO_EXT(constant)`
+- `core_utils/presets/store.py::JSON_CODEC(constant)`
+- `core_utils/presets/store.py::PresetReadOnlyError(class)`
+- `core_utils/presets/store.py::PresetStore(class)`
+- `core_utils/presets/store.py::PresetStore.active(self) -> Optional[str]`
+- `core_utils/presets/store.py::PresetStore.builtin_dir(self) -> Optional[Path]`
+- `core_utils/presets/store.py::PresetStore.delete(self, name: str, *, force: bool = False) -> bool`
+- `core_utils/presets/store.py::PresetStore.ensure_info(self, name: str) -> Dict[str, Any]`
+- `core_utils/presets/store.py::PresetStore.exists(self, name: str) -> bool`
+- `core_utils/presets/store.py::PresetStore.ext(self) -> str`
+- `core_utils/presets/store.py::PresetStore.info(self, name: str) -> Dict[str, Any]`
+- `core_utils/presets/store.py::PresetStore.info_path(self, name: str) -> Path`
+- `core_utils/presets/store.py::PresetStore.is_read_only(self, name: str) -> bool`
+- `core_utils/presets/store.py::PresetStore.key(self) -> Optional[str]`
+- `core_utils/presets/store.py::PresetStore.list(self, tier: Optional[str] = None) -> List[str]`
+- `core_utils/presets/store.py::PresetStore.load(self, name: str) -> dict`
+- `core_utils/presets/store.py::PresetStore.path(self, name: str, tier: str = 'user') -> Path`
+- `core_utils/presets/store.py::PresetStore.rename(self, old: str, new: str, *, force: bool = False) -> bool`
+- `core_utils/presets/store.py::PresetStore.resolve_builtin_spec(spec: Optional[Dict[str, str]]) -> Optional[Path]`
+- `core_utils/presets/store.py::PresetStore.sanitize_preset_name(name: str) -> str`
+- `core_utils/presets/store.py::PresetStore.save(self, name: str, data: dict, *, force: bool = False) -> Path`
+- `core_utils/presets/store.py::PresetStore.set_info(self, name: str, **fields: Any) -> Dict[str, Any]`
+- `core_utils/presets/store.py::PresetStore.source(self, name: str) -> Optional[str]`
+- `core_utils/presets/store.py::PresetStore.unique_name(self, base: str) -> str`
+- `core_utils/presets/store.py::PresetStore.user_dir(self) -> Path`
+- `core_utils/presets/store.py::PresetStore.write_info(self, name: str, info: Dict[str, Any]) -> None`
+- `core_utils/test_sandbox.py::TestSandbox.user_config(cls) -> Iterator[str]`
+- `core_utils/user_config.py::UserConfig.xdg_home(kind: str = 'config') -> str`
+- `core_utils/x11.py::X11(class)`
+- `core_utils/x11.py::X11.active_window_pid(cls) -> Optional[int]`
+- `core_utils/x11.py::X11.available(cls) -> bool`
+- `core_utils/x11.py::X11.has_compositor(cls) -> Optional[bool]`
+- `core_utils/x11.py::X11.key_down(cls, keysym: int) -> Optional[bool]`
+- `core_utils/x11.py::X11.pointer(cls) -> Optional[Tuple[int, int]]`
+- `core_utils/x11.py::X11.window_titles(cls, pids: Iterable[int]) -> Optional[List[str]]`
+- `file_utils/_file_utils.py::FileUtils.canonical_module_path(filepath)`
+- `file_utils/_file_utils.py::FileUtils.replace_file(src: str, dst: str) -> None`
+- `file_utils/mesh_convert/_fbx2gltf.py::FBX2GLTF_PLATFORMS(constant)`
+- `file_utils/mesh_convert/_fbx2gltf.py::FBX2GLTF_VERSION(constant)`
+- `file_utils/mesh_convert/glb/clips.py::GlbClips(class)`
+- `file_utils/mesh_convert/glb/clips.py::GlbClips.rebuild(cls, edit: Any, takes: Sequence[Dict[str, Any]], fps: float, source_zero: float = 0.0, *, cut_shots: bool = True, keep_sequence: bool = True) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit(class)`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.accessor_elements(cls, edit: 'GlbEdit', index: int) -> Optional[List[bytes]]`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.alpha_extrema(self, img_idx: int) -> Optional[Tuple[int, int]]`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.append_bin_views(edit: 'GlbEdit', payloads: Sequence[bytes]) -> List[int]`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.base_color_image(self, mat: dict) -> Optional[int]`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.bin_data(self) -> Optional[memoryview]`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.bin_view(gltf: Dict[str, Any], accessor: Dict[str, Any]) -> Optional[dict]`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.buffer_views(self) -> list`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.channel_extrema(self, img_idx: int, channel: str = 'A') -> Optional[Tuple[int, int]]`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.compact_bin(edit: 'GlbEdit') -> int`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.drop_orphaned_accessors(cls, edit: 'GlbEdit', candidates: Set[int]) -> int`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.image_bytes(self, img_entry: dict) -> Optional[bytes]`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.image_digests(self) -> Dict[str, int]`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.image_for_texture(self, texture_index: Any) -> Optional[int]`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.image_label(self, img_idx: int) -> str`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.images(self) -> list`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.map_accessor_refs(cls, gltf: Dict[str, Any], visit) -> None`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.materials(self) -> list`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.open(cls, glb: GlbTarget)`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.read(cls, glb_path: str) -> 'GlbEdit'`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.referenced_accessors(cls, gltf: Dict[str, Any]) -> set`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.release_animation_payload(cls, edit: 'GlbEdit', animations: Union[Dict[str, Any], Sequence[Dict[str, Any]]]) -> int`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.relocate_embedded_images(cls, edit: 'GlbEdit') -> int`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.replace_rest(self, new_bin: bytes) -> None`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.rest(self) -> bytes`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.texture_for_image(self, image_index: int) -> int`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.textures(self) -> list`
+- `file_utils/mesh_convert/glb/edit.py::GlbEdit.write(edit: 'GlbEdit') -> None`
+- `file_utils/mesh_convert/glb/fades.py::CHANNELS(constant)`
+- `file_utils/mesh_convert/glb/fades.py::DEFAULT_COLOR(constant)`
+- `file_utils/mesh_convert/glb/fades.py::EXTENSION(constant)`
+- `file_utils/mesh_convert/glb/fades.py::GlbFades(class)`
+- `file_utils/mesh_convert/glb/fades.py::GlbFades.apply(cls, edit: Any, fades: Dict[str, Sequence[Sequence[float]]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/glb/fades.py::GlbFades.apply_channels(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Any]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/glb/fades.py::POINTER(constant)`
+- `file_utils/mesh_convert/glb/fades.py::PointerChannel(class)`
+- `file_utils/mesh_convert/glb/fades.py::PointerChannel.accessor_type(self) -> str`
+- `file_utils/mesh_convert/glb/fades.py::PointerChannel.base(self, gltf: Dict[str, Any], index: int) -> List[float]`
+- `file_utils/mesh_convert/glb/fades.py::PointerChannel.color_key(self) -> Optional[str]`
+- `file_utils/mesh_convert/glb/fades.py::PointerChannel.components(self) -> int`
+- `file_utils/mesh_convert/glb/key_reduction.py::GlbKeyReduction(class)`
+- `file_utils/mesh_convert/glb/key_reduction.py::GlbKeyReduction.deviation(cls, reference: Sampler, candidate: Sampler, quaternion: bool = False) -> float`
+- `file_utils/mesh_convert/glb/key_reduction.py::GlbKeyReduction.evaluate(times: Sequence[float], values: Sequence[Sequence[float]], at: float, interpolation: str = 'LINEAR', quaternion: bool = False) -> Tuple[float, ...]`
+- `file_utils/mesh_convert/glb/key_reduction.py::GlbKeyReduction.read_sampler(gltf: Dict[str, Any], blob: Optional[bytes], sampler: Dict[str, Any]) -> Optional[Sampler]`
+- `file_utils/mesh_convert/glb/key_reduction.py::GlbKeyReduction.reduce(cls, glb: Any, tolerance: float, rotation_tolerance: Optional[float] = None) -> Dict[str, int]`
+- `file_utils/mesh_convert/glb/pipeline.py::GlbPipeline(class)`
+- `file_utils/mesh_convert/glb/pipeline.py::GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/glb/pipeline.py::GlbPipeline.envelope(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Dict[str, Dict[str, Any]]] = None, logger: Any = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader(class)`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.accessor(self, index: int) -> Optional[List[Tuple[float, ...]]]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.animation(self, key: Union[int, str]) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.animations(self) -> List[str]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.channel_table(self, key: Union[int, str]) -> List[Dict[str, Any]]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.clip_spans(self, fps: float = 30.0) -> Dict[str, Tuple[float, float, int]]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.counts(self) -> Dict[str, int]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.extensions(self) -> Tuple[List[str], List[str]]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.image_mimes(self) -> Dict[str, int]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.load(cls, path: str) -> 'GlbReader'`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.local_matrix(self, index: int, time: Optional[float] = None, animation: Union[int, str, None] = None) -> List[List[float]]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.motion_span(self, key: Union[int, str], tolerance: float = 0.001) -> Optional[Tuple[float, float]]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.nan_findings(self, huge: float = 10000000.0, deep: bool = False) -> List[str]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.node_index(self, name: str) -> Optional[int]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.parent_of(self, index: int) -> Optional[int]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.sample(self, key: Union[int, str], node: Union[int, str], path: str, time: float) -> Optional[Tuple[float, ...]]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.skins_summary(self) -> Dict[str, int]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.walk(self) -> Iterator[Tuple[int, Optional[str]]]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.world_matrix(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[List[List[float]]]`
+- `file_utils/mesh_convert/glb/reader.py::GlbReader.world_position(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[Tuple[float, float, float]]`
+- `file_utils/mesh_convert/glb/tangents.py::GlbTangents(class)`
+- `file_utils/mesh_convert/glb/tangents.py::GlbTangents.repair(cls, glb: GlbTarget) -> Dict[str, int]`
+- `file_utils/tiled_path.py::TiledPath(class)`
+- `file_utils/tiled_path.py::TiledPath.has_token(cls, path: Optional[str]) -> bool`
+- `file_utils/tiled_path.py::TiledPath.is_frame_sequence(cls, path: Optional[str]) -> bool`
+- `file_utils/tiled_path.py::TiledPath.representative(cls, path: Optional[str]) -> Optional[str]`
+- `file_utils/tiled_path.py::TiledPath.scheme(cls, spelling: Optional[str]) -> Optional[str]`
+- `file_utils/tiled_path.py::TiledPath.spell(cls, path: Optional[str], tile: int = 1001) -> str`
+- `file_utils/tiled_path.py::TiledPath.tile_token_pattern(cls) -> str`
+- `file_utils/tiled_path.py::TiledPath.tiles(cls, path: Optional[str]) -> List[str]`
+- `file_utils/tiled_path.py::TiledPath.wildcard(cls, path: Optional[str], wildcard: Optional[str] = '*') -> str`
+- `file_utils/uv_unwrap.py::BFF_DOWNLOAD_URL(constant)`
+- `file_utils/uv_unwrap.py::BFF_PLATFORMS(constant)`
+- `file_utils/uv_unwrap.py::BFF_SHA256(constant)`
+- `file_utils/uv_unwrap.py::BFF_URL(constant)`
+- `file_utils/uv_unwrap.py::BFF_VERSION(constant)`
+- `file_utils/uv_unwrap.py::DEFAULT_TIMEOUT(constant)`
+- `file_utils/uv_unwrap.py::ENGINES(constant)`
+- `file_utils/uv_unwrap.py::EngineSpec(class)`
+- `file_utils/uv_unwrap.py::MOF_DOWNLOAD_URL(constant)`
+- `file_utils/uv_unwrap.py::MOF_EXE(constant)`
+- `file_utils/uv_unwrap.py::UvUnwrap(class)`
+- `file_utils/uv_unwrap.py::UvUnwrap.available_engines(cls) -> Dict[str, Optional[str]]`
+- `file_utils/uv_unwrap.py::UvUnwrap.hard_surface(cls, obj_in: str, obj_out: Optional[str] = None, **kwargs) -> str`
+- `file_utils/uv_unwrap.py::UvUnwrap.organic(cls, obj_in: str, obj_out: Optional[str] = None, **kwargs) -> str`
+- `file_utils/uv_unwrap.py::UvUnwrap.resolve_engine(cls, engine: str, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]`
+- `file_utils/uv_unwrap.py::UvUnwrap.resolve_method(cls, method: str) -> str`
+- `file_utils/uv_unwrap.py::UvUnwrap.unwrap(cls, obj_in: str, obj_out: Optional[str] = None, *, engine: str = 'mof', overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = DEFAULT_TIMEOUT, **params) -> str`
+- `file_utils/workspace.py::WorkspaceTemplates.rules_from(data: Dict[str, Any]) -> Dict[str, str]`
+- `geo_utils/uv/budget.py::BudgetItem(class)`
+- `geo_utils/uv/budget.py::BudgetItem.demand(self, tpu: float, pad: float) -> float`
+- `geo_utils/uv/budget.py::BudgetPage(class)`
+- `geo_utils/uv/budget.py::BudgetPage.fill(self) -> float`
+- `geo_utils/uv/budget.py::BudgetPlan(class)`
+- `geo_utils/uv/budget.py::BudgetPlan.density_ratio(self) -> Optional[float]`
+- `geo_utils/uv/budget.py::BudgetPlan.rows(self) -> List[BudgetRow]`
+- `geo_utils/uv/budget.py::BudgetRow(class)`
+- `geo_utils/uv/budget.py::BudgetRow.assignment(self) -> Dict[str, int]`
+- `geo_utils/uv/budget.py::BudgetRow.texels(self) -> int`
+- `geo_utils/uv/budget.py::BudgetRow.underfilled(self, threshold: float = 0.5) -> List[int]`
+- `geo_utils/uv/budget.py::BudgetRow.utilization(self) -> float`
+- `geo_utils/uv/budget.py::BudgetRow.worst_fill(self) -> float`
+- `geo_utils/uv/budget.py::UvBudget(class)`
+- `geo_utils/uv/budget.py::UvBudget.density_at_pages(cls, items: Sequence[BudgetItem], pages: int, map_size: int, *, factor: int = 256, mip_levels: int = 0, fill: Optional[float] = None, level: bool = True) -> BudgetRow`
+- `geo_utils/uv/budget.py::UvBudget.first_fit_decreasing(sizes: Sequence[Tuple[str, float]], capacity: float) -> Optional[List[List[str]]]`
+- `geo_utils/uv/budget.py::UvBudget.padding_for(map_size: int, factor: int = 256, mip_levels: int = 0) -> Tuple[float, bool]`
+- `geo_utils/uv/budget.py::UvBudget.pages_at_density(cls, items: Sequence[BudgetItem], density: float, map_size: int, *, factor: int = 256, mip_levels: int = 0, fill: Optional[float] = None, level: bool = False) -> BudgetRow`
+- `geo_utils/uv/budget.py::UvBudget.partition_lpt(sizes: Sequence[Tuple[str, float]], pages: int) -> List[List[str]]`
+- `geo_utils/uv/budget.py::UvBudget.plan(cls, items: Sequence[BudgetItem], *, map_size: int = 4096, density: Optional[float] = None, pages: Optional[int] = None, factor: int = 256, mip_levels: int = 0, fill: Optional[float] = None, level: bool = False, alternates: bool = True, map_sizes: Optional[Iterable[int]] = None) -> BudgetPlan`
+- `geo_utils/uv/cylinder_seams.py::COPLANAR_EPS_DEG(constant)`
+- `geo_utils/uv/cylinder_seams.py::CylinderSeams(class)`
+- `geo_utils/uv/cylinder_seams.py::CylinderSeams.dihedral(self, e: int) -> Optional[float]`
+- `geo_utils/uv/cylinder_seams.py::CylinderSeams.edge_mid(self, e: int) -> np.ndarray`
+- `geo_utils/uv/cylinder_seams.py::CylinderSeams.edge_vec(self, e: int) -> np.ndarray`
+- `geo_utils/uv/cylinder_seams.py::CylinderSeams.seams(self, angle: float = 45.0, taper_angle: float = DEFAULT_TAPER_ANGLE, invert_seam: bool = False, camera: Optional[Vec] = None, flat_angle: float = DEFAULT_FLAT_ANGLE, trim_ratio: float = DEFAULT_TRIM_RATIO) -> Set[int]`
+- `geo_utils/uv/cylinder_seams.py::CylinderSeams.seed_uvs(self) -> Dict[int, List[Tuple[float, float]]]`
+- `geo_utils/uv/cylinder_seams.py::DEFAULT_FLAT_ANGLE(constant)`
+- `geo_utils/uv/cylinder_seams.py::DEFAULT_TAPER_ANGLE(constant)`
+- `geo_utils/uv/cylinder_seams.py::DEFAULT_TRIM_RATIO(constant)`
+- `geo_utils/uv/cylinder_seams.py::DEFAULT_VIEW_DIR(constant)`
+- `geo_utils/uv/cylinder_seams.py::SHARP_FOLD(constant)`
+- `geo_utils/uv/pack.py::PackIslandsResult(class)`
+- `geo_utils/uv/pack.py::UvPack(class)`
+- `geo_utils/uv/pack.py::UvPack.available(cls) -> bool`
+- `geo_utils/uv/pack.py::UvPack.pack_islands(cls, meshes: Sequence[Tuple[Any, Any]], padding: int = 4, rotate: bool = True, brute_force: bool = False, resolution: int = 0, pages: int = 1, align_to_axis: Optional[bool] = None) -> PackIslandsResult`
+- `geo_utils/uv/pack.py::UvPack.resolve(cls, required: bool = True)`
+- `geo_utils/uv/pack.py::XATLAS_PYPI_URL(constant)`
+- `geo_utils/uv/pack.py::XATLAS_REPO_URL(constant)`
+- `geo_utils/uv/transfer.py::TransferTable(class)`
+- `geo_utils/uv/transfer.py::TransferTable.coverage(self) -> 'np.ndarray'`
+- `geo_utils/uv/transfer.py::TransferTable.frames(self) -> 'np.ndarray'`
+- `geo_utils/uv/transfer.py::TransferTable.mask(self) -> 'np.ndarray'`
+- `geo_utils/uv/transfer.py::TransferTable.nbytes(self) -> int`
+- `geo_utils/uv/transfer.py::TransferTable.passes(self) -> int`
+- `geo_utils/uv/transfer.py::UvTransfer(class)`
+- `geo_utils/uv/transfer.py::UvTransfer.build(cls, src_tris, dst_tris, size: Union[int, Tuple[int, int]], *, supersample: int = 2, source_ids=None) -> TransferTable`
+- `geo_utils/uv/transfer.py::UvTransfer.load_map(path: str) -> Tuple['np.ndarray', float]`
+- `geo_utils/uv/transfer.py::UvTransfer.merge_layouts(cls, jobs: Dict[str, Dict[str, Any]], name: str, *, probe_size: int = 256) -> Dict[str, Dict[str, Any]]`
+- `geo_utils/uv/transfer.py::UvTransfer.normal_convention(cls, path: str, override: Optional[str] = None) -> str`
+- `geo_utils/uv/transfer.py::UvTransfer.pad(cls, image, coverage, width: int = -1) -> 'np.ndarray'`
+- `geo_utils/uv/transfer.py::UvTransfer.save_map(path: str, arr: 'np.ndarray', value_max: float = 255.0) -> str`
+- `geo_utils/uv/transfer.py::UvTransfer.transfer(cls, table: TransferTable, sources, *, source_masks=None, bilinear: bool = True) -> Tuple['np.ndarray', 'np.ndarray']`
+- `geo_utils/uv/transfer.py::UvTransfer.transfer_materials(cls, jobs: Dict[str, Dict[str, Any]], *, output_dir: str, channels: Optional[Sequence[str]] = None, size: Optional[int] = None, supersample: int = 2, padding: int = -1, name_format: str = '{material}_{channel}', normal_convention: Optional[str] = None, source_mask_from_uvs: bool = True, log=None) -> Dict[str, Dict[str, str]]`
+- `geo_utils/uv/transfer.py::UvTransfer.transfer_normals(cls, table: TransferTable, sources, *, convention: str = 'opengl', source_masks=None, bilinear: bool = True, value_range: Tuple[float, float] = (0.0, 255.0)) -> Tuple['np.ndarray', 'np.ndarray']`
+- `geo_utils/uv/transfer.py::UvTransfer.triangle_frames(cls, src_tris, dst_tris) -> 'np.ndarray'`
+- `img_utils/_img_utils.py::ImgUtils.is_environment_map(cls, image_path: str, *, latlong_only: bool = True, skip_lightmaps: bool = True) -> bool`
+- `img_utils/_img_utils.py::ImgUtils.is_equirectangular(cls, image_path: str, tolerance: float = 0.05) -> Optional[bool]`
+- `net_utils/_net_utils.py::NetUtils.listening_ports() -> List[Tuple[int, Optional[int]]]`
+- `net_utils/preview/routes.py::PLAYBLAST_ACTIONS(constant)`
+- `net_utils/preview/routes.py::PLAYBLAST_PATH(constant)`
+- `net_utils/preview/routes.py::SETTINGS_PATH(constant)`
+- `net_utils/preview/routes.py::SNAPSHOT_PATH(constant)`
+- `net_utils/preview/routes.py::VIEWER_CLOSED_PATH(constant)`
+- `str_utils/_str_utils.py::StrUtils.natural_sort_key(text: str, ignore_case: bool = False) -> Tuple`
+- `str_utils/tooltip_format.py::TooltipFormat(class)`
+- `str_utils/tooltip_format.py::TooltipFormat.display_ms(cls, text: str, rich: bool = None) -> int`
+- `str_utils/tooltip_format.py::TooltipFormat.fmt(title: str = None, body: str = None, bullets: list = None, steps: list = None, rows: list = None, sections: list = None, notes: list = None) -> str`
+- `str_utils/tooltip_format.py::TooltipFormat.hl(text: str, color: str = _C_ACCENT) -> str`
+- `str_utils/tooltip_format.py::TooltipFormat.is_rich(cls, text: str) -> bool`
+- `str_utils/tooltip_format.py::TooltipFormat.kbd(*keys: str) -> str`
+- `str_utils/tooltip_format.py::TooltipFormat.placeholder_preview(template: str, context: dict, *, title: str = None, body: str = None, descriptions: dict = None, wildcards: dict = None, final: str = None, final_label: str = '→', empty_text: str = None, notes: list = None) -> str`
+- `str_utils/tooltip_format.py::TooltipFormat.stored_items(items, *, title: str = None, body: str = None, formatter=None, max_items: int = None, noun: str = 'item(s)', empty_text: str = None, notes: list = None) -> str`
+- `str_utils/tooltip_format.py::TooltipFormat.wrap(cls, text: str, width: int = None, slack: int = None, rich: bool = None) -> str`
+
+## Moved (381)
+
+_Still resolvable at the same call site -- hoisted to a base class or re-exported from another module. NOT a removal: no alias or minor bump is owed._
+
+- `core_utils/app_handoff.py::AppSpec`
+- `core_utils/app_handoff.py::AppSpec.available`
+- `core_utils/app_handoff.py::AppSpec.not_found_message`
+- `core_utils/app_handoff.py::AppSpec.path`
+- `core_utils/app_handoff.py::AppSpec.refresh`
+- `core_utils/app_handoff.py::AppSpec.resolve`
+- `core_utils/app_handoff.py::Deliverer`
+- `core_utils/app_handoff.py::Deliverer.deliver`
+- `core_utils/app_handoff.py::Deliverer.preflight`
+- `core_utils/app_handoff.py::HandoffBridge`
+- `core_utils/app_handoff.py::HandoffBridge.app_path`
+- `core_utils/app_handoff.py::HandoffBridge.carrier`
+- `core_utils/app_handoff.py::HandoffBridge.carrier_of`
+- `core_utils/app_handoff.py::HandoffBridge.child_sys_path`
+- `core_utils/app_handoff.py::HandoffBridge.headless_app_path`
+- `core_utils/app_handoff.py::HandoffBridge.import_roots`
+- `core_utils/app_handoff.py::HandoffBridge.merge_params`
+- `core_utils/app_handoff.py::HandoffBridge.params_defaults`
+- `core_utils/app_handoff.py::HandoffBridge.payload_extension`
+- `core_utils/app_handoff.py::HandoffBridge.send`
+- `core_utils/app_handoff.py::HandoffRequest`
+- `core_utils/app_handoff.py::HandoffRequest.get`
+- `core_utils/app_handoff.py::Payload`
+- `core_utils/app_handoff.py::ScriptLaunchBridge`
+- `core_utils/app_handoff.py::ScriptLaunchBridge.list_template_modes`
+- `core_utils/app_handoff.py::ScriptLaunchBridge.list_templates`
+- `core_utils/app_handoff.py::ScriptLaunchBridge.modes`
+- `core_utils/app_handoff.py::ScriptLaunchBridge.render_context`
+- `core_utils/app_handoff.py::ScriptLaunchBridge.render_template`
+- `core_utils/app_handoff.py::ScriptLaunchBridge.resolve_save_path`
+- `core_utils/app_handoff.py::ScriptLaunchBridge.round_trip`
+- `core_utils/app_handoff.py::ScriptLaunchBridge.save_as`
+- `core_utils/app_handoff.py::ScriptLaunchDeliverer`
+- `core_utils/app_handoff.py::ScriptLaunchDeliverer.deliver`
+- `core_utils/app_handoff.py::ScriptLaunchDeliverer.preflight`
+- `core_utils/app_handoff.py::ScriptLaunchDeliverer.render`
+- `core_utils/app_handoff.py::ScriptLaunchSpec`
+- `core_utils/app_handoff.py::ScriptRoundTripDeliverer`
+- `core_utils/app_handoff.py::ScriptRoundTripDeliverer.deliver`
+- `core_utils/app_handoff.py::ScriptRunDeliverer`
+- `core_utils/app_handoff.py::ScriptRunDeliverer.deliver`
+- `core_utils/app_handoff.py::ScriptRunDeliverer.run`
+- `core_utils/app_launcher.py::AppLauncher`
+- `core_utils/app_launcher.py::AppLauncher.active_console_session_id`
+- `core_utils/app_launcher.py::AppLauncher.append_to_path`
+- `core_utils/app_launcher.py::AppLauncher.close_process`
+- `core_utils/app_launcher.py::AppLauncher.current_session_id`
+- `core_utils/app_launcher.py::AppLauncher.find_app`
+- `core_utils/app_launcher.py::AppLauncher.find_session_launcher`
+- `core_utils/app_launcher.py::AppLauncher.get_running_processes`
+- `core_utils/app_launcher.py::AppLauncher.get_window_titles`
+- `core_utils/app_launcher.py::AppLauncher.handoff_env`
+- `core_utils/app_launcher.py::AppLauncher.is_interactive_session`
+- `core_utils/app_launcher.py::AppLauncher.is_path_persisted`
+- `core_utils/app_launcher.py::AppLauncher.launch`
+- `core_utils/app_launcher.py::AppLauncher.launch_in_session`
+- `core_utils/app_launcher.py::AppLauncher.process_environ`
+- `core_utils/app_launcher.py::AppLauncher.resolve_app_path`
+- `core_utils/app_launcher.py::AppLauncher.run`
+- `core_utils/app_launcher.py::AppLauncher.scan_for_executables`
+- `core_utils/app_launcher.py::AppLauncher.scan_install_dirs`
+- `core_utils/app_launcher.py::AppLauncher.spawn`
+- `core_utils/app_launcher.py::AppLauncher.wait_for_ready`
+- `core_utils/export_profile.py::ExportProfile`
+- `core_utils/export_profile.py::ExportProfile.baked_reflections_default`
+- `core_utils/export_profile.py::ExportProfile.fold_legacy_naming`
+- `core_utils/export_profile.py::ExportProfile.fold_legacy_regex`
+- `core_utils/export_profile.py::ExportProfile.frame_rate_options`
+- `core_utils/export_profile.py::ExportProfile.glb_defaults`
+- `core_utils/export_profile.py::ExportProfile.glb_options`
+- `core_utils/export_profile.py::ExportProfile.legal_name`
+- `core_utils/export_profile.py::ExportProfile.naming_report`
+- `core_utils/export_profile.py::ExportProfile.optimize_textures_options`
+- `core_utils/export_profile.py::ExportProfile.optimize_textures_tasks`
+- `core_utils/export_profile.py::ExportProfile.read_values`
+- `core_utils/export_profile.py::ExportProfile.resolve_output_path`
+- `core_utils/export_profile.py::ExportProfile.run_config`
+- `core_utils/export_profile.py::ExportProfile.scoped_tables`
+- `core_utils/export_profile.py::ExportProfile.strip_deliverable_extension`
+- `core_utils/export_profile.py::ExportProfile.task_order`
+- `core_utils/export_profile.py::ExportProfile.texture_file_type_options`
+- `core_utils/export_profile.py::ExportProfile.texture_size_limit_bytes`
+- `core_utils/export_profile.py::ExportProfile.unimplemented`
+- `core_utils/export_profile.py::ExportProfile.value_method`
+- `core_utils/export_profile.py::ExportProfile.widget_key`
+- `core_utils/export_profile.py::ExportRun`
+- `core_utils/export_profile.py::ExportRun.baked_reflection_level`
+- `core_utils/export_profile.py::ExportRun.clip_mode`
+- `core_utils/export_profile.py::ExportRun.create_glb`
+- `core_utils/export_profile.py::ExportRun.for_glb`
+- `core_utils/export_profile.py::ExportRun.from_tasks`
+- `core_utils/export_profile.py::ExportRun.glb_max_size`
+- `core_utils/export_profile.py::ExportRun.glb_only`
+- `core_utils/export_profile.py::ExportRun.glb_texture_params`
+- `core_utils/export_profile.py::ExportRun.rendering`
+- `core_utils/export_profile.py::ExportRun.replace`
+- `core_utils/export_profile.py::ExportRun.usd`
+- `core_utils/export_profile.py::ExportRun.with_tasks`
+- `core_utils/handoff_manifest.py::HandoffManifest`
+- `core_utils/handoff_manifest.py::HandoffManifest.build`
+- `core_utils/handoff_manifest.py::HandoffManifest.carries`
+- `core_utils/handoff_manifest.py::HandoffManifest.data`
+- `core_utils/handoff_manifest.py::HandoffManifest.format`
+- `core_utils/handoff_manifest.py::HandoffManifest.path`
+- `core_utils/handoff_manifest.py::HandoffManifest.path_for`
+- `core_utils/handoff_manifest.py::HandoffManifest.payload_path`
+- `core_utils/handoff_manifest.py::HandoffManifest.plan`
+- `core_utils/handoff_manifest.py::HandoffManifest.read`
+- `core_utils/handoff_manifest.py::HandoffManifest.unreadable`
+- `core_utils/handoff_manifest.py::HandoffManifest.version`
+- `core_utils/handoff_manifest.py::HandoffManifest.write`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.adopt`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.compare`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.decode`
 - `core_utils/hierarchy_baseline.py::HierarchyBaseline.encode`
-  - was: `(cls, paths: Iterable[str]) -> Dict`
-  - now: `(cls, paths: Iterable[str], scene: Optional[str] = None) -> Dict`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.in_scope`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.is_record`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.merge`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.paths_hash`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.recorded_by`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.relevant_roots`
+- `core_utils/hierarchy_baseline.py::HierarchyBaseline.top_level`
+- `core_utils/logging_mixin.py::DefaultTextLogHandler`
+- `core_utils/logging_mixin.py::DefaultTextLogHandler.emit`
+- `core_utils/logging_mixin.py::DefaultTextLogHandler.get_color`
+- `core_utils/logging_mixin.py::LevelAwareFormatter`
+- `core_utils/logging_mixin.py::LevelAwareFormatter.format`
+- `core_utils/logging_mixin.py::LoggerExt`
+- `core_utils/logging_mixin.py::LoggerExt.format_message_as_html`
+- `core_utils/logging_mixin.py::LoggerExt.get_color`
+- `core_utils/logging_mixin.py::LoggerExt.get_html_preset`
+- `core_utils/logging_mixin.py::LoggerExt.patch`
+- `core_utils/logging_mixin.py::LoggerExt.register_html_preset`
+- `core_utils/logging_mixin.py::LoggerExt.set_default_text_handler`
+- `core_utils/logging_mixin.py::LoggerExt.strip_html`
+- `core_utils/logging_mixin.py::LoggingMixin`
+- `core_utils/logging_mixin.py::LoggingMixin.class_logger`
+- `core_utils/logging_mixin.py::LoggingMixin.clear_log_buffer`
+- `core_utils/logging_mixin.py::LoggingMixin.disable_log_buffer`
+- `core_utils/logging_mixin.py::LoggingMixin.dump_log`
+- `core_utils/logging_mixin.py::LoggingMixin.enable_log_buffer`
+- `core_utils/logging_mixin.py::LoggingMixin.logger`
+- `core_utils/logging_mixin.py::LoggingMixin.logging`
+- `core_utils/logging_mixin.py::LoggingMixin.set_log_file`
+- `core_utils/logging_mixin.py::LoggingMixin.set_log_level`
+- `core_utils/logging_mixin.py::LoggingMixin.use_logger`
+- `core_utils/logging_mixin.py::RingBufferHandler`
+- `core_utils/logging_mixin.py::RingBufferHandler.clear`
+- `core_utils/logging_mixin.py::RingBufferHandler.emit`
+- `core_utils/logging_mixin.py::RingBufferHandler.format_records`
+- `core_utils/logging_mixin.py::StripHtmlFormatter`
+- `core_utils/logging_mixin.py::StripHtmlFormatter.format`
+- `core_utils/logging_mixin.py::TableMixin`
 - `core_utils/logging_mixin.py::TableMixin.format_table`
-  - was: `(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160) -> str`
-  - now: `(self, data: List[List[Any]], headers: List[str], title: Optional[str] = None, col_max_width: int = 60, max_width: int = 160, wrap: bool = False, markup: bool = True) -> str`
+- `core_utils/logging_mixin.py::TableMixin.log_group`
+- `core_utils/logging_mixin.py::TableMixin.log_table`
+- `core_utils/manifest_plan.py::ManifestPlan`
+- `core_utils/manifest_plan.py::ManifestPlan.add`
+- `core_utils/manifest_plan.py::ManifestPlan.labels`
+- `core_utils/manifest_plan.py::ManifestPlan.run`
+- `core_utils/preset_store.py::Codec`
+- `core_utils/preset_store.py::PresetStore`
+- `core_utils/preset_store.py::PresetStore.active`
+- `core_utils/preset_store.py::PresetStore.builtin_dir`
+- `core_utils/preset_store.py::PresetStore.delete`
+- `core_utils/preset_store.py::PresetStore.exists`
+- `core_utils/preset_store.py::PresetStore.ext`
+- `core_utils/preset_store.py::PresetStore.list`
+- `core_utils/preset_store.py::PresetStore.load`
+- `core_utils/preset_store.py::PresetStore.path`
+- `core_utils/preset_store.py::PresetStore.rename`
+- `core_utils/preset_store.py::PresetStore.sanitize_preset_name`
+- `core_utils/preset_store.py::PresetStore.save`
+- `core_utils/preset_store.py::PresetStore.source`
+- `core_utils/preset_store.py::PresetStore.user_dir`
+- `core_utils/scene_records.py::ExportContext`
+- `core_utils/scene_records.py::ExportContext.note`
+- `core_utils/scene_records.py::ExportContext.record`
+- `core_utils/scene_records.py::ExportContext.refreshes`
+- `core_utils/scene_records.py::ExportSnapshot`
+- `core_utils/scene_records.py::ExportSnapshot.assemble`
+- `core_utils/scene_records.py::ExportSnapshot.channels`
+- `core_utils/scene_records.py::ExportSnapshot.commit`
+- `core_utils/scene_records.py::ExportSnapshot.publish`
+- `core_utils/scene_records.py::ExportSnapshot.record`
+- `core_utils/scene_records.py::ExportSnapshot.records`
+- `core_utils/scene_records.py::ExportSnapshot.summary`
+- `core_utils/scene_records.py::Kind`
+- `core_utils/scene_records.py::Merge`
+- `core_utils/scene_records.py::Record`
+- `core_utils/scene_records.py::Record.key`
+- `core_utils/scene_records.py::Record.save`
+- `core_utils/scene_records.py::Record.text`
+- `core_utils/scene_records.py::RecordSpec`
+- `core_utils/scene_records.py::RecordSpec.clear`
+- `core_utils/scene_records.py::RecordSpec.decode`
+- `core_utils/scene_records.py::RecordSpec.encode`
+- `core_utils/scene_records.py::RecordSpec.is_present`
+- `core_utils/scene_records.py::RecordSpec.load`
+- `core_utils/scene_records.py::RecordSpec.make`
+- `core_utils/scene_records.py::RecordSpec.path_keys`
+- `core_utils/scene_records.py::RecordSpec.read_text`
+- `core_utils/scene_records.py::RecordSpec.save`
+- `core_utils/scene_records.py::RecordSpec.write_text`
+- `core_utils/scene_records.py::RecordTransfer`
 - `core_utils/scene_records.py::RecordTransfer.absolute_paths`
-  - was: `(payload: Any, ctx: TransferContext) -> Any`
-  - now: `(payload: Any, ctx: TransferContext, keys: Optional[Tuple[str, ...]] = None) -> Any`
+- `core_utils/scene_records.py::RecordTransfer.apply`
 - `core_utils/scene_records.py::RecordTransfer.arriving_paths`
-  - was: `(payload: Any, ctx: TransferContext) -> Any`
-  - now: `(payload: Any, ctx: TransferContext, keys: Optional[Tuple[str, ...]] = None) -> Any`
+- `core_utils/scene_records.py::RecordTransfer.between`
+- `core_utils/scene_records.py::RecordTransfer.incoming`
+- `core_utils/scene_records.py::RecordTransfer.is_empty`
+- `core_utils/scene_records.py::RecordTransfer.merge_record`
+- `core_utils/scene_records.py::RecordTransfer.payloads`
+- `core_utils/scene_records.py::RecordTransfer.receive`
+- `core_utils/scene_records.py::RecordTransfer.rederive`
+- `core_utils/scene_records.py::RecordTransfer.respell`
+- `core_utils/scene_records.py::RecordTransfer.sections`
+- `core_utils/scene_records.py::RecordTransfer.summary`
+- `core_utils/scene_records.py::RecordTransfer.union`
+- `core_utils/scene_records.py::SceneRecords`
+- `core_utils/scene_records.py::SceneRecords.all`
+- `core_utils/scene_records.py::SceneRecords.by_key`
+- `core_utils/scene_records.py::SceneRecords.check_producers`
+- `core_utils/scene_records.py::SceneRecords.codec`
+- `core_utils/scene_records.py::SceneRecords.declared_takes`
+- `core_utils/scene_records.py::SceneRecords.deliverable`
+- `core_utils/scene_records.py::SceneRecords.describe`
+- `core_utils/scene_records.py::SceneRecords.handoff_block`
 - `core_utils/scene_records.py::SceneRecords.map_paths`
-  - was: `(payload: Any, spell: Callable[[str], str]) -> Any`
-  - now: `(payload: Any, spell: Callable[[str], str], keys: Optional[Tuple[str, ...]] = None) -> Any`
-- `net_utils/preview/bridge.py::PreviewBridge.lightmap_summary`
-  - was: `(result: Optional[Dict[str, Any]]) -> str`
-  - now: `(cls, result: Optional[Dict[str, Any]]) -> str`
-- `net_utils/preview/bridge.py::PreviewBridge.share`
-  - was: `(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None) -> Dict[str, Any]`
-  - now: `(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, on_step: Optional[Callable[[Any], Any]] = None) -> Dict[str, Any]`
-- `net_utils/preview/server.py::PreviewServer.share`
-  - was: `(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, timeout: Optional[float] = None) -> Dict[str, Any]`
-  - now: `(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, timeout: Optional[float] = None, on_step: Optional[Callable[[Any], Any]] = None) -> Dict[str, Any]`
+- `core_utils/scene_records.py::SceneRecords.ordered`
+- `core_utils/scene_records.py::SceneRecords.portable`
+- `core_utils/scene_records.py::SceneRecords.private`
+- `core_utils/scene_records.py::SceneRecords.rebase_paths`
+- `core_utils/scene_records.py::SceneRecords.rendering_policy`
+- `core_utils/scene_records.py::SceneRecords.resolve`
+- `core_utils/scene_records.py::SceneRecords.resolve_class`
+- `core_utils/scene_records.py::SceneRecords.with_paths`
+- `core_utils/scene_records.py::SceneStoreBase`
+- `core_utils/scene_records.py::SceneStoreBase.channels`
+- `core_utils/scene_records.py::SceneStoreBase.discard_carriers`
+- `core_utils/scene_records.py::SceneStoreBase.dump`
+- `core_utils/scene_records.py::SceneStoreBase.flush_owners`
+- `core_utils/scene_records.py::SceneStoreBase.format_dump`
+- `core_utils/scene_records.py::SceneStoreBase.keys`
+- `core_utils/scene_records.py::SceneStoreBase.merge_carriers`
+- `core_utils/scene_records.py::SceneStoreBase.merge_plan`
+- `core_utils/scene_records.py::SceneStoreBase.name`
+- `core_utils/scene_records.py::SceneStoreBase.owners`
+- `core_utils/scene_records.py::SceneStoreBase.project_root`
+- `core_utils/scene_records.py::SceneStoreBase.project_root_of`
+- `core_utils/scene_records.py::SceneStoreBase.read`
+- `core_utils/scene_records.py::SceneStoreBase.rebase_paths`
+- `core_utils/scene_records.py::SceneStoreBase.receive_sections`
+- `core_utils/scene_records.py::SceneStoreBase.scene_path`
+- `core_utils/scene_records.py::SceneStoreBase.transfer_sections`
+- `core_utils/scene_records.py::SceneStoreBase.values`
+- `core_utils/scene_records.py::SceneStoreBase.write`
+- `core_utils/scene_records.py::SceneStoreBase.writer_stamp`
+- `core_utils/scene_records.py::SceneStoreBase.written_here`
+- `core_utils/scene_records.py::Scope`
+- `core_utils/scene_records.py::TransferContext`
+- `core_utils/scene_records.py::TransferContext.adapter`
+- `core_utils/scene_records.py::TransferContext.note`
+- `core_utils/scene_records.py::TransferContext.respell`
+- `core_utils/scene_records.py::TransferContext.spell`
+- `core_utils/script_run.py::ProgressRelay`
+- `core_utils/script_run.py::ProgressRelay.line`
+- `core_utils/script_run.py::ProgressRelay.parse`
+- `core_utils/script_run.py::ProgressRelay.reader`
+- `core_utils/script_run.py::ProgressRelay.report`
+- `core_utils/script_run.py::ProgressRelay.tick`
+- `core_utils/script_run.py::ProgressRelay.value`
+- `core_utils/script_run.py::ScriptRunResult`
+- `core_utils/script_run.py::ScriptRunner`
+- `core_utils/script_run.py::ScriptRunner.run_script_to_artifact`
+- `core_utils/script_template.py::ScriptTemplate`
+- `core_utils/script_template.py::ScriptTemplate.declared_modes`
+- `core_utils/script_template.py::ScriptTemplate.declared_values`
+- `core_utils/script_template.py::ScriptTemplate.list_template_modes`
+- `core_utils/script_template.py::ScriptTemplate.list_templates`
+- `core_utils/script_template.py::ScriptTemplate.normalize_modes`
+- `core_utils/script_template.py::ScriptTemplate.render_template`
+- `core_utils/script_template.py::ScriptTemplate.template_modes`
+- `file_utils/mesh_convert/_mesh_convert.py::FBX2GLTF_PLATFORMS`
+- `file_utils/mesh_convert/_mesh_convert.py::FBX2GLTF_VERSION`
+- `file_utils/mesh_convert/glb_clips.py::GlbClips`
+- `file_utils/mesh_convert/glb_clips.py::GlbClips.rebuild`
+- `file_utils/mesh_convert/glb_fades.py::GlbFades`
+- `file_utils/mesh_convert/glb_fades.py::GlbFades.apply`
+- `file_utils/mesh_convert/glb_fades.py::GlbFades.apply_channels`
+- `file_utils/mesh_convert/glb_fades.py::PointerChannel`
+- `file_utils/mesh_convert/glb_fades.py::PointerChannel.accessor_type`
+- `file_utils/mesh_convert/glb_fades.py::PointerChannel.base`
+- `file_utils/mesh_convert/glb_fades.py::PointerChannel.color_key`
+- `file_utils/mesh_convert/glb_fades.py::PointerChannel.components`
+- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction`
+- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction.deviation`
+- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction.evaluate`
+- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction.read_sampler`
+- `file_utils/mesh_convert/glb_key_reduction.py::GlbKeyReduction.reduce`
+- `file_utils/mesh_convert/glb_pipeline.py::GlbPipeline`
+- `file_utils/mesh_convert/glb_pipeline.py::GlbPipeline.build`
+- `file_utils/mesh_convert/glb_pipeline.py::GlbPipeline.envelope`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.accessor`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.animation`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.animations`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.channel_table`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.clip_spans`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.counts`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.extensions`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.image_mimes`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.load`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.local_matrix`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.motion_span`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.nan_findings`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.node_index`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.parent_of`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.sample`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.skins_summary`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.walk`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.world_matrix`
+- `file_utils/mesh_convert/glb_reader.py::GlbReader.world_position`
+- `file_utils/mesh_convert/glb_tangents.py::GlbTangents`
+- `file_utils/mesh_convert/glb_tangents.py::GlbTangents.repair`
+- `file_utils/uv_unwrap/_uv_unwrap.py::EngineSpec`
+- `file_utils/uv_unwrap/_uv_unwrap.py::UvUnwrap`
+- `file_utils/uv_unwrap/_uv_unwrap.py::UvUnwrap.available_engines`
+- `file_utils/uv_unwrap/_uv_unwrap.py::UvUnwrap.hard_surface`
+- `file_utils/uv_unwrap/_uv_unwrap.py::UvUnwrap.organic`
+- `file_utils/uv_unwrap/_uv_unwrap.py::UvUnwrap.resolve_engine`
+- `file_utils/uv_unwrap/_uv_unwrap.py::UvUnwrap.resolve_method`
+- `file_utils/uv_unwrap/_uv_unwrap.py::UvUnwrap.unwrap`
+- `geo_utils/uv_budget.py::BudgetItem`
+- `geo_utils/uv_budget.py::BudgetItem.demand`
+- `geo_utils/uv_budget.py::BudgetPage`
+- `geo_utils/uv_budget.py::BudgetPage.fill`
+- `geo_utils/uv_budget.py::BudgetPlan`
+- `geo_utils/uv_budget.py::BudgetPlan.density_ratio`
+- `geo_utils/uv_budget.py::BudgetPlan.rows`
+- `geo_utils/uv_budget.py::BudgetRow`
+- `geo_utils/uv_budget.py::BudgetRow.assignment`
+- `geo_utils/uv_budget.py::BudgetRow.texels`
+- `geo_utils/uv_budget.py::BudgetRow.underfilled`
+- `geo_utils/uv_budget.py::BudgetRow.utilization`
+- `geo_utils/uv_budget.py::BudgetRow.worst_fill`
+- `geo_utils/uv_budget.py::UvBudget`
+- `geo_utils/uv_budget.py::UvBudget.density_at_pages`
+- `geo_utils/uv_budget.py::UvBudget.first_fit_decreasing`
+- `geo_utils/uv_budget.py::UvBudget.padding_for`
+- `geo_utils/uv_budget.py::UvBudget.pages_at_density`
+- `geo_utils/uv_budget.py::UvBudget.partition_lpt`
+- `geo_utils/uv_budget.py::UvBudget.plan`
+- `geo_utils/uv_pack.py::PackIslandsResult`
+- `geo_utils/uv_pack.py::UvPack`
+- `geo_utils/uv_pack.py::UvPack.available`
+- `geo_utils/uv_pack.py::UvPack.pack_islands`
+- `geo_utils/uv_pack.py::UvPack.resolve`
+- `geo_utils/uv_transfer.py::TransferTable`
+- `geo_utils/uv_transfer.py::TransferTable.coverage`
+- `geo_utils/uv_transfer.py::TransferTable.frames`
+- `geo_utils/uv_transfer.py::TransferTable.mask`
+- `geo_utils/uv_transfer.py::TransferTable.nbytes`
+- `geo_utils/uv_transfer.py::TransferTable.passes`
+- `geo_utils/uv_transfer.py::UvTransfer`
+- `geo_utils/uv_transfer.py::UvTransfer.build`
+- `geo_utils/uv_transfer.py::UvTransfer.load_map`
+- `geo_utils/uv_transfer.py::UvTransfer.merge_layouts`
+- `geo_utils/uv_transfer.py::UvTransfer.normal_convention`
+- `geo_utils/uv_transfer.py::UvTransfer.pad`
+- `geo_utils/uv_transfer.py::UvTransfer.save_map`
+- `geo_utils/uv_transfer.py::UvTransfer.transfer`
+- `geo_utils/uv_transfer.py::UvTransfer.transfer_materials`
+- `geo_utils/uv_transfer.py::UvTransfer.transfer_normals`
+- `geo_utils/uv_transfer.py::UvTransfer.triangle_frames`
+- `net_utils/preview/server.py::PLAYBLAST_ACTIONS`
+- `net_utils/preview/server.py::PLAYBLAST_PATH`
+- `net_utils/preview/server.py::SETTINGS_PATH`
+- `net_utils/preview/server.py::SNAPSHOT_PATH`
+- `net_utils/preview/server.py::VIEWER_CLOSED_PATH`
+
+## Signature changed (1)
+
+- `net_utils/preview/bridge.py::PreviewBridge.scope_objects`
+  - was: `(self, scope: str = 'selected') -> List[Any]`
+  - now: `(self, scope: str = HandoffScope.SELECTED) -> List[Any]`

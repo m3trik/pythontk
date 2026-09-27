@@ -15,7 +15,7 @@ import struct
 import unittest
 
 from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-from pythontk.file_utils.mesh_convert.glb_key_reduction import GlbKeyReduction
+from pythontk.file_utils.mesh_convert.glb.key_reduction import GlbKeyReduction
 from pythontk.file_utils.temp_artifacts import TempArtifacts
 
 _WIDTH = {1: "SCALAR", 3: "VEC3", 4: "VEC4"}
@@ -302,7 +302,7 @@ class GlbKeyReductionTestCase(unittest.TestCase):
             edit.dirty = True
         before = os.path.getsize(path)
         with self.assertLogs(
-            "pythontk.file_utils.mesh_convert.glb_key_reduction", level="WARNING"
+            "pythontk.file_utils.mesh_convert.glb.key_reduction", level="WARNING"
         ) as captured:
             summary = GlbKeyReduction.reduce(path, 1e-3)
         self.assertIn("reduced samplers", captured.output[0])

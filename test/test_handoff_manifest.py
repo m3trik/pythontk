@@ -16,8 +16,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pythontk as ptk
-from pythontk.core_utils.handoff_manifest import HandoffManifest
-from pythontk.core_utils.manifest_plan import ManifestPlan
+from pythontk.core_utils.handoff.manifest import HandoffManifest
+from pythontk.core_utils.handoff.manifest_plan import ManifestPlan
 
 
 class _SidecarCase(unittest.TestCase):

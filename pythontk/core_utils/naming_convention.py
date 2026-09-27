@@ -38,9 +38,11 @@ in a later release still reaches everyone who never overrode it.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from pythontk.core_utils.presets.store import PresetStore
 from pythontk.core_utils.user_config import UserConfig
 
 logger = logging.getLogger(__name__)
@@ -101,6 +103,46 @@ class AffixRule:
 
         prefix, suffix = self.parts(default=default)
         return StrUtils.apply_affix(name, prefix=prefix, suffix=suffix)
+
+    def matches(
+        self, name: str, *, case_sensitive: bool = False, default: str = "suffix"
+    ) -> bool:
+        """True when *name* carries this rule's affix -- :meth:`apply`, read back.
+
+        Recognizes the affix through the decorations a name picks up after the
+        tool that applied it: a trailing index (``OFFICE_Lightmap_12``, an
+        atlas tile or a version) and dotted sub-names
+        (``desk_Lightmap.LIGHT_A_areaLight``, a light group or AOV layer), each
+        dot-separated part tested on its own. Pass a file's *stem*; an extension
+        would read as one more dotted part, which is harmless but pointless.
+
+        The test is the affix exactly as :meth:`apply` writes it -- a trailing
+        ``suffix`` or a leading ``prefix``, spelling and delimiter included -- so
+        a delimited affix carries its own word boundary (``_Lightmap`` never
+        matches ``studio_lightmapping``) and a bare one (``LM``, applied as
+        ``roomLM``) matches bare, with the reach its owner chose.
+
+        Case-insensitive by default, unlike the rename path's type vocabulary:
+        one artifact marker does not collide with words the way ``_CAM`` does,
+        while files in the wild drift in case (a ``_LightMap`` from before the
+        convention settled, which a case-only rename cannot fix on a
+        case-insensitive cloud sync).
+
+        Returns:
+            False for an empty rule -- it marks nothing.
+        """
+        prefix, suffix = self.parts(default=default)
+        if not (prefix or suffix):
+            return False
+        fold = (lambda s: s) if case_sensitive else str.casefold
+        prefix, suffix = fold(prefix), fold(suffix)
+        for part in fold(str(name)).split("."):
+            for candidate in {part, re.sub(r"[_-]*\d+$", "", part)}:
+                if (suffix and candidate.endswith(suffix)) or (
+                    prefix and candidate.startswith(prefix)
+                ):
+                    return True
+        return False
 
     def as_dict(self) -> Dict[str, str]:
         """JSON-shaped form (``label`` omitted — it ships with the defaults)."""
@@ -276,6 +318,49 @@ class NamingConvention(_NamingConventionInternal):
         return cls.get(key).apply(name, default=default)
 
     @classmethod
+    def matches(
+        cls,
+        name: str,
+        key: str,
+        *,
+        case_sensitive: bool = False,
+        default: str = "suffix",
+    ) -> bool:
+        """True when *name* carries *key*'s affix (see :meth:`AffixRule.matches`).
+
+        The recognizer for names a tool did not write itself -- e.g. the HDR
+        manager telling a baked lightmap from an environment map in the same
+        ``sourceimages`` folder:
+
+            >>> NamingConvention.matches("desk_Lightmap.LIGHT_A_areaLight", "lightmap")
+            True
+        """
+        return cls.get(key).matches(
+            name, case_sensitive=case_sensitive, default=default
+        )
+
+    @classmethod
+    def as_dict(cls) -> Dict[str, Dict[str, str]]:
+        """The whole table as ``{key: {"text", "mode"}}`` -- :meth:`update`'s input.
+
+        Every entry, not only the overrides: this is what a named convention
+        preset stores (:meth:`preset_store`), so loading one reproduces the
+        table exactly whatever defaults it lands on.
+        """
+        return {key: rule.as_dict() for key, rule in cls.items()}
+
+    @staticmethod
+    def preset_store() -> PresetStore:
+        """Named snapshots of the table (:meth:`as_dict` payloads).
+
+        One store for every host --
+        ``<user_config_root>/pythontk/naming_convention/``, beside the
+        convention doc -- so a convention saved from Maya's Naming panel loads
+        in Blender's.
+        """
+        return PresetStore(CONFIG_NAME, package=CONFIG_PACKAGE)
+
+    @classmethod
     def all_affixes(cls) -> List[str]:
         """Every non-empty spelling, longest first.
 
@@ -351,10 +436,18 @@ class NamingConvention(_NamingConventionInternal):
         """Set several entries at once and persist. Returns the merged table.
 
         *mapping* values may be :class:`AffixRule`, ``{"text", "mode"}`` dicts,
-        or bare spelling strings.
+        or bare spelling strings. ``_``-prefixed keys are skipped: no entry is
+        named that way, and a :meth:`preset_store` file carries a ``_meta``
+        block beside the entries.
+
+        Merges into the doc as it is NOW, not this process's cached table: Maya
+        and Blender share the doc, and a stale cache written back whole erased
+        an edit the other host had made since.
         """
-        table = dict(cls.resolve())
+        table = dict(cls.resolve(refresh=True))
         for key, value in mapping.items():
+            if key.startswith("_"):
+                continue
             label = table[key].label if key in table else ""
             table[key] = cls._coerce(key, value, label)
         cls._write(table)

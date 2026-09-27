@@ -12,6 +12,7 @@ Comprehensive edge case coverage for:
 - insert / rreplace
 - truncate
 - get_trailing_integers
+- natural_sort_key
 - find_str / find_str_and_format
 - format_suffix
 
@@ -669,6 +670,58 @@ class StrTest(BaseTestCase):
     def test_get_trailing_integers_multi_digit(self):
         """Test get_trailing_integers with multi-digit number."""
         self.assertEqual(StrUtils.get_trailing_integers("object123"), 123)
+
+    # -------------------------------------------------------------------------
+    # natural_sort_key Tests
+    # -------------------------------------------------------------------------
+
+    def test_natural_sort_key_orders_numbers_by_value(self):
+        names = ["Cube10", "Cube2", "Cube1", "Cube02b", "Cube"]
+        self.assertEqual(
+            sorted(names, key=StrUtils.natural_sort_key),
+            ["Cube", "Cube1", "Cube2", "Cube02b", "Cube10"],
+        )
+
+    def test_natural_sort_key_version_strings(self):
+        """4.10 outranks 4.9 (the version-path use: newest install first)."""
+        paths = ["Blender 4.9", "Blender 4.10", "Blender 5.1", "Blender 4.2"]
+        self.assertEqual(
+            sorted(paths, key=StrUtils.natural_sort_key, reverse=True)[0],
+            "Blender 5.1",
+        )
+        self.assertLess(
+            StrUtils.natural_sort_key("Blender 4.9"),
+            StrUtils.natural_sort_key("Blender 4.10"),
+        )
+
+    def test_natural_sort_key_shape(self):
+        """A hashable tuple alternating text and int, text first."""
+        self.assertEqual(StrUtils.natural_sort_key("a12b3"), ("a", 12, "b", 3, ""))
+        self.assertEqual(StrUtils.natural_sort_key("12"), ("", 12, ""))
+        self.assertEqual(StrUtils.natural_sort_key(""), ("",))
+        # Leading digits and plain text never compare an int against a str.
+        self.assertEqual(
+            sorted(["b", "10", "a2", "9"], key=StrUtils.natural_sort_key),
+            ["9", "10", "a2", "b"],
+        )
+
+    def test_natural_sort_key_case(self):
+        self.assertLess(
+            StrUtils.natural_sort_key("Zeta"), StrUtils.natural_sort_key("alpha")
+        )
+        self.assertLess(
+            StrUtils.natural_sort_key("alpha", ignore_case=True),
+            StrUtils.natural_sort_key("Zeta", ignore_case=True),
+        )
+        self.assertEqual(
+            StrUtils.natural_sort_key("Cube2", ignore_case=True), ("cube", 2, "")
+        )
+
+    def test_natural_sort_key_non_decimal_digit_text(self):
+        """A text run of digit-like characters that are not decimal digits
+        (a superscript) stays text: it must not reach ``int()``."""
+        self.assertEqual(StrUtils.natural_sort_key("x\u00b2"), ("x\u00b2",))
+        self.assertEqual(StrUtils.natural_sort_key("\u00b2"), ("\u00b2",))
 
     # -------------------------------------------------------------------------
     # time_stamp Tests
@@ -1940,6 +1993,19 @@ class StrTest(BaseTestCase):
             self.assertEqual(
                 ExportProfile.legal_name(name), StrUtils.to_legal_name(name)
             )
+
+
+class StrUtilsLayoutTest(unittest.TestCase):
+    """The facade split by job keeps every public method on StrUtils itself."""
+
+    def test_public_methods_stay_on_the_facade(self):
+        # The resolver registers flat names (ptk.<method>) from the class's own
+        # body, so a public method living only on an internal base drops out.
+        bases = [b for b in StrUtils.__mro__[1:] if b.__name__.startswith("_Str")]
+        self.assertTrue(bases)
+        for base in bases:
+            on_base = {n for n in vars(base) if not n.startswith("_")}
+            self.assertEqual(on_base - set(vars(StrUtils)), set(), base.__name__)
 
 
 if __name__ == "__main__":

@@ -7,8 +7,10 @@ import os
 import shutil
 import tempfile
 import unittest
+import uuid
+from pathlib import Path
 
-from pythontk.core_utils.preset_store import PresetStore
+from pythontk.core_utils.presets.store import PresetStore
 from pythontk.core_utils.user_config import UserConfig, CONFIG_ROOT_ENV_VAR
 
 
@@ -143,6 +145,40 @@ class PresetStoreTest(unittest.TestCase):
         self.store.rename("draft", "final")
         self.assertEqual(self.store.active, "final")
 
+    # A name with punctuation is stored under a stem without it ("a (b)" ->
+    # "a _b_"): the stem is what list() shows, what a combo holds and what the
+    # Preset Editor renames and deletes by, so it is what the pointer holds.
+    def test_active_holds_the_file_stem_of_a_name_with_punctuation(self):
+        self.store.save("m3trik (laptop)", {"x": 1})
+        self.store.active = "m3trik (laptop)"
+        self.assertEqual(self.store.active, "m3trik _laptop_")
+        self.assertIn(self.store.active, self.store.list("user"))
+        self.assertEqual(self.store.load(self.store.active)["x"], 1)
+
+    def test_rename_by_stem_follows_an_active_name_with_punctuation(self):
+        self.store.save("m3trik (laptop)", {"x": 1})
+        self.store.active = "m3trik (laptop)"
+        self.assertTrue(self.store.rename("m3trik _laptop_", "m3trik laptop"))
+        self.assertEqual(self.store.active, "m3trik laptop")
+        self.assertEqual(self.store.load(self.store.active)["x"], 1)
+
+    def test_delete_by_stem_clears_an_active_name_with_punctuation(self):
+        self.store.save("draft (old)", {"x": 1})
+        self.store.active = "draft (old)"
+        self.assertTrue(self.store.delete("draft _old_"))
+        self.assertIsNone(self.store.active)
+
+    def test_a_pointer_written_as_typed_by_an_older_release_still_resolves(self):
+        # The pointer used to hold the name as typed; that file outlives the
+        # upgrade, so it must still name its preset and still follow a rename.
+        self.store.save("m3trik (laptop)", {"x": 1})
+        (self.store.user_dir / ".active").write_text(
+            json.dumps({"name": "m3trik (laptop)"}), encoding="utf-8"
+        )
+        self.assertEqual(self.store.active, "m3trik _laptop_")
+        self.assertTrue(self.store.rename("m3trik _laptop_", "m3trik laptop"))
+        self.assertEqual(self.store.active, "m3trik laptop")
+
     def test_no_builtin_dir_is_user_only(self):
         store = PresetStore("p", "extapps", user_dir=self.user)
         self.assertIsNone(store.builtin_dir)
@@ -234,7 +270,7 @@ class PresetStoreCodecTest(unittest.TestCase):
         self.assertEqual(store.ext, ".json")
 
     def test_custom_codec_writes_its_extension_and_round_trips(self):
-        from pythontk.core_utils.preset_store import Codec
+        from pythontk.core_utils.presets.store import Codec
 
         # A trivial non-JSON codec (here still JSON-encoded text, but a distinct
         # extension) proves discovery + IO route through the codec, not hardcoded.
@@ -246,7 +282,7 @@ class PresetStoreCodecTest(unittest.TestCase):
         self.assertEqual(store.load("cfg"), {"a": 1})
 
     def test_json_files_are_invisible_to_a_yaml_store(self):
-        from pythontk.core_utils.preset_store import Codec
+        from pythontk.core_utils.presets.store import Codec
 
         json_store = PresetStore("p", user_dir=self.tmp)
         json_store.save("only_json", {"a": 1})
@@ -256,7 +292,7 @@ class PresetStoreCodecTest(unittest.TestCase):
         self.assertEqual(yaml_store.list(), [])  # different extension, not found
 
     def test_codec_ext_is_normalized_with_leading_dot(self):
-        from pythontk.core_utils.preset_store import Codec
+        from pythontk.core_utils.presets.store import Codec
 
         # A dotless ext is a natural public-API mistake; it must not produce
         # 'cfgyaml' filenames / '*yaml' globs. __post_init__ prepends the dot.
@@ -266,6 +302,206 @@ class PresetStoreCodecTest(unittest.TestCase):
         self.assertEqual(store.ext, ".yaml")
         self.assertEqual(store.save("cfg", {"a": 1}).suffix, ".yaml")
         self.assertEqual(store.list(), ["cfg"])
+
+
+class _TempRootCase(unittest.TestCase):
+    """Per-test scratch dir under ``test/temp_tests/``, set as the presets root."""
+
+    def setUp(self):
+        self.root = os.path.join(
+            os.path.dirname(__file__),
+            "temp_tests",
+            f"preset_store_{self._testMethodName}_{uuid.uuid4().hex[:6]}",
+        )
+        # Unique per run: a folder a sync client kept from being deleted, or a
+        # concurrent run of the same test (routine with several sessions), must
+        # never be this run's root -- both surfaced as FileExistsError here.
+        os.makedirs(self.root)
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        prev = os.environ.get(CONFIG_ROOT_ENV_VAR)
+        os.environ[CONFIG_ROOT_ENV_VAR] = self.root
+        self.addCleanup(
+            lambda: (
+                os.environ.pop(CONFIG_ROOT_ENV_VAR, None)
+                if prev is None
+                else os.environ.__setitem__(CONFIG_ROOT_ENV_VAR, prev)
+            )
+        )
+
+
+class PresetStoreInfoTest(_TempRootCase):
+    """Management metadata lives in a sidecar; the payload is never touched."""
+
+    def setUp(self):
+        super().setUp()
+        self.builtin = os.path.join(self.root, "_shipped")
+        os.makedirs(self.builtin)
+        with open(os.path.join(self.builtin, "stock.json"), "w") as fh:
+            json.dump({"x": 0}, fh)
+        self.store = PresetStore("tool", "pkg", builtin_dir=self.builtin)
+
+    def test_payload_round_trips_byte_for_byte_with_no_metadata_key(self):
+        # The reason metadata is a sidecar: raw stores splat the payload into
+        # kwargs, and older installs read the same file.
+        self.store.save("raw", {"axis": "Y"})
+        self.assertEqual(self.store.load("raw"), {"axis": "Y"})
+        with open(self.store.path("raw"), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh), {"axis": "Y"})
+
+    def test_first_save_stamps_identity_and_resave_keeps_it(self):
+        self.store.save("a", {"v": 1})
+        info = self.store.info("a")
+        self.assertTrue(info["id"])
+        self.assertEqual(info["label"], "a")
+        self.assertIn("created", info)
+        self.store.save("a", {"v": 2})
+        self.assertEqual(self.store.info("a")["id"], info["id"])
+
+    def test_label_keeps_the_punctuation_the_file_name_loses(self):
+        name = "MRAO (Metallic, Roughness, AO)"
+        path = self.store.save(name, {"v": 1})
+        self.assertEqual(path.stem, "MRAO _Metallic_ Roughness_ AO_")
+        self.assertEqual(self.store.info(name)["label"], name)
+
+    def test_sidecar_and_marker_never_list_as_presets(self):
+        self.store.save("a", {"v": 1})
+        self.assertEqual(self.store.list("user"), ["a"])
+
+    def test_set_info_merges_and_none_removes(self):
+        self.store.save("a", {"v": 1})
+        self.store.set_info("a", tags=["x"], collection="c")
+        self.store.set_info("a", collection=None)
+        info = self.store.info("a")
+        self.assertEqual(info["tags"], ["x"])
+        self.assertNotIn("collection", info)
+
+    def test_set_info_on_a_builtin_or_missing_name_raises(self):
+        with self.assertRaises(KeyError):
+            self.store.set_info("stock", read_only=True)
+        with self.assertRaises(KeyError):
+            self.store.set_info("ghost", read_only=True)
+
+    def test_locked_preset_refuses_save_delete_and_rename(self):
+        from pythontk.core_utils.presets.store import PresetReadOnlyError
+
+        self.store.save("a", {"v": 1})
+        self.store.set_info("a", read_only=True)
+        self.assertTrue(self.store.is_read_only("a"))
+        with self.assertRaises(PresetReadOnlyError):
+            self.store.save("a", {"v": 2})
+        self.assertIsInstance(PresetReadOnlyError("x"), OSError)
+        self.assertFalse(self.store.delete("a"))
+        self.assertFalse(self.store.rename("a", "b"))
+        self.assertEqual(self.store.load("a"), {"v": 1})
+        # force: the collection-update path.
+        self.store.save("a", {"v": 3}, force=True)
+        self.assertEqual(self.store.load("a"), {"v": 3})
+        self.assertTrue(self.store.delete("a", force=True))
+        self.assertFalse(self.store.info_path("a").exists())
+
+    def test_builtins_are_read_only_but_a_shadow_can_still_be_saved(self):
+        self.assertTrue(self.store.is_read_only("stock"))
+        self.store.save("stock", {"x": 9})  # duplicate-to-edit, as before
+        self.assertFalse(self.store.is_read_only("stock"))
+
+    def test_rename_moves_the_sidecar_keeps_the_id_and_relabels(self):
+        self.store.save("a", {"v": 1})
+        pid = self.store.info("a")["id"]
+        self.assertTrue(self.store.rename("a", "b"))
+        self.assertFalse(self.store.info_path("a").exists())
+        self.assertEqual(self.store.info("b")["id"], pid)
+        self.assertEqual(self.store.info("b")["label"], "b")
+
+    def test_delete_removes_the_sidecar(self):
+        self.store.save("a", {"v": 1})
+        self.assertTrue(self.store.delete("a"))
+        self.assertFalse(self.store.info_path("a").exists())
+
+    def test_a_new_preset_never_inherits_a_stray_sidecar(self):
+        # An older install deletes the payload but not the sidecar it doesn't
+        # know about; a later, unrelated preset of that name must start clean.
+        self.store.save("a", {"v": 1})
+        self.store.set_info("a", read_only=True, collection="studio")
+        dead_id = self.store.info("a")["id"]
+        self.store.path("a").unlink()
+        self.store.save("a", {"v": 2})  # must not raise: the lock was the dead one's
+        info = self.store.info("a")
+        self.assertNotEqual(info["id"], dead_id)
+        self.assertNotIn("read_only", info)
+        self.assertNotIn("collection", info)
+
+    def test_unique_name_numbers_past_both_tiers(self):
+        self.store.save("stock 2", {"v": 1})  # "stock" is a built-in
+        self.assertEqual(self.store.unique_name("stock"), "stock 3")
+        self.assertEqual(self.store.unique_name("fresh"), "fresh")
+
+    def test_key_is_the_folder_under_the_root(self):
+        self.assertEqual(self.store.key, "pkg/tool")
+        outside = PresetStore("t", user_dir=os.path.join(self.root + "_elsewhere", "x"))
+        self.assertIsNone(outside.key)
+
+
+class PresetStoreMarkerTest(_TempRootCase):
+    """A store announces itself with a ``.domain`` marker, without creating dirs."""
+
+    def _marker(self, store):
+        return json.loads((store.user_dir / ".domain").read_text(encoding="utf-8"))
+
+    def test_list_marks_an_existing_folder_with_ext_and_builtin_spec(self):
+        builtin = os.path.join(self.root, "_shipped")
+        os.makedirs(builtin)
+        store = PresetStore("tool", "pkg", builtin_dir=builtin)
+        store.user_dir.mkdir(parents=True)
+        store.list()
+        marker = self._marker(store)
+        self.assertEqual(marker["key"], "pkg/tool")
+        self.assertEqual(marker["ext"], ".json")
+        # Whatever form was recorded, it must find this very dir again.
+        self.assertEqual(
+            PresetStore.resolve_builtin_spec(marker["builtin"]).resolve(),
+            Path(builtin).resolve(),
+        )
+
+    def test_package_form_that_does_not_round_trip_falls_back_to_a_path(self):
+        from unittest import mock
+
+        # E.g. a repo's ``test`` package shadowed by the stdlib's in another host.
+        builtin = os.path.join(self.root, "_shipped")
+        os.makedirs(builtin)
+        store = PresetStore("tool", "pkg", builtin_dir=builtin)
+        store.user_dir.mkdir(parents=True)
+        with mock.patch.object(PresetStore, "resolve_builtin_spec", return_value=None):
+            store.list()
+        self.assertEqual(
+            self._marker(store)["builtin"], {"dir": str(Path(builtin).resolve())}
+        )
+
+    def test_a_read_never_creates_the_folder(self):
+        store = PresetStore("never", "pkg")
+        store.list()
+        self.assertFalse(store.user_dir.exists())
+
+    def test_mark_false_writes_nothing(self):
+        store = PresetStore("quiet", "pkg", mark=False)
+        store.save("a", {"v": 1})
+        self.assertFalse((store.user_dir / ".domain").exists())
+
+    def test_builtin_inside_a_package_is_recorded_package_relative(self):
+        import pythontk
+
+        pkg_dir = Path(pythontk.__file__).parent
+        builtin = pkg_dir / "core_utils"  # any dir inside the package
+        spec = PresetStore._builtin_spec(builtin)
+        self.assertEqual(spec, {"package": "pythontk", "path": "core_utils"})
+        self.assertEqual(
+            PresetStore.resolve_builtin_spec(spec).resolve(), builtin.resolve()
+        )
+
+    def test_unknown_package_resolves_to_none(self):
+        self.assertIsNone(
+            PresetStore.resolve_builtin_spec({"package": "no_such_pkg_x", "path": "p"})
+        )
+        self.assertIsNone(PresetStore.resolve_builtin_spec(None))
 
 
 if __name__ == "__main__":

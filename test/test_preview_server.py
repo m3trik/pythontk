@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from pythontk.core_utils.app_handoff import (
+from pythontk.core_utils.handoff.app_handoff import (
     Deliverer,
     HandoffBridge,
     HandoffRequest,
@@ -1405,6 +1405,53 @@ class _StartBridge(_StubPreviewBridge):
         return super()._produce(objects, request)
 
 
+class PreviewScopeObjectsTestCase(unittest.TestCase):
+    """`PreviewBridge.scope_objects`: the shared scope words over the host hooks.
+
+    ``None`` from ``_resolve_objects`` is the skeleton's "the selection", so a
+    widening scope whose hook cannot answer narrows to the selection -- never to
+    an empty set (a populated scene reported as nothing to push) and never to
+    anything wider.
+    """
+
+    class _Host(PreviewBridge):
+        payload_prefix = "test_preview_scope"
+
+        def __init__(self, scene=None, visible=None):
+            super().__init__()
+            self._scene, self._visible = scene, visible
+
+        def _resolve_objects(self, objects):
+            return ["<selection>"] if objects is None else list(objects)
+
+        def _scene_objects(self):
+            return self._scene
+
+        def _visible_objects(self):
+            return self._visible
+
+    def test_selected_and_unknown_resolve_to_the_selection(self):
+        host = self._Host(scene=["a", "b"], visible=["b"])
+        self.assertEqual(host.scope_objects(), ["<selection>"])
+        self.assertEqual(host.scope_objects("selected"), ["<selection>"])
+        self.assertEqual(host.scope_objects("bogus"), ["<selection>"])
+
+    def test_widening_scopes_read_their_hook(self):
+        host = self._Host(scene=["a", "b"], visible=["b"])
+        self.assertEqual(host.scope_objects("all"), ["a", "b"])
+        self.assertEqual(host.scope_objects("visible"), ["b"])
+
+    def test_an_unanswered_hook_narrows_to_the_selection(self):
+        host = self._Host(scene=None, visible=None)
+        self.assertEqual(host.scope_objects("all"), ["<selection>"])
+        self.assertEqual(host.scope_objects("visible"), ["<selection>"])
+
+    def test_an_empty_scene_stays_empty(self):
+        host = self._Host(scene=[], visible=[])
+        self.assertEqual(host.scope_objects("all"), [])
+        self.assertEqual(host.scope_objects("visible"), [])
+
+
 class PreviewServerBrowserChoiceTestCase(unittest.TestCase):
     """Which browser a push opens.
 
@@ -1679,7 +1726,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         deliverer resolves it in its preflight, and the host's envelope
         publishes it -- an input to the envelope, never patched on afterwards.
         A push's own row outranks the deliverer's, as every row does."""
-        from pythontk.file_utils.mesh_convert.glb_pipeline import GlbPipeline
+        from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
 
         bridge = _StubPreviewBridge()
         bridge.deliverer = PreviewDeliverer(
@@ -1713,7 +1760,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         fallback choice, the embed flag, and its own scratch allocator and
         release hook. What the build reports is what the push returns.
         """
-        from pythontk.file_utils.mesh_convert.glb_pipeline import GlbPipeline
+        from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
 
         seen = {}
 
@@ -1975,7 +2022,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         was cut to the web ceiling (2048 px) whatever the export was set to --
         a 4K export previewed at 2K, with nothing saying they differed.
         """
-        from pythontk.core_utils.export_profile import ExportRun
+        from pythontk.core_utils.engines.scene_export.export_profile import ExportRun
 
         rows = {
             "texture_file_type": ExportRun.KTX2_WITH_FALLBACK,
@@ -1996,7 +2043,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         """Saying nothing is the Scene Exporter's defaults -- the same texture
         pass an export with its rows untouched runs: the web container, every
         map at its own resolution (Optimize Textures is OFF)."""
-        from pythontk.core_utils.export_profile import ExportRun
+        from pythontk.core_utils.engines.scene_export.export_profile import ExportRun
 
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         calls, resolves = self._optimize_calls({})
@@ -3785,7 +3832,7 @@ class PreviewGuestTestCase(unittest.TestCase):
     def test_a_guest_body_gets_no_routes_allowance(self):
         """A still may be 64 MB -- from the owner. A guest's claim past the
         JSON ceiling is refused unread."""
-        from pythontk.net_utils.preview.server import _PreviewHandler
+        from pythontk.net_utils.preview.routes import _PreviewHandler
 
         huge = str(_PreviewHandler.MAX_JSON_BODY + 1)
         status, _body, _headers = self._guest(

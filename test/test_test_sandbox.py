@@ -98,6 +98,49 @@ class TestSandboxTestCase(unittest.TestCase):
         self.assertEqual(TestSandbox.activate(), TestSandbox.activate())
         self.assertTrue(TestSandbox.is_active())
 
+    def test_user_config_hides_the_developers_convention_then_restores_it(self):
+        """A developer's Lightmap = "_LM" must not reach a test, and a test's
+        write must not reach the developer's doc."""
+        import json
+
+        from pythontk.core_utils.naming_convention import (
+            CONFIG_ENV_VAR,
+            NamingConvention,
+        )
+        from pythontk.core_utils.user_config import CONFIG_ROOT_ENV_VAR
+
+        store = TempArtifacts("sandbox_dev_config", policy="scoped")
+        dev_root = store.dir_path()
+        self.addCleanup(store.cleanup)
+        studio = os.path.join(dev_root, "studio.json")
+        with open(studio, "w") as f:
+            json.dump({"mesh": "_MSH"}, f)
+        saved = {v: os.environ.get(v) for v in (CONFIG_ROOT_ENV_VAR, CONFIG_ENV_VAR)}
+
+        def restore():
+            for var, value in saved.items():
+                if value is None:
+                    os.environ.pop(var, None)
+                else:
+                    os.environ[var] = value
+            NamingConvention.reload()
+
+        self.addCleanup(restore)
+        os.environ[CONFIG_ROOT_ENV_VAR] = dev_root
+        os.environ[CONFIG_ENV_VAR] = studio
+        NamingConvention.set("lightmap", "_LM")  # the developer's own edit
+
+        with TestSandbox.user_config() as root:
+            self.assertNotEqual(os.path.normcase(root), os.path.normcase(dev_root))
+            self.assertEqual(NamingConvention.affix("lightmap"), "_Lightmap")
+            self.assertEqual(NamingConvention.affix("mesh"), "_GEO")  # no studio doc
+            NamingConvention.set("group", "_G")  # a test's write
+        self.assertFalse(os.path.exists(root), "the throwaway root is removed")
+        self.assertEqual(os.environ[CONFIG_ENV_VAR], studio)
+        self.assertEqual(NamingConvention.affix("lightmap"), "_LM")
+        self.assertEqual(NamingConvention.affix("mesh"), "_MSH")
+        self.assertEqual(NamingConvention.affix("group"), "_GRP")
+
 
 class PytestLeakGateTest(unittest.TestCase):
     """The browser-leak check has to gate the run CI actually performs.

@@ -26,12 +26,12 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Union
 
-from pythontk.core_utils.export_profile import ExportProfile
-from pythontk.core_utils.scene_records import SceneRecords
+from pythontk.core_utils.engines.scene_export.export_profile import ExportProfile
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
-from pythontk.file_utils.mesh_convert.glb_reader import GlbReader
+from pythontk.file_utils.mesh_convert.glb.reader import GlbReader
 
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 

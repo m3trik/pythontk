@@ -13,22 +13,16 @@ The scene-touching appliers (``apply_behavior``, ``verify_behavior``,
 DCC toolkits, which import this module for the pure core.
 
 Package facade: the implementation lives in :mod:`._behaviors` / :mod:`._spec`.
-The public classes are re-exported here so ``from ...behaviors import Behaviors``
-keeps working; ``mock.patch`` of ``...behaviors.Behaviors.<method>`` takes
-effect for callers that read the class off this package.  To intercept an
-*intra-module* call, patch ``...behaviors._behaviors.Behaviors.<method>``.
+The public classes are published here, lazily (``lazy_exports``), so
+``from ...behaviors import Behaviors`` keeps working; ``mock.patch`` of
+``...behaviors.Behaviors.<method>`` takes effect for callers that read the class
+off this package.  To intercept an *intra-module* call, patch
+``...behaviors._behaviors.Behaviors.<method>``.
 """
 
-from pythontk.core_utils.engines.shots.manifest.behaviors._behaviors import (  # noqa: F401
-    Behaviors,
-)
-from pythontk.core_utils.engines.shots.manifest.behaviors._spec import (  # noqa: F401
-    BehaviorSpec,
-    KNOWN_VERIFY_MODES,
-)
+from pythontk.core_utils.module_resolver import lazy_exports
 
-__all__ = [
-    "Behaviors",
-    "BehaviorSpec",
-    "KNOWN_VERIFY_MODES",
-]
+lazy_exports(
+    globals(),
+    {"_behaviors": "Behaviors", "_spec": ("BehaviorSpec", "KNOWN_VERIFY_MODES")},
+)

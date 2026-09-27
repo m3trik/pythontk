@@ -13,8 +13,6 @@ Run standalone: python -m test.test_naming_convention
 
 import json
 import os
-import shutil
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -23,31 +21,16 @@ from pythontk.core_utils.naming_convention import (
     NamingConvention,
     CONFIG_ENV_VAR,
 )
-from pythontk.core_utils.user_config import CONFIG_ROOT_ENV_VAR
+from pythontk.core_utils.test_sandbox import TestSandbox
 
 
 class _SandboxedConventionTest(unittest.TestCase):
     """Redirects the config root at a temp dir so no test touches the real doc."""
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        self._prev_root = os.environ.get(CONFIG_ROOT_ENV_VAR)
-        self._prev_env = os.environ.get(CONFIG_ENV_VAR)
-        os.environ[CONFIG_ROOT_ENV_VAR] = self.tmp
-        os.environ.pop(CONFIG_ENV_VAR, None)
-        NamingConvention.reload()
-
-    def tearDown(self):
-        for var, prev in (
-            (CONFIG_ROOT_ENV_VAR, self._prev_root),
-            (CONFIG_ENV_VAR, self._prev_env),
-        ):
-            if prev is None:
-                os.environ.pop(var, None)
-            else:
-                os.environ[var] = prev
-        shutil.rmtree(self.tmp, ignore_errors=True)
-        NamingConvention.reload()
+        sandbox = TestSandbox.user_config()
+        self.tmp = sandbox.__enter__()
+        self.addCleanup(sandbox.__exit__, None, None, None)
 
     def _overrides(self) -> dict:
         path = NamingConvention.config_path()
@@ -184,6 +167,100 @@ class ConventionWriteTest(_SandboxedConventionTest):
     def test_unknown_mode_degrades_to_auto(self):
         NamingConvention.set("mesh", "_MSH", mode="sideways")
         self.assertEqual(NamingConvention.mode("mesh"), "auto")
+
+
+class ConventionMatchTest(_SandboxedConventionTest):
+    """:meth:`NamingConvention.matches` -- the affix read back off a name."""
+
+    def test_the_shipped_lightmap_spellings_all_match(self):
+        """Every name shape the production sourceimages actually holds."""
+        for stem in (
+            "ROOM_ENV_Lightmap",
+            "diffuse_cube_LightMap",  # case drift from before the convention
+            "ROOM_ENV_Lightmap_12",  # an atlas tile index
+            "LX2000_Lightmap.LIGHT_A_areaLight",  # a light-group layer
+            "LX2000_Lightmap.default",
+        ):
+            with self.subTest(stem=stem):
+                self.assertTrue(NamingConvention.matches(stem, "lightmap"))
+
+    def test_an_environment_map_does_not_match(self):
+        for stem in ("workshop_8k", "studio_lightmapping", "Lightmapper_sky"):
+            with self.subTest(stem=stem):
+                self.assertFalse(NamingConvention.matches(stem, "lightmap"))
+
+    def test_case_sensitive_refuses_the_drifted_spelling(self):
+        self.assertFalse(
+            NamingConvention.matches(
+                "diffuse_cube_LightMap", "lightmap", case_sensitive=True
+            )
+        )
+
+    def test_follows_a_convention_edit(self):
+        NamingConvention.set("lightmap", "_LM")
+        self.assertTrue(NamingConvention.matches("floor_LM_3", "lightmap"))
+        self.assertFalse(NamingConvention.matches("floor_Lightmap", "lightmap"))
+
+    def test_a_prefix_convention_matches_at_the_front(self):
+        NamingConvention.set("lightmap", "LM_", "prefix")
+        self.assertTrue(NamingConvention.matches("LM_floor", "lightmap"))
+        self.assertFalse(NamingConvention.matches("floor_LM", "lightmap"))
+
+    def test_an_empty_entry_marks_nothing(self):
+        NamingConvention.set("lightmap", "")
+        self.assertFalse(NamingConvention.matches("floor_Lightmap", "lightmap"))
+
+    def test_reads_back_whatever_apply_wrote(self):
+        """A bare affix concatenates verbatim ("roomLM"); matches must see it."""
+        for text, mode in (("LM", "suffix"), ("LM", "prefix"), ("_LM", "auto")):
+            with self.subTest(text=text, mode=mode):
+                NamingConvention.set("lightmap", text, mode)
+                applied = NamingConvention.apply("room", "lightmap")
+                self.assertTrue(NamingConvention.matches(applied, "lightmap"))
+                self.assertTrue(
+                    NamingConvention.matches(applied + "_7.LIGHT_A", "lightmap")
+                )
+
+
+class ConventionSnapshotTest(_SandboxedConventionTest):
+    """The whole-table snapshot a named convention preset stores."""
+
+    def test_as_dict_round_trips_through_update(self):
+        NamingConvention.set("mesh", "GEO_", "prefix")
+        snapshot = NamingConvention.as_dict()
+        self.assertEqual(snapshot["mesh"], {"text": "GEO_", "mode": "prefix"})
+        self.assertEqual(set(snapshot), set(NamingConvention.keys()))
+        NamingConvention.reset()
+        NamingConvention.update(snapshot)
+        self.assertEqual(NamingConvention.affix("mesh"), "GEO_")
+
+    def test_a_saved_preset_loads_through_update_without_its_meta(self):
+        """A preset file carries ``_meta`` beside the entries; loading one
+        headlessly must not persist it as a convention key."""
+        store = NamingConvention.preset_store()
+        store.save("studio", {"_meta": {"version": 1}, **NamingConvention.as_dict()})
+        NamingConvention.update(store.load("studio"))
+        self.assertNotIn("_meta", NamingConvention.keys())
+        self.assertNotIn("_meta", self._overrides())
+
+    def test_update_keeps_an_edit_another_host_made_since(self):
+        """Maya and Blender share the doc: Maya's cached table must not be
+        written back over a Blender edit."""
+        NamingConvention.resolve()  # this process's cache, before the edit
+        NamingConvention.config_path().parent.mkdir(parents=True, exist_ok=True)
+        NamingConvention.config_path().write_text(
+            json.dumps({"mesh": {"text": "_MSH", "mode": "auto"}})
+        )  # the other host's write
+        NamingConvention.set("group", "_G")
+        self.assertEqual(self._overrides()["mesh"]["text"], "_MSH")
+        self.assertEqual(NamingConvention.affix("mesh"), "_MSH")
+
+    def test_preset_store_is_shared_under_the_config_root(self):
+        """One store for every host, beside the convention doc itself."""
+        store = NamingConvention.preset_store()
+        self.assertEqual(
+            Path(store.user_dir), NamingConvention.config_path().with_suffix("")
+        )
 
 
 class ConventionBindTest(_SandboxedConventionTest):

@@ -13,6 +13,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from unittest.mock import patch, MagicMock
 from pythontk.core_utils.app_installer import AppInstaller
 
+#: How a platform binary is spelled on disk: fixtures that stand for an
+#: archive's real payload name it the way the platform's build would.
+_EXE = ".exe" if sys.platform == "win32" else ""
+
 
 class TestAppInstaller(unittest.TestCase):
     """Tests for AppInstaller — all network-free via mocks and local archives."""
@@ -93,12 +97,12 @@ class TestAppInstaller(unittest.TestCase):
         """Exe buried several levels deep is found."""
         nested = os.path.join(self.tmp, "a", "b", "c")
         os.makedirs(nested)
-        exe = os.path.join(nested, "mytool.exe")
+        exe = os.path.join(nested, f"mytool{_EXE}")
         with open(exe, "w") as f:
             f.write("x")
         result = AppInstaller._find_executable(self.tmp, "mytool")
         self.assertIsNotNone(result)
-        self.assertTrue(result.lower().endswith("mytool.exe"))
+        self.assertTrue(result.lower().endswith(f"mytool{_EXE}"))
 
     def test_find_executable_exact_name(self):
         """Exact name match without .exe extension."""
@@ -369,7 +373,7 @@ class TestAppInstaller(unittest.TestCase):
 
     def test_ensure_add_to_path_false(self):
         """ensure(add_to_path=False) skips PATH injection."""
-        zip_path = self._make_zip("bin/nopath.exe", b"FAKE")
+        zip_path = self._make_zip(f"bin/nopath{_EXE}", b"FAKE")
         resp = self._mock_urlopen(zip_path)
         install_dir = os.path.join(self.tmp, "nopath_dir")
 
@@ -462,7 +466,7 @@ class TestAppInstaller(unittest.TestCase):
 
     def test_ensure_downloads_and_extracts(self):
         """Full lifecycle: download → extract → discover → catalog."""
-        zip_path = self._make_zip("nested/bin/cooltool.exe", b"FAKEBIN")
+        zip_path = self._make_zip(f"nested/bin/cooltool{_EXE}", b"FAKEBIN")
         resp = self._mock_urlopen(zip_path)
         install_dir = os.path.join(self.tmp, "managed")
 
@@ -491,6 +495,65 @@ class TestAppInstaller(unittest.TestCase):
             result = AppInstaller.ensure("ffmpeg", platforms=self._make_platforms())
         self.assertEqual(result, "/usr/bin/ffmpeg")
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX permission bits")
+    def test_extract_zip_keeps_the_members_permission_bits(self):
+        """ZipFile drops them: a tool's second binary (ffprobe beside ffmpeg)
+        landed unrunnable. setuid is never granted."""
+        zip_path = os.path.join(self.tmp, "modes.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for name, mode in (
+                ("bin/tool", 0o755),
+                ("bin/helper", 0o4755),
+                ("README", 0o644),
+            ):
+                info = zipfile.ZipInfo(name)
+                info.external_attr = mode << 16
+                zf.writestr(info, b"x")
+        dest = os.path.join(self.tmp, "out")
+        AppInstaller._extract(zip_path, dest, "zip")
+        mode = lambda *p: os.stat(os.path.join(dest, *p)).st_mode & 0o7777  # noqa: E731
+        self.assertEqual(mode("bin", "tool"), 0o755)
+        self.assertEqual(mode("bin", "helper"), 0o755)  # the setuid bit is dropped
+        self.assertEqual(mode("README"), 0o644)
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX permission bits")
+    def test_extract_zip_never_grants_group_or_other_write(self):
+        """The tar path's ``filter="data"`` strips group/other write; zip kept
+        them, so a member recorded 0o777 landed world-writable -- a tool
+        binary any local user could replace before it next ran."""
+        zip_path = os.path.join(self.tmp, "writable.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for name, mode in (("bin/tool", 0o777), ("share/data", 0o666)):
+                info = zipfile.ZipInfo(name)
+                info.external_attr = mode << 16
+                zf.writestr(info, b"x")
+        dest = os.path.join(self.tmp, "out")
+        AppInstaller._extract(zip_path, dest, "zip")
+        mode = lambda *p: os.stat(os.path.join(dest, *p)).st_mode & 0o7777  # noqa: E731
+        self.assertEqual(mode("bin", "tool"), 0o755)
+        self.assertEqual(mode("share", "data"), 0o644)
+
+    def test_platform_entry_matches_the_cpu_not_just_the_os(self):
+        """An x86_64 Linux build on an arm64 machine installs fine and then
+        fails "Exec format error" at first use: an arch key wins, and a Linux
+        build declared for another CPU is refused up front."""
+        table = {
+            "linux": {"url": "x86", "arch": "x86_64"},
+            "linux-arm64": {"url": "arm"},
+            "windows": {"url": "win", "arch": "x86_64"},
+        }
+        with patch.object(AppInstaller, "_current_platform", return_value="linux"):
+            with patch("platform.machine", return_value="aarch64"):
+                self.assertEqual(AppInstaller._platform_entry(table)[0], "linux-arm64")
+                with self.assertRaisesRegex(LookupError, "arm64"):
+                    AppInstaller._platform_entry({"linux": table["linux"]}, "tool")
+            with patch("platform.machine", return_value="x86_64"):
+                self.assertEqual(AppInstaller._platform_entry(table)[0], "linux")
+        # Windows (and macOS) run x86_64 builds on arm64 under emulation.
+        with patch.object(AppInstaller, "_current_platform", return_value="windows"):
+            with patch("platform.machine", return_value="ARM64"):
+                self.assertEqual(AppInstaller._platform_entry(table)[0], "windows")
+
     def test_ensure_raises_for_unknown_platform(self):
         with self.assertRaises(LookupError):
             AppInstaller.ensure("tool", platforms={"fakeos": {"url": "x"}})
@@ -499,7 +562,7 @@ class TestAppInstaller(unittest.TestCase):
         """SHA-256 is checked when provided."""
         import hashlib
 
-        zip_path = self._make_zip("bin/verified.exe", b"VERIFIED")
+        zip_path = self._make_zip(f"bin/verified{_EXE}", b"VERIFIED")
         with open(zip_path, "rb") as f:
             h = hashlib.sha256(f.read()).hexdigest()
 
@@ -523,7 +586,7 @@ class TestAppInstaller(unittest.TestCase):
     def test_ensure_update_redownloads(self):
         """update=True triggers a fresh download even if already installed."""
         # First install
-        zip_path = self._make_zip("bin/upd.exe", b"V1")
+        zip_path = self._make_zip(f"bin/upd{_EXE}", b"V1")
         resp1 = self._mock_urlopen(zip_path)
         install_dir = os.path.join(self.tmp, "upd")
 
@@ -537,7 +600,7 @@ class TestAppInstaller(unittest.TestCase):
                     )
 
         # Update
-        zip_path2 = self._make_zip("bin/upd.exe", b"V2")
+        zip_path2 = self._make_zip(f"bin/upd{_EXE}", b"V2")
         resp2 = self._mock_urlopen(zip_path2)
 
         with patch("pythontk.net_utils.remote_file.urlopen", return_value=resp2):

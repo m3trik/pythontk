@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 import ctypes
-import glob
 import inspect
 import threading
 import _thread
@@ -14,6 +13,7 @@ import subprocess
 from functools import wraps
 
 from pythontk.core_utils.execution_monitor import _sidecar
+from pythontk.core_utils.x11 import X11
 
 
 class _EscapeHoldDetector:
@@ -80,8 +80,6 @@ class ExecutionMonitor:
     bundled python is not discoverable pin it with :meth:`set_interpreter`.
     """
 
-    _x11_lib = None
-    _x11_display = None
     _interpreter_override = None
 
     #: Prefix namespace for the watchdog heartbeat files (a ``TempArtifacts``
@@ -161,9 +159,14 @@ class ExecutionMonitor:
         pressed in a browser would cancel a background operation here. Gating on
         window ownership removes that entire false-positive class.
 
-        Returns ``True`` on platforms where ownership can't be determined, so
-        the gate never *removes* an existing cancel affordance.
+        Linux asks the X server for the focused window's ``_NET_WM_PID``
+        (:meth:`X11.active_window_pid`; XWayland included). Returns ``True``
+        where ownership can't be determined, so the gate never *removes* an
+        existing cancel affordance.
         """
+        if sys.platform.startswith("linux"):
+            pid = X11.active_window_pid()
+            return True if pid is None else pid == os.getpid()
         if sys.platform != "win32":
             return True
         try:
@@ -192,49 +195,7 @@ class ExecutionMonitor:
                 return bool(ctypes.windll.user32.GetAsyncKeyState(0x1B) & 0x8000)
 
             elif sys.platform.startswith("linux"):
-                try:
-                    if ExecutionMonitor._x11_lib is None:
-                        ExecutionMonitor._x11_lib = ctypes.cdll.LoadLibrary(
-                            "libX11.so.6"
-                        )
-                        ExecutionMonitor._x11_lib.XOpenDisplay.restype = ctypes.c_void_p
-                        ExecutionMonitor._x11_lib.XKeysymToKeycode.restype = (
-                            ctypes.c_ubyte
-                        )
-                        ExecutionMonitor._x11_lib.XQueryKeymap.argtypes = [
-                            ctypes.c_void_p,
-                            ctypes.c_char * 32,
-                        ]
-
-                    if ExecutionMonitor._x11_display is None:
-                        ExecutionMonitor._x11_display = (
-                            ExecutionMonitor._x11_lib.XOpenDisplay(None)
-                        )
-
-                    if not ExecutionMonitor._x11_display:
-                        return False
-
-                    # XK_Escape is 0xFF1B
-                    keycode = ExecutionMonitor._x11_lib.XKeysymToKeycode(
-                        ExecutionMonitor._x11_display, 0xFF1B
-                    )
-
-                    keys = (ctypes.c_char * 32)()
-                    ExecutionMonitor._x11_lib.XQueryKeymap(
-                        ExecutionMonitor._x11_display, keys
-                    )
-
-                    byte_index = keycode // 8
-                    bit_index = keycode % 8
-
-                    # In Python 3, accessing c_char array returns bytes of length 1
-                    key_byte = keys[byte_index]
-                    # Convert to int
-                    key_val = key_byte[0] if isinstance(key_byte, bytes) else key_byte
-
-                    return (key_val & (1 << bit_index)) != 0
-                except Exception:
-                    return False
+                return bool(X11.key_down(0xFF1B))  # XK_Escape; X11 and XWayland
         except Exception:
             # Key-state probing is best-effort; an unexpected failure here must
             # not propagate — it would kill the monitor thread (and with it the
@@ -253,18 +214,13 @@ class ExecutionMonitor:
         cls._interpreter_override = path
 
     @staticmethod
-    def _looks_like_python(path: str) -> bool:
-        name = os.path.splitext(os.path.basename(path))[0].lower()
-        return "python" in name or name.endswith("py") or name == "hython"
-
-    @staticmethod
     def _get_python_executable():
         """Path of a python interpreter for the sidecar processes, or ``None``.
 
-        :meth:`set_interpreter` wins. Otherwise ``sys.executable`` when it is
-        itself a python; else a companion beside it (``maya.exe`` → ``mayapy``,
-        ``3dsmax`` → ``3dsmaxpy``, a sibling ``python``/``hython``); else the
-        python bundled under ``sys.prefix`` (Blender: ``<ver>/python/bin``).
+        :meth:`set_interpreter` wins; otherwise :meth:`AppLauncher.companion_python`
+        -- ``sys.executable`` when it is itself a python, else the companion
+        beside it (``maya.exe`` -> ``mayapy``) or bundled under ``sys.prefix``
+        (Blender).
 
         ``None``, never the host binary: every caller hands the result a python
         *script* to run, and inside a host with no discoverable interpreter the
@@ -272,35 +228,9 @@ class ExecutionMonitor:
         """
         if ExecutionMonitor._interpreter_override:
             return ExecutionMonitor._interpreter_override
+        from pythontk.core_utils.app_launcher import AppLauncher
 
-        executable = sys.executable or ""
-        if executable and ExecutionMonitor._looks_like_python(executable):
-            return executable
-
-        ext = ".exe" if sys.platform == "win32" else ""
-        candidates = []
-        if executable:
-            dir_path = os.path.dirname(executable)
-            # {app}py beside the app (mayabatch → mayapy), then generic names.
-            base = os.path.splitext(os.path.basename(executable))[0].lower()
-            base = base.replace("batch", "")
-            for name in (base + "py", "python", "python3", "hython"):
-                candidates.append(os.path.join(dir_path, name + ext))
-        prefixes = dict.fromkeys(
-            p for p in (sys.prefix, sys.base_prefix, sys.exec_prefix) if p
-        )
-        for prefix in prefixes:
-            candidates.append(os.path.join(prefix, "python" + ext))
-            candidates.append(os.path.join(prefix, "bin", "python" + ext))
-            candidates.append(os.path.join(prefix, "bin", "python3" + ext))
-            candidates.extend(
-                sorted(glob.glob(os.path.join(prefix, "bin", "python3.*")))
-            )
-
-        for candidate in candidates:
-            if os.path.exists(candidate):
-                return candidate
-        return None
+        return AppLauncher.companion_python()
 
     @staticmethod
     def _get_cursor_pos():
@@ -314,6 +244,8 @@ class ExecutionMonitor:
                 pt = POINT()
                 if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
                     return (pt.x, pt.y)
+            elif sys.platform.startswith("linux"):
+                return X11.pointer()
         except Exception:
             pass
         return None

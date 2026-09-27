@@ -25,12 +25,15 @@ directly: ``from pythontk import Polyline, PointCloud``.
   shadow projection: points onto the ground plane through a light (or along a
   sun's direction), plus the bounding-cylinder model a live expression can
   evaluate. The geometry under the mayatk / blendertk ``ShadowRig`` twins.
+- :mod:`~pythontk.geo_utils.uv` -- the UV-layout family: ``UvPack`` (island
+  packing), ``UvBudget`` (map-count / texel-density planning) and
+  ``UvTransfer`` (texel remap between two layouts of the same triangles).
 
 The curtain *generator* that once lived here (``CurtainDrape``) was one tool's
 displacement math, not a general geometry primitive: its rail→grid machinery
 was extracted into the general :class:`RailSurface` primitive (which stays
 here), and the curtain-specific remainder now lives with its consumers as the
-vendored ``edit_utils._curtain_drape`` twins in mayatk and blendertk
+vendored ``edit_utils.curtain._curtain_drape`` twins in mayatk and blendertk
 (code-identical, drift-guarded by extapps' ``test_vendor_sync.py``).
 """
 

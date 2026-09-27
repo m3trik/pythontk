@@ -684,12 +684,12 @@ class FileTest(BaseTestCase):
         self.assertIs(match[0], Canonical)
 
     def test_canonical_module_path_walks_up_init_py(self):
-        """``_canonical_module_path`` returns dotted name for a packaged file."""
+        """``canonical_module_path`` returns dotted name for a packaged file."""
         from pythontk.iter_utils._iter_utils import IterUtils
 
         path = inspect.getfile(IterUtils)
         self.assertEqual(
-            FileUtils._canonical_module_path(path),
+            FileUtils.canonical_module_path(path),
             "pythontk.iter_utils._iter_utils",
         )
 
@@ -698,7 +698,7 @@ class FileTest(BaseTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             loose = Path(tmp) / "loose_module.py"
             loose.write_text("class Loose: pass\n", encoding="utf-8")
-            self.assertIsNone(FileUtils._canonical_module_path(str(loose)))
+            self.assertIsNone(FileUtils.canonical_module_path(str(loose)))
 
     def test_canonical_module_path_for_package_init(self):
         """An ``__init__.py`` resolves to its package's dotted name."""
@@ -706,7 +706,7 @@ class FileTest(BaseTestCase):
 
         init_path = pkg.__file__
         self.assertEqual(
-            FileUtils._canonical_module_path(init_path),
+            FileUtils.canonical_module_path(init_path),
             "pythontk.iter_utils",
         )
 
@@ -770,30 +770,41 @@ class FileTest(BaseTestCase):
         import sys
 
         captured = []
+
+        def answered(args):  # a file manager that answers (Linux: the D-Bus call)
+            captured.append(args)
+            return True
+
         with tempfile.TemporaryDirectory() as d:
             f = os.path.join(d, "scene.blend")
             with open(f, "w", encoding="utf-8") as fh:
                 fh.write("x")
 
-            # A real file → the args include the file path (selected on Win/mac).
-            args_file = FileUtils.reveal_in_file_manager(f, _runner=captured.append)
-            self.assertIn(
-                f, [os.path.normpath(a) for a in args_file if isinstance(a, str)]
+            # A real file → selected: by path on Windows/macOS, by URI through
+            # freedesktop FileManager1 on Linux.
+            args_file = FileUtils.reveal_in_file_manager(f, _runner=answered)
+            self.assertEqual(captured[-1], args_file)  # the runner got exactly these
+            launcher = {"win": "explorer", "darwin": "open"}.get(
+                "win" if sys.platform.startswith("win") else sys.platform, "dbus-send"
             )
-            self.assertEqual(
-                captured[-1], args_file
-            )  # the runner received exactly the args
+            self.assertEqual(args_file[0], launcher)
+            if launcher == "dbus-send":
+                self.assertIn(f"array:string:{Path(f).as_uri()}", args_file)
+                # No file manager on the bus → the containing folder opens.
+                captured.clear()
+                fallback = FileUtils.reveal_in_file_manager(f, _runner=captured.append)
+                self.assertEqual(fallback, ["xdg-open", os.path.normpath(d)])
+                self.assertEqual([a[0] for a in captured], ["dbus-send", "xdg-open"])
+            else:
+                self.assertIn(
+                    f, [os.path.normpath(a) for a in args_file if isinstance(a, str)]
+                )
 
             # A directory → opens the folder (no file-select token).
             args_dir = FileUtils.reveal_in_file_manager(d, _runner=captured.append)
             self.assertNotIn("/select,", args_dir)
+            self.assertNotIn("dbus-send", args_dir)
             self.assertEqual(os.path.normpath(args_dir[-1]), os.path.normpath(d))
-
-            # Platform sanity: the launcher executable matches the OS.
-            launcher = {"win": "explorer", "darwin": "open"}.get(
-                "win" if sys.platform.startswith("win") else sys.platform, "xdg-open"
-            )
-            self.assertEqual(args_file[0], launcher)
 
         # A path whose containing directory is gone → FileNotFoundError (caller can message).
         with self.assertRaises(FileNotFoundError):
@@ -801,6 +812,34 @@ class FileTest(BaseTestCase):
                 os.path.join(tempfile.gettempdir(), "no_such_dir_xyz", "f.blend"),
                 _runner=captured.append,
             )
+
+    def test_reveal_in_file_manager_resolves_a_relative_path(self):
+        """A path relative to the cwd is made absolute first: Linux's file URI
+        refuses a relative path (``ValueError``), a bare file name (dirname
+        ``""``) raised FileNotFoundError on every OS, and a file manager would
+        resolve a relative one against its OWN cwd."""
+        import sys
+
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "sub"))
+            names = (os.path.join("sub", "scene.blend"), "top.blend")
+            for name in names:
+                with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+                    fh.write("x")
+            cwd = os.getcwd()
+            os.chdir(d)
+            try:
+                for name in names:
+                    absolute = os.path.join(os.getcwd(), name)
+                    args = FileUtils.reveal_in_file_manager(
+                        name, _runner=lambda a: True
+                    )
+                    if sys.platform.startswith("win") or sys.platform == "darwin":
+                        self.assertEqual(args[-1], absolute)
+                    else:
+                        self.assertIn(f"array:string:{Path(absolute).as_uri()}", args)
+            finally:
+                os.chdir(cwd)
 
     # -------------------------------------------------------------------------
     # is_cloud_placeholder Tests
@@ -1047,13 +1086,33 @@ class FileTest(BaseTestCase):
         """No abspath: a relative path must not be resolved against the CWD."""
         self.assertFalse(FileUtils.is_under("x.png", os.getcwd()))
 
+    def test_remap_file_paths_needs_a_folder_boundary(self):
+        """``/proj2/b.png`` is not under ``/proj``: a bare startswith took it
+        for inside, and relpath then mapped it to ``../proj2/b.png`` -- out of
+        the target folder."""
+        root = os.path.abspath(os.sep)
+        base, target = os.path.join(root, "proj"), os.path.join(root, "out")
+        inside = os.path.join(base, "tex", "a.png")
+        sibling = os.path.join(root, "proj2", "b.png")
+        (k1, new1, _), (k2, new2, _) = FileUtils.remap_file_paths(
+            [inside, sibling], target, base
+        )
+        self.assertEqual(k1, "tex/a.png")
+        self.assertEqual(os.path.normpath(new1), os.path.join(target, "tex", "a.png"))
+        self.assertEqual(k2, "b.png")  # not under base: flattened by name
+        self.assertEqual(os.path.normpath(new2), os.path.join(target, "b.png"))
+
     # -------------------------------------------------------------------------
     # is_rooted_path / resolve_output_dir Tests
     # -------------------------------------------------------------------------
 
     def test_is_rooted_path_needs_a_drive_or_posix_root(self):
-        self.assertTrue(FileUtils.is_rooted_path("C:/bakes"))
-        self.assertTrue(FileUtils.is_rooted_path(r"\\server\share\bakes"))
+        if os.name == "nt":
+            self.assertTrue(FileUtils.is_rooted_path("C:/bakes"))
+            self.assertTrue(FileUtils.is_rooted_path(r"\\server\share\bakes"))
+        else:  # no drives here: 'C:/bakes' is a folder named 'C:'
+            self.assertTrue(FileUtils.is_rooted_path("/bakes"))
+            self.assertFalse(FileUtils.is_rooted_path("C:/bakes"))
         self.assertFalse(FileUtils.is_rooted_path("bakes"))
         self.assertFalse(FileUtils.is_rooted_path(""))
 
@@ -1062,6 +1121,7 @@ class FileTest(BaseTestCase):
         drive's root -- which is why this test exists rather than isabs."""
         self.assertEqual(FileUtils.is_rooted_path("/new"), os.sep == "/")
 
+    @unittest.skipUnless(os.name == "nt", "drive letters are a Windows spelling")
     def test_is_rooted_path_rejects_a_drive_relative_entry(self):
         """'C:new' carries a drive but no root: Windows resolves it against the
         CWD *on that drive*, so it is the same trap as '/new' in another
@@ -1088,12 +1148,15 @@ class FileTest(BaseTestCase):
         )
 
     def test_resolve_output_dir_treats_a_separator_spelled_entry_as_a_subdir(self):
-        """'/new/' and 'new' name the same folder -- the driveless-root trap."""
+        """On Windows '/new/' and 'new' name the same folder -- the driveless-root
+        trap. On POSIX '/new/' is a full path, and a full path wins."""
         base = os.path.normpath("/proj/sourceimages")
-        self.assertEqual(
-            FileUtils.resolve_output_dir("/lightmaps/", base),
-            os.path.join(base, "lightmaps"),
+        expected = (
+            os.path.join(base, "lightmaps")
+            if os.name == "nt"
+            else os.path.normpath("/lightmaps")
         )
+        self.assertEqual(FileUtils.resolve_output_dir("/lightmaps/", base), expected)
 
     def test_resolve_output_dir_keeps_a_full_path(self):
         base = os.path.normpath("/proj/sourceimages")
@@ -1307,13 +1370,21 @@ class FileTest(BaseTestCase):
         path = os.path.join(folder, "Map.exr")
         with open(path, "wb") as fh:
             fh.write(b"x")
-        self.assertTrue(FileUtils.is_same_file(path, path.upper()))
+        # Case is the FILESYSTEM's call: one file on NTFS/APFS, two names
+        # (the second naming nothing) on a case-sensitive Linux filesystem.
+        other_case = os.path.join(folder, "MAP.EXR")
+        self.assertEqual(
+            FileUtils.is_same_file(path, other_case), os.path.exists(other_case)
+        )
         self.assertTrue(
             FileUtils.is_same_file(path, os.path.join(folder, "sub", "..", "Map.exr"))
         )
         self.assertFalse(FileUtils.is_same_file(path, os.path.join(folder, "Other")))
-        # Neither on disk: the normalized spellings decide.
-        self.assertTrue(FileUtils.is_same_file("gone/a.exr", "gone\\a.exr"))
+        # Neither on disk: the normalized spellings decide ('\\' separates only
+        # on Windows; elsewhere it is a filename character).
+        self.assertEqual(
+            FileUtils.is_same_file("gone/a.exr", "gone\\a.exr"), os.name == "nt"
+        )
 
     def test_has_same_content_is_the_bytes_not_the_size(self):
         store = __import__("pythontk").TempArtifacts("ptk_same_content")
@@ -1824,6 +1895,81 @@ class AtomicWriteTest(unittest.TestCase):
         self.assertEqual(self._read(self.target), b"previous")
         os.replace(part, self.target)
         self.assertEqual(self._read(self.target), b"new")
+
+    @unittest.skipUnless(os.name == "nt", "Windows lock codes")
+    def test_a_momentarily_held_target_is_still_replaced(self):
+        from unittest import mock
+
+        replace, calls = ReplaceFileTest.held(2)
+        with mock.patch("os.replace", side_effect=replace), mock.patch("time.sleep"):
+            FileUtils.atomic_write(self.target, self._writer(b"new"))
+        self.assertEqual(self._read(self.target), b"new")
+        self.assertEqual(len(calls), 3)
+
+
+@unittest.skipUnless(os.name == "nt", "Windows lock codes")
+class ReplaceFileTest(unittest.TestCase):
+    """``FileUtils.replace_file``: ``os.replace`` that waits out a momentary lock.
+
+    A sync client, a virus scanner or the search indexer opens a file right
+    after it changes; for that moment Windows refuses to replace or rename it
+    (``WinError 32`` sharing violation, ``WinError 5`` access denied). Captured
+    live on a synced drive: ``[WinError 5] Access is denied: '.x.tmp' ->
+    '.Unity.preset'`` on the third quick rewrite of a preset's sidecar.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="ptk_replace_file_test_")
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.src = os.path.join(self.dir, "new.txt")
+        self.dst = os.path.join(self.dir, "target.txt")
+        for path, text in ((self.src, "new"), (self.dst, "old")):
+            with open(path, "w") as fh:
+                fh.write(text)
+
+    @staticmethod
+    def held(times, winerror=32):
+        """An ``os.replace`` refused *times* times, as while another process
+        holds the file; ``winerror=None`` refuses the way a real permission
+        problem does."""
+        real, calls = os.replace, []
+
+        def replace(src, dst):
+            calls.append(dst)
+            if len(calls) <= times:
+                if winerror is None:
+                    raise PermissionError(13, "Permission denied", dst)
+                raise PermissionError(13, "held by another process", dst, winerror)
+            return real(src, dst)
+
+        return replace, calls
+
+    def _replace(self, replace):
+        from unittest import mock
+
+        with mock.patch("os.replace", side_effect=replace), mock.patch("time.sleep"):
+            FileUtils.replace_file(self.src, self.dst)
+
+    def test_a_momentary_lock_is_waited_out(self):
+        replace, calls = self.held(2)
+        self._replace(replace)
+        self.assertEqual(len(calls), 3)
+        with open(self.dst) as fh:
+            self.assertEqual(fh.read(), "new")
+
+    def test_a_lock_that_outlasts_the_wait_raises(self):
+        replace, calls = self.held(10**6, winerror=5)
+        with self.assertRaises(PermissionError):
+            self._replace(replace)
+        self.assertGreater(len(calls), 1)
+        with open(self.dst) as fh:
+            self.assertEqual(fh.read(), "old")
+
+    def test_any_other_refusal_raises_at_once(self):
+        replace, calls = self.held(10**6, winerror=None)
+        with self.assertRaises(PermissionError):
+            self._replace(replace)
+        self.assertEqual(len(calls), 1)
 
 
 class TestUniquePath(unittest.TestCase):

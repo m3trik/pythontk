@@ -2,7 +2,7 @@
 # coding=utf-8
 import fnmatch
 from difflib import SequenceMatcher
-from typing import Any, Dict, List, Set, Callable, Optional
+from typing import Any, Dict, List, Set, Callable, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -240,6 +240,205 @@ class HierarchyAnalyzer:
             )
 
         return move_differences
+
+    # ------------------------------------------------------------------
+    # Pairing passes over missing/extra PATH lists
+    # ------------------------------------------------------------------
+    # Each takes the pools still unexplained, pairs what it recognizes, and
+    # returns ``(pairs, remaining_missing, remaining_extra)`` so a caller
+    # chains them (reparented -> fuzzy renames -> suffix flattening, as both
+    # DCC Hierarchy Syncs do) and each pass sees only what the ones before it
+    # left.  Pure path-string logic; a host vetoes a pairing through a
+    # predicate rather than a scene read here.
+
+    @staticmethod
+    def detect_reparented(
+        missing: List[str],
+        extra: List[str],
+        compatible: Optional[Callable[[str, str], bool]] = None,
+        path_separator: str = "|",
+    ) -> Tuple[List[Dict[str, str]], List[str], List[str]]:
+        """Pair items that exist in both pools under different parents.
+
+        A leaf name found exactly once on each side is the same node moved:
+        ``Grp|Leaf`` missing and ``Other|Leaf`` extra.  A leaf that repeats on
+        either side is ambiguous and left alone.
+
+        Parameters:
+            missing: Reference paths absent from the current hierarchy.
+            extra: Current paths absent from the reference.
+            compatible: ``(reference_path, current_path) -> bool``; a host's
+                veto for a pairing leaf identity alone cannot rule out (a
+                missing mesh vs. a new empty group that shares its name).
+                ``None`` accepts every pairing.
+            path_separator: Character separating path components.
+
+        Returns:
+            ``(pairs, remaining_missing, remaining_extra)``; each pair is
+            ``{"leaf", "reference_path", "current_path"}``.
+        """
+        missing_by_leaf: Dict[str, List[str]] = {}
+        for p in missing:
+            missing_by_leaf.setdefault(p.rsplit(path_separator, 1)[-1], []).append(p)
+        extra_by_leaf: Dict[str, List[str]] = {}
+        for p in extra:
+            extra_by_leaf.setdefault(p.rsplit(path_separator, 1)[-1], []).append(p)
+
+        pairs: List[Dict[str, str]] = []
+        matched_missing: Set[str] = set()
+        matched_extra: Set[str] = set()
+        for leaf, m_paths in missing_by_leaf.items():
+            e_paths = extra_by_leaf.get(leaf, [])
+            if len(m_paths) != 1 or len(e_paths) != 1:
+                continue
+            if compatible is not None and not compatible(m_paths[0], e_paths[0]):
+                continue
+            pairs.append(
+                {"leaf": leaf, "reference_path": m_paths[0], "current_path": e_paths[0]}
+            )
+            matched_missing.add(m_paths[0])
+            matched_extra.add(e_paths[0])
+
+        return (
+            pairs,
+            [p for p in missing if p not in matched_missing],
+            [p for p in extra if p not in matched_extra],
+        )
+
+    @staticmethod
+    def detect_fuzzy_renames(
+        missing: List[str],
+        extra: List[str],
+        score_threshold: float = 0.7,
+        path_separator: str = "|",
+    ) -> Tuple[List[Dict[str, Any]], List[str], List[str]]:
+        """Pair items that were renamed, by fuzzy leaf-name similarity.
+
+        Each missing leaf takes its best-scoring extra leaf
+        (:meth:`~pythontk.FuzzyMatcher.find_all_matches`); a path is claimed
+        once, first come first served.  Identical leaves are not renames (the
+        reparented pass owns those).
+
+        Parameters:
+            missing: Reference paths absent from the current hierarchy.
+            extra: Current paths absent from the reference.
+            score_threshold: Minimum similarity for a pairing.
+            path_separator: Character separating path components.
+
+        Returns:
+            ``(pairs, remaining_missing, remaining_extra)``; each pair is
+            ``{"target_name", "current_name", "score"}`` (target = the
+            reference path).
+        """
+        from pythontk.str_utils.fuzzy_matcher import FuzzyMatcher
+
+        pairs: List[Dict[str, Any]] = []
+        if not (missing and extra):
+            return pairs, list(missing), list(extra)
+
+        def leaf(path: str) -> str:
+            return path.rsplit(path_separator, 1)[-1]
+
+        raw_matches = FuzzyMatcher.find_all_matches(
+            [leaf(p) for p in missing],
+            [leaf(p) for p in extra],
+            score_threshold=score_threshold,
+        )
+        matched_missing: Set[str] = set()
+        matched_extra: Set[str] = set()
+        for query_leaf, (best_leaf, score) in raw_matches.items():
+            if query_leaf == best_leaf:
+                continue
+            ref_path = next((p for p in missing if leaf(p) == query_leaf), None)
+            cur_path = next((p for p in extra if leaf(p) == best_leaf), None)
+            if (
+                ref_path
+                and cur_path
+                and ref_path not in matched_missing
+                and cur_path not in matched_extra
+            ):
+                pairs.append(
+                    {"target_name": ref_path, "current_name": cur_path, "score": score}
+                )
+                matched_missing.add(ref_path)
+                matched_extra.add(cur_path)
+
+        return (
+            pairs,
+            [p for p in missing if p not in matched_missing],
+            [p for p in extra if p not in matched_extra],
+        )
+
+    @staticmethod
+    def detect_suffix_flattening(
+        missing: List[str],
+        extra: List[str],
+        path_separator: str = "|",
+    ) -> Tuple[List[Dict[str, Any]], List[str], List[str]]:
+        """Pair names an exporter flattened by prepending the parent's name.
+
+        ``BOOSTER_OFF_6_SWITCH`` -> ``OVERHEAD_CONSOLE_BOOSTERS_BOOSTER_OFF_6_SWITCH``
+        (FBX name flattening): the pair shares its parent path, and the
+        shorter leaf is a ``_``-delimited suffix of the longer.
+
+        Parameters:
+            missing: Reference paths absent from the current hierarchy.
+            extra: Current paths absent from the reference.
+            path_separator: Character separating path components.
+
+        Returns:
+            ``(pairs, remaining_missing, remaining_extra)``; each pair is
+            ``{"target_name", "current_name", "score": 1.0}``.
+        """
+        pairs: List[Dict[str, Any]] = []
+        if not (missing and extra):
+            return pairs, list(missing), list(extra)
+
+        def group_by_parent(paths):
+            result: Dict[str, List[Tuple[str, str]]] = {}
+            for p in paths:
+                parent, _, leaf = p.rpartition(path_separator)
+                result.setdefault(parent, []).append((leaf, p))
+            return result
+
+        extra_by_parent = group_by_parent(extra)
+        matched_missing: Set[str] = set()
+        matched_extra: Set[str] = set()
+        for parent, m_items in group_by_parent(missing).items():
+            e_items = extra_by_parent.get(parent)
+            if not e_items:
+                continue
+            for m_leaf, m_path in m_items:
+                if m_path in matched_missing:
+                    continue
+                for e_leaf, e_path in e_items:
+                    if e_path in matched_extra or m_leaf == e_leaf:
+                        continue
+                    longer, shorter = (
+                        (m_leaf, e_leaf)
+                        if len(m_leaf) > len(e_leaf)
+                        else (e_leaf, m_leaf)
+                    )
+                    if (
+                        longer.endswith(shorter)
+                        and longer[len(longer) - len(shorter) - 1] == "_"
+                    ):
+                        pairs.append(
+                            {
+                                "target_name": m_path,
+                                "current_name": e_path,
+                                "score": 1.0,
+                            }
+                        )
+                        matched_missing.add(m_path)
+                        matched_extra.add(e_path)
+                        break
+
+        return (
+            pairs,
+            [p for p in missing if p not in matched_missing],
+            [p for p in extra if p not in matched_extra],
+        )
 
     @staticmethod
     def categorize_differences(

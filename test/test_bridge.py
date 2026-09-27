@@ -4,9 +4,9 @@
 
 Covers the shared machinery the per-DCC bridge engines previously duplicated:
 generic script-template discovery / mode parsing / ``__KEY__`` substitution
-(``core_utils.script_template``), executable resolution
+(``core_utils.handoff.script_template``), executable resolution
 (``AppLauncher.resolve_app_path``), and the Template-Method + Strategy orchestration
-(``core_utils.app_handoff``). No DCC runtime required.
+(``core_utils.handoff.app_handoff``). No DCC runtime required.
 """
 
 import os
@@ -18,10 +18,10 @@ from unittest import mock
 from dataclasses import replace
 from pathlib import Path
 
-from pythontk.core_utils import script_template
+from pythontk.core_utils.handoff import script_template
 from pythontk.core_utils.app_launcher import AppLauncher
-from pythontk.core_utils import app_handoff
-from pythontk.core_utils.app_handoff import (
+from pythontk.core_utils.handoff import app_handoff
+from pythontk.core_utils.handoff.app_handoff import (
     AppSpec,
     HandoffBridge,
     HandoffRequest,
@@ -34,7 +34,7 @@ from pythontk.core_utils.app_handoff import (
     SAVE_AS,
     SEND_TO,
 )
-from pythontk.core_utils.script_run import ScriptRunResult
+from pythontk.core_utils.handoff.script_run import ScriptRunResult
 
 
 class TemplatesTest(unittest.TestCase):
@@ -1010,9 +1010,12 @@ class HandoffSaveAsTest(unittest.TestCase):
 
     def test_the_staging_sibling_keeps_the_extension_and_is_promoted(self):
         """Templates branch on the extension (``.mb`` -> mayaBinary), so it must survive."""
-        staging = app_handoff.ScriptRunDeliverer._staging_path(r"C:\out\asset.mb")
+        out_dir = Path(os.path.abspath(os.sep)) / "out"  # C:\out, or /out
+        staging = app_handoff.ScriptRunDeliverer._staging_path(
+            str(out_dir / "asset.mb")
+        )
         self.assertTrue(staging.endswith(".mb"))
-        self.assertEqual(Path(staging).parent, Path(r"C:\out"))
+        self.assertEqual(Path(staging).parent, out_dir)
         self.assertNotEqual(Path(staging).name, "asset.mb")
 
         br = self._bridge()
@@ -1174,7 +1177,7 @@ class HandoffRoundTripTest(unittest.TestCase):
 
     def test_the_runner_is_asked_to_judge_by_change_not_creation(self):
         """Clearing the path first would delete the app's own input."""
-        from pythontk.core_utils.script_run import REWRITTEN
+        from pythontk.core_utils.handoff.script_run import REWRITTEN
 
         br = self._bridge()
         br.round_trip(objects=["a"], template="unwrap")

@@ -21,9 +21,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Union
 
-from pythontk.core_utils.app_handoff import Deliverer, HandoffRequest, Payload
+from pythontk.core_utils.handoff.app_handoff import Deliverer, HandoffRequest, Payload
 from pythontk.core_utils.deprecation import Deprecation
-from pythontk.core_utils.export_profile import ExportRun
+from pythontk.core_utils.engines.scene_export.export_profile import ExportRun
 from pythontk.net_utils.preview.server import PreviewServer
 
 
@@ -293,7 +293,7 @@ class PreviewDeliverer(Deliverer):
     ) -> Optional[Dict[str, Any]]:
         # Imported here rather than at module scope: the pipeline pulls in the
         # managed-binary installer, which no other PreviewServer user needs.
-        from pythontk.file_utils.mesh_convert.glb_pipeline import GlbPipeline
+        from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
 
         if not payload.primary:
             bridge.logger.error("Preview delivery got no exported file to convert.")

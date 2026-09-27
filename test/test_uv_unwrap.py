@@ -25,7 +25,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from pythontk import UvUnwrap, UsdMeshWriter
-from pythontk.file_utils.uv_unwrap import _uv_unwrap
+from pythontk.file_utils import uv_unwrap as _uv_unwrap
 
 
 # A quad cube — n-gon-free but non-triangulated, which both engines accept.
@@ -184,6 +184,10 @@ class TestResolveEngine(_UvUnwrapTestCase):
         with (
             patch.object(_uv_unwrap.AppLauncher, "resolve_app_path", return_value=None),
             patch(
+                "pythontk.core_utils.app_installer.AppInstaller._current_platform",
+                return_value="windows",  # BFF publishes Windows builds only
+            ),
+            patch(
                 "pythontk.core_utils.app_installer.AppInstaller.get_path",
                 return_value=None,
             ),
@@ -205,6 +209,10 @@ class TestResolveEngine(_UvUnwrapTestCase):
         with (
             patch.object(_uv_unwrap.AppLauncher, "resolve_app_path", return_value=None),
             patch(
+                "pythontk.core_utils.app_installer.AppInstaller._current_platform",
+                return_value="windows",  # BFF publishes Windows builds only
+            ),
+            patch(
                 "pythontk.core_utils.app_installer.AppInstaller.get_path",
                 return_value=None,
             ),
@@ -216,6 +224,30 @@ class TestResolveEngine(_UvUnwrapTestCase):
                 UvUnwrap.resolve_engine("bff", auto_install=True, prompt=True)
         ensure.assert_not_called()
         self.assertIn("prompt=False", str(ctx.exception))
+
+    def test_bff_is_not_offered_where_no_build_exists(self):
+        """No Linux build: "not installed" with the manual route -- never a
+        download prompt the user answers only to hit a LookupError."""
+        with (
+            patch.object(_uv_unwrap.AppLauncher, "resolve_app_path", return_value=None),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller.get_path",
+                return_value=None,
+            ),
+            patch(
+                "pythontk.core_utils.app_installer.AppInstaller._current_platform",
+                return_value="linux",
+            ),
+            patch("pythontk.core_utils.app_installer.AppInstaller.consent") as consent,
+            patch("pythontk.core_utils.app_installer.AppInstaller.ensure") as ensure,
+        ):
+            with self.assertRaises(FileNotFoundError):
+                UvUnwrap.resolve_engine("bff", auto_install=True, prompt=True)
+            self.assertIsNone(
+                UvUnwrap.resolve_engine("bff", auto_install=True, required=False)
+            )
+        consent.assert_not_called()
+        ensure.assert_not_called()
 
 
 class TestAvailableEngines(_UvUnwrapTestCase):

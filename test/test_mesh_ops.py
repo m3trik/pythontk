@@ -81,6 +81,26 @@ class TestResolveContract(unittest.TestCase):
     def test_install_note_names_the_extra(self):
         self.assertIn("pythontk[mesh]", MeshOps._install_note())
 
+    def test_an_engine_that_cannot_write_is_not_available(self):
+        """pymeshlab imports even when its IO plug-ins failed to load (Linux
+        without libOpenGL.so.0); every op then failed "Unknown format for
+        save" while ``available()`` said True. Probed once, then cached."""
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        fake = MagicMock()
+        fake.MeshSet.return_value.save_current_mesh.side_effect = Exception(
+            "Unknown format for save: ply"
+        )
+        with (
+            patch.dict(sys.modules, {"pymeshlab": fake}),
+            patch.object(MeshOps, "_io_error", None),
+        ):
+            self.assertFalse(MeshOps.available())
+            with self.assertRaisesRegex(RuntimeError, "libOpenGL.so.0"):
+                MeshOps.resolve()
+            self.assertEqual(fake.MeshSet.call_count, 1)  # one probe, then cached
+
 
 class TestPreEngineGuards(unittest.TestCase):
     """Validation that runs before any pymeshlab use — dep-free."""

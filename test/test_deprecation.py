@@ -9,9 +9,12 @@ Run with:
 
 import datetime
 import importlib
+import importlib.util
 import inspect
+import pathlib
 import pkgutil
 import sys
+import tempfile
 import types
 import unittest
 import warnings
@@ -699,6 +702,27 @@ class DeprecationAttributesTest(BaseTestCase):
         self.addCleanup(sys.modules.pop, name, None)
         return module
 
+    def _on_path(self, files):
+        """Write ``{relative path: source}`` under a temp dir on ``sys.path``;
+        the modules it holds are unloaded after the test."""
+        root = tempfile.TemporaryDirectory()
+        self.addCleanup(root.cleanup)
+        for relative, source in files.items():
+            target = pathlib.Path(root.name, relative)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(source, encoding="utf-8")
+        sys.path.insert(0, root.name)
+        self.addCleanup(sys.path.remove, root.name)
+        tops = {pathlib.PurePath(r).parts[0].split(".")[0] for r in files}
+
+        def unload():
+            for loaded in [n for n in sys.modules if n.split(".")[0] in tops]:
+                sys.modules.pop(loaded, None)
+
+        self.addCleanup(unload)
+        importlib.invalidate_caches()
+        return pathlib.Path(root.name)
+
     def test_moved_attribute_resolves_and_warns(self):
         module = self._module()
         Deprecation.attributes(
@@ -710,6 +734,47 @@ class DeprecationAttributesTest(BaseTestCase):
             resolved = module.SymbolRecord
         self.assertIs(resolved, ptk.SymbolRecord)
         self.assertIn("9.9.0", str(caught.warning))
+
+    def test_a_name_that_moved_onto_a_class_resolves(self):
+        """A retired module-level function often lands as a method:
+        ``pkg.launch`` -> ``pkg.slots.Slots.launch``.  The path walks the
+        attributes past the last importable module."""
+        module = self._module()
+        Deprecation.attributes(
+            module.__dict__,
+            {"version": "pythontk.core_utils.deprecation.Deprecation.warn"},
+            remove_in="9.9.0",
+        )
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(module.version, Deprecation.warn)
+
+    def test_a_target_whose_own_import_fails_raises_that_error(self):
+        """Only a module that does not EXIST is walked past -- one that exists
+        but fails inside must surface its own error, not read as a missing
+        attribute of its parent. The missing dependency ``_depx`` is a string
+        prefix of the target package ``_depx_pkg``, which a bare
+        ``startswith`` took for the target itself."""
+        self._on_path(
+            {
+                "_depx_pkg/__init__.py": "",
+                "_depx_pkg/needs_dep.py": "import _depx\n\nclass Thing:\n    pass\n",
+            }
+        )
+        module = self._module()
+        Deprecation.attributes(
+            module.__dict__,
+            {"Broken": "_depx_pkg.needs_dep.Thing", "Absent": "_depx_pkg.gone.Thing"},
+            remove_in="9.9.0",
+        )
+        with self.assertWarns(DeprecationWarning):
+            with self.assertRaises(ModuleNotFoundError) as caught:
+                module.Broken
+        self.assertEqual(caught.exception.name, "_depx")
+        # The boundary's other side: a module that is truly absent IS walked
+        # past, and reads as a missing attribute of the package that exists.
+        with self.assertWarns(DeprecationWarning):
+            with self.assertRaises(AttributeError):
+                module.Absent
 
     def test_a_live_name_is_untouched(self):
         module = self._module()
@@ -755,6 +820,39 @@ class DeprecationAttributesTest(BaseTestCase):
             self.assertIs(module.Gone, ptk.SymbolRecord)
         with self.assertRaises(AttributeError):
             module.neither
+
+    def test_two_calls_in_one_run_compose(self):
+        """Names retired on two schedules take two calls; the second chains onto
+        the first -- it is not a previous run's hook to replace."""
+        module = self._module()
+        module.__spec__ = importlib.util.spec_from_loader(module.__name__, None)
+        target = "pythontk.core_utils.symbol_record.SymbolRecord"
+        Deprecation.attributes(module.__dict__, {"First": target}, remove_in="9.9.0")
+        Deprecation.attributes(module.__dict__, {"Second": target}, remove_in="9.10.0")
+        for name in ("First", "Second"):
+            with self.assertWarns(DeprecationWarning):
+                self.assertIs(getattr(module, name), ptk.SymbolRecord)
+
+    def test_a_reload_replaces_the_last_runs_hooks_instead_of_stacking(self):
+        """``importlib.reload`` re-runs a module in the SAME globals. Chaining onto
+        the hooks the last run installed added a layer per reload, each still
+        serving an alias the edited module no longer declares."""
+        body = (
+            "from pythontk.core_utils.deprecation import Deprecation\n\n"
+            "Deprecation.attributes(globals(), {%s}, remove_in='9.9.0')\n"
+        )
+        kept = '"Kept": "pythontk.core_utils.symbol_record.SymbolRecord"'
+        dropped = '"Dropped": "pythontk.core_utils.symbol_record.SymbolRecord"'
+        root = self._on_path({"_dep_reload_mod.py": body % f"{kept}, {dropped}"})
+        module = importlib.import_module("_dep_reload_mod")
+        (root / "_dep_reload_mod.py").write_text(body % kept, encoding="utf-8")
+        importlib.reload(module)
+
+        with self.assertWarns(DeprecationWarning):
+            self.assertIs(module.Kept, ptk.SymbolRecord)
+        with self.assertRaises(AttributeError):
+            module.Dropped  # dropped by the edit: nothing may still serve it
+        self.assertNotIn("Dropped", dir(module))
 
     def test_dir_lists_both_halves(self):
         module = self._module()

@@ -8,10 +8,12 @@ math (``behaviors``), and the range resolver (``range_resolver``).  The DCC-hook
 engine (``manifest_engine``) is exercised separately.
 """
 
+import json
 import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -29,10 +31,14 @@ from pythontk.core_utils.engines.shots.manifest.manifest_model import (
 )
 from pythontk.net_utils.remote_file import RemoteFile
 from pythontk.core_utils.engines.shots.manifest import mapping as mapping_mod
+from pythontk.core_utils.engines.shots.manifest.mapping._mapping import (
+    _AUDIO_BUILDERS,
+)
 from pythontk.core_utils.engines.shots.manifest import behaviors as beh
 from pythontk.core_utils.engines.shots.manifest import range_resolver as rr
 from pythontk.core_utils.engines.shots.manifest.manifest_engine import ShotManifest
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
+from pythontk.core_utils.schema_spec import SchemaError
 
 
 def _write_csv(text: str) -> str:
@@ -234,6 +240,11 @@ class TestDetectBehaviors(unittest.TestCase):
 
 
 class TestMapping(unittest.TestCase):
+    def test_audio_builder_registry_matches_descriptor_registry(self):
+        # OCP guard: the resolver builders and the validate/docs descriptors
+        # must enumerate the same methods.
+        self.assertEqual(set(_AUDIO_BUILDERS), set(mapping_mod.AUDIO_METHODS))
+
     def test_discover_builtins(self):
         names = mapping_mod.Mapping.discover()
         self.assertIn("default", names)
@@ -251,6 +262,88 @@ class TestMapping(unittest.TestCase):
             self.assertEqual([s.step_id for s in steps], ["A01", "A02"])
         finally:
             os.remove(path)
+
+
+class TestMappingSpec(unittest.TestCase):
+    """The mapping-file schema: self-validating skeleton, shipped files clean,
+    bad audio methods rejected, unknown keys tolerated."""
+
+    def test_skeleton_is_valid_against_its_own_schema(self):
+        spec = mapping_mod.MappingSpec
+        self.assertTrue(spec.validate(spec.skeleton()).ok)
+
+    def test_shipped_mappings_validate_clean(self):
+        for name in ("default", "speedrun"):
+            path = mapping_mod.DEFAULT_DIR / f"{name}.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            res = mapping_mod.MappingSpec.validate(data)
+            self.assertTrue(res.ok, f"{name}: errors={res.errors}")
+
+    def test_unknown_audio_method_is_error(self):
+        res = mapping_mod.MappingSpec.validate({"audio_resolve": {"method": "bogus"}})
+        self.assertFalse(res.ok)
+        self.assertTrue(any("audio_resolve" in e for e in res.errors))
+
+    def test_regex_method_requires_pattern(self):
+        res = mapping_mod.MappingSpec.validate({"audio_resolve": {"method": "regex"}})
+        self.assertFalse(res.ok)
+        self.assertTrue(any("pattern" in e for e in res.errors))
+
+    def test_unknown_top_level_key_is_warning_not_error(self):
+        res = mapping_mod.MappingSpec.validate({"bogus": 1})
+        self.assertTrue(res.ok)  # tolerated -- does not reject the file
+        self.assertTrue(res.warnings)
+
+    def test_load_mapping_raises_schema_error_on_bad_method(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "bad.json"
+            p.write_text(
+                json.dumps({"audio_resolve": {"method": "nope"}}), encoding="utf-8"
+            )
+            with self.assertRaises(SchemaError):
+                mapping_mod.Mapping.load_mapping(str(p))
+
+
+class TestMappingResolveRoundTrip(unittest.TestCase):
+    """A CSV parsed through the ``default`` mapping yields exactly what the
+    underlying ColumnMap path does."""
+
+    CSV = (
+        "SECTION A: INTRO\n"
+        "Step,Step Contents,Asset Names,Voice Support\n"
+        "A01.),Aileron fades in,wing_L,Welcome to the course\n"
+        "A02.),Rudder appears,rudder,N/A\n"
+    )
+
+    def _csv(self, d):
+        p = Path(d) / "m.csv"
+        p.write_text(self.CSV, encoding="utf-8")
+        return str(p)
+
+    def test_resolve_matches_direct_columnmap_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            csv = self._csv(d)
+            data = mapping_mod.Mapping.load_mapping("default")
+            via_resolve = mapping_mod.Mapping.resolve(csv, mapping=data)
+            via_direct = ManifestModel.parse_csv(
+                csv, columns=ColumnMap.from_dict(data["columns"])
+            )
+            self.assertTrue(via_resolve)  # non-empty
+            self.assertEqual(
+                [s.step_id for s in via_resolve], [s.step_id for s in via_direct]
+            )
+            self.assertEqual(
+                [s.description for s in via_resolve],
+                [s.description for s in via_direct],
+            )
+
+    def test_speedrun_mapping_resolves(self):
+        with tempfile.TemporaryDirectory() as d:
+            csv = self._csv(d)
+            steps = mapping_mod.Mapping.resolve(
+                csv, name="speedrun", directory=str(mapping_mod.DEFAULT_DIR)
+            )
+            self.assertTrue(steps)
 
 
 class TestBehaviors(unittest.TestCase):
@@ -652,6 +745,172 @@ class TestManifestEngine(unittest.TestCase):
             step, initial_shot_length=200, fit_mode="extend_only", fps=24.0
         )
         self.assertGreaterEqual(dur, 0.0)
+
+
+class TestRangeBookkeeping(unittest.TestCase):
+    """The user-range rules both DCC manifest panels apply (RangeResolver)."""
+
+    RR = rr.RangeResolver
+
+    def _steps(self, *ids):
+        return [BuilderStep(i, "A", "t", "", [BuilderObject(f"{i}_geo")]) for i in ids]
+
+    def test_step_index(self):
+        steps = self._steps("A01", "A02", "A03")
+        self.assertEqual(self.RR.step_index(steps, "A02"), 1)
+        self.assertEqual(self.RR.step_index(steps, "nope"), -1)
+
+    def test_all_ranges_complete_needs_both_ends_on_every_step(self):
+        steps = self._steps("A01", "A02")
+        self.assertFalse(self.RR.all_ranges_complete([], {}))
+        self.assertFalse(
+            self.RR.all_ranges_complete(steps, {"A01": (1, 10), "A02": (20, None)})
+        )
+        self.assertFalse(self.RR.all_ranges_complete(steps, {"A01": (1, 10)}))
+        self.assertTrue(
+            self.RR.all_ranges_complete(steps, {"A01": (1, 10), "A02": (20, 30)})
+        )
+
+    def test_cascade_from_drops_only_downstream_ranges(self):
+        steps = self._steps("A01", "A02", "A03", "A04")
+        ranges = {"A01": (1, 5), "A02": (6, 9), "A04": (30, None)}
+        dropped = self.RR.cascade_from(steps, ranges, 1)
+        self.assertEqual(dropped, ["A04"])
+        self.assertEqual(ranges, {"A01": (1, 5), "A02": (6, 9)})
+
+    def test_parse_range_edit(self):
+        parse = self.RR.parse_range_edit
+        self.assertIsNone(parse("", " "), "both empty clears")
+        self.assertEqual(parse("10", ""), (10.0, None))
+        self.assertEqual(parse(" 10 ", "25"), (10.0, 25.0))
+        for start, end in (("x", ""), ("1", "y"), ("", "5"), ("-1", ""), ("5", "5")):
+            with self.subTest(start=start, end=end):
+                with self.assertRaises(ValueError):
+                    parse(start, end)
+
+    def test_previous_end_skips_unresolved_predecessors(self):
+        steps = self._steps("A01", "A02", "A03")
+        # Sparse: A02 did not resolve (selected-keys mode skips it).
+        last = [("A01", 1.0, 40.0, False), ("A03", 50.0, 60.0, False)]
+        self.assertEqual(self.RR.previous_end(steps, last, 2), 40.0)
+        self.assertIsNone(self.RR.previous_end(steps, last, 0))
+        self.assertIsNone(self.RR.previous_end(steps, [], 2))
+
+    def test_find_collisions(self):
+        resolved = [
+            ("A01", 1.0, 20.0, True),
+            ("A02", 15.0, 30.0, False),  # starts inside A01
+            ("A03", 31.0, None, False),  # no end: occupies its start only
+            ("A04", 31.0, 40.0, False),
+        ]
+        self.assertEqual(self.RR.find_collisions(resolved), [("A01", "A02")])
+        resolved[2] = ("A03", 32.0, None, False)
+        self.assertEqual(
+            self.RR.find_collisions(resolved), [("A01", "A02"), ("A03", "A04")]
+        )
+        self.assertEqual(self.RR.find_collisions(resolved[:1]), [])
+
+    def test_gaps_from_regions(self):
+        regions = [
+            {"start": 1.0, "end": 10.0},
+            {"start": 20.0},
+            {"start": 30.0, "end": None},
+        ]
+        self.assertEqual(
+            self.RR.gaps_from_regions(regions), ([1.0, 20.0, 30.0], {1.0: 10.0})
+        )
+        self.assertEqual(self.RR.gaps_from_regions([]), ([], {}))
+        self.assertEqual(self.RR.gaps_from_regions(None), ([], {}))
+
+
+class TestFindObjectStatus(unittest.TestCase):
+    def test_scoped_to_the_step_when_given(self):
+        results = [
+            StepStatus("A01", True, [ObjectStatus("door", True, "valid")]),
+            StepStatus(
+                "A05",
+                True,
+                [
+                    ObjectStatus(
+                        "door", True, "missing_behavior", ["fade_out"], ["fade_out"]
+                    )
+                ],
+            ),
+        ]
+        self.assertEqual(StepStatus.find_object(results, "door").status, "valid")
+        found = StepStatus.find_object(results, "door", "A05")
+        self.assertEqual(found.broken_behaviors, ["fade_out"])
+        self.assertIsNone(StepStatus.find_object(results, "door", "A09"))
+        self.assertIsNone(StepStatus.find_object(results, "wall"))
+        self.assertIsNone(StepStatus.find_object([], "door"))
+
+
+class TestDescribeReadFailure(unittest.TestCase):
+    """An unreadable CSV is explained by likely causes, never one asserted."""
+
+    @staticmethod
+    def _describe(path, *, free, placeholder):
+        exc = OSError(22, "Invalid argument")
+        with (
+            patch("pythontk.FileUtils.free_space", return_value=free),
+            patch("pythontk.FileUtils.is_cloud_placeholder", return_value=placeholder),
+        ):
+            return ManifestModel.describe_read_failure(path, exc).lower()
+
+    def test_low_disk_surfaces_the_free_space_figure(self):
+        msg = self._describe("X:/seq/m.csv", free=786 * 1024 * 1024, placeholder=True)
+        self.assertIn("786 mb free", msg)
+        self.assertIn("disk may be full", msg)
+        self.assertNotIn("available offline", msg)
+
+    def test_cloud_file_names_the_sync_client_without_a_figure(self):
+        msg = self._describe("X:/seq/m.csv", free=10 * 1024**3, placeholder=True)
+        self.assertIn("sync", msg)
+        self.assertNotIn("mb free", msg)
+
+    def test_local_file_omits_the_cloud_cause_and_keeps_the_error(self):
+        msg = self._describe("C:/local/m.csv", free=None, placeholder=False)
+        self.assertNotIn("cloud", msg)
+        self.assertIn("invalid argument", msg)
+
+
+class TestSeedUserFolder(unittest.TestCase):
+    """Mapping.seed_user_folder: an empty user folder gets an example + reference."""
+
+    def _ts(self, tmp):
+        from pythontk import TemplateSet
+
+        return TemplateSet(
+            "seed_test",
+            mapping_mod.Mapping.templates().spec,
+            "pythontk",
+            user_dir=Path(tmp),
+        )
+
+    def test_seeds_empty_then_noops(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ts = self._ts(tmp)
+            self.assertTrue(mapping_mod.Mapping.seed_user_folder(ts))
+            names = sorted(p.name for p in Path(tmp).iterdir())
+            self.assertIn("example.json", names)
+            self.assertIn("MAPPING_FORMAT.md", names)
+            (Path(tmp) / "example.json").write_text("EDIT", encoding="utf-8")
+            self.assertFalse(mapping_mod.Mapping.seed_user_folder(ts))
+            self.assertEqual(
+                (Path(tmp) / "example.json").read_text(encoding="utf-8"), "EDIT"
+            )
+
+    def test_the_active_pointer_does_not_count_as_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ts = self._ts(tmp)
+            (Path(tmp) / ".active").write_text("speedrun", encoding="utf-8")
+            self.assertTrue(mapping_mod.Mapping.seed_user_folder(ts))
+            self.assertTrue((Path(tmp) / "MAPPING_FORMAT.md").is_file())
+
+    def test_a_missing_folder_is_a_quiet_no_op(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ts = self._ts(os.path.join(tmp, "absent"))
+            self.assertFalse(mapping_mod.Mapping.seed_user_folder(ts))
 
 
 if __name__ == "__main__":

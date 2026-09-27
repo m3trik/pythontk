@@ -19,7 +19,12 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
-from pythontk.core_utils.app_handoff import HandoffBridge, HandoffRequest, Payload
+from pythontk.core_utils.handoff.app_handoff import (
+    HandoffBridge,
+    HandoffRequest,
+    Payload,
+)
+from pythontk.core_utils.handoff.handoff_scope import HandoffScope
 from pythontk.core_utils.deprecation import Deprecation
 from pythontk.net_utils.preview.deliverer import PreviewDeliverer
 
@@ -138,7 +143,7 @@ class PreviewBridge(HandoffBridge):
         (:attr:`PreviewDeliverer.RENDERING_KEY`). Without one -- or through a
         deliverer that resolves no rows -- the recipe ships as declared.
         """
-        from pythontk.file_utils.mesh_convert.glb_pipeline import GlbPipeline
+        from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
 
         payload.extras["scene_sidecar"] = GlbPipeline.envelope(
             read_sections,
@@ -159,31 +164,32 @@ class PreviewBridge(HandoffBridge):
         server = getattr(self.deliverer, "server", None)
         return server.url if server is not None else None
 
-    def scope_objects(self, scope: str = "selected") -> List[Any]:
+    def scope_objects(self, scope: str = HandoffScope.SELECTED) -> List[Any]:
         """The objects *scope* resolves to, through the host hooks.
 
         The scope vocabulary is the ecosystem's, not this bridge's:
-        ``"selected"`` / ``"all"`` / ``"visible"``, as declared by
-        :meth:`uitk.bridge.Parameters.scope_spec` and resolved identically by
-        every other hand-off. Public rather than private because a *caller*
-        needs the answer too -- a panel that pushes blind cannot tell "nothing
-        selected" from "the scene is empty" from "the export failed", and those
-        three want three different messages.
+        :class:`~pythontk.core_utils.handoff.handoff_scope.HandoffScope`'s
+        ``"selected"`` / ``"all"`` / ``"visible"``, resolved by its one
+        precedence rule like every other hand-off. Public rather than private
+        because a *caller* needs the answer too -- a panel that pushes blind
+        cannot tell "nothing selected" from "the scene is empty" from "the export
+        failed", and those three want three different messages.
 
         ``"selected"`` is the default AND the fallback for any unknown value:
         an unrecognised scope must never silently WIDEN a push to the whole
         scene. A host that cannot answer a widening hook (either returns
         ``None``) falls back to the selection for the same reason.
         """
-        if scope == "all":
-            objects = self._scene_objects()
-        elif scope == "visible":
-            objects = self._visible_objects()
-        else:
-            objects = None
-        # ``None`` from either hook means "this host can't enumerate itself",
-        # which the skeleton defines as fall back to the selection -- NOT as an
-        # empty scene, which would report a populated scene as nothing to push.
+        # ``None`` is the skeleton's "the selection" (``_resolve_objects``), so it
+        # is what the selection lookup answers -- and a widening hook that cannot
+        # enumerate its host (``None``) narrows to it, NOT to an empty scene,
+        # which would report a populated scene as nothing to push.
+        objects = HandoffScope.resolve(
+            scope,
+            selected=lambda: None,
+            all=self._scene_objects,
+            visible=self._visible_objects,
+        )
         return self._resolve_objects(objects)
 
     @Deprecation.parameter(

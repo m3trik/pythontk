@@ -411,6 +411,7 @@ class TileTokenTest(unittest.TestCase):
             ("rock_Normal.<UDIM>.png", "Normal"),
             ("rock_Normal_<UDIM>.png", "Normal"),
             ("rock_Normal.<UVTILE>.png", "Normal"),
+            ("rock_Normal.<u>_<v>.png", "Normal"),  # Mudbox (ptk.TiledPath)
             ("rock_Normal.u1_v1.png", "Normal"),
             ("rock_Normal_u2_v10.png", "Normal"),
         ):
@@ -420,6 +421,7 @@ class TileTokenTest(unittest.TestCase):
         for stem, base, token in (
             ("rock_Normal.1001", "rock_Normal", ".1001"),
             ("rock_Normal_<UDIM>", "rock_Normal", "_<UDIM>"),
+            ("rock_Normal.<u>_<v>", "rock_Normal", ".<u>_<v>"),
             ("rock_Normal.u1_v1", "rock_Normal", ".u1_v1"),
             ("rock_Normal", "rock_Normal", ""),
         ):

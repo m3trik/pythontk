@@ -358,7 +358,7 @@ class _FbxMediaInternal:
             part = cls._write_part(target, version, roots, footer_id, magic)
         # After the mmap closes: Windows refuses to replace a mapped file, and
         # `target` is `src` for an in-place run.
-        os.replace(part, target)
+        FileUtils.replace_file(part, target)
         return report
 
 
@@ -689,7 +689,7 @@ class FbxMedia(_FbxMediaInternal):
             report["objects"] = {k.decode(): v for k, v in removed.items()}
             target = dst or src
             part = cls._write_part(target, version, roots, footer_id, magic)
-        os.replace(part, target)
+        FileUtils.replace_file(part, target)
         return report
 
     #: Model classes that draw nothing and bind nothing by themselves -- a
@@ -867,7 +867,7 @@ class FbxMedia(_FbxMediaInternal):
             report["objects"] = {k.decode(): v for k, v in counts.items()}
             target = dst or src
             part = cls._write_part(target, version, roots, footer_id, magic)
-        os.replace(part, target)
+        FileUtils.replace_file(part, target)
         return report
 
     @classmethod
@@ -987,7 +987,7 @@ class FbxMedia(_FbxMediaInternal):
         proxy marker), whose loss would silently cost the deliverable its
         records; and a Model wired to an object this writer does not own.
         """
-        from pythontk.core_utils.scene_records import SceneRecords
+        from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
         from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
         kinds, classes, names = graph["kinds"], graph["classes"], graph["names"]

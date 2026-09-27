@@ -140,6 +140,44 @@ class ManifestModel(_ManifestModelInternal):
     and detecting each step's behaviors. DCC-agnostic.
     """
 
+    #: Below this much free space, :meth:`describe_read_failure` states the
+    #: figure beside the causes: low disk is then a plausible culprit and the
+    #: number helps spot a (nearly) full volume.  A fact, never asserted as THE
+    #: cause; above it the figure is noise.
+    LOW_DISK_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB
+
+    @classmethod
+    def describe_read_failure(cls, path: str, exc: OSError) -> str:
+        """Explain a CSV that exists but cannot be read, without over-committing.
+
+        ``isfile()`` passed but the bytes would not read.  The tempting
+        diagnosis -- "it's a cloud file that hasn't downloaded, make it
+        available offline" -- is usually wrong: cloud placeholders hydrate on
+        demand fine, and a genuine failure is far more often a full volume or a
+        stopped sync client.  So the likely causes are *enumerated* (the
+        cloud-client clause only for a cloud-managed file) rather than one
+        asserted, the raw error is always included, and the actual free space
+        is appended when it is below :attr:`LOW_DISK_BYTES`.
+        """
+        import os
+
+        from pythontk.file_utils._file_utils import FileUtils
+
+        causes = ["the disk may be full"]
+        if FileUtils.is_cloud_placeholder(path):
+            causes.append("your cloud sync client may not be running")
+        causes.append("the file may be locked by another program")
+        causes.append("the drive may be disconnected")
+        msg = (
+            f"Can't read CSV: {exc}. The file exists but its contents can't be "
+            f"read - {', '.join(causes)}. Check, then reload."
+        )
+        free = FileUtils.free_space(path)
+        if free is not None and free < cls.LOW_DISK_BYTES:
+            drive = os.path.splitdrive(os.path.abspath(path))[0] or "the drive"
+            msg += f" ({drive} has only {free // (1024 * 1024)} MB free.)"
+        return msg
+
     @staticmethod
     def detect_behaviors(text: str) -> List[str]:
         """Return behavior names inferred from descriptive *text*.
@@ -508,6 +546,26 @@ class StepStatus:
     @property
     def total_count(self) -> int:
         return len(self.objects)
+
+    @staticmethod
+    def find_object(
+        results: List["StepStatus"], name: str, step_id: Optional[str] = None
+    ) -> Optional[ObjectStatus]:
+        """The first assessed :class:`ObjectStatus` named *name* in *results*.
+
+        *step_id* restricts the search to that step's result: one object can
+        appear in several steps with different statuses (a fade verified in
+        one, broken in another), so a first-match scan across steps would
+        report another step's verdict.
+        """
+        for result in results or ():
+            if step_id is not None and result.step_id != step_id:
+                continue
+            # Last wins within a step, as a name -> status map reads it.
+            found = {o.name: o for o in result.objects}.get(name)
+            if found is not None:
+                return found
+        return None
 
 
 # ---------------------------------------------------------------------------

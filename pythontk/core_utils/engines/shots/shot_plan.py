@@ -4,12 +4,13 @@
 NO DCC IMPORTS — this module is part of the shot *model* layer and must not
 import ``maya.cmds`` / ``bpy``.  It computes WHAT should move WHERE given a
 :class:`ShotStore`, producing a :class:`MovePlan` dataclass with no side
-effects.  Anything that actually writes to a DCC scene lives in the sibling
-module :mod:`shot_apply` (via injected writer callables).
+effects.  Anything that actually writes to a DCC scene lives with the DCC:
+mayatk's ``ShotApply`` and blendertk's ``ShotSequencer._apply_plan``.
 
 Two-stage discipline for every multi-shot operation:
     1. Build a :class:`MovePlan` from the current :class:`ShotStore`.
-    2. Hand the plan to :func:`shot_apply.apply`.
+    2. Hand the plan to the DCC's applier (mayatk ``ShotApply.apply``,
+       blendertk ``ShotSequencer._apply_plan``).
 
 The split exists because interleaved resolve → mutate loops (the old
 ``respace`` / ``_ripple_*`` shape) corrupted keyframes when a shot's
@@ -141,7 +142,7 @@ class _ShotPlannerInternal(object):
         parked shots translate rigidly, so their relative layout (and thus
         their mutual disjointness) is preserved at the parked location.  The
         +1000 headroom leaves a wide, precision-safe gap between real content
-        and the park zone — :func:`shot_apply.apply` caps the last shot's
+        and the park zone — mayatk's ``ShotApply.apply`` caps the last shot's
         +INF envelope just above ``_content_top`` so no move window ever
         reaches into that zone.
         """
@@ -212,6 +213,11 @@ class ShotPlanner(_ShotPlannerInternal):
     splits and key collisions resolved up front. Nothing here touches a
     DCC — :class:`ShotApply` commits the plan.
     """
+
+    #: ``env_end`` of an envelope no following shot bounds (the last shot's,
+    #: from :meth:`envelope_for`). A large finite sentinel, not ``inf``:
+    #: compare with ``>=`` / ``<`` rather than ``math.isinf``.
+    UNBOUNDED: float = _INF
 
     @staticmethod
     def envelope_for(sorted_shots: List, index: int) -> tuple:
@@ -691,7 +697,7 @@ class ShotPlanner(_ShotPlannerInternal):
         adjacent keeps its current width.  Because a reorder makes one shot's move
         cross others', the resulting ``moves`` almost always form a collision cycle —
         :func:`_finalize_plan` resolves that into the park / ordered / land structure
-        that :func:`shot_apply.apply` executes, so no bespoke park/land loop is needed.
+        that the DCC applier executes, so no bespoke park/land loop is needed.
 
         Envelopes describe each shot's *current* (pre-move) owned key window, so the
         executor reads keys from where they are now and lands them at the reordered

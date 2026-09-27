@@ -4,21 +4,25 @@
 
 Where the ``*_utils`` siblings hold general primitives placed by data type
 (strings, images, math, …), this package holds the *mechanisms* the ecosystem
-runs on. Deliberately flat: these module paths are import contracts for every
-downstream package (uitk, mayatk, blendertk, tentacle, extapps), so modules are
-not re-nested for cosmetics. The clusters, for navigation:
+runs on. Flat by default, never re-nested for cosmetics: a module moves into a
+subpackage only when a CODE_STANDARD §3 trigger fires (a second cohesive
+module, private internals, an owned asset directory). Downstream packages still
+import many of these module paths directly, so every move follows §14: grep the
+workspace, and alias an externally imported path for one release. The
+clusters, for navigation:
 
 - **General helpers** — :mod:`._core_utils` (``CoreUtils``).
 - **Class infrastructure** — :mod:`.class_property`, :mod:`.help_mixin`,
   :mod:`.logging_mixin`, :mod:`.singleton_mixin`, :mod:`.namedtuple_container`,
   :mod:`.namespace_handler`.
 - **App/process orchestration** — :mod:`.app_launcher`, :mod:`.app_installer`,
-  :mod:`.app_handoff`, :mod:`.script_run`, :mod:`.script_template`,
-  :mod:`.process_stream`, :mod:`.execution_monitor`, :mod:`.cancel_scope`.
-- **Config & persistence** — :mod:`.user_config`, :mod:`.preset_store`,
+  :mod:`.handoff` (``app_handoff``, ``script_template``, ``script_run``,
+  ``manifest``, ``manifest_plan``), :mod:`.process_stream`,
+  :mod:`.execution_monitor`, :mod:`.cancel_scope`.
+- **Config & persistence** — :mod:`.user_config`, :mod:`.presets`,
   :mod:`.schema_spec`, :mod:`.template_set`.
 - **Package/dev infrastructure** — :mod:`.module_resolver`,
-  :mod:`.module_reloader`, :mod:`.package_manager`, :mod:`.git`, :mod:`.cli`,
+  :mod:`.module_reloader`, :mod:`.package_manager`, :mod:`.cli`,
   :mod:`.symbol_record`, :mod:`.status_badge`, :mod:`.test_sandbox`,
   :mod:`.doc_audit`.
 - **Pipeline primitives** — :mod:`.task_factory`, :mod:`.qc_log`,

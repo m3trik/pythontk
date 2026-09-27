@@ -11,6 +11,7 @@ down.
 import os
 import shutil
 import tempfile
+import time
 import unittest
 
 from pythontk import FileUtils
@@ -74,6 +75,147 @@ class MoveFileTest(BaseTestCase):
         out = FileUtils.move_file(src, self.dst_dir, overwrite=True)
         with open(out) as f:
             self.assertEqual(f.read(), "new content")
+
+    def test_a_failed_overwrite_keeps_both_files(self):
+        """Overwriting deleted the destination BEFORE moving the source, so a
+        move that failed (a full disk, a locked file) lost the old file and
+        left the new one wherever it was -- the delete-then-move the lightmap
+        baker documents losing a finished map to."""
+        from unittest import mock
+
+        src = self._src("a.txt", "new content")
+        existing = os.path.join(self.dst_dir, "a.txt")
+        with open(existing, "w") as f:
+            f.write("old")
+        with mock.patch("shutil.move", side_effect=OSError(28, "No space left")):
+            with self.assertRaises(OSError):
+                FileUtils.move_file(src, self.dst_dir, overwrite=True)
+        with open(existing) as f:
+            self.assertEqual(f.read(), "old")
+        self.assertTrue(os.path.isfile(src))
+
+    def test_a_refused_swap_puts_the_source_back(self):
+        """The destination held open (Windows refuses the rename): the old file
+        stays, and the source is back where the caller can retry it under
+        another name."""
+        from unittest import mock
+
+        src = self._src("a.txt", "new content")
+        existing = os.path.join(self.dst_dir, "a.txt")
+        with open(existing, "w") as f:
+            f.write("old")
+        with mock.patch.object(
+            FileUtils, "replace_file", side_effect=PermissionError(13, "held open")
+        ):
+            with self.assertRaises(PermissionError):
+                FileUtils.move_file(src, self.dst_dir, overwrite=True)
+        with open(existing) as f:
+            self.assertEqual(f.read(), "old")
+        with open(src) as f:
+            self.assertEqual(f.read(), "new content")
+        self.assertEqual(sorted(os.listdir(self.dst_dir)), ["a.txt"])
+
+    @staticmethod
+    def _age(path: str, days: float = 30.0) -> None:
+        """Backdate *path* past TempArtifacts' stale-sweep age gate."""
+        stamp = time.time() - days * 86400
+        os.utime(path, (stamp, stamp))
+
+    def test_a_sibling_sweep_never_takes_a_staged_move(self):
+        """An overwrite stages the source beside the destination, and a moved
+        file keeps its source's mtime. Staged as an ``atomic_write_*`` temp, a
+        week-old source read as stale to the sweep any concurrent
+        ``FileUtils.atomic_write`` into the folder runs first, and was deleted
+        between the stage and the swap."""
+        from unittest import mock
+
+        src = self._src("a.txt", "new content")
+        self._age(src)
+        existing = os.path.join(self.dst_dir, "a.txt")
+        with open(existing, "w") as f:
+            f.write("old")
+        real_replace = FileUtils.replace_file
+        interposed = []
+
+        def sibling_write_then_swap(staged, dst):
+            if not interposed:  # the move's swap; the sibling's own promote passes
+                interposed.append(staged)
+                FileUtils.atomic_write(
+                    os.path.join(self.dst_dir, "other.bin"),
+                    lambda part: open(part, "wb").close(),
+                )
+            real_replace(staged, dst)
+
+        with mock.patch.object(
+            FileUtils, "replace_file", side_effect=sibling_write_then_swap
+        ):
+            FileUtils.move_file(src, self.dst_dir, overwrite=True)
+        with open(existing) as f:
+            self.assertEqual(f.read(), "new content")
+        self.assertFalse(os.path.exists(src))
+        self.assertEqual(sorted(os.listdir(self.dst_dir)), ["a.txt", "other.bin"])
+
+    def test_an_interrupted_directory_move_keeps_the_whole_copy(self):
+        """Across volumes a directory is copied, then its source removed. A
+        removal that fails part way leaves the source PARTIAL, so the stage
+        holds the only whole copy: it must survive, and the log must say where.
+        (A file's unlink is all or nothing, so a file's stage may be dropped.)"""
+        import errno
+        from unittest import mock
+
+        src = os.path.join(self.src_dir, "pkg")
+        os.makedirs(src)
+        for name in ("a.txt", "b.txt"):
+            with open(os.path.join(src, name), "w") as f:
+                f.write(name)
+        existing = os.path.join(self.dst_dir, "pkg")
+        with open(existing, "w") as f:
+            f.write("old")
+
+        def cross_volume(*_args, **_kwargs):
+            raise OSError(errno.EXDEV, "cross-device link")
+
+        def partial_rmtree(path, *_args, **_kwargs):
+            os.remove(os.path.join(path, "a.txt"))
+            raise PermissionError(13, "held open")
+
+        with mock.patch("os.rename", side_effect=cross_volume), mock.patch(
+            "shutil.rmtree", side_effect=partial_rmtree
+        ), self.assertLogs("pythontk.file_utils._file_utils", "ERROR") as logs:
+            with self.assertRaises(PermissionError):
+                FileUtils.move_file(src, self.dst_dir, overwrite=True)
+        stages = [n for n in os.listdir(self.dst_dir) if n.endswith(".moving")]
+        self.assertEqual(len(stages), 1, os.listdir(self.dst_dir))
+        stage = os.path.join(self.dst_dir, stages[0])
+        self.assertEqual(sorted(os.listdir(stage)), ["a.txt", "b.txt"])
+        self.assertIn(stages[0], "".join(logs.output))
+        with open(existing) as f:
+            self.assertEqual(f.read(), "old")
+
+    def test_concurrent_overwrites_into_one_folder_lose_nothing(self):
+        """The shape that lost textures: a thread pool archiving week-old files
+        into one folder (``MapOptimizer.optimize_maps``), each move's staging
+        sweep deleting the others' stages."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        names = [f"t{i:02d}.txt" for i in range(32)]
+        for name in names:
+            self._age(self._src(name, name))
+            with open(os.path.join(self.dst_dir, name), "w") as f:
+                f.write("old")
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(
+                pool.map(
+                    lambda name: FileUtils.move_file(
+                        os.path.join(self.src_dir, name), self.dst_dir
+                    ),
+                    names,
+                )
+            )
+        for name in names:
+            with open(os.path.join(self.dst_dir, name)) as f:
+                self.assertEqual(f.read(), name)
+        self.assertEqual(sorted(os.listdir(self.dst_dir)), names)
 
     def test_move_no_overwrite_raises(self):
         src = self._src("a.txt")

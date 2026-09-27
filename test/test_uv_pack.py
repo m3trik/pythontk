@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-"""Tests for pythontk.geo_utils.uv_pack (UvPack — optional xatlas engine).
+"""Tests for pythontk.geo_utils.uv.pack (UvPack — optional xatlas engine).
 
 The engine is an optional dependency, so the packing tests skip cleanly when
 xatlas is absent; the resolve/availability contract is testable either way.
@@ -404,9 +404,9 @@ class TestModuleInvariant(unittest.TestCase):
         import ast
         import inspect
 
-        from pythontk.geo_utils import uv_pack
+        from pythontk.geo_utils.uv import pack
 
-        tree = ast.parse(inspect.getsource(uv_pack))
+        tree = ast.parse(inspect.getsource(pack))
         offenders = [
             n.name
             for n in tree.body

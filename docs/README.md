@@ -1,7 +1,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-5577%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-6040%20passed-brightgreen.svg)](../test/)
+![Platform](https://img.shields.io/badge/Platform-Windows%2C%20Linux-lightgrey.svg)
 
 # pythontk
 
@@ -18,7 +19,7 @@ pythontk is the bottom of the chain `pythontk → uitk → mayatk / blendertk �
 Three rules shape it:
 
 - **Primitives are placed by data type, not domain.** Sharpest-frame extraction lives in `vid_utils`, perceptual-hash curation in `img_utils` — not in a "photogrammetry" package — so each stays independently reusable.
-- **A domain pipeline lives here once more than one host needs it**, under `core_utils/engines/`: PBR/texture conversion (`engines/textures`, ~11.9k lines), the shot timeline (`engines/shots`, ~6.4k), instancing and the key stash. These are compositions of the primitives above, and they are here rather than downstream because Maya and Blender both drive them — "shared code moves down" outranks "placed by data type", and the alternative is two drifting copies. A pipeline only one host will ever use belongs in that host's toolkit.
+- **A domain pipeline lives here once more than one host needs it**, under `core_utils/engines/`: PBR/texture conversion (`engines/textures`, ~11.9k lines), the shot timeline (`engines/shots`, ~6.4k), the scene export (`engines/scene_export`: scene records, export profile and snapshot, hierarchy baseline, the exporter and sidecar shells), instancing and the key stash. These are compositions of the primitives above, and they are here rather than downstream because Maya and Blender both drive them — "shared code moves down" outranks "placed by data type", and the alternative is two drifting copies. A pipeline only one host will ever use belongs in that host's toolkit.
 - **Shared code moves down.** When two downstream tools need the same helper, it moves here and becomes the single source of truth — Maya and Blender panels share one calculator engine, one material-report formatter, one point-clustering routine, instead of drifting copies.
 
 ## Install
@@ -55,7 +56,7 @@ ptk.ImgUtils.pack_channels(...)     # class-qualified — explicit, collision-pr
 | `audio_utils` | FFmpeg-backed conversion, composite WAV building, silence trimming, waveform envelopes |
 | [`core_utils`](../pythontk/core_utils/README.md) | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), `listify`, package bootstrap, hot-reload, app orchestration (`AppLauncher`, `HandoffBridge`), cooperative cancellation (`CancelScope`), task pipeline, process output streaming, config/template stores, QC gates, `ExecutionMonitor`, hierarchy diffing, color primitives — plus the shared domain engines (`shots`, `instancing`, `textures`) |
 | [`file_utils`](../pythontk/file_utils/README.md) | Filtered directory traversal, atomic writes, policy-scoped temp artifacts (`TempArtifacts`), cloud-placeholder detection, FBX→GLB conversion + glTF repair (`MeshConvert`), zero-dependency USD/USDZ authoring, UV unwrapping, project workspaces, embedded metadata |
-| `geo_utils` | Pure geometry — `Polyline` (order/resample/smooth/simplify, arc-length sampling), `PointCloud` (PCA, clustering), `RailSurface` (line-pair framing), `PlateEmitter`, UV island packing (`UvPack`) |
+| `geo_utils` | Pure geometry — `Polyline` (order/resample/smooth/simplify, arc-length sampling), `PointCloud` (PCA, clustering), `RailSurface` (line-pair framing), `PlateEmitter`, and the UV-layout family in `geo_utils/uv/` (`UvPack` island packing, `UvBudget` map-count planning, `UvTransfer` texel remap, `CylinderSeams` tube / turned-part seam placement) |
 | `img_utils` | Pillow-backed image ops, channel packing, atlas layout/assembly, KTX2 encoding (`Ktx2Encoder`), exposure equalization, image curation, mask generation |
 | `iter_utils` | Flatten, dedupe, wildcard filtering of lists/dicts, integer-sequence collapse |
 | `math_utils` | Vectors, clustering, remap/lerp/clamp, easing curves (`ProgressionCurves`), band-limited noise, morph-weight math (`Weights`), safe expression evaluation |
@@ -219,6 +220,7 @@ Beyond the data-type utilities, `core_utils` supplies the machinery the layers a
 
 - **`bootstrap_package`** (`module_resolver`) — the lazy-loading package root. Every ecosystem package (`uitk`, `mayatk`, `blendertk`, …) exposes its public surface through it.
 - **`PresetStore` / `TemplateSet` / `SchemaSpec` / `UserConfig`** — Qt-free named-preset and schema-validated-template stores with built-in + user tiers; uitk's `PresetManager` is a GUI over them.
+- **`PresetLibrary`** — every `PresetStore` under the presets root at once: lock presets (`PresetReadOnlyError`), group them into collections, and export / review / import one bundle format for backups and sharing. Metadata lives in a `.<name>.preset` sidecar per preset, never in the preset file; uitk's `PresetEditor` is the GUI over it.
 - **`AppLauncher` / `AppInstaller` / `HandoffBridge`** — find, launch, and hand work to external applications; the base of the ecosystem's Maya/Blender/Marmoset/Substance bridges. Three hand-off shapes — `send()`, `save_as()`, `round_trip()` — come off one export pipeline with a per-mode `Deliverer` strategy.
 - **`CancelScope` / `ExecutionMonitor`** — one cooperative cancellation object shared by every cancel affordance (push from any thread, pull at the operation's own checkpoints), plus threshold-escalated dialogs and watchdogs for long-running operations.
 - **`RpcClient` + `RpcPlugin`** — both ends of the plugin-hosted JSON-RPC protocol, shipped together so the wire format cannot drift; the in-app half is stdlib-only so installed plugin payloads can carry a verbatim copy ([`net_utils/README.md`](../pythontk/net_utils/README.md)).

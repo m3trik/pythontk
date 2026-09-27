@@ -111,6 +111,50 @@ class TestPaths:
         return str(cls.IMGTK_TEST_DIR / filename)
 
 
+class X11Window:
+    """A real top-level X11 window owned by a child process -- the fixture for
+    window lookups by PID, with no GUI toolkit needed.
+
+    Maps a window, sets ``_NET_WM_PID`` and ``WM_NAME`` as Qt/GTK apps (Maya,
+    Blender, browsers) do -- Tk 9 sets no ``_NET_WM_PID`` -- prints ``up``, and
+    holds the window until its stdin closes. Run :meth:`script` with
+    ``python -c``.
+    """
+
+    _SCRIPT = """
+import ctypes, os, sys
+x = ctypes.cdll.LoadLibrary("libX11.so.6")
+vp, ul, i = ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int
+for name, args, res in (
+    ("XOpenDisplay", [ctypes.c_char_p], vp),
+    ("XDefaultRootWindow", [vp], ul),
+    ("XCreateSimpleWindow", [vp, ul, i, i, ctypes.c_uint, ctypes.c_uint,
+                             ctypes.c_uint, ul, ul], ul),
+    ("XInternAtom", [vp, ctypes.c_char_p, i], ul),
+    ("XChangeProperty", [vp, ul, ul, ul, i, i, vp, i], i),
+    ("XStoreName", [vp, ul, ctypes.c_char_p], i),
+    ("XMapWindow", [vp, ul], i),
+    ("XSync", [vp, i], i),
+):
+    fn = getattr(x, name)
+    fn.argtypes, fn.restype = args, res
+d = x.XOpenDisplay(None)
+w = x.XCreateSimpleWindow(d, x.XDefaultRootWindow(d), 10, 10, 120, 80, 0, 0, 0)
+pid = ctypes.c_long(os.getpid())  # format-32 data travels as C longs
+x.XChangeProperty(d, w, x.XInternAtom(d, b"_NET_WM_PID", 0), 6, 32, 0,
+                  ctypes.byref(pid), 1)
+x.XStoreName(d, w, TITLE.encode())
+x.XMapWindow(d, w)
+x.XSync(d, 0)
+print("up", flush=True)
+sys.stdin.readline()
+"""
+
+    @classmethod
+    def script(cls, title: str) -> str:
+        return f"TITLE = {title!r}\n" + cls._SCRIPT
+
+
 class BaseTestCase(unittest.TestCase):
     """Base test case with common utilities and assertions."""
 

@@ -552,7 +552,7 @@ class WorkspaceTemplates(object):
         cached instance would freeze an already-resolved ``user_dir``, defeating
         the ``$UITK_PRESETS_ROOT`` sandbox tests rely on.
         """
-        from pythontk.core_utils.preset_store import PresetStore
+        from pythontk.core_utils.presets.store import PresetStore
 
         store = PresetStore(cls.STORE_NAME)
         cls._migrate_legacy(store)
@@ -591,12 +591,19 @@ class WorkspaceTemplates(object):
             except (KeyError, ValueError, OSError):
                 data = None
             if isinstance(data, dict):
-                # Templates saved through uitk's PresetManager carry a "_meta"
-                # version block — bookkeeping, not a file rule.
-                rules = {str(k): str(v) for k, v in data.items() if k != "_meta"}
+                rules = cls.rules_from(data)
                 if rules:
                     return rules
         return dict(DEFAULT_FILE_RULES)
+
+    @staticmethod
+    def rules_from(data: Dict[str, Any]) -> Dict[str, str]:
+        """The file rules in template payload *data*, as ``{rule: path}`` strings.
+
+        ``_``-prefixed keys annotate the file, never name a rule: uitk
+        PresetManager's ``_meta`` block, a hand-shared template's ``_comment``.
+        """
+        return {str(k): str(v) for k, v in data.items() if not str(k).startswith("_")}
 
     @classmethod
     def save(cls, name: str, rules: Dict[str, str]) -> str:

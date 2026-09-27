@@ -1,8 +1,8 @@
 name: Tests
 
-# Pythontk targets Windows DCCs (Maya/Max/Nuke). Its test suite uses
-# ctypes.windll, c:/... paths, and Windows-specific subprocess behaviour.
-# Run on windows-latest so tests match the platform they were written for.
+# Pythontk is supported on Windows AND Linux (its DCCs -- Maya, Blender -- ship
+# for both), so the suite runs on both. Platform-specific tests gate themselves
+# (win32 branches patch ctypes.windll in; X11/procfs tests skip without Linux).
 
 on:
   pull_request:
@@ -10,8 +10,12 @@ on:
   workflow_call:
 
 jobs:
-  test:
-    runs-on: windows-latest
+  suite:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
@@ -20,6 +24,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        # libopengl0: pymeshlab's IO plug-ins fail to load without it (every
+        # mesh op then fails "Unknown format"). xvfb: a private X server for
+        # the Tk sidecar and the X11 client tests -- never a real desktop.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopengl0 xvfb
 
       - name: Install dependencies
         run: |
@@ -31,15 +44,40 @@ jobs:
           pip install pymeshlab
           pip install -e .
 
-      - name: Run tests with coverage
+      - name: Run tests with coverage (Windows)
+        if: runner.os == 'Windows'
         run: |
           pytest --tb=short -v --cov=pythontk --cov-report=xml --cov-report=term test/
+
+      - name: Run tests with coverage (Linux, under Xvfb)
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a pytest --tb=short -v --cov=pythontk --cov-report=xml --cov-report=term test/
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           file: ./test/coverage.xml
           fail_ci_if_error: false
+
+  test:
+    # The one check branch protection requires, under its long-standing name.
+    # A matrix job reports one check per leg -- `suite (windows-latest)`,
+    # `suite (ubuntu-latest)` -- never a bare `test`, so a required `test` on
+    # the matrix itself would never attach and every release PR would sit
+    # BLOCKED. This job is green only when every leg is, so both platforms gate
+    # the PR, and publish.yml (which calls this workflow) gates on them too.
+    # `always()`, not `!cancelled()`: a cancelled run would SKIP this job, and
+    # branch protection counts a skipped required check as passed.
+    needs: suite
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every platform leg passed
+        run: |
+          echo "suite result: ${{ needs.suite.result }}"
+          test "${{ needs.suite.result }}" = "success"
 
   lint:
     # ``ruff check`` only -- NOT ``ruff format --check``. The lint rule set is

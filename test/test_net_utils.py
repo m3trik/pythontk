@@ -1,5 +1,6 @@
 import unittest
 import os
+import sys
 import socket
 from unittest.mock import MagicMock, patch
 
@@ -285,6 +286,74 @@ class TestNetUtils(unittest.TestCase):
             self.assertFalse(NetUtils.is_port_open("127.0.0.1", port, timeout=0.3))
         finally:
             squatter.close()
+
+    @unittest.skipUnless(
+        sys.platform == "win32" or sys.platform.startswith("linux"),
+        "netstat (Windows) or /proc (Linux)",
+    )
+    def test_listening_ports_names_the_owner_of_a_listener(self):
+        """A launcher trusts a port only when the process it started holds it:
+        this process's own listener must come back with this PID, and a socket
+        that merely binds (never listens) must not come back at all."""
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        bound_only = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        bound_only.bind(("127.0.0.1", 0))
+        try:
+            rows = NetUtils.listening_ports()
+            self.assertIn((listener.getsockname()[1], os.getpid()), rows)
+            self.assertNotIn(bound_only.getsockname()[1], [port for port, _ in rows])
+        finally:
+            listener.close()
+            bound_only.close()
+
+    @unittest.skipUnless(sys.platform == "win32", "netstat's console codepage")
+    def test_listening_ports_reads_a_localized_netstat(self):
+        """netstat writes the console's OEM codepage; read as ANSI text, a
+        French header ("État": cp850 0x90, undefined in cp1252) raised
+        UnicodeDecodeError before a row was read. A real child writes the
+        bytes, so subprocess's own decoding is what runs."""
+        import subprocess
+
+        raw = (
+            "\r\nConnexions actives\r\n\r\n"
+            "  Proto  Adresse locale         Adresse distante       État\r\n"
+            "  TCP    0.0.0.0:7002           0.0.0.0:0              LISTENING"
+            "       4242\r\n"
+            "  TCP    127.0.0.1:7002         127.0.0.1:50000        ESTABLISHED"
+            "     4242\r\n"
+        ).encode("cp850")
+        real_check_output = subprocess.check_output
+
+        def netstat(cmd, **kwargs):
+            self.assertEqual(cmd[0], "netstat")
+            script = f"import sys; sys.stdout.buffer.write({raw!r})"
+            return real_check_output([sys.executable, "-c", script], **kwargs)
+
+        with patch(
+            "pythontk.net_utils._net_utils.subprocess.check_output",
+            side_effect=netstat,
+        ):
+            self.assertEqual(NetUtils.listening_ports(), [(7002, 4242)])
+
+    @unittest.skipIf(os.name == "nt", "SO_REUSEADDR semantics are POSIX")
+    def test_is_port_bindable_over_a_previous_runs_time_wait(self):
+        """The preview server binds with SO_REUSEADDR on POSIX, straight over
+        the TIME_WAIT sockets its previous run left; probed without it, a quick
+        restart read as "taken" and the server moved port (an open page lost
+        its URL)."""
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        client = socket.create_connection(("127.0.0.1", port))
+        conn, _ = srv.accept()
+        conn.close()  # the server side closes first: TIME_WAIT on `port`
+        srv.close()
+        client.close()
+        self.assertTrue(NetUtils.is_port_bindable(port))
 
     @patch("pythontk.net_utils._net_utils.subprocess.Popen")
     @patch("pythontk.net_utils._net_utils.subprocess.run")

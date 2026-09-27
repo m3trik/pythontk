@@ -492,6 +492,11 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
                 "linux": {
                     "url": f"{_CLOUDFLARED_RELEASES}/cloudflared-linux-amd64",
                     "type": "binary",
+                    "arch": "x86_64",
+                },
+                "linux-arm64": {
+                    "url": f"{_CLOUDFLARED_RELEASES}/cloudflared-linux-arm64",
+                    "type": "binary",
                 },
                 "darwin": {
                     "url": f"{_CLOUDFLARED_RELEASES}/cloudflared-darwin-amd64.tgz",

@@ -1,5 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
+import functools
 from typing import Any, Dict, Optional
 
 
@@ -29,6 +30,10 @@ class SingletonMixin:
 
         original_init = cls.__init__
 
+        # ``wraps`` keeps the subclass's name, docstring and -- through
+        # ``__wrapped__`` -- its ``inspect.signature``, which callers use to
+        # ask what the class accepts.
+        @functools.wraps(original_init)
         def new_init(self, *args, **kwargs):
             # ``singleton_key`` is routing data for __new__, not an init arg.
             kwargs.pop("singleton_key", None)

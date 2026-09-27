@@ -8,16 +8,14 @@ real values live in a JSON file under :func:`user_config_root` (or an
 env-pointed path), and only the keys they override need be present —
 :meth:`UserConfig.resolve` deep-merges the user doc over the default.
 
-Why here (and not via uitk's ``SettingsManager`` / ``PresetManager``): those are
-the ecosystem's GUI settings/template stores, but both import ``qtpy`` and resolve
-their directory through ``QtCore.QStandardPaths``. This module must be usable from
-**headless, Qt-free** contexts — notably the photogrammetry engines running inside
-Metashape's bundled Python 3.9 (where Qt is absent and engine code must not import
-it). So it reproduces the *same* consolidated location uitk uses
-(``<per-user-config>/uitk/<package>/``) with plain ``os``/``pathlib`` instead of
-Qt, and honors the same :data:`CONFIG_ROOT_ENV_VAR` override — so a power user who
-redirects uitk's store redirects this too, and the Qt and Qt-free paths stay in
-lockstep without this module depending on uitk.
+Why here (and not in uitk's ``SettingsManager`` / ``PresetManager``): those are
+the ecosystem's GUI settings/template stores and import ``qtpy``, but this module
+must be usable from **headless, Qt-free** contexts -- notably the photogrammetry
+engines running inside Metashape's bundled Python 3.9 (where Qt is absent and
+engine code must not import it). So the consolidated location
+(``<per-user-config>/uitk/<package>/``) is resolved HERE, with plain
+``os``/``pathlib``, and uitk's ``PresetManager.get_presets_root`` delegates to it:
+one owner, so one :data:`CONFIG_ROOT_ENV_VAR` override moves every store.
 
 JSON (not TOML) is deliberate: ``tomllib`` is 3.11+ and won't import under
 Metashape's 3.9; ``json`` is stdlib everywhere.
@@ -29,14 +27,16 @@ import json
 import logging
 import os
 import platform
+import re
+import tempfile
 from pathlib import Path
 from typing import Any, Mapping, Optional, Union
 
 logger = logging.getLogger(__name__)
 
-# Env var that redirects the ecosystem user-config root wholesale. Shared *by
-# name* (a documented string convention, not an import) with uitk's
-# ``preset_manager.PresetManager.get_presets_root()`` so one override moves both stores.
+# Env var that redirects the ecosystem user-config root wholesale. uitk's
+# ``PresetManager.get_presets_root()`` delegates to :meth:`UserConfig.user_config_root`,
+# so one override moves every store.
 CONFIG_ROOT_ENV_VAR = "UITK_PRESETS_ROOT"
 _ECOSYSTEM_WRAPPER = "uitk"
 
@@ -57,6 +57,12 @@ class UserConfig:
     The default ships in source (generic, non-personal); the user drops a
     partial ``<user_config_root>/mypkg/myapp.json`` overriding only what differs.
     """
+
+    #: Env var that redirects the ecosystem user-config root wholesale -- the
+    #: public spelling of the module constant of the same name, so another
+    #: package reaches it through the root (``ptk.UserConfig.CONFIG_ROOT_ENV_VAR``)
+    #: instead of this module's path.
+    CONFIG_ROOT_ENV_VAR: str = CONFIG_ROOT_ENV_VAR
 
     @staticmethod
     def path_for(name: str, package: str) -> Path:
@@ -142,7 +148,7 @@ class UserConfig:
         if path:
             src = path
         elif env and os.environ.get(env):
-            src = os.path.expanduser(os.path.expandvars(os.environ[env]))
+            src = cls.expand(os.environ[env])
         else:
             cand = cls.path_for(name, package)
             if cand.is_file():
@@ -167,22 +173,79 @@ class UserConfig:
                 out[k] = v
         return out
 
+    #: A variable reference in any spelling a profile may carry -- ``${VAR}``,
+    #: ``$VAR`` or Windows' ``%VAR%`` -- or the ``%%`` escape for a literal
+    #: ``%``. ``os.path.expandvars`` reads ``%VAR%`` only on Windows, so a
+    #: profile written there kept it literal on Linux. A braced or ``%`` name
+    #: runs to its delimiter, so ``%ProgramFiles(x86)%`` reads; a ``%`` name
+    #: never spans whitespace or a path separator, so a stray ``%`` cannot
+    #: swallow a path segment. A quote is text, as a path spells it
+    #: (``Bob's Files``), not Windows' ``expandvars`` no-expansion span.
+    _VAR_REF = re.compile(r"(%%)|\$\{([^}]+)\}|\$(\w+)|%([^%\s/\\]+)%")
+
     @staticmethod
     def expand(value: Any) -> Any:
-        """Expand ``~`` and ``${ENV}`` / ``%VAR%`` in string values.
+        """Expand ``~`` and ``${VAR}`` / ``$VAR`` / ``%VAR%`` in string values.
+
+        Every spelling on every OS, so a profile written on one machine reads
+        the same on another; an unset variable is left as written, and ``%%``
+        is a literal ``%``. ``TEMP`` and ``TMP`` fall back to the system temp
+        dir where the OS sets neither (Linux), so a profile can reference
+        ``${TEMP}`` portably.
 
         Recurses into dicts/lists/tuples; non-strings pass through. Apply to
-        path-valued config entries so a profile can reference ``${TEMP}`` or
-        ``~`` portably. (Intra-document ``{token}`` interpolation is left to the
-        schema-aware consumer, which knows which keys are the bases.)
+        path-valued config entries. (Intra-document ``{token}`` interpolation
+        is left to the schema-aware consumer, which knows which keys are the
+        bases.)
         """
         if isinstance(value, str):
-            return os.path.expanduser(os.path.expandvars(value))
+
+            def lookup(match):
+                if match.group(1):  # the %% escape
+                    return "%"
+                name = next(group for group in match.groups() if group)
+                found = os.environ.get(name)
+                if found is None and name in ("TEMP", "TMP"):
+                    found = tempfile.gettempdir()
+                return match.group(0) if found is None else found
+
+            return os.path.expanduser(UserConfig._VAR_REF.sub(lookup, value))
         if isinstance(value, Mapping):
             return {k: UserConfig.expand(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
             return type(value)(UserConfig.expand(v) for v in value)
         return value
+
+    #: The XDG base-directory defaults, under the home folder.
+    _XDG_DEFAULTS = {"config": (".config",), "data": (".local", "share")}
+
+    @staticmethod
+    def xdg_home(kind: str = "config") -> str:
+        """An XDG base directory: ``$XDG_CONFIG_HOME`` / ``$XDG_DATA_HOME`` when it
+        holds an absolute path, else the spec's default (``~/.config`` /
+        ``~/.local/share``).
+
+        The spec calls a relative value invalid, and Qt ignores one; used as
+        given, the directory moved with the working directory. It is the
+        freedesktop rule -- whether it applies on this OS is the caller's call.
+
+        Parameters:
+            kind (str): ``"config"`` or ``"data"``.
+
+        Returns:
+            str: An absolute directory path (not created).
+
+        Raises:
+            ValueError: *kind* is neither.
+        """
+        try:
+            default = UserConfig._XDG_DEFAULTS[kind]
+        except KeyError:
+            raise ValueError(f"kind is 'config' or 'data', not {kind!r}") from None
+        base = os.environ.get(f"XDG_{kind.upper()}_HOME", "")
+        if os.path.isabs(base):
+            return base
+        return os.path.join(os.path.expanduser("~"), *default)
 
     @staticmethod
     def user_config_root() -> Path:
@@ -190,16 +253,20 @@ class UserConfig:
 
         Honors ``$UITK_PRESETS_ROOT`` (used as given; ``~`` and ``%VAR%`` expanded).
         Otherwise the host-independent per-user config dir plus a ``uitk`` wrapper
-        folder — matching uitk ``preset_manager.PresetManager.get_presets_root()`` so this Qt-free
-        path and uitk's ``QStandardPaths`` path resolve to the same location:
+        folder. The one owner of the root: uitk's ``PresetManager.get_presets_root()``
+        delegates here.
 
         * Windows: ``%LOCALAPPDATA%/uitk``
         * macOS:   ``~/Library/Preferences/uitk``
         * Linux:   ``$XDG_CONFIG_HOME/uitk`` (else ``~/.config/uitk``)
+
+        Always absolute: a relative ``$XDG_CONFIG_HOME`` is ignored, as the XDG
+        spec requires (and Qt does) -- used as given, the root moved with the
+        working directory.
         """
         override = os.environ.get(CONFIG_ROOT_ENV_VAR)
         if override:
-            p = Path(os.path.expandvars(override)).expanduser()
+            p = Path(UserConfig.expand(override))
             return p if p.is_absolute() else p.absolute()
 
         system = platform.system().lower()
@@ -210,7 +277,6 @@ class UserConfig:
         elif system == "darwin":
             base = os.path.join(os.path.expanduser("~"), "Library", "Preferences")
         else:
-            base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
-                os.path.expanduser("~"), ".config"
-            )
-        return Path(base) / _ECOSYSTEM_WRAPPER
+            base = UserConfig.xdg_home("config")
+        root = Path(base) / _ECOSYSTEM_WRAPPER
+        return root if root.is_absolute() else root.absolute()

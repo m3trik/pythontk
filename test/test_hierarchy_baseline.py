@@ -4,7 +4,9 @@
 
 import unittest
 
-from pythontk.core_utils.hierarchy_baseline import HierarchyBaseline as HB
+from pythontk.core_utils.engines.scene_export.hierarchy_baseline import (
+    HierarchyBaseline as HB,
+)
 
 
 A = {"assetA_grp", "assetA_grp|meshA1", "assetA_grp|meshA2"}
@@ -197,6 +199,153 @@ class TestRecord(unittest.TestCase):
 
         raw = json.dumps(HB.encode(A, scene="a.ma"))
         self.assertEqual(HB.recorded_by(raw), "a.ma")
+
+
+class _FakeStore:
+    """A scene store over a dict: the two channel primitives plus the writer
+    stamp pair (``SceneStoreBase``'s contract, minus a real scene file)."""
+
+    channels = {}
+    scene = "shot_a.ma"
+    #: Scene files still on disk -- a stamp naming one of these that is not
+    #: ``scene`` is a Save As source, so its record is not this scene's.
+    on_disk = {"shot_a.ma"}
+
+    @classmethod
+    def read(cls, scope, key):
+        return cls.channels.get((scope, key))
+
+    @classmethod
+    def write(cls, scope, key, text):
+        if text is None:
+            cls.channels.pop((scope, key), None)
+            return None
+        cls.channels[(scope, key)] = text
+        return "data_internal"
+
+    @classmethod
+    def writer_stamp(cls):
+        return cls.scene
+
+    @classmethod
+    def written_here(cls, stamp):
+        if stamp is None:
+            return False
+        return stamp in ("", cls.scene) or stamp not in cls.on_disk
+
+
+class _FakeSidecar:
+    """What each deliverable last shipped, by export path."""
+
+    shipped = {}
+    migrated = []
+
+    @classmethod
+    def migrate_legacy(cls, export_path, base_stem=False):
+        cls.migrated.append(export_path)
+
+    @classmethod
+    def read_manifest(cls, export_path, base_stem=False):
+        return cls.shipped.get(export_path)
+
+
+class TestStore(unittest.TestCase):
+    """HierarchyBaselineStore: the storage both DCC subclasses inherit."""
+
+    def setUp(self):
+        from pythontk.core_utils.engines.scene_export.hierarchy_baseline import (
+            HierarchyBaselineStore,
+        )
+
+        class Store(_FakeStore):
+            channels = {}
+            scene = "shot_a.ma"
+            on_disk = {"shot_a.ma"}
+
+        class Sidecar(_FakeSidecar):
+            shipped = {}
+            migrated = []
+
+        class Baseline(HierarchyBaselineStore):
+            STORE = Store
+            SIDECAR = Sidecar
+
+        self.Store, self.Sidecar, self.Baseline = Store, Sidecar, Baseline
+
+    def test_no_record_reads_empty_and_is_not_unreadable(self):
+        self.assertEqual(self.Baseline.read(), set())
+        self.assertFalse(self.Baseline.is_unreadable())
+        self.assertIsNone(self.Baseline.inherited_from())
+
+    def test_write_then_read_round_trips_stamped_with_this_scene(self):
+        self.assertTrue(self.Baseline.write(A))
+        self.assertEqual(self.Baseline.read(), A)
+        from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
+
+        raw = SceneRecords.HIERARCHY_BASELINE.read_text(self.Store)
+        self.assertEqual(HB.recorded_by(raw), "shot_a.ma")
+
+    def test_write_rolls_one_scope_forward_and_keeps_the_others(self):
+        self.Baseline.write(A)
+        self.Baseline.write(B)
+        self.assertEqual(self.Baseline.read(), A | B)
+        match, missing, extra, new = self.Baseline.compare(B - {"assetB_grp|meshB1"})
+        self.assertEqual((match, missing, new), (False, ["assetB_grp|meshB1"], False))
+
+    def test_an_empty_write_records_nothing(self):
+        self.assertTrue(self.Baseline.write(set()))
+        self.assertEqual(self.Store.channels, {})
+
+    def test_a_save_as_copy_sets_its_source_record_aside(self):
+        self.Baseline.write(A)
+        # The copy: same record, another scene file, the source still on disk.
+        self.Store.scene, self.Store.on_disk = "shot_b.ma", {"shot_a.ma", "shot_b.ma"}
+        self.assertEqual(self.Baseline.read(), set())
+        self.assertEqual(self.Baseline.inherited_from(), "shot_a.ma")
+        # Its first export replaces the source's record rather than merging.
+        self.Baseline.write(B)
+        self.assertEqual(self.Baseline.read(), B)
+        self.assertIsNone(self.Baseline.inherited_from())
+
+    def test_unreadable_is_flagged_and_reads_empty(self):
+        from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
+
+        SceneRecords.HIERARCHY_BASELINE.write_text(self.Store, "{not json")
+        self.assertTrue(self.Baseline.is_unreadable())
+        self.assertEqual(self.Baseline.read(), set())
+
+    def test_close_hook_runs_on_the_way_out(self):
+        class Closed(self.Baseline):
+            @classmethod
+            def _close(cls, paths):
+                return paths | {"closed"}
+
+        Closed.write(A)
+        self.assertEqual(Closed.read(), A | {"closed"})
+
+    def test_adopt_sidecar_takes_this_deliverable_only(self):
+        self.Sidecar.shipped = {"a.fbx": A, "b.fbx": B}
+        self.assertTrue(self.Baseline.adopt_sidecar("a.fbx"))
+        self.assertEqual(self.Baseline.read(), A)
+        self.assertEqual(self.Sidecar.migrated, ["a.fbx"])
+        # A scope the record holds is never adopted over.
+        self.assertFalse(self.Baseline.adopt_sidecar("a.fbx"))
+        self.assertTrue(self.Baseline.adopt_sidecar("b.fbx"))
+        self.assertEqual(self.Baseline.read(), A | B)
+
+    def test_adopt_sidecar_never_raises(self):
+        class Broken(self.Sidecar):
+            @classmethod
+            def read_manifest(cls, export_path, base_stem=False):
+                raise OSError("disk gone")
+
+        class Baseline(self.Baseline):
+            SIDECAR = Broken
+
+        self.assertFalse(Baseline.adopt_sidecar("a.fbx"))
+
+    def test_the_dcc_classes_keep_the_channel_name(self):
+        self.assertEqual(self.Baseline.ATTR_NAME, "hierarchy_baseline")
 
 
 if __name__ == "__main__":

@@ -73,6 +73,8 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
+from pythontk.core_utils.module_resolver import _ModuleHook
+
 #: Modules whose frames are transparent when a warning is attributed to a
 #: caller. This module's own frames obviously, plus the lazy package resolver:
 #: a deprecated module attribute reached through ``pythontk.<Name>`` is served
@@ -753,7 +755,10 @@ class Deprecation(_DeprecationInternal):
 
         Chains onto any ``__getattr__`` and ``__dir__`` already installed --
         several packages front a lazy loader with one, and replacing it outright
-        would make every non-deprecated name on the module vanish.
+        would make every non-deprecated name on the module vanish. Except the
+        ones a previous run of the module installed: a reload re-runs this call
+        in the same globals, and stacking on the last run's hooks kept serving
+        the aliases it declared.
 
         The resolved value is deliberately NOT cached back into the module
         globals: a lazy loader caches because the import is the cost, whereas
@@ -764,6 +769,8 @@ class Deprecation(_DeprecationInternal):
             module_globals (dict): The module's ``globals()``.
             moved (Mapping): Retired attribute name -> dotted path of its new
                 home, e.g. ``{"PreviewServer": "pythontk.net_utils.preview.server.PreviewServer"}``.
+                The path may run past the module into attributes, for a
+                function that became a method: ``"pkg.slots.Slots.launch"``.
             remove_in (str): The release the aliases stop working in.
             reason (str): Optional extra sentence appended to each message.
             since (str): ISO date the notices first ship.
@@ -772,8 +779,10 @@ class Deprecation(_DeprecationInternal):
             (dict) Attribute name -> its registered record.
         """
         module_name = module_globals.get("__name__", "")
-        previous_getattr = module_globals.get("__getattr__")
-        previous_dir = module_globals.get("__dir__")
+        previous_getattr, stale_getattr = _ModuleHook.previous(
+            module_globals, "__getattr__"
+        )
+        previous_dir, stale_dir = _ModuleHook.previous(module_globals, "__dir__")
 
         records = {
             name: cls._register(
@@ -799,16 +808,50 @@ class Deprecation(_DeprecationInternal):
                     f"module {module_name!r} has no attribute {name!r}"
                 )
             cls._emit(record)
-            target_module, _, attribute = record.replacement.rpartition(".")
-            return getattr(importlib.import_module(target_module), attribute)
+            return cls._resolve_path(record.replacement)
 
         def __dir__() -> list:
             base = previous_dir() if previous_dir is not None else list(module_globals)
             return sorted(set(base) | set(records))
 
-        module_globals["__getattr__"] = __getattr__
-        module_globals["__dir__"] = __dir__
+        _ModuleHook.install(
+            module_globals,
+            "__getattr__",
+            __getattr__,
+            previous_getattr,
+            stale=stale_getattr,
+        )
+        _ModuleHook.install(
+            module_globals, "__dir__", __dir__, previous_dir, stale=stale_dir
+        )
         return records
+
+    @staticmethod
+    def _resolve_path(path: str) -> Any:
+        """Import the longest prefix of *path* that is a module, then walk the
+        rest as attributes (``"pkg.mod.Class.method"``).
+
+        Only a module that does not exist is walked past: one that exists but
+        fails inside its own import raises, rather than reading as a missing
+        attribute of its parent.
+        """
+        parts = path.split(".")
+        for cut in range(len(parts) - 1, 0, -1):
+            module_name = ".".join(parts[:cut])
+            try:
+                target = importlib.import_module(module_name)
+            except ModuleNotFoundError as exc:
+                # Walk past only the target itself or a package above it: a
+                # dependency whose name merely PREFIXES it ("dep" in "deppkg.mod")
+                # is missing from inside a module that exists.
+                missing = exc.name or ""
+                if missing != module_name and not module_name.startswith(f"{missing}."):
+                    raise
+                continue
+            for attribute in parts[cut:]:
+                target = getattr(target, attribute)
+            return target
+        raise ImportError(f"no importable module in {path!r}")
 
     @classmethod
     def values(

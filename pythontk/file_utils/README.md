@@ -24,11 +24,11 @@ The path-plumbing workhorse, in five clusters:
 
 ## Mesh conversion (`mesh_convert/`)
 
-`MeshConvert` wraps the godotengine **FBX2glTF** CLI (pinned, auto-installed into `~/.pythontk/tools/` on first use — override with `PYTHONTK_TOOLS_DIR`) for static-mesh FBX → GLB, then acts as a glTF/GLB repair-and-enrichment toolkit where multiple passes share one edit session:
+`MeshConvert` wraps the godotengine **FBX2glTF** CLI (pinned, auto-installed into `~/.pythontk/tools/` on first use — override with `PYTHONTK_TOOLS_DIR`) for static-mesh FBX → GLB, then acts as a glTF/GLB repair-and-enrichment toolkit where multiple passes share one edit session. `_mesh_convert.py` is the facade, composed from one private mixin per job (`_fbx2gltf`, `_sidecar`, `_lightmaps`, `_shadow_rigs`, `_animation`, `_visibility`, `_materials`, `_textures`, `_images`); `glb/` holds the container every pass edits (`GlbEdit`, `glb/edit.py`) and the GLB family built on it (`reader`, `pipeline`, `clips`, `fades`, `key_reduction`, `tangents`):
 
 - **Scene sidecar** — `build_scene_sidecar` / `apply_scene_sidecar` / `read_scene_sidecar`: a versioned envelope embedded into the glTF root `extras`, making the deliverable self-describing to any glTF tool with no side files. The schema has exactly one home here, so producers (DCC exporters, WebXR bridges) cannot fork it.
 - **Lightmaps** — `apply_glb_lightmaps` encodes baked HDR EXRs for web and binds them as `occlusionTexture` on `TEXCOORD_1` (glTF has no lightmap slot; occlusion is the shared convention, and naive viewers degrade to grey AO). No manifest = clean no-op. `fix_glb_lightmap_metadata` gives a GLB the applier never touched (a native DCC export) the same correction: every lightmap marker and manifest copy says what the file ships.
-- **`GlbPipeline`** (`glb_pipeline.py`) — the one FBX → GLB build every deliverable goes through (downsize embedded textures to the ceiling → `fbx_to_glb` with the sidecar, live lightmap folders and a report → `optimize_glb_textures` last). The Scene Exporters' GLB output and the WebXR preview both call it and hand it dials only, so the two cannot disagree on a channel.
+- **`GlbPipeline`** (`glb/pipeline.py`) — the one FBX → GLB build every deliverable goes through (downsize embedded textures to the ceiling → `fbx_to_glb` with the sidecar, live lightmap folders and a report → `optimize_glb_textures` last). The Scene Exporters' GLB output and the WebXR preview both call it and hand it dials only, so the two cannot disagree on a channel.
 - **GLB passes** — `optimize_glb_textures` (WebP default, or KTX2/Basis via `KHR_texture_basisu`; KTX2 needs the external `toktx` encoder), `check_glb_materials`, `fix_glb_phantom_opaque_alpha`, `fix_glb_skin_skeletons` / `prune_glb_unused_skins` (spec-valid skeleton roots, no skinning data nothing binds; both run on every conversion), `fix_glb_tangents` (`GlbTangents`: each shipped tangent's handedness from its UVs -- FBX2glTF writes `w = +1`, inverting a normal map on every mirrored UV shell -- and no zero-length one; runs on every conversion), `set_glb_base_color` / `set_glb_metallic_roughness` / `set_glb_emissive`.
 
 The end-to-end DCC → GLB → headset pipeline this serves is documented in [Live WebXR preview](../../docs/webxr_preview.md).
@@ -45,7 +45,7 @@ Pure Python, explicitly no `pxr` import. `UsdFile` sniffs format by magic bytes 
 - **The `OPS` registry** — curated single-filter operators with validated params and `PercentageValue`/`PureValue` wrapping declared per-spec; adding one is one `OpSpec` entry.
 - **`apply()` / `session()`** — the escape hatch to any PyMeshLab filter by name (unvalidated), and a context-managed `MeshSet` session so composed ops skip the load → save → reload round-trip.
 
-## UV unwrapping (`uv_unwrap/`)
+## UV unwrapping (`uv_unwrap.py`)
 
 `UvUnwrap`: automatic unwrapping via external CLI engines, OBJ in → OBJ out, behind product-facing names — `hard_surface` (**Ministry of Flat**; discovery-only, its license forbids redistribution so the binary is never downloaded on your behalf) and `organic` (**Boundary First Flattening**; MIT, pinned + checksum-verified, auto-installable). Both preserve input topology exactly so callers can map UVs back by component index. Success is judged by the output file, not the exit code (MoF returns 1 even on success).
 
@@ -61,6 +61,7 @@ Shared project-workspace model plus a `workspace.mel` codec — pure Python, no 
 
 - **`metadata.py`** — `Metadata`: cross-platform file metadata/tag read-write, native where possible (Windows property system via pywin32) with an opt-in hidden JSON sidecar; works sidecar-only without pywin32.
 - **`file_dependencies.py`** — `FileDependencies`: the rules over files a record names by name plus the folder it was written from — where each is now (`resolve`, `search_dirs`), which names a write must not take (`claims`), which files a re-write left unread and may delete (`remove_superseded`, narrowed by the host through `written_here`), and gathering them into one folder (`relocate`).
+- **`tiled_path.py`** — `TiledPath`: the one tile / frame token vocabulary of a path (`<UDIM>`, `<uvtile>`, `<u>_<v>`, `<f>`, `<frame>`): detect (`has_token`, `is_frame_sequence`, `scheme`), collapse to one real file (`representative`, `spell`), expand to the set on disk (`tiles`, `wildcard`). Both DCC packages' `MatUtils` and exporters, and the texture taxonomy, read it.
 
 ## Dependency gating
 

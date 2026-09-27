@@ -134,6 +134,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "canonical_module_path",
+    "qualname": "FileUtils.canonical_module_path",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.math_utils._math_utils",
     "name": "catenary",
     "qualname": "MathUtils.catenary",
@@ -891,6 +898,20 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "is_environment_map",
+    "qualname": "ImgUtils.is_environment_map",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "is_equirectangular",
+    "qualname": "ImgUtils.is_equirectangular",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "is_image_constant",
     "qualname": "ImgUtils.is_image_constant",
     "tier": "bare"
@@ -1082,6 +1103,13 @@
     "module": "pythontk.str_utils._str_utils",
     "name": "name_pattern_context",
     "qualname": "StrUtils.name_pattern_context",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "natural_sort_key",
+    "qualname": "StrUtils.natural_sort_key",
     "tier": "bare"
   },
   {
@@ -1299,6 +1327,13 @@
     "module": "pythontk.str_utils._str_utils",
     "name": "replace_delimited",
     "qualname": "StrUtils.replace_delimited",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "replace_file",
+    "qualname": "FileUtils.replace_file",
     "tier": "bare"
   },
   {
@@ -1695,14 +1730,14 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.app_launcher",
+    "module": "pythontk.core_utils.app_launcher._app_launcher",
     "name": "AppLauncher",
     "qualname": "AppLauncher",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "AppSpec",
     "qualname": "AppSpec",
     "tier": "root"
@@ -1744,28 +1779,28 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.uv_budget",
+    "module": "pythontk.geo_utils.uv.budget",
     "name": "BudgetItem",
     "qualname": "BudgetItem",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.uv_budget",
+    "module": "pythontk.geo_utils.uv.budget",
     "name": "BudgetPage",
     "qualname": "BudgetPage",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.uv_budget",
+    "module": "pythontk.geo_utils.uv.budget",
     "name": "BudgetPlan",
     "qualname": "BudgetPlan",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.uv_budget",
+    "module": "pythontk.geo_utils.uv.budget",
     "name": "BudgetRow",
     "qualname": "BudgetRow",
     "tier": "root"
@@ -1786,21 +1821,21 @@
   },
   {
     "kind": "dict",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "CARRIER_BY_EXTENSION",
     "qualname": null,
     "tier": "root"
   },
   {
     "kind": "dict",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "CARRIER_EXTENSIONS",
     "qualname": null,
     "tier": "root"
   },
   {
     "kind": "str",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "CARRIER_PARAM",
     "qualname": null,
     "tier": "root"
@@ -1849,7 +1884,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.preset_store",
+    "module": "pythontk.core_utils.presets.store",
     "name": "Codec",
     "qualname": "Codec",
     "tier": "root"
@@ -1897,6 +1932,13 @@
     "tier": "root"
   },
   {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv.cylinder_seams",
+    "name": "CylinderSeams",
+    "qualname": "CylinderSeams",
+    "tier": "root"
+  },
+  {
     "kind": "dict",
     "module": "pythontk.file_utils.workspace",
     "name": "DEFAULT_FILE_RULES",
@@ -1905,7 +1947,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "Deliverer",
     "qualname": "Deliverer",
     "tier": "root"
@@ -1954,14 +1996,14 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.scene_records",
+    "module": "pythontk.core_utils.engines.scene_export.export_snapshot",
     "name": "ExportContext",
     "qualname": "ExportContext",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.export_profile",
+    "module": "pythontk.core_utils.engines.scene_export.export_profile",
     "name": "ExportProfile",
     "qualname": "ExportProfile",
     "tier": "root"
@@ -1975,14 +2017,14 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.export_profile",
+    "module": "pythontk.core_utils.engines.scene_export.export_profile",
     "name": "ExportRun",
     "qualname": "ExportRun",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.scene_records",
+    "module": "pythontk.core_utils.engines.scene_export.export_snapshot",
     "name": "ExportSnapshot",
     "qualname": "ExportSnapshot",
     "tier": "root"
@@ -2073,6 +2115,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_plan",
+    "name": "GapRetime",
+    "qualname": "GapRetime",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.qc_log",
     "name": "GateError",
     "qualname": "GateError",
@@ -2080,37 +2129,51 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.file_utils.mesh_convert.glb_pipeline",
+    "module": "pythontk.file_utils.mesh_convert.glb.fades",
+    "name": "GlbFades",
+    "qualname": "GlbFades",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.mesh_convert.glb.pipeline",
     "name": "GlbPipeline",
     "qualname": "GlbPipeline",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.file_utils.mesh_convert.glb_reader",
+    "module": "pythontk.file_utils.mesh_convert.glb.reader",
     "name": "GlbReader",
     "qualname": "GlbReader",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "HandoffBridge",
     "qualname": "HandoffBridge",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.handoff_manifest",
+    "module": "pythontk.core_utils.handoff.manifest",
     "name": "HandoffManifest",
     "qualname": "HandoffManifest",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "HandoffRequest",
     "qualname": "HandoffRequest",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.handoff.handoff_scope",
+    "name": "HandoffScope",
+    "qualname": "HandoffScope",
     "tier": "root"
   },
   {
@@ -2136,9 +2199,16 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.hierarchy_baseline",
+    "module": "pythontk.core_utils.engines.scene_export.hierarchy_baseline",
     "name": "HierarchyBaseline",
     "qualname": "HierarchyBaseline",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.hierarchy_baseline",
+    "name": "HierarchyBaselineStore",
+    "qualname": "HierarchyBaselineStore",
     "tier": "root"
   },
   {
@@ -2213,6 +2283,41 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.presets.library",
+    "name": "ImportItem",
+    "qualname": "ImportItem",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.presets.library",
+    "name": "ImportPlan",
+    "qualname": "ImportPlan",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.presets.library",
+    "name": "ImportResult",
+    "qualname": "ImportResult",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.instancing.instance_grouping",
+    "name": "InstanceGrouping",
+    "qualname": "InstanceGrouping",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.instancing.instancing_strategy",
+    "name": "InstancingStrategy",
+    "qualname": "InstancingStrategy",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.iter_utils._iter_utils",
     "name": "IterUtils",
     "qualname": "IterUtils",
@@ -2220,7 +2325,7 @@
   },
   {
     "kind": "Codec",
-    "module": "pythontk.core_utils.preset_store",
+    "module": "pythontk.core_utils.presets.store",
     "name": "JSON_CODEC",
     "qualname": null,
     "tier": "root"
@@ -2234,7 +2339,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.scene_records",
+    "module": "pythontk.core_utils.engines.scene_export.scene_records",
     "name": "Kind",
     "qualname": "Kind",
     "tier": "root"
@@ -2248,7 +2353,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.logging_mixin",
+    "module": "pythontk.core_utils.logging_mixin.logger_ext",
     "name": "LevelAwareFormatter",
     "qualname": "LevelAwareFormatter",
     "tier": "root"
@@ -2262,14 +2367,14 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.logging_mixin",
+    "module": "pythontk.core_utils.logging_mixin.logger_ext",
     "name": "LoggerExt",
     "qualname": "LoggerExt",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.logging_mixin",
+    "module": "pythontk.core_utils.logging_mixin._logging_mixin",
     "name": "LoggingMixin",
     "qualname": "LoggingMixin",
     "tier": "root"
@@ -2290,7 +2395,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.manifest_plan",
+    "module": "pythontk.core_utils.handoff.manifest_plan",
     "name": "ManifestPlan",
     "qualname": "ManifestPlan",
     "tier": "root"
@@ -2353,7 +2458,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.scene_records",
+    "module": "pythontk.core_utils.engines.scene_export.scene_records",
     "name": "Merge",
     "qualname": "Merge",
     "tier": "root"
@@ -2486,7 +2591,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.uv_pack",
+    "module": "pythontk.geo_utils.uv.pack",
     "name": "PackIslandsResult",
     "qualname": "PackIslandsResult",
     "tier": "root"
@@ -2507,7 +2612,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "Payload",
     "qualname": "Payload",
     "tier": "root"
@@ -2556,7 +2661,35 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.preset_store",
+    "module": "pythontk.core_utils.presets.library",
+    "name": "PresetDomain",
+    "qualname": "PresetDomain",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.presets.library",
+    "name": "PresetEntry",
+    "qualname": "PresetEntry",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.presets.library",
+    "name": "PresetLibrary",
+    "qualname": "PresetLibrary",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.presets.store",
+    "name": "PresetReadOnlyError",
+    "qualname": "PresetReadOnlyError",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.presets.store",
     "name": "PresetStore",
     "qualname": "PresetStore",
     "tier": "root"
@@ -2598,7 +2731,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.script_run",
+    "module": "pythontk.core_utils.handoff.script_run",
     "name": "ProgressRelay",
     "qualname": "ProgressRelay",
     "tier": "root"
@@ -2626,21 +2759,21 @@
   },
   {
     "kind": "tuple",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "RIG_MODES",
     "qualname": null,
     "tier": "root"
   },
   {
     "kind": "str",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "RIG_MODE_PARAM",
     "qualname": null,
     "tier": "root"
   },
   {
     "kind": "str",
-    "module": "pythontk.core_utils.script_template",
+    "module": "pythontk.core_utils.handoff.script_template",
     "name": "ROUND_TRIP",
     "qualname": null,
     "tier": "root"
@@ -2675,21 +2808,21 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.scene_records",
+    "module": "pythontk.core_utils.engines.scene_export.scene_records",
     "name": "Record",
     "qualname": "Record",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.scene_records",
+    "module": "pythontk.core_utils.engines.scene_export.scene_records",
     "name": "RecordSpec",
     "qualname": "RecordSpec",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.scene_records",
+    "module": "pythontk.core_utils.engines.scene_export.record_transfer",
     "name": "RecordTransfer",
     "qualname": "RecordTransfer",
     "tier": "root"
@@ -2864,14 +2997,14 @@
   },
   {
     "kind": "str",
-    "module": "pythontk.core_utils.script_template",
+    "module": "pythontk.core_utils.handoff.script_template",
     "name": "SAVE_AS",
     "qualname": null,
     "tier": "root"
   },
   {
     "kind": "str",
-    "module": "pythontk.core_utils.script_template",
+    "module": "pythontk.core_utils.handoff.script_template",
     "name": "SEND_TO",
     "qualname": null,
     "tier": "root"
@@ -2899,6 +3032,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.scene_data_sidecar",
+    "name": "SceneDataSidecarBase",
+    "qualname": "SceneDataSidecarBase",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.scene_exporter",
+    "name": "SceneExporterBase",
+    "qualname": "SceneExporterBase",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.shots.shot_model",
     "name": "ScenePersistence",
     "qualname": "ScenePersistence",
@@ -2906,14 +3053,14 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.scene_records",
+    "module": "pythontk.core_utils.engines.scene_export.scene_records",
     "name": "SceneRecords",
     "qualname": "SceneRecords",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.scene_records",
+    "module": "pythontk.core_utils.engines.scene_export.scene_store",
     "name": "SceneStoreBase",
     "qualname": "SceneStoreBase",
     "tier": "root"
@@ -2934,7 +3081,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.scene_records",
+    "module": "pythontk.core_utils.engines.scene_export.scene_records",
     "name": "Scope",
     "qualname": "Scope",
     "tier": "root"
@@ -2948,56 +3095,56 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "ScriptLaunchBridge",
     "qualname": "ScriptLaunchBridge",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "ScriptLaunchDeliverer",
     "qualname": "ScriptLaunchDeliverer",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "ScriptLaunchSpec",
     "qualname": "ScriptLaunchSpec",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "ScriptRoundTripDeliverer",
     "qualname": "ScriptRoundTripDeliverer",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.app_handoff",
+    "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "ScriptRunDeliverer",
     "qualname": "ScriptRunDeliverer",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.script_run",
+    "module": "pythontk.core_utils.handoff.script_run",
     "name": "ScriptRunResult",
     "qualname": "ScriptRunResult",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.script_run",
+    "module": "pythontk.core_utils.handoff.script_run",
     "name": "ScriptRunner",
     "qualname": "ScriptRunner",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.script_template",
+    "module": "pythontk.core_utils.handoff.script_template",
     "name": "ScriptTemplate",
     "qualname": "ScriptTemplate",
     "tier": "root"
@@ -3074,6 +3221,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_plan",
+    "name": "ShotBoundaryConflict",
+    "qualname": "ShotBoundaryConflict",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.shots.shot_model",
     "name": "ShotDefined",
     "qualname": "ShotDefined",
@@ -3119,6 +3273,20 @@
     "module": "pythontk.core_utils.engines.shots.shot_model",
     "name": "ShotRemoved",
     "qualname": "ShotRemoved",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_report",
+    "name": "ShotReport",
+    "qualname": "ShotReport",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_sequencer",
+    "name": "ShotSequencer",
+    "qualname": "ShotSequencer",
     "tier": "root"
   },
   {
@@ -3207,14 +3375,35 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.instancing.instancing_strategy",
+    "name": "StrategyConfig",
+    "qualname": "StrategyConfig",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.instancing.instancing_strategy",
+    "name": "StrategyType",
+    "qualname": "StrategyType",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.symbol_record",
     "name": "SymbolRecord",
     "qualname": "SymbolRecord",
     "tier": "root"
   },
   {
+    "kind": "tuple",
+    "module": "pythontk.core_utils.engines.shots.shot_detection",
+    "name": "TRANSFORM_CHANNELS",
+    "qualname": null,
+    "tier": "root"
+  },
+  {
     "kind": "class",
-    "module": "pythontk.core_utils.logging_mixin",
+    "module": "pythontk.core_utils.logging_mixin.table_mixin",
     "name": "TableMixin",
     "qualname": "TableMixin",
     "tier": "root"
@@ -3256,14 +3445,28 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.scene_records",
+    "module": "pythontk.file_utils.tiled_path",
+    "name": "TiledPath",
+    "qualname": "TiledPath",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.str_utils.tooltip_format",
+    "name": "TooltipFormat",
+    "qualname": "TooltipFormat",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.record_transfer",
     "name": "TransferContext",
     "qualname": "TransferContext",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.uv_transfer",
+    "module": "pythontk.geo_utils.uv.transfer",
     "name": "TransferTable",
     "qualname": "TransferTable",
     "tier": "root"
@@ -3312,28 +3515,28 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.uv_budget",
+    "module": "pythontk.geo_utils.uv.budget",
     "name": "UvBudget",
     "qualname": "UvBudget",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.uv_pack",
+    "module": "pythontk.geo_utils.uv.pack",
     "name": "UvPack",
     "qualname": "UvPack",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.uv_transfer",
+    "module": "pythontk.geo_utils.uv.transfer",
     "name": "UvTransfer",
     "qualname": "UvTransfer",
     "tier": "root"
   },
   {
     "kind": "class",
-    "module": "pythontk.file_utils.uv_unwrap._uv_unwrap",
+    "module": "pythontk.file_utils.uv_unwrap",
     "name": "UvUnwrap",
     "qualname": "UvUnwrap",
     "tier": "root"
@@ -3378,6 +3581,13 @@
     "module": "pythontk.file_utils.workspace",
     "name": "WorkspaceTemplates",
     "qualname": "WorkspaceTemplates",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.x11",
+    "name": "X11",
+    "qualname": "X11",
     "tier": "root"
   },
   {

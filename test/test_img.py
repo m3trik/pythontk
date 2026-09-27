@@ -26,7 +26,13 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from pythontk import FileUtils, ImgUtils, MapFactory as TextureMapFactory, TempArtifacts
+from pythontk import (
+    FileUtils,
+    ImgUtils,
+    MapFactory as TextureMapFactory,
+    TempArtifacts,
+    TestSandbox,
+)
 from pythontk.img_utils._img_utils import ImageFormat
 from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer
 
@@ -51,12 +57,12 @@ class ImgTest(BaseTestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.test_dir = os.path.join(
-            os.path.dirname(__file__), "test_files", "imgtk_test"
-        )
-        if os.path.exists(cls.test_dir):
-            shutil.rmtree(cls.test_dir)
-        os.makedirs(cls.test_dir)
+        # Generated into a throwaway dir: this used to rmtree and regenerate the
+        # TRACKED test_files/imgtk_test/ (rewriting im_h.png & co. every run, and
+        # as im_H.png on a case-sensitive FS, which test_file then tripped on).
+        fixtures = TempArtifacts("pythontk_imgtest", policy="scoped")
+        cls.addClassCleanup(fixtures.cleanup)  # runs even if setup fails below
+        cls.test_dir = fixtures.dir_path()
 
         # Create base images
         cls.im_h.save(os.path.join(cls.test_dir, "im_H.png"))
@@ -138,6 +144,160 @@ class ImgTest(BaseTestCase):
             with open(fake, "wb") as f:
                 f.write(b"not an image at all")
             self.assertIsNone(ImgUtils._image_size_from_header(fake))
+
+    @staticmethod
+    def _exr_header(data_window, *, before=()):
+        """An OpenEXR header: magic, version, *before* attributes, then dataWindow."""
+        import struct
+
+        def attr(name, type_name, value):
+            return (
+                name + b"\0" + type_name + b"\0" + struct.pack("<i", len(value)) + value
+            )
+
+        blob = b"\x76\x2f\x31\x01" + struct.pack("<I", 2)
+        for name, type_name, value in before:
+            blob += attr(name, type_name, value)
+        blob += attr(b"dataWindow", b"box2i", struct.pack("<iiii", *data_window))
+        return blob + b"\0"
+
+    def test_the_header_parse_reads_exr_and_radiance_hdr(self):
+        """HDR formats too: PIL reads neither, so without this an EXR or .hdr
+        environment map had no size at all -- the HDR manager needs its aspect
+        to tell a 2:1 latlong from a square lightmap."""
+        with tempfile.TemporaryDirectory() as tmp:
+            exr = os.path.join(tmp, "env.exr")
+            with open(exr, "wb") as f:
+                # A window not at the origin, behind a large attribute the parse
+                # must seek past rather than read (Arnold stamps render metadata).
+                f.write(
+                    self._exr_header(
+                        (-10, 5, 2037, 1028),
+                        before=[(b"comments", b"string", b"x" * 70000)],
+                    )
+                )
+            self.assertEqual(ImgUtils._image_size_from_header(exr), (2048, 1024))
+            self.assertEqual(ImgUtils.get_image_size(exr), (2048, 1024))
+
+            no_window = os.path.join(tmp, "no_window.exr")
+            with open(no_window, "wb") as f:
+                f.write(b"\x76\x2f\x31\x01" + b"\x02\0\0\0" + b"\0")
+            self.assertIsNone(ImgUtils._image_size_from_header(no_window))
+
+            hdr = os.path.join(tmp, "env.hdr")
+            with open(hdr, "wb") as f:
+                f.write(b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 512 +X 1024\n")
+            self.assertEqual(ImgUtils._image_size_from_header(hdr), (1024, 512))
+            # Rotated storage lists X first; each value belongs to its axis.
+            rotated = os.path.join(tmp, "rotated.hdr")
+            with open(rotated, "wb") as f:
+                f.write(b"#?RGBE\n\n+X 300 -Y 100\n")
+            self.assertEqual(ImgUtils._image_size_from_header(rotated), (300, 100))
+            unended = os.path.join(tmp, "unended.hdr")
+            with open(unended, "wb") as f:
+                f.write(b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n")
+            self.assertIsNone(ImgUtils._image_size_from_header(unended))
+            # CRLF is not a Radiance header per the format. Size and integrity
+            # check read it through ONE parse, so they agree: the sizer used to
+            # size it (8, 4) while the check refused it.
+            crlf = os.path.join(tmp, "crlf.hdr")
+            with open(crlf, "wb") as f:
+                f.write(
+                    b"#?RADIANCE\r\nFORMAT=32-bit_rle_rgbe\r\n\r\n-Y 4 +X 8\r\n"
+                    + b"\x10" * 128
+                )
+            self.assertIsNone(ImgUtils._image_size_from_header(crlf))
+            self.assertEqual(
+                ImgUtils.validate_image_integrity(crlf), (False, "incomplete header")
+            )
+
+    def test_is_environment_map_by_shape_and_name(self):
+        """An HDR picker's filter over a folder that also holds baked lightmaps
+        (a production sourceimages held 72, every one square). Sandboxed: the
+        name half reads the convention, which a developer may have edited."""
+        with TestSandbox.user_config(), tempfile.TemporaryDirectory() as tmp:
+
+            def exr(name, size):
+                path = os.path.join(tmp, name)
+                with open(path, "wb") as f:
+                    f.write(self._exr_header((0, 0, size[0] - 1, size[1] - 1)))
+                return path
+
+            env = exr("workshop_8k.exr", (2048, 1024))
+            pano = exr("skyDome.exr", (4096, 2004))  # 2.044: Maya's own
+            lightmap = exr("ROOM_ENV_Lightmap_12.exr", (256, 256))
+            texture = exr("crate.exr", (512, 512))
+            wide_lightmap = exr("desk_LightMap.LIGHT_A.exr", (2048, 1024))
+
+            self.assertTrue(ImgUtils.is_equirectangular(env))
+            self.assertTrue(ImgUtils.is_equirectangular(pano))
+            self.assertFalse(ImgUtils.is_equirectangular(texture))
+            self.assertIsNone(ImgUtils.is_equirectangular(os.path.join(tmp, "x.hdr")))
+
+            self.assertTrue(ImgUtils.is_environment_map(env))
+            self.assertTrue(ImgUtils.is_environment_map(pano))
+            for path in (lightmap, texture, wide_lightmap):
+                with self.subTest(path=os.path.basename(path)):
+                    self.assertFalse(ImgUtils.is_environment_map(path))
+            # Each filter switches off on its own.
+            self.assertTrue(ImgUtils.is_environment_map(texture, latlong_only=False))
+            self.assertTrue(
+                ImgUtils.is_environment_map(wide_lightmap, skip_lightmaps=False)
+            )
+            # Square AND lightmap-named: either filter alone still hides it.
+            self.assertFalse(ImgUtils.is_environment_map(lightmap, latlong_only=False))
+            self.assertFalse(
+                ImgUtils.is_environment_map(lightmap, skip_lightmaps=False)
+            )
+            # Unknown size is never a false reject.
+            self.assertTrue(ImgUtils.is_environment_map(os.path.join(tmp, "x.hdr")))
+
+    def test_is_equirectangular_never_reads_an_online_only_file(self):
+        """Even a header read makes the sync client download the whole image --
+        100 MB per HDR on every dropdown open."""
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "crate.exr")
+            with open(path, "wb") as f:
+                f.write(self._exr_header((0, 0, 511, 511)))
+            with (
+                mock.patch.object(FileUtils, "is_cloud_placeholder", return_value=True),
+                mock.patch.object(ImgUtils, "get_image_size") as sizer,
+            ):
+                self.assertIsNone(ImgUtils.is_equirectangular(path))
+                self.assertTrue(ImgUtils.is_environment_map(path))
+            sizer.assert_not_called()
+
+    def test_is_equirectangular_rereads_a_rewritten_file(self):
+        """Sizes are cached per file version, not per path."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "env.exr")
+            with open(path, "wb") as f:
+                f.write(self._exr_header((0, 0, 511, 511)))
+            self.assertFalse(ImgUtils.is_equirectangular(path))
+            with open(path, "wb") as f:  # a different byte size: a new version
+                f.write(
+                    self._exr_header(
+                        (0, 0, 1023, 511), before=[(b"owner", b"string", b"me")]
+                    )
+                )
+            self.assertTrue(ImgUtils.is_equirectangular(path))
+
+    @unittest.skipUnless(HAS_CV2, "cv2 not installed")
+    def test_the_header_parse_reads_an_exr_cv2_wrote(self):
+        """The lightmap baker writes its EXRs through cv2 -- a real header."""
+        os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+        import cv2
+
+        with tempfile.TemporaryDirectory() as tmp:
+            exr = os.path.join(tmp, "desk_Lightmap.exr")
+            img = np.zeros((96, 160, 3), np.float32)
+            if not cv2.imwrite(
+                exr, img, [cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_HALF]
+            ):
+                self.skipTest("cv2 built without OpenEXR write support")
+            self.assertEqual(ImgUtils.get_image_size(exr), (160, 96))
 
     def test_create_image_rgb(self):
         """Test create_image with RGB mode."""
@@ -3091,6 +3251,36 @@ class ComposeRectTest(unittest.TestCase):
     def test_no_outer_rect_is_the_identity(self):
         rect = [0.5, 0.25, 0.1, 0.6]
         self.assertEqual(ImgUtils.compose_rect(None, rect), rect)
+
+
+class ImgUtilsLayoutTest(unittest.TestCase):
+    """The facade split by job keeps its surface and its layering."""
+
+    _PKG = Path(__file__).resolve().parents[1] / "pythontk" / "img_utils"
+
+    def _modules(self):
+        return [self._PKG / "_img_utils.py"] + sorted(
+            p for p in self._PKG.glob("_*.py") if p.name not in ("_img_utils.py",)
+        )
+
+    def test_no_module_level_import_of_an_engine(self):
+        # A *_utils root sits below core_utils/engines: the texture taxonomy is
+        # reached only through deferred imports inside the methods that need it.
+        offenders = []
+        for path in self._modules():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in tree.body:
+                if isinstance(node, ast.ImportFrom) and "engines" in (node.module or ""):
+                    offenders.append(f"{path.name}: {ast.unparse(node)}")
+        self.assertEqual(offenders, [])
+
+    def test_public_methods_stay_on_the_facade(self):
+        # The resolver registers flat names (ptk.<method>) from the class's own
+        # body, so a public method living only on an internal base drops out.
+        for base in ImgUtils.__mro__[1:]:
+            if base.__name__.startswith("_Img"):
+                on_base = {n for n in vars(base) if not n.startswith("_")}
+                self.assertEqual(on_base - set(vars(ImgUtils)), set(), base.__name__)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import math
-import struct
 import logging
 
 # OpenCV reads this once, when its EXR codec first initializes (often at the
@@ -52,8 +51,19 @@ except ImportError as e:
 # From this package:
 from pythontk.core_utils._core_utils import CoreUtils
 from pythontk.core_utils.help_mixin import HelpMixin
+from pythontk.core_utils.naming_convention import NamingConvention
 from pythontk.file_utils._file_utils import FileUtils
-from pythontk.str_utils._str_utils import StrUtils
+
+# The facade's bodies, split by concept (CODE_STANDARD section 3): each is an
+# ImgUtils base, so helpers resolve through ``cls`` and the public methods
+# (signatures + docstrings) stay here for the flat ``ptk.<method>`` surface.
+from pythontk.img_utils._image_header import _ImgHeaderInternal
+from pythontk.img_utils._codecs import _ImgCodecInternal
+from pythontk.img_utils._channels import _ImgChannelInternal
+from pythontk.img_utils._filters import _ImgFilterInternal
+from pythontk.img_utils._atlas import _ImgAtlasInternal
+from pythontk.img_utils._rasterize import _ImgRasterizeInternal
+from pythontk.img_utils._color_space import _ImgColorSpaceInternal
 
 
 # Per-format IO capability. ``backend`` selects the library used to read/write:
@@ -62,7 +72,16 @@ from pythontk.str_utils._str_utils import StrUtils
 ImageFormat = namedtuple("ImageFormat", "read write backend")
 
 
-class ImgUtils(HelpMixin):
+class ImgUtils(
+    _ImgHeaderInternal,
+    _ImgCodecInternal,
+    _ImgChannelInternal,
+    _ImgFilterInternal,
+    _ImgAtlasInternal,
+    _ImgRasterizeInternal,
+    _ImgColorSpaceInternal,
+    HelpMixin,
+):
     """Helper methods for working with image file formats."""
 
     # ------------------------------------------------------------------
@@ -556,86 +575,6 @@ class ImgUtils(HelpMixin):
         return True, ""
 
     @staticmethod
-    def _validate_radiance_hdr(fp: str) -> Tuple[bool, str]:
-        """Walk a Radiance HDR's scanlines to detect truncation."""
-        with open(fp, "rb") as f:
-            data = f.read()
-        if not data.startswith(b"#?"):  # #?RADIANCE / #?RGBE
-            return True, ""  # not the expected format; don't block
-        nl = data.find(b"\n\n")  # header ends at the first blank line
-        if nl < 0:
-            return False, "incomplete header"
-        p = nl + 2
-        eol = data.find(b"\n", p)
-        if eol < 0:
-            return False, "missing resolution line"
-        res = data[p:eol].split()  # e.g. b"-Y 4096 +X 8192"
-        if len(res) != 4:
-            return True, ""  # nonstandard orientation; skip the strict check
-        try:
-            height, width = int(res[1]), int(res[3])
-        except ValueError:
-            return True, ""
-        off, n = eol + 1, len(data)
-
-        # New-style adaptive RLE: each scanline is 0x02 0x02 <hi> <lo> then four
-        # run-length-encoded channels. Old/flat RGBE has no markers.
-        if (
-            8 <= width <= 0x7FFF
-            and off + 4 <= n
-            and data[off] == 2
-            and data[off + 1] == 2
-        ):
-            rows = 0
-            while rows < height and off + 4 <= n:
-                if data[off] != 2 or data[off + 1] != 2:
-                    break
-                if ((data[off + 2] << 8) | data[off + 3]) != width:
-                    break
-                off += 4
-                truncated = False
-                for _channel in range(4):
-                    x = 0
-                    while x < width:
-                        if off >= n:
-                            truncated = True
-                            break
-                        run = data[off]
-                        off += 1
-                        if run > 128:  # a run of (run-128) identical bytes
-                            off += 1
-                            x += run - 128
-                        else:  # (run) literal bytes
-                            off += run
-                            x += run
-                    if truncated or off > n:
-                        truncated = True
-                        break
-                if truncated:
-                    break
-                rows += 1
-            if rows < height:
-                return False, f"truncated: {rows}/{height} scanlines"
-            return True, ""
-
-        # Flat RGBE fallback: 4 bytes/pixel, no length markers.
-        expected = width * height * 4
-        if (n - off) < expected:
-            return False, f"truncated: {n - off}/{expected} pixel bytes"
-        return True, ""
-
-    @staticmethod
-    def _validate_exr(fp: str, size: int) -> Tuple[bool, str]:
-        """Check an OpenEXR magic number + a sane minimum size."""
-        with open(fp, "rb") as f:
-            magic = f.read(4)
-        if magic != b"\x76\x2f\x31\x01":
-            return False, "not an OpenEXR file (bad magic)"
-        if size < 64:  # header alone is larger than this
-            return False, "EXR too small to be valid"
-        return True, ""
-
-    @staticmethod
     def create_image(mode, size=(4096, 4096), color=None):
         """Create a new image.
 
@@ -981,288 +920,6 @@ class ImgUtils(HelpMixin):
             im.save(name, **kwargs)
 
     @classmethod
-    @contextmanager
-    def _sized_encoder_buffer(cls, im: "Image.Image", ext: str, kwargs: dict):
-        """Widen Pillow's optimize buffer for the duration of one JPEG save.
-
-        In optimize/progressive mode libjpeg needs a single buffer big enough
-        for the WHOLE encoded image, and Pillow guesses its size from the pixel
-        count -- ``2*w*h`` at quality >= 95, ``w*h`` below. That guess assumes
-        4:2:0 chroma. :meth:`_apply_lossy_kwargs` writes **4:4:4**
-        (``subsampling=0``) so a normal map's X/Y vectors are not turned to
-        mush, and full-resolution chroma on a high-frequency map encodes past
-        the guess -- at which point Pillow raises ``OSError: broken data stream
-        when writing image file`` rather than growing the buffer.
-
-        Not hypothetical: ``MapOptimizer.optimize_map`` passes ``optimize=True``
-        on every save, so this is the .jpg path of the texture optimizer
-        failing on exactly the detailed maps it exists to process. Measured on
-        random-noise RGB at q95/4:4:4 -- 256^2 encoded to 159 KB against a
-        131 KB budget, 1024^2 to 2.48 MB against 2 MB.
-
-        ``ImageFile._save`` takes ``max(MAXBLOCK, bufsize)``, so raising that
-        module global is the lever Pillow offers. The bound is the raw pixel
-        size (channels * w * h) plus slack for headers: a JPEG that big would
-        mean the encoder expanded the image, which it does not do at any
-        quality. Restored in ``finally`` -- it is process-wide state and this
-        is a library, not an application.
-        """
-        optimizing = kwargs.get("optimize") or kwargs.get("progressive")
-        # ALWAYS_LOSSY_FORMATS is exactly the JPEG pair, and it is the set this
-        # buffer problem belongs to: a container with no lossless mode is the
-        # one whose writer takes the quality/subsampling that overflows the
-        # guess. Naming the pair a second time here would be two lists to keep
-        # in step.
-        if ext not in cls.ALWAYS_LOSSY_FORMATS or not optimizing or Image is None:
-            yield
-            return
-
-        from PIL import ImageFile
-
-        width, height = im.size
-        needed = len(im.getbands()) * width * height + 65536
-        previous = ImageFile.MAXBLOCK
-        ImageFile.MAXBLOCK = max(previous, needed)
-        try:
-            yield
-        finally:
-            ImageFile.MAXBLOCK = previous
-
-    @classmethod
-    def _assert_webp_dimensions(cls, im: "Image.Image", name: str) -> None:
-        """Raise a fix-shaped error when *im* exceeds WebP's encoder ceiling.
-
-        Pillow surfaces the libwebp error, which states the limit but not what to
-        do about it — and by then the caller has already paid for a full optimize
-        pass. Fail here with both.
-        """
-        width, height = im.size
-        if max(width, height) > cls.WEBP_MAX_DIMENSION:
-            raise ValueError(
-                f"Cannot write {name!r} as WebP: {width}x{height} exceeds the "
-                f"format's {cls.WEBP_MAX_DIMENSION}px limit. Resize first "
-                f"(e.g. max_size={cls.WEBP_MAX_DIMENSION}) or keep it as PNG."
-            )
-
-    @classmethod
-    def _apply_lossy_kwargs(
-        cls, ext: str, quality: Optional[int], kwargs: dict
-    ) -> dict:
-        """Resolve writer kwargs for a lossy container. Returns a new dict.
-
-        ``quality is None`` means *lossless wherever the container offers it*.
-        That default is the whole point: Pillow writes WebP at *lossy q80* unless
-        told otherwise, so a caller who merely picked ".webp" off a format menu
-        would silently ship a degraded normal map — the exact failure this
-        parameter exists to make impossible to reach by accident.
-
-        JPEG has no lossless mode, so None resolves to
-        :attr:`JPEG_DEFAULT_QUALITY` at 4:4:4 instead. Explicit kwargs always
-        win, so a caller who really wants ``subsampling=2`` can still say so.
-        """
-        kwargs = dict(kwargs)
-        if ext == "webp":
-            if quality is None:
-                # In lossless mode Pillow reads ``quality`` as compression EFFORT,
-                # not fidelity — 100 is the smallest file, not the best pixels.
-                kwargs.setdefault("lossless", True)
-                kwargs.setdefault("quality", 100)
-            else:
-                kwargs.setdefault("lossless", False)
-                kwargs.setdefault("quality", int(quality))
-        else:  # jpg / jpeg — lossy either way; only the amount is negotiable.
-            kwargs.setdefault(
-                "quality",
-                cls.JPEG_DEFAULT_QUALITY if quality is None else int(quality),
-            )
-            kwargs.setdefault("subsampling", 0)  # 4:4:4 — see JPEG_DEFAULT_QUALITY
-        return kwargs
-
-    @classmethod
-    def _save_dds_compressed(
-        cls, im: "Image.Image", name: str, compression: str
-    ) -> None:
-        """Write *im* to a block-compressed ``.dds``.
-
-        DXT/BC5 use Pillow's ``pixel_format``; BC7/BC6H route to a codec registered
-        via :meth:`register_dds_codec`, raising a clear error if none is installed.
-        """
-        comp = compression.upper()
-        if comp in cls.PIL_DDS_PIXEL_FORMATS:
-            # BC5 is a two-channel format and only accepts RGB; DXT* want RGB(A).
-            if comp == "BC5":
-                im = im.convert("RGB") if im.mode != "RGB" else im
-            elif im.mode not in ("RGB", "RGBA"):
-                im = im.convert("RGBA")
-            im.save(name, pixel_format=comp)
-            return
-
-        if cls._dds_codec is not None:
-            cls._dds_codec(im, name, comp)
-            return
-
-        raise ValueError(
-            f"DDS compression {comp!r} requires an external codec. Pillow writes "
-            f"{cls.PIL_DDS_PIXEL_FORMATS}; for BC7/BC6H install the DDS codec "
-            f"extension and register it via ImgUtils.register_dds_codec()."
-        )
-
-    @classmethod
-    def _save_ktx2(
-        cls,
-        im: "Image.Image",
-        name: str,
-        compression: Optional[str],
-        quality: Optional[int],
-        colorspace: Optional[str],
-        uastc_rdo: Optional[float] = None,
-        uastc_rdo_dictionary: Optional[int] = None,
-    ) -> None:
-        """Write *im* to ``.ktx2`` through the registered / built-in encoder.
-
-        ``compression`` selects the Basis codec. The bare-call default is UASTC
-        — with no map-type context the quality-safe codec is the only safe one;
-        ``MapOptimizer.resolve_compression`` derives the right codec per map
-        type for the texture pipeline. ``colorspace`` labels the transfer
-        function (None = sRGB, the common case for a bare save); mip levels are
-        always generated — a GPU-compressed texture cannot make its own at
-        runtime. The RDO pair rides a UASTC encode only (ETC1S has no RDO
-        stage), and only when set, so a registered encoder that models neither
-        keyword still encodes everything else.
-        """
-        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
-
-        encoder = cls.resolve_ktx2_encoder(required=True)
-        codec = (compression or "UASTC").upper()
-        srgb = (colorspace or "sRGB").lower() != "linear"
-        rdo = Ktx2Encoder.rdo_kwargs(uastc_rdo, uastc_rdo_dictionary)
-        encoder.encode(
-            im,
-            name,
-            codec=codec,
-            srgb=srgb,
-            mipmaps=True,
-            quality=quality,
-            **(rdo if codec == "UASTC" else {}),
-        )
-
-    @classmethod
-    def _save_high_bit_depth(cls, im: "Image.Image", name: str, bit_depth: int) -> bool:
-        """Write *im* at 16-bit. Returns True when handled, False when the request
-        can't be honored (unsupported depth or container) — the caller then falls
-        back to an 8-bit save. Either way the degrade is announced, never silent.
-
-        Grayscale uses Pillow's ``I;16``; a colour PNG is written by
-        :meth:`_write_png16` (standard library), a colour TIFF through OpenCV
-        ``uint16``. 8-bit sources are promoted (value*257); existing 16-bit
-        data is preserved.
-        """
-        if bit_depth != 16:  # only 16 is supported here; 32-bit float = EXR/HDR.
-            print(
-                f"# ImgUtils: {bit_depth}-bit unsupported for {name}; saving as 8-bit."
-            )
-            return False
-
-        ext = os.path.splitext(name)[1].lstrip(".").lower()
-        if ext not in ("png", "tiff", "tif"):
-            print(f"# ImgUtils: '{ext}' cannot store 16-bit; saving {name} as 8-bit.")
-            return False
-
-        if im.mode in ("L", "P", "1", "I", "I;16"):
-            arr = np.asarray(im.convert("I"), dtype=np.int64)
-            if im.mode in ("L", "P", "1"):  # promote 8-bit range to 16-bit
-                arr = arr * 257
-            arr = np.clip(arr, 0, 65535).astype(np.uint16)
-            Image.fromarray(arr).save(name)  # uint16 array → "I;16" natively
-            return True
-
-        # RGB / RGBA — Pillow has no 16-bit colour mode. A PNG is written with
-        # the standard library (a data map a GPU must not sRGB-decode needs 16
-        # bits on any machine, OpenCV or not); a TIFF through OpenCV uint16.
-        rgb = im.convert("RGBA") if im.mode == "RGBA" else im.convert("RGB")
-        arr = np.asarray(rgb, dtype=np.uint16) * 257
-        if ext == "png":
-            cls._write_png16(arr, name)
-            return True
-        try:
-            import cv2
-        except ImportError:
-            return False
-        code = cv2.COLOR_RGBA2BGRA if rgb.mode == "RGBA" else cv2.COLOR_RGB2BGR
-        cv2.imwrite(name, cv2.cvtColor(arr, code))
-        return True
-
-    @staticmethod
-    def _write_png16(arr: "np.ndarray", name: str) -> None:
-        """Write a ``(height, width, 3 | 4)`` ``uint16`` array as a 16-bit
-        RGB / RGBA PNG with the standard library alone: one IDAT, filter type
-        0 on every row, big-endian samples as the format requires.
-        """
-        import zlib
-
-        height, width, channels = arr.shape
-        if channels not in (3, 4):
-            raise ValueError(f"_write_png16: {channels} channels; expected 3 or 4.")
-        samples = np.ascontiguousarray(arr, dtype=">u2").view(np.uint8)
-        rows = samples.reshape(height, width * channels * 2)
-        raw = np.concatenate([np.zeros((height, 1), np.uint8), rows], axis=1)
-
-        def chunk(kind: bytes, data: bytes) -> bytes:
-            body = kind + data
-            crc = zlib.crc32(body) & 0xFFFFFFFF
-            return struct.pack(">I", len(data)) + body + struct.pack(">I", crc)
-
-        colour_type = 6 if channels == 4 else 2
-        header = struct.pack(">IIBBBBB", width, height, 16, colour_type, 0, 0, 0)
-        with open(name, "wb") as fh:
-            fh.write(b"\x89PNG\r\n\x1a\n")
-            fh.write(chunk(b"IHDR", header))
-            fh.write(chunk(b"IDAT", zlib.compress(raw.tobytes(), 6)))
-            fh.write(chunk(b"IEND", b""))
-
-    @staticmethod
-    def _save_via_cv2(im: "Image.Image", name: str) -> None:
-        """Write a PIL image to a float format (EXR, HDR) via OpenCV.
-
-        Pillow cannot encode these. The source PIL image is 8-bit, so values
-        are normalized to 0-1 float32 (the inverse of :meth:`_load_via_cv2`).
-        OpenEXR is enabled at module import (``OPENCV_IO_ENABLE_OPENEXR``).
-
-        Raises:
-            ImportError: cv2 unavailable (it is the only writer for these).
-            OSError: the write failed -- cv2 reports that by RETURNING False
-                (no exception), so an unchecked call leaves the caller believing
-                a file exists that was never created.
-        """
-        try:
-            import cv2
-        except ImportError as e:
-            raise ImportError(
-                f"OpenCV (cv2) is required to save '{os.path.splitext(name)[1]}' files."
-            ) from e
-
-        img_np = np.array(im)
-        if im.mode == "RGB":
-            img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-        elif im.mode == "RGBA":
-            img_np = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGRA)
-        # "L" (grayscale) passes through unchanged.
-
-        img_np = img_np.astype(np.float32) / 255.0
-        # Half float for EXR: the source is 8-bit, and half's 11-bit mantissa
-        # already exceeds that -- cv2's FP32 default would double the bytes for
-        # no precision. cv2 RETURNS False rather than raising when the codec is
-        # missing or the path is bad, so an unchecked call reports success with
-        # no file on disk.
-        params = (
-            [cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_HALF]
-            if os.path.splitext(name)[1].lower() == ".exr"
-            else []
-        )
-        if not cv2.imwrite(name, img_np, params):
-            raise OSError(f"Failed to write image: {name}")
-
-    @classmethod
     def load_image(cls, filepath):
         """Load an image and return a PIL copy, dispatching on the file extension.
 
@@ -1285,36 +942,6 @@ class ImgUtils(HelpMixin):
 
         with Image.open(filepath) as im:
             return im.copy()
-
-    @staticmethod
-    def _load_via_cv2(filepath: str) -> "Image.Image":
-        """Read a float format (EXR, HDR) via OpenCV and return an 8-bit PIL image.
-
-        Values are clipped to 0-1 and scaled to 8-bit, so the result is
-        preview-grade — lossy for true HDR data. Consumers needing float
-        precision (e.g. lightmap baking) should read via cv2 directly.
-        OpenEXR is enabled at module import (``OPENCV_IO_ENABLE_OPENEXR``).
-        """
-        try:
-            import cv2
-        except ImportError as e:
-            raise ImportError(
-                f"OpenCV (cv2) is required to read '{os.path.splitext(filepath)[1]}' files."
-            ) from e
-
-        img = cv2.imread(filepath, cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
-        if img is None:
-            raise OSError(f"OpenCV could not read image: {filepath}")
-
-        # Float HDR data → clip to 0-1 and scale to 8-bit for the PIL contract.
-        if img.dtype != np.uint8:
-            img = (np.clip(img, 0.0, 1.0) * 255.0).round().astype(np.uint8)
-
-        if img.ndim == 2:
-            return Image.fromarray(img, mode="L")
-        if img.shape[2] == 4:
-            return Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA), mode="RGBA")
-        return Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), mode="RGB")
 
     @classmethod
     def list_image_files(cls, directory, exts=None, full_paths=False):
@@ -1412,84 +1039,19 @@ class ImgUtils(HelpMixin):
         return images
 
     @staticmethod
-    def _image_size_from_header(image_path: str) -> Optional[Tuple[int, int]]:
-        """``(width, height)`` from a JPEG/PNG/DDS/TGA header using only the stdlib.
-
-        Reads the dimensions out of the file header — no PIL, numpy, or cv2 — so
-        it works in dependency-light interpreters (e.g. Metashape's bundled
-        Python, or Blender's, where the fallback decodes the whole image).
-        ``None`` for an unrecognized or truncated file.
-        """
-        try:
-            with open(image_path, "rb") as f:
-                head = f.read(24)
-                # PNG: 8-byte signature, then IHDR chunk (width,height big-endian u32).
-                if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
-                    w, h = struct.unpack(">II", head[16:24])
-                    return int(w), int(h)
-                # DDS: "DDS " + DDS_HEADER (size 124), height then width, LE u32.
-                if head[:4] == b"DDS " and len(head) >= 20:
-                    if struct.unpack("<I", head[4:8])[0] == 124:
-                        h, w = struct.unpack("<II", head[12:20])
-                        return int(w), int(h)
-                    return None
-                # TGA has no signature: trust the extension, then the header's own
-                # sanity (a known image type and pixel depth, a non-zero size).
-                if str(image_path).lower().endswith((".tga", ".targa")):
-                    if (
-                        len(head) >= 18
-                        and head[2] in (1, 2, 3, 9, 10, 11)
-                        and head[16] in (8, 15, 16, 24, 32)
-                    ):
-                        w, h = struct.unpack("<HH", head[12:16])
-                        if w and h:
-                            return int(w), int(h)
-                    return None
-                # JPEG: SOI 0xFFD8, then scan segments for a Start-Of-Frame marker.
-                if head[:2] == b"\xff\xd8":
-                    f.seek(2)
-                    while True:
-                        b = f.read(1)
-                        if not b:
-                            return None
-                        if b != b"\xff":
-                            continue
-                        marker = f.read(1)
-                        while marker == b"\xff":  # skip fill bytes
-                            marker = f.read(1)
-                        if not marker:
-                            return None
-                        m = marker[0]
-                        if 0xD0 <= m <= 0xD9:  # RSTn / SOI / EOI: no length
-                            continue
-                        lb = f.read(2)
-                        if len(lb) < 2:
-                            return None
-                        seglen = struct.unpack(">H", lb)[0]
-                        if seglen < 2:  # invalid: length includes its own 2 bytes
-                            return None  # guards against a backward-seek infinite loop
-                        # SOF0..SOF15 carry the frame size (excl. DHT/JPG/DAC: C4/C8/CC).
-                        if 0xC0 <= m <= 0xCF and m not in (0xC4, 0xC8, 0xCC):
-                            f.read(1)  # sample precision
-                            hw = f.read(4)
-                            if len(hw) < 4:
-                                return None
-                            h, w = struct.unpack(">HH", hw)
-                            return int(w), int(h)
-                        f.seek(seglen - 2, 1)  # skip to next segment
-        except Exception:
-            return None
-        return None
-
-    @staticmethod
     def get_image_size(image_path: str) -> Optional[Tuple[int, int]]:
         """``(width, height)`` of an image, read as cheaply as possible.
 
-        Parses the JPEG/PNG header with the **stdlib only** (no PIL/numpy/cv2),
-        so it works in dependency-light interpreters such as Metashape's bundled
-        Python; falls back to PIL for other formats when available. ``None`` if
-        the size can't be determined. Use this (not :meth:`get_image_info`) when
-        you need only the dimensions and can't assume PIL is installed.
+        Parses the JPEG/PNG/DDS/TGA/OpenEXR/Radiance HDR header with the
+        **stdlib only** (no PIL/numpy/cv2), so it works in dependency-light
+        interpreters such as Metashape's bundled Python; falls back to PIL for
+        other formats when available. ``None`` if the size can't be determined.
+        Use this (not :meth:`get_image_info`) when you need only the dimensions
+        and can't assume PIL is installed.
+
+        Reads the file, so on an online-only cloud placeholder it triggers the
+        download -- gate on :meth:`FileUtils.is_cloud_placeholder` first when
+        sizing many files a user merely browses.
         """
         size = ImgUtils._image_size_from_header(image_path)
         if size:
@@ -1501,6 +1063,83 @@ class ImgUtils(HelpMixin):
             except Exception:
                 pass
         return None
+
+    #: Width:height of an equirectangular (latlong) environment map.
+    LATLONG_ASPECT = 2.0
+
+    #: ``{normalized path: ((mtime_ns, byte size), (w, h) | None)}`` behind
+    #: :meth:`is_equirectangular` -- a file browser re-lists on every open, so a
+    #: header is read once per file version.
+    _latlong_size_cache: Dict[str, tuple] = {}
+
+    @classmethod
+    def is_equirectangular(
+        cls, image_path: str, tolerance: float = 0.05
+    ) -> Optional[bool]:
+        """Whether *image_path* is shaped like a latlong environment map (2:1).
+
+        The projection a dome light / world background maps by default, and the
+        shape no baked lightmap or tiling texture has (those are square). Read
+        from the header (:meth:`get_image_size`), cached per file version.
+
+        Parameters:
+            image_path: The image file.
+            tolerance: Relative slack on :attr:`LATLONG_ASPECT` -- stitched
+                panoramas land a few rows off (Maya's own ``skyDome.hdr`` is
+                4096x2004, 2.044).
+
+        Returns:
+            ``None`` when the size is unknown: a missing or unrecognized file,
+            or an online-only cloud placeholder, which is never read (the sync
+            client would download the whole image). A caller deciding what to
+            list should keep an unknown.
+        """
+        try:
+            stat = os.stat(image_path)
+        except OSError:
+            return None
+        if FileUtils.is_cloud_placeholder(image_path):
+            return None  # not cached: it sizes normally once synced
+        key = os.path.normcase(os.path.normpath(str(image_path)))
+        version = (stat.st_mtime_ns, stat.st_size)
+        cached = cls._latlong_size_cache.get(key)
+        if cached is not None and cached[0] == version:
+            size = cached[1]
+        else:
+            size = cls.get_image_size(image_path)
+            cls._latlong_size_cache[key] = (version, size)
+        if not size or not size[1]:  # a header may declare a zero height
+            return None
+        width, height = size
+        return abs(width / height - cls.LATLONG_ASPECT) <= (
+            cls.LATLONG_ASPECT * tolerance
+        )
+
+    @classmethod
+    def is_environment_map(
+        cls,
+        image_path: str,
+        *,
+        latlong_only: bool = True,
+        skip_lightmaps: bool = True,
+    ) -> bool:
+        """True if *image_path* can light a scene as a dome / world environment.
+
+        What an HDR picker lists from a folder that also holds baked lightmaps
+        and EXR textures (a Maya ``sourceimages``). Two tests, each switchable:
+
+        * *skip_lightmaps* -- the file name carries the ``lightmap`` affix of the
+          shared :class:`NamingConvention` (``_Lightmap`` unless a user changed
+          it), seen through tile indices and light-group tails
+          (``room_Lightmap_12``, ``desk_Lightmap.LIGHT_A_areaLight``).
+        * *latlong_only* -- :meth:`is_equirectangular`. An unknown size passes:
+          never a false reject.
+        """
+        if skip_lightmaps and NamingConvention.matches(
+            os.path.splitext(os.path.basename(str(image_path)))[0], "lightmap"
+        ):
+            return False
+        return not latlong_only or cls.is_equirectangular(image_path) is not False
 
     @classmethod
     def get_image_info(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]:
@@ -1634,10 +1273,12 @@ class ImgUtils(HelpMixin):
         Returns:
             PIL.Image.Image: The image with the specified or recommended bit depth and mode.
         """
-        # Determine the target mode based on map type. MapRegistry is a
-        # SingletonMixin so the import + lookup are cheap; the deferred
-        # import keeps _img_utils.py free of module-load-time coupling to
-        # the map cluster.
+        # Determine the target mode based on map type. The map-type -> mode
+        # table is the texture engine's taxonomy (not a general image rule),
+        # so it is read from MapRegistry through a deferred import: the engine
+        # imports ImgUtils at module load, and a generic ImgUtils consumer
+        # should not pay for the map cluster. MapRegistry is a singleton, so
+        # the lookup is cheap.
         from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 
         map_modes = MapRegistry().get_map_modes()
@@ -1699,34 +1340,7 @@ class ImgUtils(HelpMixin):
         Returns:
             PIL.Image.Image: The image with specified channels inverted.
         """
-        im = cls.ensure_image(image)
-        split_channels = im.split()
-
-        # Use the image's real band names (e.g. ('L','A'), ('R','G','B','A')) so
-        # channels map correctly for every mode instead of the fixed "RGBA"[:n]
-        # labels, which mislabel LA's alpha as 'G' and crash on merge.
-        bands = im.getbands()
-        requested = channels.upper()
-
-        def _is_requested(name: str) -> bool:
-            name = name.upper()
-            # A single-band image's lone band carries the value data whatever
-            # its mode label (L, P, I, F, 1), so it responds to an L/R/G/B
-            # request — preserving the historical default where a grayscale
-            # image is inverted. Keying on the 'L' label alone silently
-            # no-opped paletted/bilevel/deep single-band images.
-            if len(bands) == 1:
-                return any(c in requested for c in "LRGB")
-            return name in requested
-
-        inverted = [
-            ImageChops.invert(band) if _is_requested(name) else band
-            for name, band in zip(bands, split_channels)
-        ]
-
-        if len(inverted) == 1:  # Single-band (e.g. grayscale) image
-            return inverted[0]
-        return Image.merge(im.mode, tuple(inverted))
+        return super().invert_channels(image, channels)
 
     @classmethod
     def swizzle_channels(cls, image, mapping):
@@ -1758,40 +1372,7 @@ class ImgUtils(HelpMixin):
         Returns:
             PIL.Image.Image: The remapped image.
         """
-        im = cls.ensure_image(image)
-        rgba = im.convert("RGBA")
-        bands = dict(zip("RGBA", rgba.split()))
-
-        def resolve(token):
-            token = str(token).strip().upper()
-            if token in ("0", "1"):
-                return Image.new("L", rgba.size, 0 if token == "0" else 255)
-            if token in bands:
-                return bands[token]
-            raise ValueError(
-                f"swizzle_channels: invalid source '{token}'; expected one of "
-                "R, G, B, A, 0, 1."
-            )
-
-        if isinstance(mapping, str):
-            order = mapping.strip()
-            if not 1 <= len(order) <= 4:
-                raise ValueError(
-                    "swizzle_channels: string mapping must be 1-4 characters."
-                )
-            out_bands = [resolve(c) for c in order]
-            if len(out_bands) == 1:
-                return out_bands[0]
-            out_mode = {2: "LA", 3: "RGB", 4: "RGBA"}[len(out_bands)]
-            return Image.merge(out_mode, tuple(out_bands))
-
-        # dict mapping — output RGB, gaining alpha when the input already has
-        # one or the mapping explicitly addresses the ``A`` destination.
-        remap = {str(k).strip().upper(): v for k, v in mapping.items()}
-        has_alpha = "A" in remap or "A" in im.getbands()
-        dest_order = "RGBA" if has_alpha else "RGB"
-        out_bands = [resolve(remap.get(dest, dest)) for dest in dest_order]
-        return Image.merge(dest_order, tuple(out_bands))
+        return super().swizzle_channels(image, mapping)
 
     @classmethod
     @CoreUtils.listify(threading=True)
@@ -1989,125 +1570,7 @@ class ImgUtils(HelpMixin):
         Returns:
             Blurred image, in the same form as the input.
         """
-        if radius <= 0:
-            if isinstance(image, np.ndarray):
-                return image.copy()
-            im = cls.ensure_image(image)
-            return im.copy()
-
-        # Numpy path
-        if isinstance(image, np.ndarray):
-            return cls._gaussian_blur_array(image, radius, channel)
-
-        # PIL path
-        im = cls.ensure_image(image)
-        if channel and im.mode in ("RGBA", "LA"):
-            bands = list(im.split())
-            band_names = im.getbands()  # ('L','A') or ('R','G','B','A')
-            ch = channel.upper()
-            if ch not in band_names:
-                raise ValueError(
-                    f"Channel {channel!r} not present in image mode {im.mode!r}"
-                )
-            idx = band_names.index(ch)
-            bands[idx] = bands[idx].filter(ImageFilter.GaussianBlur(radius=radius))
-            return Image.merge(im.mode, bands)
-        return im.filter(ImageFilter.GaussianBlur(radius=radius))
-
-    @staticmethod
-    def _gaussian_blur_array(
-        arr: "np.ndarray", radius: float, channel: Optional[str]
-    ) -> "np.ndarray":
-        """Numpy-array blur. Uses PIL when present (avoids pulling in scipy/cv2); falls back to a
-        pure-numpy separable Gaussian when PIL is unavailable, so dependency-light callers (e.g.
-        ``rasterize_silhouette`` under Blender's PIL-less Python) keep working."""
-        # Non-uint8 arrays (float [0,1]/HDR, uint16, …) must not be truncated to
-        # uint8 for the PIL path; route them to the range-agnostic pure-numpy
-        # blur which preserves their values.
-        if Image is None or arr.dtype != np.uint8:
-            return ImgUtils._gaussian_blur_array_numpy(arr, radius, channel)
-        # 2D grayscale
-        if arr.ndim == 2:
-            src = Image.fromarray(
-                arr if arr.dtype == np.uint8 else arr.astype(np.uint8)
-            )
-            blurred = src.filter(ImageFilter.GaussianBlur(radius=radius))
-            out = np.asarray(blurred)
-            return out.astype(arr.dtype, copy=False)
-
-        # 3D: HxWxC
-        if arr.ndim == 3:
-            chans = arr.shape[2]
-            mode = {1: "L", 2: "LA", 3: "RGB", 4: "RGBA"}.get(chans)
-            if mode is None:
-                raise ValueError(f"Unsupported channel count: {chans}")
-            src = Image.fromarray(
-                arr if arr.dtype == np.uint8 else arr.astype(np.uint8), mode=mode
-            )
-            if channel and mode in ("RGBA", "LA"):
-                bands = list(src.split())
-                band_names = src.getbands()  # ('L','A') or ('R','G','B','A')
-                ch = channel.upper()
-                if ch not in band_names:
-                    raise ValueError(
-                        f"Channel {channel!r} not present in mode {mode!r}"
-                    )
-                idx = band_names.index(ch)
-                bands[idx] = bands[idx].filter(ImageFilter.GaussianBlur(radius=radius))
-                blurred = Image.merge(mode, bands)
-            else:
-                blurred = src.filter(ImageFilter.GaussianBlur(radius=radius))
-            out = np.asarray(blurred)
-            return out.astype(arr.dtype, copy=False)
-
-        raise ValueError(f"Unsupported array shape: {arr.shape}")
-
-    @staticmethod
-    def _gaussian_blur_array_numpy(
-        arr: "np.ndarray", radius: float, channel: Optional[str]
-    ) -> "np.ndarray":
-        """Pure-numpy separable Gaussian blur (PIL-free fallback for :meth:`_gaussian_blur_array`).
-
-        Treats ``radius`` as the kernel std-dev (sigma), matching PIL's ``GaussianBlur(radius=…)``,
-        and pads with reflection so edges don't darken. Returns the input dtype (uint8 inputs are
-        rounded). For a 3D RGBA/LA array, ``channel`` (``"R"``/``"G"``/``"B"``/``"A"``) restricts the
-        blur to one channel, mirroring the PIL path."""
-        sigma = max(float(radius), 1e-6)
-        rad = max(1, int(round(3.0 * sigma)))
-        x = np.arange(-rad, rad + 1, dtype=np.float64)
-        k = np.exp(-(x * x) / (2.0 * sigma * sigma))
-        k /= k.sum()
-
-        def blur2d(a2d: "np.ndarray") -> "np.ndarray":
-            a2d = a2d.astype(np.float64, copy=False)
-            pad = len(k) // 2
-            ap = np.pad(a2d, ((0, 0), (pad, pad)), mode="reflect")
-            a2d = np.apply_along_axis(lambda m: np.convolve(m, k, mode="valid"), 1, ap)
-            ap = np.pad(a2d, ((pad, pad), (0, 0)), mode="reflect")
-            return np.apply_along_axis(lambda m: np.convolve(m, k, mode="valid"), 0, ap)
-
-        def cast(out: "np.ndarray") -> "np.ndarray":
-            if arr.dtype == np.uint8:
-                return (out + 0.5).clip(0, 255).astype(np.uint8)
-            return out.astype(arr.dtype, copy=False)
-
-        if arr.ndim == 2:
-            return cast(blur2d(arr))
-        if arr.ndim == 3:
-            chans = arr.shape[2]
-            # Derive the channel index from the array's real band layout so 'A'
-            # maps to index 1 on a 2-channel LA array (not 3, which the fixed
-            # RGBA map produced -- silently blurring every channel instead).
-            band_names = {1: "L", 2: "LA", 3: "RGB", 4: "RGBA"}.get(chans, "")
-            idx = (
-                band_names.find(channel.upper()) if channel else -1
-            )  # -1 = absent/none
-            targets = [idx] if idx >= 0 else range(chans)
-            out = arr.astype(np.float64, copy=True)
-            for c in targets:
-                out[:, :, c] = blur2d(arr[:, :, c])
-            return cast(out)
-        raise ValueError(f"Unsupported array shape: {arr.shape}")
+        return super().gaussian_blur(image, radius, channel)
 
     @staticmethod
     def dilate_image(
@@ -2145,85 +1608,9 @@ class ImgUtils(HelpMixin):
             Image with empty regions filled; same shape and dtype as input --
             or ``(image, mask)`` with *return_mask*.
         """
-        arr = np.asarray(image)
-        out = arr.astype(np.float32, copy=True)
-        squeeze = out.ndim == 2
-        if squeeze:
-            out = out[..., None]
-        h, w, _ = out.shape
-
-        if mask is None:
-            valid = (out > 0).any(axis=2)
-        else:
-            valid = np.asarray(mask).astype(bool)
-            if valid.shape != (h, w):
-                raise ValueError(f"mask shape {valid.shape} != image {(h, w)}")
-        out[~valid] = 0.0  # empties must not contribute color until filled
-
-        if connectivity == 8:
-            offsets = [
-                (-1, -1),
-                (-1, 0),
-                (-1, 1),
-                (0, -1),
-                (0, 1),
-                (1, -1),
-                (1, 0),
-                (1, 1),
-            ]
-        elif connectivity == 4:
-            offsets = [(-1, 0), (1, 0), (0, -1), (0, 1)]
-        else:
-            raise ValueError("connectivity must be 4 or 8")
-
-        # Source/destination slice pair per neighbor offset, precomputed: the
-        # accumulators are filled by IN-PLACE slice adds, never through a
-        # freshly zeroed full-size shift buffer. A shift temporary per offset
-        # is 16 whole-image allocations per pass (8 colour + 8 count) -- at a
-        # 4096 atlas with an 18px gutter that is tens of GB of pure alloc and
-        # zero-fill traffic for an answer the slices give directly.
-        windows = []
-        for dy, dx in offsets:
-            ys, yd = (
-                slice(max(dy, 0), h + min(dy, 0)),
-                slice(max(-dy, 0), h + min(-dy, 0)),
-            )
-            xs, xd = (
-                slice(max(dx, 0), w + min(dx, 0)),
-                slice(max(-dx, 0), w + min(-dx, 0)),
-            )
-            windows.append((ys, xs, yd, xd))
-
-        color_acc = np.empty_like(out)
-        count_acc = np.empty((h, w), dtype=np.float32)
-        vf = np.empty((h, w), dtype=np.float32)
-        it = 0
-        while not valid.all() and (iterations < 0 or it < iterations):
-            color_acc[...] = 0.0
-            count_acc[...] = 0.0
-            np.copyto(vf, valid)
-            # `out` is already zero at every invalid pixel (and stays so until
-            # the pass that fills it also flips it valid), so out == out*vf --
-            # accumulate `out` directly; only the count needs the validity mask.
-            for ys, xs, yd, xd in windows:
-                color_acc[yd, xd] += out[ys, xs]
-                count_acc[yd, xd] += vf[ys, xs]
-            fillable = (~valid) & (count_acc > 0)
-            if not fillable.any():
-                break  # remaining empties are unreachable from any valid pixel
-            out[fillable] = color_acc[fillable] / count_acc[fillable][..., None]
-            valid[fillable] = True
-            it += 1
-
-        if squeeze:
-            out = out[..., 0]
-        if np.issubdtype(arr.dtype, np.integer):
-            # A neighbour average is fractional; truncating it on the way back
-            # to an integer dtype biases every gutter texel dark by up to one
-            # LSB, systematically (127.9 -> 127).
-            np.rint(out, out=out)
-        result = out.astype(arr.dtype, copy=False)
-        return (result, valid) if return_mask else result
+        return _ImgFilterInternal.dilate_image(
+            image, mask, iterations, connectivity, return_mask
+        )
 
     @classmethod
     def denoise_image(
@@ -2286,249 +1673,7 @@ class ImgUtils(HelpMixin):
             The denoised image, same shape and dtype; texels outside *mask*
             unchanged.
         """
-        arr = np.asarray(image)
-        cv2 = cls._cv2()
-        # float32 through cv2 (its filters' native type), float64 in numpy,
-        # where the integral images' running sums need the headroom.
-        dtype = np.float32 if cv2 is not None else np.float64
-        work = arr.astype(dtype, copy=False)
-        squeeze = work.ndim == 2
-        if squeeze:
-            work = work[..., None]
-        h, w, channels = work.shape
-        finite = np.isfinite(work).all(axis=2)
-        if mask is None:
-            # A bad sample is still where the renderer wrote content.
-            with np.errstate(invalid="ignore"):
-                valid = ~finite | (work > 0).any(axis=2)
-        else:
-            valid = np.asarray(mask).astype(bool)
-            if valid.shape != (h, w):
-                raise ValueError(f"mask shape {valid.shape} != image {(h, w)}")
-        # A NaN or inf texel -- a renderer's rare bad sample -- is read as
-        # absent: one would poison every statistic it touches (0 * NaN is NaN,
-        # so even a zero-weighted texel leaks into its windows), and the whole
-        # map came back NaN. Where it is the caller's content it is written
-        # from its neighbourhood; outside the mask it comes back untouched.
-        original = work
-        heal = None
-        if not finite.all():
-            heal = valid & ~finite
-            work = np.where(finite[..., None], work, dtype(0))
-            valid = valid & finite
-        if not valid.any() or radius < 1:
-            return arr.copy()
-
-        # PLANAR from here on: one contiguous 2D plane per channel. A numpy op
-        # broadcasting an HxW plane against HxWx3 runs a strided inner loop
-        # (measured: 24 ms at 1024^2 against ~1 ms for the same op plane by
-        # plane), and the filter is a few dozen such ops.
-        planes = (
-            list(cv2.split(work))
-            if cv2 is not None and channels > 1
-            else [np.ascontiguousarray(work[..., c]) for c in range(channels)]
-        )
-        # The guide is the channel MEAN, not a luma: callers hand in RGB and
-        # cv2's BGR alike, and the guide only has to carry the structure.
-        luma = planes[0].copy()
-        for plane in planes[1:]:
-            luma += plane
-        luma *= dtype(1.0 / channels)
-        # A floor far under the content, so a black texel inside the mask is a
-        # very dark value rather than log(0) = -inf poisoning every window.
-        sample = cls._sample(luma[valid & (luma > 0)])
-        floor = dtype(1e-6 * (float(np.median(sample)) if sample.size else 1.0))
-        guide = cls._log(np.maximum(luma, floor))
-        # Centred on the map's own level: the variance is a difference of box
-        # means of G and G^2, and in float32 that cancellation is exact only
-        # while G sits near zero. The fit is shift-invariant, so the centre is
-        # added back at the end.
-        centre = dtype(np.median(cls._sample(guide[valid])))
-        guide -= centre
-        # Each channel floored against its OWN texel's brightness, not the
-        # map's: a channel at exactly zero beside lit neighbours (a saturated
-        # colour, a coloured light's edge) otherwise sits ~14 log units under
-        # them and drags that channel's window means down -- a colour fringe
-        # (measured: x0.64 on the next texel's blue). A thousandth of the
-        # texel's own level is invisible after any display transform.
-        chroma_floor = np.maximum(luma * dtype(1e-3), floor)
-        logs = [cls._log(np.maximum(plane, chroma_floor)) - centre for plane in planes]
-
-        if noise is None:
-            noise = cls._log_noise_sigma(guide, valid)
-        weight = valid.astype(dtype)
-        inv_count = 1.0 / np.maximum(cls._box_sum(weight, radius), dtype(1e-6))
-        if outliers and noise > 0:
-            # The median reads a mask-outside neighbour as the local mean of
-            # the mask texels around it, so a gutter cannot pull it.
-            local = cls._box_sum(weight * guide, radius) * inv_count
-            median = cls._median3(np.where(valid, guide, local), valid)
-            deviation = guide - median
-            spike = valid & (np.abs(deviation) > dtype(float(outliers) * float(noise)))
-            if spike.any():
-                # Brightness to the neighbourhood's, the texel's own colour kept.
-                shift = deviation[spike]
-                for plane in logs:
-                    plane[spike] -= shift
-                guide[spike] = median[spike]
-        eps = dtype(max(float(strength) * float(noise), 1e-6) ** 2)
-
-        weighted_g = weight * guide
-        mean_g = cls._box_sum(weighted_g, radius) * inv_count
-        var_g = cls._box_sum(weighted_g * guide, radius) * inv_count
-        var_g -= mean_g * mean_g
-        np.maximum(var_g, 0.0, out=var_g)
-        inv_var = 1.0 / (var_g + eps)
-        out_planes = []
-        for plane, log in zip(planes, logs):
-            weighted = np.multiply(log, weight, out=log)
-            mean_p = cls._box_sum(weighted, radius) * inv_count
-            a = cls._box_sum(weighted * guide, radius) * inv_count
-            a -= mean_g * mean_p
-            a *= inv_var
-            b = mean_p - a * mean_g
-            fitted = cls._box_sum(a * weight, radius) * inv_count
-            fitted *= guide
-            fitted += cls._box_sum(b * weight, radius) * inv_count
-            fitted += centre
-            result = np.where(valid, cls._exp(fitted), plane)
-            if heal is not None:
-                # A bad sample's own value says nothing, so it takes its
-                # window's (log) mean of the good texels around it.
-                result = np.where(heal, cls._exp(mean_p + centre), result)
-            out_planes.append(result)
-        out = (
-            cv2.merge(out_planes)
-            if cv2 is not None and channels > 1
-            else np.stack(out_planes, axis=2)
-        )
-        if heal is not None:
-            untouched = ~finite & ~heal  # bad samples outside the mask
-            out[untouched] = original[untouched]
-
-        if squeeze:
-            out = out[..., 0]
-        return out.astype(arr.dtype, copy=False)
-
-    @staticmethod
-    def _cv2():
-        """cv2 when it imports, else ``None``: the fast path, never a need."""
-        try:
-            import cv2
-
-            return cv2
-        except ImportError:
-            return None
-
-    @classmethod
-    def _log(cls, values: "np.ndarray") -> "np.ndarray":
-        """``log`` of a float32 plane through cv2 (~1.6x numpy's), else numpy."""
-        cv2 = cls._cv2()
-        if cv2 is not None and values.dtype == np.float32:
-            return cv2.log(values)
-        return np.log(values)
-
-    @classmethod
-    def _exp(cls, values: "np.ndarray") -> "np.ndarray":
-        """``exp`` of a float32 plane through cv2 (~1.8x numpy's), else numpy."""
-        cv2 = cls._cv2()
-        if cv2 is not None and values.dtype == np.float32:
-            return cv2.exp(values)
-        return np.exp(values)
-
-    @staticmethod
-    def _sample(values: "np.ndarray", limit: int = 1 << 18) -> "np.ndarray":
-        """*values*, strided down to about *limit* for a median: a quarter of a
-        million texels pins a level as well as all of them, at a fraction of the
-        partition."""
-        step = max(1, values.size // limit)
-        return values[::step] if step > 1 else values
-
-    @classmethod
-    def _box_sum(cls, values: "np.ndarray", radius: int) -> "np.ndarray":
-        """Sum of *values* (HxW or HxWxC) over the ``(2 * radius + 1)^2`` window
-        at each texel, clipped at the frame: cv2's box filter on float32 (zero
-        border = clipped), an integral image otherwise."""
-        k = 2 * radius + 1
-        cv2 = cls._cv2()
-        if cv2 is not None and values.dtype == np.float32:
-            planes = values.shape[2] if values.ndim == 3 else 0
-            if planes == 1:
-                return cv2.boxFilter(
-                    values[..., 0],
-                    -1,
-                    (k, k),
-                    normalize=False,
-                    borderType=cv2.BORDER_CONSTANT,
-                )[..., None]
-            if planes <= 4:
-                return cv2.boxFilter(
-                    values, -1, (k, k), normalize=False, borderType=cv2.BORDER_CONSTANT
-                )
-        pad = [(radius + 1, radius), (radius + 1, radius)] + [(0, 0)] * (
-            values.ndim - 2
-        )
-        table = np.pad(values, pad).cumsum(axis=0).cumsum(axis=1)
-        return table[k:, k:] - table[:-k, k:] - table[k:, :-k] + table[:-k, :-k]
-
-    @classmethod
-    def _median3(
-        cls, values: "np.ndarray", mask: "np.ndarray", band: int = 256
-    ) -> "np.ndarray":
-        """Each texel's 3x3 median, *values* already filled outside *mask*.
-
-        cv2's median filter on float32; without it, nine shifted planes per
-        band of rows -- all nine of a 4K map at once would be over a gigabyte
-        inside the DCC running the bake.
-        """
-        cv2 = cls._cv2()
-        if cv2 is not None:
-            return cv2.medianBlur(values.astype(np.float32, copy=False), 3).astype(
-                values.dtype, copy=False
-            )
-        h, w = values.shape
-        padded = np.pad(values, 1, mode="edge")
-        out = np.empty_like(values)
-        for top in range(0, h, band):
-            bottom = min(top + band, h)
-            planes = [
-                padded[top + dy : bottom + dy, dx : dx + w]
-                for dy in range(3)
-                for dx in range(3)
-            ]
-            out[top:bottom] = np.median(np.stack(planes), axis=0)
-        return out
-
-    @classmethod
-    def _log_noise_sigma(cls, log_image: "np.ndarray", mask: "np.ndarray") -> float:
-        """Per-texel noise of *log_image* over *mask*, as a standard deviation.
-
-        The median absolute Laplacian, scaled to a Gaussian's sigma: robust to
-        the edges and gradients a map is made of, since those occupy few
-        texels or add almost nothing to a Laplacian. White noise of sigma s
-        gives a 4-neighbour Laplacian of sigma ``s * sqrt(1.25)``. Read on
-        every other row: half a megapixel of 1024^2 samples pins a median as
-        well as the whole map does.
-        """
-        centre = log_image[1:-1:2, 1:-1]
-        up, down = log_image[0:-2:2, 1:-1], log_image[2::2, 1:-1]
-        left, right = log_image[1:-1:2, :-2], log_image[1:-1:2, 2:]
-        rows = min(len(centre), len(up), len(down))
-        inner = (
-            mask[1:-1:2, 1:-1][:rows]
-            & mask[0:-2:2, 1:-1][:rows]
-            & mask[2::2, 1:-1][:rows]
-            & mask[1:-1:2, :-2][:rows]
-            & mask[1:-1:2, 2:][:rows]
-        )
-        if not inner.any():
-            return 0.0
-        lap = centre[:rows] - 0.25 * (
-            up[:rows] + down[:rows] + left[:rows] + right[:rows]
-        )
-        residual = cls._sample(lap[inner]).astype(np.float64)
-        mad = float(np.median(np.abs(residual - np.median(residual))))
-        return 1.4826 * mad / math.sqrt(1.25)
+        return super().denoise_image(image, mask, radius, strength, noise, outliers)
 
     @classmethod
     def fill_empty_texels(
@@ -2564,118 +1709,7 @@ class ImgUtils(HelpMixin):
         Returns:
             Image with every empty texel filled; same shape/dtype as input.
         """
-        arr = np.asarray(image)
-        if mask is None:
-            valid = (arr > 0).any(axis=2) if arr.ndim == 3 else arr > 0
-        else:
-            valid = np.asarray(mask).astype(bool)
-            if valid.shape != arr.shape[:2]:
-                raise ValueError(f"mask shape {valid.shape} != image {arr.shape[:2]}")
-        if valid.all():
-            return arr.copy()
-        if not valid.any():
-            return arr.copy()  # nothing to spread from
-
-        try:
-            import cv2
-        except ImportError:
-            return cls._fill_pyramid(arr, valid)
-
-        # Distance transform on the EMPTY set with pixel-index labels: each
-        # empty texel's label is its nearest VALID texel, one pass, exact.
-        empty_u8 = (~valid).astype(np.uint8)
-        _, labels = cv2.distanceTransformWithLabels(
-            empty_u8, cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_PIXEL
-        )
-        # Labels index the zero-pixels of the input (the valid set) in row
-        # scan order; map label -> flat pixel index, then gather.
-        valid_flat = np.flatnonzero(valid.ravel())
-        out = arr.copy()
-        flat = out.reshape(-1, arr.shape[2]) if arr.ndim == 3 else out.reshape(-1)
-        empty_flat = ~valid.ravel()
-        # Gather only the empty texels' labels: indexing the whole label image
-        # would materialize a full-size int array to use a fraction of it.
-        src = valid_flat[labels.ravel()[empty_flat] - 1]
-        flat[empty_flat] = flat[src]
-        return out
-
-    @classmethod
-    def _fill_pyramid(
-        cls, image: "np.ndarray", valid: "np.ndarray", ring: int = 4
-    ) -> "np.ndarray":
-        """cv2-less :meth:`fill_empty_texels`: a near ring by neighbour averaging,
-        the far field from an image pyramid.
-
-        The previous fallback, :meth:`dilate_image` ``iterations=-1``, costs one
-        full-image pass per texel of distance to the nearest valid texel, so a
-        map's cost is set by its FARTHEST background texel: a 1024 lightmap whose
-        corners sit ~60 texels from any island paid ~60 passes -- measured 1.8 s
-        per per-object map inside Blender (which ships no cv2), 48% of the whole
-        bake loop, and it quadruples with each doubling of resolution.
-
-        Only the texels within *ring* of valid content are ever sampled by a
-        bilinear tap or a fine mip level, and those are filled exactly as before
-        (neighbour averaging at full resolution). Everything beyond takes its
-        value from a pyramid: each level is 2x2 valid-only averaged from the one
-        below, filled with the same ring, and its leftovers take the next-coarser
-        level's value on the way back up, so the far field costs O(log n) passes
-        over shrinking images instead of O(distance) passes over the full one
-        (measured 0.2 s on the same map). A far texel feeds nothing but coarse
-        mips, and a pooled average is what the GPU would compute there anyway.
-
-        Parameters:
-            image: HxW or HxWxC array (any dtype; float32 internally).
-            valid: HxW bool mask, at least one True.
-            ring: Neighbour-averaging passes per level before the pyramid
-                takes over -- the width, in texels, of the exact border.
-
-        Returns:
-            Image with every invalid texel filled; same shape/dtype as input.
-        """
-        arr = np.asarray(image)
-        squeeze = arr.ndim == 2
-        cur = arr.astype(np.float32, copy=True)
-        if squeeze:
-            cur = cur[..., None]
-        cur_valid = np.asarray(valid).astype(bool)
-        cur[~cur_valid] = 0.0
-
-        levels = []  # (image, filled mask) per level, fine to coarse
-        while not cur_valid.all() and min(cur_valid.shape) > 2:
-            cur, filled = cls.dilate_image(
-                cur, mask=cur_valid, iterations=ring, return_mask=True
-            )
-            if filled.all():
-                cur_valid = filled
-                break
-            levels.append((cur, filled))
-            # 2x2 valid-only average pooling; an odd edge is padded with an
-            # empty row/column so it pools rather than drops.
-            h, w, c = cur.shape
-            ph, pw = h + (h & 1), w + (w & 1)
-            pooled = np.zeros((ph, pw, c), dtype=np.float32)
-            pooled[:h, :w] = cur  # invalid texels are zero, so a plain sum is masked
-            count = np.zeros((ph, pw), dtype=np.float32)
-            count[:h, :w] = filled
-            pooled = pooled.reshape(ph // 2, 2, pw // 2, 2, c).sum(axis=(1, 3))
-            count = count.reshape(ph // 2, 2, pw // 2, 2).sum(axis=(1, 3))
-            cur_valid = count > 0
-            cur = pooled / np.maximum(count, 1.0)[..., None]
-        if not cur_valid.all():
-            # The coarsest level is a handful of texels: flood it outright.
-            cur = cls.dilate_image(cur, mask=cur_valid, iterations=-1)
-
-        for fine, fine_valid in reversed(levels):
-            up = np.repeat(np.repeat(cur, 2, axis=0), 2, axis=1)
-            missing = ~fine_valid
-            fine[missing] = up[: fine.shape[0], : fine.shape[1]][missing]
-            cur = fine
-
-        if squeeze:
-            cur = cur[..., 0]
-        if np.issubdtype(arr.dtype, np.integer):
-            np.rint(cur, out=cur)  # see dilate_image: never truncate toward dark
-        return cur.astype(arr.dtype, copy=False)
+        return super().fill_empty_texels(image, mask)
 
     @staticmethod
     def compute_atlas_layout(
@@ -2733,107 +1767,7 @@ class ImgUtils(HelpMixin):
             One ``(scaleX, scaleY, offsetX, offsetY)`` tuple per input weight, in
             the same order. ``[]`` for no items; ``[(1, 1, 0, 0)]`` for one.
         """
-        n = len(weights)
-        if n == 0:
-            return []
-        if n == 1:
-            return [(1.0, 1.0, 0.0, 0.0)]
-
-        w = [max(float(x), 0.0) for x in weights]
-        total = sum(w)
-        if total <= 0.0:  # no information -> equal shares
-            w = [1.0] * n
-            total = float(n)
-
-        rects: List[Tuple[float, float, float, float]] = [(1.0, 1.0, 0.0, 0.0)] * n
-
-        if rows is None:
-            # Squarified treemap (Bruls/Huizing/van Wijk): rows are grown along
-            # the remaining rect's SHORTER side, admitting the next item only
-            # while doing so does not make the row's worst aspect ratio worse.
-            # When it would, the row is closed and the next starts in what is
-            # left. Areas stay exactly proportional; what changes is the SHAPE
-            # each area is delivered in.
-            eps = 1e-12
-            order = sorted(range(n), key=lambda k: (-w[k], k))
-            areas = [w[i] / total for i in order]
-
-            def worst(
-                a_max: float, a_min: float, row_area: float, side: float
-            ) -> float:
-                """Worst aspect in a row of *row_area* laid along *side*.
-
-                The row occupies a strip ``t = row_area / side`` thick, in which
-                an item of area ``a`` gets an extent of ``a / t``. Areas arrive
-                descending, so the row's largest and smallest items are the only
-                two that can hold the worst ratio.
-                """
-                t2 = max((row_area / max(side, eps)) ** 2, eps)
-                return max(a_max / t2, t2 / max(a_min, eps))
-
-            x, y, bw, bh = 0.0, 0.0, 1.0, 1.0
-            pos = 0
-            while pos < n:
-                horizontal = bw >= bh  # a wide rect takes a VERTICAL strip
-                side = bh if horizontal else bw
-                end, row_area = pos + 1, areas[pos]
-                best = worst(areas[pos], areas[pos], row_area, side)
-                while end < n:
-                    trial_area = row_area + areas[end]
-                    trial = worst(areas[pos], areas[end], trial_area, side)
-                    if trial > best:
-                        break
-                    row_area, best, end = trial_area, trial, end + 1
-
-                # The last row takes the whole remaining extent, so float drift
-                # can never leave an unassigned seam down the atlas edge.
-                span = bw if horizontal else bh
-                thick = span if end >= n else min(row_area / max(side, eps), span)
-                # Cells run cumulatively along `side`, and the last one is
-                # derived from the row's far edge rather than from its own area
-                # -- the same "one shared coordinate" discipline that makes the
-                # tiling exact rather than merely close.
-                cur, far = (y, y + bh) if horizontal else (x, x + bw)
-                for j in range(pos, end):
-                    nxt = far if j == end - 1 else cur + areas[j] / max(thick, eps)
-                    nxt = min(max(nxt, cur), far)
-                    if horizontal:
-                        rects[order[j]] = (thick, nxt - cur, x, cur)
-                    else:
-                        rects[order[j]] = (nxt - cur, thick, cur, y)
-                    cur = nxt
-                if horizontal:
-                    x, bw = x + thick, bw - thick
-                else:
-                    y, bh = y + thick, bh - thick
-                pos = end
-            return rects
-
-        r = max(1, min(int(rows), n))
-
-        # Balance items across `r` shelves by weight (LPT): assign the heaviest
-        # remaining item to the currently-lightest shelf. Keeps shelf weight-sums
-        # (and thus heights) even, which keeps rect aspect ratios reasonable.
-        # With r <= n and zero-weight shelves being "lightest", the first r items
-        # seed distinct shelves, so no shelf is ever left empty.
-        shelves: List[List[int]] = [[] for _ in range(r)]
-        shelf_w = [0.0] * r
-        for i in sorted(range(n), key=lambda k: w[k], reverse=True):
-            j = min(range(r), key=lambda k: shelf_w[k])
-            shelves[j].append(i)
-            shelf_w[j] += w[i]
-
-        rects: List[Tuple[float, float, float, float]] = [(1.0, 1.0, 0.0, 0.0)] * n
-        oy = 0.0
-        for j, shelf in enumerate(shelves):
-            sh = shelf_w[j] / total  # shelf height == its weight share
-            ox = 0.0
-            for i in sorted(shelf):  # input order within the row, for stable output
-                sw = w[i] / shelf_w[j] if shelf_w[j] > 0 else 1.0 / len(shelf)
-                rects[i] = (sw, sh, ox, oy)
-                ox += sw
-            oy += sh
-        return rects
+        return _ImgAtlasInternal.compute_atlas_layout(weights, rows=rows)
 
     @staticmethod
     def atlas_pixel_rects(
@@ -2860,15 +1794,7 @@ class ImgUtils(HelpMixin):
             Degenerate rects come back with zero (or negative) extent; callers
             skip those the same way :meth:`assemble_atlas` does.
         """
-        w_px, h_px = (size, size) if isinstance(size, int) else size
-        out: List[Tuple[int, int, int, int]] = []
-        for sx, sy, ox, oy in rects:
-            col0 = int(round(ox * w_px))
-            col1 = int(round((ox + sx) * w_px))
-            row0 = int(round((1.0 - (oy + sy)) * h_px))
-            row1 = int(round((1.0 - oy) * h_px))
-            out.append((row0, row1, col0, col1))
-        return out
+        return _ImgAtlasInternal.atlas_pixel_rects(rects, size)
 
     @staticmethod
     def flip_rect_v(rect: Sequence[float]) -> List[float]:
@@ -2883,8 +1809,7 @@ class ImgUtils(HelpMixin):
         THE helper is the point: one V-flip authored twice is how the two
         conventions drift.
         """
-        sx, sy, ox, oy = (float(v) for v in rect)
-        return [sx, sy, ox, 1.0 - sy - oy]
+        return _ImgAtlasInternal.flip_rect_v(rect)
 
     @staticmethod
     def compose_rect(
@@ -2906,9 +1831,7 @@ class ImgUtils(HelpMixin):
         Returns:
             List[float]: ``[sx, sy, ox, oy]``.
         """
-        osx, osy, oox, ooy = (float(v) for v in (outer or (1.0, 1.0, 0.0, 0.0)))
-        isx, isy, iox, ioy = (float(v) for v in inner)
-        return [isx * osx, isy * osy, iox * osx + oox, ioy * osy + ooy]
+        return _ImgAtlasInternal.compose_rect(outer, inner)
 
     @staticmethod
     def inset_atlas_rects(
@@ -2937,20 +1860,7 @@ class ImgUtils(HelpMixin):
         Returns:
             The inset rects, same format and order as the input.
         """
-        w_px, h_px = (size, size) if isinstance(size, int) else size
-        out: List[Tuple[float, float, float, float]] = []
-        for sx, sy, ox, oy in rects:
-            gx = min(float(gutter), max(0.0, (sx * w_px - 2.0) / 4.0))
-            gy = min(float(gutter), max(0.0, (sy * h_px - 2.0) / 4.0))
-            out.append(
-                (
-                    sx - 2.0 * gx / w_px,
-                    sy - 2.0 * gy / h_px,
-                    ox + gx / w_px,
-                    oy + gy / h_px,
-                )
-            )
-        return out
+        return _ImgAtlasInternal.inset_atlas_rects(rects, size, gutter)
 
     @classmethod
     def snap_atlas_rects(
@@ -2982,19 +1892,7 @@ class ImgUtils(HelpMixin):
         Returns:
             The snapped rects, same format and order as the input.
         """
-        w_px, h_px = (size, size) if isinstance(size, int) else size
-        out: List[Tuple[float, float, float, float]] = []
-        pixel_rects = cls.atlas_pixel_rects(rects, (w_px, h_px))
-        for rect, (row0, row1, col0, col1) in zip(rects, pixel_rects):
-            if row1 - row0 <= 0 or col1 - col0 <= 0:
-                out.append(tuple(float(v) for v in rect))
-                continue
-            sx = (col1 - col0) / w_px
-            sy = (row1 - row0) / h_px
-            ox = col0 / w_px
-            oy = 1.0 - row1 / h_px  # back to bottom-left origin
-            out.append((sx, sy, ox, oy))
-        return out
+        return super().snap_atlas_rects(rects, size)
 
     @staticmethod
     def inset_rects_to_texel_centers(
@@ -3036,26 +1934,7 @@ class ImgUtils(HelpMixin):
         Returns:
             The adjusted rects, same format and order as the input.
         """
-        w_px, h_px = (size, size) if isinstance(size, int) else size
-        eps = 1e-6  # tolerate float noise on exact texel boundaries
-        out: List[Tuple[float, float, float, float]] = []
-        for i, (sx, sy, ox, oy) in enumerate(rects):
-            bbox = bboxes[i] if bboxes is not None else None
-            u0, v0, u1, v1 = bbox if bbox is not None else (0.0, 0.0, 1.0, 1.0)
-            if u1 - u0 <= 0 or v1 - v0 <= 0:
-                out.append((float(sx), float(sy), float(ox), float(oy)))
-                continue
-            x0 = math.floor((ox + sx * u0) * w_px + eps) + 0.5
-            x1 = math.ceil((ox + sx * u1) * w_px - eps) - 0.5
-            y0 = math.floor((oy + sy * v0) * h_px + eps) + 0.5
-            y1 = math.ceil((oy + sy * v1) * h_px - eps) - 0.5
-            if x1 - x0 < 1.0 or y1 - y0 < 1.0:
-                out.append((float(sx), float(sy), float(ox), float(oy)))
-                continue
-            nsx = (x1 - x0) / ((u1 - u0) * w_px)
-            nsy = (y1 - y0) / ((v1 - v0) * h_px)
-            out.append((nsx, nsy, x0 / w_px - u0 * nsx, y0 / h_px - v0 * nsy))
-        return out
+        return _ImgAtlasInternal.inset_rects_to_texel_centers(rects, size, bboxes)
 
     @classmethod
     def assemble_atlas(
@@ -3089,67 +1968,7 @@ class ImgUtils(HelpMixin):
         Returns:
             The atlas as an HxWxC (or HxW) array, dtype matching ``images[0]``.
         """
-        if len(images) != len(rects):
-            raise ValueError(
-                f"images ({len(images)}) and rects ({len(rects)}) length differ"
-            )
-        if not images:
-            raise ValueError("assemble_atlas requires at least one image")
-
-        import cv2
-
-        w_px, h_px = (size, size) if isinstance(size, int) else size
-        first = np.asarray(images[0])
-        dtype = first.dtype
-        squeeze = first.ndim == 2
-        channels = 1 if squeeze else first.shape[2]
-        canvas = np.full((h_px, w_px, channels), background, dtype=np.float32)
-
-        # UV v is bottom-up; image rows are top-down -> atlas_pixel_rects owns
-        # the flip + rounding so mask-building consumers can't drift from it.
-        pixel_rects = cls.atlas_pixel_rects(rects, (w_px, h_px))
-        for img, (row0, row1, col0, col1) in zip(images, pixel_rects):
-            tw, th = col1 - col0, row1 - row0
-            if tw <= 0 or th <= 0:
-                continue  # degenerate (e.g. zero-weight) rect -- nothing to place
-            # A rect that rounds past the canvas clips the DESTINATION slice
-            # while the resized source keeps its full size -- a shape-mismatch
-            # ValueError that would lose a whole atlas. Clamp the destination
-            # first and crop the source to match it, so the two agree by
-            # construction (deriving the crop from the overhang instead lets a
-            # rect that lies ENTIRELY off-canvas produce a negative slice stop,
-            # which silently wraps and mismatches again).
-            dst_r0, dst_r1 = max(row0, 0), min(row1, h_px)
-            dst_c0, dst_c1 = max(col0, 0), min(col1, w_px)
-            if dst_r1 <= dst_r0 or dst_c1 <= dst_c0:
-                continue  # entirely outside the canvas
-
-            a = np.asarray(img, dtype=np.float32)
-            if a.ndim == 2:
-                a = a[..., None]
-            if a.shape[2] != channels:
-                raise ValueError(
-                    f"image channel count {a.shape[2]} != atlas {channels}"
-                )
-            # INTER_AREA is the correct downscale kernel (the common atlas case);
-            # use bilinear only when a rect happens to be larger than its source.
-            interp = (
-                cv2.INTER_AREA
-                if th <= a.shape[0] and tw <= a.shape[1]
-                else cv2.INTER_LINEAR
-            )
-            resized = cv2.resize(a, (tw, th), interpolation=interp)
-            if resized.ndim == 2:
-                resized = resized[..., None]
-            if (dst_r1 - dst_r0, dst_c1 - dst_c0) != (th, tw):
-                resized = resized[
-                    dst_r0 - row0 : dst_r1 - row0, dst_c0 - col0 : dst_c1 - col0, :
-                ]
-            canvas[dst_r0:dst_r1, dst_c0:dst_c1, :] = resized
-
-        if squeeze:
-            canvas = canvas[..., 0]
-        return canvas.astype(dtype, copy=False)
+        return super().assemble_atlas(images, rects, size, background=background)
 
     @staticmethod
     def radial_gradient(
@@ -3186,28 +2005,9 @@ class ImgUtils(HelpMixin):
             2D numpy array shape ``(height, width)`` with values in ``[0, 1]``
             (or ``[0, 255]`` for uint8).
         """
-        w, h = int(size[0]), int(size[1])
-        cx = float(center[0]) * (w - 1)
-        cy = float(center[1]) * (h - 1)
-
-        if max_radius is None:
-            max_radius = math.hypot(w - 1, h - 1)
-        max_radius = max(float(max_radius), 1.0)
-
-        y, x = np.ogrid[:h, :w]
-        dist = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
-        norm = np.clip(dist / max_radius, 0.0, 1.0)
-        if falloff_power != 1.0:
-            norm = norm ** float(falloff_power)
-        result = 1.0 - norm
-        if invert:
-            result = 1.0 - result
-
-        if dtype is None or dtype == np.float32:
-            return result.astype(np.float32, copy=False)
-        if dtype == np.uint8:
-            return (result * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
-        return result.astype(dtype, copy=False)
+        return _ImgRasterizeInternal.radial_gradient(
+            size, center, max_radius, falloff_power, invert, dtype
+        )
 
     @classmethod
     def rasterize_uv_triangles(
@@ -3242,114 +2042,7 @@ class ImgUtils(HelpMixin):
             (size, size) uint8 coverage array (0 outside, 255 fully inside,
             anti-aliased edges between).
         """
-        tris = np.asarray(triangles, dtype=float).reshape(-1, 3, 2)
-        ss = max(1, int(supersample))
-        dim = int(size) * ss
-        mask = np.zeros((dim, dim), dtype=np.uint8)
-        for tri in tris:
-            px = tri[:, 0] * dim
-            py = (1.0 - tri[:, 1]) * dim
-            cls._fill_triangle(mask, np.stack([px, py], axis=1))
-        if ss > 1:
-            # Accumulate each ss x ss block into one output-sized integer
-            # buffer rather than casting the whole supersampled grid to
-            # float32: that cast is a transient FOUR TIMES the size of the
-            # grid it reduces -- measured 268 MB to downsample a 2048 map at
-            # supersample 4 -- allocated inside whatever host process is
-            # baking. The arithmetic is unchanged (every sample is 0 or 255,
-            # so the block mean is its sum over ss*ss either way) and the
-            # arithmetic stays integer end to end, so no float copy of either
-            # the grid or the result is ever materialized.
-            view = mask.reshape(size, ss, size, ss)
-            n = ss * ss
-            acc = np.zeros((size, size), dtype=np.uint32)
-            for i in range(ss):
-                for j in range(ss):
-                    acc += view[:, i, :, j]
-            # Round half up. Every sample is 0 or 255, so the only quotient
-            # that can land exactly on .5 is a half-covered texel (128 either
-            # way, matching the round-half-to-even this replaces), and the
-            # maximum is 255 exactly -- nothing to clip.
-            mask = ((acc + n // 2) // n).astype(np.uint8)
-        return mask
-
-    @staticmethod
-    def _fill_triangle(mask, tri, value=255):
-        """Fill a 2D triangle (3x2 float pixel coords) into ``mask`` with *value*
-        (255 by default; into a float buffer the value is MAX-composited, so a
-        per-triangle scalar field — a penumbra width — survives overlaps).
-
-        Samples at pixel CENTERS and keeps the vertices in floating point.
-        Both matter to any caller that reads the downsampled result as a
-        coverage FRACTION: testing at pixel corners offsets every edge by
-        half a sample, and rounding the vertices onto the sample grid first
-        moves them by up to a whole one. Against a supersampled grid those
-        biases are sub-texel, so they never showed as a visibly wrong mask --
-        but a consumer thresholding on FULL coverage reads the result as
-        "this texel lies entirely inside the shape" when part of it does not,
-        which is the one question a coverage mask exists to answer exactly.
-
-        Geometry outside the image is CROPPED (the bbox is clamped, the
-        vertices are not): clamping a vertex would drag the edge it belongs
-        to across the image and smear a triangle that merely overhangs into
-        a wedge along the border.
-        """
-        h, w = mask.shape[:2]
-        xs, ys = tri[:, 0], tri[:, 1]
-        x0, x1 = int(np.floor(xs.min())), int(np.ceil(xs.max()))
-        y0, y1 = int(np.floor(ys.min())), int(np.ceil(ys.max()))
-        x0, y0 = max(x0, 0), max(y0, 0)
-        x1, y1 = min(x1, w - 1), min(y1, h - 1)
-        if x1 < x0 or y1 < y0:
-            return  # wholly outside the image
-        ax, ay = float(tri[0][0]), float(tri[0][1])
-        bx, by = float(tri[1][0]), float(tri[1][1])
-        cx, cy = float(tri[2][0]), float(tri[2][1])
-        denom = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
-        if abs(denom) < 1e-12:
-            return  # degenerate
-        yy, xx = np.mgrid[y0 : y1 + 1, x0 : x1 + 1]
-        xx = xx + 0.5
-        yy = yy + 0.5
-        l1 = ((by - cy) * (xx - cx) + (cx - bx) * (yy - cy)) / denom
-        l2 = ((cy - ay) * (xx - cx) + (ax - cx) * (yy - cy)) / denom
-        l3 = 1.0 - l1 - l2
-        inside = (l1 >= 0) & (l2 >= 0) & (l3 >= 0)
-        sub = mask[y0 : y1 + 1, x0 : x1 + 1]
-        if mask.dtype.kind == "f":
-            sub[inside] = np.maximum(sub[inside], value)
-        else:
-            sub[inside] = value
-
-    @classmethod
-    def _contact_falloff(cls, mask, falloff_source, falloff_power, vertical_weight):
-        """Radial + vertical contact-falloff weight (0..1) for a silhouette mask (pre-flip coords)."""
-        h, w = mask.shape
-        rows = np.where(mask.max(axis=1) > 0)[0]
-        cols = np.where(mask.max(axis=0) > 0)[0]
-        if not (len(rows) and len(cols)):
-            return np.ones((h, w), dtype=np.float32)
-        top_row, bottom_row = rows[0], rows[-1]
-        center_col = (cols[0] + cols[-1]) // 2
-        if falloff_source is not None:  # saved-PNG coords -> pre-flip (v mirrored)
-            src = (float(falloff_source[0]), 1.0 - float(falloff_source[1]))
-        else:
-            src = (center_col / max(w - 1, 1), bottom_row / max(h - 1, 1))
-        radial_w = max(1.0 - vertical_weight, 0.0)
-        vertical_w = max(min(vertical_weight, 1.0), 0.0)
-        radial = cls.radial_gradient(
-            (w, h),
-            center=src,
-            max_radius=max(bottom_row - top_row, 1),
-            falloff_power=falloff_power,
-        )
-        vertical = np.zeros((h, w), dtype=np.float32)
-        span = max(bottom_row - top_row, 1)
-        t = np.clip((np.arange(h) - top_row) / span, 0.0, 1.0) ** 0.6
-        vertical[:, :] = t[:, None]
-        vertical[np.arange(h) < top_row, :] = 0.0
-        vertical[np.arange(h) > bottom_row, :] = 1.0
-        return radial * radial_w + vertical * vertical_w
+        return super().rasterize_uv_triangles(triangles, size, supersample)
 
     @classmethod
     def rasterize_silhouette(
@@ -3385,54 +2078,16 @@ class ImgUtils(HelpMixin):
         Returns:
             ``(size, size, 4)`` uint8 RGBA array (silhouette in alpha; V flipped for bottom-left UV).
         """
-        meshes = [
-            (
-                np.asarray(p, dtype=float).reshape(-1, 3),
-                np.asarray(t, dtype=np.int64).reshape(-1, 3),
-            )
-            for p, t in meshes
-            if len(p) and len(t)
-        ]
-        if not meshes:
-            raise ValueError("rasterize_silhouette: no geometry provided.")
-
-        all_pts = np.concatenate([p for p, _ in meshes], axis=0)
-        mn, mx = all_pts.min(axis=0), all_pts.max(axis=0)
-        a = axis.lower()
-        if a == "auto":
-            a = "x" if (mx[2] - mn[2]) > (mx[0] - mn[0]) else "z"
-        u_idx, v_idx = {"y": (0, 2), "x": (2, 1)}.get(a, (0, 1))
-        # 1.1 = 10% padding; `or 1.0` guards a zero-extent (single-point/degenerate) mesh against /0.
-        extent = max(mx[u_idx] - mn[u_idx], mx[v_idx] - mn[v_idx]) * 1.1 or 1.0
-        u_c, v_c = (mn[u_idx] + mx[u_idx]) / 2.0, (mn[v_idx] + mx[v_idx]) / 2.0
-
-        mask = np.zeros((size, size), dtype=np.uint8)
-        for pts, tris in meshes:
-            pu = np.clip(
-                ((pts[:, u_idx] - u_c) / extent + 0.5) * size, 0, size - 1
-            ).astype(np.int32)
-            pv = np.clip(
-                (1.0 - ((pts[:, v_idx] - v_c) / extent + 0.5)) * size, 0, size - 1
-            ).astype(np.int32)
-            proj = np.stack([pu, pv], axis=1)
-            for tri in tris:
-                cls._fill_triangle(mask, proj[tri])
-
-        if blur_amount and blur_amount > 0:
-            mask = cls.gaussian_blur(mask, radius=blur_amount)
-        combined = (
-            np.ones(mask.shape, dtype=np.float32)
-            if uniform_alpha
-            else cls._contact_falloff(
-                mask, falloff_source, falloff_power, vertical_weight
-            )
+        return super().rasterize_silhouette(
+            meshes,
+            size,
+            axis,
+            uniform_alpha=uniform_alpha,
+            falloff_source=falloff_source,
+            falloff_power=falloff_power,
+            vertical_weight=vertical_weight,
+            blur_amount=blur_amount,
         )
-        alpha = np.flipud(
-            (mask.astype(np.float32) / 255.0 * combined * 255).astype(np.uint8)
-        )
-        result = np.zeros((size, size, 4), dtype=np.uint8)
-        result[:, :, 3] = alpha
-        return result
 
     @classmethod
     def rasterize_height_fields(
@@ -3473,14 +2128,9 @@ class ImgUtils(HelpMixin):
             ``(z_top, z_bot, mask, bounds)`` — two ``(size, size)`` float32
             fields (0 where empty), a bool coverage mask, and the bounds used.
         """
-
-        lo, hi, bounds = cls.rasterize_height_spans(
+        return super().rasterize_height_fields(
             meshes, up=up, size=size, ground=ground, bounds=bounds, padding=padding
         )
-        mask = ~np.isnan(hi[0])
-        z_top = np.where(mask, hi[0], 0.0).astype(np.float32)
-        z_bot = np.where(mask, lo[0], 0.0).astype(np.float32)
-        return z_top, z_bot, mask, bounds
 
     @classmethod
     def rasterize_height_spans(
@@ -3516,194 +2166,15 @@ class ImgUtils(HelpMixin):
             ``NaN`` where a pixel has no span at that index, spans sorted by
             height per pixel, and the bounds used.
         """
-        from pythontk.geo_utils.shadow_projection import ShadowProjection
-
-        a, b = ShadowProjection.horizontal_axes(up)
-        spans = max(int(spans), 1)
-        tris_all = []
-        for pts, tris in meshes:
-            pts = np.asarray(pts, dtype=float).reshape(-1, 3)
-            tris = np.asarray(tris, dtype=np.int64).reshape(-1, 3)
-            if len(pts) and len(tris):
-                tris_all.append(pts[tris])  # (M, 3, 3)
-        size = int(size)
-        lo = np.full((spans, size, size), np.nan, np.float32)
-        hi = np.full((spans, size, size), np.nan, np.float32)
-        default_bounds = (
-            (0.0, 1.0, 0.0, 1.0) if bounds is None else tuple(float(v) for v in bounds)
+        return super().rasterize_height_spans(
+            meshes,
+            up=up,
+            size=size,
+            ground=ground,
+            bounds=bounds,
+            padding=padding,
+            spans=spans,
         )
-        if not tris_all:
-            return lo, hi, default_bounds
-        T = np.concatenate(tris_all, axis=0)
-        # Heights above the ground, clamped AT the ground: a face below it
-        # still crosses a column -- a box cut by the ground plane enters the
-        # solid at its buried floor -- and clamping puts that crossing on the
-        # ground, where the column's span then starts. A wholly buried mesh
-        # collapses to spans of no height, which block nothing and are dropped
-        # below.
-        z = np.maximum(T[:, :, up] - float(ground), 0.0)
-        pa, pb = T[:, :, a], T[:, :, b]
-        if bounds is None:
-            lo_a, hi_a, lo_b, hi_b = pa.min(), pa.max(), pb.min(), pb.max()
-            pad = float(padding) * max(hi_a - lo_a, hi_b - lo_b, 1e-3) + 1e-6
-            bounds = (lo_a - pad, hi_a + pad, lo_b - pad, hi_b + pad)
-        a0, a1, b0, b1 = (float(v) for v in bounds)
-        sa, sb = max(a1 - a0, 1e-9), max(b1 - b0, 1e-9)
-        x = (pa - a0) / sa * size  # (M, 3) pixel coords
-        y = (pb - b0) / sb * size
-        # Which way each face looks along up: a vertical ray ENTERS the solid
-        # through a face looking down and LEAVES through one looking up, so
-        # the crossings of a closed mesh count in and out whatever its
-        # winding, and a duplicate from a shared edge is a duplicate.
-        normal_up = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])[:, up]
-        facing = np.where(normal_up < 0.0, 1, -1).astype(np.int8)
-        # -- surface crossings at pixel centres, per triangle
-        cross_px: list = []
-        cross_z: list = []
-        cross_sign: list = []
-        for i in range(len(T)):
-            xs, ys, zs = x[i], y[i], z[i]
-            x0, x1 = int(np.floor(xs.min())), int(np.ceil(xs.max()))
-            y0, y1 = int(np.floor(ys.min())), int(np.ceil(ys.max()))
-            x0, y0 = max(x0, 0), max(y0, 0)
-            x1, y1 = min(x1, size - 1), min(y1, size - 1)
-            if x1 < x0 or y1 < y0:
-                continue
-            ax_, ay_ = xs[0], ys[0]
-            bx_, by_ = xs[1], ys[1]
-            cx_, cy_ = xs[2], ys[2]
-            denom = (by_ - cy_) * (ax_ - cx_) + (cx_ - bx_) * (ay_ - cy_)
-            if abs(denom) < 1e-12:
-                continue
-            yy, xx = np.mgrid[y0 : y1 + 1, x0 : x1 + 1]
-            xx = xx + 0.5
-            yy = yy + 0.5
-            l1 = ((by_ - cy_) * (xx - cx_) + (cx_ - bx_) * (yy - cy_)) / denom
-            l2 = ((cy_ - ay_) * (xx - cx_) + (ax_ - cx_) * (yy - cy_)) / denom
-            l3 = 1.0 - l1 - l2
-            inside = (l1 >= 0) & (l2 >= 0) & (l3 >= 0)
-            if not inside.any():
-                continue
-            zz = l1 * zs[0] + l2 * zs[1] + l3 * zs[2]
-            cross_px.append(((yy - 0.5) * size + (xx - 0.5))[inside].astype(np.int64))
-            cross_z.append(zz[inside].astype(np.float64))
-            cross_sign.append(np.full(int(inside.sum()), facing[i], np.int8))
-        # -- edge splat at half-pixel steps, all edges at once: the hull of
-        #    the samples a pixel receives, one span, where the fill missed
-        e0 = np.concatenate([x[:, [0, 1]], x[:, [1, 2]], x[:, [2, 0]]], axis=0)
-        e1 = np.concatenate([y[:, [0, 1]], y[:, [1, 2]], y[:, [2, 0]]], axis=0)
-        ez = np.concatenate([z[:, [0, 1]], z[:, [1, 2]], z[:, [2, 0]]], axis=0)
-        length = np.hypot(e0[:, 1] - e0[:, 0], e1[:, 1] - e1[:, 0])
-        counts = np.minimum(np.ceil(length * 2.0).astype(int) + 1, 4 * size)
-        total = int(counts.sum())
-        edge_id = np.repeat(np.arange(len(counts)), counts)
-        offsets = np.cumsum(counts) - counts
-        frac = (np.arange(total) - offsets[edge_id]) / np.maximum(
-            counts[edge_id] - 1, 1
-        )
-        sx = e0[edge_id, 0] + (e0[edge_id, 1] - e0[edge_id, 0]) * frac
-        sy = e1[edge_id, 0] + (e1[edge_id, 1] - e1[edge_id, 0]) * frac
-        sz = ez[edge_id, 0] + (ez[edge_id, 1] - ez[edge_id, 0]) * frac
-        ia = np.floor(sx).astype(int)
-        ib = np.floor(sy).astype(int)
-        inb = (ia >= 0) & (ia < size) & (ib >= 0) & (ib < size)
-        splat_top = np.full(size * size, -np.inf)
-        splat_bot = np.full(size * size, np.inf)
-        flat = ib[inb] * size + ia[inb]
-        np.maximum.at(splat_top, flat, sz[inb])
-        np.minimum.at(splat_bot, flat, sz[inb])
-        # -- the crossings into spans, pixel by pixel: sorted by height, the
-        #    running count of entries minus exits is non-zero INSIDE the
-        #    solid, so each gap between consecutive crossings with a non-zero
-        #    count is a span. Every crossing also stands as a zero-thickness
-        #    span of its own: an open surface (a single-sided plank) still
-        #    blocks at its height, and inside a closed span it merges away.
-        filled = np.zeros(size * size, bool)
-        if cross_px:
-            px = np.concatenate(cross_px)
-            zc = np.concatenate(cross_z)
-            sg = np.concatenate(cross_sign).astype(np.int64)
-            order = np.lexsort((sg, zc, px))
-            px, zc, sg = px[order], zc[order], sg[order]
-            # a shared edge reports the same surface twice at a pixel centre
-            # (the two triangles interpolate one edge, equal to rounding --
-            # a bit-exact compare let the pair through, and an unmatched
-            # entry fills the gap up to the next crossing solid)
-            same_z = np.abs(zc[1:] - zc[:-1]) <= 1e-9 * (1.0 + np.abs(zc[1:]))
-            dup = np.r_[False, (px[1:] == px[:-1]) & same_z & (sg[1:] == sg[:-1])]
-            px, zc, sg = px[~dup], zc[~dup], sg[~dup]
-            new_pixel = np.r_[True, px[1:] != px[:-1]]
-            seg = np.cumsum(new_pixel) - 1
-            total = np.cumsum(sg)
-            base = np.r_[0, total[:-1]][np.flatnonzero(new_pixel)][seg]
-            count = total - base  # entries minus exits below this crossing, inclusive
-            same_next = np.r_[px[1:] == px[:-1], False]
-            solid = same_next & (count != 0)
-            span_px = np.concatenate([px[solid], px])
-            span_lo = np.concatenate([zc[solid], zc])
-            span_hi = np.concatenate([np.r_[zc[1:], zc[-1:]][solid], zc])
-            filled[np.unique(px)] = True
-            cls._assign_spans(lo, hi, span_px, span_lo, span_hi, size, spans)
-        # -- the splat hull where the fill left a pixel empty
-        only_splat = np.isfinite(splat_top) & ~filled & (splat_top > 0.0)
-        idx = np.flatnonzero(only_splat)
-        if idx.size:
-            lo[0].reshape(-1)[idx] = np.maximum(splat_bot[idx], 0.0)
-            hi[0].reshape(-1)[idx] = splat_top[idx]
-        # a span that never rises above the ground blocks nothing
-        buried = ~np.isnan(hi) & (hi <= 0.0)
-        lo[buried] = np.nan
-        hi[buried] = np.nan
-        return lo, hi, (a0, a1, b0, b1)
-
-    @staticmethod
-    def _assign_spans(lo, hi, px, span_lo, span_hi, size, spans):
-        """Merge touching spans per pixel, keep the *spans* thickest (the
-        rest merged into the neighbour across the smallest gap) and write
-        them, sorted by height, into ``lo`` / ``hi`` ``(K, size, size)``."""
-        order = np.lexsort((span_lo, px))
-        px, span_lo, span_hi = px[order], span_lo[order], span_hi[order]
-        # A span merges into the one before it (same pixel) when it starts at
-        # or below that one's top: the running maximum of the tops, restarted
-        # per pixel by lifting each pixel's values onto their own plateau.
-        new_pixel = np.r_[True, px[1:] != px[:-1]]
-        seg = np.cumsum(new_pixel) - 1
-        lift = float(np.nanmax(span_hi) - np.nanmin(span_lo)) + 1.0
-        run_top = np.maximum.accumulate(span_hi + seg * lift) - seg * lift
-        prev_top = np.r_[-np.inf, run_top[:-1]]
-        start = new_pixel | (span_lo > prev_top + 1e-9)
-        group = np.cumsum(start) - 1
-        n_groups = int(group[-1]) + 1
-        g_lo = np.full(n_groups, np.inf)
-        g_hi = np.full(n_groups, -np.inf)
-        np.minimum.at(g_lo, group, span_lo)
-        np.maximum.at(g_hi, group, span_hi)
-        g_px = px[start]
-        # Per pixel the merged spans are sorted by height. Up to K of them
-        # scatter straight in; a pixel with more merges its smallest gaps
-        # first (rare: a shelf's boards, a chair's rungs) until K remain.
-        g_new = np.r_[True, g_px[1:] != g_px[:-1]]
-        g_seg = np.cumsum(g_new) - 1
-        g_rank = np.arange(len(g_px)) - np.flatnonzero(g_new)[g_seg]
-        g_count = np.diff(np.r_[np.flatnonzero(g_new), len(g_px)])[g_seg]
-        fits = g_count <= spans
-        iy, ix = np.divmod(g_px[fits], size)
-        lo[g_rank[fits], iy, ix] = g_lo[fits]
-        hi[g_rank[fits], iy, ix] = g_hi[fits]
-        for s in np.flatnonzero(g_new & ~fits):
-            c = int(g_count[s])
-            pixel = int(g_px[s])
-            py_, px_ = divmod(pixel, size)
-            l_ = list(g_lo[s : s + c])
-            h_ = list(g_hi[s : s + c])
-            while len(l_) > spans:
-                gaps = [l_[j + 1] - h_[j] for j in range(len(l_) - 1)]
-                j = int(np.argmin(gaps))
-                h_[j] = max(h_[j], h_[j + 1])
-                del l_[j + 1], h_[j + 1]
-            for k in range(len(l_)):
-                lo[k, py_, px_] = l_[k]
-                hi[k, py_, px_] = h_[k]
 
     @classmethod
     def rasterize_shadow(
@@ -3780,147 +2251,25 @@ class ImgUtils(HelpMixin):
             ``(rgba, raster)`` — a ``(size, size, 4)`` uint8 array (black RGB,
             shadow in alpha) and the :class:`ShadowRaster` it was drawn into.
         """
-        from pythontk.geo_utils.shadow_projection import (
-            ShadowProjection,
-            ShadowRaster,
-        )
-
-        meshes = [
-            (
-                np.asarray(p, dtype=float).reshape(-1, 3),
-                np.asarray(t, dtype=np.int64).reshape(-1, 3),
-            )
-            for p, t in meshes
-            if len(p) and len(t)
-        ]
-        if not meshes:
-            raise ValueError("rasterize_shadow: no geometry provided.")
-        size = int(size)
-        a, b = ShadowProjection.horizontal_axes(up)
-        if contact is None or radius is None or height is None:
-            all_pts = np.concatenate([p for p, _ in meshes], axis=0)
-            mn, mx = all_pts.min(axis=0), all_pts.max(axis=0)
-            if contact is None:
-                contact = np.zeros(3)
-                contact[a], contact[b] = 0.5 * (mn[a] + mx[a]), 0.5 * (mn[b] + mx[b])
-                contact[up] = mn[up]
-            if radius is None:
-                radius = 0.5 * math.hypot(mx[a] - mn[a], mx[b] - mn[b])
-            if height is None:
-                height = mx[up] - mn[up]
-        contact = np.asarray(contact, dtype=float).reshape(3)
-        radius = max(float(radius), 1e-3)
-        height = max(float(height), 1e-3)
-        model = ShadowProjection.model(
-            contact,
+        return super().rasterize_shadow(
+            meshes,
             light,
             ground,
-            radius,
-            height,
+            size,
             up=up,
             direction=direction,
+            source_size=source_size,
             max_stretch=max_stretch,
+            canvas=canvas,
+            contact=contact,
+            radius=radius,
+            height=height,
+            padding=padding,
+            uniform_alpha=uniform_alpha,
+            falloff_power=falloff_power,
+            vertical_weight=vertical_weight,
+            blur_amount=blur_amount,
         )
-        stretch = (
-            ShadowProjection.DEFAULT_MAX_STRETCH if max_stretch is None else max_stretch
-        )
-        slide = math.hypot(model.anchor[0] - contact[a], model.anchor[1] - contact[b])
-        max_len = stretch * height + slide
-
-        projected = []  # (uw, penumbra widths, tris)
-        for pts, tris in meshes:
-            res = ShadowProjection.project(
-                pts, light, ground, up=up, direction=direction, max_length=max_len
-            )
-            if res is None:
-                projected = []
-                break
-            uw = ShadowProjection.to_frame(res[0], model)
-            # A point level with the source spreads without bound; the
-            # penumbra can never usefully exceed the reach cap.
-            widths = np.minimum(float(source_size) * res[1], max_len)
-            projected.append((uw, widths, tris))
-
-        if canvas is not None:
-            rect = tuple(float(v) for v in canvas)
-        elif projected:
-            all_uw = np.concatenate([uw for uw, _, _ in projected], axis=0)
-            pen = max(float(w.max()) for _, w, _ in projected)
-            lo, hi = all_uw.min(axis=0), all_uw.max(axis=0)
-            pad = float(padding) * max(hi[0] - lo[0], hi[1] - lo[1], 1e-3) + 0.5 * pen
-            rect = (lo[0] - pad, hi[0] + pad, lo[1] - pad, hi[1] + pad)
-        else:  # nothing cast — the model's own rect, fully transparent
-            rect = model.rect((-1.0, 1.0, -0.5, 0.5))
-        u_lo, u_hi, w_lo, w_hi = rect
-        du, dw = max(u_hi - u_lo, 1e-9), max(w_hi - w_lo, 1e-9)
-
-        # Pre-flip orientation (the light-side edge at the BOTTOM row, as
-        # rasterize_silhouette's contact row): rows run far -> near.
-        mask = np.zeros((size, size), dtype=np.uint8)
-        soft = np.zeros((size, size), dtype=np.float32)  # penumbra sigma, px
-        px_per_unit = size / (0.5 * (du + dw))
-        pen_max = 0.0
-        for uw, widths, tris in projected:
-            cols = (uw[:, 1] - w_lo) / dw * size
-            rows = (1.0 - (uw[:, 0] - u_lo) / du) * size
-            proj = np.stack([cols, rows], axis=1)
-            sigma = widths * px_per_unit * 0.25  # a step blurs over ~4 sigma
-            pen_max = max(pen_max, float(widths.max()))
-            for tri in tris:
-                cls._fill_triangle(mask, proj[tri])
-                if sigma[tri].max() > 0.0:
-                    cls._fill_triangle(soft, proj[tri], float(sigma[tri].mean()))
-
-        base = mask
-        if blur_amount and blur_amount > 0:
-            base = cls.gaussian_blur(base, radius=blur_amount)
-        s_max = float(soft.max())
-        if s_max >= 0.5:
-            base = cls._variable_blur(base, mask, soft, s_max)
-
-        alpha = base.astype(np.float32) / 255.0
-        if not uniform_alpha:
-            # The footprint centre (the frame origin) in saved-image coords:
-            # rows there run near -> far, so the origin's row is measured
-            # from the near edge.
-            origin = ((0.0 - w_lo) / dw, (0.0 - u_lo) / du)
-            alpha *= cls._contact_falloff(mask, origin, falloff_power, vertical_weight)
-        result = np.zeros((size, size, 4), dtype=np.uint8)
-        result[:, :, 3] = np.flipud(np.clip(alpha * 255.0, 0, 255).astype(np.uint8))
-        raster = ShadowRaster(
-            model=model,
-            rect=rect,
-            fractions=ShadowProjection.fractions(rect, model),
-            penumbra=pen_max,
-        )
-        return result, raster
-
-    @classmethod
-    def _variable_blur(cls, base, mask, sigma, s_max, levels=(0.125, 0.25, 0.5, 1.0)):
-        """Blur *base* by the per-pixel *sigma* field (pixels), as a blend
-        between a few uniformly blurred levels. *sigma* is defined inside
-        *mask* only; it is carried past the edge by a normalized convolution
-        so the blur reaches as far out as the penumbra does."""
-        m = (mask > 0).astype(np.uint8) * 255
-        q = np.clip(sigma / s_max * 255.0, 0, 255).astype(np.uint8)
-        reach = max(s_max, 1.0)
-        num = cls.gaussian_blur(q, radius=reach).astype(np.float32)
-        den = cls.gaussian_blur(m, radius=reach).astype(np.float32)
-        field = np.where(den > 1.0, num / np.maximum(den, 1.0) * s_max, 0.0)
-        field = np.clip(field, 0.0, s_max)
-        radii = [0.0] + [s_max * f for f in levels]
-        stack = [base.astype(np.float32)] + [
-            cls.gaussian_blur(base, radius=r).astype(np.float32) for r in radii[1:]
-        ]
-        out = stack[0].copy()
-        for i in range(len(radii) - 1):
-            lo, hi = radii[i], radii[i + 1]
-            sel = (field >= lo) & (field <= hi)
-            if not sel.any():
-                continue
-            t = (field[sel] - lo) / max(hi - lo, 1e-9)
-            out[sel] = stack[i][sel] * (1.0 - t) + stack[i + 1][sel] * t
-        return np.clip(out + 0.5, 0, 255).astype(np.uint8)
 
     @classmethod
     def convert_rgb_to_gray(cls, data):
@@ -3972,31 +2321,7 @@ class ImgUtils(HelpMixin):
         Returns:
             ``(r, g, b)`` linear floats.
         """
-        temperature = max(1000.0, min(40000.0, float(kelvin))) / 100.0
-
-        if temperature <= 66.0:
-            red = 255.0
-            green = 99.4708025861 * math.log(temperature) - 161.1195681661
-        else:
-            red = 329.698727446 * ((temperature - 60.0) ** -0.1332047592)
-            green = 288.1221695283 * ((temperature - 60.0) ** -0.0755148492)
-
-        if temperature >= 66.0:
-            blue = 255.0
-        elif temperature <= 19.0:
-            blue = 0.0
-        else:
-            blue = 138.5177312231 * math.log(temperature - 10.0) - 305.0447927307
-
-        srgb = [max(0.0, min(255.0, channel)) / 255.0 for channel in (red, green, blue)]
-        # sRGB EOTF -- the fit outputs display-referred values.
-        linear = [
-            c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in srgb
-        ]
-        if normalize:
-            peak = max(linear) or 1.0
-            linear = [c / peak for c in linear]
-        return tuple(linear)
+        return _ImgColorSpaceInternal.kelvin_to_linear_rgb(kelvin, normalize)
 
     @classmethod
     def convert_rgb_to_hsv(cls, image):
@@ -4114,71 +2439,17 @@ class ImgUtils(HelpMixin):
         Returns:
             str | Image.Image: Output path if saving, else the PIL image object.
         """
-        if channels is None:
-            channels = ["R", "G", "B", "A"]
-        if fill_values is None:
-            fill_values = {ch: 0 for ch in "RGB"}
-            fill_values["A"] = 255
-        if invert_channels is None:
-            invert_channels = []
-
-        has_alpha = bool(channel_files.get("A"))
-        out_mode = out_mode or ("RGBA" if has_alpha else "RGB")
-        n_channels = 4 if out_mode == "RGBA" else 3
-
-        # Get first valid image for sizing
-        first_file = next(
-            (f for f in (channel_files.get(ch) for ch in channels) if f), None
+        return super().pack_channels(
+            channel_files,
+            channels,
+            out_mode,
+            fill_values,
+            output_path,
+            output_format,
+            grayscale_to_rgb,
+            invert_channels,
+            **kwargs,
         )
-        if first_file is None:
-            raise ValueError("No input images provided")
-        size = cls.ensure_image(first_file).size
-
-        # Determine if we should replicate grayscale to RGB (duplicate if only one RGB channel is used)
-        used_rgb_channels = [ch for ch in "RGB" if channel_files.get(ch)]
-        allow_duplicate = grayscale_to_rgb and len(used_rgb_channels) == 1
-        r_img = (
-            cls.ensure_image(channel_files.get("R"), mode="L").resize(size)
-            if channel_files.get("R")
-            else None
-        )
-
-        bands = []
-        for ch in channels[:n_channels]:
-            img_input = channel_files.get(ch)
-            if img_input:
-                # Load image once to avoid double I/O
-                img_obj = cls.ensure_image(img_input)
-
-                # Optimization: Check if image is constant
-                # This avoids expensive resizing artifacts for small constant maps
-                is_const, const_color = cls.is_image_constant(img_obj)
-
-                if is_const:
-                    # Convert constant color to grayscale
-                    # Create 1x1 temp image to handle color conversion correctly
-                    temp_img = Image.new(img_obj.mode, (1, 1), const_color)
-                    gray_val = temp_img.convert("L").getpixel((0, 0))
-                    band = cls.create_image("L", size, color=gray_val)
-                else:
-                    band = img_obj.convert("L").resize(size)
-            elif ch in "GB" and allow_duplicate and r_img is not None:
-                # Duplicate R into G/B if only R is used
-                band = r_img
-            else:
-                band = cls.create_image("L", size, color=fill_values.get(ch, 0))
-
-            if ch in invert_channels:
-                band = ImageOps.invert(band)
-
-            bands.append(band)
-
-        img = Image.merge(out_mode, bands)
-
-        if output_path:
-            cls.save_image(img, output_path, format=output_format, **kwargs)
-            return output_path
-        return img
 
     @classmethod
     def pack_channel_into_alpha(
@@ -4203,135 +2474,14 @@ class ImgUtils(HelpMixin):
         Returns:
             str | Image.Image: Path to the saved image or the PIL Image object.
         """
-        base_img = cls.ensure_image(image).convert("RGBA")
-        r, g, b, existing_alpha_channel = base_img.split()
-
-        alpha_img = cls.ensure_image(alpha)
-
-        final_alpha = alpha_img
-        invert_list = ["A"] if invert_alpha else []
-
-        if preserve_existing_alpha:
-            # Pre-process alpha for multiplication
-            if invert_alpha:
-                alpha_img = cls.invert_grayscale_image(alpha_img)
-                invert_list = []  # Already inverted
-
-            alpha_img = alpha_img.convert("L")
-
-            # Handle resizing for multiplication
-            if alpha_img.size != base_img.size:
-                if resize_alpha:
-                    # Optimization: Check if alpha is constant
-                    is_const, const_color = cls.is_image_constant(alpha_img)
-                    if is_const:
-                        alpha_img = cls.create_image(
-                            "L", base_img.size, color=const_color[0]
-                        )
-                    else:
-                        alpha_img = alpha_img.resize(
-                            base_img.size, Image.Resampling.LANCZOS
-                        )
-                else:
-                    raise ValueError(
-                        f"Alpha image size {alpha_img.size} does not match base {base_img.size} and resize is disabled."
-                    )
-
-            final_alpha = ImageChops.multiply(existing_alpha_channel, alpha_img)
-
-        return cls.pack_channels(
-            channel_files={"R": r, "G": g, "B": b, "A": final_alpha},
-            output_path=output_path,
-            invert_channels=invert_list,
+        return super().pack_channel_into_alpha(
+            image,
+            alpha,
+            output_path,
+            invert_alpha,
+            resize_alpha,
+            preserve_existing_alpha,
         )
-
-    @staticmethod
-    def _srgb_to_linear_np(arr):
-        """Convert sRGB values to linear.
-
-        Accepts a NumPy array or array-like. Values can be either 0-255 or 0-1.
-        Returns float32 in [0,1]. Alpha channel (if present) is preserved.
-        """
-        a = np.asarray(arr)
-        # Convert to float32 for calculation
-        if a.dtype != np.float32 and a.dtype != np.float64:
-            a = a.astype(np.float32)
-
-        alpha = None
-        if a.ndim == 3 and a.shape[-1] == 4:
-            alpha = a[..., 3:4]
-            a = a[..., :3]
-
-        # Normalize to [0,1] if needed
-        if a.max() > 1.0:
-            a = a / 255.0
-
-        a = np.clip(a, 0.0, 1.0)
-        k0 = 0.04045
-        out = np.empty_like(a, dtype=np.float32)
-        low = a <= k0
-        out[low] = a[low] / 12.92
-        out[~low] = ((a[~low] + 0.055) / 1.055) ** 2.4
-
-        if alpha is not None:
-            out = np.concatenate([out, alpha], axis=-1)
-        return out
-
-    @staticmethod
-    def _linear_to_srgb_np(arr):
-        """Convert linear values to sRGB.
-
-        Accepts a NumPy array in [0,1] and returns float32 in [0,1].
-        """
-        a = np.asarray(arr)
-        if a.dtype != np.float32 and a.dtype != np.float64:
-            a = a.astype(np.float32)
-
-        alpha = None
-        if a.ndim == 3 and a.shape[-1] == 4:
-            alpha = a[..., 3:4]
-            a = a[..., :3]
-
-        a = np.clip(a, 0.0, 1.0)
-        k1 = 0.0031308
-        out = np.empty_like(a, dtype=np.float32)
-        low = a <= k1
-        out[low] = a[low] * 12.92
-        out[~low] = 1.055 * (a[~low] ** (1.0 / 2.4)) - 0.055
-
-        if alpha is not None:
-            out = np.concatenate([out, alpha], axis=-1)
-        return out
-
-    @classmethod
-    def _srgb_to_linear_image(cls, img: Image.Image) -> Image.Image:
-        """Convert a PIL image (L/RGB/RGBA) from sRGB to linear, returned as 8-bit per channel.
-
-        Alpha channel (if present) is preserved untouched.
-        """
-        arr = np.array(img, dtype=np.float32)
-        if img.mode in ("L", "RGB", "RGBA"):
-            # Normalize to [0,1] (incl. alpha) before the helper so its
-            # `a.max() > 1.0` re-normalization gate never trips on the RGB
-            # slice and leaves alpha at 0-255 (which then clips to 255).
-            lin = cls._srgb_to_linear_np(arr / 255.0)
-            lin_8 = np.clip(lin * 255.0, 0, 255).astype(np.uint8)
-            return Image.fromarray(lin_8, mode=img.mode)
-        # For other modes, fall back to converting to RGB
-        return cls._srgb_to_linear_image(img.convert("RGBA"))
-
-    @classmethod
-    def _linear_to_srgb_image(cls, img: Image.Image) -> Image.Image:
-        """Convert a PIL image (L/RGB/RGBA) from linear to sRGB, returned as 8-bit per channel.
-
-        Alpha channel (if present) is preserved untouched.
-        """
-        arr = np.array(img, dtype=np.float32)
-        if img.mode in ("L", "RGB", "RGBA"):
-            srgb = cls._linear_to_srgb_np(arr / 255.0)
-            srgb_8 = np.clip(srgb * 255.0, 0, 255).astype(np.uint8)
-            return Image.fromarray(srgb_8, mode=img.mode)
-        return cls._linear_to_srgb_image(img.convert("RGBA"))
 
     @classmethod
     def srgb_to_linear(cls, data):
@@ -4340,10 +2490,7 @@ class ImgUtils(HelpMixin):
         - If Image: returns Image in the same mode (8-bit), converted to linear.
         - Otherwise: converts input to numpy, applies sRGB->linear, returns numpy array float32 in [0,1].
         """
-        if isinstance(data, Image.Image):
-            return cls._srgb_to_linear_image(data)
-        # Accept lists/tuples/arrays
-        return cls._srgb_to_linear_np(data)
+        return super().srgb_to_linear(data)
 
     @classmethod
     def linear_to_srgb(cls, data):
@@ -4352,9 +2499,7 @@ class ImgUtils(HelpMixin):
         - If Image: returns Image in the same mode (8-bit), converted to sRGB.
         - Otherwise: expects data in [0,1], returns numpy array float32 in [0,1].
         """
-        if isinstance(data, Image.Image):
-            return cls._linear_to_srgb_image(data)
-        return cls._linear_to_srgb_np(data)
+        return super().linear_to_srgb(data)
 
     #: Percentile used to normalize an HDR image for 8-bit web encoding. High enough
     #: that only genuine light sources clip, low enough that one hot texel cannot
@@ -4389,41 +2534,7 @@ class ImgUtils(HelpMixin):
             ImportError: cv2 unavailable (it is the only float-image reader here).
             ValueError: the file could not be read as an image.
         """
-        try:
-            import cv2
-        except ImportError as e:
-            raise ImportError(
-                "OpenCV (cv2) is required to encode HDR images for the web."
-            ) from e
-
-        percentile = cls.HDR_WEB_PERCENTILE if percentile is None else float(percentile)
-        img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
-        if img is None:
-            raise ValueError(f"Unreadable image: {path}")
-        arr = np.asarray(img, dtype=np.float32)
-        if arr.ndim == 2:
-            arr = arr[:, :, None].repeat(3, axis=2)
-        bgr = arr[:, :, :3]  # lightmaps are opaque; drop any alpha
-        # A renderer's fireflies survive into the file, and both non-finite
-        # kinds poison the encode SILENTLY: `inf > 0` is True, so enough of
-        # them make the percentile itself inf and the whole map encodes BLACK
-        # against an inf scalar; NaN passes the percentile's own filter but
-        # propagates through np.clip and casts to uint8 as undefined garbage.
-        if not np.isfinite(bgr).all():
-            bgr = np.nan_to_num(bgr, nan=0.0, posinf=0.0, neginf=0.0)
-
-        lit = bgr[bgr > 0.0]
-        scalar = float(np.percentile(lit, percentile)) if lit.size else 1.0
-        scalar = max(scalar, 1e-6)
-
-        srgb = cls._linear_to_srgb_np(np.clip(bgr / scalar, 0.0, 1.0))
-        out = np.clip(srgb * 255.0 + 0.5, 0, 255).astype(np.uint8)
-        # cv2 reads AND writes BGR: no swap needed. Max compression -- the
-        # bytes go straight into a GLB, where they are the file size.
-        ok, buf = cv2.imencode(".png", out, [cv2.IMWRITE_PNG_COMPRESSION, 9])
-        if not ok:
-            raise ValueError(f"PNG encode failed for {path}")
-        return buf.tobytes(), scalar
+        return super().encode_hdr_for_web(path, percentile)
 
     @classmethod
     def generate_mipmaps(cls, image: Union[str, Image.Image]) -> List[Image.Image]:
@@ -4523,11 +2634,12 @@ class ImgUtils(HelpMixin):
         """Extracts the base texture name from a filename or path,
         removing known suffixes (e.g., _normal, _roughness).
 
-        The single implementation — ``MapFactory.get_base_texture_name`` delegates
-        here. They were twins for a while, and drifted: only the factory dropped
-        the UDIM/UV-tile token first, so a tiled filename produced two different
-        base names depending on which entry point the caller reached (the
-        factory's own packed-output naming uses this one).
+        A facade over :meth:`MapFactory.get_base_texture_name`, which owns the
+        implementation: what counts as a map suffix is the texture engine's
+        taxonomy, not a general image rule. Kept here because callers reach it
+        on ``ImgUtils`` (and subclasses of it). They were twins once, and
+        drifted: only the factory dropped the UDIM/UV-tile token first, so a
+        tiled filename produced two base names depending on the entry point.
 
         Logic: ``MapRegistry.split_map_suffix`` (which composes the tile split
         with ``get_suffix_strip_pattern`` — the SSoT) decides what a suffix is:
@@ -4547,32 +2659,15 @@ class ImgUtils(HelpMixin):
         Returns:
             str: The base name without map-type suffix, with any configured user prefix/suffix removed.
         """
-        cls.assert_pathlike(filepath_or_filename, "filepath_or_filename")
+        # Deferred, and one of the two upward edges left here: the texture engine
+        # imports ImgUtils at module load, so a top-level import would be a
+        # cycle, and a generic ImgUtils consumer should not pay for the map
+        # taxonomy.
+        from pythontk.core_utils.engines.textures.map_factory import MapFactory
 
-        filename = os.path.basename(str(filepath_or_filename))
-        base_name, _ = os.path.splitext(filename)
-
-        from pythontk.core_utils.engines.textures.map_registry import MapRegistry
-
-        registry = MapRegistry()
-
-        # The registry owns the taxonomy AND the order the two tokens come off in
-        # (tile first, or the suffix is unreachable). The tail it returns is
-        # dropped rather than restored: this is the MATERIAL's name (and the
-        # texture-set key's stem), which every tile of a set shares.
-        # `MapFactory.get_tile_token` reads the token back for output naming;
-        # `group_textures_by_set` re-appends it to keep tiles separable.
-        base_name, _tail = registry.split_map_suffix(base_name)
-
-        # Strip any configured user prefix/suffix so callers can re-apply them
-        # idempotently, then collapse a trailing delimiter (preserves the
-        # original behavior for filenames like 'foo_.png' even when no affix
-        # was supplied). Every delimiter, not just `_`: the suffix rules accept
-        # all of `SEPARATORS`, so collapsing one of them and leaving the rest
-        # put 'rock-' and 'rock' in different texture sets.
-        return StrUtils.strip_known_affix(
-            base_name, prefix=prefix, suffix=suffix
-        ).rstrip(registry.SEPARATORS)
+        return MapFactory.get_base_texture_name(
+            filepath_or_filename, prefix=prefix, suffix=suffix
+        )
 
     @classmethod
     def extract_channels(
@@ -4608,84 +2703,9 @@ class ImgUtils(HelpMixin):
             Dict[str, str | Image.Image]: Dictionary mapping source channel keys to
             the resulting file path (if save=True) or PIL Image object (if save=False).
         """
-        # Load image
-        img = cls.ensure_image(image_path)
-
-        # Determine output directory and base name
-        if base_name is None:
-            if isinstance(image_path, str):
-                base_name = cls.get_base_texture_name(image_path)
-            else:
-                base_name = "texture"
-
-        if output_dir is None:
-            if isinstance(image_path, str):
-                output_dir = os.path.dirname(image_path)
-            else:
-                output_dir = os.getcwd()
-
-        if save and output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-
-        # Extract format/extension from kwargs
-        output_format = kwargs.pop("output_format", "PNG")
-        ext = kwargs.pop("ext", "png")
-        if not ext.startswith("."):
-            ext = f".{ext}"
-
-        results = {}
-
-        # Helper to get channel safely
-        def get_channel_data(source_mode, channel_name, default_val=None):
-            # Handle RGB extraction
-            if channel_name == "RGB":
-                return img.convert("RGB")
-
-            # Handle single channel extraction
-            # Check if channel exists in image
-            if channel_name in img.getbands():
-                return img.getchannel(channel_name)
-
-            # Handle fallback/default
-            if default_val is not None:
-                # Create constant image
-                return Image.new("L", img.size, default_val)
-
-            # If requesting R/G/B from L image, return the L image
-            if source_mode == "L" and channel_name in "RGB":
-                return img.copy()
-
-            return None
-
-        for src_chan, config in channel_config.items():
-            suffix = config.get("suffix", f"_{src_chan}")
-            invert = config.get("invert", False)
-            default = config.get("default", None)
-
-            extracted = get_channel_data(img.mode, src_chan, default)
-
-            if extracted is None:
-                # print(f"// Warning: Channel '{src_chan}' not found in image.")
-                continue
-
-            # Ensure L mode for single channels if they aren't already (getchannel returns L)
-            if len(src_chan) == 1 and src_chan in "RGBA" and extracted.mode != "L":
-                extracted = extracted.convert("L")
-
-            # Invert if requested
-            if invert:
-                extracted = ImageOps.invert(extracted)
-
-            if not save:
-                results[src_chan] = extracted
-                continue
-
-            # Save
-            out_path = os.path.join(output_dir, f"{base_name}{suffix}{ext}")
-            cls.save_image(extracted, out_path, format=output_format, **kwargs)
-            results[src_chan] = out_path
-
-        return results
+        return super().extract_channels(
+            image_path, channel_config, output_dir, base_name, save, **kwargs
+        )
 
 
 # --------------------------------------------------------------------------------------------
