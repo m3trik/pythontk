@@ -165,6 +165,13 @@
   .panel footer { display: flex; gap: 8px; margin-top: 8px; }
   .panel footer:empty { display: none; }
   .panel footer button.ui { padding: 4px 10px; }
+  /* A panel's sliders (`addSlider`): their own grid under the rows, so a
+     script refreshing its rows never takes a slider out from under a drag. */
+  .panel .controls { margin-top: 6px; }
+  .panel .controls:empty { display: none; }
+  .panel .slider { display: flex; gap: 8px; align-items: center; min-width: 0; }
+  .panel .slider input { flex: 1; min-width: 0; accent-color: #6fb3ff; cursor: pointer; }
+  .panel .slider output { font-variant-numeric: tabular-nums; min-width: 7ch; text-align: right; }
   /* VRButton positions itself bottom-center with inline styles; leave it be. */
 </style>
 <script type="importmap">
@@ -2081,6 +2088,14 @@ const rig = (() => {
       .applyAxisAngle(UP, place.yaw);
   }
 
+  // A tracked orientation as a scene one: the rig's yaw after it, as
+  // `directionToScene` applies it to one axis.
+  function orientationToScene(orientation) {
+    return new THREE.Quaternion()
+      .setFromAxisAngle(UP, place.yaw)
+      .multiply(new THREE.Quaternion().fromArray(orientation));
+  }
+
   // The way a rotation faces, as a turn about +Y from -Z: its view axis
   // flattened -- or, looking straight down (or up), the way the top of its view
   // points. That second case is not only a camera aimed at the floor: a Blender
@@ -2223,6 +2238,7 @@ const rig = (() => {
     },
     toScene,
     directionToScene,
+    orientationToScene,
     headingOf,
     turn,
     move,
@@ -2629,14 +2645,24 @@ const poseArrays = ({ position: p, orientation: q }) => ({
   orientation: [q.x, q.y, q.z, q.w],
 });
 
-// The head, the sticks and the right controller's aim ray, all in the
-// session's own space: the rig maps them into the scene, so they must not be
-// read through the offset space the rig itself builds. Returns what
-// `headset.step` takes -- `{head, left, right, aim}`, each pose
-// `{position, orientation}` as arrays and each stick `[x, y]`, or null -- and
-// `sources`, the controller behind each hand.
+// The head, the sticks, both controllers' grips and aim rays and whether each
+// is squeezed, all in the session's own space: the rig maps them into the
+// scene, so they must not be read through the offset space the rig itself
+// builds. Returns what `headset.step` takes -- `{head, left, right, aim,
+// grips, aims, squeeze}`: each pose `{position, orientation}` as arrays, each
+// stick `[x, y]`, `grips` / `aims` `{left, right}` poses, `squeeze` `{left,
+// right}` booleans (the grip OR the trigger -- either takes hold -- or, for a
+// tracked hand, which has no gamepad, a pinch), null where absent -- and
+// `sources`, the controller behind each hand. `aim` is the right hand's ray,
+// which locomotion aims with. A hand that reports no grip space holds from its
+// aim pose.
+const pinching = { left: false, right: false };  // set by the session's select events
+
 function readHeadsetInput(frame) {
-  const input = { head: null, left: null, right: null, aim: null, sources: {} };
+  const input = {
+    head: null, left: null, right: null, aim: null,
+    grips: {}, aims: {}, squeeze: {}, sources: {},
+  };
   const viewerPose = frame.getViewerPose(headsetSpace);
   if (viewerPose) input.head = poseArrays(viewerPose.transform);
   for (const source of frame.session.inputSources) {
@@ -2647,13 +2673,290 @@ function readHeadsetInput(frame) {
     // xr-standard puts the thumbstick on axes 2-3; a touchpad-only controller
     // reports on 0-1.
     if (axes && axes.length >= 2) input[hand] = axes.length >= 4 ? [axes[2], axes[3]] : [axes[0], axes[1]];
-    if (hand === 'right') {
-      const aim = frame.getPose(source.targetRaySpace, headsetSpace);
-      if (aim) input.aim = poseArrays(aim.transform);
-    }
+    const aim = frame.getPose(source.targetRaySpace, headsetSpace);
+    if (aim) input.aims[hand] = poseArrays(aim.transform);
+    if (aim && hand === 'right') input.aim = input.aims[hand];
+    const grip = source.gripSpace ? frame.getPose(source.gripSpace, headsetSpace) : null;
+    if (grip) input.grips[hand] = poseArrays(grip.transform);
+    else if (input.aims[hand]) input.grips[hand] = input.aims[hand];
+    // xr-standard: button 0 the trigger, 1 the grip.
+    const buttons = source.gamepad?.buttons || [];
+    input.squeeze[hand] = !!(buttons[0]?.pressed || buttons[1]?.pressed || pinching[hand]);
   }
   return input;
 }
+
+/* ------------------------------------------------------------------ grab --- */
+
+// Grabbing: the page's one hand on the model. A script registers what a hand
+// may take hold of (`viewer.grab.register(object, handler)`), and the page
+// delivers every way of holding one -- the desktop pointer, either headset
+// controller -- as the same three calls on plain values, so a script is
+// written once and a test drives it with synthetic input:
+//
+//   begin({source, point, pose})     the world point taken hold of, and the
+//                                    world pose ({position, quaternion}) of
+//                                    what took it -- the camera, a grip.
+//                                    Return false to refuse the hold.
+//   move({source, point, rotation})  where that point should now be (world),
+//                                    and the holder's turn since `begin` (a
+//                                    world THREE.Quaternion), or null: a
+//                                    mouse holds a position only.
+//   end({source})
+//
+// `source` is 'mouse', 'left' or 'right'. The page moves nothing itself --
+// what a hold does is the handler's: an articulated rig solves its joints, a
+// door would swing. Handlers run outside the render, so a script that poses
+// nodes re-applies its pose in its own 'frame' hook -- which runs after the
+// animation mixer; posed from here alone, a playing clip would overwrite it.
+//
+// On the desktop a press on a registered object takes it AHEAD of the orbit
+// controls (the page listens on the window in the capture phase and stops
+// the event), the drag moves the point in the camera-facing plane through
+// it, and the wheel pushes the plane away or pulls it closer. In a headset
+// the grip (or the trigger) takes whatever the hand is inside of or within
+// GRAB_NEAR of -- held where the hand is -- else whatever the controller's
+// ray points at within GRAB_FAR; the held point then rides the controller.
+const GRAB_NEAR = 0.1;        // m
+const GRAB_FAR = 20;          // m
+const GRAB_WHEEL = 0.1;       // of the point's distance, per wheel notch
+
+const grab = (() => {
+  const entries = new Map();          // Object3D -> handler
+  const holds = new Map();            // source -> hold
+  const pressed = { left: false, right: false };
+  const raycaster = new THREE.Raycaster();
+  const box = new THREE.Box3();
+  const scratch = new THREE.Vector3();
+  const pointer = new THREE.Vector2();
+  let lastPointer = null;
+  let hoverQueued = false;
+
+  // A handler is script code: contained like a script's hook, so a throw
+  // never breaks the page's input.
+  function call(handler, name, detail) {
+    try {
+      return handler[name]?.(detail);
+    } catch (error) {
+      console.warn(`grab handler threw on '${name}':`, error);
+      return false;
+    }
+  }
+
+  function register(object, handler) {
+    entries.set(object, handler);
+    return () => {
+      entries.delete(object);
+      for (const [source, hold] of holds) if (hold.object === object) holds.delete(source);
+    };
+  }
+
+  // The registered object a hit belongs to: itself or its nearest registered
+  // ancestor, so a script registers a part and a hit on any mesh under it
+  // counts.
+  function ownerOf(object) {
+    for (let o = object; o; o = o.parent) if (entries.has(o)) return o;
+    return null;
+  }
+
+  const live = () => [...entries.keys()].filter((object) => object.parent);
+
+  /** The nearest registered object on a ray: `{object, point, distance}`, or null. */
+  function pick(origin, direction, far = Infinity) {
+    const roots = live();
+    if (!roots.length) return null;
+    raycaster.set(origin, direction.clone().normalize());
+    raycaster.far = far;
+    for (const hit of raycaster.intersectObjects(roots, true)) {
+      const object = ownerOf(hit.object);
+      if (object) return { object, point: hit.point.clone(), distance: hit.distance };
+    }
+    return null;
+  }
+
+  // The registered object a hand at `position` is inside or within GRAB_NEAR
+  // of -- boxes, not triangles: a hand closing on a thin rod must not miss.
+  function near(position) {
+    let best = null;
+    for (const object of live()) {
+      box.setFromObject(object);
+      const distance = box.clampPoint(position, scratch).distanceTo(position);
+      if (distance <= GRAB_NEAR && (!best || distance < best.distance)) {
+        best = { object, point: position.clone(), distance };
+      }
+    }
+    return best;
+  }
+
+  // Begin a hold on `found` for `source`, remembering the point in the
+  // holder's frame so it can ride the holder.
+  function take(source, found, pose) {
+    if (!found || holds.has(source)) return false;
+    const handler = entries.get(found.object);
+    if (call(handler, 'begin', { source, point: found.point.clone(), pose }) === false) return false;
+    holds.set(source, {
+      object: found.object,
+      handler,
+      offset: found.point.clone().sub(pose.position).applyQuaternion(pose.quaternion.clone().invert()),
+      start: pose.quaternion.clone(),
+      plane: null,
+    });
+    return true;
+  }
+
+  /** Move `source`'s hold to the world `point`, with the holder's turn (or null). */
+  function drag(source, point, rotation = null) {
+    const hold = holds.get(source);
+    if (hold) call(hold.handler, 'move', { source, point: point.clone(), rotation });
+  }
+
+  // The held point riding a holder now at `pose`.
+  function follow(source, pose) {
+    const hold = holds.get(source);
+    if (!hold) return;
+    const point = hold.offset.clone().applyQuaternion(pose.quaternion).add(pose.position);
+    drag(source, point, pose.quaternion.clone().multiply(hold.start.clone().invert()));
+  }
+
+  function release(source) {
+    const hold = holds.get(source);
+    if (!hold) return;
+    holds.delete(source);
+    call(hold.handler, 'end', { source });
+    if (source === 'mouse') renderer.domElement.style.cursor = '';
+  }
+
+  /**
+   * Take hold along a ray: what `origin` + `direction` (world) hits first,
+   * held by a holder at `pose` (default: at `origin`, unturned). Returns
+   * whether a hold began.
+   */
+  function press(source, origin, direction, pose = null) {
+    const found = pick(origin, direction);
+    return take(source, found, pose || { position: origin.clone(), quaternion: new THREE.Quaternion() });
+  }
+
+  // ---- the desktop pointer
+  function cameraRay(event) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.set(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    raycaster.setFromCamera(pointer, camera);
+    return raycaster.ray.clone();
+  }
+
+  function pointerDrag() {
+    const hold = holds.get('mouse');
+    if (!hold || !lastPointer) return;
+    const point = cameraRay(lastPointer).intersectPlane(hold.plane, new THREE.Vector3());
+    if (point) drag('mouse', point, null);
+  }
+
+  function hover() {
+    hoverQueued = false;
+    if (!lastPointer || holds.has('mouse')) return;
+    const ray = cameraRay(lastPointer);
+    renderer.domElement.style.cursor = pick(ray.origin, ray.direction) ? 'grab' : '';
+  }
+
+  window.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || event.target !== renderer.domElement || renderer.xr.isPresenting) return;
+    if (!entries.size) return;
+    const ray = cameraRay(event);
+    const found = pick(ray.origin, ray.direction);
+    const pose = {
+      position: camera.getWorldPosition(new THREE.Vector3()),
+      quaternion: camera.getWorldQuaternion(new THREE.Quaternion()),
+    };
+    if (!take('mouse', found, pose)) return;
+    holds.get('mouse').plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+      camera.getWorldDirection(new THREE.Vector3()), found.point,
+    );
+    lastPointer = { clientX: event.clientX, clientY: event.clientY };
+    renderer.domElement.style.cursor = 'grabbing';
+    event.stopPropagation();
+    event.preventDefault();
+  }, true);
+
+  window.addEventListener('pointermove', (event) => {
+    lastPointer = { clientX: event.clientX, clientY: event.clientY };
+    if (holds.has('mouse')) {
+      event.stopPropagation();
+      pointerDrag();
+    } else if (entries.size && !hoverQueued) {
+      hoverQueued = true;
+      requestAnimationFrame(hover);
+    }
+  }, true);
+
+  window.addEventListener('pointerup', (event) => {
+    if (!holds.has('mouse')) return;
+    event.stopPropagation();
+    release('mouse');
+  }, true);
+
+  window.addEventListener('wheel', (event) => {
+    const hold = holds.get('mouse');
+    if (!hold) return;
+    event.stopPropagation();
+    event.preventDefault();
+    // Push (wheel down) or pull the plane along the view, by a share of the
+    // point's own distance so a notch is as big near the model as far off.
+    const eye = camera.getWorldPosition(new THREE.Vector3());
+    const distance = Math.max(Math.abs(hold.plane.distanceToPoint(eye)), 0.01);
+    hold.plane.constant -= Math.sign(event.deltaY) * GRAB_WHEEL * distance;
+    pointerDrag();
+  }, { capture: true, passive: false });
+
+  // ---- the headset
+  /** One headset frame of it: `input` as `readHeadsetInput` returns it. */
+  function step(input = {}) {
+    for (const hand of ['left', 'right']) {
+      const squeezing = !!input.squeeze?.[hand];
+      const was = pressed[hand];
+      pressed[hand] = squeezing;
+      const grip = input.grips?.[hand];
+      const pose = grip
+        ? { position: rig.toScene(grip.position), quaternion: rig.orientationToScene(grip.orientation) }
+        : null;
+      if (squeezing && !was && pose && entries.size) {
+        let found = near(pose.position);
+        const aim = input.aims?.[hand];
+        if (!found && aim) {
+          found = pick(rig.toScene(aim.position), rig.directionToScene(aim.orientation), GRAB_FAR);
+        }
+        take(hand, found, pose);
+      } else if (!squeezing && was) {
+        release(hand);
+      } else if (squeezing && pose) {
+        follow(hand, pose);
+      }
+    }
+  }
+
+  // A session's end lets go of whatever the hands held.
+  function end() {
+    release('left');
+    release('right');
+    pressed.left = pressed.right = false;
+  }
+
+  return {
+    register,
+    pick,
+    press,
+    drag,
+    release,
+    step,
+    end,
+    /** The sources holding something now: 'mouse', 'left', 'right'. */
+    get holding() { return [...holds.keys()]; },
+    /** How many objects are registered. */
+    get count() { return entries.size; },
+  };
+})();
 
 /* ----------------------------------------------------------------- start --- */
 
@@ -3169,10 +3472,11 @@ const headset = {
     arrivedAt = null;
   },
   /**
-   * One frame. `input` is `{head, left, right, aim}` in the tracked space, each
-   * stick `[x, y]` with y negative pushed forward, as XR gamepads report it.
-   * Returns the frame's events: 'arrive' as a session is placed at its start,
-   * 'aim', 'turn', and 'land' as a jump arrives.
+   * One frame. `input` is `{head, left, right, aim, grips, aims, squeeze}` in
+   * the tracked space (see `readHeadsetInput`), each stick `[x, y]` with y
+   * negative pushed forward, as XR gamepads report it. Returns the frame's
+   * events: 'arrive' as a session is placed at its start, 'aim', 'turn', and
+   * 'land' as a jump arrives.
    */
   step(delta, input = {}, time = 0) {
     const events = rig.step(delta, input.head);
@@ -3182,6 +3486,8 @@ const headset = {
     if (!locomotion.enabled && !atStart()) returnToStart();
     events.push(...stepStart(input));
     events.push(...locomotion.step(delta, input, events, time));
+    // After locomotion: a held point rides the hand where the rig now stands.
+    grab.step(input);
     overlay.material.uniforms.fade.value = rig.fade;
     overlay.visible = rig.fade > 0 || overlay.material.uniforms.vignette.value > 0;
     return events;
@@ -3190,6 +3496,7 @@ const headset = {
   end() {
     rig.reset();
     locomotion.reset();
+    grab.end();
     arrived = true;
     arrivedAt = null;
   },
@@ -3222,12 +3529,22 @@ renderer.xr.addEventListener('sessionstart', () => {
   holdHeadsetNear();
   headsetSpace = renderer.xr.getReferenceSpace();
   headsetSpace.addEventListener('reset', headset.recenter);
+  // A tracked hand's pinch is a 'select'; a controller's trigger is too, and
+  // is read off its gamepad as well -- either way the hand holds.
+  const session = renderer.xr.getSession();
+  const pinch = (on) => (event) => {
+    const hand = event.inputSource?.handedness;
+    if (hand === 'left' || hand === 'right') pinching[hand] = on;
+  };
+  session.addEventListener('selectstart', pinch(true));
+  session.addEventListener('selectend', pinch(false));
   headset.begin();
   headsetLayer.visible = true;
   surfaces.warm();
 });
 renderer.xr.addEventListener('sessionend', () => {
   headsetSpace = null;
+  pinching.left = pinching.right = false;
   headset.end();
   headsetLayer.visible = false;
   if (desktopView) applyView(desktopView);
@@ -3261,8 +3578,10 @@ function addPanel(title) {
   header.textContent = title;
   const rows = document.createElement('div');
   rows.className = 'rows';
+  const controls = document.createElement('div');
+  controls.className = 'rows controls';
   const footer = document.createElement('footer');
-  panel.append(header, rows, footer);
+  panel.append(header, rows, controls, footer);
   el.panels.append(panel);
   const cell = (className, text) => {
     const node = document.createElement('div');
@@ -3293,6 +3612,71 @@ function addPanel(title) {
       footer.append(button);
       return button;
     },
+    /**
+     * A labelled slider under the rows: `{min, max, step, value, format}`
+     * (`format(value)` -> the text beside it), `onInput(value)` on every
+     * move. Returns `{element, value, setRange(min, max)}`; setting `value`
+     * moves the slider without calling `onInput`, so a script can mirror a
+     * value it is also driving.
+     */
+    addSlider(label, { min = 0, max = 1, step = 0.01, value = 0, format = (v) => v.toFixed(2) } = {}, onInput) {
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = String(min);
+      input.max = String(max);
+      input.step = String(step);
+      input.value = String(value);
+      const output = document.createElement('output');
+      output.textContent = format(Number(input.value));
+      const wrap = document.createElement('div');
+      wrap.className = 'slider';
+      wrap.append(input, output);
+      controls.append(cell('key', label), wrap);
+      input.addEventListener('input', () => {
+        output.textContent = format(Number(input.value));
+        onInput?.(Number(input.value));
+      });
+      return {
+        element: wrap,
+        get value() { return Number(input.value); },
+        set value(v) {
+          input.value = String(v);
+          output.textContent = format(Number(input.value));
+        },
+        setRange(lo, hi) {
+          input.min = String(lo);
+          input.max = String(hi);
+        },
+      };
+    },
+  };
+}
+
+// glTF node index -> Object3D, through the loader's association table rather
+// than by name (the production assembly ships duplicate names). A name-verified
+// entry wins over an unverified one, and an index the table lacks (a mesh
+// shared by several nodes shares one association record) falls back to the
+// unique object carrying that glTF name in its userData. Null when neither
+// says. Every manifest a script binds by node index resolves through this.
+function nodeResolver(gltf, model) {
+  const parser = gltf.parser;
+  const defs = parser.json.nodes || [];
+  const table = new Map();
+  for (const [object, assoc] of parser.associations) {
+    if (!object?.isObject3D || assoc?.nodes === undefined) continue;
+    const index = assoc.nodes;
+    const def = defs[index];
+    const named = !def?.name || object.name === THREE.PropertyBinding.sanitizeNodeName(def.name);
+    if (named || !table.has(index)) table.set(index, object);
+  }
+  return (index) => {
+    if (!Number.isInteger(index)) return null;
+    if (table.has(index)) return table.get(index);
+    const name = defs[index]?.name;
+    if (!name) return null;
+    const matches = [];
+    model.traverse((object) => { if (object.userData?.name === name) matches.push(object); });
+    return matches.length === 1 ? matches[0] : null;
   };
 }
 
@@ -3325,6 +3709,23 @@ const viewer = {
    * the walking `vignette`.
    */
   locomotion,
+  /**
+   * Grabbing (see the grab section): `register(object, {begin, move, end})`
+   * makes an object and everything under it something a hand takes hold of,
+   * and returns the unregister; `press(source, origin, direction, pose)`,
+   * `drag(source, point, rotation)` and `release(source)` drive a hold on
+   * plain values, as the pointer and the headset do; `pick(origin,
+   * direction, far)` asks what a ray would take; `holding` lists the sources
+   * holding something.
+   */
+  grab,
+  /**
+   * `nodeResolver(gltf, model)` -> `(index) => Object3D | null`: a glTF node
+   * index (what a manifest in the file's extras binds by) to the object the
+   * loader made of it -- by the loader's own association, never by a name a
+   * production assembly repeats.
+   */
+  nodeResolver,
   /** The model currently on screen, or null between loads. */
   get model() { return current; },
   /** `{size, center}` of the current model, in metres (glTF's unit). */

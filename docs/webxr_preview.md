@@ -513,7 +513,9 @@ A module's default export receives the viewer API: `THREE`, `scene`, `renderer`,
 page tells you*), `guest` (true on a view-only share, where every
 write is refused -- see *Sharing a link*), `setStatus`, `addButton(label, onClick)`,
 `addPanel(title)` (a panel of label/value rows in the page's chrome, stacked top-right --
-`setRows`, `show`, and an `addButton` of its own; hidden until shown, written as text),
+`setRows`, `show`, an `addButton` of its own, and `addSlider(label, {min, max, step, value,
+format}, onInput)` for a labelled slider under the rows, whose `value` a script can set without
+firing `onInput`; hidden until shown, written as text),
 `addHeadsetCard({name, width, height, metres, radius, over})` (a card of text in the headset,
 where the page's chrome is not drawn -- a canvas in its colours on a plane in the headset's layer,
 hidden until shown, `over` the model when asked; `draw(paint)` repaints it and hands
@@ -522,6 +524,9 @@ delta)` stands it in front of a head and eases it after one, and `mesh` shows, h
 it -- the page's controls card and `inspect`'s ride it),
 `formatBytes(bytes)` (a size as the status line quotes one) and `materialsOf(node)` (a node's
 materials as a list, whether it carries one, an array or none),
+`nodeResolver(gltf, model)` (a glTF node index -- what a manifest in the file's extras binds by --
+to the object the loader made of it, through the loader's own association table, never by a name a
+production assembly repeats), `grab` (see *Grabbing* below),
 `showDialog({title, fields, confirm})`, and `on(event, fn)` for `'load'` / `'frame'` /
 `'rendered'` / `'key'` -- `'rendered'` fires after each frame is drawn, with the page's CPU time
 for it (`cpuMs`) and the part spent inside `renderer.render` (`renderMs`).
@@ -550,7 +555,7 @@ logged and contained —
 an optional module must never make a good preview *look* broken, because the one place this is read
 is a headset where the console is not visible.
 
-Five ship in the box: **`turntable`** (hands-free rotation on the desktop, on the pivot so it
+Six ship in the box: **`turntable`** (hands-free rotation on the desktop, on the pivot so it
 survives a push; it holds still in a headset),
 **`inspect`** (the profiler: frame time against the display's budget, CPU and GPU time, draw calls,
 estimated GPU memory, the file's composition and the load's phases -- the numbers a GLB's size does
@@ -559,20 +564,60 @@ rigs: reads the `extras.shadow_web` manifest `MeshConvert.apply_glb_shadows` wri
 conversion, gives every plane one `ShaderMaterial` — projected silhouettes and horizon maps in one
 program — batches the projected planes that share an atlas and carry no fade into an
 `InstancedMesh`, and re-places each plane from its source and contact nodes every frame with a port
-of `ShadowProjection.model`; the contract is `mayatk/docs/shadow_rig_morphing.md`), and
+of `ShadowProjection.model`; the contract is `mayatk/docs/shadow_rig_morphing.md`),
+**`articulated_rig`** (the runtime half of the DCC articulated rigs: reads the `extras.articulation_web`
+manifest `MeshConvert.apply_glb_articulation` writes, builds each rig's `ArticulationModel` -- a
+port of pythontk's, pinned by `ArticulationConformance` -- registers every grabbed part with
+`viewer.grab`, and shows the rig panel; see *Grabbing* below and `mayatk/docs/articulated_rig.md`),
+and
 **`snapshot`** (an **Export Image** button: the current view saved as a PNG — see *Exporting a
 still* below). `turntable`, `inspect` and `snapshot` are checkboxes on the WebXR Preview option box,
 which passes an explicit list every push: the panel
 is authoritative, so a script registered on the server by other code is cleared by the next push
 from there. **`playblast`** records the clip the transport is on to a movie file (see *Recording a clip*
-below). `shadow_rig` and `playblast` are **on by themselves**: `PreviewServer.AUTO_SCRIPTS` maps it to the extras key
-each reads, and `publish()` activates it — appended to whatever the push named — for any GLB whose
-root extras carry that key (`shadow_web` and `animation_web` respectively; the JSON chunk is probed,
-never the geometry). Opt out by removing the registry entry or with `remove_script(name)` after the
+below). `shadow_rig`, `articulated_rig` and `playblast` are **on by themselves**:
+`PreviewServer.AUTO_SCRIPTS` maps each to the extras key it reads, and `publish()` activates it —
+appended to whatever the push named — for any GLB whose root extras carry that key (`shadow_web`,
+`articulation_web` and `animation_web` respectively; the JSON chunk is probed, never the geometry).
+Opt out by removing the registry entry or with `remove_script(name)` after the
 push. One caveat of the page's
 loading order: scripts and the asset load concurrently and the first `load` is not held for the
 imports, so a deliverable small enough to parse before a 40 KB module arrives shows still planes
 until the next push (the script says so in the console); a production GLB is never that small.
+
+### Grabbing — testing an interactive rig
+
+The page has one hand on the model, and any script can hand it something to hold:
+`viewer.grab.register(object, {begin, move, end})` makes an object -- and every mesh under it -- a
+thing a hand takes hold of, and returns the unregister. The page delivers every way of holding one
+as the same three calls on plain values, so a script is written once:
+
+| Call | Carries |
+|:---|:---|
+| `begin({source, point, pose})` | the world point taken hold of, and the world pose (`{position, quaternion}`) of what took it; return `false` to refuse |
+| `move({source, point, rotation})` | where that point should now be, and the holder's turn since `begin` (a world quaternion), or `null` from a mouse |
+| `end({source})` | the hold is over |
+
+`source` is `'mouse'`, `'left'` or `'right'`. **On the desktop** a press on a registered object is
+taken AHEAD of the orbit controls (the page listens on the window in the capture phase and stops the
+event, so the camera never moves), the drag carries the point across the camera-facing plane through
+it, and the wheel pushes the plane away or pulls it closer; the cursor turns to a hand over anything
+grabbable. **In a headset** a controller's grip or trigger -- or a tracked hand's pinch -- takes
+whatever the hand is inside of or within 10 cm of (held where the hand is), else whatever its ray
+points at within 20 m; the held point then rides the controller. The page moves nothing itself: what
+a hold does is the handler's, and since a playing clip poses the model before the scripts' `'frame'`
+hooks run, a script that poses nodes re-applies its pose there.
+
+Tests drive the same path on synthetic input: `grab.press(source, origin, direction, pose)`,
+`grab.drag(source, point, rotation)`, `grab.release(source)` and `grab.step(input)` (the headset's
+`{grips, aims, squeeze}` as `readHeadsetInput` returns it) -- `pick(origin, direction, far)` asks what
+a ray would take, and `holding` lists who holds what. `test_articulated_rig_web.py` pins the mouse
+drag (the rig moves, the camera does not), a grip carrying a part, and a grab against the Python
+solve.
+
+The `articulated_rig` panel is the rig's test bench: a slider per channel (bounded by its limits),
+the joints' values, **Reset** to rest, **Return to animation**, and **Joint axes**. A grabbed or
+slid rig holds its pose while the clip plays on, until **Return to animation** or the next Play.
 
 ## Does WebXR use OpenGL?
 

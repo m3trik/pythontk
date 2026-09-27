@@ -114,6 +114,47 @@ class TestPaths:
         return str(cls.IMGTK_TEST_DIR / filename)
 
 
+def find_mayapy():
+    """A mayapy.exe on this machine, else None (Windows default install layout).
+
+    Gates the tests that must run a REAL mayapy: it decodes its command line in
+    the ANSI code page, which no stand-in interpreter reproduces.
+    """
+    if sys.platform != "win32":
+        return None
+    root = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Autodesk"
+    found = sorted(root.glob("Maya20*/bin/mayapy.exe")) if root.is_dir() else []
+    return str(found[-1]) if found else None
+
+
+_BROWSER_RUNTIME = []
+
+
+def browser_runtime_available():
+    """Playwright installed AND an Edge channel it can drive; probed once.
+
+    Gates the live-page tests (the preview viewer, the shadow and articulated
+    rig scripts). The probe launches a real browser, so it is memoized: each
+    module once carried its own copy and paid one launch per gate at import.
+    """
+    if not _BROWSER_RUNTIME:
+        _BROWSER_RUNTIME.append(_probe_browser_runtime())
+    return _BROWSER_RUNTIME[0]
+
+
+def _probe_browser_runtime():
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return False
+    try:
+        with sync_playwright() as p:
+            p.chromium.launch(channel="msedge", headless=True).close()
+        return True
+    except Exception:  # noqa: BLE001 -- no browser is a skip, not a failure
+        return False
+
+
 class X11Window:
     """A real top-level X11 window owned by a child process -- the fixture for
     window lookups by PID, with no GUI toolkit needed.

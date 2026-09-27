@@ -34,6 +34,13 @@ class _ShadowRigsMixin:
     SHADOW_METADATA_VERSION = SceneRecords.SHADOWS.version
     #: Root-extras key the viewer's packaged ``shadow_rig`` script reads.
     SHADOW_WEB_KEY = "shadow_web"
+    #: Where ``shadow_web`` binds by glTF NODE INDEX -- the paths a pass that
+    #: renumbers nodes (``strip_glb_curve_proxies``) must follow.
+    SHADOW_WEB_NODE_FIELDS = (
+        ("planes", "node"),
+        ("planes", "source_node"),
+        ("planes", "contact_node"),
+    )
     #: Sampler a horizon DATA map is bound with: no mipmaps (9729 = LINEAR
     #: for both filters -- a mip would average span heights, distances and
     #: pyramid bounds across texels; the shader reads texels whole, so the
@@ -65,9 +72,7 @@ class _ShadowRigsMixin:
     }
 
     @staticmethod
-    def _shadow_nodes_named(
-        gltf: dict, name: Any, mesh_only: bool = False
-    ) -> List[int]:
+    def _nodes_named(gltf: dict, name: Any, mesh_only: bool = False) -> List[int]:
         """Indices of the nodes *name* denotes: exact matches, else every node
         whose namespace-stripped leaf matches (``NS:name`` binds ``name``).
 
@@ -102,7 +107,7 @@ class _ShadowRigsMixin:
         (warned: a plane must never follow a guess)."""
         if not isinstance(name, str) or not name:
             return None
-        found = cls._shadow_nodes_named(gltf, name)
+        found = cls._nodes_named(gltf, name)
         if len(found) == 1:
             return found[0]
         if found:
@@ -409,7 +414,7 @@ class _ShadowRigsMixin:
                     )
                     skipped += 1
                     continue
-                node_indices = cls._shadow_nodes_named(gltf, name, mesh_only=True)
+                node_indices = cls._nodes_named(gltf, name, mesh_only=True)
                 if not node_indices:
                     out_of_scope.append(name)
                     logger.debug(

@@ -73,11 +73,31 @@ class TestClaims(unittest.TestCase):
 
 
 class TestRemoveSuperseded(_FilesCase):
-    """What a re-bake may delete: the files its owners read before, once
-    nothing reads them. Every keep rule is a reader the delete would strand."""
+    """What a re-bake may set aside: the files its owners read before, once
+    nothing reads them. Every keep rule is a reader the move would strand.
 
-    def test_a_file_nothing_reads_is_deleted_and_a_read_one_kept(self):
-        old = self._file("old", "Crate_Lightmap.exr")
+    Pinned to a volume with no trash, so each file goes beside itself into
+    ``_superseded`` in the scratch folder, not into this machine's Recycle
+    Bin (:class:`TestSetAside` covers the trash branch).
+    """
+
+    def setUp(self):
+        super().setUp()
+        patcher = unittest.mock.patch.object(
+            ptk.FileUtils, "move_to_trash", return_value=None
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _aside(self, path):
+        return os.path.join(
+            os.path.dirname(path),
+            FileDependencies.SUPERSEDED_DIR,
+            os.path.basename(path),
+        )
+
+    def test_a_file_nothing_reads_is_set_aside_and_a_read_one_kept(self):
+        old = self._file("old", "Crate_Lightmap.exr", data=b"old bake")
         shared = self._file("old", "Floor_Lightmap.exr")
         new = self._file("new", "Crate_Lightmap.exr")
         after = [
@@ -91,6 +111,8 @@ class TestRemoveSuperseded(_FilesCase):
         self.assertFalse(os.path.exists(old))
         self.assertTrue(os.path.exists(shared))
         self.assertTrue(os.path.exists(new))
+        with open(self._aside(old), "rb") as fh:
+            self.assertEqual(fh.read(), b"old bake", "set aside, never deleted")
 
     def test_a_name_found_nowhere_keeps_every_file_of_that_name(self):
         """A reader whose file resolved nowhere may still find this one by a
@@ -100,23 +122,24 @@ class TestRemoveSuperseded(_FilesCase):
         self.assertEqual(FileDependencies.remove_superseded([old], after), [])
         self.assertTrue(os.path.exists(old))
 
-    def test_each_file_is_deleted_once_however_it_is_spelled(self):
+    def test_each_file_is_set_aside_once_however_it_is_spelled(self):
         old = self._file("old", "Crate_Lightmap.exr")
         spelled = os.path.join(self.tmp, "old", ".", "Crate_Lightmap.exr")
         removed = FileDependencies.remove_superseded([old, spelled], [])
         self.assertEqual(removed, [old])
 
-    def test_a_file_already_gone_or_held_open_is_not_reported_deleted(self):
+    def test_a_file_already_gone_or_held_open_is_not_reported_set_aside(self):
         gone = os.path.join(self.tmp, "old", "Gone_Lightmap.exr")
         held = self._file("old", "Held_Lightmap.exr")
-        real_remove = os.remove
 
-        def remove(path):
+        def trash(path):
             if os.path.basename(path) == "Held_Lightmap.exr":
                 raise PermissionError(13, "held open", path)
-            real_remove(path)
+            raise FileNotFoundError(2, "No such file", path)
 
-        with unittest.mock.patch("os.remove", side_effect=remove):
+        with unittest.mock.patch.object(
+            ptk.FileUtils, "move_to_trash", side_effect=trash
+        ):
             with self.assertLogs(FileDependencies.logger, level="WARNING") as caught:
                 removed = FileDependencies.remove_superseded([gone, held], [])
 
@@ -179,6 +202,126 @@ class TestRemoveSuperseded(_FilesCase):
         self.assertEqual(removed, [])
         self.assertTrue(os.path.isdir(folder))
         warn.assert_not_called()
+
+
+class TestSetAside(_FilesCase):
+    """Where a superseded file goes: the platform trash, else a ``_superseded``
+    folder beside it -- never a permanent delete (BACKLOG 2026-09-23, decided
+    2026-09-27: a scene cannot see another file's reads, so what it retires
+    must stay one restore away). The trash itself is pinned here; its backends
+    are ``FileUtils.move_to_trash``'s tests."""
+
+    def test_the_trash_takes_it_when_the_volume_has_one(self):
+        path = self._file("maps", "Crate_Lightmap.exr")
+        bin_dir = self._dir("bin")
+
+        def trash(src):
+            dst = os.path.join(bin_dir, os.path.basename(src))
+            os.replace(src, dst)
+            return dst
+
+        with unittest.mock.patch.object(
+            ptk.FileUtils, "move_to_trash", side_effect=trash
+        ):
+            where = FileDependencies.set_aside(path)
+        self.assertTrue(self._same(where, os.path.join(bin_dir, "Crate_Lightmap.exr")))
+        self.assertFalse(
+            os.path.exists(
+                os.path.join(self.tmp, "maps", FileDependencies.SUPERSEDED_DIR)
+            )
+        )
+
+    def test_with_no_trash_it_goes_beside_itself_under_a_free_name(self):
+        first = self._file("maps", "Crate_Lightmap.exr", data=b"first")
+        with unittest.mock.patch.object(
+            ptk.FileUtils, "move_to_trash", return_value=None
+        ):
+            where = FileDependencies.set_aside(first)
+            second = self._file("maps", "Crate_Lightmap.exr", data=b"second")
+            again = FileDependencies.set_aside(second)
+        aside = os.path.join(self.tmp, "maps", FileDependencies.SUPERSEDED_DIR)
+        self.assertTrue(self._same(where, os.path.join(aside, "Crate_Lightmap.exr")))
+        self.assertTrue(self._same(again, os.path.join(aside, "Crate_Lightmap_1.exr")))
+        self.assertFalse(os.path.exists(first))
+        for path, data in ((where, b"first"), (again, b"second")):
+            with open(path, "rb") as fh:
+                self.assertEqual(fh.read(), data)
+
+    def test_a_file_that_cannot_move_stays_where_it_was(self):
+        path = self._file("maps", "Held_Lightmap.exr")
+        with unittest.mock.patch.object(
+            ptk.FileUtils,
+            "move_to_trash",
+            side_effect=PermissionError(13, "held open", path),
+        ):
+            with self.assertRaises(PermissionError):
+                FileDependencies.set_aside(path)
+        self.assertTrue(os.path.isfile(path))
+
+    def test_a_walk_never_finds_a_file_set_aside(self):
+        """It keeps its name: found by a walk, the stale map it replaced would
+        be bound again -- the leftover the move exists to retire."""
+        path = self._file("tex", "maps", "Crate_Lightmap.exr")
+        with unittest.mock.patch.object(
+            ptk.FileUtils, "move_to_trash", return_value=None
+        ):
+            FileDependencies.set_aside(path)
+        root = os.path.join(self.tmp, "tex")
+        self.assertEqual(FileDependencies.find_files(["Crate_Lightmap.exr"], root), [])
+        dep = FileDependencies.resolve(
+            [("|crate", "Crate_Lightmap.exr", "")], walk_root=root
+        )[0]
+        self.assertIsNone(dep["path"])
+        plan = FileDependencies.relocate(
+            [dep], self._dir("gathered"), source_dir=root, dry_run=True
+        )
+        self.assertEqual(len(plan["missing"]), 1, plan)
+
+
+class TestWalk(_FilesCase):
+    """One pruning for every search that finds files by name (2026-09-27):
+    sync-client caches, the OS's trash and volume folders, version control,
+    dependency and bytecode caches, and ``_superseded``. Each holds stale
+    same-named copies a walk would bind as current. mayatk's texture walk
+    pruned them (with ``$RECYCLE.BIN`` spelled as FAT spells it, so NTFS's
+    ``$Recycle.Bin`` got through); blendertk's pruned nothing."""
+
+    STALE = (
+        ".dropbox.cache",
+        ".Dropbox",
+        "$Recycle.Bin",
+        "System Volume Information",
+        ".git",
+        ".svn",
+        ".hg",
+        "node_modules",
+        "__pycache__",
+        "_Superseded",
+        ".Trash-1000",
+        ".Trashes",
+    )
+
+    def test_a_walk_never_enters_a_folder_of_stale_copies(self):
+        wanted = self._file("tex", "maps", "Crate.exr")
+        for folder in self.STALE:
+            self._file("tex", folder, "Crate.exr")
+            self._file("tex", "maps", folder, "deeper", "Crate.exr")
+        root = os.path.join(self.tmp, "tex")
+        found = FileDependencies.find_files(["crate.EXR"], root)
+        self.assertEqual(
+            [os.path.normcase(p) for p in found], [os.path.normcase(wanted)]
+        )
+        walked = {
+            os.path.basename(folder) for folder, _d, _f in FileDependencies.walk(root)
+        }
+        self.assertEqual(walked, {"tex", "maps"})
+
+    def test_the_skip_names_compare_without_case(self):
+        for folder in self.STALE:
+            self.assertTrue(FileDependencies._skips_dir(folder), folder)
+            self.assertTrue(FileDependencies._skips_dir(folder.upper()), folder)
+        for folder in ("maps", "trash", "git", "superseded", "Dropbox"):
+            self.assertFalse(FileDependencies._skips_dir(folder), folder)
 
 
 class TestWrittenHere(_FilesCase):

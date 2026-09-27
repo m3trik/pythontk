@@ -11,6 +11,7 @@ this one as a private mixin, and the facade is composed from them:
   ``data_export`` channels, the rendering policy, ``verify_glb``
 - ``_lightmaps``   -- a host DCC's committed bake, bound for the web viewer
 - ``_shadow_rigs`` -- shadow-plane maps and the ``shadow_web`` manifest
+- ``_articulation`` -- articulated rigs, the ``articulation_web`` manifest
 - ``_animation``   -- shot clips, the ``animation_web`` manifest, key compaction
 - ``_visibility``  -- keyed visibility, authored fades/highlights, previews
 - ``_materials``   -- material checks and the per-channel writers
@@ -26,6 +27,7 @@ buffer helpers the passes call it through.
 
 from pythontk.core_utils.help_mixin import HelpMixin
 from pythontk.file_utils.mesh_convert._animation import _AnimationMixin
+from pythontk.file_utils.mesh_convert._articulation import _ArticulationMixin
 from pythontk.file_utils.mesh_convert._fbx2gltf import (  # noqa: F401
     FBX2GLTF_PLATFORMS,  # published extapps <= 0.2.2 imports these from HERE;
     FBX2GLTF_VERSION,  # drop once its pythontk floor passes this release
@@ -46,6 +48,7 @@ class MeshConvert(
     _SidecarMixin,
     _LightmapsMixin,
     _ShadowRigsMixin,
+    _ArticulationMixin,
     _AnimationMixin,
     _VisibilityMixin,
     _MaterialsMixin,

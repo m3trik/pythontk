@@ -12,6 +12,7 @@ Run with:
 """
 
 import glob
+import json
 import os
 import shutil
 import subprocess
@@ -19,7 +20,9 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
+from conftest import find_mayapy
 from pythontk.core_utils.app_launcher import AppLauncher
 from pythontk.core_utils.cancel_scope import CancelScope, OperationCancelled
 from pythontk.core_utils.handoff.script_run import (
@@ -88,7 +91,7 @@ class TestSuccess(ScriptRunBase):
         self.assertTrue(os.path.isfile(result.artifact))
 
     def test_launch_args_shape_the_argv(self):
-        # Interpreter-style default is [script]; a custom mapper must win.
+        # The default runs a Python interpreter off its env; a custom mapper must win.
         script = f"open({self.artifact!r}, 'wb').write(b'x')\n"
         seen = {}
 
@@ -308,6 +311,124 @@ class TestStreaming(ScriptRunBase):
         self.run_script(script, on_output=relay.reader(0, "Child"))
         self.assertIn((50, "Child: half"), reports)
         self.assertIn((100, "Child: done"), reports)
+
+
+class TestNonAsciiScriptDir(unittest.TestCase):
+    """The temp script lives under %TEMP%, which holds the user's name.
+
+    mayapy.exe decodes its command line in the ANSI code page: measured on Maya
+    2025, "José" arrived as "Jos\\udce9" and "Жук" as "???", so ``mayapy <script>``
+    for a user so named failed with "can't open file" and the run produced nothing.
+    The script's path must reach the interpreter some other way.
+    """
+
+    WORD = "José Жук"
+    PROBE = (
+        "import json, os, sys\n"
+        "with open(OUT, 'w', encoding='utf-8') as fh:\n"
+        "    json.dump({'argv': sys.argv, 'file': __file__, 'name': __name__,\n"
+        "               'path0': sys.path[0],\n"
+        "               'var': os.environ.get('PYTHONTK_ARGV')}, fh)\n"
+    )
+
+    def setUp(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        self.dir = os.path.join(here, "temp_tests", f"sr {self.WORD} {os.getpid()}")
+        os.makedirs(self.dir)
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.artifact = os.path.join(self.dir, "out.json")
+        # TempArtifacts' default root -- where the runner writes its script.
+        patcher = mock.patch.object(tempfile, "tempdir", self.dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _run(self, exe):
+        script = f"OUT = {self.artifact!r}\n" + self.PROBE
+        result = ScriptRunner.run_script_to_artifact(
+            exe, script, artifact=self.artifact, timeout=300
+        )
+        with open(self.artifact, encoding="utf-8") as fh:
+            return result, json.load(fh)
+
+    def test_no_path_reaches_the_command_line(self):
+        seen = {}
+
+        def fake_run(app, args=None, env=None, **kwargs):
+            seen.update(args=list(args), env=env)
+            with open(self.artifact, "w") as fh:
+                fh.write("x")
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        with mock.patch.object(AppLauncher, "run", side_effect=fake_run):
+            result = ScriptRunner.run_script_to_artifact(
+                "mayapy", "pass", artifact=self.artifact
+            )
+        self.assertIn(self.WORD, result.script_path)
+        self.assertTrue(all(arg.isascii() for arg in seen["args"]), seen["args"])
+        carried = json.loads(seen["env"][AppLauncher.PYTHON_ARGV_VAR])
+        self.assertEqual(carried, [result.script_path])
+
+    def test_the_script_runs_as_python_script_py_would(self):
+        result, seen = self._run(sys.executable)
+        self.assertEqual(seen["argv"], [result.script_path])
+        self.assertEqual(seen["file"], result.script_path)
+        self.assertEqual(seen["name"], "__main__")
+        self.assertEqual(seen["path0"], os.path.dirname(result.script_path))
+        # Consumed before the script runs: nothing it spawns inherits it.
+        self.assertIsNone(seen["var"])
+
+    @unittest.skipUnless(find_mayapy(), "mayapy.exe not installed")
+    def test_mayapy_runs_a_script_under_a_non_ascii_temp(self):
+        """The measured failure itself, through a real mayapy."""
+        result, seen = self._run(find_mayapy())
+        self.assertEqual(seen["file"], result.script_path)
+        self.assertEqual(seen["argv"], [result.script_path])
+
+    @unittest.skipUnless(find_mayapy(), "mayapy.exe not installed")
+    def test_maya_saves_a_scene_under_a_temp_its_code_page_cannot_hold(self):
+        """Maya itself opens and saves through the ANSI code page. With TEMP under
+        "José Жук" (cp1252 cannot hold "Жук") it read TEMP as "???", put its own
+        temp files in the CURRENT directory, and ``cmds.file`` save said "An
+        invalid path was specified". The child gets its TEMP, and the template the
+        path it saves to, in 8.3 form."""
+        import glob
+
+        import pythontk
+        from pythontk.core_utils.handoff.script_template import ScriptTemplate
+
+        if (AppLauncher._short_name(self.dir) or "") == self.dir:
+            self.skipTest("no 8.3 short names on this volume")
+        artifact = os.path.join(self.dir, "cube.ma")
+        report = os.path.join(self.dir, "report.json")
+        root = os.path.dirname(os.path.dirname(os.path.abspath(pythontk.__file__)))
+        script = (
+            "import json, os, sys\n"
+            "import maya.standalone\n"
+            "maya.standalone.initialize(name='python')\n"
+            "import maya.cmds as cmds\n"
+            "cmds.polyCube(name='A5Cube')\n"
+            f"cmds.file(rename=r'{ScriptTemplate.child_path(artifact)}')\n"
+            "cmds.file(save=True, type='mayaAscii', force=True)\n"
+            f"json.dump(cmds.internalVar(userTmpDir=True), open({report!r}, 'w'))\n"
+            # Not os._exit: it runs Maya's faulting DLL detach, which files a
+            # crash dump and an untitled[Recovered-...].ma into the child's TEMP.
+            f"sys.path.insert(0, {root!r})\n"
+            "from pythontk.core_utils.process_exit import ProcessExit\n"
+            "ProcessExit.hard_exit(0)\n"
+        )
+        env = dict(os.environ, TEMP=self.dir, TMP=self.dir, MAYA_SKIP_USERSETUP_PY="1")
+        ScriptRunner.run_script_to_artifact(
+            find_mayapy(), script, artifact=artifact, env=env, timeout=600
+        )
+        with open(artifact, encoding="utf-8", errors="replace") as fh:
+            self.assertIn("A5Cube", fh.read())
+        with open(report, encoding="utf-8") as fh:
+            maya_temp = json.load(fh)
+        self.assertTrue(os.path.samefile(maya_temp, self.dir), ascii(maya_temp))
+        # The child's TEMP holds no crash-save: no recovered scene, no crash log.
+        crashed = glob.glob(os.path.join(self.dir, "*[[]Recovered-*"))
+        crashed += glob.glob(os.path.join(self.dir, "MayaCrashLog*"))
+        self.assertEqual(crashed, [])
 
 
 class TestProgressRelay(unittest.TestCase):

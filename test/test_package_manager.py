@@ -23,31 +23,21 @@ from pythontk.core_utils.package_manager import (
     _PkgVersionUtils,
 )
 
-from conftest import BaseTestCase
+from conftest import BaseTestCase, find_mayapy
 
 
 def _pip_argv(cmd, kwargs):
     """The ``<python> [flags] -m pip <args>`` a :meth:`PackageManager._run_pip` call stands for.
 
-    pip's arguments travel in the environment, not on the command line (see ``_run_pip``),
-    so a recorded ``subprocess.run`` call is decoded back into the form it replaces.
+    pip's arguments travel in the environment, not on the command line (see ``_run_pip``
+    and ``AppLauncher.python_args_via_env``), so a recorded ``subprocess.run`` call is
+    decoded back into the form it replaces.
     """
     import json
+    from pythontk.core_utils.app_launcher import AppLauncher
 
     shim = cmd.index("-c")
-    args = json.loads(kwargs["env"][PackageManager._PIP_ARGV_VAR])
-    return cmd[:shim] + ["-m", "pip"] + args
-
-
-def _find_mayapy():
-    """A mayapy.exe on this machine, else None (Windows default install layout)."""
-    if sys.platform != "win32":
-        return None
-    from pathlib import Path
-
-    root = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Autodesk"
-    found = sorted(root.glob("Maya20*/bin/mayapy.exe")) if root.is_dir() else []
-    return str(found[-1]) if found else None
+    return cmd[:shim] + json.loads(kwargs["env"][AppLauncher.PYTHON_ARGV_VAR])
 
 
 class PackageManagerTest(BaseTestCase):
@@ -711,10 +701,12 @@ class InstallTargetedTest(BaseTestCase):
             self.pm.install_targeted("six", target_dir=target)
 
         self.assertEqual(len(seen), 2)
+        from pythontk.core_utils.app_launcher import AppLauncher
+
         for cmd, kwargs in seen:
-            self.assertEqual(cmd[-2:], ["-c", PackageManager._PIP_SHIM], cmd)
+            self.assertEqual(cmd[-2:], ["-c", AppLauncher._PYTHON_ARGV_SHIM], cmd)
             self.assertTrue(all(part.isascii() for part in cmd), cmd)
-            self.assertTrue(kwargs["env"][PackageManager._PIP_ARGV_VAR].isascii())
+            self.assertTrue(kwargs["env"][AppLauncher.PYTHON_ARGV_VAR].isascii())
         apply_args = _pip_argv(*seen[1])
         self.assertEqual(apply_args[apply_args.index("--target") + 1], target)
 
@@ -734,11 +726,11 @@ class InstallTargetedTest(BaseTestCase):
         """The shim is ``python -m pip``: a real pip, offline, lists a dist in a non-ASCII dir."""
         self._assert_lists_a_dist_in_a_non_ascii_dir(sys.executable)
 
-    @unittest.skipUnless(_find_mayapy(), "mayapy.exe not installed")
+    @unittest.skipUnless(find_mayapy(), "mayapy.exe not installed")
     def test_mayapy_receives_a_non_ascii_path_intact(self):
         """The measured failure itself: through mayapy, a path pip is handed must arrive
         as written. On the argv route pip listed an EMPTY, mangled directory."""
-        self._assert_lists_a_dist_in_a_non_ascii_dir(_find_mayapy())
+        self._assert_lists_a_dist_in_a_non_ascii_dir(find_mayapy())
 
     def _assert_lists_a_dist_in_a_non_ascii_dir(self, python):
         import json

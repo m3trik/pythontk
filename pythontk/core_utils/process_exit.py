@@ -45,19 +45,56 @@ Usage is one call, last, after everything that must survive is on disk::
     ptk.ProcessExit.hard_exit(0 if ok else 1)
 
 It never returns.  ``atexit`` hooks, ``__del__`` finalizers and C++ static
-destructors do NOT run, so release anything that matters BEFORE calling it.
-On POSIX there are no detach callbacks to skip and it is simply ``os._exit``.
+destructors do NOT run, so release anything that matters BEFORE calling it --
+or hand it to :meth:`ProcessExit.register`, which is ``hard_exit``'s own
+``atexit``.  A ``session`` :class:`pythontk.TempArtifacts` store registers its
+cleanup there: before it did, every runner and DCC child leaving through here
+leaked its whole test sandbox (791 of them, 572 MB, in the system temp dir
+after a week of runs).  On POSIX there are no detach callbacks to skip and it
+is simply ``os._exit``.
 """
 
 import os
 import sys
-from typing import NoReturn
+from typing import Any, Callable, List, NoReturn, Tuple
 
 __all__ = ["ProcessExit"]
 
 
 class _ProcessExitInternal:
     """Platform mechanics behind :class:`ProcessExit`."""
+
+    # (func, args, kwargs) in registration order; run last-first by hard_exit.
+    # Kept in the module namespace, which importlib.reload re-uses: a reload
+    # builds a second class, and a fresh list there would drop every
+    # registration made through the first.
+    _releases: List[Tuple[Callable[..., Any], tuple, dict]] = globals().setdefault(
+        "_RELEASES", []
+    )
+
+    @staticmethod
+    def _run_releases() -> None:
+        """Run what :meth:`ProcessExit.register` collected, last registered first.
+
+        Popped, not iterated, so a release that itself calls ``hard_exit``
+        cannot run twice.  Each one is guarded: a release that raises must
+        neither keep the process alive nor starve the ones registered before
+        it -- the exit is already decided.
+        """
+        releases = _ProcessExitInternal._releases
+        while releases:
+            func, args, kwargs = releases.pop()
+            try:
+                func(*args, **kwargs)
+            except BaseException as e:  # noqa: BLE001 - a release never outranks the exit
+                try:
+                    print(
+                        f"ProcessExit.hard_exit: release {ascii(func)} raised "
+                        f"{type(e).__name__}: {ascii(str(e))}",
+                        file=sys.stderr,
+                    )
+                except Exception:  # noqa: BLE001 - diagnostics never outrank the exit
+                    pass
 
     @staticmethod
     def _flush_streams() -> None:
@@ -134,13 +171,49 @@ class ProcessExit(_ProcessExitInternal):
     """Process-wide exit that skips interpreter and DLL teardown."""
 
     @staticmethod
+    def register(
+        func: Callable[..., Any], *args: Any, **kwargs: Any
+    ) -> Callable[..., Any]:
+        """Run ``func(*args, **kwargs)`` when :meth:`hard_exit` is called.
+
+        The ``atexit.register`` of this exit, which skips ``atexit``: for
+        pure-Python release work that must still happen when a process leaves
+        this way -- deleting its scratch files, dropping a lock.  Releases run
+        last registered first, before the streams are flushed, and one that
+        raises is reported and skipped.  An ordinary interpreter exit does not
+        run them; register with ``atexit`` as well for that.
+
+        Parameters:
+            func: The callable to run.
+            *args: Positional arguments for it.
+            **kwargs: Keyword arguments for it.
+
+        Returns:
+            *func*, so this also serves as a decorator.
+        """
+        _ProcessExitInternal._releases.append((func, args, kwargs))
+        return func
+
+    @staticmethod
+    def unregister(func: Callable[..., Any]) -> None:
+        """Drop every registration of *func*, as ``atexit.unregister`` does.
+
+        Parameters:
+            func: A callable passed to :meth:`register`.
+        """
+        _ProcessExitInternal._releases[:] = [
+            r for r in _ProcessExitInternal._releases if r[0] != func
+        ]
+
+    @staticmethod
     def hard_exit(code: int = 0) -> NoReturn:
         """Stop this process immediately with status *code*.  Never returns.
 
-        Flushes ``stdout`` / ``stderr``, then terminates without running
-        ``atexit`` hooks, object finalizers, or -- on Windows -- any DLL's
-        ``DLL_PROCESS_DETACH`` handler.  Release anything that must outlive the
-        process (files, locks, sandboxes) BEFORE calling.
+        Runs the releases collected by :meth:`register`, flushes ``stdout`` /
+        ``stderr``, then terminates without running ``atexit`` hooks, object
+        finalizers, or -- on Windows -- any DLL's ``DLL_PROCESS_DETACH``
+        handler.  Release anything else that must not outlive the process
+        (files, locks, sandboxes) BEFORE calling, or register it.
 
         Parameters:
             code: Exit status handed to the parent. Conventionally 0 for
@@ -151,6 +224,7 @@ class ProcessExit(_ProcessExitInternal):
             Never returns.
         """
         code = int(code)
+        ProcessExit._run_releases()
         ProcessExit._flush_streams()
         if os.name == "nt":
             # Total by contract: the Windows path is an OPTIMISATION over

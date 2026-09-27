@@ -197,6 +197,29 @@ class ScriptTemplate(_ScriptTemplateInternal):
         return out
 
     @staticmethod
+    def child_path(path) -> str:
+        """*path* as a rendered template hands it to the app it launches.
+
+        Forward slashes (safe inside any string literal), and spelled so an app
+        that opens files through the ANSI code page can open it: Maya said "File
+        not found" for a payload under a folder that code page cannot hold (a
+        Cyrillic name on cp1252), so such folders become their 8.3 names
+        (:meth:`pythontk.AppLauncher.ansi_safe_path`; a no-op for every other path
+        and off Windows).
+
+        Parameters:
+            path: A file or folder path, or ``None`` / ``""``.
+
+        Returns:
+            str: The path to substitute, or ``""`` for no path.
+        """
+        if not path:
+            return ""
+        from pythontk.core_utils.app_launcher import AppLauncher
+
+        return str(AppLauncher.ansi_safe_path(str(path))).replace("\\", "/")
+
+    @staticmethod
     def render_template(template_path, context: Dict[str, str]) -> str:
         """Substitute ``__KEY__`` placeholders in *template_path* using *context*.
 

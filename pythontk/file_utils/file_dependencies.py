@@ -16,7 +16,8 @@ such a record ends up needing the same four answers:
   still reads them (:meth:`FileDependencies.claims`, the input to
   :meth:`FileUtils.unique_path`);
 * which files a batch's owners stopped reading, now that nothing reads them
-  (:meth:`FileDependencies.remove_superseded`);
+  -- set aside, never deleted (:meth:`FileDependencies.remove_superseded`,
+  :meth:`FileDependencies.set_aside`);
 * how to gather the files into one folder (:meth:`FileDependencies.relocate`).
 
 They take plain values -- ``(owner, name, recorded folder)`` references -- and
@@ -33,6 +34,7 @@ from typing import (
     Dict,
     FrozenSet,
     Iterable,
+    Iterator,
     List,
     Optional,
     Sequence,
@@ -59,6 +61,34 @@ class FileDependencies(LoggingMixin):
     #: disk nowhere.
     FOUND_BY_HINT: str = "hint"
     FOUND_BY_SEARCH: str = "search"
+
+    #: The folder :meth:`set_aside` moves a file into, beside it, where its
+    #: volume keeps no trash. :meth:`find_files` never walks one: what was set
+    #: aside is out of circulation, as a file in the Recycle Bin is.
+    SUPERSEDED_DIR: str = "_superseded"
+
+    #: Folder names a search for files by name never enters (:meth:`walk`),
+    #: compared without case: sync-client caches, the OS's trash and volume
+    #: folders, version control, dependency and bytecode caches, and
+    #: :attr:`SUPERSEDED_DIR`. Each holds stale same-named copies -- an older
+    #: texture, a map a re-bake set aside -- that a walk would bind as the
+    #: current file. A freedesktop ``.Trash-<uid>`` is skipped by its prefix.
+    WALK_SKIP_DIRS: FrozenSet[str] = frozenset(
+        {
+            ".dropbox.cache",
+            ".dropbox",
+            "$recycle.bin",
+            "system volume information",
+            ".trash",
+            ".trashes",
+            ".git",
+            ".svn",
+            ".hg",
+            "node_modules",
+            "__pycache__",
+            SUPERSEDED_DIR,
+        }
+    )
 
     @staticmethod
     def _spelled(path: str) -> str:
@@ -99,7 +129,7 @@ class FileDependencies(LoggingMixin):
     def remove_superseded(
         cls, before: Iterable[str], after: Iterable[Sequence[Any]]
     ) -> List[str]:
-        """Delete the files of *before* that nothing in *after* reads; return those deleted.
+        """Set aside the files of *before* that nothing in *after* reads; return those.
 
         The other half of :meth:`claims`: a write that gives its owners new
         files -- another folder, another name, several maps folded into one
@@ -118,9 +148,16 @@ class FileDependencies(LoggingMixin):
         names it by a relative spelling only the host could place: a search
         the host did not run -- a walk of its texture tree -- could still
         land on this one. Names compare without case. Only an absolute path
-        is ever deleted (a relative one would resolve against the process
-        CWD), never a folder. A file already gone is skipped; one that cannot
-        be deleted (held open) is logged and left out of the result.
+        ever goes (a relative one would resolve against the process CWD),
+        never a folder.
+
+        Nothing is deleted: each file goes to the Recycle Bin, or beside
+        itself into a :attr:`SUPERSEDED_DIR` folder (:meth:`set_aside`). A
+        host sees only its own scene's references, so a file another scene
+        file still reads -- a Save As copy's source, a copy made in Explorer
+        -- can look unread here; set aside, it is one restore away. A file
+        already gone is skipped; one that cannot be moved (held open) is
+        logged and left out of the result.
 
         Parameters:
             before: Absolute paths the owners read before the write.
@@ -128,7 +165,7 @@ class FileDependencies(LoggingMixin):
                 is ``None`` or ``""`` for a file found nowhere.
 
         Returns:
-            The files deleted, in *before*'s order.
+            The files set aside, as *before* spelled them, in its order.
         """
 
         def key(path: str) -> str:
@@ -162,19 +199,65 @@ class FileDependencies(LoggingMixin):
             if cls._identity(path) in identities:
                 continue
             try:
-                os.remove(path)
+                cls.set_aside(path)
             except FileNotFoundError:
                 continue
             except OSError as error:
                 cls.logger.warning(
-                    "Could not delete %s, which nothing reads any more (%s); "
-                    "delete it by hand.",
+                    "Could not set aside %s, which nothing reads any more (%s); "
+                    "move or delete it by hand.",
                     path,
                     error,
                 )
                 continue
             removed.append(path)
         return removed
+
+    @classmethod
+    def set_aside(cls, path: str) -> str:
+        """Take the file *path* out of its folder without destroying it.
+
+        To the platform's trash (:meth:`FileUtils.move_to_trash`: the Recycle
+        Bin), else -- a network share, a removable drive, a bin that would
+        delete it at once -- into a :attr:`SUPERSEDED_DIR` folder beside it,
+        under its own name or, when that is taken, the first free
+        ``<stem>_<k>``. Either way it keeps its content and is one restore
+        away, and neither place is searched again by name (:meth:`find_files`
+        skips the folder).
+
+        Parameters:
+            path: The file to set aside.
+
+        Returns:
+            Where it is now: inside the trash (``""`` when Windows could not
+            say where), or the ``_superseded`` folder.
+
+        Raises:
+            FileNotFoundError: *path* does not exist.
+            OSError: It could not be moved (held open); it is where it was.
+        """
+        trashed = FileUtils.move_to_trash(path)
+        if trashed is not None:
+            return trashed
+        folder = os.path.join(
+            os.path.dirname(os.path.abspath(path)), cls.SUPERSEDED_DIR
+        )
+        os.makedirs(folder, exist_ok=True)
+        stem, ext = os.path.splitext(os.path.basename(path))
+        for k in range(100000):
+            target = os.path.join(folder, f"{stem}_{k}{ext}" if k else f"{stem}{ext}")
+            if os.path.lexists(target):
+                continue
+            # A rename within the folder's volume; never onto a file (POSIX
+            # would replace it), hence the check just above.
+            os.rename(path, target)
+            cls.logger.info(
+                "No trash on %s's volume: set it aside in %s.",
+                os.path.basename(path),
+                folder,
+            )
+            return cls._spelled(target)
+        raise OSError(17, "No free name to set it aside under", folder)
 
     @staticmethod
     def _identity(path: str) -> Optional[Tuple[int, int]]:
@@ -226,8 +309,11 @@ class FileDependencies(LoggingMixin):
         """Every file under *root*, recursively, whose name is one of *names*.
 
         Names compare without case. The default search :meth:`resolve` and
-        :meth:`relocate` walk with; a host with a texture walk of its own (a skip
-        list, tile tokens) passes that instead. Links are not followed.
+        :meth:`relocate` walk with; a host with a texture walk of its own (tile
+        tokens) passes that instead, walking with :meth:`walk` too. Links are
+        not followed, and no :attr:`WALK_SKIP_DIRS` folder is entered: a file
+        set aside in ``_superseded`` keeps its name, and a walk that found it
+        would bind it again.
 
         Parameters:
             names: File names (a path's base name is used).
@@ -238,9 +324,34 @@ class FileDependencies(LoggingMixin):
         """
         wanted = {os.path.basename(str(n)).lower() for n in names}
         hits: List[str] = []
-        for folder, _dirs, files in os.walk(root):
+        for folder, _dirs, files in FileDependencies.walk(root):
             hits.extend(os.path.join(folder, n) for n in files if n.lower() in wanted)
         return hits
+
+    @classmethod
+    def walk(cls, root: str) -> Iterator[Tuple[str, List[str], List[str]]]:
+        """``os.walk(root)``, top-down, that never enters a folder of stale
+        copies (:attr:`WALK_SKIP_DIRS`).
+
+        The one pruning every search for files by name shares: :meth:`find_files`,
+        and each DCC's texture walks (resolve a missing texture, find and copy),
+        so a folder one of them skips is one all of them skip.
+
+        Parameters:
+            root: The folder to walk.
+
+        Yields:
+            ``(folder, subfolders, files)``, as ``os.walk`` does.
+        """
+        for folder, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if not cls._skips_dir(d)]
+            yield folder, dirs, files
+
+    @classmethod
+    def _skips_dir(cls, name: str) -> bool:
+        """Whether :meth:`walk` leaves the folder *name* out."""
+        name = str(name).lower()
+        return name in cls.WALK_SKIP_DIRS or name.startswith(".trash-")
 
     @classmethod
     def resolve(

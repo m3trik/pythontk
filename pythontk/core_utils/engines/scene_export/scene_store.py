@@ -157,10 +157,19 @@ class SceneStoreBase:
         hierarchy baseline) -- read back by :meth:`written_here`.  The record
         declares the stamp a path (:attr:`RecordSpec.paths`), so a save into
         another project re-spells it and the copy still names its source."""
+        return cls.writer_stamp_of(cls.scene_path())
+
+    @classmethod
+    def writer_stamp_of(cls, scene_path: Optional[str]) -> str:
+        """*scene_path* as a writer stamp: spelled from ITS own project
+        (:meth:`project_root_of`), ``""`` for none -- :meth:`writer_stamp`'s
+        answer for the open scene, and a save hook's for the file about to be
+        written (:meth:`SceneRecords.stamp_unsaved`)."""
         from pythontk.file_utils._file_utils import FileUtils
 
-        scene = cls.scene_path()
-        return FileUtils.portable_path(scene, cls.project_root()) if scene else ""
+        if not scene_path:
+            return ""
+        return FileUtils.portable_path(scene_path, cls.project_root_of(scene_path))
 
     @classmethod
     def written_here(cls, stamp: Optional[str]) -> bool:
@@ -200,6 +209,63 @@ class SceneStoreBase:
                 changed,
                 new_base or "(none)",
             )
+        return changed
+
+    @classmethod
+    def respell_for_write(
+        cls, target: str, old_base: Optional[str], first_save: bool = False
+    ) -> Dict[Tuple[Scope, str], Optional[str]]:
+        """Ready the path records for this scene written as *target* -- a
+        save, a copy, an export into a scene file -- and return them as they
+        were.
+
+        Re-spelled from *old_base*, the project they are spelled from now, to
+        *target*'s (:meth:`rebase_paths`), so the written file resolves them
+        from where IT lives; on the scene's *first_save* every ``""`` writer
+        stamp is given *target*'s (:meth:`SceneRecords.stamp_unsaved`).  What
+        both DCCs' save hooks call; a write that leaves the open scene where
+        it was -- a copy, an autosave, a failed save -- hands the returned
+        snapshot to :meth:`restore_path_records` afterwards.
+
+        Parameters:
+            target: The file being written.
+            old_base: The project the records are spelled from now (``None``
+                while the scene was unsaved: its entries are absolute).
+            first_save: Whether this write gives an unsaved scene its file.
+
+        Returns:
+            The path records' stored text before the write
+            (:meth:`path_records`).
+        """
+        snapshot = cls.path_records()
+        new_base = cls.project_root_of(target)
+        if new_base is not None:
+            cls.rebase_paths(old_base, new_base)
+        if first_save:
+            SceneRecords.stamp_unsaved(cls, cls.writer_stamp_of(target))
+        return snapshot
+
+    @classmethod
+    def path_records(cls) -> Dict[Tuple[Scope, str], Optional[str]]:
+        """The stored text of every path record (:meth:`SceneRecords.with_paths`),
+        by ``(scope, key)`` -- the snapshot :meth:`restore_path_records` puts
+        back exactly, where re-spelling back could normalize an entry."""
+        return {
+            (spec.scope, spec.key): cls.read(spec.scope, spec.key)
+            for spec in SceneRecords.with_paths()
+        }
+
+    @classmethod
+    def restore_path_records(
+        cls, snapshot: Mapping[Tuple[Scope, str], Optional[str]]
+    ) -> int:
+        """Put the path records back as *snapshot* (:meth:`path_records`) holds
+        them; returns how many records changed."""
+        changed = 0
+        for (scope, key), text in snapshot.items():
+            if cls.read(scope, key) != text:
+                cls.write(scope, key, text)
+                changed += 1
         return changed
 
     @classmethod

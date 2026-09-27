@@ -15,6 +15,12 @@ ever catches:
   leaves thousands of ``<prefix>_<tag>`` entries behind, reclaimed only by the
   seven-day sweep -- and only if that prefix ever allocates again. Measured on
   one workstation: 24,500 entries, 1,371 of them from one preview suite.
+* **Fill the developer's Recycle Bin.** A lightmap re-bake sets the maps it
+  superseded aside through :meth:`FileUtils.move_to_trash`, and a suite that
+  re-bakes -- the bake tests, a bridge's wire-back -- sent its scratch maps
+  into the machine's own bin, one per test, every run (measured 2026-09-27:
+  11 in one mayatk run). Under the sandbox the call answers "no trash here",
+  so the caller sets the file aside in its own folder, inside the temp root.
 
 This lives in the shipped package, at the bottom of the stack, because both
 effects are process-wide and every downstream suite (uitk, mayatk, blendertk,
@@ -28,7 +34,8 @@ runner never loads a conftest)::
     ptk.TestSandbox.activate()
 
 A test that legitimately exercises a browser launch patches ``webbrowser.open``
-itself: ``unittest.mock.patch`` layers over the guard and restores it after.
+itself: ``unittest.mock.patch`` layers over the guard and restores it after. A
+test of the trash itself runs inside :meth:`TestSandbox.real_trash`.
 
 A third effect is opt-in per test, :meth:`TestSandbox.user_config`: reading
 (or writing) the developer's own config docs -- the naming convention, preset
@@ -59,11 +66,16 @@ class _TestSandboxInternal:
     _LAUNCHER_TYPES = ("BackgroundBrowser", "GenericBrowser")
     #: What a child process reads for its temp dir (``tempfile`` checks these first).
     _TEMP_ENV = ("TMPDIR", "TEMP", "TMP")
+    #: Names the root for a child, which nests its own inside it rather than
+    #: re-deriving it from :attr:`_TEMP_ENV` (see :meth:`TestSandbox.temp`).
+    _ROOT_ENV = "PYTHONTK_TEST_TEMP_ROOT"
 
     _state: Dict[str, object] = {
         "guard": None,  # the one function standing in for every launcher
         "temp_dir": None,
         "temp_store": None,  # the TempArtifacts owning temp_dir; held so its exit cleanup fires
+        "trash": None,  # the real FileUtils.move_to_trash, while the guard stands in
+        "can_trash": None,  # ...and the real FileUtils.can_trash
     }
 
     @classmethod
@@ -89,6 +101,23 @@ class _TestSandboxInternal:
 
         return blocked
 
+    @classmethod
+    def _make_trash_guard(cls) -> Callable[[str], None]:
+        """The ``move_to_trash`` stand-in: the real one's refusals (a missing
+        path, a folder), else record the file and answer ``None`` -- a volume
+        with no trash, a branch every caller already handles."""
+
+        def no_trash(path):
+            path = os.path.abspath(os.fspath(path))
+            if not os.path.lexists(path):
+                raise FileNotFoundError(2, "No such file", path)
+            if os.path.isdir(path) and not os.path.islink(path):
+                raise IsADirectoryError(21, "A folder, not a file", path)
+            cls.trashed.append(path)
+            return None
+
+        return no_trash
+
 
 class TestSandbox(_TestSandboxInternal):
     """Keep this process's side effects off the developer's machine. Idempotent."""
@@ -97,6 +126,8 @@ class TestSandbox(_TestSandboxInternal):
     #: report, which is what surfaces a refusal that a broad ``except`` between
     #: the launch and the test swallowed.
     launches: List[str] = []
+    #: Files a caller asked to move to the trash while the trash guard stood in.
+    trashed: List[str] = []
 
     @classmethod
     def browser(cls) -> None:
@@ -129,32 +160,90 @@ class TestSandbox(_TestSandboxInternal):
         hand-off payload and scratch dir that defaults to it -- resolves inside
         the root for the rest of the process, and ``TMPDIR``/``TEMP``/``TMP``
         point there so a child process (mayapy, Blender, FBX2glTF) inherits the
-        same. The root goes at interpreter exit; a process that is killed
+        same. The root goes at interpreter exit, or at
+        :meth:`ProcessExit.hard_exit`, which skips it; a process that is killed
         instead leaves it for the age-gated sweep the next activation runs, so
         the worst case is one stale directory rather than thousands of loose
         files. Prefix sweeps inside a run still work: they scan whatever
         ``gettempdir()`` answers.
+
+        Those variables are not enough for a Python child: a fresh
+        interpreter derives its temp dir from them by probing each with a
+        throwaway write and, on any failure but ``FileExistsError``, falls past
+        all three -- they name the same root -- to the user's real temp dir,
+        silently (measured: a root that had gone, an ``OSError`` on three
+        probes in a row, or a refused create). So the root is also named in
+        ``PYTHONTK_TEST_TEMP_ROOT``, and a child activating the sandbox nests
+        its own root inside that one without probing. A child that must share
+        the parent's root instead is handed it outright by whatever launches
+        it (``tempfile.tempdir = root`` before its first line -- blendertk's
+        runner does this).
         """
         state = cls._state
         if state["temp_dir"] is not None:
             return state["temp_dir"]
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
-        # Allocated in the REAL temp dir, before the redirect, so the sweep of
-        # prior killed runs looks where they landed.
-        store = TempArtifacts("ptk_test_sandbox", policy="session")
+        # Top level: allocated in the REAL temp dir, before the redirect, so
+        # the sweep of prior killed runs looks where they landed. In a child:
+        # inside the parent's root, by name.
+        parent = os.environ.get(cls._ROOT_ENV) or None
+        store = TempArtifacts("ptk_test_sandbox", policy="session", dir=parent)
         root = store.dir_path()
         tempfile.tempdir = root
-        for name in cls._TEMP_ENV:
+        for name in cls._TEMP_ENV + (cls._ROOT_ENV,):
             os.environ[name] = root
         state["temp_store"] = store
         state["temp_dir"] = root
         return root
 
     @classmethod
+    def trash(cls) -> None:
+        """Keep :meth:`FileUtils.move_to_trash` off the machine's trash for the
+        rest of the process: it answers ``None``, as on a volume with no trash,
+        so a caller sets the file aside its own way
+        (``FileDependencies.set_aside``: a ``_superseded`` folder beside it,
+        inside the temp root), and :meth:`FileUtils.can_trash` answers False,
+        so a prompt says what will really happen. Each file is recorded on
+        :attr:`trashed`. A test patching either call layers over the guard,
+        as for the browser."""
+        state = cls._state
+        if state["trash"] is not None:
+            return
+        from pythontk.file_utils._file_utils import FileUtils
+
+        state["trash"] = FileUtils.__dict__["move_to_trash"]
+        state["can_trash"] = FileUtils.__dict__["can_trash"]
+        FileUtils.move_to_trash = staticmethod(cls._make_trash_guard())
+        # A prompt asks first: told "no trash" too, it says what will happen.
+        FileUtils.can_trash = staticmethod(lambda path: False)
+
+    @classmethod
+    @contextmanager
+    def real_trash(cls) -> Iterator[None]:
+        """The machine's own trash for the block -- for a test of
+        :meth:`FileUtils.move_to_trash` itself, which cleans up what it
+        moved. A no-op outside the guard."""
+        from pythontk.file_utils._file_utils import FileUtils
+
+        real = cls._state["trash"]
+        if real is None:
+            yield
+            return
+        guards = (FileUtils.__dict__["move_to_trash"], FileUtils.__dict__["can_trash"])
+        FileUtils.move_to_trash = real
+        FileUtils.can_trash = cls._state["can_trash"]
+        try:
+            yield
+        finally:
+            FileUtils.move_to_trash, FileUtils.can_trash = guards
+
+    @classmethod
     def activate(cls) -> str:
-        """Both guards; returns the temp root. Safe to call more than once."""
+        """Every guard -- the browser, the trash, the temp root; returns the
+        temp root. Safe to call more than once."""
         cls.browser()
+        cls.trash()
         return cls.temp()
 
     @classmethod

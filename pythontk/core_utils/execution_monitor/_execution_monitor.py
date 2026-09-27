@@ -286,13 +286,23 @@ class ExecutionMonitor:
 
     @staticmethod
     def _sidecar_command(command: str, *args: str):
-        """``[python, _sidecar.py, command, *args]`` or ``None`` when no script
-        or interpreter is available."""
+        """``(cmd, env)`` that runs ``python _sidecar.py command *args``, or
+        ``None`` when no script or interpreter is available.
+
+        The sidecar's argv rides in *env*, never on the command line
+        (:meth:`AppLauncher.python_args_via_env`): inside Maya the interpreter
+        is mayapy, which decodes its command line in the ANSI code page. A
+        heartbeat under a %TEMP% with a non-ASCII letter then named a file that
+        does not exist, and the watchdog killed its owner with the heartbeat live.
+        """
+        from pythontk.core_utils.app_launcher import AppLauncher
+
         script = ExecutionMonitor._helper_script_path("_sidecar.py")
         executable = ExecutionMonitor._get_python_executable()
         if not script or not executable:
             return None
-        return [executable, script, command, *args]
+        shim_args, env = AppLauncher.python_args_via_env([script, command, *args])
+        return [executable, *shim_args], env
 
     @staticmethod
     def _parent_pid_arg() -> str:
@@ -327,12 +337,15 @@ class ExecutionMonitor:
                 # parsed by argparse as an option flag (exit 2, no spinner).
                 extra.append(f"--pos={pos[0]},{pos[1]}")
 
-            cmd = ExecutionMonitor._sidecar_command(
+            launch = ExecutionMonitor._sidecar_command(
                 "indicator", ExecutionMonitor._parent_pid_arg(), *extra
             )
-            if cmd is None:
+            if launch is None:
                 return None
-            return subprocess.Popen(cmd, **ExecutionMonitor._hidden_popen_kwargs())
+            cmd, env = launch
+            return subprocess.Popen(
+                cmd, env=env, **ExecutionMonitor._hidden_popen_kwargs()
+            )
         except Exception:
             return None
 
@@ -561,12 +574,15 @@ class ExecutionMonitor:
             extra = [ExecutionMonitor._parent_pid_arg()]
             if force_label:
                 extra.append(f"--force-label={force_label}")
-            cmd = ExecutionMonitor._sidecar_command(
+            launch = ExecutionMonitor._sidecar_command(
                 "dialog", *extra, "--", title, message
             )
-            if cmd is None:
+            if launch is None:
                 return None
-            process = subprocess.Popen(cmd, **ExecutionMonitor._hidden_popen_kwargs())
+            cmd, env = launch
+            process = subprocess.Popen(
+                cmd, env=env, **ExecutionMonitor._hidden_popen_kwargs()
+            )
             code = ExecutionMonitor._wait_child(process, finished)
         except Exception:
             return None
@@ -955,8 +971,8 @@ class ExecutionMonitor:
         ]
         if kill_tree:
             args.append("--kill-tree")
-        cmd = ExecutionMonitor._sidecar_command("watchdog", *args)
-        if cmd is None:
+        launch = ExecutionMonitor._sidecar_command("watchdog", *args)
+        if launch is None:
             if logger:
                 logger.warning(
                     "External watchdog skipped: no python interpreter resolved "
@@ -964,8 +980,11 @@ class ExecutionMonitor:
                 )
             return None, None
 
+        cmd, env = launch
         try:
-            proc = subprocess.Popen(cmd, **ExecutionMonitor._hidden_popen_kwargs())
+            proc = subprocess.Popen(
+                cmd, env=env, **ExecutionMonitor._hidden_popen_kwargs()
+            )
         except Exception as e:
             if logger:
                 logger.warning(f"Failed to start watchdog subprocess: {e}")

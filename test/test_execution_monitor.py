@@ -5,6 +5,7 @@ import threading
 import sys
 import os
 import subprocess
+import shutil
 import tempfile
 from unittest.mock import MagicMock, patch
 from pythontk.core_utils.execution_monitor._execution_monitor import ExecutionMonitor
@@ -12,23 +13,44 @@ from pythontk import ExecutionMonitor as PublicExecutionMonitor
 from pythontk import CancelScope
 from pythontk.core_utils.x11 import X11
 
-from conftest import BaseTestCase
+from conftest import BaseTestCase, find_mayapy
 
 _SIDECAR = os.path.join(
     os.path.dirname(os.path.abspath(sys.modules[ExecutionMonitor.__module__].__file__)),
     "_sidecar.py",
 )
 _HAS_DISPLAY = sys.platform == "win32" or bool(os.environ.get("DISPLAY"))
+_NON_ASCII = "Jos\u00e9 \u0416\u0443\u043a"
+
+
+def _sidecar_argv(call):
+    """The ``python <argv>`` a recorded sidecar ``Popen`` call stands for.
+
+    The command line is ``python -c <shim>``; the sidecar's own argv rides in the
+    environment (``AppLauncher.python_args_via_env``), so decode it back.
+    """
+    import json
+    from pythontk.core_utils.app_launcher import AppLauncher
+
+    cmd, kwargs = call[0][0], call[1]
+    return cmd[:1] + json.loads(kwargs["env"][AppLauncher.PYTHON_ARGV_VAR])
 
 
 def _with_windll(test):
     """Run a test of a win32 branch on any OS: ``ctypes.windll`` exists only on
     Windows, so it is patched in (a mock everywhere) and the test's own
-    ``ctypes.windll.user32.*`` patches resolve."""
+    ``ctypes.windll.user32.*`` patches resolve. The live environment block is
+    read through that same API (``AppLauncher.process_environ``, which a sidecar
+    launch builds its env from), so it is served from ``os.environ`` instead --
+    a mock can hand back no block to walk."""
+    from pythontk.core_utils.app_launcher import AppLauncher
 
     @functools.wraps(test)
     def wrapper(*args, **kwargs):
-        with patch("ctypes.windll", MagicMock(), create=True):
+        live = patch.object(
+            AppLauncher, "process_environ", side_effect=lambda: dict(os.environ)
+        )
+        with patch("ctypes.windll", MagicMock(), create=True), live:
             return test(*args, **kwargs)
 
     return wrapper
@@ -733,8 +755,7 @@ class TestExecutionMonitor(BaseTestCase):
 
                 # Verify Popen called with the sidecar watchdog and our args
                 popen.assert_called()
-                called_args, called_kwargs = popen.call_args
-                argv = called_args[0]
+                argv = _sidecar_argv(popen.call_args)
                 self.assertEqual(argv[0], ExecutionMonitor._get_python_executable())
                 self.assertTrue(argv[1].endswith("_sidecar.py"), argv)
                 self.assertEqual(argv[2], "watchdog")
@@ -751,6 +772,25 @@ class TestExecutionMonitor(BaseTestCase):
                 stop()
                 fake_proc.terminate.assert_called()
                 self.assertFalse(os.path.exists(stop_file))
+
+    def test_a_sidecar_command_line_carries_no_path(self):
+        """Inside Maya the sidecar python is mayapy.exe, which decodes its command
+        line in the ANSI code page: a heartbeat under a %TEMP% with a non-ASCII
+        letter reached the watchdog as a file that does not exist, so it took its
+        owner's LIVE heartbeat for a missing one and killed the owner once the
+        timeout ran out. No path may ride on the command line."""
+        hb = os.path.join(tempfile.gettempdir(), _NON_ASCII, "hb.txt")
+        with patch(f"{self._EM_MOD}.subprocess.Popen", return_value=MagicMock()) as p:
+            ExecutionMonitor._spawn_watchdog_subprocess(
+                pid=1234,
+                heartbeat_path=hb,
+                timeout=5.0,
+                check_interval=0.5,
+                kill_tree=False,
+            )
+        cmd = p.call_args[0][0]
+        self.assertTrue(all(part.isascii() for part in cmd), cmd)
+        self.assertEqual(_sidecar_argv(p.call_args)[2:5], ["watchdog", "1234", hb])
 
     def test_spawn_watchdog_subprocess_windows_sets_no_window(self):
         with tempfile.TemporaryDirectory() as td:
@@ -990,7 +1030,7 @@ class TestExecutionMonitor(BaseTestCase):
         with patch(f"{self._EM_MOD}.subprocess.Popen", return_value=fake_proc) as popen:
             proc = ExecutionMonitor._start_indicator_process(indicator=gif)
             self.assertIs(proc, fake_proc)
-            argv = popen.call_args[0][0]
+            argv = _sidecar_argv(popen.call_args)
             self.assertTrue(argv[1].endswith("_sidecar.py"), argv)
             self.assertEqual(argv[2], "indicator")
             self.assertIn(f"--gif={gif}", argv)
@@ -1001,7 +1041,7 @@ class TestExecutionMonitor(BaseTestCase):
         fake_proc = MagicMock()
         with patch(f"{self._EM_MOD}.subprocess.Popen", return_value=fake_proc) as popen:
             ExecutionMonitor._start_indicator_process(indicator="no_such_file.gif")
-            argv = popen.call_args[0][0]
+            argv = _sidecar_argv(popen.call_args)
             self.assertTrue(argv[1].endswith("_sidecar.py"), argv)
             self.assertFalse(any(a.startswith("--gif=") for a in argv), argv)
 
@@ -1313,6 +1353,43 @@ class TestSidecar(unittest.TestCase):
             finally:
                 if victim.poll() is None:
                     victim.kill()
+
+    @unittest.skipUnless(find_mayapy(), "mayapy.exe not installed")
+    def test_a_mayapy_watchdog_spares_an_owner_whose_heartbeat_lives(self):
+        """End to end through the sidecar python a Maya host resolves (mayapy), the
+        heartbeat under a non-ASCII directory: the owner keeps beating, so it lives.
+        On the argv route the watchdog could not see the file and killed it."""
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_tests")
+        where = os.path.join(root, f"wd {_NON_ASCII} {os.getpid()}")
+        os.makedirs(where)
+        self.addCleanup(shutil.rmtree, where, True)
+        hb = os.path.join(where, "hb.txt")
+        victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: victim.poll() is None and victim.kill())
+        done = threading.Event()
+
+        def beat():
+            while not done.is_set():
+                with open(hb, "w", encoding="utf-8") as fh:
+                    fh.write("0")
+                time.sleep(0.1)
+
+        beater = threading.Thread(target=beat, daemon=True)
+        beater.start()
+        self.addCleanup(beater.join, 5)
+        self.addCleanup(done.set)  # cleanups run LIFO: stop beating, then join
+        with patch.object(ExecutionMonitor, "_interpreter_override", find_mayapy()):
+            watchdog, stop = ExecutionMonitor._spawn_watchdog_subprocess(
+                pid=victim.pid,
+                heartbeat_path=hb,
+                timeout=1.5,
+                check_interval=0.1,
+                kill_tree=False,
+            )
+        self.addCleanup(stop)
+        time.sleep(6)  # mayapy starts in about a second; 1.5 s later a blind one kills
+        self.assertIsNone(victim.poll(), "killed an owner whose heartbeat was live")
+        self.assertIsNone(watchdog.poll(), "the watchdog should still be watching")
 
     def test_watchdog_exits_on_stop_file(self):
         with tempfile.TemporaryDirectory() as td:

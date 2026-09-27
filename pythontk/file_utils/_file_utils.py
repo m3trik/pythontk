@@ -1578,6 +1578,67 @@ class FileUtils(HelpMixin):
                 log.error("move_file: could not restore %s; it is at %s", src, staged)
             raise
 
+    @staticmethod
+    def move_to_trash(path: str) -> Optional[str]:
+        """Move the file *path* to the platform's trash, where it can be restored.
+
+        The Recycle Bin on Windows; on Linux the freedesktop.org trash (the
+        home trash, else the volume's own ``.Trash-$uid``); ``~/.Trash`` on
+        macOS. Never a permanent delete. Windows' own recycle call deletes a
+        file permanently, without a word, wherever the Recycle Bin will not
+        keep it -- a network share, a removable or SUBST drive, a bin set to
+        "remove files immediately" or smaller than the file, a path longer
+        than ``MAX_PATH`` -- so each case is checked first, and there nothing
+        is touched: the answer is ``None``, and what to do instead is the
+        caller's (:meth:`FileDependencies.set_aside` moves the file into a
+        folder beside it).
+
+        Parameters:
+            path (str): The file to move (a folder is refused).
+
+        Returns:
+            str | None: Where the file is now, inside the trash (on Windows the
+            Recycle Bin's ``$R`` file). ``""`` when Windows reported it recycled
+            but no Recycle Bin record names it (logged: it may have been
+            deleted permanently). ``None`` when its volume keeps no trash that
+            would hold it -- the file is untouched.
+
+        Raises:
+            FileNotFoundError: *path* does not exist.
+            IsADirectoryError: *path* is a folder.
+            OSError: The move failed (the file is held open, say); the file is
+                where it was.
+        """
+        from pythontk.file_utils._trash import _TrashInternal
+
+        return _TrashInternal.run(path)
+
+    @staticmethod
+    def can_trash(path: str) -> bool:
+        """Whether :meth:`move_to_trash` would take the file *path* to a trash
+        that keeps it -- asked before anything moves, for a prompt that must
+        say "to the Recycle Bin" or "permanently". The same checks the move
+        makes (on Windows: the drive, the policy, the bin's own settings, the
+        path length); the move stays the answer that counts, so a caller whose
+        move is then refused treats the file as still there.
+
+        Parameters:
+            path (str): The file to ask about.
+
+        Returns:
+            bool: False for a missing path, a folder, or a volume whose trash
+            would not keep it.
+        """
+        from pythontk.file_utils._trash import _TrashInternal
+
+        return _TrashInternal.can_trash(path)
+
+    @staticmethod
+    def trash_name() -> str:
+        """What this platform calls its trash, for a sentence: "Recycle Bin"
+        on Windows, "Trash" elsewhere."""
+        return "Recycle Bin" if sys.platform.startswith("win") else "Trash"
+
     @classmethod
     def reveal_in_file_manager(cls, path, _runner=None):
         """Open the OS file manager showing ``path`` (selecting the file when supported, else

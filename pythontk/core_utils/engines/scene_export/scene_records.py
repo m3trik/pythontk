@@ -201,6 +201,13 @@ class RecordSpec:
             (:class:`TransferContext`).  A tuple of keys names the only values
             that are paths, in a payload that is otherwise data: the hierarchy
             baseline's writer stamp, beside a path set and a hash.
+        stamps: Whether the payload's values are WRITER STAMPS -- the scene
+            file that made each entry (``SceneStoreBase.writer_stamp``), ``""``
+            for one made while the scene was unsaved -- and are given the
+            file the scene is first saved as (:meth:`SceneRecords.stamp_unsaved`).
+            A tuple of keys names the only values that are (the hierarchy
+            baseline's ``scene``).  A stamp is a path too: declare it in
+            :attr:`paths` as well.
     """
 
     key: str
@@ -221,12 +228,19 @@ class RecordSpec:
     portable: bool = False
     section: Optional[str] = None
     paths: Union[bool, Tuple[str, ...]] = False
+    stamps: Union[bool, Tuple[str, ...]] = False
 
     @property
     def path_keys(self) -> Optional[Tuple[str, ...]]:
         """The payload keys whose values are paths (:attr:`paths`): the named
         ones, or ``None`` -- every value -- for a whole path mapping."""
         return self.paths if isinstance(self.paths, tuple) else None
+
+    @property
+    def stamp_keys(self) -> Optional[Tuple[str, ...]]:
+        """The payload keys whose values are writer stamps (:attr:`stamps`):
+        the named ones, or ``None`` -- every value -- for a whole mapping."""
+        return self.stamps if isinstance(self.stamps, tuple) else None
 
     # ------------------------------------------------------------------ codec
     def make(self, payload: Any) -> Record:
@@ -393,6 +407,19 @@ class SceneRecords:
         ),
         consumers=("unity", "glb"),
     )
+    ARTICULATION = RecordSpec(
+        "articulation",
+        Scope.DELIVERABLE,
+        1,
+        owner="Articulated Rig",
+        description=(
+            "articulated rigs: per rig its joints (node name, parent, rest "
+            "translate and orient, rotate order, channels with limits and "
+            "grab weights) and the parts a hand grabs, each with the joint "
+            "it rides -- the ArticulationModel a runtime poses"
+        ),
+        consumers=("unity", "glb"),
+    )
     EMISSIVE_GROUPS = RecordSpec(
         "emissive_groups",
         Scope.DELIVERABLE,
@@ -471,6 +498,7 @@ class SceneRecords:
         envelope=False,
         merge=Merge.OWN,
         paths=("scene",),
+        stamps=("scene",),
     )
     EMISSIVE_REGISTRY = RecordSpec(
         "emissive_groups",
@@ -532,8 +560,9 @@ class SceneRecords:
     #: folder record, so those alone cannot tell the two scenes apart.  A
     #: path record like ``lightmap_dirs``, so a copy saved into another
     #: project still names its source.  ``""`` is a map written while the
-    #: scene was unsaved: the scene's own only until its first save (a Save
-    #: As copy carries the same ``""``), and it never crosses to another.
+    #: scene was unsaved, the scene's own while it still is; its first save
+    #: stamps it with the file written (:meth:`SceneRecords.stamp_unsaved`),
+    #: so a copy made later names its source like any other entry.
     LIGHTMAP_WRITERS = RecordSpec(
         "lightmap_writers",
         Scope.PRIVATE,
@@ -545,6 +574,7 @@ class SceneRecords:
         respell=False,
         portable=True,
         paths=True,
+        stamps=True,
     )
 
     #: The domain codecs: record key -> (module, class) whose classmethod
@@ -646,6 +676,70 @@ class SceneRecords:
         (:attr:`RecordSpec.paths`), in declaration order."""
         return [s for s in cls.all() if s.paths]
 
+    @classmethod
+    def with_stamps(cls) -> List[RecordSpec]:
+        """The records holding writer stamps (:attr:`RecordSpec.stamps`), in
+        declaration order."""
+        return [s for s in cls.all() if s.stamps]
+
+    @classmethod
+    def stamp_unsaved(cls, store, stamp: str) -> int:
+        """Give every writer stamp still ``""`` in *store* the file *stamp*
+        names -- what a DCC's save hook calls at a scene's FIRST save.
+
+        ``""`` stamps an entry made while the scene was unsaved, and is the
+        scene's own only while it still is (``FileDependencies.written_here``):
+        once saved, a Save As copy would carry the same ``""`` and nothing
+        could tell the two files apart.  Left as it was, everything made
+        before the first save was nobody's from then on -- a lightmap
+        re-bake never retired those maps, and the hierarchy baseline was set
+        aside as another scene's.  Stamped as the file is first written, it
+        reads as that file's own, and a later copy names its source.
+
+        Which write is the first save is the hook's to say: a copy of an
+        unsaved scene (an export, an autosave) is not one, and keeps ``""``.
+
+        Parameters:
+            store: The scene store (a :class:`SceneStoreBase`).
+            stamp: The first-saved file, spelled as a writer stamp
+                (``SceneStoreBase.writer_stamp_of``).  ``""`` does nothing.
+
+        Returns:
+            int: How many entries were stamped.
+        """
+        if not stamp:
+            return 0
+
+        def stamped(spec: RecordSpec, payload: Mapping) -> Dict[str, Any]:
+            keys = spec.stamp_keys
+            return {
+                key: (stamp if value == "" and (keys is None or key in keys) else value)
+                for key, value in payload.items()
+            }
+
+        return cls._remap_records(store, cls.with_stamps(), stamped)
+
+    @staticmethod
+    def _remap_records(
+        store,
+        specs: List[RecordSpec],
+        remap: Callable[[RecordSpec, Mapping], Mapping],
+    ) -> int:
+        """Rewrite each of *specs*' mapping payloads in *store* through
+        *remap* (``(spec, payload) -> new payload``), saving only a record
+        that changed; returns how many entries changed."""
+        changed = 0
+        for spec in specs:
+            payload = spec.load(store)
+            if not isinstance(payload, Mapping) or not payload:
+                continue
+            new = remap(spec, payload)
+            diff = sum(1 for key in payload if new.get(key) != payload.get(key))
+            if diff:
+                spec.save(store, new)
+                changed += diff
+        return changed
+
     @staticmethod
     def map_paths(
         payload: Any,
@@ -693,21 +787,15 @@ class SceneRecords:
         """
         from pythontk.file_utils._file_utils import FileUtils
 
-        changed = 0
-        for spec in cls.with_paths():
-            payload = spec.load(store)
-            if not payload:
-                continue
-            moved = cls.map_paths(
+        return cls._remap_records(
+            store,
+            cls.with_paths(),
+            lambda spec, payload: cls.map_paths(
                 payload,
                 lambda v: FileUtils.rebase_portable_path(v, old_base, new_base),
                 spec.path_keys,
-            )
-            diff = sum(1 for k in payload if moved.get(k) != payload.get(k))
-            if diff:
-                spec.save(store, moved)
-                changed += diff
-        return changed
+            ),
+        )
 
     @classmethod
     def deliverable(cls) -> List[RecordSpec]:

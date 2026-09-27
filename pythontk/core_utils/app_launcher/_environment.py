@@ -5,7 +5,10 @@
 ``process_environ`` reads the LIVE environment block (a host app that embeds
 Python sets variables at the C level that the ``os.environ`` snapshot never
 sees); ``handoff_env`` and ``desktop_env`` derive a child's env from it for a
-hand-off to another app and for a desktop helper. ``append_to_path`` /
+hand-off to another app and for a desktop helper; ``python_args_via_env`` moves
+a Python child's command line into its env (mayapy reads its own in the ANSI
+code page), and ``ansi_safe_path`` spells a path so a program that reads paths
+in that code page (Maya) can open it. ``append_to_path`` /
 ``is_path_persisted`` own the user-scope PATH entry (the registry on Windows,
 one marked ``~/.profile`` line elsewhere).
 
@@ -123,6 +126,210 @@ class _EnvironmentMixin:
             return env
         finally:
             kernel32.FreeEnvironmentStringsW(ctypes.c_void_p(ptr))
+
+    #: The variable :meth:`python_args_via_env` hands a Python child its command
+    #: line in: a JSON list (ASCII whatever it holds), the argv that would follow
+    #: the interpreter -- ``[script, *args]`` or ``["-m", module, *args]``. A host
+    #: whose startup hook takes code rather than a path (maya.exe's ``-command``)
+    #: reads the script from item 0 of it.
+    PYTHON_ARGV_VAR = "PYTHONTK_ARGV"
+
+    #: What :meth:`python_args_via_env` runs with ``-c``: exactly ``python <argv>``,
+    #: the argv read from :attr:`PYTHON_ARGV_VAR`. The variable is removed before
+    #: the target runs, so nothing the target spawns inherits it. A script gets its
+    #: own directory as ``sys.path[0]`` (what ``python script.py`` gives it) unless
+    #: the interpreter was told to add none (``-I`` / ``-P``).
+    _PYTHON_ARGV_SHIM = "\n".join(
+        (
+            "import json, os, runpy, sys",
+            f"argv = json.loads(os.environ.pop({PYTHON_ARGV_VAR!r}))",
+            "if argv[0] == '-m':",
+            "    sys.argv[:] = argv[1:]",
+            "    runpy.run_module(argv[1], run_name='__main__', alter_sys=True)",
+            "else:",
+            "    sys.argv[:] = argv",
+            "    if sys.path[:1] == ['']:",
+            "        sys.path[0] = os.path.dirname(os.path.abspath(argv[0]))",
+            "    runpy.run_path(argv[0], run_name='__main__')",
+        )
+    )
+
+    @staticmethod
+    def python_args_via_env(argv, env=None):
+        """The arguments and environment that make a Python interpreter run
+        ``python <argv>`` with nothing of *argv* on its command line.
+
+        mayapy.exe (and maya.exe) decode their command line in the ANSI code
+        page: measured on Maya 2025, "José" arrived as "Jos\\udce9" and "Жук" as
+        "???", while the environment and the working directory arrived intact.
+        So ``mayapy <script>`` for a user whose %TEMP% holds such a letter ran a
+        file that does not exist. Here the command line is only ``-c`` and a
+        fixed ASCII shim; *argv* travels in :attr:`PYTHON_ARGV_VAR`. Any Python
+        reads either route, so callers need not know which interpreter it is.
+
+        Parameters:
+            argv: What would follow the interpreter: ``[script, *args]`` or
+                ``["-m", module, *args]``. Items are converted with ``str``.
+            env: The child's environment to add to (not modified); ``None`` =
+                the environment the child would inherit (:meth:`process_environ`).
+
+        Returns:
+            tuple: ``(args, env)`` -- *args* to follow the interpreter and any
+            interpreter flags (``[python, *flags, *args]``), and a new env dict
+            carrying *argv*.
+
+        Raises:
+            ValueError: When *argv* is empty (there is nothing to run).
+        """
+        import json
+        from pythontk.core_utils.app_launcher._app_launcher import AppLauncher
+
+        argv = [str(arg) for arg in argv]
+        if not argv:
+            raise ValueError("argv is empty: name a script or '-m <module>' to run.")
+        child_env = dict(AppLauncher.process_environ() if env is None else env)
+        child_env[AppLauncher.PYTHON_ARGV_VAR] = json.dumps(argv)
+        # The child's temp root in a form it can open too (see ansi_safe_path): with
+        # TEMP under "Жук", Maya fell back to its CURRENT DIRECTORY for temp files.
+        # TMPDIR too: a Python child's tempfile reads it first (TestSandbox sets it).
+        for key, value in child_env.items():
+            if key.upper() in ("TEMP", "TMP", "TMPDIR") and value:
+                child_env[key] = AppLauncher.ansi_safe_path(value)
+        return ["-c", AppLauncher._PYTHON_ARGV_SHIM], child_env
+
+    #: Offending folders :meth:`ansi_safe_path` has already warned about (once each).
+    _ANSI_WARNED = set()
+    #: The SYSTEM ANSI code page's codec, read once (see :meth:`_ansi_codec`).
+    _ANSI_CODEC = None
+
+    @staticmethod
+    def _ansi_codec():
+        """The codec of the SYSTEM ANSI code page: the one a program without a
+        UTF-8 manifest (Maya) reads paths in.
+
+        Not this process's code page: Blender's manifest declares UTF-8, so inside
+        Blender ``mbcs`` and ``GetACP()`` are 65001 (measured, Blender 5.1) while
+        the mayapy it launches reads cp1252 -- a check against ``mbcs`` there
+        passes every path Maya cannot open.
+        """
+        from pythontk.core_utils.app_launcher._app_launcher import AppLauncher
+
+        if AppLauncher._ANSI_CODEC is None:
+            import codecs
+
+            codec = "mbcs"
+            try:
+                import winreg
+
+                key = r"SYSTEM\CurrentControlSet\Control\Nls\CodePage"
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as handle:
+                    acp = str(winreg.QueryValueEx(handle, "ACP")[0]).strip()
+                name = "utf-8" if acp == "65001" else f"cp{acp}"
+                codecs.lookup(name)
+                codec = name
+            except (ImportError, OSError, LookupError):
+                pass
+            AppLauncher._ANSI_CODEC = codec
+        return AppLauncher._ANSI_CODEC
+
+    @staticmethod
+    def _ansi_encodable(text):
+        """Whether *text* survives the system's ANSI code page (no best-fit)."""
+        from pythontk.core_utils.app_launcher._app_launcher import AppLauncher
+
+        try:
+            text.encode(AppLauncher._ansi_codec())
+        except UnicodeEncodeError:
+            return False
+        return True
+
+    @staticmethod
+    def _short_name(path):
+        """The 8.3 form of the EXISTING *path* (``GetShortPathNameW``), else None."""
+        import ctypes
+        from ctypes import wintypes
+
+        get = ctypes.windll.kernel32.GetShortPathNameW
+        get.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        get.restype = wintypes.DWORD
+        size = get(path, None, 0)
+        if not size:
+            return None
+        buffer = ctypes.create_unicode_buffer(size)
+        return buffer.value if get(path, buffer, size) else None
+
+    @staticmethod
+    def ansi_safe_path(path, ascii_only=False):
+        """*path* spelled so a program that reads paths in the ANSI code page can open it.
+
+        Maya opens and saves files through the ANSI code page. Measured on Maya
+        2025 (cp1252 here), with folders under "José Жук": ``cmds.file`` save gave
+        "An invalid path was specified", open gave "File not found", and a TEMP
+        there read as "???" so Maya put its own temp files in the current
+        directory. The 8.3 short form of the same folders worked for all three.
+        So every component the code page cannot hold is swapped for its short name
+        (``GetShortPathNameW``); every other component is kept as written, so a
+        template that reads a payload's own name still sees it. A component not
+        yet on disk (a file the child will write) is kept as written.
+
+        With no short name to use (8.3 names switched off on that volume, or the
+        offending component not yet created), the path is returned unchanged and
+        one warning names the remedy. It never falls back to a shared folder: a
+        payload is private to the user. A no-op off Windows and for a path the
+        code page already holds.
+
+        *ascii_only* is for a path written INTO a file that another program
+        decodes as ANSI whatever the code page could hold: RizomUV 2020.1 reads the
+        UTF-8 bytes of a Lua script's paths that way, so an "é" (inside cp1252)
+        breaks there as surely as a Cyrillic letter -- measured, ``ZomLoad`` /
+        ``ZomSave`` under a "José Ångström" folder timed out and the 8.3 form
+        passed. Every non-ASCII component is then swapped.
+
+        Parameters:
+            path: A file or folder path (``str`` or path-like), or ``None``.
+            ascii_only: Swap every non-ASCII component, not only those the ANSI
+                code page cannot hold.
+
+        Returns:
+            The path as given when nothing needs changing, else its ANSI-safe
+            ``str`` form (absolute).
+        """
+        import re
+        import sys
+        from pythontk.core_utils.app_launcher._app_launcher import AppLauncher
+
+        if sys.platform != "win32" or not path:
+            return path
+        text = os.fspath(path)
+        fits = str.isascii if ascii_only else AppLauncher._ansi_encodable
+        if fits(text):
+            return path
+        drive, tail = os.path.splitdrive(os.path.abspath(text))
+        written = safe = drive + os.sep
+        for part in (p for p in re.split(r"[\\/]+", tail) if p):
+            written = os.path.join(written, part)
+            if not fits(part):
+                short = AppLauncher._short_name(written)
+                part = os.path.basename(short) if short else ""
+                if not part or not fits(part):
+                    if written not in AppLauncher._ANSI_WARNED:
+                        AppLauncher._ANSI_WARNED.add(written)
+                        where = (
+                            "plain ASCII"
+                            if ascii_only
+                            else "this system's ANSI code page"
+                        )
+                        logger.warning(
+                            f"{written} holds a character outside {where} and "
+                            "has no 8.3 short name, so Maya (and any program that "
+                            "reads paths in the ANSI code page, RizomUV's scripts "
+                            "included) cannot open files under it. Point TEMP and TMP at a "
+                            "folder whose path is plain ASCII (e.g. C:\\Temp), or "
+                            "move the file to one."
+                        )
+                    return text
+            safe = os.path.join(safe, part)
+        return safe
 
     @staticmethod
     def handoff_env(source_root):

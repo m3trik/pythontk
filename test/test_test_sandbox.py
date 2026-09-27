@@ -94,6 +94,81 @@ class TestSandboxTestCase(unittest.TestCase):
         ).strip()
         self.assertEqual(os.path.normcase(child), os.path.normcase(root))
 
+    def test_a_child_sandbox_nests_inside_the_root_even_when_the_probe_fails(self):
+        """A child's own root goes INSIDE the parent's, named, never re-derived.
+
+        A child that activates the sandbox (mayatk's chunk driver, tentacle's
+        in-Maya dispatcher) found the parent's root the way any fresh
+        interpreter does: ``tempfile`` probes TMPDIR/TEMP/TMP with a throwaway
+        write and, on any failure but ``FileExistsError``, falls past all three
+        to the user's real temp dir without a word. Measured: a root that had
+        gone, an ``OSError`` on three probes in a row, or a refused create.
+        Here every probe write into the root is refused.
+        """
+        root = TestSandbox.temp()
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        child = "\n".join(
+            [
+                "import errno, os, sys",
+                f"sys.path.insert(0, {repo!r})",
+                "root = os.path.normcase(os.environ['TEMP'])",
+                "real_open = os.open",
+                "def refuse(path, *args, **kwargs):",
+                "    if os.path.normcase(os.path.dirname(os.path.abspath(path))) == root:",
+                "        raise OSError(errno.EIO, 'probe write refused', path)",
+                "    return real_open(path, *args, **kwargs)",
+                "os.open = refuse",
+                "from pythontk.core_utils.test_sandbox import TestSandbox",
+                "nested = TestSandbox.temp()",
+                "os.open = real_open  # the exit cleanup's rmtree opens dirs on POSIX",
+                "print(nested)",
+            ]
+        )
+        nested = subprocess.check_output(
+            [sys.executable, "-c", child], text=True
+        ).splitlines()[-1]
+        self.assertEqual(
+            os.path.normcase(os.path.dirname(nested)), os.path.normcase(root)
+        )
+        self.assertFalse(os.path.exists(nested), "the child's root goes with it")
+        self.assertEqual(os.environ.get(TestSandbox._ROOT_ENV), root)
+
+    def test_the_trash_is_the_scratch_folders_not_the_machines(self):
+        """A re-bake sets superseded maps aside through ``move_to_trash``: under
+        the sandbox that is "no trash here", so they go beside themselves into
+        ``_superseded`` inside the temp root -- never into the developer's
+        Recycle Bin, which a mayatk run filled with 11 scratch maps."""
+        from pythontk.file_utils._file_utils import FileUtils
+        from pythontk.file_utils.file_dependencies import FileDependencies
+
+        store = TempArtifacts("sandbox_trash", policy="scoped")
+        self.addCleanup(store.cleanup)
+        path = os.path.join(store.dir_path(), "old_Lightmap.exr")
+        with open(path, "wb") as fh:
+            fh.write(b"map")
+        before = len(TestSandbox.trashed)
+        where = FileDependencies.set_aside(path)
+        self.assertEqual(TestSandbox.trashed[before:], [os.path.abspath(path)])
+        del TestSandbox.trashed[before:]
+        self.assertEqual(
+            os.path.normcase(os.path.abspath(where)),
+            os.path.normcase(
+                os.path.join(os.path.dirname(path), "_superseded", "old_Lightmap.exr")
+            ),
+        )
+        with self.assertRaises(FileNotFoundError):
+            FileUtils.move_to_trash(path)  # the real refusals still stand
+        self.assertFalse(
+            FileUtils.can_trash(where), "a prompt is told there is no trash, too"
+        )
+        real = TestSandbox._state["trash"]
+        with TestSandbox.real_trash():
+            self.assertIs(FileUtils.__dict__["move_to_trash"], real)
+            self.assertIs(
+                FileUtils.__dict__["can_trash"], TestSandbox._state["can_trash"]
+            )
+        self.assertIsNot(FileUtils.__dict__["move_to_trash"], real, "guarded again")
+
     def test_activate_is_idempotent(self):
         self.assertEqual(TestSandbox.activate(), TestSandbox.activate())
         self.assertTrue(TestSandbox.is_active())

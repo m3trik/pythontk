@@ -2094,5 +2094,305 @@ class TestUniquePath(unittest.TestCase):
         self.assertEqual(os.path.basename(path), "Crate_1.exr")
 
 
+class TestMoveToTrash(unittest.TestCase):
+    """``FileUtils.move_to_trash`` -- the platform trash, never a permanent delete.
+
+    Windows' own recycle call deletes a file PERMANENTLY, without a word, where
+    the Recycle Bin will not keep it (a network share, a removable or SUBST
+    drive, a bin set to delete at once or too small), so every one of those is
+    refused up front and the file left alone. Each backend is pinned here
+    rather than discovered: the freedesktop and macOS ones run on any host
+    against a scratch trash, the real Recycle Bin only on Windows.
+    """
+
+    def setUp(self):
+        from pythontk import TempArtifacts, TestSandbox
+
+        # The sandbox keeps every other test out of the machine's trash; these
+        # test the call itself (and purge what they put there).
+        real = TestSandbox.real_trash()
+        real.__enter__()
+        self.addCleanup(real.__exit__, None, None, None)
+        self.store = TempArtifacts("ptk_move_to_trash", policy="scoped")
+        self.addCleanup(self.store.cleanup)
+        self.tmp = self.store.dir_path()
+
+    def _file(self, *parts, data=b"lightmap"):
+        path = os.path.join(self.tmp, *parts)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return path
+
+    @staticmethod
+    def _read(path):
+        with open(path, "rb") as fh:
+            return fh.read()
+
+    def test_a_missing_file_or_a_folder_is_refused(self):
+        with self.assertRaises(FileNotFoundError):
+            FileUtils.move_to_trash(os.path.join(self.tmp, "nope.exr"))
+        folder = os.path.join(self.tmp, "maps")
+        os.makedirs(folder)
+        with self.assertRaises(IsADirectoryError):
+            FileUtils.move_to_trash(folder)
+        self.assertTrue(os.path.isdir(folder))
+
+    def test_each_platform_takes_its_own_trash(self):
+        from unittest import mock
+
+        from pythontk.file_utils._trash import _TrashInternal
+
+        path = self._file("a.exr")
+        for platform, backend in (
+            ("win32", "_windows"),
+            ("darwin", "_macos"),
+            ("linux", "_freedesktop"),
+        ):
+            with (
+                mock.patch.object(sys, "platform", platform),
+                mock.patch.object(
+                    _TrashInternal, backend, return_value="there"
+                ) as chosen,
+            ):
+                self.assertEqual(FileUtils.move_to_trash(path), "there")
+            chosen.assert_called_once_with(os.path.abspath(path))
+
+    # -- freedesktop.org (Linux) ------------------------------------------------
+
+    def test_freedesktop_writes_the_record_then_moves_the_file(self):
+        from unittest import mock
+        from urllib.parse import quote
+
+        from pythontk.file_utils._trash import _TrashInternal
+
+        data_home = os.path.join(self.tmp, "xdg")
+        first = self._file("maps", "Crate_Lightmap.exr", data=b"one")
+        second = self._file("other", "Crate_Lightmap.exr", data=b"two")
+        with mock.patch.dict(os.environ, {"XDG_DATA_HOME": data_home}):
+            moved = _TrashInternal._freedesktop(first)
+            again = _TrashInternal._freedesktop(second)
+        trash = os.path.join(data_home, "Trash")
+        self.assertEqual(moved, os.path.join(trash, "files", "Crate_Lightmap.exr"))
+        self.assertEqual(again, os.path.join(trash, "files", "Crate_Lightmap.1.exr"))
+        self.assertFalse(os.path.exists(first))
+        self.assertEqual(self._read(moved), b"one")
+        self.assertEqual(self._read(again), b"two")
+        with open(
+            os.path.join(trash, "info", "Crate_Lightmap.exr.trashinfo"),
+            encoding="utf-8",
+        ) as fh:
+            record = fh.read().splitlines()
+        self.assertEqual(record[:2], ["[Trash Info]", f"Path={quote(first)}"])
+        self.assertTrue(record[2].startswith("DeletionDate="), record)
+
+    def test_freedesktop_a_trash_that_cannot_be_made_touches_nothing(self):
+        from unittest import mock
+
+        from pythontk.file_utils._trash import _TrashInternal
+
+        data_home = os.path.join(self.tmp, "xdg")
+        # A FILE where the trash's folder must go: nothing can be made there.
+        self._file("xdg", "Trash")
+        path = self._file("maps", "Crate_Lightmap.exr")
+        with mock.patch.dict(os.environ, {"XDG_DATA_HOME": data_home}):
+            self.assertIsNone(_TrashInternal._freedesktop(path))
+        self.assertTrue(os.path.isfile(path))
+
+    # -- macOS --------------------------------------------------------------------
+
+    def test_macos_moves_into_the_trash_under_finders_free_name(self):
+        from pythontk.file_utils._trash import _TrashInternal
+
+        trash = os.path.join(self.tmp, ".Trash")
+        os.makedirs(trash)
+        first = self._file("maps", "Crate.exr", data=b"one")
+        second = self._file("other", "Crate.exr", data=b"two")
+        self.assertEqual(
+            _TrashInternal._macos(first, [trash]), os.path.join(trash, "Crate.exr")
+        )
+        self.assertEqual(
+            _TrashInternal._macos(second, [trash]), os.path.join(trash, "Crate 2.exr")
+        )
+        self.assertEqual(self._read(os.path.join(trash, "Crate 2.exr")), b"two")
+
+    def test_macos_with_no_trash_on_the_volume_touches_nothing(self):
+        from pythontk.file_utils._trash import _TrashInternal
+
+        path = self._file("maps", "Crate.exr")
+        missing = os.path.join(self.tmp, "no_trash_here")
+        self.assertIsNone(_TrashInternal._macos(path, [missing]))
+        self.assertTrue(os.path.isfile(path))
+
+    # -- Windows ------------------------------------------------------------------
+
+    @unittest.skipUnless(sys.platform.startswith("win"), "the Recycle Bin is Windows'")
+    def test_windows_the_recycle_bin_keeps_it_restorably(self):
+        """The file leaves its folder for the Recycle Bin, whole, and the
+        Shell's own view of the bin lists it under its original folder. The
+        item is purged again afterwards."""
+        import subprocess
+
+        name = f"ptk_trash_{os.getpid()}_{id(self)}.exr"
+        path = self._file(name, data=b"recycled lightmap")
+        item = FileUtils.move_to_trash(path)
+        self.assertTrue(item, "the bin's own record names it")
+        self.addCleanup(self._purge, item)
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(self._read(item), b"recycled lightmap")
+        script = (
+            "$bin = (New-Object -ComObject Shell.Application).Namespace(10); "
+            f"$bin.Items() | Where-Object {{ $_.Name -eq '{name}' }} | "
+            "ForEach-Object { $bin.GetDetailsOf($_, 1) }"
+        )
+        try:
+            shown = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", script],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            ).stdout
+        except (OSError, subprocess.SubprocessError) as error:
+            self.skipTest(f"no PowerShell to ask the Shell ({error})")
+        self.assertIn(
+            os.path.normcase(os.path.dirname(path)),
+            [os.path.normcase(line.strip()) for line in shown.splitlines()],
+        )
+
+    @staticmethod
+    def _purge(item):
+        """Remove a test's own Recycle Bin item: its ``$R`` file and ``$I`` record."""
+        record = os.path.join(os.path.dirname(item), "$I" + os.path.basename(item)[2:])
+        for path in (item, record):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    @unittest.skipUnless(sys.platform.startswith("win"), "the Recycle Bin is Windows'")
+    def test_windows_a_file_held_open_stays_and_raises(self):
+        path = self._file("held.exr")
+        with open(path, "rb"):
+            with self.assertRaises(OSError):
+                FileUtils.move_to_trash(path)
+        self.assertTrue(os.path.isfile(path))
+
+    def test_the_trash_is_named_as_the_platform_names_it(self):
+        from unittest import mock
+
+        for platform, name in (
+            ("win32", "Recycle Bin"),
+            ("darwin", "Trash"),
+            ("linux", "Trash"),
+        ):
+            with mock.patch.object(sys, "platform", platform):
+                self.assertEqual(FileUtils.trash_name(), name)
+
+    def test_can_trash_answers_before_anything_moves(self):
+        """What a prompt needs before it asks: whether the file would go to the
+        trash, or could only be deleted for good. Nothing is moved."""
+        from unittest import mock
+
+        from pythontk.file_utils._trash import _TrashInternal
+
+        path = self._file("maps", "Crate.exr")
+        self.assertFalse(FileUtils.can_trash(os.path.join(self.tmp, "nope.exr")))
+        self.assertFalse(FileUtils.can_trash(os.path.dirname(path)), "a folder")
+        if sys.platform.startswith("win"):
+            self.assertTrue(FileUtils.can_trash(path), "a fixed drive keeps it")
+            with mock.patch.object(
+                _TrashInternal, "_windows_bin_keeps", return_value=False
+            ):
+                self.assertFalse(FileUtils.can_trash(path))
+        with mock.patch.object(sys, "platform", "darwin"):
+            trash = os.path.join(self.tmp, ".Trash")
+            with mock.patch.object(
+                _TrashInternal, "_macos_candidates", return_value=[trash]
+            ):
+                self.assertFalse(FileUtils.can_trash(path), "no ~/.Trash here")
+                os.makedirs(trash)
+                self.assertTrue(FileUtils.can_trash(path))
+        with (
+            mock.patch.object(sys, "platform", "linux"),
+            mock.patch.dict(
+                os.environ, {"XDG_DATA_HOME": os.path.join(self.tmp, "xdg")}
+            ),
+        ):
+            self.assertTrue(FileUtils.can_trash(path), "the home trash, made on use")
+        self.assertTrue(os.path.isfile(path), "nothing moved")
+
+    @unittest.skipUnless(sys.platform.startswith("win"), "the Recycle Bin is Windows'")
+    def test_windows_a_bin_that_would_not_keep_it_is_never_called(self):
+        """Every case FOF_ALLOWUNDO deletes in silently is refused up front."""
+        import ctypes
+        from unittest import mock
+
+        from pythontk.file_utils._trash import _TrashInternal
+
+        path = self._file("keep.exr", data=b"x" * 4096)
+        kernel32 = ctypes.windll.kernel32
+
+        def keeps(**patches):
+            if not patches:
+                return _TrashInternal._windows_bin_keeps(path)
+            with mock.patch.multiple(_TrashInternal, **patches):
+                return _TrashInternal._windows_bin_keeps(path)
+
+        self.assertTrue(keeps(), "the scratch folder's own fixed drive")
+        for drive_type in (2, 4, 5, 6):  # removable, network, optical, RAM disk
+            with mock.patch.object(kernel32, "GetDriveTypeW", return_value=drive_type):
+                self.assertFalse(_TrashInternal._windows_bin_keeps(path), drive_type)
+
+        def setting(value):
+            return lambda _hive, _key, name: value.get(name)
+
+        self.assertFalse(keeps(_registry_int=setting({"NoRecycleFiles": 1})))
+        self.assertFalse(keeps(_registry_int=setting({"NukeOnDelete": 1})))
+        self.assertFalse(keeps(_registry_int=setting({"MaxCapacity": 0})))
+        self.assertTrue(keeps(_registry_int=setting({"MaxCapacity": 1})))
+        self.assertFalse(
+            _TrashInternal._windows_bin_keeps(path[:3] + "x" * 260 + ".exr"),
+            "longer than MAX_PATH",
+        )
+        with mock.patch.object(
+            _TrashInternal, "_windows_bin_keeps", return_value=False
+        ):
+            with mock.patch.object(ctypes.windll.shell32, "SHFileOperationW") as call:
+                self.assertIsNone(FileUtils.move_to_trash(path))
+        call.assert_not_called()
+        self.assertTrue(os.path.isfile(path))
+
+    @unittest.skipUnless(sys.platform.startswith("win"), "SUBST is Windows'")
+    def test_windows_a_subst_drive_is_read_on_its_host_volume(self):
+        """A SUBST drive's bin deletes permanently; its host volume's keeps."""
+        import ctypes
+        from unittest import mock
+
+        from pythontk.file_utils._trash import _TrashInternal
+
+        devices = {
+            "X:": "\\??\\C:\\projects\\show",
+            "Y:": "\\??\\UNC\\server\\share\\show",
+            "C:": "\\Device\\HarddiskVolume3",
+        }
+
+        def query(drive, buffer, _size):
+            buffer.value = devices.get(drive, "")
+            return len(buffer.value) + 2 if buffer.value else 0
+
+        with mock.patch.object(ctypes.windll.kernel32, "QueryDosDeviceW", query):
+            self.assertEqual(
+                _TrashInternal._windows_real_path("X:\\maps\\a.exr"),
+                "C:\\projects\\show\\maps\\a.exr",
+            )
+            self.assertEqual(
+                _TrashInternal._windows_real_path("Y:\\maps\\a.exr"),
+                "\\\\server\\share\\show\\maps\\a.exr",
+            )
+            self.assertEqual(
+                _TrashInternal._windows_real_path("C:\\maps\\a.exr"), "C:\\maps\\a.exr"
+            )
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

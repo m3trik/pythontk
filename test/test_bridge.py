@@ -423,17 +423,54 @@ class HandoffSendTest(unittest.TestCase):
 
         app_handoff.AppLauncher.launch = staticmethod(_capturing_launch)
         br = self._bridge()
+        var = AppLauncher.PYTHON_ARGV_VAR  # the script path, added to every env
+
+        def hooked():
+            return {k: v for k, v in seen["env"].items() if k != var}
+
         # The deliverer holds the spec (wired at __init__) -- swap it there.
         br.deliverer.spec = replace(
             br.deliverer.spec, launch_env=lambda: {"CLEAN": "1"}
         )
         self.assertIsNotNone(br.send(template="import", mode=SEND_TO))
-        self.assertEqual(seen["env"], {"CLEAN": "1"})
+        self.assertEqual(hooked(), {"CLEAN": "1"})
         # ...and a RAISING hook degrades to the inherited env instead of
         # killing the send (sanitizing is best-effort by contract).
         br.deliverer.spec = replace(br.deliverer.spec, launch_env=lambda: 1 / 0)
+        with mock.patch.object(AppLauncher, "process_environ", return_value={"I": "1"}):
+            self.assertIsNotNone(br.send(template="import", mode=SEND_TO))
+        self.assertEqual(hooked(), {"I": "1"})
+
+    def test_the_script_path_rides_in_the_child_env(self):
+        """mayapy and maya.exe decode their command line in the ANSI code page, and
+        the script sits under %TEMP%, which holds the user's name: a launch that
+        must not name it (maya.exe's MEL) reads it from the env instead."""
+        import json
+
+        seen = {}
+
+        def _capturing_launch(app, args=None, detached=True, env=None, **kw):
+            seen.update(args=list(args), env=env)
+            return object()
+
+        app_handoff.AppLauncher.launch = staticmethod(_capturing_launch)
+        result = self._bridge().send(template="import", mode=SEND_TO)
+        carried = json.loads(seen["env"][AppLauncher.PYTHON_ARGV_VAR])
+        self.assertEqual(carried, [result["script"]])
+        self.assertEqual(seen["args"], ["--run", result["script"]])  # spec's argv
+
+    def test_a_spec_without_launch_args_runs_an_interpreter_off_its_env(self):
+        seen = {}
+
+        def _capturing_launch(app, args=None, detached=True, env=None, **kw):
+            seen.update(args=list(args), env=env)
+            return object()
+
+        app_handoff.AppLauncher.launch = staticmethod(_capturing_launch)
+        br = self._bridge()
+        br.deliverer.spec = replace(br.deliverer.spec, launch_args=None)
         self.assertIsNotNone(br.send(template="import", mode=SEND_TO))
-        self.assertIsNone(seen["env"])
+        self.assertEqual(seen["args"], ["-c", AppLauncher._PYTHON_ARGV_SHIM])
 
     def test_send_renders_writes_and_launches(self):
         br = self._bridge()
@@ -921,6 +958,32 @@ class HandoffSaveAsTest(unittest.TestCase):
         self.assertIn(f'OUT = r"{staged.replace(chr(92), "/")}"', body)
         self.assertIn("SCALE = 1.0", body)  # params ride along as usual
         self.assertFalse(re.findall(r"__[A-Z][A-Z0-9_]*__", body))  # all substituted
+
+    @unittest.skipUnless(sys.platform == "win32", "the ANSI code page is Windows'")
+    def test_the_paths_a_template_is_handed_are_ones_maya_can_open(self):
+        """Maya opens and saves through the ANSI code page: under a folder named
+        "Жук" (outside cp1252) ``cmds.file`` said "An invalid path was specified" /
+        "File not found". The payload and the output reach the template in their
+        8.3 short form; the names the code page holds are kept."""
+        import re
+
+        root = Path(__file__).resolve().parent / "temp_tests" / f"sa {os.getpid()}"
+        where = root / "José Жук"
+        where.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, root, True)
+        if not (app_handoff.AppLauncher._short_name(str(where)) or "").isascii():
+            self.skipTest("no 8.3 short names on this volume")
+        with mock.patch.object(tempfile, "tempdir", str(where)):
+            result = self._bridge().save_as(str(where / "asset.stub"))
+        self.assertIsNotNone(result)
+        body = self.runs[0]["script"]
+        fbx = re.search(r'FBX = r"(.*)"', body).group(1)
+        out = re.search(r'OUT = r"(.*)"', body).group(1)
+        for path in (fbx, out):  # "José Жук" is one component: its 8.3 name is ASCII
+            self.assertTrue(path.isascii(), ascii(path))
+        self.assertTrue(os.path.samefile(fbx, result["payload"]))
+        self.assertTrue(os.path.samefile(os.path.dirname(out), where))
+        self.assertEqual(os.path.basename(out), ".asset.saving.stub")
 
     def test_defaults_to_the_whole_scene_not_the_selection(self):
         """ "Save the scene as ..." is about the scene; ``send`` stays selection-first."""

@@ -246,6 +246,55 @@ class EditTest(_LibraryCase):
                 self.assertEqual(PresetLibrary.read_header(bundle)["id"], cid)
 
 
+class HiddenAndDescriptionTest(_LibraryCase):
+    """Hide presets from their tools' dropdowns; say what a preset is for."""
+
+    def setUp(self):
+        super().setUp()
+        shipped = Path(self.other, "shipped")
+        shipped.mkdir()
+        (shipped / "Stock.json").write_text(
+            json.dumps({"_meta": {"description": "The shipped look."}, "a": 0})
+        )
+        self.store = PresetStore("scene_exporter", "mayatk", builtin_dir=shipped)
+        self.store.save("Unity", {"a": 1})
+
+    def entries(self):
+        return {e.name: e for e in self.lib.entries("mayatk/scene_exporter")}
+
+    def test_set_hidden_takes_builtins_too_and_entries_carry_it(self):
+        e = self.entries()
+        self.assertFalse(e["Stock"].hidden or e["Unity"].hidden)
+        self.assertEqual(self.lib.set_hidden([e["Stock"], e["Unity"]]), 2)
+        e = self.entries()
+        self.assertTrue(e["Stock"].hidden and e["Unity"].hidden)
+        self.assertTrue(self.store.is_hidden("Stock"))
+        self.assertTrue(self.lib.entry("mayatk/scene_exporter", "Stock").hidden)
+        self.assertEqual(self.lib.set_hidden([e["Stock"]], False), 1)
+        self.assertFalse(self.entries()["Stock"].hidden)
+        self.assertTrue(self.entries()["Unity"].hidden)
+
+    def test_a_hidden_preset_follows_a_library_rename(self):
+        self.lib.set_hidden([self.entries()["Unity"]])
+        self.assertTrue(self.lib.rename(self.entries()["Unity"], "Unity 6"))
+        self.assertTrue(self.entries()["Unity 6"].hidden)
+
+    def test_descriptions_are_the_users_to_write_and_a_builtins_to_read(self):
+        e = self.entries()
+        self.assertEqual(e["Stock"].description, "The shipped look.")
+        self.assertEqual(e["Unity"].description, "")
+        # Built-ins are skipped, as for tags.
+        self.assertEqual(
+            self.lib.set_description([e["Unity"], e["Stock"]], "  For Unity. "), 1
+        )
+        self.assertEqual(self.entries()["Unity"].description, "For Unity.")
+        self.assertEqual(self.entries()["Stock"].description, "The shipped look.")
+        self.assertTrue(self.lib.rename(self.entries()["Unity"], "Unity 6"))
+        self.assertEqual(self.entries()["Unity 6"].description, "For Unity.")
+        self.lib.set_description([self.entries()["Unity 6"]], " ")
+        self.assertNotIn("description", self.store.info("Unity 6"))
+
+
 class CollectionRoundTripTest(_LibraryCase):
     """Author exports a collection; an artist (second root) installs and updates."""
 
@@ -409,6 +458,45 @@ class CollectionRoundTripTest(_LibraryCase):
         ]
         self.assertEqual((item.status, item.action), ("update", "replace"))
 
+    def test_a_changed_description_is_an_update_not_identical(self):
+        self.publish()
+        self.install()
+        [unity] = [e for e in self.lib.members(self.c["id"]) if e.name == "Unity"]
+        self.lib.set_description([unity], "The house Unity export.")
+        self.publish()
+        [item] = [
+            i for i in self.artist.plan_import(self.bundle).items if i.name == "Unity"
+        ]
+        self.assertEqual((item.status, item.action), ("update", "replace"))
+        self.install()
+        installed = self.artist.entry("mayatk/scene_exporter", "Unity")
+        self.assertEqual(installed.description, "The house Unity export.")
+
+    def test_hiding_is_the_artists_own_and_no_collection_carries_it(self):
+        # The author hides a member in their own dropdown: it still installs
+        # visible. The artist hides one: an update keeps it hidden.
+        [unity] = [e for e in self.lib.members(self.c["id"]) if e.name == "Unity"]
+        self.lib.set_hidden([unity])
+        self.publish()
+        with zipfile.ZipFile(self.bundle) as zf:
+            sidecar = json.loads(zf.read("presets/mayatk/scene_exporter/.Unity.preset"))
+        self.assertNotIn("hidden", sidecar)
+        self.install()
+        mine = self.artist.entry("mayatk/scene_exporter", "WebXR")
+        self.assertFalse(self.artist.entry("mayatk/scene_exporter", "Unity").hidden)
+        self.artist.set_hidden([mine])
+        self.exporter().save("WebXR", {"a": 22}, force=True)  # a v2 of the member
+        self.publish()
+        plan = self.artist.plan_import(self.bundle)
+        self.assertEqual(
+            {i.name: i.status for i in plan.items},
+            {"Unity": "identical", "WebXR": "update"},
+        )
+        self.artist.apply(plan)
+        webxr = self.artist.entry("mayatk/scene_exporter", "WebXR")
+        self.assertEqual(json.loads(webxr.path.read_text()), {"a": 22})
+        self.assertTrue(webxr.hidden)
+
     def test_apply_backs_up_first(self):
         self.publish()
         self.exporter(self.other).save("Mine", {"m": 1})
@@ -483,6 +571,38 @@ class BackupTest(_LibraryCase):
 
     def test_nothing_to_back_up_returns_none(self):
         self.assertIsNone(self.lib.backup())
+
+    def test_a_backup_can_cover_some_stores_and_keeps_what_you_hid(self):
+        self.exporter().save("Unity", {"a": 1})
+        self.fbx().save("game", {"axis": "Y"})
+        self.lib.set_hidden([self.lib.entry("blendertk/fbx_presets", "game")])
+        path = self.lib.backup(keys=["blendertk/fbx_presets"], name="Blender › FBX")
+        self.assertIsNone(self.lib.backup(keys=["nowhere/tool"]))
+        self.assertFalse(path.name.startswith("auto-"), "a manual backup is kept")
+        self.assertIn("blender-fbx", path.name)
+        with zipfile.ZipFile(path) as zf:
+            header = json.loads(zf.read("collection.json"))
+            payloads = [n for n in zf.namelist() if n.endswith(".json")]
+        self.assertEqual(header["name"], "Blender › FBX")
+        self.assertEqual(
+            payloads, ["collection.json", "presets/blendertk/fbx_presets/game.json"]
+        )
+        fresh = PresetLibrary(self.other)
+        fresh.apply(fresh.plan_import(path), backup=False)
+        self.assertTrue(fresh.entry("blendertk/fbx_presets", "game").hidden)
+
+    def test_restoring_a_backup_in_place_restores_a_hide(self):
+        # The payload is unchanged, so only the hide differs: that must still
+        # read as an update, or the restore skips it as identical.
+        self.fbx().save("game", {"axis": "Y"})
+        game = self.lib.entry("blendertk/fbx_presets", "game")
+        self.lib.set_hidden([game])
+        path = self.lib.backup()
+        self.lib.set_hidden([game], False)
+        plan = self.lib.plan_import(path)
+        self.assertEqual([(i.name, i.status) for i in plan.items], [("game", "update")])
+        self.lib.apply(plan, backup=False)
+        self.assertTrue(self.lib.entry("blendertk/fbx_presets", "game").hidden)
 
     def test_only_the_newest_automatic_backups_are_kept(self):
         d = Path(self.root, BACKUPS_DIR)

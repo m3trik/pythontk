@@ -120,6 +120,9 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`file_utils/usd.py`](#file_utils--usd) — Zero-dependency USD (OpenUSD) file utilities.
 - [`file_utils/uv_unwrap.py`](#file_utils--uv_unwrap) — Automatic UV unwrapping via external CLI engines (OBJ in -> OBJ out).
 - [`file_utils/workspace.py`](#file_utils--workspace) — Shared project-workspace model + ``workspace.mel`` codec.
+- [`geo_utils/articulation/analysis.py`](#geo_utils--articulation--analysis) — Propose an articulated rig from the parts' geometry alone -- no DCC.
+- [`geo_utils/articulation/conformance.py`](#geo_utils--articulation--conformance) — The golden cases every port of :class:`ArticulationModel` is held to.
+- [`geo_utils/articulation/model.py`](#geo_utils--articulation--model) — The articulated-rig joint model and its grab solver -- pure math, no DCC.
 - [`geo_utils/plate_emitter.py`](#geo_utils--plate_emitter) — Emitter geometry for a flat light-fixture plate — pure math, no DCC.
 - [`geo_utils/pointcloud.py`](#geo_utils--pointcloud) — Point-cloud geometry — analyze and group unordered sets of points.
 - [`geo_utils/polyline.py`](#geo_utils--polyline) — Pure polyline / curve geometry — generate, measure, sample, reshape.
@@ -231,6 +234,8 @@ The :class:`AppLauncher` facade: the three launch shapes, over its job mixins.
   - `AppLauncher.companion_python(executable: Optional[str] = None) -> Optional[str]` *(static)* — The Python interpreter that pairs with *executable* (default: this process).
   - `AppLauncher.find_app(app_identifier)` *(static)* — Attempts to locate the executable for the given application identifier.
   - `AppLauncher.process_environ()` *(static)* — The LIVE process environment -- what a child would actually inherit.
+  - `AppLauncher.python_args_via_env(argv, env=None)` *(static)* — The arguments and environment that make a Python interpreter run
+  - `AppLauncher.ansi_safe_path(path, ascii_only=False)` *(static)* — *path* spelled so a program that reads paths in the ANSI code page can open it.
   - `AppLauncher.handoff_env(source_root)` *(static)* — Child env for launching a DIFFERENT app: this process's env, minus its
   - `AppLauncher.desktop_env()` *(static)* — Child env for a desktop helper (``xdg-open``, a file manager) on POSIX.
   - `AppLauncher.append_to_path(path, user_scope=True)` *(static)* — Appends a directory to the system PATH.
@@ -724,6 +729,7 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `Record.save(self, store) -> Optional[str]` — Write this record through *store*;
 - **[`class RecordSpec`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L146)** — The one declaration of a record: identity, contract and codec.
   - `RecordSpec.path_keys(self) -> Optional[Tuple[str, ...]]` *(property)* — The payload keys whose values are paths (:attr:`paths`): the named
+  - `RecordSpec.stamp_keys(self) -> Optional[Tuple[str, ...]]` *(property)* — The payload keys whose values are writer stamps (:attr:`stamps`):
   - `RecordSpec.make(self, payload: Any) -> Record` — A :class:`Record` of *payload*, the envelope's ``version`` applied.
   - `RecordSpec.encode(self, payload: Any) -> str` — The stored text for *payload*.
   - `RecordSpec.decode(self, text: Optional[str], default: Any = None) -> Any` — *text* parsed, or *default* when absent, cleared, not JSON, or newer
@@ -733,13 +739,15 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `RecordSpec.save(self, store, payload: Any) -> Optional[str]` — Publish *payload* (the publish / clear idiom in one call).
   - `RecordSpec.clear(self, store) -> Optional[str]` — Clear the record;
   - `RecordSpec.is_present(self, store) -> bool` — Whether *store* holds a non-empty value for this record.
-- **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L325)** — The registry: every record, declared once, and what derives from it.
+- **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L339)** — The registry: every record, declared once, and what derives from it.
   - `SceneRecords.resolve_class(module: str, name: str) -> Any` *(static)* — The class a ``(module, name)`` row names -- :attr:`CODECS`',
   - `SceneRecords.codec(cls, spec: RecordSpec) -> Optional[Any]` *(class)* — The codec class of a :attr:`Merge.CODEC` record, else ``None``.
   - `SceneRecords.portable(cls) -> List[RecordSpec]` *(class)* — The records that cross a DCC hand-off, in declaration order.
   - `SceneRecords.rendering_policy(overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(static)* — What a deliverable claims about how it should be lit.
   - `SceneRecords.all(cls) -> List[RecordSpec]` *(class)* — Every declared record, in declaration order.
   - `SceneRecords.with_paths(cls) -> List[RecordSpec]` *(class)* — The records whose values are project-relative paths
+  - `SceneRecords.with_stamps(cls) -> List[RecordSpec]` *(class)* — The records holding writer stamps (:attr:`RecordSpec.stamps`), in
+  - `SceneRecords.stamp_unsaved(cls, store, stamp: str) -> int` *(class)* — Give every writer stamp still ``""`` in *store* the file *stamp*
   - `SceneRecords.map_paths(payload: Any, spell: Callable[[str], str], keys: Optional[Tuple[str, ...]] = None) -> Any` *(static)* — *payload* (a :attr:`RecordSpec.paths` mapping) with every string
   - `SceneRecords.rebase_paths(cls, store, old_base: Optional[str], new_base: Optional[str]) -> int` *(class)* — Re-spell every :attr:`RecordSpec.paths` record in *store* from
   - `SceneRecords.deliverable(cls) -> List[RecordSpec]` *(class)*
@@ -768,9 +776,13 @@ The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
   - `SceneStoreBase.scene_path(cls) -> str` *(class)* — The open scene's file, ``""`` while it is unsaved -- and in this
   - `SceneStoreBase.project_root(cls) -> Optional[str]` *(class)* — This scene's own project root -- what its :attr:`RecordSpec.paths`
   - `SceneStoreBase.writer_stamp(cls) -> str` *(class)* — This scene's file as a record stamps its writer: spelled from the
+  - `SceneStoreBase.writer_stamp_of(cls, scene_path: Optional[str]) -> str` *(class)* — *scene_path* as a writer stamp: spelled from ITS own project
   - `SceneStoreBase.written_here(cls, stamp: Optional[str]) -> bool` *(class)* — Whether a record stamped *stamp* (:meth:`writer_stamp`) is this
   - `SceneStoreBase.project_root_of(scene_path: Optional[str]) -> Optional[str]` *(static)* — The project *scene_path* lives in: its nearest marked ancestor, else
   - `SceneStoreBase.rebase_paths(cls, old_base: Optional[str], new_base: Optional[str]) -> int` *(class)* — Re-spell this scene's path records from *old_base* to *new_base*
+  - `SceneStoreBase.respell_for_write(cls, target: str, old_base: Optional[str], first_save: bool = False) -> Dict[Tuple[Scope, str], Optional[str]]` *(class)* — Ready the path records for this scene written as *target* -- a
+  - `SceneStoreBase.path_records(cls) -> Dict[Tuple[Scope, str], Optional[str]]` *(class)* — The stored text of every path record (:meth:`SceneRecords.with_paths`),
+  - `SceneStoreBase.restore_path_records(cls, snapshot: Mapping[Tuple[Scope, str], Optional[str]]) -> int` *(class)* — Put the path records back as *snapshot* (:meth:`path_records`) holds
   - `SceneStoreBase.format_dump(cls, decode: bool = True) -> str` *(class)* — Pretty JSON of :meth:`dump`, or ``""`` when nothing is stored.
   - `SceneStoreBase.owners(cls) -> Dict[str, Any]` *(class)* — :attr:`OWNERS` resolved to classes.
   - `SceneStoreBase.transfer_sections(cls, spell: Optional[Callable[[str], str]] = None, objects=None) -> Dict[str, Any]` *(class)* — What a hand-off producer adds to its sidecar: every portable record
@@ -1537,16 +1549,16 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `HandoffBridge.import_roots(*packages: str) -> List[str]` *(static)* — ``sys.path`` entries that make *packages* importable in a launched child app.
   - `HandoffBridge.child_sys_path(entries: Optional[Sequence[str]] = None) -> List[str]` *(static)* — The parent's importable set, minus what belongs to the parent's OWN Python.
 - **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L814)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L839)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L843)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L988)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
+- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L998)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
   - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1142)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1152)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
   - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1225)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1235)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
   - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app work on them, and re-ingest the result.
@@ -1603,8 +1615,8 @@ Run a script in an external app, block until it exits, and collect an artifact.
 - [`REWRITTEN`](pythontk/pythontk/core_utils/handoff/script_run.py#L40) — constant
 - **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/handoff/script_run.py#L60)** — Run a script in an external app, block, and collect its artifact.
   - `ScriptRunner.run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None, expect: str = CREATED, on_output: Optional[Callable[[Optional[str]], Optional[bool]]] = None) -> ScriptRunResult` *(static)* — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
-- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/handoff/script_run.py#L219)** — What a successful :func:`run_script_to_artifact` returns.
-- **[`class ProgressRelay`](pythontk/pythontk/core_utils/handoff/script_run.py#L234)** — One progress callback fed by staged work: child-script markers and in-process steps.
+- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/handoff/script_run.py#L227)** — What a successful :func:`run_script_to_artifact` returns.
+- **[`class ProgressRelay`](pythontk/pythontk/core_utils/handoff/script_run.py#L242)** — One progress callback fed by staged work: child-script markers and in-process steps.
   - `ProgressRelay.line(cls, step: int, steps: int, text: str = '') -> str` *(class)* — The marker line a child prints for *step* of *steps*.
   - `ProgressRelay.parse(cls, line: Optional[str]) -> Optional[Tuple[int, int, str]]` *(class)* — ``(step, steps, text)`` from a marker anywhere in *line*, else ``None``.
   - `ProgressRelay.value(self) -> int` *(property)* — The bar position last reported.
@@ -1627,6 +1639,7 @@ Generic on-disk script-template discovery + ``__KEY__`` rendering.
   - `ScriptTemplate.declared_modes(template_path, field: str = 'BRIDGE_MODES') -> Optional[Tuple[str, ...]]` *(static)* — Return the MODES a template declares, legacy spellings folded to the canon.
   - `ScriptTemplate.template_modes(template_path, allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> Tuple[str, ...]` *(static)* — Return the modes a template declares via its ``<field> = (...)`` tuple.
   - `ScriptTemplate.list_template_modes(template_dir, extension: str = '.py', allowed: Sequence[str] = (SEND_TO,), field: str = 'BRIDGE_MODES') -> List[Tuple[str, str]]` *(static)* — Return ``[(stem, mode), ...]`` for every (template, mode) pairing.
+  - `ScriptTemplate.child_path(path) -> str` *(static)* — *path* as a rendered template hands it to the app it launches.
   - `ScriptTemplate.render_template(template_path, context: Dict[str, str]) -> str` *(static)* — Substitute ``__KEY__`` placeholders in *template_path* using *context*.
 
 <a id="core_utils--help_mixin"></a>
@@ -1924,31 +1937,32 @@ Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 
 Whole-root view over the ecosystem's preset stores.
 
-- [`BUNDLE_FORMAT`](pythontk/pythontk/core_utils/presets/library.py#L66) — constant
-- [`BUNDLE_HEADER`](pythontk/pythontk/core_utils/presets/library.py#L67) — constant
-- [`BUNDLE_ROOT`](pythontk/pythontk/core_utils/presets/library.py#L68) — constant
-- [`COLLECTIONS_DIR`](pythontk/pythontk/core_utils/presets/library.py#L69) — constant
-- [`BACKUPS_DIR`](pythontk/pythontk/core_utils/presets/library.py#L70) — constant
-- [`AUTO_BACKUP_KEEP`](pythontk/pythontk/core_utils/presets/library.py#L73) — constant
-- **[`class PresetDomain`](pythontk/pythontk/core_utils/presets/library.py#L93)** — One preset store as the library sees it (a folder under the root).
+- [`BUNDLE_FORMAT`](pythontk/pythontk/core_utils/presets/library.py#L69) — constant
+- [`BUNDLE_HEADER`](pythontk/pythontk/core_utils/presets/library.py#L70) — constant
+- [`BUNDLE_ROOT`](pythontk/pythontk/core_utils/presets/library.py#L71) — constant
+- [`COLLECTIONS_DIR`](pythontk/pythontk/core_utils/presets/library.py#L72) — constant
+- [`BACKUPS_DIR`](pythontk/pythontk/core_utils/presets/library.py#L73) — constant
+- [`AUTO_BACKUP_KEEP`](pythontk/pythontk/core_utils/presets/library.py#L76) — constant
+- **[`class PresetDomain`](pythontk/pythontk/core_utils/presets/library.py#L96)** — One preset store as the library sees it (a folder under the root).
   - `PresetDomain.package(self) -> str` *(property)* — First key segment: the owning package (``"mayatk"``) or shared area.
   - `PresetDomain.store(self) -> PresetStore` — A non-marking store over this folder (the library never writes a marker).
-- **[`class PresetEntry`](pythontk/pythontk/core_utils/presets/library.py#L135)** — One preset: an immutable record, the ``HandlerEntry`` of presets.
+- **[`class PresetEntry`](pythontk/pythontk/core_utils/presets/library.py#L138)** — One preset: an immutable record, the ``HandlerEntry`` of presets.
   - `PresetEntry.id(self) -> Optional[str]` *(property)*
   - `PresetEntry.label(self) -> str` *(property)* — The name as typed (file names lose punctuation), else the name.
   - `PresetEntry.collection(self) -> Optional[str]` *(property)*
   - `PresetEntry.tags(self) -> Tuple[str, ...]` *(property)*
+  - `PresetEntry.description(self) -> str` *(property)* — What the preset is for: a user preset's own (its sidecar), a
   - `PresetEntry.read_only(self) -> bool` *(property)*
   - `PresetEntry.modified(self) -> Optional[float]` *(property)* — Payload mtime (epoch seconds): right even after an older install saves.
-- **[`class ImportItem`](pythontk/pythontk/core_utils/presets/library.py#L185)** — One row of an :class:`ImportPlan`.
+- **[`class ImportItem`](pythontk/pythontk/core_utils/presets/library.py#L207)** — One row of an :class:`ImportPlan`.
   - `ImportItem.label(self) -> str` *(property)*
   - `ImportItem.choices(self) -> Tuple[str, ...]` — The actions valid for this item's status.
-- **[`class ImportPlan`](pythontk/pythontk/core_utils/presets/library.py#L226)** — What importing a bundle would do;
+- **[`class ImportPlan`](pythontk/pythontk/core_utils/presets/library.py#L248)** — What importing a bundle would do;
   - `ImportPlan.kind(self) -> str` *(property)*
   - `ImportPlan.counts(self) -> Dict[str, int]` — ``{status: n}`` for a summary line.
   - `ImportPlan.pending(self) -> List[ImportItem]` — Items whose action changes something.
-- **[`class ImportResult`](pythontk/pythontk/core_utils/presets/library.py#L251)** — What :meth:`PresetLibrary.apply` did.
-- **[`class PresetLibrary(_PresetLibraryInternal)`](pythontk/pythontk/core_utils/presets/library.py#L336)** — Every preset store under one root: browse, lock, collect, back up, share.
+- **[`class ImportResult`](pythontk/pythontk/core_utils/presets/library.py#L273)** — What :meth:`PresetLibrary.apply` did.
+- **[`class PresetLibrary(_PresetLibraryInternal)`](pythontk/pythontk/core_utils/presets/library.py#L358)** — Every preset store under one root: browse, lock, collect, back up, share.
   - `PresetLibrary.root(self) -> Path` *(property)*
   - `PresetLibrary.domains(self, inc: Optional[Patterns] = None, exc: Optional[Patterns] = None) -> List[PresetDomain]` — Every preset store under the root, sorted by key.
   - `PresetLibrary.in_scope(keys: Iterable[str], inc: Optional[Patterns] = None, exc: Optional[Patterns] = None) -> List[str]` *(static)* — The store *keys* inside the scope *inc* / *exc* describe, in order.
@@ -1957,8 +1971,10 @@ Whole-root view over the ecosystem's preset stores.
   - `PresetLibrary.entry(self, key: str, name: str) -> Optional[PresetEntry]` — The preset *name* of store *key* (user shadows built-in), or ``None``.
   - `PresetLibrary.find(self, preset_id: str) -> Optional[PresetEntry]` — The user preset with sidecar id *preset_id*, or ``None``.
   - `PresetLibrary.set_read_only(self, entries: Iterable[PresetEntry], flag: bool = True) -> int` — Lock (or unlock) user presets.
+  - `PresetLibrary.set_hidden(self, entries: Iterable[PresetEntry], flag: bool = True) -> int` — Leave presets out of their tools' dropdowns (or list them again).
   - `PresetLibrary.assign(self, entries: Iterable[PresetEntry], collection: Optional[str]) -> int` — Tag user presets with *collection* (``None`` untags).
   - `PresetLibrary.set_tags(self, entries: Iterable[PresetEntry], tags: Iterable[str]) -> int` — Replace the tags of user presets.
+  - `PresetLibrary.set_description(self, entries: Iterable[PresetEntry], text: Optional[str]) -> int` — Say what user presets are for (blank clears it).
   - `PresetLibrary.duplicate(self, entry: PresetEntry, name: Optional[str] = None) -> PresetEntry` — Copy a preset (user or built-in) to a new, unlocked, untagged user preset.
   - `PresetLibrary.rename(self, entry: PresetEntry, new_name: str) -> bool` — Rename a user preset (refused when locked or the name is taken).
   - `PresetLibrary.delete(self, entries: Iterable[PresetEntry], *, force: bool = False) -> int` — Delete user presets (locked ones only with *force*).
@@ -1971,7 +1987,7 @@ Whole-root view over the ecosystem's preset stores.
   - `PresetLibrary.is_modified(self, entry: PresetEntry) -> bool` — True when a collection member's payload changed since install/publish.
   - `PresetLibrary.delete_collection(self, collection_id: str, *, delete_members: bool = False) -> Dict[str, int]` — Remove a collection header and untag (or delete) its members.
   - `PresetLibrary.export(self, path: Union[str, os.PathLike], *, collection: Optional[str] = None, keys: Optional[Iterable[str]] = None, name: Optional[str] = None) -> Path` — Write a bundle of user presets to *path* (a ``.zip``).
-  - `PresetLibrary.backup(self, path: Optional[Union[str, os.PathLike]] = None, *, reason: str = 'manual') -> Optional[Path]` — Back up every user preset;
+  - `PresetLibrary.backup(self, path: Optional[Union[str, os.PathLike]] = None, *, reason: str = 'manual', keys: Optional[Iterable[str]] = None, name: Optional[str] = None) -> Optional[Path]` — Back up user presets;
   - `PresetLibrary.backups(self) -> List[Path]` — Bundles in ``<root>/.backups/``, newest first.
   - `PresetLibrary.read_header(path: Union[str, os.PathLike]) -> Dict[str, Any]` *(static)* — The ``collection.json`` header of bundle *path*.
   - `PresetLibrary.plan_import(self, path: Union[str, os.PathLike]) -> ImportPlan` — Compare bundle *path* against the local presets;
@@ -1988,9 +2004,10 @@ Qt-free, zero-dependency named-preset *store* for the ecosystem.
 - [`ACTIVE_SENTINEL`](pythontk/pythontk/core_utils/presets/store.py#L84) — constant
 - [`INFO_EXT`](pythontk/pythontk/core_utils/presets/store.py#L92) — constant
 - [`DOMAIN_MARKER`](pythontk/pythontk/core_utils/presets/store.py#L98) — constant
+- [`HIDDEN_BUILTINS`](pythontk/pythontk/core_utils/presets/store.py#L106) — constant
 - **[`class Codec`](pythontk/pythontk/core_utils/presets/store.py#L52)** — Pluggable (de)serialiser for a :class:`PresetStore`'s on-disk format.
-- **[`class PresetReadOnlyError(PermissionError)`](pythontk/pythontk/core_utils/presets/store.py#L101)** — Raised when saving over a locked (read-only) user preset.
-- **[`class PresetStore(_PresetStoreInternal)`](pythontk/pythontk/core_utils/presets/store.py#L188)** — Named-preset collection with a read-only built-in tier and a writable
+- **[`class PresetReadOnlyError(PermissionError)`](pythontk/pythontk/core_utils/presets/store.py#L109)** — Raised when saving over a locked (read-only) user preset.
+- **[`class PresetStore(_PresetStoreInternal)`](pythontk/pythontk/core_utils/presets/store.py#L217)** — Named-preset collection with a read-only built-in tier and a writable
   - `PresetStore.ext(self) -> str` *(property)* — File extension this store reads/writes (from its :class:`Codec`).
   - `PresetStore.user_dir(self) -> Path` *(property)* — Writable preset directory (created lazily on first :meth:`save`).
   - `PresetStore.builtin_dir(self) -> Optional[Path]` *(property)* — Read-only shipped preset directory, or ``None`` when not configured.
@@ -2002,6 +2019,9 @@ Qt-free, zero-dependency named-preset *store* for the ecosystem.
   - `PresetStore.set_info(self, name: str, **fields: Any) -> Dict[str, Any]` — Merge *fields* into *name*'s sidecar;
   - `PresetStore.ensure_info(self, name: str) -> Dict[str, Any]` — *name*'s metadata, stamped with an ``id`` (and label/created/author) if missing.
   - `PresetStore.is_read_only(self, name: str) -> bool` — True for a shipped built-in, or a user preset whose sidecar is locked.
+  - `PresetStore.description(self, name: str) -> str` — What preset *name* is for, or ``""``.
+  - `PresetStore.is_hidden(self, name: str) -> bool` — True when *name* is left out of its tool's dropdown (:meth:`set_hidden`).
+  - `PresetStore.set_hidden(self, name: str, hidden: bool = True) -> bool` — Leave preset *name* out of its tool's dropdown, or list it again.
   - `PresetStore.unique_name(self, base: str) -> str` — *base*, or ``"<base> 2"``, ``"<base> 3"``...
   - `PresetStore.active(self) -> Optional[str]` *(property)* — The last-selected preset's file stem, or ``None`` when unset/unreadable.
   - `PresetStore.list(self, tier: Optional[str] = None) -> List[str]` — Sorted preset names.
@@ -2019,7 +2039,9 @@ Qt-free, zero-dependency named-preset *store* for the ecosystem.
 
 Exit a DCC-hosted interpreter without running ``DLL_PROCESS_DETACH``.
 
-- **[`class ProcessExit(_ProcessExitInternal)`](pythontk/pythontk/core_utils/process_exit.py#L133)** — Process-wide exit that skips interpreter and DLL teardown.
+- **[`class ProcessExit(_ProcessExitInternal)`](pythontk/pythontk/core_utils/process_exit.py#L170)** — Process-wide exit that skips interpreter and DLL teardown.
+  - `ProcessExit.register(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Callable[..., Any]` *(static)* — Run ``func(*args, **kwargs)`` when :meth:`hard_exit` is called.
+  - `ProcessExit.unregister(func: Callable[..., Any]) -> None` *(static)* — Drop every registration of *func*, as ``atexit.unregister`` does.
   - `ProcessExit.hard_exit(code: int = 0) -> NoReturn` *(static)* — Stop this process immediately with status *code*.
 
 <a id="core_utils--process_stream"></a>
@@ -2174,10 +2196,12 @@ A discoverable, user-extensible collection of schema-validated template files.
 
 Process-level test isolation -- keep a test run off the developer's machine.
 
-- **[`class TestSandbox(_TestSandboxInternal)`](pythontk/pythontk/core_utils/test_sandbox.py#L93)** — Keep this process's side effects off the developer's machine.
+- **[`class TestSandbox(_TestSandboxInternal)`](pythontk/pythontk/core_utils/test_sandbox.py#L122)** — Keep this process's side effects off the developer's machine.
   - `TestSandbox.browser(cls) -> None` *(class)* — Refuse every ``webbrowser`` launch for the rest of the process.
   - `TestSandbox.temp(cls) -> str` *(class)* — Route the process's temp dir into one throwaway root;
-  - `TestSandbox.activate(cls) -> str` *(class)* — Both guards; returns the temp root.
+  - `TestSandbox.trash(cls) -> None` *(class)* — Keep :meth:`FileUtils.move_to_trash` off the machine's trash for the
+  - `TestSandbox.real_trash(cls) -> Iterator[None]` *(class)* — The machine's own trash for the block -- for a test of
+  - `TestSandbox.activate(cls) -> str` *(class)* — Every guard -- the browser, the trash, the temp root;
   - `TestSandbox.is_active(cls) -> bool` *(class)* — True while both guards are in place.
   - `TestSandbox.user_config(cls) -> Iterator[str]` *(class)* — Point the ecosystem user-config root at a throwaway dir for the block.
 
@@ -2261,6 +2285,9 @@ A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys.
   - `FileUtils.atomic_write(target: str, write: Callable[[str], Any], promote: bool = True) -> str` *(static)* — Produce *target* through *write*, so no reader meets a partial file.
   - `FileUtils.copy_file(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str` *(static)* — Copies a file to a specified folder, ensuring the folder exists.
   - `FileUtils.move_file(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]` *(class)* — Moves one or more files to a specified folder.
+  - `FileUtils.move_to_trash(path: str) -> Optional[str]` *(static)* — Move the file *path* to the platform's trash, where it can be restored.
+  - `FileUtils.can_trash(path: str) -> bool` *(static)* — Whether :meth:`move_to_trash` would take the file *path* to a trash
+  - `FileUtils.trash_name() -> str` *(static)* — What this platform calls its trash, for a sentence: "Recycle Bin"
   - `FileUtils.reveal_in_file_manager(cls, path, _runner=None)` *(class)* — Open the OS file manager showing ``path`` (selecting the file when supported, else
   - `FileUtils.get_file_info(cls, paths, info, hash_algo=None, force_tuples=False)` *(class)* — Returns file and directory information for a list of file strings based on specified parameters.
   - `FileUtils.format_path(p: Union[str, List[str]], section: Union[str, None] = None, replace: Union[str, None] = None) -> Union[str, List[str]]` *(static)* — Format a given filepath(s).
@@ -2276,11 +2303,13 @@ A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys.
 
 File dependencies -- files a record names by *name*, found where they are NOW.
 
-- **[`class FileDependencies(LoggingMixin)`](pythontk/pythontk/file_utils/file_dependencies.py#L46)** — The rules over files that records name by name;
+- **[`class FileDependencies(LoggingMixin)`](pythontk/pythontk/file_utils/file_dependencies.py#L48)** — The rules over files that records name by name;
   - `FileDependencies.claims(refs: Iterable[Sequence[str]]) -> Dict[str, FrozenSet[str]]` *(static)* — ``{file name: owners}`` -- which owners read which file name.
-  - `FileDependencies.remove_superseded(cls, before: Iterable[str], after: Iterable[Sequence[Any]]) -> List[str]` *(class)* — Delete the files of *before* that nothing in *after* reads;
+  - `FileDependencies.remove_superseded(cls, before: Iterable[str], after: Iterable[Sequence[Any]]) -> List[str]` *(class)* — Set aside the files of *before* that nothing in *after* reads;
+  - `FileDependencies.set_aside(cls, path: str) -> str` *(class)* — Take the file *path* out of its folder without destroying it.
   - `FileDependencies.written_here(writer: Optional[str], scene: str, base: Optional[str]) -> bool` *(static)* — Whether a file whose writer record says *writer* is *scene*'s own to delete.
   - `FileDependencies.find_files(names: Iterable[str], root: str) -> List[str]` *(static)* — Every file under *root*, recursively, whose name is one of *names*.
+  - `FileDependencies.walk(cls, root: str) -> Iterator[Tuple[str, List[str], List[str]]]` *(class)* — ``os.walk(root)``, top-down, that never enters a folder of stale
   - `FileDependencies.resolve(cls, refs: Iterable[Sequence[str]], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, resolve_hint: Optional[Callable[[str, str], str]] = None) -> List[Dict[str, Any]]` *(class)* — Every file *refs* name, resolved on disk NOW;
   - `FileDependencies.search_dirs(deps: Iterable[Dict[str, Any]], then: Iterable[str] = ()) -> List[str]` *(static)* — The folders a consumer that joins names should try, in priority order.
   - `FileDependencies.copy_files(cls, sources: Iterable[str], dest_dir: str, mode: str = 'copy') -> List[Tuple[str, str]]` *(class)* — Copy (or, ``mode="move"``, move) *sources* into *dest_dir*, without clobbering.
@@ -2306,15 +2335,15 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
 
 The FBX2glTF CLI driver behind :meth:`MeshConvert.fbx_to_glb`, and the
 
-- [`FBX2GLTF_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L32) — constant
-- [`FBX2GLTF_PLATFORMS`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L33) — constant
+- [`FBX2GLTF_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L33) — constant
+- [`FBX2GLTF_PLATFORMS`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L34) — constant
 
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
 FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
 
-- **[`class MeshConvert(_Fbx2GltfMixin, _SidecarMixin, _LightmapsMixin, _ShadowRigsMixin, _AnimationMixin, _VisibilityMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L44)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+- **[`class MeshConvert(_Fbx2GltfMixin, _SidecarMixin, _LightmapsMixin, _ShadowRigsMixin, _ArticulationMixin, _AnimationMixin, _VisibilityMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L46)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
   - `MeshConvert.conversion_timeout(cls, src: str) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
   - `MeshConvert.bake_node_frames(cls, src: str) -> int` *(class)* — Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
@@ -2341,6 +2370,7 @@ FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
   - `MeshConvert.lightmap_report(coverage: Dict[str, List[str]], bound: Sequence[Dict[str, Any]]) -> Dict[str, Any]` *(static)* — ``{"expected", "bound", "unbound", "out_of_scope"}`` for one bind.
   - `MeshConvert.apply_glb_lightmaps(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True) -> List[Dict[str, Any]]` *(class)* — Wire a host DCC's committed lightmaps into a GLB for the web viewer.
   - `MeshConvert.apply_glb_shadows(cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()) -> Optional[Dict[str, Any]]` *(class)* — Bind a scene's shadow-rig maps into a GLB;
+  - `MeshConvert.apply_glb_articulation(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Publish ``extras.articulation_web``: the scene's articulated rigs,
   - `MeshConvert.apply_glb_clips(cls, glb: GlbTarget, *, mode: str = 'both') -> Optional[Dict[str, Any]]` *(class)* — Rebuild the declared shot clips as exact slices of the whole timeline.
   - `MeshConvert.clip_spans(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None, key_spans: Optional[Callable[[List[Tuple[Optional[float], Optional[float]]]], Sequence[Optional[Sequence[float]]]]] = None) -> Dict[str, List[float]]` *(class)* — Per take, the first and last authored frame inside its window.
   - `MeshConvert.prune_glb_animations(cls, glb: GlbTarget) -> List[str]` *(class)* — Drop every animation that carries no channels or no samplers.
@@ -2577,17 +2607,17 @@ File-level mesh processing via PyMeshLab (optional dependency).
 
 Prefix-scoped temp artifacts with an explicit lifetime policy.
 
-- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L40)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files/dirs in one directory.
+- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L47)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files/dirs in one directory.
   - `TempArtifacts.path(self, extension: str = '.tmp', name: Optional[str] = None) -> str` — Return a tracked ``<prefix>_<tag><extension>`` path in :attr:`dir`.
   - `TempArtifacts.dir_path(self, name: Optional[str] = None, create: bool = True) -> str` — Return a tracked ``<prefix>_<tag>/`` DIRECTORY path in :attr:`dir`.
   - `TempArtifacts.register(self, path: str) -> str` — Adopt *path* (e.g.
   - `TempArtifacts.release(self, path: str) -> bool` — Delete ONE tracked *path* now, whatever the policy;
   - `TempArtifacts.cleanup(self, force: bool = False) -> List[str]` — Remove tracked files per the policy;
   - `TempArtifacts.sweep_stale(self) -> List[str]` — Best-effort delete of ``<prefix>_*`` files in :attr:`dir` older than
-- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L320)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
+- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L376)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
   - `CachedArtifact.key(*parts: Any, files: Sequence[str] = (), length: int = 16) -> str` *(static)* — A deterministic tag over *parts* and the identity of each path in *files*.
   - `CachedArtifact.get(self, key: str, produce: Callable[[str], Any], *, sidecars: Sequence[str] = (), use_cache: bool = True) -> 'CachedArtifact.Result'` — The artifact for *key*, produced by ``produce(out_path)`` on a miss.
-- **[`class ScratchTwins(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L462)** — Per-source scratch twins of foreign files, discarded only while untouched.
+- **[`class ScratchTwins(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L518)** — Per-source scratch twins of foreign files, discarded only while untouched.
   - `ScratchTwins.path_for(self, source: str) -> str` — The deterministic twin path for *source* (nothing is created).
   - `ScratchTwins.create(self, source: str, payload: str) -> str` — Copy *payload* to *source*'s twin path, stamp it, and return the path.
   - `ScratchTwins.is_twin(self, path: str) -> bool` — True if *path* is a twin this store created and still tracks.
@@ -2685,6 +2715,52 @@ Shared project-workspace model + ``workspace.mel`` codec.
   - `WorkspaceTemplates.rules_from(data: Dict[str, Any]) -> Dict[str, str]` *(static)* — The file rules in template payload *data*, as ``{rule: path}`` strings.
   - `WorkspaceTemplates.save(cls, name: str, rules: Dict[str, str]) -> str` *(class)* — Save *rules* as template *name* and make it the active default.
   - `WorkspaceTemplates.delete(cls, name: str) -> bool` *(class)* — Delete template *name* (the store keeps its active pointer
+
+<a id="geo_utils--articulation--analysis"></a>
+### `geo_utils/articulation/analysis.py`
+
+Propose an articulated rig from the parts' geometry alone -- no DCC.
+
+- **[`class ShellFacts(NamedTuple)`](pythontk/pythontk/geo_utils/articulation/analysis.py#L43)** — One shell's measured shape (see :meth:`ArticulationAnalysis.shell`).
+  - `ShellFacts.length(self) -> float` *(property)*
+  - `ShellFacts.isotropy(self) -> float` *(property)* — Shortest extent over the longest: 1 for a ball, near 0 for a rod.
+- **[`class ArticulationAnalysis`](pythontk/pythontk/geo_utils/articulation/analysis.py#L72)** — The rules that read an articulated rig off its parts' shells.
+  - `ArticulationAnalysis.shell(points: Sequence[Sequence[float]]) -> Optional[ShellFacts]` *(static)* — Measure one shell: its principal axes and extents, its radius about
+  - `ArticulationAnalysis.propose(cls, parts: Sequence[Dict[str, Any]], root: Optional[int] = None, order: Optional[Sequence[int]] = None, up: Sequence[float] = (0.0, 1.0, 0.0)) -> Dict[str, Any]` *(class)* — A rig proposal for *parts*.
+
+<a id="geo_utils--articulation--conformance"></a>
+### `geo_utils/articulation/conformance.py`
+
+The golden cases every port of :class:`ArticulationModel` is held to.
+
+- **[`class ArticulationConformance`](pythontk/pythontk/geo_utils/articulation/conformance.py#L31)** — Golden cases for the ports of :class:`ArticulationModel`.
+  - `ArticulationConformance.rigs() -> Dict[str, Dict[str, Any]]` *(static)* — The rigs the cases pose, by name.
+  - `ArticulationConformance.cases(cls, seed: int = 0, per_rig: int = 4) -> Dict[str, Any]` *(class)* — The conformance document: ``{"tolerance", "rigs", "cases"}``.
+
+<a id="geo_utils--articulation--model"></a>
+### `geo_utils/articulation/model.py`
+
+The articulated-rig joint model and its grab solver -- pure math, no DCC.
+
+- [`ROTATE_CHANNELS`](pythontk/pythontk/geo_utils/articulation/model.py#L55) — constant
+- [`TRANSLATE_CHANNELS`](pythontk/pythontk/geo_utils/articulation/model.py#L56) — constant
+- [`CHANNELS`](pythontk/pythontk/geo_utils/articulation/model.py#L57) — constant
+- [`ROTATE_ORDERS`](pythontk/pythontk/geo_utils/articulation/model.py#L59) — constant
+- **[`class ArticulationModel(_ArticulationModelInternal)`](pythontk/pythontk/geo_utils/articulation/model.py#L274)** — One rig's joints, channels and limits, and the solver that poses them.
+  - `ArticulationModel.from_record(cls, payload: Mapping[str, Any], name: Optional[str] = None) -> 'ArticulationModel'` *(class)* — The model of the rig *name* (default: the first) in an
+  - `ArticulationModel.joint_index(self, name: str) -> int` — The index of the joint called *name*.
+  - `ArticulationModel.chain(self, joint: int) -> List[int]` — The joints from *joint*'s root down to *joint*, root first.
+  - `ArticulationModel.rest_state(self) -> List[float]` — Every channel at 0: the rig at rest.
+  - `ArticulationModel.limits(self, slot: int) -> Tuple[Optional[float], Optional[float]]` — ``(min, max)`` of state slot *slot*;
+  - `ArticulationModel.clamp(self, state: Sequence[float]) -> List[float]` — *state* with every channel inside its limits.
+  - `ArticulationModel.local(self, state: Sequence[float], joint: int) -> Tuple[Vec, Quat]` — Joint *joint*'s local ``(translation, rotation)`` at *state*.
+  - `ArticulationModel.pose(self, state: Sequence[float]) -> List[Tuple[Vec, Quat]]` — Every joint's local ``(translation, rotation)`` at *state*.
+  - `ArticulationModel.world(self, state: Sequence[float]) -> List[Tuple[Vec, Quat]]` — Every joint's ``(position, rotation)`` in rig space at *state*.
+  - `ArticulationModel.point(self, state: Sequence[float], joint: int, local_point: Sequence[float]) -> Vec` — *local_point* (in joint *joint*'s frame) in rig space at *state*.
+  - `ArticulationModel.to_local(self, state: Sequence[float], joint: int, point: Sequence[float]) -> Vec` — The rig-space *point* in joint *joint*'s frame at *state* -- where a
+  - `ArticulationModel.read(self, locals_: Sequence[Tuple[Sequence[float], Sequence[float]]], hint: Optional[Sequence[float]] = None) -> List[float]` — The state that poses the joints at *locals_* -- one local
+  - `ArticulationModel.scale_of(self, locals_: Sequence[Tuple[Sequence[float], Sequence[float]]]) -> float` — How many of the runtime's units one of the record's makes, measured
+  - `ArticulationModel.solve(self, state: Sequence[float], joint: int, local_point: Sequence[float], target: Sequence[float], rotation: Optional[Sequence[float]] = None) -> List[float]` — The state that brings *local_point* on joint *joint*'s link to the
 
 <a id="geo_utils--plate_emitter"></a>
 ### `geo_utils/plate_emitter.py`

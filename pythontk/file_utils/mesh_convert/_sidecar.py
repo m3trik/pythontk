@@ -406,6 +406,21 @@ class _SidecarMixin:
                         "reader without one leaves the imported keys and the "
                         "silhouette in the base colour, which is the fallback"
                     ),
+                    f"extras.{cls.ARTICULATION_WEB_KEY}": (
+                        "the scene's articulated rigs: per rig its joints -- the "
+                        "glTF node index, the parent joint, the rest translate "
+                        "and rotation in the parent's space, the rotate order "
+                        "and the channels (rx/ry/rz degrees, tx/ty/tz a slide "
+                        "along the rest axes) with their limits -- and the "
+                        "parts a hand grabs, each with its node index and the "
+                        "joint it rides. A runtime poses a joint as rotation = "
+                        "rest (x) Euler(channels), translation = rest + "
+                        "rest.(tx, ty, tz), measures its own unit factor off "
+                        "the rest translations, and solves a grab with "
+                        "pythontk's ArticulationModel (ported in the preview's "
+                        "articulated_rig.js); a reader without one plays the "
+                        "clips, which are the joints' own keys"
+                    ),
                 },
                 "sections": sorted(cls.SIDECAR_APPLIERS),
                 # How to LIGHT what the sections describe. The rest of this

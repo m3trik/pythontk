@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pythontk as ptk  # noqa: E402
 from pythontk import ImgUtils, MeshConvert, PreviewServer  # noqa: E402
+from conftest import browser_runtime_available  # noqa: E402
 
 try:
     import numpy as np
@@ -516,6 +517,42 @@ class TestApplyGlbShadows(unittest.TestCase):
         with MeshConvert.open_glb(path) as edit:
             return json.loads(json.dumps(edit.gltf))
 
+    def test_a_curve_proxy_strip_keeps_the_manifest_on_its_nodes(self):
+        """The conversion strips render-effect curve proxies AFTER this pass,
+        renumbering every node behind one; the manifest's indices must follow
+        or the planes follow the wrong source."""
+        proxy = {
+            "name": "Fx__highlight",
+            "extras": {
+                "fromFBX": {
+                    "userProperties": {
+                        MeshConvert.CURVE_PROXY_MARKER: {
+                            "type": "eFbxBool",
+                            "value": True,
+                        }
+                    }
+                }
+            },
+        }
+        nodes = [
+            proxy,
+            {"name": "Box_shadow", "mesh": 0},
+            {"name": "shadow_source", "translation": [1.5, 2.0, -0.5]},
+            {"name": "Box_contact_loc", "translation": [0.2, 0.0, 0.3]},
+            {"name": "Box_horizon_plane", "mesh": 1},
+            _data_export_node(self._v2()),
+        ]
+        path = self._glb(None, nodes=nodes)
+        MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
+        MeshConvert.strip_glb_curve_proxies(path)
+        gltf = self._read(path)
+        manifest = gltf["extras"][MeshConvert.SHADOW_WEB_KEY]
+        names = [n.get("name") for n in gltf["nodes"]]
+        for plane in manifest["planes"]:
+            self.assertEqual(names[plane["node"]], plane["name"])
+            self.assertEqual(names[plane["source_node"]], "shadow_source")
+            self.assertEqual(names[plane["contact_node"]], "Box_contact_loc")
+
     def test_the_manifest_carries_indices_top_left_rects_and_the_data_sampler(self):
         path = self._glb(self._v2())
         manifest = MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
@@ -935,20 +972,8 @@ class TestServerAutoActivation(unittest.TestCase):
 
 
 def _runtime_available():
-    """Playwright installed AND an Edge/Chrome channel it can drive."""
-    if np is None or Image is None:
-        return False
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return False
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(channel="msedge", headless=True)
-            browser.close()
-        return True
-    except Exception:  # noqa: BLE001 -- no browser is a skip, not a failure
-        return False
+    """The image stack AND a drivable browser (see conftest)."""
+    return np is not None and Image is not None and browser_runtime_available()
 
 
 #: The probe: waits for the shim's session (whose load hook runs after this

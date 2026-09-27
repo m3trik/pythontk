@@ -112,6 +112,77 @@ class TestHardExitSkipsTeardown(unittest.TestCase):
         self.assertNotIn("UNREACHABLE", out)
 
 
+class TestHardExitRunsReleases(unittest.TestCase):
+    """What ``register`` collected runs first -- ``hard_exit``'s own ``atexit``.
+
+    Skipping ``atexit`` is the point, yet some of what it runs must still
+    happen: a ``session`` temp store deletes itself there, and every runner and
+    DCC child that leaves through ``hard_exit`` leaked its whole test sandbox
+    (measured: 791 of them, 572 MB, in the system temp dir after a week).
+    """
+
+    def test_a_registered_release_runs_before_the_exit(self):
+        rc, out = _child(
+            _PRELUDE
+            + "ProcessExit.register(print, 'RELEASED', end='')\n"
+            + "ProcessExit.hard_exit(5)"
+        )
+        self.assertEqual(rc, 5)
+        self.assertIn("RELEASED", out)
+
+    def test_releases_run_last_registered_first(self):
+        # atexit's order: a later registration may depend on an earlier one.
+        rc, out = _child(
+            _PRELUDE
+            + "ProcessExit.register(print, 'A', end='')\n"
+            + "ProcessExit.register(print, 'B', end='')\n"
+            + "ProcessExit.hard_exit(0)"
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "BA")
+
+    def test_a_raising_release_blocks_neither_the_exit_nor_the_others(self):
+        rc, out = _child(
+            _PRELUDE
+            + "ProcessExit.register(print, 'EARLIER', end='')\n"
+            + "ProcessExit.register(lambda: 1 / 0)\n"
+            + "ProcessExit.hard_exit(6)"
+        )
+        self.assertEqual(rc, 6)
+        self.assertIn("EARLIER", out)
+
+    def test_unregister_drops_a_release(self):
+        rc, out = _child(
+            _PRELUDE
+            + "def say(): print('DROPPED', end='')\n"
+            + "ProcessExit.register(say)\n"
+            + "ProcessExit.unregister(say)\n"
+            + "ProcessExit.hard_exit(0)"
+        )
+        self.assertEqual(rc, 0)
+        self.assertNotIn("DROPPED", out)
+
+    def test_a_registration_survives_a_module_reload(self):
+        # A reload builds a second class object; the registrations must not
+        # stay behind on the first (ModuleReloader reloads in a DCC session).
+        rc, out = _child(
+            _PRELUDE
+            + "ProcessExit.register(print, 'KEPT', end='')\n"
+            + "import importlib, pythontk.core_utils.process_exit as m\n"
+            + "importlib.reload(m).ProcessExit.hard_exit(3)"
+        )
+        self.assertEqual(rc, 3)
+        self.assertIn("KEPT", out)
+
+    def test_register_returns_the_callable(self):
+        # As atexit.register does, so it also serves as a decorator.
+        fn = ProcessExit.register(len)
+        try:
+            self.assertIs(fn, len)
+        finally:
+            ProcessExit.unregister(len)
+
+
 class TestHardExitIsTotal(unittest.TestCase):
     """It exits even when its own fast path is broken.
 

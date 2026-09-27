@@ -815,13 +815,17 @@ class ScriptLaunchSpec:
     """Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
 
     *launch_args* maps the rendered script's path to the argv that makes the target
-    run it on startup (e.g. ``lambda s: ["--python", s]`` /
-    ``lambda s: ["-command", mel_wrapper(s)]``).
+    run it on startup (e.g. ``lambda s: ["--python", s]``). ``None`` = the target is
+    a Python interpreter (``mayapy``), run as ``python script.py`` would with the path
+    off its command line (:meth:`pythontk.AppLauncher.python_args_via_env`). The child
+    env always carries the path in :attr:`pythontk.AppLauncher.PYTHON_ARGV_VAR` too,
+    so a target that decodes its command line in the ANSI code page (``maya.exe``)
+    can read it from there instead: ``lambda s: ["-command", mel_reading_the_env]``.
     """
 
     app: AppSpec
     template_dir: Path
-    launch_args: Callable[[str], Sequence[str]]
+    launch_args: Optional[Callable[[str], Sequence[str]]] = None
     template_extension: str = ".py"
     modes: Tuple[str, ...] = (SEND_TO,)
     payload_prefix: str = "handoff"
@@ -923,13 +927,19 @@ class ScriptLaunchDeliverer(Deliverer):
             f"{script_path}"
         )
 
-        env = self._env(bridge)
-
+        # The script sits beside the payload under %TEMP%, which holds the user's
+        # name, and mayapy / maya.exe decode their command line in the ANSI code
+        # page -- so the path always rides in the child's env as well, where a
+        # launch that must not name it reads it (see ScriptLaunchSpec).
+        shim_args, env = AppLauncher.python_args_via_env(
+            [script_path], self._env(bridge)
+        )
+        launch_args = self.spec.launch_args
         # FRESH instance every time -- never attach to a running session. Detached:
         # control returns immediately.
         proc = AppLauncher.launch(
             self._exe(bridge),
-            args=self.spec.launch_args(script_path),
+            args=launch_args(script_path) if launch_args else shim_args,
             detached=True,
             env=env,
         )
@@ -958,7 +968,7 @@ class ScriptLaunchDeliverer(Deliverer):
         same path -- a USD payload arrives under ``FBX_PATH`` too -- so a template
         that must know the format reads the path's extension, not the token name.
         """
-        primary = str(payload.primary).replace("\\", "/")
+        primary = script_template.ScriptTemplate.child_path(payload.primary)
         context = {"PAYLOAD_PATH": primary, "FBX_PATH": primary}
         context.update(bridge.render_context(request.params))
         return context
@@ -1025,7 +1035,7 @@ class ScriptRunDeliverer(ScriptLaunchDeliverer):
         # there is one definition of where the child writes.
         output = request.get("output")
         staged = self._staging_path(output) if output else ""
-        context["OUT_FILE"] = str(staged).replace("\\", "/")
+        context["OUT_FILE"] = script_template.ScriptTemplate.child_path(staged)
         return context
 
     @staticmethod
@@ -1170,7 +1180,7 @@ class ScriptRoundTripDeliverer(ScriptRunDeliverer):
         # writes the one payload path, which the base already exposes as
         # __PAYLOAD_PATH__ / __FBX_PATH__.
         context = ScriptLaunchDeliverer._context(self, bridge, payload, request)
-        context["OUT_FILE"] = str(payload.primary or "").replace("\\", "/")
+        context["OUT_FILE"] = script_template.ScriptTemplate.child_path(payload.primary)
         return context
 
     def deliver(

@@ -13,6 +13,7 @@ One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
 the other passes through ``cls``.
 """
 
+import json
 import logging
 import os
 import platform as _platform
@@ -689,6 +690,20 @@ class _Fbx2GltfMixin:
                             len(shadows["planes"]),
                             cls.SHADOW_WEB_KEY,
                         )
+                # Reads node names only, so its place in the chain is free of
+                # the image and animation passes; self-feeding like the shadow
+                # pass: no channel, no-op.
+                try:
+                    articulated = cls.apply_glb_articulation(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB articulated rigs skipped: %s", exc)
+                else:
+                    if articulated:
+                        logger.info(
+                            "Articulated rigs: %d published in extras.%s.",
+                            len(articulated["rigs"]),
+                            cls.ARTICULATION_WEB_KEY,
+                        )
                 # Before every animation pass: a curve proxy is an FBX-only
                 # transport node whose scale channel would otherwise count as
                 # clip content and ship as a stray animated child.
@@ -815,6 +830,37 @@ class _Fbx2GltfMixin:
     #: node from the GLB, where the ramp already rides ``visibility_tracks``.
     CURVE_PROXY_MARKER = "curveProxy"
 
+    @staticmethod
+    def _renumber_manifest_nodes(
+        manifest: Any, fields: Sequence[Sequence[str]], remap: Dict[int, int]
+    ) -> Any:
+        """*manifest* (a dict, or its JSON text -- returned in the same form)
+        with the node index at each of *fields* renumbered through *remap*: a
+        path of keys, descending through every list on the way. An index to a
+        node that is gone becomes None, which every reader takes as absent."""
+        text = isinstance(manifest, str)
+        if text:
+            try:
+                manifest = json.loads(manifest)
+            except ValueError:
+                return manifest
+
+        def walk(value: Any, path: Sequence[str]) -> None:
+            if isinstance(value, list):
+                for item in value:
+                    walk(item, path)
+            elif isinstance(value, dict) and path:
+                if len(path) == 1:
+                    index = value.get(path[0])
+                    if isinstance(index, int) and not isinstance(index, bool):
+                        value[path[0]] = remap.get(index)
+                else:
+                    walk(value.get(path[0]), path[1:])
+
+        for path in fields:
+            walk(manifest, path)
+        return json.dumps(manifest) if text else manifest
+
     @classmethod
     def strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]:
         """Remove every curve-proxy node (and its channels) from a GLB.
@@ -882,6 +928,20 @@ class _Fbx2GltfMixin:
                         target["node"] = remap[node]
                     survivors.append(channel)
                 animation["channels"] = survivors
+            # The manifests earlier passes bound BY NODE INDEX follow the
+            # renumber too: measured, a proxy ahead of a shadow plane left the
+            # plane following the node after its source, and a rig posing its
+            # joints one node over.
+            extras = gltf.get("extras")
+            if isinstance(extras, dict):
+                for key, fields in (
+                    (cls.SHADOW_WEB_KEY, cls.SHADOW_WEB_NODE_FIELDS),
+                    (cls.ARTICULATION_WEB_KEY, cls.ARTICULATION_WEB_NODE_FIELDS),
+                ):
+                    if key in extras:
+                        extras[key] = cls._renumber_manifest_nodes(
+                            extras[key], fields, remap
+                        )
             gltf["nodes"] = kept
             edit.dirty = True
             removed = [str(nodes[i].get("name") or i) for i in sorted(doomed)]

@@ -12,7 +12,8 @@ actually sound for inter-process payloads:
   delete on :meth:`cleanup` / clean ``with``-exit, **keep on exception** so failures
   stay debuggable.
 * ``"session"`` — a detached consumer reads the file during this process's lifetime
-  (a launched DCC): removed at interpreter exit via ``atexit``.
+  (a launched DCC): removed at interpreter exit via ``atexit``, and at
+  :meth:`ProcessExit.hard_exit <pythontk.ProcessExit.hard_exit>`, which skips it.
 * ``"detached"`` — no deterministic delete exists (the consumer may outlive us and
   there is no completion signal). Allocation instead garbage-collects *stale* files
   of the same prefix (:meth:`sweep_stale`) — amortized cleanup with no risk to a
@@ -21,6 +22,9 @@ actually sound for inter-process payloads:
 Every policy runs that stale sweep on its first allocation: detached because
 nothing else deletes, scoped/session because keep-on-failure and hard-crash
 leftovers have no other reclamation path.
+
+Removal is best-effort, never all-or-nothing: an entry something still holds
+stays (for a later cleanup or sweep) and everything else goes now.
 """
 
 from __future__ import annotations
@@ -29,12 +33,15 @@ import atexit
 import hashlib
 import os
 import shutil
+import stat
+import sys
 import tempfile
 import threading
 import time
 from typing import Any, Callable, List, NamedTuple, Optional, Sequence
 
 from pythontk.core_utils.logging_mixin import LoggingMixin
+from pythontk.core_utils.process_exit import ProcessExit
 
 
 class TempArtifacts(LoggingMixin):
@@ -168,6 +175,9 @@ class TempArtifacts(LoggingMixin):
             self._tracked.append(path)
         if self.policy == "session" and not self._atexit_registered:
             atexit.register(self.cleanup, force=True)
+            # hard_exit skips atexit, and it is how every DCC child and several
+            # test runners end -- each leaked its whole store until this.
+            ProcessExit.register(self.cleanup, force=True)
             self._atexit_registered = True
         return path
 
@@ -204,18 +214,16 @@ class TempArtifacts(LoggingMixin):
         """
         if path not in self._tracked:
             return False
-        try:
-            if os.path.isdir(path):
-                shutil.rmtree(path)
-            elif os.path.exists(path):
-                os.remove(path)
-            else:
-                # Allocation only reserves a name, so a path never written has
-                # nothing to remove -- and nothing left to track either.
-                self._tracked.remove(path)
-                return False
-        except OSError as e:
-            self.logger.warning(f"Could not release temp artifact {path}: {e}")
+        if not os.path.exists(path):
+            # Allocation only reserves a name, so a path never written has
+            # nothing to remove -- and nothing left to track either.
+            self._tracked.remove(path)
+            return False
+        left = self._remove(path)
+        if left:
+            self.logger.warning(
+                f"Could not release temp artifact {path}: {self._left_note(left)}"
+            )
             return False
         self._tracked.remove(path)
         return True
@@ -239,16 +247,15 @@ class TempArtifacts(LoggingMixin):
                 self.logger.warning(f"on_cleanup callback failed: {e}")
         removed = []
         for p in existing:
-            try:
-                # Directories are first-class here (see dir_path): a scratch dir
-                # left behind leaks just as hard as a file, and harder to notice.
-                if os.path.isdir(p):
-                    shutil.rmtree(p)
-                else:
-                    os.remove(p)
+            # Directories are first-class here (see dir_path): a scratch dir
+            # left behind leaks just as hard as a file, and harder to notice.
+            left = self._remove(p)
+            if left:
+                self.logger.warning(
+                    f"Could not remove temp artifact {p}: {self._left_note(left)}"
+                )
+            else:
                 removed.append(p)
-            except OSError as e:
-                self.logger.warning(f"Could not remove temp artifact {p}: {e}")
         self._tracked = [p for p in self._tracked if p not in removed]
         return removed
 
@@ -277,14 +284,63 @@ class TempArtifacts(LoggingMixin):
                 try:
                     if self._newest_mtime(entry) >= cutoff:
                         continue
-                    if entry.is_dir():
-                        shutil.rmtree(entry.path)
-                    else:
-                        os.remove(entry.path)
-                    removed.append(entry.path)
                 except OSError:
                     continue
+                # A held entry waits for the next sweep; the rest goes now.
+                if not self._remove(entry.path):
+                    removed.append(entry.path)
         return removed
+
+    @staticmethod
+    def _remove(path: str) -> List[str]:
+        """Delete *path* -- a file, or a directory and all in it -- as far as it
+        will go; return what stayed as ``"<entry>: <error>"`` lines (``[]`` = gone).
+
+        Best-effort where ``shutil.rmtree`` is all-or-nothing. rmtree stops at
+        the first entry it cannot delete, and on Windows that is routine: a
+        helper a DCC spawns outlives it holding a file in the DCC's temp dir
+        (Autodesk's ADPClientService, observed). One held file then kept a whole
+        test sandbox where only that file had to stay -- with the hard-exit leak
+        in :meth:`register`, 791 sandboxes and 572 MB in the system temp dir
+        after a week of runs. A read-only entry (a git object), which Windows
+        refuses to delete, is made writable and retried; anything else is
+        skipped and the walk carries on, so only what is still held remains.
+        """
+        left: List[str] = []
+
+        def skip(func, target, exc):
+            if isinstance(exc, tuple):  # onerror's exc_info, before 3.12
+                exc = exc[1]
+            # Never chmod through a link: that would edit a file outside the tree.
+            if func in (os.unlink, os.remove, os.rmdir) and not os.path.islink(target):
+                try:
+                    os.chmod(target, os.stat(target).st_mode | stat.S_IWRITE)
+                    func(target)
+                    return
+                except OSError as e:
+                    exc = e
+            if os.path.lexists(target):  # gone meanwhile is not a leftover
+                left.append(f"{target}: {exc}")
+
+        if os.path.isdir(path):
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(path, onexc=skip)
+            else:
+                shutil.rmtree(path, onerror=skip)
+        else:
+            try:
+                os.remove(path)
+            except OSError as e:
+                skip(os.remove, path, e)
+        return left
+
+    @staticmethod
+    def _left_note(left: List[str]) -> str:
+        """One log line for :meth:`_remove`'s leftovers: the first, and a count.
+
+        The first is the held entry itself; the rest are mostly its ancestors,
+        which could not go because it did not."""
+        return left[0] + (f" (+{len(left) - 1} more)" if len(left) > 1 else "")
 
     @staticmethod
     def _newest_mtime(entry: os.DirEntry) -> float:
