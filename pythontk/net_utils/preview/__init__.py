@@ -8,7 +8,13 @@ it serves:
 
 * :mod:`.server` -- :class:`PreviewServer`: the loopback static-file server
   with a live ``/manifest.json``, viewer liveness, and the materialization of
-  ``viewer.html`` plus the active ``scripts/*.js`` into the serve root.
+  ``viewer.html`` plus the active ``scripts/*.js`` into the serve root. The
+  facade over private mixins: ``_serve_root`` (the page, the viewer scripts,
+  atomic writes), ``_sharing`` (the read-only guest listener and its tunnel),
+  ``_page_outputs`` (recordings and stills).
+* :mod:`.routes` -- the served surface: the route names the page posts to
+  (re-exported by :mod:`.server`) and the HTTP handler behind the loopback
+  bind's gates.
 * :mod:`.deliverer` -- :class:`PreviewDeliverer`: FBX -> GLB -> publish, the
   GLB built by the shared :class:`~pythontk.GlbPipeline` the Scene Exporters
   also run.

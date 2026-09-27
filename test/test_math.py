@@ -1537,5 +1537,18 @@ class MathTest(BaseTestCase):
         self.assertEqual((list(m_in), list(m_out)), ([0.0], [0.0]))
 
 
+class MathUtilsLayoutTest(unittest.TestCase):
+    """The facade split by job keeps every public method on MathUtils itself."""
+
+    def test_public_methods_stay_on_the_facade(self):
+        # The resolver registers flat names (ptk.<method>) from the class's own
+        # body, so a public method living only on an internal base drops out.
+        bases = [b for b in MathUtils.__mro__[1:] if b.__name__.startswith("_Math")]
+        self.assertTrue(bases)
+        for base in bases:
+            on_base = {n for n in vars(base) if not n.startswith("_")}
+            self.assertEqual(on_base - set(vars(MathUtils)), set(), base.__name__)
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

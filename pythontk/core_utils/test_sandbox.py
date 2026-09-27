@@ -29,11 +29,16 @@ runner never loads a conftest)::
 
 A test that legitimately exercises a browser launch patches ``webbrowser.open``
 itself: ``unittest.mock.patch`` layers over the guard and restores it after.
+
+A third effect is opt-in per test, :meth:`TestSandbox.user_config`: reading
+(or writing) the developer's own config docs -- the naming convention, preset
+stores -- through the shared user-config root.
 """
 
 import os
 import tempfile
-from typing import Callable, Dict, List
+from contextlib import contextmanager
+from typing import Callable, Dict, Iterator, List
 
 
 class _TestSandboxInternal:
@@ -173,3 +178,47 @@ class TestSandbox(_TestSandboxInternal):
         return tempfile.gettempdir() == state["temp_dir"] and all(
             entry is state["guard"] for entry in patched
         )
+
+    @classmethod
+    @contextmanager
+    def user_config(cls) -> Iterator[str]:
+        """Point the ecosystem user-config root at a throwaway dir for the block.
+
+        Every :class:`UserConfig` doc, every :class:`PresetStore` user tier and
+        the :class:`NamingConvention` resolve under ``$UITK_PRESETS_ROOT``, so a
+        test that reads one reads the DEVELOPER's settings -- a convention with
+        Lightmap set to ``_LM`` fails a test written against ``_Lightmap`` -- and
+        a test that writes one edits them. Opt-in per test rather than part of
+        :meth:`activate`: a suite asserting the default root must still see it.
+
+        Also hides a studio convention doc (``$PYTHONTK_NAMING_CONVENTION``) and
+        reloads the convention on entry and exit, so neither side reads the
+        other's cached table. Yields the root. Pre-3.11 ``unittest`` setUp form::
+
+            sandbox = TestSandbox.user_config()
+            self.config_root = sandbox.__enter__()
+            self.addCleanup(sandbox.__exit__, None, None, None)
+        """
+        from pythontk.core_utils.naming_convention import (
+            CONFIG_ENV_VAR,
+            NamingConvention,
+        )
+        from pythontk.core_utils.user_config import CONFIG_ROOT_ENV_VAR
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        saved = {
+            var: os.environ.get(var) for var in (CONFIG_ROOT_ENV_VAR, CONFIG_ENV_VAR)
+        }
+        with TempArtifacts("ptk_user_config", policy="scoped") as store:
+            os.environ[CONFIG_ROOT_ENV_VAR] = store.dir_path()
+            os.environ.pop(CONFIG_ENV_VAR, None)
+            NamingConvention.reload()
+            try:
+                yield os.environ[CONFIG_ROOT_ENV_VAR]
+            finally:
+                for var, value in saved.items():
+                    if value is None:
+                        os.environ.pop(var, None)
+                    else:
+                        os.environ[var] = value
+                NamingConvention.reload()

@@ -12,7 +12,7 @@ caller unwinds LIFO once that work is done. It knows nothing about any DCC --
 the scene-exporter ``TaskManager`` in mayatk and blendertk each subclass it
 and supply the host-specific task/check methods it discovers by name.
 
-Like :mod:`pythontk.core_utils.app_handoff`, this is a *general* orchestration
+Like :mod:`pythontk.core_utils.handoff.app_handoff`, this is a *general* orchestration
 base (no domain model or planner), so it lives in ``core_utils`` beside the other
 shared infrastructure rather than in ``core_utils/engines/``. Formerly vendored
 byte-identical in mayatk and blendertk; now the single source of truth.

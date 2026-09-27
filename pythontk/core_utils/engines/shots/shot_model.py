@@ -37,7 +37,8 @@ from typing import (
 from contextlib import contextmanager
 
 from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
-from pythontk.core_utils.scene_records import ExportContext, Record, SceneRecords
+from pythontk.core_utils.engines.scene_export.export_snapshot import ExportContext
+from pythontk.core_utils.engines.scene_export.scene_records import Record, SceneRecords
 from pythontk.str_utils._str_utils import StrUtils
 
 _log = logging.getLogger(__name__)

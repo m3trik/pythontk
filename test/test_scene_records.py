@@ -15,17 +15,21 @@ import unittest
 from typing import Any, Dict
 from unittest import mock
 
-from pythontk.core_utils.scene_records import (
+from pythontk.core_utils.engines.scene_export.export_snapshot import (
     ExportContext,
     ExportSnapshot,
-    Merge,
-    RecordSpec,
+)
+from pythontk.core_utils.engines.scene_export.record_transfer import (
     RecordTransfer,
-    SceneRecords as SR,
-    SceneStoreBase,
-    Scope,
     TransferContext,
 )
+from pythontk.core_utils.engines.scene_export.scene_records import (
+    Merge,
+    RecordSpec,
+    SceneRecords as SR,
+    Scope,
+)
+from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
 
 
 class DictStore(SceneStoreBase):
@@ -199,7 +203,9 @@ class TestCodec(SceneRecordsCase):
         rec = SR.EMISSIVE_GROUPS.make({"groups": []})
         self.assertEqual(rec.payload, {"schema": 1, "groups": []})
         newer = json.dumps({"schema": 2, "groups": []})
-        with self.assertLogs("pythontk.core_utils.scene_records", level="WARNING"):
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ):
             self.assertIsNone(SR.EMISSIVE_GROUPS.decode(newer))
 
     def test_legacy_shape_is_stored_as_given(self):
@@ -213,7 +219,9 @@ class TestCodec(SceneRecordsCase):
 
     def test_decode_refuses_a_newer_version(self):
         newer = json.dumps({"version": SR.SHOTS.version + 1, "shots": []})
-        with self.assertLogs("pythontk.core_utils.scene_records", level="WARNING"):
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ):
             self.assertIsNone(SR.SHOTS.decode(newer))
         older = json.dumps({"version": 0, "shots": []})
         self.assertEqual(SR.SHOTS.decode(older)["shots"], [])
@@ -446,7 +454,9 @@ class TestSnapshot(SceneRecordsCase):
             return None
 
         ctx = ExportContext()
-        with self.assertLogs("pythontk.core_utils.scene_records", "WARNING") as log:
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", "WARNING"
+        ) as log:
             snap = ExportSnapshot.assemble({SR.SHOTS: noting}, ctx)
         self.assertIn("2 shot(s) left out", log.output[0])
         self.assertEqual(snap.ctx.notes, ["2 shot(s) left out"])
@@ -459,7 +469,9 @@ class TestSnapshot(SceneRecordsCase):
         """A producer that forgets ``spec.make`` fails ITS record, not the
         assembly -- the isolation contract covers a wrong return too."""
         table = {SR.LIGHTMAPS: lambda c: {"objects": [1]}, SR.SHOTS: _shots}
-        with self.assertLogs("pythontk.core_utils.scene_records", level="WARNING"):
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ):
             snap = ExportSnapshot.assemble(table)
         self.assertEqual(snap.failed, {"lightmap_metadata"})
         self.assertIn("shot_metadata", snap.records)
@@ -493,7 +505,9 @@ class TestSnapshot(SceneRecordsCase):
             SR.SHOTS: _shots,
         }
         snap = ExportSnapshot.assemble(table)
-        with self.assertLogs("pythontk.core_utils.scene_records", level="WARNING"):
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ):
             written = snap.commit(LockedStore)
         self.assertIn("lightmap_metadata", snap.failed)
         self.assertNotIn("lightmap_metadata", written)
@@ -522,7 +536,9 @@ class TestSnapshot(SceneRecordsCase):
     def test_a_failing_producer_is_isolated_and_leaves_its_record_as_stored(self):
         SR.LIGHTMAPS.save(DictStore, {"objects": [1]})
         table = {SR.LIGHTMAPS: _boom, SR.SHOTS: _shots}
-        with self.assertLogs("pythontk.core_utils.scene_records", level="WARNING"):
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ):
             snap = ExportSnapshot.assemble(table)
         self.assertEqual(snap.failed, {"lightmap_metadata"})
         snap.commit(DictStore)
@@ -567,7 +583,9 @@ class TestSnapshot(SceneRecordsCase):
     def test_a_failed_successor_leaves_its_legacy_record_alone(self):
         ExportSnapshot.assemble({SR.SHOTS: _shots}).commit(DictStore)
         _older_scene_takes()
-        with self.assertLogs("pythontk.core_utils.scene_records", level="WARNING"):
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ):
             ExportSnapshot.assemble({SR.SHOTS: _boom}).commit(DictStore)
         self.assertTrue(SR.SHOTS.is_present(DictStore))
         self.assertTrue(SR.FBX_TAKES.is_present(DictStore))
@@ -1178,7 +1196,7 @@ class TestRecordHandoff(SceneRecordsCase):
     def test_the_generic_section_is_the_manifests(self):
         """The engine names the section without importing the manifest class
         (the lighter module imports first); the two spellings are one."""
-        from pythontk.core_utils.handoff_manifest import HandoffManifest
+        from pythontk.core_utils.handoff.manifest import HandoffManifest
 
         self.assertEqual(RecordTransfer.RECORDS_SECTION, HandoffManifest.RECORDS)
         self.assertIn(SR.SHOT_STORE.section, HandoffManifest.SECTIONS)
@@ -1325,7 +1343,10 @@ class TestStoreCrossings(unittest.TestCase):
 
     def test_the_owners_table_resolves_lazily_and_skips_the_missing(self):
         table = {
-            "a": ("pythontk.core_utils.scene_records", "RecordTransfer"),
+            "a": (
+                "pythontk.core_utils.engines.scene_export.record_transfer",
+                "RecordTransfer",
+            ),
             "b": ("no_such_module_anywhere", "Owner"),
         }
         with mock.patch.object(_CarrierStore, "OWNERS", table):
@@ -1601,6 +1622,46 @@ class TestWriterStamp(SceneRecordsCase):
         self.assertFalse(self.store.written_here("scenes/source.ma"))
         os.remove(self.source)  # ...until the source is gone: a rename
         self.assertTrue(self.store.written_here("scenes/source.ma"))
+
+
+class TestMovedPaths(unittest.TestCase):
+    """The pre-2026-09-26 deep paths warn and resolve until 0.13.0.
+
+    Delete with the stubs (``core_utils/scene_records.py``,
+    ``export_profile.py``, ``hierarchy_baseline.py``).
+    """
+
+    MOVED = {
+        "pythontk.core_utils.scene_records": (
+            "SceneRecords",
+            "SceneStoreBase",
+            "ExportSnapshot",
+            "RecordTransfer",
+        ),
+        "pythontk.core_utils.export_profile": ("ExportProfile", "ExportRun"),
+        "pythontk.core_utils.hierarchy_baseline": (
+            "HierarchyBaseline",
+            "HierarchyBaselineStore",
+        ),
+    }
+
+    def test_old_paths_warn_and_resolve_to_the_root_objects(self):
+        import importlib
+        import warnings
+
+        import pythontk as ptk
+
+        for module, names in self.MOVED.items():
+            mod = importlib.import_module(module)
+            for name in names:
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    obj = getattr(mod, name)
+                self.assertIs(obj, getattr(ptk, name), f"{module}.{name}")
+                self.assertTrue(
+                    any(issubclass(w.category, DeprecationWarning) for w in caught),
+                    f"{module}.{name} resolved without a notice",
+                )
 
 
 if __name__ == "__main__":

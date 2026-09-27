@@ -287,5 +287,74 @@ class HierarchyAnalyzerTest(BaseTestCase):
         self.assertIn("group2", filtered[0].path)
 
 
+class HierarchyPairingPassesTest(BaseTestCase):
+    """The missing/extra pairing passes both DCC Hierarchy Syncs run."""
+
+    def test_reparented_pairs_a_unique_leaf_across_parents(self):
+        pairs, missing, extra = HierarchyAnalyzer.detect_reparented(
+            ["Grp|Leaf", "Grp|Gone"], ["Other|Leaf", "New"]
+        )
+        self.assertEqual(
+            pairs,
+            [
+                {
+                    "leaf": "Leaf",
+                    "reference_path": "Grp|Leaf",
+                    "current_path": "Other|Leaf",
+                }
+            ],
+        )
+        self.assertEqual((missing, extra), (["Grp|Gone"], ["New"]))
+
+    def test_reparented_leaves_an_ambiguous_leaf_and_honours_the_host_veto(self):
+        pairs, missing, _ = HierarchyAnalyzer.detect_reparented(
+            ["A|Leaf", "B|Leaf"], ["C|Leaf"]
+        )
+        self.assertEqual((pairs, missing), ([], ["A|Leaf", "B|Leaf"]))
+        vetoed = []
+        pairs, missing, extra = HierarchyAnalyzer.detect_reparented(
+            ["Grp|Leaf"],
+            ["Other|Leaf"],
+            compatible=lambda ref, cur: vetoed.append((ref, cur)) and False,
+        )
+        self.assertEqual((pairs, missing, extra), ([], ["Grp|Leaf"], ["Other|Leaf"]))
+        self.assertEqual(vetoed, [("Grp|Leaf", "Other|Leaf")])
+
+    def test_fuzzy_renames_pair_near_identical_leaves(self):
+        pairs, missing, extra = HierarchyAnalyzer.detect_fuzzy_renames(
+            ["Grp|Switchh", "Grp|Unrelated"], ["Grp|Switch"]
+        )
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["target_name"], "Grp|Switchh")
+        self.assertEqual(pairs[0]["current_name"], "Grp|Switch")
+        self.assertGreaterEqual(pairs[0]["score"], 0.7)
+        self.assertEqual((missing, extra), (["Grp|Unrelated"], []))
+        self.assertEqual(
+            HierarchyAnalyzer.detect_fuzzy_renames([], ["x"]), ([], [], ["x"])
+        )
+
+    def test_suffix_flattening_pairs_a_prefixed_leaf_under_the_same_parent(self):
+        pairs, missing, extra = HierarchyAnalyzer.detect_suffix_flattening(
+            ["Grp|BOOSTER_OFF", "Grp|Solo"],
+            ["Grp|CONSOLE_BOOSTER_OFF", "Else|Solo_x"],
+        )
+        self.assertEqual(
+            pairs,
+            [
+                {
+                    "target_name": "Grp|BOOSTER_OFF",
+                    "current_name": "Grp|CONSOLE_BOOSTER_OFF",
+                    "score": 1.0,
+                }
+            ],
+        )
+        self.assertEqual((missing, extra), (["Grp|Solo"], ["Else|Solo_x"]))
+        # A bare suffix with no ``_`` boundary is not a flattening.
+        pairs, _, _ = HierarchyAnalyzer.detect_suffix_flattening(
+            ["Grp|OFF"], ["Grp|BOOSTEROFF"]
+        )
+        self.assertEqual(pairs, [])
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

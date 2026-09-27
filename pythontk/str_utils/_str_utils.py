@@ -1,12 +1,18 @@
 # !/usr/bin/python
 # coding=utf-8
 import re
-import string
 from typing import Union, List, Optional, Dict, Tuple, Callable, Iterable
 
 # from this package:
 from pythontk.core_utils._core_utils import CoreUtils
 from pythontk.iter_utils._iter_utils import IterUtils
+
+# The facade's bodies, split by concept (CODE_STANDARD section 3): each is a
+# StrUtils base; the public methods (signatures + docstrings) stay here for
+# the flat ``ptk.<method>`` surface.
+from pythontk.str_utils._name_pattern import _StrNamePatternInternal
+from pythontk.str_utils._search import _StrSearchInternal
+from pythontk.str_utils._affix import _StrAffixInternal
 
 
 # ANSI/VT100 control sequences: CSI (``ESC [ … final-byte`` — covers SGR color) and the
@@ -19,50 +25,16 @@ ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 _LEGAL_NAME_RE = re.compile(r"[A-Za-z0-9_]+")
 _ILLEGAL_NAME_CHAR_RE = re.compile(r"[^A-Za-z0-9_]")
 
-
-class _SafeFormatter(string.Formatter):
-    """The one formatter behind every ``{token}`` this class resolves.
-
-    Two departures from ``string.Formatter``, both because the text it formats
-    was typed by a USER into a pattern field rather than written by a
-    programmer:
-
-    - An unknown key is preserved verbatim (``{missing}``) instead of raising,
-      so one stray brace pair is a typo rather than an aborted export.
-    - A format spec carrying a regex delimiter
-      (:attr:`StrUtils.REGEX_MODIFIER_DELIMITERS`) is a *regex modifier* on the
-      token's own value, not a format spec: ``{name:_bar.*->}``. Errors are
-      collected on :attr:`errors`, never raised -- the caller reports them at
-      its own severity.
-    """
-
-    def __init__(self):
-        super().__init__()
-        #: ``[(spec, message), ...]`` for every modifier that would not compile.
-        self.errors = []
-
-    def get_value(self, key, args, kwargs):
-        if isinstance(key, str):
-            return kwargs.get(key, "{" + key + "}")
-        return "{" + str(key) + "}"
-
-    def format_field(self, value, format_spec):
-        # Preserve unresolved placeholders verbatim, including their format
-        # spec, so a second pass can still apply padding (or a modifier) later.
-        # (`!r`/`!a` conversions on unresolved keys are not preserved.)
-        if isinstance(value, str) and value.startswith("{") and value.endswith("}"):
-            if format_spec:
-                return value[:-1] + ":" + format_spec + "}"
-            return value
-        if format_spec and StrUtils.split_regex_modifier(format_spec) is not None:
-            result, error = StrUtils.apply_regex_modifier(value, format_spec)
-            if error:
-                self.errors.append((format_spec, error))
-            return result
-        return super().format_field(value, format_spec)
+# A run of decimal digits, captured so ``split`` keeps it (StrUtils.natural_sort_key).
+_DIGIT_RUN_RE = re.compile(r"(\d+)")
 
 
-class StrUtils(CoreUtils):
+class StrUtils(
+    _StrNamePatternInternal,
+    _StrSearchInternal,
+    _StrAffixInternal,
+    CoreUtils,
+):
     """ """
 
     #: What a legal name may hold, as a whole-name pattern.  A name that
@@ -331,35 +303,7 @@ class StrUtils(CoreUtils):
             >>> StrUtils.expand_wildcard("asset")        # -> 'asset'
             >>> StrUtils.expand_wildcard("{name:_bar.*->}")  # -> unchanged
         """
-        token = "{" + key + "}"
-        text = (text or "").strip()
-        if not text:
-            return token
-        if wildcard not in text:
-            return text
-        try:
-            parsed = list(string.Formatter().parse(text))
-        except ValueError:
-            # Malformed (a lone brace) -- no token structure to respect, so fall
-            # back to the blind rewrite and let the caller report the syntax.
-            return text.replace(wildcard, token)
-        out = []
-        for literal, field, spec, conversion in parsed:
-            # `parse` hands back literals already UNescaped, so re-double the
-            # braces a user typed to mean one.
-            out.append(
-                literal.replace("{", "{{").replace("}", "}}").replace(wildcard, token)
-            )
-            if field is None:
-                continue
-            out.append(
-                "{"
-                + field
-                + (f"!{conversion}" if conversion else "")
-                + (f":{spec}" if spec else "")
-                + "}"
-            )
-        return "".join(out)
+        return _StrNamePatternInternal.expand_wildcard(text, key, wildcard)
 
     #: Delimiters an inline regex modifier accepts, longest first -- the spec
     #: form a token uses to reshape its OWN value: ``{name:_bar.*->}``. A spec
@@ -391,11 +335,7 @@ class StrUtils(CoreUtils):
             >>> StrUtils.split_regex_modifier("03d") is None
             True
         """
-        for delim in cls.REGEX_MODIFIER_DELIMITERS:
-            if delim in spec:
-                pattern, replacement = spec.split(delim, 1)
-                return pattern.strip(), replacement.strip()
-        return None
+        return super().split_regex_modifier(spec)
 
     @classmethod
     def apply_regex_modifier(cls, value, spec: str) -> Tuple[str, Optional[str]]:
@@ -421,15 +361,7 @@ class StrUtils(CoreUtils):
             >>> StrUtils.apply_regex_modifier("asset", "(->")[0]
             'asset'
         """
-        text = value if isinstance(value, str) else format(value)
-        parts = cls.split_regex_modifier(spec)
-        if parts is None:
-            return text, None
-        pattern, replacement = parts
-        try:
-            return re.sub(pattern, replacement, text), None
-        except re.error as e:
-            return text, f"invalid regex {pattern!r}: {e}"
+        return super().apply_regex_modifier(value, spec)
 
     @classmethod
     def attach_modifier(cls, text: str, key: str, spec: str) -> str:
@@ -458,28 +390,7 @@ class StrUtils(CoreUtils):
             >>> StrUtils.attach_modifier("{scene:^a->b}", "scene", "_bar.*->")
             '{scene:^a->b}'
         """
-        if not spec or not text:
-            return text
-        try:
-            parsed = list(string.Formatter().parse(text))
-        except ValueError:
-            return text
-        out = []
-        for literal, field, field_spec, conversion in parsed:
-            out.append(literal.replace("{", "{{").replace("}", "}}"))
-            if field is None:
-                continue
-            base = field.split(".")[0].split("[")[0]
-            if base == key and not field_spec:
-                field_spec = spec
-            out.append(
-                "{"
-                + field
-                + (f"!{conversion}" if conversion else "")
-                + (f":{field_spec}" if field_spec else "")
-                + "}"
-            )
-        return "".join(out)
+        return super().attach_modifier(text, key, spec)
 
     @staticmethod
     def replace_placeholders(text: str, **kwargs) -> str:
@@ -514,7 +425,7 @@ class StrUtils(CoreUtils):
             >>> StrUtils.replace_placeholders("Path: {root}/{missing}", root="C:/Projects")
             'Path: C:/Projects/{missing}'
         """
-        return _SafeFormatter().format(text, **kwargs)
+        return _StrNamePatternInternal.replace_placeholders(text, **kwargs)
 
     @staticmethod
     def resolve_placeholders(text: str, **kwargs) -> dict:
@@ -554,31 +465,7 @@ class StrUtils(CoreUtils):
             >>> StrUtils.resolve_placeholders("{root}/{name}_{ver:03d}", root="C:/p", name="shot")
             {'result': 'C:/p/shot_{ver:03d}', 'fields': ['root', 'name', 'ver'], 'resolved': {'root': 'C:/p', 'name': 'shot'}, 'unresolved': ['ver']}
         """
-        import string
-
-        fields = []
-        for _literal, field_name, _spec, _conv in string.Formatter().parse(text):
-            if not field_name:  # None (literal run) or "" (positional auto-number)
-                continue
-            base = field_name.split(".")[0].split("[")[0]
-            if base and not base.isdigit() and base not in fields:
-                fields.append(base)
-
-        resolved = {name: format(kwargs[name]) for name in fields if name in kwargs}
-        unresolved = [name for name in fields if name not in kwargs]
-
-        # Format through an OWNED formatter rather than replace_placeholders, so
-        # the regex modifiers it applied can be reported rather than swallowed.
-        formatter = _SafeFormatter()
-        result = formatter.format(text, **kwargs)
-
-        return {
-            "result": result,
-            "fields": fields,
-            "resolved": resolved,
-            "unresolved": unresolved,
-            "regex_errors": formatter.errors,
-        }
+        return _StrNamePatternInternal.resolve_placeholders(text, **kwargs)
 
     #: The tokens every name pattern gets for free -- token -> meaning, in the
     #: order a tooltip should list them. Universal by construction: nothing here
@@ -605,16 +492,7 @@ class StrUtils(CoreUtils):
         Returns:
             (dict) token -> value, ready for :meth:`resolve_name_pattern`.
         """
-        import getpass
-        from datetime import datetime
-
-        now = datetime.now()
-        return {
-            "date": now.strftime("%Y-%m-%d"),
-            "time": now.strftime("%H-%M-%S"),
-            "user": getpass.getuser(),
-            **values,
-        }
+        return _StrNamePatternInternal.name_pattern_context(**values)
 
     @classmethod
     def resolve_name_pattern(
@@ -680,90 +558,7 @@ class StrUtils(CoreUtils):
             >>> StrUtils.resolve_name_pattern("*_v{n:03d}", {"name": "s"}, keep=["n"])["template"]
             's_v{n:03d}'
         """
-        import string
-
-        context = cls.name_pattern_context() if context is None else context
-        expanded = cls.expand_wildcard(pattern, key=key, wildcard=wildcard)
-        keep = set(keep or ())
-
-        def escape(text: str) -> str:
-            return text.replace("{", "{{").replace("}", "}}")
-
-        # Split at the kept placeholders so each run between them resolves and
-        # legalizes on its own while the kept ones pass through untouched. A run
-        # is rebuilt as format source (literal braces re-doubled, fields as
-        # written), so it resolves exactly as it would inside the whole pattern.
-        runs, source, kept = [], [], []
-        try:
-            for literal, field, spec, conversion in string.Formatter().parse(expanded):
-                source.append(escape(literal))
-                if field is None:
-                    continue
-                text = (
-                    "{"
-                    + field
-                    + (f"!{conversion}" if conversion else "")
-                    + (f":{spec}" if spec else "")
-                    + "}"
-                )
-                base = field.split(".")[0].split("[")[0]
-                if base in keep:
-                    runs.extend((("".join(source), None), (text, text)))
-                    source = []
-                    if base not in kept:
-                        kept.append(base)
-                else:
-                    source.append(text)
-            runs.append(("".join(source), None))
-            runs = [
-                (text, verbatim or cls.resolve_placeholders(text, **context))
-                for text, verbatim in runs
-            ]
-        except ValueError as e:  # a malformed format string (a lone brace)
-            # Its braces read as literal text, but its illegal characters are
-            # still illegal: a name the OS refuses fails only at the write.
-            legal, dropped = cls.to_legal_filename(name=expanded, report=True)
-            return {
-                "name": legal,
-                "template": escape(legal),
-                "kept": [],
-                "expanded": expanded,
-                "unresolved": [],
-                "dropped": dropped,
-                "regex_errors": [],
-                "error": str(e),
-            }
-        name, template, unresolved, dropped, regex_errors = "", "", [], [], []
-        for text, resolved in runs:
-            if isinstance(resolved, str):  # a kept placeholder, verbatim
-                name += resolved
-                template += resolved
-                continue
-            legal, bad = cls.to_legal_filename(name=resolved["result"], report=True)
-            name += legal
-            template += escape(legal)
-            unresolved += [n for n in resolved["unresolved"] if n not in unresolved]
-            dropped += [c for c in bad if c not in dropped]
-            regex_errors += [
-                e for e in resolved["regex_errors"] if e not in regex_errors
-            ]
-        # A pattern that resolves to NOTHING is not a name -- a lone "?" drops to
-        # empty, and the caller would join it onto a directory and write a file
-        # that is only an extension. Fall back to the default the wildcard stands
-        # for; `dropped` / `unresolved` already say why the typed one vanished.
-        if not name:
-            name = str(context.get(key, ""))
-            template = escape(name)
-        return {
-            "name": name,
-            "template": template,
-            "kept": kept,
-            "expanded": expanded,
-            "unresolved": unresolved,
-            "dropped": dropped,
-            "regex_errors": regex_errors,
-            "error": None,
-        }
+        return super().resolve_name_pattern(pattern, context, wildcard, key, keep)
 
     @staticmethod
     def replace_delimited(
@@ -1358,58 +1153,31 @@ class StrUtils(CoreUtils):
         return result
 
     @staticmethod
-    def _parse_wildcard_terms(find, ignore_case=False):
-        """Parse a pipe-separated wildcard filter into (term, mode) pairs.
+    def natural_sort_key(text: str, ignore_case: bool = False) -> Tuple:
+        """Sort key that ranks embedded integers by value, not character by character.
 
-        Shared by 'find_str' and 'find_str_and_format' so the two can never drift
-        on what 'chars', 'chars*', '*chars' and '*chars*' mean. The returned terms
-        are index-aligned with ``find.split("|")``, which is what lets the
-        formatter map a matched string back to the filter term that selected it.
-
-        Parameters:
-            find (str): The search string, e.g. 'chars*|*chars'.
-            ignore_case (bool): Case-fold the terms (values must be folded to match).
-
-        Returns:
-            (list) [(term, mode)] where mode is one of
-                    'contains' / 'endswith' / 'startswith' / 'exact'.
-        """
-        terms = []
-        for w in find.split("|"):
-            term = w.strip("*")
-            starts, ends = w.startswith("*"), w.endswith("*")
-
-            if starts and ends:
-                mode = "contains"
-            elif starts:
-                mode = "endswith"
-            elif ends:
-                mode = "startswith"
-            else:
-                mode = "exact"
-
-            terms.append((term.lower() if ignore_case else term, mode))
-        return terms
-
-    @staticmethod
-    def _match_wildcard_term(value, term, mode):
-        """Test one already case-folded value against one parsed wildcard term.
+        The text is split into alternating runs -- text, digits, text, ... --
+        and each digit run compares as an int, so ``Cube2`` sorts before
+        ``Cube10`` and ``4.10`` after ``4.9``. The key always starts with a text
+        run (``""`` when the string starts with a digit), so two keys never
+        compare an int against a str.
 
         Parameters:
-            value (str): The candidate, pre-folded when ignoring case.
-            term (str): The term from '_parse_wildcard_terms'.
-            mode (str): 'contains' / 'endswith' / 'startswith' / 'exact'.
+            text: The string to key.
+            ignore_case: Lower-case the text runs first (``alpha`` < ``Zeta``).
 
         Returns:
-            (bool)
+            (tuple) A hashable key: ``(text, int, text, ..., text)``.
+
+        Example:
+            sorted(["Cube10", "Cube2"], key=StrUtils.natural_sort_key)
+            #returns: ['Cube2', 'Cube10']
         """
-        if mode == "contains":
-            return term in value
-        elif mode == "endswith":
-            return value.endswith(term)
-        elif mode == "startswith":
-            return value.startswith(term)
-        return value == term
+        parts = _DIGIT_RUN_RE.split(text.lower() if ignore_case else text)
+        # re.split with one capture group puts every digit run at an odd index;
+        # the parity (not str.isdigit, which also accepts superscripts that
+        # int() rejects) is what marks a number.
+        return tuple(int(p) if i % 2 else p for i, p in enumerate(parts))
 
     @classmethod
     def find_str(cls, find, strings, regex=False, ignore_case=False):
@@ -1441,46 +1209,7 @@ class StrUtils(CoreUtils):
             find_str('*Weight*', lst) #find any element that contains the string 'Weight'.
             find_str('Weight$|Weights$', lst, regex=True) #find any element that endswith 'Weight' or 'Weights'.
         """
-        import re
-
-        # Filter out non-string values
-        strings = [s for s in strings if isinstance(s, str)]
-
-        if not find:  # Handle empty search string
-            return []
-
-        if not strings:  # Early exit for empty list
-            return []
-
-        if regex:
-            try:
-                flags = re.IGNORECASE if ignore_case else 0
-                pattern = re.compile(find, flags)
-                return [s for s in strings if pattern.search(s)]
-            except re.error as e:
-                print(f"# Error find_str: in {find}: {e}. #")
-                return []
-
-        # Pre-process: parse all search terms once
-        search_terms = cls._parse_wildcard_terms(find, ignore_case)
-
-        # Use set for O(1) duplicate checking
-        seen = set()
-        result = []
-
-        for s in strings:
-            if s in seen:
-                continue
-
-            check = s.lower() if ignore_case else s
-
-            for term, mode in search_terms:
-                if cls._match_wildcard_term(check, term, mode):
-                    seen.add(s)
-                    result.append(s)
-                    break  # Don't check other terms for this string
-
-        return result
+        return super().find_str(find, strings, regex, ignore_case)
 
     @classmethod
     def find_str_and_format(
@@ -1542,235 +1271,9 @@ class StrUtils(CoreUtils):
             find_str_and_format(['arm_L','arm_R'], '*_lt|*_rt', '*_L|*_R') #-> ['arm_lt','arm_rt']
             find_str_and_format(['pCube1'], r'*\\1_box*', r'(p)Cube', regex=True) #-> ['p_box1']
         """
-        import re
-
-        # Filter out non-string values
-        strings = [s for s in strings if isinstance(s, str)]
-
-        if not strings:  # Early exit
-            return []
-
-        flags = re.IGNORECASE if ignore_case else 0
-
-        # Split into paired terms. Wildcard mode only: in regex mode '|' is
-        # alternation, so the filter is one pattern and 'to' one template.
-        if regex or "|" not in fltr:
-            fltr_terms, to_terms = [fltr], [to]
-        else:
-            fltr_terms = fltr.split("|")
-            to_terms = to.split("|") if "|" in to else [to]
-
-        # Compile the regex filter once; it drives the substitution as well as
-        # the search, so a bad pattern is fatal here rather than silently literal.
-        rx_filter = None
-        if regex and fltr:
-            try:
-                rx_filter = re.compile(fltr, flags)
-            except re.error as e:
-                print(f"# Error find_str_and_format: in {fltr}: {e}. #")
-                return []
-
-        # Pair each surviving string with the index of the filter term that
-        # selected it -- that term supplies its "from" text and its paired 'to' --
-        # plus, in regex mode, the match itself, so the span is not searched twice.
-        # Filtering happens here rather than through 'find_str' because find_str
-        # deduplicates, which would collapse same-named inputs (two objects
-        # sharing a short name) into a single result and format only one.
-        if not fltr:
-            matched = [(s, 0, None) for s in strings]
-        elif regex:
-            matched = []
-            for s in strings:
-                m = rx_filter.search(s)
-                if m:
-                    matched.append((s, 0, m))
-        else:
-            parsed = cls._parse_wildcard_terms(fltr, ignore_case)
-            matched = []
-            for s in strings:
-                check = s.lower() if ignore_case else s
-                idx = next(
-                    (
-                        i
-                        for i, (term, mode) in enumerate(parsed)
-                        if cls._match_wildcard_term(check, term, mode)
-                    ),
-                    None,
-                )
-                if idx is not None:
-                    matched.append((s, idx, None))
-
-        if not matched:  # Early exit
-            return []
-
-        def infer_mode(t):
-            """Map a 'to' term to its formatting mode.
-
-            The '**' tests come first so an all-asterisk term ('**', '***')
-            reads as an append of an empty payload rather than a replace.
-            """
-            if t.startswith("**"):
-                return "append_suffix"
-            elif t.endswith("**"):
-                return "append_prefix"
-            elif t.startswith("*") and t.endswith("*") and len(t) > 1:
-                return "replace_chars"
-            elif t.startswith("*"):
-                return "replace_suffix"
-            elif t.endswith("*"):
-                return "replace_prefix"
-            elif not t.strip("*"):
-                return "strip"
-            return "replace_whole"
-
-        def strip_submode(term):
-            """Which occurrences a strip removes, from the filter term's wildcards."""
-            if term.endswith("*") and not term.startswith("*"):
-                return "first"
-            elif term.startswith("*") and not term.endswith("*"):
-                return "last"
-            return "all"
-
-        term_cache = {}
-
-        def term_data(idx):
-            """Resolve the (from, to, mode, ...) bundle for one filter term."""
-            if idx not in term_cache:
-                frm_term = fltr_terms[idx]
-                to_term = to_terms[min(idx, len(to_terms) - 1)]
-                frm_ = frm_term if regex else frm_term.strip("*")
-                mode = infer_mode(to_term)
-
-                frm_rx = rx_filter
-                if not regex and frm_ and ignore_case:
-                    try:
-                        frm_rx = re.compile(re.escape(frm_), re.IGNORECASE)
-                    except re.error:
-                        frm_rx = None
-
-                term_cache[idx] = (
-                    frm_,
-                    to_term.strip("*"),
-                    mode,
-                    frm_rx,
-                    # Regex has no leading/trailing wildcard to read a sub-mode from.
-                    ("all" if regex else strip_submode(frm_term))
-                    if mode == "strip" and frm_
-                    else None,
-                )
-            return term_cache[idx]
-
-        def expand(match, template):
-            """Expand capture-group backrefs; fall back to the literal template."""
-            if match is None:
-                return template
-            try:
-                return match.expand(template)
-            except (re.error, IndexError):
-                return template
-
-        result = []
-        for orig_str, idx, match in matched:
-            frm_, to_, mode, frm_rx, strip_mode = term_data(idx)
-
-            s = orig_str  # Default: no change (in regex mode every branch below
-            # works off 'match', resolved during the filter pass above)
-
-            if mode == "replace_chars":
-                if regex:
-                    if frm_rx:
-                        try:
-                            s = frm_rx.sub(to_, orig_str)
-                        except (re.error, IndexError):
-                            # Unusable escape (re.error) or a backref naming a
-                            # group the pattern lacks (IndexError) -> use 'to'
-                            # verbatim, matching 'expand' below.
-                            s = frm_rx.sub(lambda _m: to_, orig_str)
-                elif frm_:
-                    if frm_rx:
-                        s = frm_rx.sub(to_.replace("\\", "\\\\"), orig_str)
-                    else:
-                        s = orig_str.replace(frm_, to_)
-
-            elif mode == "append_suffix":
-                s = orig_str + (expand(match, to_) if regex else to_)
-
-            elif mode == "append_prefix":
-                s = (expand(match, to_) if regex else to_) + orig_str
-
-            elif mode == "replace_suffix":
-                if regex:
-                    s = (
-                        orig_str[: match.start()] + expand(match, to_)
-                        if match
-                        else orig_str + to_
-                    )
-                elif frm_:
-                    if frm_rx:
-                        m = frm_rx.search(orig_str)
-                        s = orig_str[: m.start()] + to_ if m else orig_str + to_
-                    else:
-                        parts = orig_str.split(frm_, 1)
-                        s = parts[0] + to_ if len(parts) > 1 else orig_str + to_
-                else:
-                    s = orig_str + to_
-
-            elif mode == "replace_prefix":
-                if regex:
-                    s = (
-                        expand(match, to_) + orig_str[match.end() :]
-                        if match
-                        else to_ + orig_str
-                    )
-                elif frm_:
-                    if frm_rx:
-                        m = frm_rx.search(orig_str)
-                        s = to_ + orig_str[m.end() :] if m else to_ + orig_str
-                    else:
-                        parts = orig_str.split(frm_, 1)
-                        # Drop the matched prefix, mirroring the ignore_case branch.
-                        s = to_ + parts[1] if len(parts) > 1 else to_ + orig_str
-                else:
-                    # No filter text to drop -- plain prepend, mirroring
-                    # 'replace_suffix' above (the Note in this docstring
-                    # promises the fallback for both sides).
-                    s = to_ + orig_str
-
-            elif mode == "strip":
-                if regex:
-                    if frm_rx:
-                        s = frm_rx.sub("", orig_str)
-                elif frm_:
-                    if strip_mode == "first":
-                        s = (
-                            frm_rx.sub("", orig_str, count=1)
-                            if frm_rx
-                            else orig_str.replace(frm_, "", 1)
-                        )
-                    elif strip_mode == "last":
-                        if frm_rx:
-                            matches = list(frm_rx.finditer(orig_str))
-                            if matches:
-                                last = matches[-1]
-                                s = orig_str[: last.start()] + orig_str[last.end() :]
-                        else:
-                            s = "".join(orig_str.rsplit(frm_, 1))
-                    else:  # all
-                        s = (
-                            frm_rx.sub("", orig_str)
-                            if frm_rx
-                            else orig_str.replace(frm_, "")
-                        )
-
-            elif mode == "replace_whole":
-                s = expand(match, to_) if regex else to_
-
-            if return_orig_strings:
-                result.append((orig_str, s))
-            else:
-                result.append(s)
-
-        return result
+        return super().find_str_and_format(
+            strings, to, fltr, regex, ignore_case, return_orig_strings
+        )
 
     @staticmethod
     def strip_suffix(name: str, suffixes: Iterable[str]) -> str:
@@ -1793,11 +1296,7 @@ class StrUtils(CoreUtils):
             strip_suffix("asset.fbx", [".fbx", ".usd"]) #returns: 'asset'
             strip_suffix("asset.v2", [".fbx", ".usd"]) #returns: 'asset.v2'
         """
-        lowered = name.lower()
-        for suffix in sorted(suffixes, key=len, reverse=True):
-            if suffix and lowered.endswith(suffix.lower()):
-                return name[: -len(suffix)]
-        return name
+        return _StrAffixInternal.strip_suffix(name, suffixes)
 
     @staticmethod
     def retain_suffix(
@@ -1836,29 +1335,7 @@ class StrUtils(CoreUtils):
             retain_suffix('Part_GEO', 'Part_GEO_A', ['_GEO']) #returns: 'Part_GEO_A'
             retain_suffix('Screw_01', 'Bolt') #returns: 'Bolt'
         """
-        digits = "0123456789"
-
-        def trailing_token(name: str) -> str:
-            """The name's trailing ``_TOKEN`` (digits ignored), else ``""``."""
-            if "_" not in name:
-                return ""
-            token = name[name.rfind("_") :].rstrip(digits)
-            return "" if token == "_" else token
-
-        old_suffix = trailing_token(old_name)
-        if not old_suffix:
-            return new_name
-        if valid_suffixes is not None and old_suffix not in valid_suffixes:
-            return new_name
-        # Still carried by the new name -- as one of its own '_' tokens, trailing
-        # digits ignored -- so nothing was lost and there is nothing to retain.
-        body = old_suffix[1:]
-        if any(t.rstrip(digits) == body for t in new_name.split("_")[1:]):
-            return new_name
-        new_suffix = trailing_token(new_name)
-        if new_suffix and (valid_suffixes is None or new_suffix in valid_suffixes):
-            new_name = new_name[: new_name.rfind("_")]
-        return new_name + old_suffix
+        return _StrAffixInternal.retain_suffix(old_name, new_name, valid_suffixes)
 
     @staticmethod
     def format_suffix(
@@ -1883,54 +1360,9 @@ class StrUtils(CoreUtils):
         Returns:
             (str): The formatted string.
         """
-        import re
-
-        def is_regex(pattern: str) -> bool:
-            """True only for a token that SPELLS a pattern.
-
-            Compiling is not a test of intent: every plain string compiles, so
-            gating on that alone made every literal suffix a global substring
-            match -- '_LOC' in the strip list turned 'ITA_LOCKHANDLE' into
-            'ITAKHANDLE'. A metacharacter is required first.
-            """
-            if not re.search(r"[.^$*+?{}\[\]\\|()]", pattern):
-                return False
-            try:
-                re.compile(pattern)
-                return True
-            except re.error:
-                return False
-
-        s = string
-
-        if strip:
-            strip_items = IterUtils.make_iterable(strip)
-            for pattern in strip_items:
-                if isinstance(pattern, str) and is_regex(pattern) and len(pattern) > 1:
-                    # Only treat as regex if it is a pattern (not a simple suffix string)
-                    s = re.sub(pattern, "", s)
-                else:
-                    # A literal token is a SUFFIX, not a substring: strip it only
-                    # while the name still ENDS with it.
-                    while pattern and s.endswith(pattern):
-                        s = s[: -len(pattern)]
-
-        # Strip trailing ints or uppercase alphas if requested
-        while True:
-            stripped = False
-            if strip_trailing_ints and s and s[-1].isdigit():
-                # Only strip digits not preceded by underscore (e.g. CUBE01 -> CUBE,
-                # but CUBE_01 stays as-is since _01 is intentional numbering)
-                if not re.search(r"_\d+$", s):
-                    s = re.sub(r"\d+$", "", s)
-                    stripped = True
-            if strip_trailing_alpha and s and s[-1].isupper():
-                s = re.sub(r"(?:[^0-9A-Za-z]+)?[A-Z]+$", "", s)
-                stripped = True
-            if not stripped:
-                break
-
-        return s + suffix
+        return _StrAffixInternal.format_suffix(
+            string, suffix, strip, strip_trailing_ints, strip_trailing_alpha
+        )
 
     @staticmethod
     def strip_known_affix(
@@ -1970,30 +1402,9 @@ class StrUtils(CoreUtils):
             The string with the configured affixes removed. If neither matches,
             returns the input unchanged.
         """
-        import re
-
-        # The inline flag group is what folds case; an empty group leaves the
-        # core matching exactly as written.
-        fold = "" if case_sensitive else "?i:"
-
-        s = string
-        if prefix:
-            core = prefix.strip("_")
-            if core:
-                s = re.sub(
-                    rf"^_*({fold}{re.escape(core)})(?:_+|$)",
-                    "",
-                    s,
-                )
-        if suffix:
-            core = suffix.strip("_")
-            if core:
-                s = re.sub(
-                    rf"(?:_+|^)({fold}{re.escape(core)})_*$",
-                    "",
-                    s,
-                )
-        return s
+        return _StrAffixInternal.strip_known_affix(
+            string, prefix, suffix, case_sensitive=case_sensitive
+        )
 
     @staticmethod
     def strip_any_affix(
@@ -2049,37 +1460,9 @@ class StrUtils(CoreUtils):
             strip_any_affix("body_GEO", ["_GEO"], exclude=["_GEO"])  # 'body_GEO'
             strip_any_affix("security_cam", ["_CAM"])                # 'security_cam'
         """
-        skip = {a for a in exclude if a}
-        core = string
-        for token in sorted({a for a in known if a}, key=lambda a: (-len(a), a)):
-            if token in skip:
-                continue
-            # Cheap necessary condition before the regex. ``strip_known_affix``
-            # anchors the token's core at one edge (modulo delimiter runs), so a
-            # name whose trimmed edges do not even begin or end with it cannot
-            # match -- and a full type vocabulary is ~20 tokens, of which at
-            # most one ever does. Skipping the two pattern builds for the other
-            # nineteen is a measured 20x on a whole-scene pass; it cannot
-            # produce a false negative, and a false positive (``GEOMETRY`` for
-            # ``GEO``) still falls through to the regex, which rejects it.
-            edge = token.strip("_")
-            if not edge:
-                continue
-            trimmed = core.strip("_")
-            if not case_sensitive:
-                edge, trimmed = edge.lower(), trimmed.lower()
-            if not (trimmed.startswith(edge) or trimmed.endswith(edge)):
-                continue
-            # prefix= and suffix= both: the vocabulary says WHAT the token is,
-            # not which side this name wears it on.
-            stripped = StrUtils.strip_known_affix(
-                core, prefix=token, suffix=token, case_sensitive=case_sensitive
-            )
-            if stripped != core:
-                core = stripped
-                if one:
-                    break
-        return core
+        return _StrAffixInternal.strip_any_affix(
+            string, known, exclude=exclude, one=one, case_sensitive=case_sensitive
+        )
 
     @staticmethod
     def infer_affix_mode(
@@ -2115,19 +1498,7 @@ class StrUtils(CoreUtils):
         Returns:
             ``"prefix"`` or ``"suffix"``.
         """
-        fallback = (default or "prefix").lower()
-        if fallback not in ("prefix", "suffix"):
-            fallback = "prefix"
-        if not text or not delimiter:
-            return fallback
-
-        starts = text.startswith(delimiter)
-        ends = text.endswith(delimiter)
-        if starts and not ends:
-            return "suffix"
-        if ends and not starts:
-            return "prefix"
-        return fallback
+        return _StrAffixInternal.infer_affix_mode(text, delimiter, default=default)
 
     @staticmethod
     def split_affix(
@@ -2163,18 +1534,9 @@ class StrUtils(CoreUtils):
             ``(prefix, suffix)`` — at most one element is non-empty. An
             empty *text* returns ``("", "")``.
         """
-        if not text:
-            return ("", "")
-
-        m = (mode or "auto").lower()
-        if m not in ("prefix", "suffix", "auto"):
-            m = "auto"
-        if m == "auto":
-            m = StrUtils.infer_affix_mode(text, delimiter=delimiter, default=default)
-
-        if m == "prefix":
-            return (text, "")
-        return ("", text)
+        return _StrAffixInternal.split_affix(
+            text, mode, default=default, delimiter=delimiter
+        )
 
     @staticmethod
     def delimit_affix(
@@ -2218,22 +1580,7 @@ class StrUtils(CoreUtils):
             delimit_affix("_MAT", "auto")    # '_MAT'  (already declared)
             delimit_affix("", "prefix")      # ''
         """
-        text = (text or "").strip()
-        if not text or not delimiter:
-            return text
-
-        mode = (mode or "").lower()
-        if text.startswith(delimiter) or text.endswith(delimiter):
-            if mode not in ("prefix", "suffix"):
-                return text
-            # Re-side rather than return: the caller named a side.
-            text = text.strip(delimiter)
-            if not text:
-                return ""
-
-        if mode == "prefix":
-            return f"{text}{delimiter}"
-        return f"{delimiter}{text}"
+        return _StrAffixInternal.delimit_affix(text, mode, delimiter=delimiter)
 
     @staticmethod
     def apply_affix(
@@ -2260,22 +1607,7 @@ class StrUtils(CoreUtils):
             dangling underscores between the affixes and the core. Internal
             underscores in the core are preserved.
         """
-        if not prefix and not suffix:
-            return string
-        core = StrUtils.strip_known_affix(string, prefix=prefix, suffix=suffix)
-        # The de-duplication strip must never consume the WHOLE name. A node
-        # whose name IS its affix ("Cam" under a ``_CAM`` rule, or a literal
-        # "GEO" under ``_GEO``) stripped to nothing and came back as the bare
-        # affix, losing the name. Guarding on emptiness rather than on case is
-        # what keeps the case-folded strip that normalises a sloppy lowercase
-        # affix -- "body_geo" still becomes "body_GEO" instead of doubling.
-        if not core.strip("_"):
-            core = string
-        if prefix:
-            core = core.lstrip("_")
-        if suffix:
-            core = core.rstrip("_")
-        return f"{prefix}{core}{suffix}"
+        return _StrAffixInternal.apply_affix(string, prefix, suffix)
 
     @staticmethod
     def alpha_sequence(index: int) -> str:

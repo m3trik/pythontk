@@ -29,8 +29,8 @@ concurrency:
 
 jobs:
   validate-pythontk:
-    # Pythontk's tests run on windows-latest (in tests.yml) for platform reasons.
-    # This job only does build validation and version extraction, both Linux-safe.
+    # Pythontk's suite runs in tests.yml (Windows and Linux legs). This job only
+    # does build validation and version extraction.
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}

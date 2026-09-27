@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-"""Tests for pythontk.geo_utils.uv_budget (UvBudget — texture-budget planning).
+"""Tests for pythontk.geo_utils.uv.budget (UvBudget — texture-budget planning).
 
 Pure arithmetic with no optional dependency, so everything here runs
 unconditionally. The properties worth pinning are the ones a caller reasons

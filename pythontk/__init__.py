@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.11.4"
+__version__ = "0.12.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -36,13 +36,16 @@ DEFAULT_INCLUDE = {
     # Deliverable inspection/verification (read-only siblings of the
     # editors above): structured GLB access, a zero-dep binary-FBX
     # reader, and the gate runner the export pipelines point at files.
-    "file_utils.mesh_convert.glb_reader": ["GlbReader"],
+    "file_utils.mesh_convert.glb.reader": ["GlbReader"],
     "file_utils.mesh_convert.fbx_file": ["FbxFile"],
     "file_utils.mesh_convert.fbx_media": ["FbxMedia"],
     "file_utils.mesh_convert.export_verify": ["ExportVerifier"],
     # FBX -> GLB: the one build the Scene Exporters and the WebXR preview share
-    "file_utils.mesh_convert.glb_pipeline": ["GlbPipeline"],
-    "file_utils.uv_unwrap._uv_unwrap": "UvUnwrap",
+    "file_utils.mesh_convert.glb.pipeline": ["GlbPipeline"],
+    # The fade/highlight channel table (``GlbFades.CHANNELS``) the DCC render
+    # effects join their own channel rows against.
+    "file_utils.mesh_convert.glb.fades": ["GlbFades"],
+    "file_utils.uv_unwrap": "UvUnwrap",
     # Zero-dep USD primitives: sniffing, spec-compliant USDZ packaging, and a
     # usda mesh author + OBJ converters (the no-DCC publish path). DCC-native
     # USD I/O lives downstream in mayatk/blendertk ``env_utils.usd``.
@@ -60,6 +63,9 @@ DEFAULT_INCLUDE = {
     # (resolve, search order, claims, relocation) -- the lightmap markers of
     # both DCC bakers today; any record that names files that way.
     "file_utils.file_dependencies": ["FileDependencies"],
+    # The tile / frame token vocabulary of a path (<UDIM>, <uvtile>, <u>_<v>,
+    # <f>): detect, collapse to a representative, expand to the set.
+    "file_utils.tiled_path": ["TiledPath"],
     # Shared project-workspace model + workspace.mel codec (zero-dep). One
     # project folder serves Maya (which parses the marker natively) and
     # blendertk (whose current-workspace resolver builds on this); one
@@ -84,38 +90,54 @@ DEFAULT_INCLUDE = {
     "geo_utils.shadow_projection": ["ShadowProjection", "ShadowModel", "ShadowRaster"],
     "geo_utils.shadow_horizon": ["ShadowHorizon", "HeightFieldMap", "HorizonMap"],
     "img_utils.shadow_atlas": "ShadowAtlas",
-    "geo_utils.uv_pack": ["UvPack", "PackIslandsResult"],
-    "geo_utils.uv_budget": [
+    "geo_utils.uv.pack": ["UvPack", "PackIslandsResult"],
+    "geo_utils.uv.budget": [
         "UvBudget",
         "BudgetItem",
         "BudgetPlan",
         "BudgetRow",
         "BudgetPage",
     ],
-    "geo_utils.uv_transfer": ["UvTransfer", "TransferTable"],
+    "geo_utils.uv.transfer": ["UvTransfer", "TransferTable"],
+    "geo_utils.uv.cylinder_seams": "CylinderSeams",
+    # Scene-export engine -- the pure half of both DCC Scene Exporters.
     # Declarative widget definitions -> run configuration (the two Scene
     # Exporter panels' export button, once).
-    "core_utils.export_profile": ["ExportProfile", "ExportRun"],
+    "core_utils.engines.scene_export.export_profile": ["ExportProfile", "ExportRun"],
     # The hierarchy change-detection baseline's set algebra -- ONE baseline per
-    # scene, scoped at compare time (shared by both DCC scene exporters).
-    "core_utils.hierarchy_baseline": ["HierarchyBaseline"],
+    # scene, scoped at compare time (shared by both DCC scene exporters) -- and
+    # its storage half, which each DCC subclasses with its scene store.
+    "core_utils.engines.scene_export.hierarchy_baseline": [
+        "HierarchyBaseline",
+        "HierarchyBaselineStore",
+    ],
     # Scene records -- every tool-authored scene channel declared ONCE (key,
     # scope, version, kind, dependencies); the store contract each DCC's
     # DataNodes implements; the export context + snapshot that assemble the
-    # producers in dependency order and commit the carrier in one pass.
-    "core_utils.scene_records": [
+    # producers in dependency order and commit the carrier in one pass; the
+    # crossing of records into another scene.
+    "core_utils.engines.scene_export.scene_records": [
         "Scope",
         "Kind",
         "RecordSpec",
         "Record",
         "SceneRecords",
-        "SceneStoreBase",
+        "Merge",
+    ],
+    "core_utils.engines.scene_export.scene_store": ["SceneStoreBase"],
+    "core_utils.engines.scene_export.export_snapshot": [
         "ExportContext",
         "ExportSnapshot",
-        "Merge",
+    ],
+    "core_utils.engines.scene_export.record_transfer": [
         "TransferContext",
         "RecordTransfer",
     ],
+    # The scene-data sidecar's format / naming / migration / diff report, and
+    # the exporter's orchestration shell -- each DCC subclasses both and
+    # supplies its scene hooks.
+    "core_utils.engines.scene_export.scene_data_sidecar": ["SceneDataSidecarBase"],
+    "core_utils.engines.scene_export.scene_exporter": ["SceneExporterBase"],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [
         "ShotStore",
@@ -153,11 +175,21 @@ DEFAULT_INCLUDE = {
     "core_utils.engines.shots.shot_plan": [
         "ShotMove",
         "MovePlan",
+        "GapRetime",
         "ShotPlanner",
+        "ShotBoundaryConflict",
     ],
     "core_utils.engines.shots.shot_detection": [
+        "TRANSFORM_CHANNELS",
         "STANDARD_TRANSFORM_ATTRS",
         "ShotDetection",
+    ],
+    # The Shots panels' one-line summaries (sequence stats, trim/pad deltas).
+    "core_utils.engines.shots.shot_report": "ShotReport",
+    # The sequencer's ripple-editing orchestration; mayatk / blendertk
+    # ``ShotSequencer`` subclass it and supply the scene I/O hooks.
+    "core_utils.engines.shots.shot_sequencer": [
+        "ShotSequencer",
     ],
     # Rig-graph engine — DCC-agnostic model of a rig's INTENT, plus the pure
     # planner that decides what ONE target can build from it. mayatk extracts
@@ -204,6 +236,14 @@ DEFAULT_INCLUDE = {
     ],
     # Auto-instancing engine — separated-part clustering core (mayatk / blendertk)
     "core_utils.engines.instancing.assembly_sorter": "AssemblySorter",
+    # ...and the grouping pass's signature merge + run summary (both AutoInstancers)
+    "core_utils.engines.instancing.instance_grouping": "InstanceGrouping",
+    # ...and the strategy decision tree (host bindings supply the triangle count)
+    "core_utils.engines.instancing.instancing_strategy": [
+        "InstancingStrategy",
+        "StrategyConfig",
+        "StrategyType",
+    ],
     # PBR texture engine — map taxonomy / preparation / packaging
     # (mayatk / blendertk material tools + extapps texture apps)
     "core_utils.engines.textures.map_factory": ["MapFactory"],
@@ -250,7 +290,7 @@ DEFAULT_INCLUDE = {
     ],
     # Same case: mayatk's blender_bridge imports ScriptTemplate and the three
     # mode constants straight from this module.
-    "core_utils.script_template": [
+    "core_utils.handoff.script_template": [
         "ScriptTemplate",
         "SEND_TO",
         "SAVE_AS",
@@ -273,9 +313,10 @@ DEFAULT_INCLUDE = {
     # on every ordinary exit. os._exit does NOT skip it on Windows, so every
     # entry point that exits from inside a DCC host shares this one.
     "core_utils.process_exit": ["ProcessExit"],
-    "core_utils.app_launcher": "AppLauncher",
+    "core_utils.app_launcher._app_launcher": "AppLauncher",
+    "core_utils.x11": "X11",
     "core_utils.app_installer": "AppInstaller",
-    "core_utils.app_handoff": [
+    "core_utils.handoff.app_handoff": [
         # The carrier vocabulary beside USD_EXTENSIONS: one spelling for every
         # panel (uitk) and every producer (the DCC mixins).
         "CARRIER_PARAM",
@@ -299,14 +340,22 @@ DEFAULT_INCLUDE = {
     # read/write rules, so both producers and both consumers spell one contract
     # instead of eighty string literals. A section's CONTENTS stay with the
     # codec that owns them (e.g. ShotTransfer for `shots`).
-    "core_utils.handoff_manifest": ["HandoffManifest"],
+    "core_utils.handoff.manifest": ["HandoffManifest"],
+    # The Scope words (selected / all / visible) and their precedence: every
+    # bridge panel, the preview push and the bakers resolve through the one
+    # rule, each host passing its own scene reads in as lookups.
+    "core_utils.handoff.handoff_scope": "HandoffScope",
     # Replay of those sections: an ordered, gated, best-effort-per-step plan
     # with one progress/cancel protocol, so adding a section is a line rather
     # than an edit to a hand-written chain in every consumer.
-    "core_utils.manifest_plan": ["ManifestPlan"],
+    "core_utils.handoff.manifest_plan": ["ManifestPlan"],
     # Blocking run-script-collect-artifact counterpart of ScriptLaunchDeliverer
     # (backs pull-direction bridges, e.g. blendertk's Maya-scene import).
-    "core_utils.script_run": ["ScriptRunResult", "ScriptRunner", "ProgressRelay"],
+    "core_utils.handoff.script_run": [
+        "ScriptRunResult",
+        "ScriptRunner",
+        "ProgressRelay",
+    ],
     # Process/log line-stream primitives (composed by the app-specific
     # connection shells in mayatk/blendertk, e.g. SubstanceConnection).
     "core_utils.process_stream": [
@@ -323,10 +372,20 @@ DEFAULT_INCLUDE = {
         "AffixRule",
         "NamingConvention",
     ],
-    "core_utils.preset_store": [
+    "core_utils.presets.store": [
         "PresetStore",
+        "PresetReadOnlyError",
         "Codec",
         "JSON_CODEC",
+    ],
+    # Every preset store under the root at once: lock, collections, bundles.
+    "core_utils.presets.library": [
+        "PresetLibrary",
+        "PresetDomain",
+        "PresetEntry",
+        "ImportPlan",
+        "ImportItem",
+        "ImportResult",
     ],
     "core_utils.schema_spec": [
         "SchemaSpec",
@@ -379,6 +438,8 @@ DEFAULT_INCLUDE = {
     "net_utils.rpc.plugin_core": ["OpRegistry", "MainThreadMarshaller", "RpcPlugin"],
     "str_utils.fuzzy_matcher": "FuzzyMatcher",
     "str_utils.hotkey_utils": "HotkeyUtils",
+    # Pure-string rich-tooltip DSL; uitk's TooltipPresenter shows the result.
+    "str_utils.tooltip_format": "TooltipFormat",
     "str_utils.report_doc": ["ReportDoc"],
 }
 

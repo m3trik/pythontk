@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from pythontk import FileUtils, ImgUtils, Ktx2Encoder, MeshConvert
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
-from pythontk.file_utils.mesh_convert.glb_clips import GlbClips
+from pythontk.file_utils.mesh_convert.glb.clips import GlbClips
 from test_fbx_media import build_stingray_fbx, encoded
 from test_glb_tangents import read_tangents, tangent_quads_glb
 
@@ -392,7 +392,7 @@ class TestFbxToGlb(unittest.TestCase):
             ),
             patch("subprocess.run", side_effect=self._run_simulator(captured)),
             self.assertLogs(
-                "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+                "pythontk.file_utils.mesh_convert", level="WARNING"
             ) as logs,
         ):
             MeshConvert.fbx_to_glb(self.src, overwrite=True, auto_install=False)
@@ -1362,15 +1362,15 @@ class TestGlbEditSession(unittest.TestCase):
 
     @staticmethod
     def _counting_write():
-        """``(patcher, writes)`` — wraps ``_write_glb`` and records each call."""
-        real = MeshConvert._write_glb
+        """``(patcher, writes)`` — wraps ``GlbEdit.write`` and records each call."""
+        real = MeshConvert.GlbEdit.write
         writes = []
 
         def counting(edit):
             writes.append(edit.path)
             return real(edit)
 
-        return patch.object(MeshConvert, "_write_glb", counting), writes
+        return patch.object(MeshConvert.GlbEdit, "write", counting), writes
 
     @staticmethod
     def _xtra_chunk(payload=b"\x01\x02\x03\x04" * 4):
@@ -2256,7 +2256,7 @@ class TestGlbEditSession(unittest.TestCase):
             }
         )
         with self.assertLogs(
-            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+            "pythontk.file_utils.mesh_convert", level="WARNING"
         ) as caught:
             records = MeshConvert.set_glb_metallic_roughness(
                 path,
@@ -4364,7 +4364,7 @@ class TestSuspectOrmMaterials(unittest.TestCase):
         )
 
         with self.assertLogs(
-            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+            "pythontk.file_utils.mesh_convert", level="WARNING"
         ) as caught:
             MeshConvert.apply_scene_sidecar(path, envelope)
 
@@ -4393,9 +4393,9 @@ class TestSuspectOrmMaterials(unittest.TestCase):
         )
 
         with self.assertLogs(
-            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+            "pythontk.file_utils.mesh_convert", level="WARNING"
         ) as caught:
-            logging.getLogger("pythontk.file_utils.mesh_convert._mesh_convert").warning(
+            logging.getLogger("pythontk.file_utils.mesh_convert").warning(
                 "sentinel so assertLogs always has a record"
             )
             MeshConvert.apply_scene_sidecar(path, envelope)
@@ -5638,7 +5638,7 @@ class TestGlbLightmaps(unittest.TestCase):
         other, so neither binds -- and it says so."""
         glb, _index = self._two_bodies(hierarchy=False)
         with self.assertLogs(
-            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+            "pythontk.file_utils.mesh_convert", level="WARNING"
         ) as caught:
             records = MeshConvert.apply_glb_lightmaps(glb)
         self.assertEqual(records, [])
@@ -5800,7 +5800,7 @@ class TestGlbLightmaps(unittest.TestCase):
         self.assertEqual(coverage["ambiguous"], [])
         self.assertEqual(coverage["absent"], ["BODY"])
         with self.assertLogs(
-            "pythontk.file_utils.mesh_convert._mesh_convert", level="DEBUG"
+            "pythontk.file_utils.mesh_convert", level="DEBUG"
         ) as caught:
             records = MeshConvert.apply_glb_lightmaps(glb)
         self.assertFalse([m for m in caught.output if "ambiguous" in m], caught.output)
@@ -5855,7 +5855,7 @@ class TestGlbLightmaps(unittest.TestCase):
         gltf, index = self._tree_scene(manifest, [lx, al], prims={lx: [2], al: [2]})
         glb = self._glb(gltf)
         with self.assertLogs(
-            "pythontk.file_utils.mesh_convert._mesh_convert", level="DEBUG"
+            "pythontk.file_utils.mesh_convert", level="DEBUG"
         ) as caught:
             records = MeshConvert.apply_glb_lightmaps(glb, replace_authored=False)
         self.assertEqual(sorted(r["object"] for r in records), ["AL_BODY", "LX_BODY"])
@@ -6248,7 +6248,7 @@ class TestGlbLightmaps(unittest.TestCase):
         glb = self._glb(gltf)
 
         with self.assertLogs(
-            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+            "pythontk.file_utils.mesh_convert", level="WARNING"
         ) as caught:
             MeshConvert.apply_glb_lightmaps(glb)
         displaced = [m for m in caught.output if "is dropped on every" in m]
@@ -6297,7 +6297,7 @@ class TestGlbLightmaps(unittest.TestCase):
         )
         glb = self._glb(self._scene(manifest, objects=("room1", "room2", "room3")))
         with self.assertLogs(
-            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+            "pythontk.file_utils.mesh_convert", level="WARNING"
         ) as caught:
             self.assertEqual(MeshConvert.apply_glb_lightmaps(glb), [])
         not_found = [m for m in caught.output if "not found in" in m]
@@ -6336,9 +6336,7 @@ class TestGlbLightmaps(unittest.TestCase):
         gltf["textures"] = [{"source": 0}]
         gltf["images"] = [{"name": "orm.png"}]
         glb = self._glb(gltf)
-        with self.assertNoLogs(
-            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
-        ):
+        with self.assertNoLogs("pythontk.file_utils.mesh_convert", level="WARNING"):
             records = MeshConvert.apply_glb_lightmaps(glb)
         self.assertEqual(len(records), 1)
         with MeshConvert.open_glb(glb) as edit:
@@ -6368,7 +6366,7 @@ class TestGlbLightmaps(unittest.TestCase):
         gltf["images"] = [{"name": "hand_authored_ao.png"}]
         glb = self._glb(gltf)
         with self.assertLogs(
-            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+            "pythontk.file_utils.mesh_convert", level="WARNING"
         ) as caught:
             records = MeshConvert.apply_glb_lightmaps(glb, replace_authored=False)
         self.assertEqual(records, [])
@@ -7480,7 +7478,7 @@ class TestApplyGlbAnimations(unittest.TestCase):
             },
         )
         with self.assertLogs(
-            "pythontk.file_utils.mesh_convert._mesh_convert", level="WARNING"
+            "pythontk.file_utils.mesh_convert", level="WARNING"
         ) as caught:
             manifest = MeshConvert.apply_glb_animations(path)
 
@@ -11554,6 +11552,66 @@ class TestGrayscaleMapsThroughTheConverter(unittest.TestCase):
             timeout=120,
         )
         self.assertEqual(self._orm(base + ".glb"), {"G": (255, 255), "B": (255, 255)})
+
+
+class TestFacadeLayout(unittest.TestCase):
+    """The 2026-09-26 split kept every ``MeshConvert`` name reaching the SAME
+    object: the container moved to ``glb/edit.py`` and the passes into one
+    private mixin per job. Pinned so a later move cannot turn a binding into a
+    copy (a copied table drifts; a re-wrapped helper escapes a patch).
+    Added: 2026-09-26"""
+
+    def test_container_names_are_the_containers_own(self):
+        from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit
+
+        self.assertIs(MeshConvert.GlbEdit, GlbEdit)
+        for name in (
+            "ACCESSOR_COMPONENT_TYPES",
+            "ACCESSOR_TYPE_COUNT",
+            "TEXTURE_CONTAINER_EXTENSIONS",
+        ):
+            self.assertIs(getattr(MeshConvert, name), getattr(GlbEdit, name), name)
+        for private, public in (
+            ("_read_glb", "read"),
+            ("_write_glb", "write"),
+            ("_append_bin_views", "append_bin_views"),
+            ("_compact_bin", "compact_bin"),
+            ("_relocate_embedded_images", "relocate_embedded_images"),
+            ("_bin_view", "bin_view"),
+            ("_accessor_elements", "accessor_elements"),
+            ("_drop_orphaned_accessors", "drop_orphaned_accessors"),
+            ("_release_animation_payload", "release_animation_payload"),
+        ):
+            self.assertEqual(
+                getattr(MeshConvert, private), getattr(GlbEdit, public), private
+            )
+
+    def test_passes_resolve_through_the_facade(self):
+        """A pass reaches the others through ``cls``, so patching the facade
+        reaches a call made from another job's module."""
+
+        class Reached(Exception):
+            pass
+
+        seen = []
+
+        def stop(glb):
+            seen.append(glb)
+            raise Reached
+
+        with patch.object(MeshConvert, "open_glb", side_effect=stop):
+            with self.assertRaises(Reached):
+                MeshConvert.check_glb_materials("x.glb")
+        self.assertEqual(seen, ["x.glb"])
+
+    def test_old_glb_fades_path_is_a_deprecated_alias(self):
+        import pythontk as ptk
+        from pythontk.file_utils.mesh_convert import glb_fades
+
+        with self.assertWarns(DeprecationWarning):
+            channels = glb_fades.CHANNELS
+        self.assertIs(channels, ptk.GlbFades.CHANNELS)
+        self.assertIn("highlight", channels)
 
 
 if __name__ == "__main__":

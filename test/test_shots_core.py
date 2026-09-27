@@ -31,7 +31,7 @@ if _PKG_PARENT not in sys.path:
 
 from pythontk.core_utils.engines.shots import shot_model
 from pythontk.core_utils.engines.shots.shot_model import ShotBlock, ShotStore
-from pythontk.core_utils.scene_records import SceneRecords
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.core_utils.engines.shots.shot_plan import ShotPlanner, ShotMove
 from pythontk.core_utils.engines.shots.shot_apply import ShotApply
 from pythontk.core_utils.engines.shots.shot_detection import (
@@ -446,6 +446,23 @@ class TestShotMove(_ShotTest):
     def test_delta_reflects_new_minus_old(self):
         m = ShotMove(1, 5, 15, 8, 18, 5, 20)
         self.assertAlmostEqual(m.delta, 3.0)
+
+
+class TestPlannerPublicSurface(_ShotTest):
+    """The names mayatk / blendertk use reach them through the root."""
+
+    def test_root_exports_the_planner_vocabulary(self):
+        import pythontk as ptk
+        from pythontk.core_utils.engines.shots import shot_plan
+
+        for name in ("ShotBoundaryConflict", "GapRetime", "ShotPlanner"):
+            self.assertIs(getattr(ptk, name), getattr(shot_plan, name))
+
+    def test_last_shot_envelope_ends_at_unbounded(self):
+        shots = [ShotBlock(1, "A", 0, 10, []), ShotBlock(2, "B", 20, 30, [])]
+        _lo, env_end, _open, _closed = ShotPlanner.envelope_for(shots, 1)
+        self.assertEqual(env_end, ShotPlanner.UNBOUNDED)
+        self.assertLess(ShotPlanner.envelope_for(shots, 0)[1], ShotPlanner.UNBOUNDED)
 
 
 class TestRespaceRoundTrip(_ShotTest):
@@ -1379,7 +1396,9 @@ class TestExportViewRefresh(_ShotTest):
         """The producer form: the exporter's Animation Clips decision is an
         INPUT on the record, never patched on afterwards, and an empty store
         yields nothing -- which a commit turns into a clear."""
-        from pythontk.core_utils.scene_records import ExportContext
+        from pythontk.core_utils.engines.scene_export.export_snapshot import (
+            ExportContext,
+        )
 
         store = _RecordingStore([])
         self.assertIsNone(store.export_records(ExportContext(clip_mode="full")))
@@ -1460,7 +1479,9 @@ class TestStaleShots(_ShotTest):
         self.assertEqual(store.stale_shots(), [])
 
     def test_export_records_leave_stale_shots_out_and_say_so(self):
-        from pythontk.core_utils.scene_records import ExportContext
+        from pythontk.core_utils.engines.scene_export.export_snapshot import (
+            ExportContext,
+        )
 
         store = self._store(
             [
@@ -1643,6 +1664,123 @@ class TestDetectionConstants(_ShotTest):
         self.assertIn("translateX", STANDARD_TRANSFORM_ATTRS)
         self.assertIn("visibility", STANDARD_TRANSFORM_ATTRS)
         self.assertEqual(len(STANDARD_TRANSFORM_ATTRS), 10)
+
+
+class TestClusterSpans(unittest.TestCase):
+    """``ShotDetection.cluster_spans``: the one sweep behind every key-timing
+    overlap grouping (mayatk ``AnimUtils._group_overlapping_keyframes`` /
+    ``SegmentKeys._group_by_overlap``, blendertk ``StaggerKeys._group_units``,
+    and :meth:`ShotDetection.cluster_segments_by_gap`).
+
+    The expectations were recorded from those four implementations before they
+    were routed through this one: strict overlap, touch, an epsilon bridge and
+    a frame gap are the same sweep with a different join threshold.
+    """
+
+    @staticmethod
+    def _seg(obj, start, end):
+        return {"obj": obj, "start": start, "end": end}
+
+    def _fixture(self):
+        seg = self._seg
+        return [
+            seg("c", 20, 30),
+            seg("a", 0, 10),
+            seg("b", 10, 15),
+            seg("a", 5, 12),
+            seg("d", 30.001, 40),
+            seg("e", 40.0025, 41),
+            seg("f", 50, 60),
+        ]
+
+    @staticmethod
+    def _objs(clusters):
+        return [[m["obj"] for m in c] for c in clusters]
+
+    def test_strict_overlap_keeps_touching_spans_apart(self):
+        # The mayatk AnimUtils / SegmentKeys default and blendertk's
+        # merge_touching=False: a span joins only when it starts BEFORE the
+        # cluster's running end -- b (10-15) joins because the second a
+        # (5-12) already carried the end to 12.
+        out = ShotDetection.cluster_spans(self._fixture())
+        self.assertEqual(self._objs(out), [["a", "a", "b"], ["c"], ["d"], ["e"], ["f"]])
+
+    def test_inclusive_joins_a_touching_span(self):
+        spans = [self._seg("x", 0, 10), self._seg("y", 10, 20)]
+        self.assertEqual(len(ShotDetection.cluster_spans(spans)), 2)
+        joined = ShotDetection.cluster_spans(spans, inclusive=True)
+        self.assertEqual(self._objs(joined), [["x", "y"]])
+
+    def test_epsilon_gap_bridges_only_what_it_reaches(self):
+        # SegmentKeys' inclusive mode: a 1e-3 seam (d at 30.001) is bridged by
+        # the 2e-3 tolerance, a 2.5e-3 one (e at 40.0025) is not.
+        out = ShotDetection.cluster_spans(self._fixture(), gap=2e-3, inclusive=True)
+        self.assertEqual(self._objs(out), [["a", "a", "b"], ["c", "d"], ["e"], ["f"]])
+
+    def test_frame_gap_matches_cluster_segments_by_gap(self):
+        out = ShotDetection.cluster_spans(self._fixture(), gap=5, inclusive=True)
+        self.assertEqual(
+            [sorted({m["obj"] for m in c}) for c in out],
+            [["a", "b", "c", "d", "e"], ["f"]],
+        )
+        detected = ShotDetection.cluster_segments_by_gap(
+            self._fixture(), gap_threshold=5, min_duration=0
+        )
+        self.assertEqual(
+            [d["objects"] for d in detected], [["a", "b", "c", "d", "e"], ["f"]]
+        )
+
+    def test_a_seam_exactly_gap_wide_is_measured_by_subtraction(self):
+        # Pinned on purpose (decided 2026-09-27): the join test is
+        # ``start - cluster_end <= gap`` -- the form shot DETECTION
+        # (``cluster_segments_by_gap``) always used -- not the
+        # ``start <= cluster_end + gap`` that both sequencer controllers'
+        # per-object clip merge and SegmentKeys' inclusive grouping wrote.
+        # The two differ by one float ULP at a seam exactly ``gap`` wide:
+        # 8.3 - 3.3 == 5.000000000000001 > 5.0 splits, where 3.3 + 5.0 == 8.3
+        # joined. Keeping the subtraction makes a displayed clip block and a
+        # detected shot split at the same seam; do not switch forms.
+        seg = self._seg
+        spans = [seg("a", 0.3, 3.3), seg("b", 8.3, 12.3)]
+        out = ShotDetection.cluster_spans(spans, gap=5.0, inclusive=True)
+        self.assertEqual(self._objs(out), [["a"], ["b"]])
+        detected = ShotDetection.cluster_segments_by_gap(
+            spans, gap_threshold=5.0, min_duration=0
+        )
+        self.assertEqual([d["objects"] for d in detected], [["a"], ["b"]])
+        # A seam that subtracts to exactly 5.0 still joins (inclusive).
+        exact = [seg("a", 0.25, 3.25), seg("b", 8.25, 12.25)]
+        joined = ShotDetection.cluster_spans(exact, gap=5.0, inclusive=True)
+        self.assertEqual(self._objs(joined), [["a", "b"]])
+
+    def test_running_end_not_last_member_decides_a_join(self):
+        seg = self._seg
+        spans = [seg("long", 0, 100), seg("short", 10, 20), seg("late", 50, 60)]
+        self.assertEqual(
+            self._objs(ShotDetection.cluster_spans(spans)), [["long", "short", "late"]]
+        )
+
+    def test_members_keep_start_order_and_ties_keep_input_order(self):
+        seg = self._seg
+        spans = [seg("second", 5, 9), seg("tie_1", 0, 6), seg("tie_2", 0, 3)]
+        self.assertEqual(
+            self._objs(ShotDetection.cluster_spans(spans)),
+            [["tie_1", "tie_2", "second"]],
+        )
+
+    def test_span_accessor_clusters_plain_tuples(self):
+        # The interval-merge form (SegmentKeys' static-interval merge,
+        # blendertk's transform motion intervals).
+        spans = [(12, 20), (0, 5), (5, 8), (30, 31)]
+        out = ShotDetection.cluster_spans(spans, inclusive=True, span=lambda iv: iv)
+        self.assertEqual(out, [[(0, 5), (5, 8)], [(12, 20)], [(30, 31)]])
+
+    def test_empty_and_input_untouched(self):
+        self.assertEqual(ShotDetection.cluster_spans([]), [])
+        spans = self._fixture()
+        snapshot = [dict(s) for s in spans]
+        ShotDetection.cluster_spans(spans, gap=5, inclusive=True)
+        self.assertEqual(spans, snapshot)
 
 
 class TestSnapEnclosesContent(unittest.TestCase):

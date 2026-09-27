@@ -20,7 +20,9 @@ import ast
 from conftest import BaseTestCase
 
 
-class ModuleResolverBootstrapTests(BaseTestCase):
+class _TempPackageCase(BaseTestCase):
+    """Builds throwaway packages on ``sys.path`` and unloads them after."""
+
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tempdir.cleanup)
@@ -30,8 +32,12 @@ class ModuleResolverBootstrapTests(BaseTestCase):
         self._imported_modules: list[str] = []
 
     def tearDown(self) -> None:
-        for name in self._imported_modules:
-            sys.modules.pop(name, None)
+        # By package prefix, not the import-time snapshot: a lazily resolved
+        # submodule is imported after ``_make_package`` returns.
+        roots = {name.split(".")[0] for name in self._imported_modules}
+        for name in list(sys.modules):
+            if name.split(".")[0] in roots:
+                sys.modules.pop(name, None)
 
     def _pop_temp_path(self) -> None:
         try:
@@ -65,6 +71,8 @@ class ModuleResolverBootstrapTests(BaseTestCase):
         )
         return module
 
+
+class ModuleResolverBootstrapTests(_TempPackageCase):
     def test_bootstrap_exposes_classes_and_methods(self) -> None:
         pkg = self._make_package(
             "resolver_pkg_a",
@@ -618,6 +626,206 @@ class ModuleResolverBootstrapTests(BaseTestCase):
         self.assertNotIn("Demo", pkg.__all__)  # stale names dropped
         self.assertNotIn("KONST", pkg.__all__)
 
+    def test_a_reload_derives_all_afresh_not_from_the_last_run(self) -> None:
+        """``importlib.reload`` re-runs the bootstrap in the SAME globals, where the
+        handle took the ``__all__`` the LAST run derived for a hand-declared one:
+        a name the edit dropped stayed advertised, and ``from pkg import *``
+        raised on it. A hand-declared ``__all__`` still survives the reload."""
+        init = """
+            from pythontk.core_utils.module_resolver import bootstrap_package
+
+            MANUAL = object()
+            __all__ = ["MANUAL"]
+
+            bootstrap_package(globals(), include={"alpha": "Demo", "beta": "Other"})
+        """
+        for declared in (False, True):
+            name = f"resolver_pkg_reload_{int(declared)}"
+            with self.subTest(declared=declared):
+                body = init if declared else init.replace('__all__ = ["MANUAL"]', "")
+                pkg = self._make_package(
+                    name,
+                    init_body=body,
+                    modules={
+                        "alpha.py": "class Demo:\n    pass\n",
+                        "beta.py": "class Other:\n    pass\n",
+                    },
+                )
+                edited = body.replace(', "beta": "Other"', "")
+                (self._tmp_path / name / "__init__.py").write_text(
+                    textwrap.dedent(edited), encoding="utf-8"
+                )
+                importlib.reload(pkg)
+
+                expected = ["Demo", "MANUAL"] if declared else ["Demo"]
+                self.assertEqual(pkg.__all__, expected)
+                exec(f"from {name} import *", {})  # raised on the dropped name
+
+
+class LazyExportsTests(_TempPackageCase):
+    """``lazy_exports``: the subpackage ``__init__`` form of the resolver."""
+
+    _INIT = """
+        from pythontk.core_utils.module_resolver import lazy_exports
+
+        lazy_exports(globals(), {"alpha": ("Demo", "_PRIVATE"), "nested.beta": "Other"})
+    """
+    _MODULES = {
+        "alpha.py": "_PRIVATE = 1\nclass Demo:\n    pass\n",
+        "nested/__init__.py": "",
+        "nested/beta.py": "class Other:\n    pass\n",
+    }
+
+    def test_import_loads_no_submodule_until_a_name_is_read(self) -> None:
+        pkg = self._make_package(
+            "lazy_pkg_a", init_body=self._INIT, modules=self._MODULES
+        )
+        self.assertNotIn("lazy_pkg_a.alpha", sys.modules)
+        self.assertEqual(pkg.Demo.__module__, "lazy_pkg_a.alpha")
+        self.assertIn("lazy_pkg_a.alpha", sys.modules)
+        self.assertNotIn("lazy_pkg_a.nested.beta", sys.modules)
+        self.assertIn("Demo", vars(pkg))  # cached: the next read is a dict hit
+
+    def test_dotted_submodules_and_the_from_import_form(self) -> None:
+        self._make_package("lazy_pkg_b", init_body=self._INIT, modules=self._MODULES)
+        from lazy_pkg_b import Other  # noqa: F401 -- the form consumers write
+
+        self.assertEqual(Other.__module__, "lazy_pkg_b.nested.beta")
+
+    def test_all_lists_public_names_and_dir_lists_every_name(self) -> None:
+        pkg = self._make_package(
+            "lazy_pkg_c", init_body=self._INIT, modules=self._MODULES
+        )
+        self.assertEqual(pkg.__all__, ["Demo", "Other"])
+        self.assertTrue({"Demo", "Other", "_PRIVATE"} <= set(dir(pkg)))
+
+    def test_an_unknown_name_raises_and_an_earlier_getattr_is_chained(self) -> None:
+        pkg = self._make_package(
+            "lazy_pkg_d",
+            init_body="""
+                from pythontk.core_utils.module_resolver import lazy_exports
+
+                def __getattr__(name):
+                    if name == "legacy":
+                        return "from the earlier hook"
+                    raise AttributeError(name)
+
+                lazy_exports(globals(), {"alpha": "Demo"})
+            """,
+            modules=self._MODULES,
+        )
+        self.assertEqual(pkg.legacy, "from the earlier hook")
+        with self.assertRaises(AttributeError):
+            pkg.missing
+
+    def test_a_name_listed_under_two_submodules_is_rejected(self) -> None:
+        from pythontk.core_utils.module_resolver import lazy_exports
+
+        with self.assertRaises(ValueError):
+            lazy_exports({"__name__": "x"}, {"a": "Demo", "b": ("Demo",)})
+
+    def test_a_reload_serves_the_reloaded_class_not_the_one_it_cached(self) -> None:
+        """``importlib.reload`` re-runs the ``__init__`` in the SAME globals, so a
+        name an earlier run cached there shadowed the reloaded submodule's class:
+        ``ptk.reload_package("pythontk")`` kept serving the old ``LoggingMixin``.
+        """
+        from pythontk.core_utils.module_reloader import ModuleReloader
+
+        pkg = self._make_package(
+            "lazy_pkg_e", init_body=self._INIT, modules=self._MODULES
+        )
+        stale = pkg.Demo  # cached into the package globals
+        ModuleReloader().reload(pkg)
+        fresh = sys.modules["lazy_pkg_e.alpha"].Demo
+        self.assertIsNot(fresh, stale)  # the submodule itself did reload
+        self.assertIs(pkg.Demo, fresh)
+
+    def test_a_reload_replaces_the_last_runs_hooks_instead_of_stacking(self) -> None:
+        """A re-run chained onto the last run's ``__getattr__`` (one more layer per
+        reload, each still serving what the old ``__init__`` declared) and unioned
+        the ``__all__`` that run derived, so a name the edit dropped outlived it in
+        both -- also with ``Deprecation.attributes`` installed after it (the shape
+        of every consumer that retired a name) or before it (the order the
+        docstring names). A hand-declared ``__all__`` survives."""
+        init = """
+            from pythontk.core_utils.deprecation import Deprecation
+            from pythontk.core_utils.module_resolver import lazy_exports
+
+            if DECLARED:
+                __all__ = ["MANUAL"]
+            if BEFORE:
+                Deprecation.attributes(
+                    globals(), {"Legacy": "PKG.alpha.Demo"}, remove_in="9.9.0"
+                )
+            lazy_exports(globals(), {"alpha": "Demo", "nested.beta": "Other"})
+            if AFTER:
+                Deprecation.attributes(
+                    globals(), {"Legacy": "PKG.alpha.Demo"}, remove_in="9.9.0"
+                )
+        """
+        for deprecation, declared in (
+            (None, False),
+            ("AFTER", False),
+            ("BEFORE", False),
+            (None, True),
+        ):
+            fronted = deprecation is not None
+            name = f"lazy_pkg_f{deprecation or 'none'}{int(declared)}".lower()
+            with self.subTest(deprecation=deprecation, declared=declared):
+                body = (
+                    init.replace("AFTER", str(deprecation == "AFTER"))
+                    .replace("BEFORE", str(deprecation == "BEFORE"))
+                    .replace("DECLARED", str(declared))
+                    .replace("PKG", name)
+                )
+                pkg = self._make_package(name, init_body=body, modules=self._MODULES)
+                edited = body.replace(', "nested.beta": "Other"', "")
+                (self._tmp_path / name / "__init__.py").write_text(
+                    textwrap.dedent(edited), encoding="utf-8"
+                )
+                importlib.reload(pkg)
+
+                self.assertEqual(
+                    pkg.__all__, ["Demo", "MANUAL"] if declared else ["Demo"]
+                )
+                with self.assertRaises(AttributeError):
+                    pkg.Other  # dropped by the edit: nothing may still serve it
+                if fronted:
+                    with self.assertWarns(DeprecationWarning):
+                        self.assertIs(pkg.Legacy, pkg.Demo)
+
+    def test_a_failure_loading_a_declared_name_keeps_its_cause(self) -> None:
+        """``from pkg import X`` turns an AttributeError out of ``__getattr__``
+        into a bare "cannot import name 'X'" and drops WHY -- the submodule's own
+        import failing on a missing attribute, or a declared name it lacks --
+        and ``hasattr`` read the broken name as merely absent."""
+        pkg = self._make_package(
+            "lazy_pkg_h",
+            init_body="""
+                from pythontk.core_utils.module_resolver import lazy_exports
+
+                lazy_exports(globals(), {"alpha": ("Demo", "Dmeo"), "broken": "Broken"})
+            """,
+            modules={
+                **self._MODULES,
+                "broken.py": "import os\n\nclass Broken(os.NoSuchBase):\n    pass\n",
+            },
+        )
+        with self.assertRaises(ImportError) as caught:
+            from lazy_pkg_h import Broken  # noqa: F401
+        self.assertIsInstance(caught.exception.__cause__, AttributeError)
+        self.assertIn("lazy_pkg_h.broken", str(caught.exception))
+        self.assertIn("NoSuchBase", str(caught.exception))
+
+        with self.assertRaises(ImportError) as caught:
+            from lazy_pkg_h import Dmeo  # noqa: F401
+        self.assertIsInstance(caught.exception.__cause__, AttributeError)
+        self.assertIn("lazy_pkg_h.alpha", str(caught.exception))
+
+        with self.assertRaises(ImportError):
+            hasattr(pkg, "Broken")
+        self.assertIs(pkg.Demo, sys.modules["lazy_pkg_h.alpha"].Demo)
+
 
 # ==============================================================================
 # Module Resolver Integration Validation Tests
@@ -914,7 +1122,7 @@ class ModuleResolverValidator:
 
         # Check for bootstrap_package call
         if "bootstrap_package" not in content:
-            details.append("âš ï¸  bootstrap_package call not found")
+            details.append("⚠  bootstrap_package call not found")
 
         # Try to parse and extract DEFAULT_INCLUDE
         try:
@@ -959,10 +1167,10 @@ class ModuleResolverValidator:
         try:
             if self.package_name in sys.modules:
                 pkg = sys.modules[self.package_name]
-                details.append("âœ… Package already loaded in sys.modules")
+                details.append("✅ Package already loaded in sys.modules")
             else:
                 pkg = importlib.import_module(self.package_name)
-                details.append("âœ… Package imported successfully")
+                details.append("✅ Package imported successfully")
         except Exception as e:
             import traceback
 
@@ -976,16 +1184,16 @@ class ModuleResolverValidator:
 
         # Check for PACKAGE_RESOLVER
         if hasattr(pkg, "PACKAGE_RESOLVER"):
-            details.append("âœ… PACKAGE_RESOLVER attribute found")
+            details.append("✅ PACKAGE_RESOLVER attribute found")
         else:
-            details.append("âš ï¸  PACKAGE_RESOLVER attribute not found")
+            details.append("⚠  PACKAGE_RESOLVER attribute not found")
 
         # Check for CLASS_TO_MODULE
         if hasattr(pkg, "CLASS_TO_MODULE"):
             class_count = len(pkg.CLASS_TO_MODULE)
-            details.append(f"âœ… CLASS_TO_MODULE has {class_count} entries")
+            details.append(f"✅ CLASS_TO_MODULE has {class_count} entries")
         else:
-            details.append("âš ï¸  CLASS_TO_MODULE not found")
+            details.append("⚠  CLASS_TO_MODULE not found")
 
         return ValidationResult(
             "Runtime Import", True, "Package imports successfully", details
@@ -1023,10 +1231,10 @@ class ModuleResolverValidator:
                     accessible += 1
                 else:
                     not_accessible += 1
-                    details.append(f"âš ï¸  {class_name} not accessible")
+                    details.append(f"⚠  {class_name} not accessible")
             except Exception as e:
                 not_accessible += 1
-                details.append(f"âŒ {class_name} raised error: {e}")
+                details.append(f"❌ {class_name} raised error: {e}")
 
         total_tested = accessible + not_accessible
         if total_tested > 0:
@@ -1065,7 +1273,7 @@ class ModuleResolverValidator:
 
         if bloated:
             details.extend(bloated)
-            details.append("âš ï¸  Consider simplifying these __init__.py files")
+            details.append("⚠  Consider simplifying these __init__.py files")
         else:
             details.append(
                 f"All {len(subpackages)} subpackages have minimal __init__.py files"

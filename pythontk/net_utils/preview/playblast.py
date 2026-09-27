@@ -262,7 +262,7 @@ class PreviewPlayblast(SequenceEncoder):
         staging = f"{path}.part"
         with open(staging, "wb") as handle:
             handle.write(data)
-        os.replace(staging, path)
+        FileUtils.replace_file(staging, path)
         with self._lock:
             recording.received[index] = FileUtils.format_path(path)
             received = len(recording.received)

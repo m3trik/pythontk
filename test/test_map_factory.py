@@ -1783,5 +1783,20 @@ class TestPrepareMapsNeverWritesOverAnInput(unittest.TestCase):
                 )
 
 
+class TestMapFactoryLayout(unittest.TestCase):
+    """The orchestrator split by job keeps every public method on the facade."""
+
+    def test_public_methods_stay_on_the_facade(self):
+        from pythontk.core_utils.engines.textures.map_factory._map_factory import (
+            MapFactory as Facade,
+        )
+
+        bases = [b for b in Facade.__mro__[1:] if b.__name__.startswith("_")]
+        self.assertTrue(bases)
+        for base in bases:
+            on_base = {n for n in vars(base) if not n.startswith("_")}
+            self.assertEqual(on_base - set(vars(Facade)), set(), base.__name__)
+
+
 if __name__ == "__main__":
     unittest.main()

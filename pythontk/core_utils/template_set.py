@@ -5,7 +5,7 @@
 :class:`TemplateSet` is the small piece of glue that binds the two halves of the
 template system:
 
-* a :class:`~pythontk.core_utils.preset_store.PresetStore` — the *storage* SSoT
+* a :class:`~pythontk.core_utils.presets.store.PresetStore` — the *storage* SSoT
   (two-tier built-in + user discovery, shadowing, last-used pointer, any codec),
 * a :class:`~pythontk.core_utils.schema_spec.SchemaSpec` — the *shape* SSoT
   (validation, skeleton generation, reference docs).
@@ -32,7 +32,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, Union
 
-from pythontk.core_utils.preset_store import JSON_CODEC, Codec, PresetStore
+from pythontk.core_utils.presets.store import JSON_CODEC, Codec, PresetStore
 from pythontk.core_utils.schema_spec import SchemaSpec, ValidationResult
 
 logger = logging.getLogger(__name__)

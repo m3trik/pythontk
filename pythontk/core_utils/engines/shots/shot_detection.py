@@ -15,31 +15,37 @@ Candidate shape (returned by both functions):
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 
-STANDARD_TRANSFORM_ATTRS: frozenset = frozenset(
-    {
-        "translateX",
-        "translateY",
-        "translateZ",
-        "rotateX",
-        "rotateY",
-        "rotateZ",
-        "scaleX",
-        "scaleY",
-        "scaleZ",
-        "visibility",
-    }
+TRANSFORM_CHANNELS: tuple = (
+    "translateX",
+    "translateY",
+    "translateZ",
+    "rotateX",
+    "rotateY",
+    "rotateZ",
+    "scaleX",
+    "scaleY",
+    "scaleZ",
+    "visibility",
 )
-"""Per-axis transform + visibility attributes.
+"""Per-axis transform + visibility channel labels, in display order.
+
+The ecosystem's channel vocabulary: mayatk's attribute names, which blendertk
+maps its ``(data_path, index)`` pairs onto -- so a UI lists them in this order
+(an ``AttributeColorDialog``'s common rows; colours in ``Palette.channels()``).
+"""
+
+STANDARD_TRANSFORM_ATTRS: frozenset = frozenset(TRANSFORM_CHANNELS)
+"""The :data:`TRANSFORM_CHANNELS` as a set, for membership tests.
 
 Used across the shots system to distinguish genuine scene-content animation
 from custom trigger/marker attributes.
 """
 
 
-__all__ = ["STANDARD_TRANSFORM_ATTRS", "ShotDetection"]
+__all__ = ["TRANSFORM_CHANNELS", "STANDARD_TRANSFORM_ATTRS", "ShotDetection"]
 
 
 class ShotDetection:
@@ -49,6 +55,57 @@ class ShotDetection:
     from them. Takes and returns plain values, so the same algorithm backs
     the Maya and Blender acquisitions.
     """
+
+    @staticmethod
+    def cluster_spans(
+        spans: Iterable[Any],
+        gap: float = 0.0,
+        inclusive: bool = False,
+        span: Optional[Callable[[Any], Tuple[float, float]]] = None,
+    ) -> List[List[Any]]:
+        """Sweep time spans into clusters of overlapping (or nearly touching) ones.
+
+        The one key-timing grouping every consumer shares: stagger / scale /
+        segment-key blocks, shot-region detection and interval merges are this
+        sweep with a different join threshold. Spans are visited in start
+        order (stable, so equal starts keep their input order); each joins the
+        running cluster when the distance from the cluster's furthest end to
+        its start -- negative while they overlap -- is below *gap*, or at most
+        *gap* when *inclusive*.
+
+        ==========================  ==========================================
+        ``gap=0``                   strict overlap: touching spans stay apart
+        ``gap=0, inclusive=True``   overlapping or touching spans join
+        ``gap=g, inclusive=True``   seams up to *g* frames are bridged
+        ==========================  ==========================================
+
+        Parameters:
+            spans: The items to cluster. Mappings with ``"start"`` / ``"end"``
+                keys unless *span* says how to read them.
+            gap: The join threshold, in frames (see above).
+            inclusive: Join at exactly *gap* too (``<=`` rather than ``<``).
+            span: ``item -> (start, end)``; defaults to the mapping keys. Pass
+                ``lambda iv: iv`` to cluster ``(start, end)`` tuples.
+
+        Returns:
+            The original items (never copied) grouped into lists, clusters in
+            ascending start order and members in visit order. Empty in, empty out.
+        """
+        read = span or (lambda item: (item["start"], item["end"]))
+        ordered = sorted(spans, key=lambda item: read(item)[0])
+        clusters: List[List[Any]] = []
+        cluster_end = 0.0
+        for item in ordered:
+            start, end = read(item)
+            if clusters:
+                distance = start - cluster_end
+                if distance <= gap if inclusive else distance < gap:
+                    clusters[-1].append(item)
+                    cluster_end = max(cluster_end, end)
+                    continue
+            clusters.append([item])
+            cluster_end = end
+        return clusters
 
     @staticmethod
     def cluster_segments_by_gap(
@@ -75,25 +132,10 @@ class ShotDetection:
             List of candidate dicts with ``"name"``, ``"start"``, ``"end"``, and
             ``"objects"`` keys, ordered by cluster (ascending start time).
         """
-        if not segments:
-            return []
-
-        # Do not mutate the caller's list — a pure function sorts a copy.
-        segments = sorted(segments, key=lambda s: s["start"])
-
-        clusters: List[List[Dict[str, Any]]] = []
-        current: List[Dict[str, Any]] = [segments[0]]
-        current_end = segments[0]["end"]
-
-        for seg in segments[1:]:
-            if seg["start"] - current_end > gap_threshold:
-                clusters.append(current)
-                current = [seg]
-                current_end = seg["end"]
-            else:
-                current.append(seg)
-                current_end = max(current_end, seg["end"])
-        clusters.append(current)
+        # A seam up to the threshold joins; the sweep sorts a copy (pure).
+        clusters = ShotDetection.cluster_spans(
+            segments, gap=gap_threshold, inclusive=True
+        )
 
         candidates: List[Dict[str, Any]] = []
         for cluster in clusters:

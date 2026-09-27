@@ -22,7 +22,7 @@ import unittest
 
 from pythontk.core_utils.app_launcher import AppLauncher
 from pythontk.core_utils.cancel_scope import CancelScope, OperationCancelled
-from pythontk.core_utils.script_run import (
+from pythontk.core_utils.handoff.script_run import (
     REWRITTEN,
     ProgressRelay,
     ScriptRunner,

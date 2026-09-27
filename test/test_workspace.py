@@ -402,6 +402,15 @@ class WorkspaceTemplatesTest(unittest.TestCase):
         # "_meta" is uitk PresetManager bookkeeping, never a file rule.
         self.assertEqual(WorkspaceTemplates.rules("gui"), {"scene": "shots"})
 
+    def test_annotation_keys_are_never_file_rules(self):
+        # Any "_"-prefixed key annotates the file (the SchemaSpec convention: a
+        # hand-shared template's "_comment") -- written as a rule it would land
+        # in workspace.mel. rules_from is what the Blender panel applies too.
+        data = {"_meta": {"version": 1}, "_comment": "studio set", "scene": "shots"}
+        WorkspaceTemplates.save("shared", data)
+        self.assertEqual(WorkspaceTemplates.rules("shared"), {"scene": "shots"})
+        self.assertEqual(WorkspaceTemplates.rules_from(data), {"scene": "shots"})
+
     def test_delete_falls_back_to_the_standard_set(self):
         WorkspaceTemplates.save("studio", {"scene": "shots"})
         self.assertTrue(WorkspaceTemplates.delete("studio"))

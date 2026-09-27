@@ -6,7 +6,10 @@ import logging
 import os
 import unittest
 
-from pythontk.core_utils.export_profile import ExportProfile, ExportRun
+from pythontk.core_utils.engines.scene_export.export_profile import (
+    ExportProfile,
+    ExportRun,
+)
 from pythontk.str_utils._str_utils import StrUtils
 
 
@@ -988,7 +991,7 @@ class TestBakedReflections(unittest.TestCase):
     def test_the_level_reaches_both_carriers(self):
         """One decision, two deliverables: the GLB's envelope and the FBX's
         handoff record publish the same recipe from it."""
-        from pythontk.core_utils.scene_records import SceneRecords
+        from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
         from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
         run = ExportRun.from_tasks({"baked_reflections": "half"})[0]

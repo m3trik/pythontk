@@ -1117,6 +1117,7 @@ class UdimGroupingTest(BaseTestCase):
         mud = ["mud_BaseColor.u1_v1.png", "mud_BaseColor.u2_v1.png"]
         self.assertEqual(tiles("mud_BaseColor.u2_v1.png"), mud)
         self.assertEqual(tiles("mud_BaseColor.<UVTILE>.png"), mud)
+        self.assertEqual(tiles("mud_BaseColor.<u>_<v>.png"), mud)  # ptk.TiledPath
         self.assertEqual(tiles("wall_BaseColor.1024.png"), ["wall_BaseColor.1024.png"])
         self.assertEqual(tiles("rock_BaseColor.png"), [], "no tile token")
         self.assertEqual(tiles(os.path.join("gone", "rock_BaseColor.1001.png")), [])

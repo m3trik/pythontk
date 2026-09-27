@@ -8,7 +8,7 @@ import unittest.mock
 from pathlib import Path
 
 from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-from pythontk.file_utils.mesh_convert.glb_pipeline import GlbPipeline
+from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
 from pythontk.file_utils.temp_artifacts import TempArtifacts
 
 

@@ -34,6 +34,13 @@ domain-shaped.
    dependency), graduate it to its own distribution. The namespace already
    marks the extraction boundary, so that move is mechanical.
 
+**Tenants.** ``shots/`` (timeline model + planner + manifest), ``scene_export/``
+(scene records, the export snapshot and profile, the hierarchy baseline, the
+exporter and sidecar shells both DCC Scene Exporters subclass),
+``instancing/`` (separated-part clustering), ``textures/`` (PBR map taxonomy +
+prep + packaging), ``rig_graph/`` (rig-intent model + capability negotiation +
+planner), ``key_stash/`` (parked-keyframe clip store).
+
 Engines are lazy-loaded via the pythontk root package; import from pythontk
-directly (e.g. ``from pythontk import ShotStore, plan_respace``).
+directly (e.g. ``from pythontk import ShotStore, ShotPlanner``).
 """

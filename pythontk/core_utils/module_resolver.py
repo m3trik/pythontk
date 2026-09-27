@@ -8,7 +8,7 @@ import os
 import pkgutil
 import sys
 import ast
-from types import ModuleType
+from types import FunctionType, ModuleType
 from typing import (
     Any,
     Callable,
@@ -26,6 +26,7 @@ __all__ = [
     "ModuleAttributeResolver",
     "PackageResolverHandle",
     "bootstrap_package",
+    "lazy_exports",
     "create_namespace_aliases",
 ]
 
@@ -482,8 +483,17 @@ class PackageResolverHandle:
         self.set_all = set_all
         # Snapshot any hand-declared ``__all__`` so it is preserved (unioned)
         # with the resolver-registered names on every (re)build, never letting a
-        # runtime reconfigure accumulate stale derived names.
-        self._declared_all: Tuple[str, ...] = tuple(module_globals.get("__all__") or ())
+        # runtime reconfigure accumulate stale derived names. The list a handle
+        # published is derived, not declared: a reload re-runs the bootstrap in
+        # the same globals, where the last run's handle left its ``__all__``.
+        declared = module_globals.get("__all__")
+        previous = module_globals.get("PACKAGE_RESOLVER")
+        if declared is not None and declared is getattr(
+            previous, "_published_all", None
+        ):
+            declared = None
+        self._declared_all: Tuple[str, ...] = tuple(declared or ())
+        self._published_all: Optional[list] = None
 
         self._default_include = (
             dict(default_include) if default_include is not None else None
@@ -758,7 +768,8 @@ class PackageResolverHandle:
             return
         names = set(self._declared_all)
         names.update(self.resolver.class_to_module)
-        self.module_globals["__all__"] = sorted(names)
+        self._published_all = sorted(names)
+        self.module_globals["__all__"] = self._published_all
 
     def _apply_configuration(self, eager: bool) -> None:
         self.resolver.module_to_parent.clear()
@@ -897,6 +908,173 @@ def bootstrap_package(
         custom_getattr=custom_getattr,
     )
     return handle
+
+
+class _ModuleHook:
+    """Install a module ``__getattr__``/``__dir__`` that chains onto the one before
+    it, and survives ``importlib.reload``.
+
+    A reload re-runs the module body in the SAME globals, so an installer finds
+    the hooks the previous run left there. Chaining onto those stacked one more
+    layer per reload, each still serving what the old body declared. Every hook
+    is therefore tagged with the ``__spec__`` it was installed under -- a reload
+    binds a fresh one -- and :meth:`previous` walks past a stale hook to the one
+    it chained onto, while two installers in one run still compose. Shared by
+    :func:`lazy_exports` and ``Deprecation.attributes``.
+    """
+
+    _TAG = "_module_hook"
+
+    @classmethod
+    def previous(
+        cls, module_globals: Mapping[str, Any], key: str
+    ) -> Tuple[Optional[Callable], list]:
+        """The hook a new ``module_globals[key]`` should chain onto.
+
+        Parameters:
+            module_globals (Mapping[str, Any]): The module's ``globals()``.
+            key (str): ``"__getattr__"`` or ``"__dir__"``.
+
+        Returns:
+            (tuple) The live hook (``None`` if there is none), and the ``state``
+            of each hook the previous run installed under *key* -- skipped here,
+            or already by an earlier installer of this run (whichever runs first
+            cuts them out of the chain).
+        """
+        token = module_globals.get("__spec__")
+        hook = module_globals.get(key)
+        stale = []
+        while isinstance(hook, FunctionType):
+            tag = hook.__dict__.get(cls._TAG)
+            if tag is None:
+                break
+            spec, chained, state, cut = tag
+            if spec is token:
+                stale.extend(cut)
+                break
+            stale.append(state)
+            hook = chained
+        return hook, stale
+
+    @classmethod
+    def install(
+        cls,
+        module_globals: MutableMapping[str, Any],
+        key: str,
+        hook: FunctionType,
+        chained: Optional[Callable] = None,
+        state: Optional[Mapping[str, Any]] = None,
+        stale: Sequence[Any] = (),
+    ) -> None:
+        """Publish *hook* as ``module_globals[key]``, tagged for :meth:`previous`.
+
+        Parameters:
+            module_globals (MutableMapping[str, Any]): The module's ``globals()``.
+            key (str): ``"__getattr__"`` or ``"__dir__"``.
+            hook (FunctionType): The new hook.
+            chained (Callable): The hook it falls back to, from :meth:`previous`.
+            state (Mapping[str, Any]): What a later run of the same installer
+                needs back from this one.
+            stale (Sequence): The stale states :meth:`previous` returned, kept
+                for this run's later installers.
+        """
+        spec = module_globals.get("__spec__")
+        hook.__dict__[cls._TAG] = (spec, chained, state, tuple(stale))
+        module_globals[key] = hook
+
+
+def lazy_exports(
+    module_globals: MutableMapping[str, Any],
+    sources: IncludeMapping,
+) -> None:
+    """Publish a subpackage's names from its submodules, each loaded on first use.
+
+    The subpackage ``__init__`` form of :func:`bootstrap_package` (CODE_STANDARD
+    section 4): the ``__init__`` stays a declaration, and importing the package
+    loads none of the listed submodules. A parent's ``bootstrap_package`` scan
+    (``pkgutil.walk_packages``) imports every subpackage ``__init__``, so an eager
+    re-export there is paid by every ``import <root>`` in the ecosystem.
+
+    Resolution is PEP 562: a name is imported on first attribute access and cached
+    in the package globals, so ``from pkg import Name`` and
+    ``mock.patch("pkg.Name.attr")`` behave as they would with an eager re-export.
+    ``__dir__`` lists every name; ``__all__`` is the public (non-``_``) ones,
+    unioned with any ``__all__`` declared before the call. A ``__getattr__``
+    already in the globals (``Deprecation.attributes``) answers the names this
+    one does not own.
+
+    Reload-safe: ``importlib.reload`` re-runs the call in the same globals, and
+    the re-run drops the names the last run cached, chains onto what preceded the
+    last run's hooks rather than onto them, and unions only the hand-declared
+    ``__all__`` -- so the package serves the reloaded submodules' objects.
+
+    Parameters:
+        module_globals (MutableMapping[str, Any]): The package's ``globals()``.
+        sources (Mapping[str, Sequence[str] | str]): Submodule (relative to the
+            package, dotted when nested) -> the names it defines. Explicit names
+            only: a ``"*"`` would need the scan this exists to avoid.
+
+    Raises:
+        ValueError: A name is listed under two submodules, or a ``"*"`` is given.
+        ImportError: (on first use of a name) Its submodule's import raised an
+            AttributeError, or the submodule does not define the name; the
+            AttributeError is the ``__cause__``. Any other error the import
+            raises propagates as is.
+    """
+    package = module_globals["__name__"]
+    owner: Dict[str, str] = {}
+    for submodule, names in sources.items():
+        for name in (names,) if isinstance(names, str) else names:
+            if name == "*":
+                raise ValueError(f"{package}: list {submodule!r}'s names, not '*'")
+            if name in owner:
+                raise ValueError(
+                    f"{package}: {name!r} listed under both {owner[name]!r} "
+                    f"and {submodule!r}"
+                )
+            owner[name] = submodule
+    # A value the last run cached would shadow the reloaded submodule's.
+    for name in owner:
+        module_globals.pop(name, None)
+    fallback, stale = _ModuleHook.previous(module_globals, "__getattr__")
+    # The list a stale run published is derived, not declared by this run.
+    declared = module_globals.get("__all__")
+    if any(state and declared is state["__all__"] for state in stale):
+        declared = None
+
+    def __getattr__(name: str) -> Any:
+        submodule = owner.get(name)
+        if submodule is None:
+            if fallback is not None:
+                return fallback(name)
+            raise AttributeError(f"module {package!r} has no attribute {name!r}")
+        try:
+            value = getattr(importlib.import_module(f"{package}.{submodule}"), name)
+        except AttributeError as exc:
+            # Raised as is, ``from pkg import name`` reports a bare "cannot
+            # import name" without the cause, and ``hasattr`` reads "absent".
+            raise ImportError(
+                f"{package}.{name}: loading {package}.{submodule} failed: {exc}"
+            ) from exc
+        module_globals[name] = value
+        return value
+
+    def __dir__() -> list:
+        return sorted(set(module_globals) | set(owner))
+
+    exported = sorted(
+        set(declared or ()) | {name for name in owner if not name.startswith("_")}
+    )
+    _ModuleHook.install(
+        module_globals,
+        "__getattr__",
+        __getattr__,
+        fallback,
+        {"__all__": exported},
+        stale,
+    )
+    _ModuleHook.install(module_globals, "__dir__", __dir__)
+    module_globals["__all__"] = exported
 
 
 def create_namespace_aliases(

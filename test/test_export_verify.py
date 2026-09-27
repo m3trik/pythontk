@@ -31,7 +31,7 @@ from pythontk.file_utils.mesh_convert.export_verify import (
     _main,
 )
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
-from pythontk.file_utils.mesh_convert.glb_reader import GlbReader
+from pythontk.file_utils.mesh_convert.glb.reader import GlbReader
 
 
 # ---------------------------------------------------------------------------

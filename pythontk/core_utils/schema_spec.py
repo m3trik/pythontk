@@ -15,7 +15,7 @@ definition the base derives, with no extra per-schema code:
 * :meth:`describe` / :meth:`to_markdown` — human-readable reference docs.
 
 This is the storage-agnostic *shape* SSoT.  Pair it with a
-:class:`~pythontk.core_utils.preset_store.PresetStore` (any codec — JSON or
+:class:`~pythontk.core_utils.presets.store.PresetStore` (any codec — JSON or
 YAML) through :class:`~pythontk.core_utils.template_set.TemplateSet` to get a
 discoverable, user-extensible collection of template files whose schema is
 documented and enforced from one place.

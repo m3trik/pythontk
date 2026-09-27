@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from dataclasses import dataclass
 
-from pythontk.core_utils.preset_store import Codec
+from pythontk.core_utils.presets.store import Codec
 from pythontk.core_utils.schema_spec import SchemaSpec, SchemaError
 from pythontk.core_utils.template_set import TemplateSet
 

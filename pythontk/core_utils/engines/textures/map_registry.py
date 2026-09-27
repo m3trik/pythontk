@@ -3,6 +3,7 @@ import re
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional, Tuple, Any, Union
 from pythontk.core_utils.singleton_mixin import SingletonMixin
+from pythontk.file_utils.tiled_path import TiledPath
 
 
 class WF:
@@ -1066,7 +1067,8 @@ class MapRegistry(SingletonMixin):
     # A trailing UDIM / UV-tile token, with its leading separator. Three forms:
     #   .1001        4-digit UDIM, restricted to the real range 1001-1999
     #                (1000 + u+1 + v*10, u 0-9). DOT-delimited only -- see below.
-    #   .<UDIM>      unexpanded token as Maya/Substance write it (also <UVTILE>)
+    #   .<UDIM>      an unexpanded placeholder -- <UDIM>, <UVTILE>, <u>_<v> --
+    #                from the one token table (``TiledPath.tile_token_pattern``)
     #   .u1_v1       Mari/Mudbox explicit UV tile
     # The bare-digit form is deliberately dot-only: `_1024` / `_2048` is the
     # everyday resolution tag, and 1024 sits squarely inside the UDIM range, so
@@ -1076,7 +1078,7 @@ class MapRegistry(SingletonMixin):
     _TILE_TOKEN_PATTERN = re.compile(
         r"(?:"
         r"\.1[0-9]{3}"
-        r"|[._]<(?:UDIM|UVTILE)>"
+        r"|[._](?:" + TiledPath.tile_token_pattern() + r")"
         r"|[._]u[0-9]+_v[0-9]+"
         r")$",
         re.IGNORECASE,
@@ -1269,9 +1271,10 @@ class MapRegistry(SingletonMixin):
     def get_suffix_strip_pattern(self) -> Optional[str]:
         """Regex matching one trailing map-type suffix (any registered alias).
 
-        Single source of truth for base-name resolution — both
-        ``MapFactory.get_base_texture_name`` and ``ImgUtils.get_base_texture_name``
-        consume this pattern (they once carried drifted copies of it).
+        Single source of truth for base-name resolution —
+        ``MapFactory.get_base_texture_name`` consumes this pattern (and
+        ``ImgUtils.get_base_texture_name`` is a facade over it; the two once
+        carried drifted copies).
 
         Matching rules:
         - Delimited suffixes match case-insensitively at any length

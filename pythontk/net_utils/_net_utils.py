@@ -4,13 +4,94 @@ from __future__ import annotations
 import os
 import socket
 import subprocess
-from typing import Optional, Dict, Sequence
+from typing import Optional, Dict, List, Sequence, Tuple
 
 
 class NetUtils:
     """
     General purpose network utilities.
     """
+
+    @staticmethod
+    def listening_ports() -> List[Tuple[int, Optional[int]]]:
+        """``[(port, pid), ...]`` for every LISTENING TCP socket, IPv4 and IPv6.
+
+        *pid* is the process holding the socket, or None where this user may
+        not see it (another user's process on Linux). The question a launcher
+        asks before trusting a port: "is this port held by the process I
+        started?" -- a port answering a connect may belong to anyone.
+
+        Windows parses ``netstat -ano``, keyed on the foreign address ``:0``
+        (the state word is localized, e.g. German "ABHÖREN"). Linux reads
+        ``/proc/net/tcp{,6}`` and maps each socket's inode to the process
+        holding it in ``/proc/<pid>/fd``.
+
+        Raises:
+            OSError: This platform's source is unavailable (or the platform is
+                not supported) -- so a caller can tell "cannot enumerate" from
+                "nothing listens".
+            subprocess.CalledProcessError: ``netstat`` failed (Windows).
+        """
+        import re
+        import sys
+
+        if sys.platform == "win32":
+            # netstat writes the console's OEM codepage, not the ANSI one a
+            # bare text mode decodes with: a localized header (French "État" is
+            # cp850 0x90, undefined in cp1252) raised UnicodeDecodeError before
+            # a row was read. The rows keyed on below are ASCII either way.
+            output = subprocess.check_output(
+                ["netstat", "-ano"], encoding="oem", errors="replace"
+            )
+            # "  TCP    0.0.0.0:7002    0.0.0.0:0    LISTENING    1234"; an
+            # ESTABLISHED row's foreign port is never 0.
+            row = re.compile(r"^\s*TCP\s+\S+:(\d+)\s+\S+:0\s+\S+\s+(\d+)\s*$")
+            return sorted(
+                {
+                    (int(m.group(1)), int(m.group(2)))
+                    for m in map(row.match, output.splitlines())
+                    if m
+                }
+            )
+        if not sys.platform.startswith("linux"):
+            raise OSError(f"listening_ports is not supported on {sys.platform}")
+
+        ports = {}  # socket inode -> port
+        found_table = False
+        for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+            try:
+                with open(table, encoding="ascii") as f:
+                    lines = f.read().splitlines()[1:]
+            except FileNotFoundError:
+                continue  # tcp6 is absent with IPv6 disabled
+            found_table = True
+            for line in lines:
+                # sl local_address rem_address st tx:rx tr:when retrnsmt uid timeout inode
+                fields = line.split()
+                if len(fields) > 9 and fields[3] == "0A":  # TCP_LISTEN
+                    ports[fields[9]] = int(fields[1].rsplit(":", 1)[1], 16)
+        if not found_table:
+            raise OSError("/proc/net/tcp is not readable")
+
+        owners = {}
+        for entry in os.listdir("/proc"):
+            if len(owners) == len(ports):
+                break
+            if not entry.isdigit():
+                continue
+            fd_dir = f"/proc/{entry}/fd"
+            try:
+                fds = os.listdir(fd_dir)
+            except OSError:
+                continue  # gone, or another user's
+            for fd in fds:
+                try:
+                    link = os.readlink(f"{fd_dir}/{fd}")
+                except OSError:
+                    continue
+                if link.startswith("socket:[") and link[8:-1] in ports:
+                    owners.setdefault(link[8:-1], int(entry))
+        return sorted({(port, owners.get(inode)) for inode, port in ports.items()})
 
     @staticmethod
     def connect_rdp(
@@ -144,6 +225,12 @@ class NetUtils:
             bool: True if a bind succeeded (the port is genuinely free).
         """
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if os.name != "nt":
+            # Bind as the server will: HTTPServer sets SO_REUSEADDR on POSIX,
+            # which binds straight over a previous run's TIME_WAIT sockets --
+            # without it a quick restart reads as "taken". (It still refuses a
+            # socket bound without the flag: the zombie case above.)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind((host, port))
             return True

@@ -196,8 +196,9 @@ class FileUtils(HelpMixin):
         The entry is treated as typed-by-a-human: surrounding whitespace and
         the quotes a path picks up when pasted out of a file manager are
         stripped, ``~`` and environment variables expand, and a bare entry's
-        own leading/trailing separators are dropped so ``"/new/"`` and
-        ``"new"`` name the same folder.
+        own leading/trailing separators are dropped so, on Windows, ``"/new/"``
+        and ``"new"`` name the same folder (on POSIX ``"/new/"`` is a full
+        path, and wins).
 
         Never returns a *relative* path: a relative result would be created
         against the process CWD by the eventual ``os.makedirs``, and in a DCC
@@ -918,6 +919,8 @@ class FileUtils(HelpMixin):
                                   and the value is a list of items of that type.
         Returns:
             list/dict: A list or dictionary containing the results based on the `content` and `group_by_type` parameters.
+                Each directory's entries come in NTFS order (upper-cased, then as written) on every file
+                system, and a recursive listing walks depth first in that order.
 
         Examples:
             # Example 1: Basic usage with default `content`
@@ -948,6 +951,11 @@ class FileUtils(HelpMixin):
 
         grouped_result = {opt: [] for opt in options}
 
+        def listing_order(name):
+            # What NTFS returns, so Windows results stay as they were; a Linux
+            # file system lists a directory in no particular order.
+            return (name.upper(), name)
+
         # Non-recursive: use scandir for single directory (faster than os.walk)
         if not recursive:
             try:
@@ -965,6 +973,8 @@ class FileUtils(HelpMixin):
                         files = IterUtils.filter_list(files, inc_files, exc_files)
                     if has_dir_filter and dirs:
                         dirs = IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
+                    files.sort(key=listing_order)
+                    dirs.sort(key=listing_order)
 
                     # Build results based on requested options
                     for opt in options:
@@ -1029,6 +1039,7 @@ class FileUtils(HelpMixin):
                 return any(FileUtils.is_under(root, p) for p in inc_roots)
 
             for root, dirs, files in os.walk(base, topdown=True):
+                dirs.sort(key=listing_order)  # In place: the walk descends in it.
                 if has_dir_filter:
                     if inc_dirs and _under_inc(root):
                         dirs[:] = IterUtils.filter_list(dirs, None, exc_dirs)
@@ -1037,27 +1048,24 @@ class FileUtils(HelpMixin):
                         if inc_dirs:
                             for d in dirs:
                                 inc_roots.add(os.path.normcase(os.path.join(root, d)))
-                yield root, dirs, files
+                yield root, dirs, sorted(files, key=listing_order)
 
         if num_threads == -1 or num_threads > 1:
             import multiprocessing
-            from concurrent.futures import ThreadPoolExecutor, as_completed
+            from concurrent.futures import ThreadPoolExecutor
 
             num_cores = (
                 multiprocessing.cpu_count() if num_threads == -1 else num_threads
             )
             with ThreadPoolExecutor(max_workers=num_cores) as executor:
-                # Pass a copy of dirs so workers never touch the walker's list.
-                futures = {
-                    executor.submit(process_directory, root, list(dirs), files): (
-                        root,
-                        dirs,
-                        files,
-                    )
+                # Pass a copy of dirs so workers never touch the walker's list;
+                # results are taken in walk order, not as they complete.
+                futures = [
+                    executor.submit(process_directory, root, list(dirs), files)
                     for root, dirs, files in walk_pruned(path)
-                }
+                ]
 
-                for future in as_completed(futures):
+                for future in futures:
                     data = future.result()
                     for opt in options:
                         grouped_result[opt].extend(data[opt])
@@ -1115,7 +1123,9 @@ class FileUtils(HelpMixin):
             elif sys.platform == "darwin":
                 subprocess.Popen(["open", path])
             else:
-                subprocess.Popen(["xdg-open", path])
+                from pythontk.core_utils.app_launcher import AppLauncher
+
+                subprocess.Popen(["xdg-open", path], env=AppLauncher.desktop_env())
             return True
         except Exception as e:
             if logger:
@@ -1240,6 +1250,42 @@ class FileUtils(HelpMixin):
             os.makedirs(parent, exist_ok=True)
         cls.atomic_write_text(filepath, content, encoding=encoding)
 
+    #: Windows codes for "another process has this file open right now":
+    #: ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION.
+    _MOMENTARY_LOCK_ERRORS = (5, 32)
+    #: Waits between attempts: about a second in all (pip's budget, same cause).
+    _REPLACE_RETRY_DELAYS = (0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.25, 0.25)
+
+    @staticmethod
+    def replace_file(src: str, dst: str) -> None:
+        """``os.replace(src, dst)`` that waits out a momentary Windows lock.
+
+        A sync client, a virus scanner or the search indexer opens a file just
+        after it changes, and for that moment Windows refuses to rename onto or
+        away from it (``WinError 5`` / ``32``) -- on a synced drive, routinely
+        the second quick rewrite of the same small file. Retried for about a
+        second, then raised; any other error raises at once, as before.
+
+        Parameters:
+            src: The finished file.
+            dst: The path it replaces (or takes, when absent).
+
+        Raises:
+            OSError: whatever ``os.replace`` raises once the wait is over, or
+                at once for anything but a momentary lock.
+        """
+        import time
+
+        for delay in FileUtils._REPLACE_RETRY_DELAYS:
+            try:
+                os.replace(src, dst)
+                return
+            except PermissionError as e:
+                if getattr(e, "winerror", None) not in FileUtils._MOMENTARY_LOCK_ERRORS:
+                    raise
+            time.sleep(delay)
+        os.replace(src, dst)
+
     @staticmethod
     def atomic_write_text(filepath: str, content: str, encoding: str = "utf-8") -> None:
         """Write text to a file atomically.
@@ -1254,37 +1300,54 @@ class FileUtils(HelpMixin):
         Leaves no temp file behind on success. On failure (write error), the
         temp file is removed and the original is untouched.
 
+        The result has the mode any write would give it: an existing file keeps
+        its own, a new one gets ``0o666`` less the umask. ``tempfile`` creates
+        ``0o600``, and ``os.replace`` keeps the temp's mode, so on POSIX every
+        rewrite of a shared file (the scene-data sidecar beside a delivery) left
+        it readable by its owner alone.
+
         Parameters:
             filepath (str): Destination path.
             content (str): Text to write.
             encoding (str): Text encoding (default "utf-8").
         """
-        import tempfile
+        import stat
+        import uuid
 
         filepath = os.fspath(filepath)
         target_dir = os.path.dirname(os.path.abspath(filepath)) or "."
 
-        # NamedTemporaryFile in the same directory so os.replace stays on one filesystem
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding=encoding,
-            dir=target_dir,
-            delete=False,
-            prefix=".",
-            suffix=".tmp",
+        # Beside the target so os.replace stays on one filesystem; the flags are
+        # tempfile's own (binary at the fd, so text mode translates once).
+        flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOINHERIT", 0)
         )
-        try:
+        while True:
+            tmp_name = os.path.join(target_dir, f".{uuid.uuid4().hex[:12]}.tmp")
             try:
+                fd = os.open(tmp_name, flags, 0o666)
+                break
+            except FileExistsError:
+                continue
+        try:
+            with os.fdopen(fd, "w", encoding=encoding) as tmp:
                 tmp.write(content)
                 tmp.flush()
                 os.fsync(tmp.fileno())
-            finally:
-                tmp.close()
-            os.replace(tmp.name, filepath)
-        except Exception:
+            if os.name == "posix":
+                try:
+                    os.chmod(tmp_name, stat.S_IMODE(os.stat(filepath).st_mode))
+                except FileNotFoundError:
+                    pass  # a new file keeps the umask'd mode it was created with
+            FileUtils.replace_file(tmp_name, filepath)
+        except BaseException:
             # Best-effort cleanup; original target is untouched.
             try:
-                os.remove(tmp.name)
+                os.remove(tmp_name)
             except OSError:
                 pass
             raise
@@ -1341,7 +1404,7 @@ class FileUtils(HelpMixin):
         try:
             write(part)
             if promote:
-                os.replace(part, target)
+                FileUtils.replace_file(part, target)
         except BaseException:
             scratch.cleanup()
             raise
@@ -1409,8 +1472,6 @@ class FileUtils(HelpMixin):
         Returns:
             str | list: New file path(s).
         """
-        import shutil
-
         file_paths = IterUtils.make_iterable(file_path)
         results = []
 
@@ -1434,13 +1495,9 @@ class FileUtils(HelpMixin):
             )
             dst_path = os.path.join(destination, name)
 
-            if os.path.exists(dst_path):
-                if overwrite:
-                    os.remove(dst_path)
-                else:
-                    raise FileExistsError(f"File already exists: {dst_path}")
-
-            shutil.move(src_path, dst_path)
+            if not overwrite and os.path.exists(dst_path):
+                raise FileExistsError(f"File already exists: {dst_path}")
+            cls._move_into_place(src_path, dst_path)
             dst_path = dst_path.replace("\\", "/")
 
             if verbose:
@@ -1454,15 +1511,89 @@ class FileUtils(HelpMixin):
             else results
         )
 
+    @staticmethod
+    def _move_into_place(src: str, dst: str) -> None:
+        """Move *src* to *dst*, never deleting or truncating *dst* on the way.
+
+        Staged beside *dst*, then swapped in by one :meth:`replace_file`, so a
+        failure anywhere leaves *dst* as it was, or absent. Deleting first and
+        moving second lost both when the move failed (a full disk, a folder the
+        user cannot write), and a cross-volume move straight onto *dst* left it
+        truncated. A swap that fails puts *src* back, so the caller can retry it
+        under another name (a destination held open by a DCC's texture cache is
+        the usual cause).
+
+        The stage is a hidden sibling no :class:`TempArtifacts` sweep matches.
+        A moved file keeps its source's mtime, so a week-old source staged as an
+        ``atomic_write_*`` temp read as stale to the sweep any concurrent
+        :meth:`atomic_write` into the folder runs first, and was deleted between
+        the stage and the swap (a thread-pooled texture archive lost the
+        textures it moved). A process killed mid-move leaves the stage whole
+        where the log line names it, never swept.
+
+        A free *dst* on the same volume is a plain rename, atomic already, so it
+        skips the staging.
+
+        Raises:
+            OSError: The move or the swap failed; *dst* is untouched.
+        """
+        import logging
+        import shutil
+        import uuid
+
+        if not os.path.exists(dst):
+            parent = os.path.dirname(os.path.abspath(dst))
+            if os.stat(src).st_dev == os.stat(parent).st_dev:
+                shutil.move(src, dst)  # a rename here; one patch point for tests
+                return
+        staged = os.path.join(
+            os.path.dirname(os.path.abspath(dst)),
+            f".{os.path.basename(dst)}.{os.getpid()}.{uuid.uuid4().hex[:8]}.moving",
+        )
+        log = logging.getLogger(__name__)
+        try:
+            shutil.move(src, staged)
+        except BaseException:
+            if os.path.lexists(staged):
+                if os.path.isfile(src) and not os.path.isdir(staged):
+                    # A file's unlink is all or nothing: src is whole, so the
+                    # stage is a partial or duplicate copy.
+                    try:
+                        os.remove(staged)
+                    except OSError:
+                        pass
+                else:
+                    # src is gone, or a directory the move may have part
+                    # emptied: the stage can hold the only whole copy.
+                    log.error(
+                        "move_file: interrupted; %s is (partly) at %s", src, staged
+                    )
+            raise
+        try:
+            FileUtils.replace_file(staged, dst)
+        except BaseException:
+            try:
+                shutil.move(staged, src)
+            except BaseException:
+                log.error("move_file: could not restore %s; it is at %s", src, staged)
+            raise
+
     @classmethod
     def reveal_in_file_manager(cls, path, _runner=None):
         """Open the OS file manager showing ``path`` (selecting the file when supported, else
         opening its containing folder). Cross-platform (Windows / macOS / Linux).
 
+        On Linux a file is selected through the freedesktop ``FileManager1``
+        D-Bus interface (Nautilus, Dolphin, Nemo, Thunar, Caja): the session bus
+        starts the manager, so none of this process's environment reaches it.
+        Where no such service answers, the containing folder opens via
+        ``xdg-open`` under :meth:`AppLauncher.desktop_env`.
+
         Parameters:
             path (str): File or directory to reveal.
-            _runner (callable): Testing seam — receives the launch arg list instead of
-                ``subprocess`` (default launches detached via ``subprocess.Popen``).
+            _runner (callable): Testing seam — receives each launch arg list instead of
+                ``subprocess``. For the Linux D-Bus call its truthy return means the
+                file manager answered; otherwise the folder opens instead.
 
         Returns:
             list: The launch command + args used (also handy for testing/logging).
@@ -1472,8 +1603,28 @@ class FileUtils(HelpMixin):
         """
         import subprocess
         import sys
+        from pathlib import Path
 
-        target = os.path.normpath(str(path))
+        from pythontk.core_utils.app_launcher import AppLauncher
+
+        def launch(args):
+            if args[0] == "dbus-send":  # synchronous: its answer decides
+                try:
+                    return (
+                        subprocess.run(args, capture_output=True, timeout=10).returncode
+                        == 0
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    return False
+            env = AppLauncher.desktop_env() if args[0] == "xdg-open" else None
+            subprocess.Popen(args, env=env)
+            return True
+
+        run = _runner or launch
+        # Absolute first: a file URI cannot spell a relative path, a bare
+        # name's dirname is "", and a file manager resolves a relative path
+        # against its OWN working directory.
+        target = os.path.abspath(str(path))
         folder = target if os.path.isdir(target) else os.path.dirname(target)
         if not os.path.isdir(folder):
             raise FileNotFoundError(f"Directory not found: {folder}")
@@ -1483,10 +1634,24 @@ class FileUtils(HelpMixin):
             args = ["explorer", "/select,", target] if select else ["explorer", folder]
         elif sys.platform == "darwin":
             args = ["open", "-R", target] if select else ["open", folder]
-        else:  # most Linux file managers can't select a file → open the folder
+        else:
+            if select:
+                args = [
+                    "dbus-send",
+                    "--session",
+                    "--print-reply",
+                    "--dest=org.freedesktop.FileManager1",
+                    "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1.ShowItems",
+                    # as_uri percent-encodes ',', which dbus-send splits arrays on
+                    f"array:string:{Path(target).as_uri()}",
+                    "string:",
+                ]
+                if run(args):
+                    return args
             args = ["xdg-open", folder]
 
-        (_runner or (lambda a: subprocess.Popen(a)))(args)
+        run(args)
         return args
 
     @classmethod
@@ -1717,7 +1882,7 @@ class FileUtils(HelpMixin):
         for original_path in source_paths:
             original_norm = os.path.normpath(original_path).replace("\\", "/")
 
-            if original_norm.lower().startswith(base_dir_norm.lower()):
+            if FileUtils.is_under(original_norm, base_dir_norm):
                 rel_path = os.path.relpath(original_norm, base_dir_norm).replace(
                     "\\", "/"
                 )
@@ -1730,7 +1895,7 @@ class FileUtils(HelpMixin):
 
             new_path_norm = os.path.normpath(new_path).replace("\\", "/")
 
-            if new_path_norm.lower().startswith(base_dir_norm.lower()):
+            if FileUtils.is_under(new_path_norm, base_dir_norm):
                 rel_path = os.path.relpath(new_path_norm, base_dir_norm).replace(
                     "\\", "/"
                 )
@@ -1857,14 +2022,23 @@ class FileUtils(HelpMixin):
         return os.path.abspath(filepath)
 
     @staticmethod
-    def _canonical_module_path(filepath):
-        """Derive a Python dotted module path from a .py file's location.
+    def canonical_module_path(filepath):
+        """The dotted module path a .py file has by its location on disk.
 
         Walks up the parent directories while each is a Python package (has
-        an ``__init__.py``) and joins their names with the file stem.
-        Returns None if the file is not inside a recognizable package
-        (i.e. its parent directory has no ``__init__.py``), in which case
-        the caller should use a synthetic loader.
+        an ``__init__.py``) and joins their names with the file stem; a
+        package's own ``__init__.py`` names the package. Needs no
+        ``sys.path`` entry or import, so it also answers for a script run
+        as ``__main__`` (a launcher finding the package it belongs to).
+
+        Parameters:
+            filepath (str): A ``.py`` file.
+
+        Returns:
+            (str/None) e.g. ``"pkg.sub.mod"`` (``"pkg.sub"`` for
+            ``pkg/sub/__init__.py``), or None when the file is not a ``.py``
+            inside a package -- a caller importing it then needs a synthetic
+            loader.
         """
         from pathlib import Path
 
@@ -1999,7 +2173,7 @@ class FileUtils(HelpMixin):
             # paths fail. Falls back to the synthetic loader for loose
             # .py files or when canonical import raises.
             module_obj = None
-            canonical_name = cls._canonical_module_path(filepath)
+            canonical_name = cls.canonical_module_path(filepath)
             if canonical_name:
                 try:
                     module_obj = importlib.import_module(canonical_name)

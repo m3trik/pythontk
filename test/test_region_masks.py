@@ -132,8 +132,9 @@ class RegionMaskManifestTest(unittest.TestCase):
         )
 
     def test_channels_round_trip(self):
+        mask = os.path.join(os.path.abspath(os.sep), "out", "prop_EMask.png")
         m = RegionMaskManifest.channels(
-            [{"name": "a", "slot": 0}], mask=r"C:\out\prop_EMask.png", resolution=512
+            [{"name": "a", "slot": 0}], mask=mask, resolution=512
         )
         data = m.to_dict()
         self.assertEqual(data["mask"], "prop_EMask.png")  # basename only

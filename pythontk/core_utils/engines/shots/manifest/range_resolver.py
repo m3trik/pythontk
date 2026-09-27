@@ -227,3 +227,131 @@ class RangeResolver:
             resolved[i] = (step_id, start, end, is_user)
 
         return resolved
+
+    # ---------------------------------------------------- user-range bookkeeping
+    # The rules a manifest panel applies to the ranges a user types, pure so
+    # both DCC panels share them (they used to carry them as controller code).
+
+    @staticmethod
+    def step_index(steps: List[BuilderStep], step_id: str) -> int:
+        """The index of *step_id* in *steps*, or ``-1`` when absent."""
+        return next((i for i, s in enumerate(steps) if s.step_id == step_id), -1)
+
+    @staticmethod
+    def all_ranges_complete(
+        steps: List[BuilderStep],
+        user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]],
+    ) -> bool:
+        """True when every step has a user-supplied ``(start, end)`` pair."""
+        return bool(steps) and all(
+            (r := user_ranges.get(s.step_id)) is not None
+            and r[0] is not None
+            and r[1] is not None
+            for s in steps
+        )
+
+    @staticmethod
+    def cascade_from(
+        steps: List[BuilderStep],
+        user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]],
+        step_idx: int,
+    ) -> List[str]:
+        """Drop the user ranges of every step after *step_idx*, in place.
+
+        What an edit to one step's range does to the steps downstream of it:
+        they re-flow from the new anchor instead of keeping positions that
+        were chosen relative to the old one.
+
+        Returns:
+            The step ids whose user range was dropped.
+        """
+        dropped = []
+        for s in steps[step_idx + 1 :]:
+            if user_ranges.pop(s.step_id, None) is not None:
+                dropped.append(s.step_id)
+        return dropped
+
+    @staticmethod
+    def parse_range_edit(
+        start_text: str, end_text: str
+    ) -> Optional[Tuple[float, Optional[float]]]:
+        """A user's Start/End cell text as a ``(start, end_or_None)`` range.
+
+        Returns ``None`` when both cells are empty -- the edit CLEARS the step's
+        user range.
+
+        Raises:
+            ValueError: the edit is not a range: a cell that is not a number,
+                an End without a Start, a negative Start, or an End at or
+                before the Start.
+        """
+        start_text, end_text = start_text.strip(), end_text.strip()
+        if not start_text and not end_text:
+            return None
+        start = float(start_text) if start_text else None
+        end = float(end_text) if end_text else None
+        if start is None:
+            raise ValueError("a range needs a start")
+        if start < 0:
+            raise ValueError(f"start {start:g} is negative")
+        if end is not None and end <= start:
+            raise ValueError(f"end {end:g} is not after start {start:g}")
+        return start, end
+
+    @staticmethod
+    def previous_end(
+        steps: List[BuilderStep],
+        last_resolved: List[Tuple[str, float, Optional[float], bool]],
+        step_idx: int,
+    ) -> Optional[float]:
+        """The resolved end of the nearest step before *step_idx* that has one.
+
+        The floor a user's Start for step *step_idx* may not go below.
+        *last_resolved* may be sparse (selected-keys mode skips unresolved
+        steps), so predecessors are matched by ``step_id``: positional indexing
+        would compare against the wrong step's end.  ``None`` for the first
+        step, or when nothing before it resolved.
+        """
+        if step_idx <= 0 or not last_resolved:
+            return None
+        resolved_ends = {sid: e for sid, _, e, _ in last_resolved}
+        return next(
+            (
+                resolved_ends[s.step_id]
+                for s in reversed(steps[:step_idx])
+                if resolved_ends.get(s.step_id) is not None
+            ),
+            None,
+        )
+
+    @staticmethod
+    def find_collisions(
+        resolved: List[Tuple[str, float, Optional[float], bool]],
+    ) -> List[Tuple[str, str]]:
+        """Adjacent resolved ranges that overlap, as ``(step_id, next_step_id)``.
+
+        A range without an end occupies its start frame only.
+        """
+        pairs = []
+        for (curr_id, curr_start, curr_end, _), (next_id, next_start, _, _) in zip(
+            resolved, resolved[1:]
+        ):
+            effective_end = curr_end if curr_end is not None else curr_start
+            if effective_end > next_start:
+                pairs.append((curr_id, next_id))
+        return pairs
+
+    @staticmethod
+    def gaps_from_regions(
+        regions: Optional[List[Dict]],
+    ) -> Tuple[List[float], Dict[float, float]]:
+        """Detected regions as :meth:`resolve_ranges`' ``(gap_starts, gap_end_map)``.
+
+        *regions* are ``{"start", "end"}`` dicts (``end`` optional); a region
+        with an end maps its start to it.
+        """
+        if not regions:
+            return [], {}
+        starts = [r["start"] for r in regions]
+        ends = {r["start"]: r["end"] for r in regions if r.get("end") is not None}
+        return starts, ends

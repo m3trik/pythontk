@@ -166,6 +166,38 @@ class _MeshOpsInternal:
     alongside its public classmethods.
     """
 
+    #: Why pymeshlab cannot write a mesh in this process ("" = it can); None
+    #: until first probed.
+    _io_error: Optional[str] = None
+
+    @classmethod
+    def _mesh_io_error(cls, pml) -> str:
+        """Why the imported engine cannot write a mesh, or "" when it can.
+
+        pymeshlab imports even when its IO plugins failed to load -- on Linux
+        they need ``libOpenGL.so.0``, and without it every save fails "Unknown
+        format for save". Probed once with a real one-triangle write.
+        """
+        if cls._io_error is None:
+            import numpy as np
+
+            from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+            try:
+                with TempArtifacts("meshops_io_probe", policy="scoped") as tmp:
+                    ms = pml.MeshSet()
+                    ms.add_mesh(
+                        pml.Mesh(
+                            vertex_matrix=np.eye(3, dtype=np.float64),
+                            face_matrix=np.array([[0, 1, 2]], dtype=np.int32),
+                        )
+                    )
+                    ms.save_current_mesh(tmp.path(extension=".ply"))
+                cls._io_error = ""
+            except Exception as e:  # any failure means the engine is unusable
+                cls._io_error = str(e) or type(e).__name__
+        return cls._io_error
+
     @staticmethod
     def _preflight(input_path: str) -> str:
         """Validate the source file; return its absolute path."""
@@ -355,11 +387,20 @@ class MeshOps(HelpMixin, _MeshOpsInternal):
             if required:
                 raise RuntimeError(cls._install_note())
             return None
+        error = cls._mesh_io_error(pymeshlab)
+        if error:
+            if required:
+                raise RuntimeError(
+                    f"pymeshlab is installed but cannot write meshes: {error}\n"
+                    "On Linux its IO plug-ins need libOpenGL.so.0 "
+                    "(Debian/Ubuntu: apt install libopengl0)."
+                )
+            return None
         return pymeshlab
 
     @classmethod
     def available(cls) -> bool:
-        """True when the pymeshlab engine can be imported."""
+        """True when the pymeshlab engine imports AND can read/write meshes."""
         return cls.resolve(required=False) is not None
 
     @staticmethod

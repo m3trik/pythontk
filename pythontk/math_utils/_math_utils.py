@@ -11,8 +11,18 @@ if TYPE_CHECKING:
 from pythontk.core_utils._core_utils import CoreUtils
 from pythontk.core_utils.help_mixin import HelpMixin
 
+# The facade's bodies, split by concept (CODE_STANDARD section 3): each is a
+# MathUtils base; the public methods (signatures + docstrings) stay here for
+# the flat ``ptk.<method>`` surface.
+from pythontk.math_utils._clustering import _MathClusteringInternal
+from pythontk.math_utils._curve_fit import _MathCurveFitInternal
 
-class MathUtils(HelpMixin):
+
+class MathUtils(
+    _MathClusteringInternal,
+    _MathCurveFitInternal,
+    HelpMixin,
+):
     """ """
 
     # Centimeter-relative length factors (1 unit -> N centimeters).
@@ -442,123 +452,7 @@ class MathUtils(HelpMixin):
                     [3, 2, 2]]
             rows, cols = MathUtils.linear_sum_assignment(cost)
         """
-        # Fast path: use scipy if available
-        try:
-            import numpy as np
-            from scipy.optimize import linear_sum_assignment as scipy_lsa
-
-            arr = np.asarray(cost_matrix, dtype=float)
-            if arr.size == 0:
-                return ([], [])
-            row_ind, col_ind = scipy_lsa(arr, maximize=maximize)
-            return (row_ind.tolist(), col_ind.tolist())
-        except ImportError:
-            pass
-
-        def _hungarian_square(cost_sq: List[List[float]]) -> List[int]:
-            """Return assignment list where assignment[i] = j for square matrix."""
-            n = len(cost_sq)
-            if n == 0:
-                return []
-
-            u = [0.0] * (n + 1)
-            v = [0.0] * (n + 1)
-            p = [0] * (n + 1)
-            way = [0] * (n + 1)
-
-            for i in range(1, n + 1):
-                p[0] = i
-                j0 = 0
-                minv = [float("inf")] * (n + 1)
-                used = [False] * (n + 1)
-
-                while True:
-                    used[j0] = True
-                    i0 = p[j0]
-                    delta = float("inf")
-                    j1 = 0
-                    for j in range(1, n + 1):
-                        if used[j]:
-                            continue
-                        cur = cost_sq[i0 - 1][j - 1] - u[i0] - v[j]
-                        if cur < minv[j]:
-                            minv[j] = cur
-                            way[j] = j0
-                        if minv[j] < delta:
-                            delta = minv[j]
-                            j1 = j
-
-                    for j in range(0, n + 1):
-                        if used[j]:
-                            u[p[j]] += delta
-                            v[j] -= delta
-                        else:
-                            minv[j] -= delta
-
-                    j0 = j1
-                    if p[j0] == 0:
-                        break
-
-                while True:
-                    j1 = way[j0]
-                    p[j0] = p[j1]
-                    j0 = j1
-                    if j0 == 0:
-                        break
-
-            assignment = [0] * n
-            for j in range(1, n + 1):
-                assignment[p[j] - 1] = j - 1
-            return assignment
-
-        # Validate matrix and extract dimensions
-        if not cost_matrix:
-            return ([], [])
-
-        n_rows = len(cost_matrix)
-        n_cols = len(cost_matrix[0]) if n_rows else 0
-        if n_cols == 0:
-            return ([], [])
-
-        for row in cost_matrix:
-            if len(row) != n_cols:
-                raise ValueError(
-                    "cost_matrix must be rectangular (all rows same length)"
-                )
-
-        # Convert to a mutable list-of-lists and optionally transform for maximize
-        costs: List[List[float]] = [list(map(float, row)) for row in cost_matrix]
-
-        flat = [c for row in costs for c in row]
-        if not flat:
-            return ([], [])
-
-        if maximize:
-            max_val = max(flat)
-            costs = [[max_val - c for c in row] for row in costs]
-            flat = [c for row in costs for c in row]
-
-        # Pad to square with a large dummy cost
-        max_cost = max(flat)
-        pad_cost = max_cost + abs(max_cost) + 1.0
-
-        n = max(n_rows, n_cols)
-        square = [[pad_cost] * n for _ in range(n)]
-        for i in range(n_rows):
-            for j in range(n_cols):
-                square[i][j] = costs[i][j]
-
-        assignment = _hungarian_square(square)
-
-        row_ind: List[int] = []
-        col_ind: List[int] = []
-        for i in range(n_rows):
-            j = assignment[i]
-            if j < n_cols:
-                row_ind.append(i)
-                col_ind.append(j)
-
-        return (row_ind, col_ind)
+        return _MathClusteringInternal.linear_sum_assignment(cost_matrix, maximize)
 
     @staticmethod
     def kmeans_clustering(
@@ -581,134 +475,9 @@ class MathUtils(HelpMixin):
         Returns:
             List of lists, where each inner list contains the indices of points in that cluster.
         """
-        try:
-            import numpy as np
-        except ImportError:
-            np = None
-
-        n = len(points)
-        if n == 0:
-            return []
-        if k <= 1:
-            return [list(range(n))]
-        k = min(k, n)
-        # At least one assignment pass must run: with zero iterations the
-        # numpy path's labels stay None and the fallback path never builds
-        # its groups (NameError).
-        max_iterations = max(1, max_iterations)
-
-        if np is not None:
-            pts = np.asarray(points, dtype=float)
-
-            # Initialization
-            centers = []
-            if seed_indices and len(seed_indices) >= k:
-                centers = pts[seed_indices[:k]]
-            else:
-                # Farthest Point Sampling
-                centers_list = []
-                first_idx = 0
-                centers_list.append(pts[first_idx])
-
-                while len(centers_list) < k:
-                    c = np.vstack(centers_list)
-                    d2 = np.min(
-                        np.sum((pts[:, None, :] - c[None, :, :]) ** 2, axis=2), axis=1
-                    )
-                    next_idx = np.argmax(d2)
-                    centers_list.append(pts[next_idx])
-                centers = np.vstack(centers_list)
-
-            labels = None
-            pts_sq = np.sum(pts**2, axis=1)
-
-            for _ in range(max_iterations):
-                # Assign to nearest center
-                centers_sq = np.sum(centers**2, axis=1)
-                d2 = (
-                    pts_sq[:, np.newaxis]
-                    + centers_sq[np.newaxis, :]
-                    - 2 * np.dot(pts, centers.T)
-                )
-                new_labels = np.argmin(d2, axis=1)
-
-                if labels is not None and np.array_equal(new_labels, labels):
-                    break
-                labels = new_labels
-
-                # Update centers
-                new_centers = centers.copy()
-                for i in range(k):
-                    mask = labels == i
-                    if np.any(mask):
-                        new_centers[i] = pts[mask].mean(axis=0)
-
-                if np.allclose(new_centers, centers):
-                    centers = new_centers
-                    break
-                centers = new_centers
-
-            groups = [np.where(labels == i)[0].tolist() for i in range(k)]
-            return [g for g in groups if g]
-
-        else:
-            # Fallback without numpy
-            # Initialization (Farthest Point)
-            centers = [points[0]]
-            while len(centers) < k:
-                max_dist = -1
-                farthest_pt = None
-
-                for p in points:
-                    min_d_to_center = float("inf")
-                    for c in centers:
-                        d = sum((p[i] - c[i]) ** 2 for i in range(len(p)))
-                        if d < min_d_to_center:
-                            min_d_to_center = d
-
-                    if min_d_to_center > max_dist:
-                        max_dist = min_d_to_center
-                        farthest_pt = p
-
-                if farthest_pt:
-                    centers.append(farthest_pt)
-                else:
-                    break
-
-            labels = [-1] * n
-            for _ in range(max_iterations):
-                changes = 0
-                groups = [[] for _ in range(k)]
-                for i, p in enumerate(points):
-                    best_idx = -1
-                    min_dist = float("inf")
-                    for c_idx, c in enumerate(centers):
-                        d = sum((p[j] - c[j]) ** 2 for j in range(len(p)))
-                        if d < min_dist:
-                            min_dist = d
-                            best_idx = c_idx
-
-                    if labels[i] != best_idx:
-                        changes += 1
-                    labels[i] = best_idx
-                    groups[best_idx].append(i)
-
-                if changes == 0:
-                    break
-
-                # Recompute centers
-                for i in range(k):
-                    g_indices = groups[i]
-                    if g_indices:
-                        dim = len(points[0])
-                        mean_pt = [0.0] * dim
-                        for idx in g_indices:
-                            for d in range(dim):
-                                mean_pt[d] += points[idx][d]
-                        mean_pt = [x / len(g_indices) for x in mean_pt]
-                        centers[i] = mean_pt
-
-            return [g for g in groups if g]
+        return _MathClusteringInternal.kmeans_clustering(
+            points, k, max_iterations, seed_indices
+        )
 
     @staticmethod
     def kmeans_1d(
@@ -741,95 +510,7 @@ class MathUtils(HelpMixin):
             centers, groups = kmeans_1d([1, 1, 1, 50, 50], k=2)
             # groups ≈ [[1, 1, 1], [50, 50]]
         """
-        if not values:
-            return [], []
-
-        vals = list(values)
-        n = len(vals)
-        n_unique = len(set(vals))
-
-        if n_unique == 1:
-            return [vals[0]], [vals]
-
-        k = min(k, n_unique)
-
-        # Try numpy fast path
-        try:
-            import numpy as np
-
-            arr = np.asarray(vals, dtype=float)
-            sorted_vals = np.sort(arr)
-
-            # Initialize centers using quantiles
-            indices = ((np.arange(k) + 0.5) * n / k).astype(int)
-            indices = np.clip(indices, 0, n - 1)
-            centers = sorted_vals[indices].copy()
-
-            labels = np.zeros(n, dtype=int)
-            for _ in range(max_iterations):
-                # Vectorized distance calculation: |arr - centers|
-                dists = np.abs(arr[:, np.newaxis] - centers[np.newaxis, :])
-                new_labels = np.argmin(dists, axis=1)
-
-                if np.array_equal(new_labels, labels):
-                    break
-                labels = new_labels
-
-                # Recompute centers
-                for i in range(k):
-                    mask = labels == i
-                    if np.any(mask):
-                        centers[i] = arr[mask].mean()
-
-            # Sort by center value
-            order = np.argsort(centers)
-            centers = centers[order].tolist()
-
-            # Build groups in sorted order
-            groups = [arr[labels == order[i]].tolist() for i in range(k)]
-            return centers, groups
-
-        except ImportError:
-            pass
-
-        # Pure Python fallback
-        sorted_vals = sorted(vals)
-        centers = []
-        for i in range(k):
-            idx = int((i + 0.5) * n / k)
-            idx = min(idx, n - 1)
-            centers.append(sorted_vals[idx])
-
-        labels = [-1] * n
-        for _ in range(max_iterations):
-            new_labels = []
-            for v in vals:
-                dists = [abs(v - c) for c in centers]
-                new_labels.append(dists.index(min(dists)))
-
-            if new_labels == labels:
-                break
-            labels = new_labels
-
-            new_centers = []
-            for i in range(k):
-                cluster_vals = [vals[j] for j in range(n) if labels[j] == i]
-                if cluster_vals:
-                    new_centers.append(sum(cluster_vals) / len(cluster_vals))
-                else:
-                    new_centers.append(centers[i])
-            centers = new_centers
-
-        # Build groups and sort by center value
-        groups = [[] for _ in range(k)]
-        for j, lbl in enumerate(labels):
-            groups[lbl].append(vals[j])
-
-        sorted_indices = sorted(range(k), key=lambda i: centers[i])
-        centers = [centers[i] for i in sorted_indices]
-        groups = [groups[i] for i in sorted_indices]
-
-        return centers, groups
+        return _MathClusteringInternal.kmeans_1d(values, k, max_iterations)
 
     @classmethod
     def get_kmeans_threshold(
@@ -855,30 +536,7 @@ class MathUtils(HelpMixin):
             threshold = get_kmeans_threshold([0.8, 1.2, 2.1, 12.4, 15.0], k=3)
             # threshold ≈ 7.25 (midpoint between medium and large clusters)
         """
-        if not values:
-            return 0.0
-
-        if len(set(values)) < 2:
-            return values[0] * 0.5 if values else 0.0
-
-        centers, groups = cls.kmeans_1d(values, k=k)
-
-        if len(centers) < 2:
-            return centers[0] * 0.5 if centers else 0.0
-
-        # Merge logic: if middle cluster is close to small cluster (ratio < 3.0),
-        # treat them as the same class and threshold between merged and large.
-        if len(centers) >= 3:
-            c0, c1, c2 = centers[0], centers[1], centers[2]
-            if c1 < c0 * 3.0:
-                # Merge small + medium; threshold between c1 and c2
-                return (c1 + c2) / 2.0
-            else:
-                # Threshold between c0 and c1
-                return (c0 + c1) / 2.0
-        else:
-            # Only 2 clusters
-            return (centers[0] + centers[1]) / 2.0
+        return super().get_kmeans_threshold(values, k)
 
     @staticmethod
     @CoreUtils.listify
@@ -2132,105 +1790,9 @@ class MathUtils(HelpMixin):
             ``(in_slopes, out_slopes)`` -- two float lists aligned with
             *keep_indices*.  Empty lists when nothing is kept.
         """
-        import numpy as np
-
-        t = np.asarray(times, dtype=float)
-        v = np.asarray(values, dtype=float)
-        keep = np.asarray(keep_indices, dtype=int)
-        k_count = len(keep)
-        if k_count == 0:
-            return [], []
-        if k_count == 1 or len(t) < 2:
-            return [0.0] * k_count, [0.0] * k_count
-
-        # Weak prior: the sampled derivative at each kept key.  It only
-        # decides keys the dropped samples leave unconstrained (adjacent
-        # kept samples) and breaks least-squares ties; on a constrained key
-        # its pull is ~1e-6 relative.
-        prior = np.gradient(v, t)[keep]
-
-        # Everything per SEGMENT is computed over the samples at once: a
-        # numpy call per segment (the hold test alone) was 130 s of a
-        # production extremes pass over ~2,500 baked curves.
-        seg_count = k_count - 1
-        lengths = np.diff(keep)
-        if np.any(lengths < 0):
-            raise ValueError("keep_indices must be ascending.")
-        # Sample j in (keep[k], keep[k+1]] belongs to segment k -- the spans
-        # tile keep[0]+1 .. keep[-1] exactly (a zero-length segment covers
-        # nothing).
-        seg_of = np.repeat(np.arange(seg_count), lengths)
-        j = np.arange(keep[0] + 1, keep[-1] + 1)
-        i0 = keep[:-1][seg_of]
-        i1 = keep[1:][seg_of]
-
-        # A hold: every sample of the segment within flat_tolerance of its
-        # start value (the start itself deviates by 0). A zero-length
-        # segment is trivially one.
-        worst = np.zeros(seg_count)
-        spans = lengths > 0
-        if spans.any():
-            # Non-empty spans are contiguous in ``j``: one reduceat, each
-            # starting at its segment's first sample (keep[k] + 1).
-            worst[spans] = np.maximum.reduceat(
-                np.abs(v[j] - v[i0]), keep[:-1][spans] - keep[0]
-            )
-        flat = worst <= flat_tolerance
-
-        # Each dropped sample couples only the two keys bounding its segment,
-        # so the normal equations (A^T A + lam^2 I) m = A^T b + lam^2 prior
-        # are tridiagonal: accumulate them per segment and solve in O(keys)
-        # rather than materialise a samples x keys matrix (a production
-        # bake is tens of thousands of samples by thousands of extrema).
-        lam2 = 1e-6
-        diag = np.full(k_count, lam2)
-        off = np.zeros(seg_count)
-        rhs = lam2 * prior
-        dt_all = t[i1] - t[i0]
-        use = (j < i1) & ~flat[seg_of] & (i1 - i0 >= 2) & (dt_all > 0)
-        if use.any():
-            seg = seg_of[use]
-            left, right = i0[use], i1[use]
-            dt = dt_all[use]
-            s = (t[j[use]] - t[left]) / dt
-            h00 = 2 * s**3 - 3 * s**2 + 1
-            h01 = -2 * s**3 + 3 * s**2
-            a = (s**3 - 2 * s**2 + s) * dt  # weight on the left key's out slope
-            c = (s**3 - s**2) * dt  # weight on the right key's in slope
-            r = v[j[use]] - h00 * v[left] - h01 * v[right]
-            diag[:-1] += np.bincount(seg, a * a, seg_count)
-            diag[1:] += np.bincount(seg, c * c, seg_count)
-            off += np.bincount(seg, a * c, seg_count)
-            rhs[:-1] += np.bincount(seg, a * r, seg_count)
-            rhs[1:] += np.bincount(seg, c * r, seg_count)
-
-        # Thomas sweep (the system is symmetric positive definite), on plain
-        # floats: the same IEEE arithmetic without a numpy scalar per step.
-        d, o, b = diag.tolist(), off.tolist(), rhs.tolist()
-        c_prime = [0.0] * k_count
-        d_prime = [0.0] * k_count
-        c_prime[0] = o[0] / d[0]
-        d_prime[0] = b[0] / d[0]
-        for k in range(1, k_count):
-            denom = d[k] - o[k - 1] * c_prime[k - 1]
-            c_prime[k] = o[k] / denom if k < k_count - 1 else 0.0
-            d_prime[k] = (b[k] - o[k - 1] * d_prime[k - 1]) / denom
-        slopes = [0.0] * k_count
-        slopes[-1] = d_prime[-1]
-        for k in range(k_count - 2, -1, -1):
-            slopes[k] = d_prime[k] - c_prime[k] * slopes[k + 1]
-
-        # A hold pins the slopes facing into it; the key's other side keeps
-        # its fitted slope (a broken tangent).
-        in_slopes = np.asarray(slopes)
-        out_slopes = in_slopes.copy()
-        out_slopes[:-1][flat] = 0.0
-        in_slopes[1:][flat] = 0.0
-        # An endpoint has one facing side; its outward side mirrors it so the
-        # key reads as unified rather than broken.
-        in_slopes[0] = out_slopes[0]
-        out_slopes[-1] = in_slopes[-1]
-        return in_slopes.tolist(), out_slopes.tolist()
+        return _MathCurveFitInternal.fit_hermite_slopes(
+            times, values, keep_indices, flat_tolerance
+        )
 
     @staticmethod
     def evaluate_hermite(
@@ -2260,35 +1822,8 @@ class MathUtils(HelpMixin):
         Returns:
             numpy float array of curve values, one per requested time.
         """
-        import numpy as np
-
-        t = np.asarray(times, dtype=float)
-        v = np.asarray(values, dtype=float)
-        keep = np.asarray(keep_indices, dtype=int)
-        x = t if at is None else np.asarray(at, dtype=float)
-        if len(keep) == 0:
-            return np.zeros(len(x))
-        kt, kv = t[keep], v[keep]
-        if len(keep) == 1:
-            return np.full(len(x), kv[0])
-        m_out = np.asarray(out_slopes, dtype=float)
-        m_in = np.asarray(in_slopes, dtype=float)
-        seg = np.clip(np.searchsorted(kt, x, side="right") - 1, 0, len(kt) - 2)
-        t0, t1 = kt[seg], kt[seg + 1]
-        dt = t1 - t0
-        with np.errstate(divide="ignore", invalid="ignore"):
-            s = np.where(dt > 0, (x - t0) / dt, 0.0)
-        s = np.clip(s, 0.0, 1.0)  # hold the end values past the kept range
-        s2, s3 = s * s, s * s * s
-        h00 = 2 * s3 - 3 * s2 + 1
-        h10 = s3 - 2 * s2 + s
-        h01 = -2 * s3 + 3 * s2
-        h11 = s3 - s2
-        return (
-            h00 * kv[seg]
-            + h10 * dt * m_out[seg]
-            + h01 * kv[seg + 1]
-            + h11 * dt * m_in[seg + 1]
+        return _MathCurveFitInternal.evaluate_hermite(
+            times, values, keep_indices, in_slopes, out_slopes, at
         )
 
     @staticmethod
@@ -2328,45 +1863,9 @@ class MathUtils(HelpMixin):
             three samples, or a curve with nothing to drop, come back as
             every index with the fitted slopes.
         """
-        import numpy as np
-
-        from pythontk.iter_utils._iter_utils import IterUtils
-
-        t = np.asarray(times, dtype=float)
-        v = np.asarray(values, dtype=float)
-        n = len(v)
-        keep: List[int] = [
-            int(i) for i in IterUtils.find_extrema_indices(v, value_tolerance)
-        ]
-        if max_error is None:
-            max_error = 0.01 * float(v.max() - v.min()) if n else 0.0
-        keep_set = set(keep)
-        while True:
-            in_slopes, out_slopes = MathUtils.fit_hermite_slopes(
-                t, v, keep, flat_tolerance=value_tolerance
-            )
-            if max_error <= 0 or len(keep) >= n:
-                break
-            error = np.abs(
-                MathUtils.evaluate_hermite(t, v, keep, in_slopes, out_slopes) - v
-            )
-            # The worst sample strictly inside every segment with an interior,
-            # found in one reduceat rather than a numpy call per segment; only
-            # the (few) segments over the bound need their argmax.
-            kept = np.asarray(keep)
-            gaps = np.nonzero(np.diff(kept) >= 2)[0]
-            if not len(gaps):
-                break
-            lo, hi = kept[:-1][gaps] + 1, kept[1:][gaps]
-            bounds = np.empty(2 * len(gaps), dtype=int)
-            bounds[0::2], bounds[1::2] = lo, hi
-            over = np.maximum.reduceat(error, bounds)[0::2] > max_error
-            if not over.any():
-                break
-            for a, b in zip(lo[over].tolist(), hi[over].tolist()):
-                keep_set.add(a + int(np.argmax(error[a:b])))
-            keep = sorted(keep_set)
-        return keep, list(in_slopes), list(out_slopes)
+        return _MathCurveFitInternal.reduce_samples(
+            times, values, value_tolerance, max_error
+        )
 
 
 # -----------------------------------------------------------------------------

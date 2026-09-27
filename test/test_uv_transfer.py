@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-"""Tests for pythontk.geo_utils.uv_transfer (UvTransfer -- UV-to-UV texel remap).
+"""Tests for pythontk.geo_utils.uv.transfer (UvTransfer -- UV-to-UV texel remap).
 
 Pins the conventions the host adapters rely on (V-up UVs, V-flipped images,
 +0.5 texel centers, correspondence by triangle index) and the behaviours that

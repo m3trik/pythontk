@@ -13,35 +13,14 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class CoreUtils(HelpMixin)`
   - methods: cached_property, listify, format_return, set_attributes, get_attributes, has_attribute, get_derived_type, teardown_guard, cycle, are_similar, randomize, parse_method_args
 
-### `core_utils/app_handoff.py` — Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
-- constants: SEND_TO, SAVE_AS, ROUND_TRIP, CARRIER_PARAM, CARRIER_EXTENSIONS, CARRIER_BY_EXTENSION, RIG_MODE_PARAM, RIG_MODES
-- `class AppSpec`
-  - methods: resolve, path, available, refresh, not_found_message
-- `class HandoffRequest`
-  - methods: get
-- `class Payload`
-- `class Deliverer`
-  - methods: preflight, deliver
-- `class HandoffBridge(LoggingMixin)`
-  - methods: app_path, headless_app_path, params_defaults, merge_params, carrier, payload_extension, carrier_of, send, import_roots, child_sys_path
-- `class ScriptLaunchSpec`
-- `class ScriptLaunchDeliverer(Deliverer)`
-  - methods: preflight, deliver, render
-- `class ScriptRunDeliverer(ScriptLaunchDeliverer)`
-  - methods: run, deliver
-- `class ScriptRoundTripDeliverer(ScriptRunDeliverer)`
-  - methods: deliver
-- `class ScriptLaunchBridge(HandoffBridge)`
-  - methods: render_context, save_as, round_trip, resolve_save_path, render_template, modes, list_template_modes, list_templates
-
 ### `core_utils/app_installer.py`
 - constants: FFMPEG_PLATFORMS
 - `class AppInstaller`
   - methods: ensure, get_path, consent
 
-### `core_utils/app_launcher.py`
-- `class AppLauncher(_AppLauncherInternal)`
-  - methods: launch, process_environ, handoff_env, run, spawn, current_session_id, active_console_session_id, is_interactive_session, find_session_launcher, launch_in_session, wait_for_ready, get_window_titles, append_to_path, scan_for_executables, is_path_persisted, scan_install_dirs, resolve_app_path, find_app, get_running_processes, close_process
+### `core_utils/app_launcher/_app_launcher.py` — The :class:`AppLauncher` facade: the three launch shapes, over its job mixins.
+- `class AppLauncher(_AppLauncherInternal, _DiscoveryMixin, _EnvironmentMixin, _DesktopMixin, _ProcessesMixin)`
+  - methods: launch, run, spawn, write_batch_script, scan_for_executables, scan_install_dirs, resolve_app_path, looks_like_python, companion_python, find_app, process_environ, handoff_env, desktop_env, append_to_path, is_path_persisted, current_session_id, active_console_session_id, is_interactive_session, find_session_launcher, launch_in_session, wait_for_ready, get_window_titles, get_running_processes, close_process, process_tree
 
 ### `core_utils/cancel_scope.py` — Cooperative cancellation — one scope shared by every cancel affordance.
 - constants: T
@@ -81,6 +60,16 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/instancing/assembly_sorter.py` — Sort separated mesh parts into repeated-assembly copies.
 - `class AssemblySorter`
   - methods: sort
+
+### `core_utils/engines/instancing/instance_grouping.py` — The DCC-free half of auto-instancing's grouping pass.
+- `class InstanceGrouping`
+  - methods: merge_similar_signatures, default_summary, format_summary
+
+### `core_utils/engines/instancing/instancing_strategy.py` — How a group of repeated parts should ship: instanced, combined or left alone.
+- `class StrategyType(Enum)`
+- `class StrategyConfig`
+- `class InstancingStrategy`
+  - methods: evaluate
 
 ### `core_utils/engines/key_stash/key_stash_model.py` — Key stash — park keyframes outside the working animation, retrieve later.
 - constants: SCHEMA_VERSION
@@ -131,6 +120,53 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class RigVerify`
   - methods: compare, compare_frames, default_tolerance, demoted, summary, verdict, convert_point, verify_plan
 
+### `core_utils/engines/scene_export/export_profile.py` — The Scene Exporter panels' shared contract, written once.
+- `class ExportProfile`
+  - methods: legal_name, widget_key, value_method, run_config, optimize_textures_tasks, read_values, texture_size_limit_bytes, strip_deliverable_extension, fold_legacy_regex, fold_legacy_naming, resolve_output_path, naming_report, scoped_tables, task_order, unimplemented, optimize_textures_options, texture_file_type_options, baked_reflections_default, glb_options, glb_defaults, frame_rate_options
+- `class ExportRun`
+  - methods: glb_only, create_glb, usd, rendering, baked_reflection_level, replace, clip_mode, with_tasks, glb_max_size, glb_texture_params, from_tasks, for_glb
+
+### `core_utils/engines/scene_export/export_snapshot.py` — Export assembly: compute every record once, then commit once.
+- `class ExportContext`
+  - methods: note, record, refreshes
+- `class ExportSnapshot`
+  - methods: assemble, publish, commit, records, record, channels, summary
+
+### `core_utils/engines/scene_export/hierarchy_baseline.py` — The change-detection baseline an exporter diffs a scene's hierarchy against.
+- `class HierarchyBaseline`
+  - methods: top_level, in_scope, relevant_roots, compare, merge, adopt, paths_hash, encode, is_record, decode, recorded_by
+- `class HierarchyBaselineStore`
+  - methods: read, inherited_from, is_unreadable, compare, write, adopt_sidecar
+
+### `core_utils/engines/scene_export/record_transfer.py` — Records crossing between scenes, by declaration (:class:`RecordTransfer`).
+- `class TransferContext`
+  - methods: note, adapter, spell, respell
+- `class RecordTransfer`
+  - methods: between, incoming, rederive, is_empty, summary, payloads, apply, merge_record, absolute_paths, arriving_paths, respell, union, sections, receive
+
+### `core_utils/engines/scene_export/scene_data_sidecar.py` — The scene-data sidecar -- what an export shipped, beside the deliverable.
+- `class SceneDataSidecarBase`
+  - methods: base_stem, manifest_path_for, diff_report_path_for, find_legacy_manifest, ensure_base_name, migrate_legacy, expand_to_descendants, drop_intermediate, build_clean_path_set, with_ancestors, get_top_level, detect_reparenting, write_manifest, read_manifest, read_data, count_descendants, format_diff_report, clean_stale_diff, build_full_path_set, compare
+
+### `core_utils/engines/scene_export/scene_exporter.py` — The Scene Exporter's orchestration shell, written once for both DCCs.
+- `class SceneExporterBase(LoggingMixin)`
+  - methods: confirm, confirm_check_override, run_config_from_values, generate_log_file_path, setup_file_logging, close_file_handlers
+
+### `core_utils/engines/scene_export/scene_records.py` — Scene records -- every piece of tool-authored scene metadata, declared once.
+- `class Scope(str, Enum)`
+- `class Kind(str, Enum)`
+- `class Merge(str, Enum)`
+- `class Record`
+  - methods: key, text, save
+- `class RecordSpec`
+  - methods: path_keys, make, encode, decode, read_text, write_text, load, save, clear, is_present
+- `class SceneRecords`
+  - methods: resolve_class, codec, portable, rendering_policy, all, with_paths, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
+
+### `core_utils/engines/scene_export/scene_store.py` — The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
+- `class SceneStoreBase`
+  - methods: name, read, write, values, keys, channels, dump, scene_path, project_root, writer_stamp, written_here, project_root_of, rebase_paths, format_dump, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
+
 ### `core_utils/engines/shots/manifest/behaviors/_behaviors.py` — Behaviors — load JSON keying recipes and resolve them to keyframe math.
 - `class Behaviors(_BehaviorsInternal)`
   - methods: templates, load_behavior, list_behaviors, resolve_keys, phase_durations, compute_duration
@@ -147,21 +183,21 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/shots/manifest/manifest_model.py` — Pure Shot Manifest data model + CSV parser.
 - constants: DEFAULT_INITIAL_SHOT_LENGTH, DEFAULT_FIT_MODE, AUDIO_PLACEHOLDER_DURATION
 - `class ManifestModel(_ManifestModelInternal)`
-  - methods: detect_behaviors, parse_csv
+  - methods: describe_read_failure, detect_behaviors, parse_csv
 - `class BuilderObject`
 - `class BuilderStep`
   - methods: display_text, from_detection
 - `class PlannedShot`
 - `class ObjectStatus`
 - `class StepStatus`
-  - methods: status, missing_count, total_count
+  - methods: status, missing_count, total_count, find_object
 - `class ColumnMap(SchemaSpec)`
   - methods: to_dict, from_dict
 
 ### `core_utils/engines/shots/manifest/mapping/_mapping.py` — CSV mapping resolver — interprets JSON mapping files.
 - constants: DEFAULT_DIR
 - `class Mapping(_MappingInternal)`
-  - methods: templates, discover, load_mapping, resolve
+  - methods: templates, seed_user_folder, discover, load_mapping, resolve
 
 ### `core_utils/engines/shots/manifest/mapping/_spec.py` — Schema for a CSV *mapping* file, defined as a dataclass.
 - constants: AUDIO_METHODS
@@ -171,16 +207,16 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/shots/manifest/range_resolver.py` — Range resolution algorithm for the Shot Manifest.
 - `class RangeResolver`
-  - methods: prune_to_top_boundaries, resolve_ranges
+  - methods: prune_to_top_boundaries, resolve_ranges, step_index, all_ranges_complete, cascade_from, parse_range_edit, previous_end, find_collisions, gaps_from_regions
 
 ### `core_utils/engines/shots/shot_apply.py` — Commit a resolved :class:`MovePlan` via injected writer callables.
 - `class ShotApply`
   - methods: apply
 
 ### `core_utils/engines/shots/shot_detection.py` — Pure shot-boundary detection math.
-- constants: STANDARD_TRANSFORM_ATTRS
+- constants: TRANSFORM_CHANNELS, STANDARD_TRANSFORM_ATTRS
 - `class ShotDetection`
-  - methods: cluster_segments_by_gap, boundaries_from_key_entries
+  - methods: cluster_spans, cluster_segments_by_gap, boundaries_from_key_entries
 
 ### `core_utils/engines/shots/shot_ledger.py` — Ledger of the edits the shot system authors on a scene's animation.
 - constants: NO_OWNER
@@ -214,6 +250,15 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class GapRetime`
   - methods: width, scale, shrinks, grows
 
+### `core_utils/engines/shots/shot_report.py` — What a shots panel says about the store: pure, one-line summaries.
+- constants: EPSILON
+- `class ShotReport`
+  - methods: summary, moved, delta_summary
+
+### `core_utils/engines/shots/shot_sequencer.py` — Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
+- `class ShotSequencer(_ShotSequencerHooks)`
+  - methods: shots, hidden_objects, markers, is_object_hidden, set_object_hidden, sorted_shots, shot_by_id, shot_by_name, ledger, define_shot, detect_next_shot, collect_shot_sequences, sequence_separation, move_sequences_to_shot, fit_shot_to_content, trim_shot_to_content, extend_shot_to_fit, move_object_keys, move_object_in_shot, move_shot, slide_shot, ripple_downstream, ripple_upstream, reconcile_system_edits, expand_shot, resize_object, set_shot_duration, resize_shot, resize_shot_bounds, set_shot_start, move_shot_to_position, insert_shot, delete_shot, merge_shots, split_shot, add_shot_space, respace, apply_gap, to_dict, from_dict, collect_object_segments, move_attribute_keys, scale_shot_keys, scale_object_keys, detect_shots
+
 ### `core_utils/engines/shots/shot_transfer.py` — Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
 - `class ShotTransfer(_ShotTransferInternal)`
   - methods: swap_up_axis, encode, decode, merge, section_out, section_in, merge_record, respell_record
@@ -221,11 +266,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/textures/map_compositor.py` — Pure image-compositing engine — alpha-composite layered texture maps
 - `class BatchResult(Enum)`
 - `class NormalOutputMode(Enum)`
-- `class MapCompositor(ptk.LoggingMixin)`
+- `class MapCompositor(pythontk.LoggingMixin)`
   - methods: removeNormalMap, written_paths, reset, process_batch, apply_output_template, composite_images, retry_failed
 
 ### `core_utils/engines/textures/map_factory/_map_factory.py` — ``MapFactory`` -- the texture-map workflow orchestrator.
-- `class MapFactory(LoggingMixin)`
+- `class MapFactory(_TextureSetInternal, _MapInventoryInternal, _MapConverterInternal, _ChannelPackingInternal, LoggingMixin)`
   - methods: map_types, passthrough_maps, packed_grayscale_maps, map_fallbacks, register_conversions, resolve_map_type, resolve_color_space, resolve_texture_filename, get_base_texture_name, get_tile_token, get_tile_paths, group_textures_by_set, collapse_tile_sets, dominant_texture_set, filter_images_by_type, sort_images_by_type, contains_map_types, is_normal_map, register_handler, register_conversion, get_map_fallbacks, get_precedence_rules, resolve_normal_maps, filter_redundant_maps, extract_channels, prepare_maps, pack_transparency_into_albedo, pack_smoothness_into_metallic, detect_normal_map_format, convert_normal_map_format, convert_bump_to_normal, extract_gloss_from_spec, convert_spec_gloss_to_pbr, create_base_color_from_spec, create_metallic_from_spec, create_roughness_from_spec, convert_base_color_to_albedo, get_converted_map, pack_orm_texture, pack_msao_texture, pack_mrao_texture, convert_smoothness_to_roughness, convert_roughness_to_smoothness, foreign_packings, unpack_to_channels, unpack_orm_texture, unpack_msao_texture, unpack_mrao_texture, unpack_albedo_transparency, unpack_metallic_smoothness, unpack_specular_gloss
 
 ### `core_utils/engines/textures/map_factory/conversions.py` — Map-conversion registry primitives for the texture MapFactory.
@@ -292,7 +337,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: vertex_color, channels, to_dict, to_json, from_dict, from_json, save, load
 - `class RegionGroupRegistry`
   - methods: merge_record, empty, read, write, sanitize, groups, next_slot, add, remove, set_default, set_attr, compact, set_encoding, manifest
-- `class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal)`
+- `class RegionMaskPacker(pythontk.LoggingMixin, _RegionMaskPackerInternal)`
   - methods: groups, add_group, validate, rasterize, write, preview
 
 ### `core_utils/execution_monitor/_execution_monitor.py`
@@ -311,29 +356,61 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `main(argv=None) -> int`
 - constants: CHROMA_KEY, INDICATOR_SIZE, GIF_SIZE, NUM_DOTS, FRAME_MS, PARENT_POLL_MS, DIALOG_MIN_WIDTH, DIALOG_WRAP, DIALOG_KEEP_WAITING, DIALOG_FORCE, DIALOG_CLOSED, DIALOG_CANCEL, KILL_TIMEOUT
 
-### `core_utils/export_profile.py` — The Scene Exporter panels' shared contract, written once.
-- `class ExportProfile`
-  - methods: legal_name, widget_key, value_method, run_config, optimize_textures_tasks, read_values, texture_size_limit_bytes, strip_deliverable_extension, fold_legacy_regex, fold_legacy_naming, resolve_output_path, naming_report, scoped_tables, task_order, unimplemented, optimize_textures_options, texture_file_type_options, baked_reflections_default, glb_options, glb_defaults, frame_rate_options
-- `class ExportRun`
-  - methods: glb_only, create_glb, usd, rendering, baked_reflection_level, replace, clip_mode, with_tasks, glb_max_size, glb_texture_params, from_tasks, for_glb
+### `core_utils/handoff/app_handoff.py` — Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
+- constants: SEND_TO, SAVE_AS, ROUND_TRIP, CARRIER_PARAM, CARRIER_EXTENSIONS, CARRIER_BY_EXTENSION, RIG_MODE_PARAM, RIG_MODES
+- `class AppSpec`
+  - methods: resolve, path, available, refresh, not_found_message
+- `class HandoffRequest`
+  - methods: get
+- `class Payload`
+- `class Deliverer`
+  - methods: preflight, deliver
+- `class HandoffBridge(LoggingMixin)`
+  - methods: app_path, headless_app_path, params_defaults, merge_params, carrier, payload_extension, carrier_of, send, import_roots, child_sys_path
+- `class ScriptLaunchSpec`
+- `class ScriptLaunchDeliverer(Deliverer)`
+  - methods: preflight, deliver, render
+- `class ScriptRunDeliverer(ScriptLaunchDeliverer)`
+  - methods: run, deliver
+- `class ScriptRoundTripDeliverer(ScriptRunDeliverer)`
+  - methods: deliver
+- `class ScriptLaunchBridge(HandoffBridge)`
+  - methods: render_context, save_as, round_trip, resolve_save_path, render_template, modes, list_template_modes, list_templates
 
-### `core_utils/handoff_manifest.py` — The hand-off sidecar -- what an FBX or USD payload cannot carry by itself.
+### `core_utils/handoff/handoff_scope.py` — Which objects a hand-off acts on: the scope vocabulary and its precedence.
+- `class HandoffScope`
+  - methods: word, resolve
+
+### `core_utils/handoff/manifest.py` — The hand-off sidecar -- what an FBX or USD payload cannot carry by itself.
 - `class HandoffManifest(_HandoffManifestInternal)`
   - methods: path_for, read, path, payload_path, data, unreadable, version, format, carries, build, write, plan
+
+### `core_utils/handoff/manifest_plan.py` — Ordered, gated replay of the steps a hand-off manifest asks for.
+- `class ManifestPlan(_ManifestPlanInternal)`
+  - methods: labels, add, run
+
+### `core_utils/handoff/script_run.py` — Run a script in an external app, block until it exits, and collect an artifact.
+- constants: CREATED, REWRITTEN
+- `class ScriptRunner(_ScriptRunnerInternal)`
+  - methods: run_script_to_artifact
+- `class ScriptRunResult`
+- `class ProgressRelay`
+  - methods: line, parse, value, report, tick, reader
+
+### `core_utils/handoff/script_template.py` — Generic on-disk script-template discovery + ``__KEY__`` rendering.
+- constants: SEND_TO, SAVE_AS, ROUND_TRIP
+- `class ScriptTemplate(_ScriptTemplateInternal)`
+  - methods: list_templates, normalize_modes, declared_values, declared_modes, template_modes, list_template_modes, render_template
 
 ### `core_utils/help_mixin.py` — HelpMixin - Enhanced help system leveraging Python's built-in help infrastructure.
 - `class HelpMixin`
   - methods: help, source, where, show_mro, signature, classify, list_members, about
 
-### `core_utils/hierarchy_baseline.py` — The change-detection baseline an exporter diffs a scene's hierarchy against.
-- `class HierarchyBaseline`
-  - methods: top_level, in_scope, relevant_roots, compare, merge, adopt, paths_hash, encode, is_record, decode, recorded_by
-
 ### `core_utils/hierarchy_utils/hierarchy_analyzer.py`
 - `class DifferenceType(Enum)`
 - `class HierarchyDifference`
 - `class HierarchyAnalyzer`
-  - methods: compare_path_sets, analyze_hierarchy_differences, detect_moved_items, categorize_differences, generate_diff_report, export_differences_to_dict, filter_differences
+  - methods: compare_path_sets, analyze_hierarchy_differences, detect_moved_items, detect_reparented, detect_fuzzy_renames, detect_suffix_flattening, categorize_differences, generate_diff_report, export_differences_to_dict, filter_differences
 
 ### `core_utils/hierarchy_utils/hierarchy_diff.py`
 - `class HierarchyDiff`
@@ -351,25 +428,29 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class HierarchyPath`
   - methods: clean_namespace, split, join, strip_namespaces, normalize, leaf, root, parent, depth, tail, ends_with
 
-### `core_utils/logging_mixin.py` — Class-scoped logging toolkit.
-- `class StripHtmlFormatter(internal_logging.Formatter)`
-  - methods: format
-- `class LevelAwareFormatter(internal_logging.Formatter)`
-  - methods: format
-- `class LoggerExt`
-  - methods: patch, set_default_text_handler, strip_html, get_color, register_html_preset, get_html_preset, format_message_as_html
-- `class DefaultTextLogHandler(internal_logging.Handler)`
-  - methods: emit, get_color
-- `class RingBufferHandler(internal_logging.Handler)`
-  - methods: emit, clear, format_records
-- `class TableMixin`
-  - methods: format_table, log_table, log_group
+### `core_utils/logging_mixin/_logging_mixin.py` — ``LoggingMixin``: one ``LoggerExt``-patched logger per class.
 - `class LoggingMixin(TableMixin)`
   - methods: logger, use_logger, class_logger, logging, set_log_level, set_log_file, enable_log_buffer, disable_log_buffer, clear_log_buffer, dump_log
 
-### `core_utils/manifest_plan.py` — Ordered, gated replay of the steps a hand-off manifest asks for.
-- `class ManifestPlan(_ManifestPlanInternal)`
-  - methods: labels, add, run
+### `core_utils/logging_mixin/_text_layout.py` — Monospace text layout: display widths, wrapping, box and table geometry.
+- `class TextLayout`
+  - methods: char_width, strip_html, display_width, pad, truncate, wrap_text, split_lines, box, table
+
+### `core_utils/logging_mixin/logger_ext.py` — ``LoggerExt``: the patch that turns a stdlib logger into a toolkit logger.
+- `class StripHtmlFormatter(logging.Formatter)`
+  - methods: format
+- `class LevelAwareFormatter(logging.Formatter)`
+  - methods: format
+- `class LoggerExt`
+  - methods: patch, set_default_text_handler, strip_html, get_color, register_html_preset, get_html_preset, format_message_as_html
+- `class DefaultTextLogHandler(logging.Handler)`
+  - methods: emit, get_color
+- `class RingBufferHandler(logging.Handler)`
+  - methods: emit, clear, format_records
+
+### `core_utils/logging_mixin/table_mixin.py` — ``TableMixin``: tables and titled groups on any class that has a ``logger``.
+- `class TableMixin`
+  - methods: format_table, log_table, log_group
 
 ### `core_utils/module_reloader.py` — Helpers for hot-reloading packages and their submodules.
 - `reload_package(package: ModuleRef, **kwargs) -> ReloadReport`
@@ -380,6 +461,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/module_resolver.py` — Reusable module attribute resolver for package-style imports.
 - `bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle`
+- `lazy_exports(module_globals: MutableMapping[str, Any], sources: IncludeMapping) -> None`
 - `create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`
 - `class ModuleAttributeResolver`
   - methods: build, rebuild, resolve, get_module, bind_to, iter_registered_names, clear_module_cache
@@ -399,19 +481,34 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/naming_convention.py` — Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 - constants: CONFIG_NAME, CONFIG_PACKAGE, CONFIG_ENV_VAR, AFFIX_MODES
 - `class AffixRule`
-  - methods: parts, apply, as_dict
+  - methods: parts, apply, matches, as_dict
 - `class NamingConvention(_NamingConventionInternal)`
-  - methods: resolve, reload, keys, items, get, label, affix, mode, affix_parts, apply, all_affixes, bind, set, update, reset, config_path
+  - methods: resolve, reload, keys, items, get, label, affix, mode, affix_parts, apply, matches, as_dict, preset_store, all_affixes, bind, set, update, reset, config_path
 
 ### `core_utils/package_manager.py`
 - `class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`
   - methods: pip, install_targeted, get_local_dependency_order, start_version_check, version_check_running, wait_for_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
 
-### `core_utils/preset_store.py` — Qt-free, zero-dependency named-preset *store* for the ecosystem.
-- constants: JSON_CODEC, ACTIVE_SENTINEL
+### `core_utils/presets/library.py` — Whole-root view over the ecosystem's preset stores.
+- constants: BUNDLE_FORMAT, BUNDLE_HEADER, BUNDLE_ROOT, COLLECTIONS_DIR, BACKUPS_DIR, AUTO_BACKUP_KEEP
+- `class PresetDomain`
+  - methods: package, store
+- `class PresetEntry`
+  - methods: id, label, collection, tags, read_only, modified
+- `class ImportItem`
+  - methods: label, choices
+- `class ImportPlan`
+  - methods: kind, counts, pending
+- `class ImportResult`
+- `class PresetLibrary(_PresetLibraryInternal)`
+  - methods: root, domains, in_scope, domain, entries, entry, find, set_read_only, assign, set_tags, duplicate, rename, delete, collections, collection, create_collection, collection_named, update_collection, members, is_modified, delete_collection, export, backup, backups, read_header, plan_import, apply, clean_up, hash_bytes
+
+### `core_utils/presets/store.py` — Qt-free, zero-dependency named-preset *store* for the ecosystem.
+- constants: JSON_CODEC, ACTIVE_SENTINEL, INFO_EXT, DOMAIN_MARKER
 - `class Codec`
+- `class PresetReadOnlyError(PermissionError)`
 - `class PresetStore(_PresetStoreInternal)`
-  - methods: ext, user_dir, builtin_dir, active, list, source, exists, path, load, save, delete, rename, sanitize_preset_name
+  - methods: ext, user_dir, builtin_dir, key, resolve_builtin_spec, info_path, info, write_info, set_info, ensure_info, is_read_only, unique_name, active, list, source, exists, path, load, save, delete, rename, sanitize_preset_name
 
 ### `core_utils/process_exit.py` — Exit a DCC-hosted interpreter without running ``DLL_PROCESS_DETACH``.
 - `class ProcessExit(_ProcessExitInternal)`
@@ -434,27 +531,6 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class QcGate`
   - methods: check
 
-### `core_utils/scene_records.py` — Scene records -- every piece of tool-authored scene metadata, declared once.
-- `class Scope(str, Enum)`
-- `class Kind(str, Enum)`
-- `class Merge(str, Enum)`
-- `class Record`
-  - methods: key, text, save
-- `class RecordSpec`
-  - methods: path_keys, make, encode, decode, read_text, write_text, load, save, clear, is_present
-- `class SceneRecords`
-  - methods: resolve_class, codec, portable, rendering_policy, all, with_paths, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
-- `class SceneStoreBase`
-  - methods: name, read, write, values, keys, channels, dump, scene_path, project_root, writer_stamp, written_here, project_root_of, rebase_paths, format_dump, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
-- `class ExportContext`
-  - methods: note, record, refreshes
-- `class ExportSnapshot`
-  - methods: assemble, publish, commit, records, record, channels, summary
-- `class TransferContext`
-  - methods: note, adapter, spell, respell
-- `class RecordTransfer`
-  - methods: between, incoming, rederive, is_empty, summary, payloads, apply, merge_record, absolute_paths, arriving_paths, respell, union, sections, receive
-
 ### `core_utils/schema_spec.py` — Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 - constants: MISSING
 - `class SchemaError(ValueError)`
@@ -463,19 +539,6 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: ok, raise_if_errors, raise_or_warn, merge
 - `class SchemaSpec(_SchemaSpecInternal)`
   - methods: from_dict, to_dict, validate, skeleton, describe, to_markdown, spec_field
-
-### `core_utils/script_run.py` — Run a script in an external app, block until it exits, and collect an artifact.
-- constants: CREATED, REWRITTEN
-- `class ScriptRunner(_ScriptRunnerInternal)`
-  - methods: run_script_to_artifact
-- `class ScriptRunResult`
-- `class ProgressRelay`
-  - methods: line, parse, value, report, tick, reader
-
-### `core_utils/script_template.py` — Generic on-disk script-template discovery + ``__KEY__`` rendering.
-- constants: SEND_TO, SAVE_AS, ROUND_TRIP
-- `class ScriptTemplate(_ScriptTemplateInternal)`
-  - methods: list_templates, normalize_modes, declared_values, declared_modes, template_modes, list_template_modes, render_template
 
 ### `core_utils/singleton_mixin.py`
 - `class SingletonMixin`
@@ -504,7 +567,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/test_sandbox.py` — Process-level test isolation -- keep a test run off the developer's machine.
 - `class TestSandbox(_TestSandboxInternal)`
-  - methods: browser, temp, activate, is_active
+  - methods: browser, temp, activate, is_active, user_config
 
 ### `core_utils/upstream_patch.py` — UpstreamPatch - correcting a defect in code we do not own, with a way out.
 - `class UpstreamPatch`
@@ -513,11 +576,15 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/user_config.py` — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - constants: CONFIG_ROOT_ENV_VAR
 - `class UserConfig`
-  - methods: path_for, load_file, save_file, resolve, deep_merge, expand, user_config_root
+  - methods: path_for, load_file, save_file, resolve, deep_merge, expand, xdg_home, user_config_root
+
+### `core_utils/x11.py` — A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys.
+- `class X11(_X11Internal)`
+  - methods: available, window_titles, active_window_pid, pointer, has_compositor, key_down
 
 ### `file_utils/_file_utils.py`
 - `class FileUtils(HelpMixin)`
-  - methods: is_valid, is_cloud_placeholder, is_under, is_same_file, has_same_content, is_rooted_path, resolve_output_dir, relativize_output_dir, portable_path, rebase_portable_path, resolve_portable_path, path_length_limit, exceeds_path_length, free_space, is_locked, locking_processes, describe_lock, format_bytes, format_bytes_delta, create_dir, next_version_path, next_version_number, unique_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, read_json, write_json, atomic_write_text, atomic_write, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, get_classes_from_path
+  - methods: is_valid, is_cloud_placeholder, is_under, is_same_file, has_same_content, is_rooted_path, resolve_output_dir, relativize_output_dir, portable_path, rebase_portable_path, resolve_portable_path, path_length_limit, exceeds_path_length, free_space, is_locked, locking_processes, describe_lock, format_bytes, format_bytes_delta, create_dir, next_version_path, next_version_number, unique_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, read_json, write_json, replace_file, atomic_write_text, atomic_write, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, canonical_module_path, get_classes_from_path
 
 ### `file_utils/file_dependencies.py` — File dependencies -- files a record names by *name*, found where they are NOW.
 - `class FileDependencies(LoggingMixin)`
@@ -529,10 +596,12 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class FileNaming(HelpMixin, LoggingMixin)`
   - methods: expand, stem, find, rename, set_case, strip_chars
 
-### `file_utils/mesh_convert/_mesh_convert.py`
+### `file_utils/mesh_convert/_fbx2gltf.py` — The FBX2glTF CLI driver behind :meth:`MeshConvert.fbx_to_glb`, and the
 - constants: FBX2GLTF_VERSION, FBX2GLTF_PLATFORMS
-- `class MeshConvert(HelpMixin)`
-  - methods: conversion_timeout, bake_node_frames, rendering_policy, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, resolve_binary, fbx_to_glb, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, effect_preview_channels, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, apply_glb_visibility, clip_spans, build_visibility_tracks, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fix_glb_tangents, apply_glb_fades, prune_glb_animations, compact_glb_animations, reduce_glb_animations, drop_glb_texture_fallbacks, apply_glb_animations, check_glb_materials, fix_glb_phantom_opaque_alpha, open_glb, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, dedupe_glb_images, prune_glb_unreferenced_textures, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color
+
+### `file_utils/mesh_convert/_mesh_convert.py` — FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
+- `class MeshConvert(_Fbx2GltfMixin, _SidecarMixin, _LightmapsMixin, _ShadowRigsMixin, _AnimationMixin, _VisibilityMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`
+  - methods: open_glb, conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fix_glb_tangents, rendering_policy, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, clip_spans, prune_glb_animations, compact_glb_animations, reduce_glb_animations, apply_glb_animations, effect_preview_channels, apply_glb_visibility, build_visibility_tracks, apply_glb_fades, check_glb_materials, fix_glb_phantom_opaque_alpha, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, drop_glb_texture_fallbacks, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, dedupe_glb_images, prune_glb_unreferenced_textures
 
 ### `file_utils/mesh_convert/export_verify.py` — Deliverable verification for exported FBX / GLB pairs.
 - `class Finding`
@@ -550,30 +619,34 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class FbxMedia(_FbxMediaInternal)`
   - methods: embedded, downsize, expand_grayscale, drop_takes, drop_apparatus, rewrite
 
-### `file_utils/mesh_convert/glb_clips.py` — Rebuild a GLB's shot clips from its one whole-timeline animation.
+### `file_utils/mesh_convert/glb/clips.py` — Rebuild a GLB's shot clips from its one whole-timeline animation.
 - `class GlbClips(_GlbClipsInternal)`
   - methods: rebuild
 
-### `file_utils/mesh_convert/glb_fades.py` — Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
+### `file_utils/mesh_convert/glb/edit.py` — The GLB container every ``mesh_convert`` pass edits: :class:`GlbEdit`.
+- `class GlbEdit`
+  - methods: rest, replace_rest, bin_data, materials, textures, images, buffer_views, image_digests, texture_for_image, image_for_texture, base_color_image, image_label, image_bytes, alpha_extrema, channel_extrema, open, read, write, append_bin_views, compact_bin, relocate_embedded_images, bin_view, accessor_elements, map_accessor_refs, referenced_accessors, drop_orphaned_accessors, release_animation_payload
+
+### `file_utils/mesh_convert/glb/fades.py` — Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
 - constants: EXTENSION, POINTER, CHANNELS, DEFAULT_COLOR
 - `class PointerChannel`
   - methods: color_key, components, accessor_type, base
 - `class GlbFades(_GlbFadesInternal)`
   - methods: apply, apply_channels
 
-### `file_utils/mesh_convert/glb_key_reduction.py` — Reduce a GLB's animation keys to what its interpolation needs.
+### `file_utils/mesh_convert/glb/key_reduction.py` — Reduce a GLB's animation keys to what its interpolation needs.
 - `class GlbKeyReduction(_GlbKeyReductionInternal)`
   - methods: read_sampler, evaluate, deviation, reduce
 
-### `file_utils/mesh_convert/glb_pipeline.py` — FBX -> GLB: the one build every GLB deliverable goes through.
+### `file_utils/mesh_convert/glb/pipeline.py` — FBX -> GLB: the one build every GLB deliverable goes through.
 - `class GlbPipeline(LoggingMixin)`
   - methods: envelope, build
 
-### `file_utils/mesh_convert/glb_reader.py` — Read-only structured access to a GLB: accessors, animation sampling, worlds.
+### `file_utils/mesh_convert/glb/reader.py` — Read-only structured access to a GLB: accessors, animation sampling, worlds.
 - `class GlbReader(_GlbReaderInternal)`
   - methods: load, counts, image_mimes, extensions, skins_summary, accessor, animations, animation, clip_spans, motion_span, channel_table, sample, nan_findings, node_index, parent_of, local_matrix, world_matrix, world_position, walk
 
-### `file_utils/mesh_convert/glb_tangents.py` — Repair a GLB's shipped tangents against the UVs they describe.
+### `file_utils/mesh_convert/glb/tangents.py` — Repair a GLB's shipped tangents against the UVs they describe.
 - `class GlbTangents(_GlbTangentsInternal)`
   - methods: repair
 
@@ -596,6 +669,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class ScratchTwins(LoggingMixin)`
   - methods: path_for, create, is_twin, discard, discard_except
 
+### `file_utils/tiled_path.py` — Tile / frame tokens in a file path -- the one vocabulary every host reads.
+- `class TiledPath`
+  - methods: has_token, is_frame_sequence, scheme, tile_token_pattern, wildcard, spell, tiles, representative
+
 ### `file_utils/usd.py` — Zero-dependency USD (OpenUSD) file utilities.
 - constants: USD_EXTENSIONS
 - `class UsdFile`
@@ -605,7 +682,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class UsdMeshWriter`
   - methods: write, from_obj, obj_to_usd, obj_to_usdz
 
-### `file_utils/uv_unwrap/_uv_unwrap.py`
+### `file_utils/uv_unwrap.py` — Automatic UV unwrapping via external CLI engines (OBJ in -> OBJ out).
 - constants: DEFAULT_TIMEOUT, MOF_DOWNLOAD_URL, MOF_EXE, BFF_VERSION, BFF_URL, BFF_PLATFORMS, BFF_SHA256, BFF_DOWNLOAD_URL, ENGINES
 - `class EngineSpec`
 - `class UvUnwrap(HelpMixin, _UvUnwrapInternal)`
@@ -616,7 +693,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class Workspace(_WorkspaceInternal)`
   - methods: marker_path, is_marked, load, save, create, promote, resolve, resolve_dir, scene_dir, source_images_dir, find, find_containing, for_path, parse_workspace_mel, write_workspace_mel
 - `class WorkspaceTemplates(object)`
-  - methods: store, list, rules, save, delete
+  - methods: store, list, rules, rules_from, save, delete
 
 ### `geo_utils/plate_emitter.py` — Emitter geometry for a flat light-fixture plate — pure math, no DCC.
 - `class PlateEmitter(NamedTuple)`
@@ -648,7 +725,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: horizontal_axes, far_point, model, project, to_frame, fractions
 - `class ShadowRaster(NamedTuple)`
 
-### `geo_utils/uv_budget.py` — UV texture-budget planning: how many maps, at what texel density (numbers in -> plan out).
+### `geo_utils/uv/budget.py` — UV texture-budget planning: how many maps, at what texel density (numbers in -> plan out).
 - `class BudgetItem`
   - methods: demand
 - `class BudgetPage`
@@ -660,21 +737,26 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class UvBudget(HelpMixin)`
   - methods: padding_for, first_fit_decreasing, partition_lpt, pages_at_density, density_at_pages, plan
 
-### `geo_utils/uv_pack.py` — UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
+### `geo_utils/uv/cylinder_seams.py` — Band-based UV seam placement for cylinder / tube / turned meshes.
+- constants: DEFAULT_TAPER_ANGLE, COPLANAR_EPS_DEG, DEFAULT_FLAT_ANGLE, DEFAULT_TRIM_RATIO, SHARP_FOLD, DEFAULT_VIEW_DIR
+- `class CylinderSeams`
+  - methods: dihedral, edge_vec, edge_mid, seams, seed_uvs
+
+### `geo_utils/uv/pack.py` — UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
 - constants: XATLAS_PYPI_URL, XATLAS_REPO_URL
 - `class PackIslandsResult`
 - `class UvPack(HelpMixin)`
   - methods: resolve, available, pack_islands
 
-### `geo_utils/uv_transfer.py` — Texture transfer between two UV layouts of the SAME triangles (arrays in -> arrays out).
+### `geo_utils/uv/transfer.py` — Texture transfer between two UV layouts of the SAME triangles (arrays in -> arrays out).
 - `class TransferTable`
   - methods: passes, nbytes, coverage, mask, frames
 - `class UvTransfer(HelpMixin)`
   - methods: build, transfer, transfer_normals, pad, merge_layouts, transfer_materials, normal_convention, load_map, save_map, triangle_frames
 
 ### `img_utils/_img_utils.py`
-- `class ImgUtils(HelpMixin)`
-  - methods: encode_workers, effective_mode, dropped_channels, channels_carrying_data, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, settle_ktx2_encoder, ensure_ktx2_encoder, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, denoise_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, compose_rect, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, rasterize_height_fields, rasterize_height_spans, rasterize_shadow, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
+- `class ImgUtils(_ImgHeaderInternal, _ImgCodecInternal, _ImgChannelInternal, _ImgFilterInternal, _ImgAtlasInternal, _ImgRasterizeInternal, _ImgColorSpaceInternal, HelpMixin)`
+  - methods: encode_workers, effective_mode, dropped_channels, channels_carrying_data, im_help, allow_large_images, ensure_image, enforce_mode, assert_pathlike, validate_image_integrity, create_image, register_dds_codec, register_ktx2_encoder, resolve_ktx2_encoder, ktx2_available, settle_ktx2_encoder, ensure_ktx2_encoder, save_image, load_image, list_image_files, unique_dir_stems, get_images, get_image_size, is_equirectangular, is_environment_map, get_image_info, are_identical, resize_image, ensure_pot, format_bit_depth, set_bit_depth, invert_grayscale_image, invert_channels, swizzle_channels, create_mask, fill_masked_area, fill, get_background, replace_color, set_contrast, gaussian_blur, dilate_image, denoise_image, fill_empty_texels, compute_atlas_layout, atlas_pixel_rects, flip_rect_v, compose_rect, inset_atlas_rects, snap_atlas_rects, inset_rects_to_texel_centers, assemble_atlas, radial_gradient, rasterize_uv_triangles, rasterize_silhouette, rasterize_height_fields, rasterize_height_spans, rasterize_shadow, convert_rgb_to_gray, kelvin_to_linear_rgb, convert_rgb_to_hsv, convert_i_to_l, convert_f_to_l, pack_channels, pack_channel_into_alpha, srgb_to_linear, linear_to_srgb, encode_hdr_for_web, generate_mipmaps, depalettize_image, is_image_constant, get_base_texture_name, extract_channels
 
 ### `img_utils/exposure_equalizer.py` — Cross-set exposure / white-balance equalization.
 - `class ExposureEqualizer`
@@ -702,7 +784,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: make_iterable, nested_depth, flatten, collapse_integer_sequence, bit_array_to_list, insert_into_dict, rindex, indices, remove_duplicates, filter_results, filter_list, filter_dict, split_list, find_flat_interior_indices, find_extrema_indices
 
 ### `math_utils/_math_utils.py`
-- `class MathUtils(HelpMixin)`
+- `class MathUtils(_MathClusteringInternal, _MathCurveFitInternal, HelpMixin)`
   - methods: eval_expression, convert_length_unit, calculate_uv_padding, uv_tile_margin, udim_to_tile, majority_tile, fit_into_tile, next_clear_offset, max_axis_skew, linear_sum_assignment, kmeans_clustering, kmeans_1d, get_kmeans_threshold, move_decimal_point, get_vector_from_two_points, clamp, clamp_range, normalize, get_magnitude, dot_product, cross_product, move_point_relative, move_point_relative_along_vector, distance_between_points, get_center_of_two_points, get_angle_from_two_vectors, get_angle_from_three_points, get_two_sides_of_asa_triangle, xyz_rotation, lerp, safe_normalize, smoothstep, resolve_falloff_profile, bspline_clamped_knots, bspline_basis, ricker, catenary, catenary_sag, evaluate_sampled_progress, generate_geometric_sequence, remap, point_segment_distance, nearest_power_of_two, is_close_to_whole, step_offset, round_value, round_to_preferred, round_to_aggressive_preferred, calculate_rotation_distance, fit_hermite_slopes, evaluate_hermite, reduce_samples
 
 ### `math_utils/noise.py`
@@ -723,7 +805,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `net_utils/_net_utils.py`
 - `class NetUtils`
-  - methods: connect_rdp, is_port_open, is_port_bindable, resolves_publicly, get_local_ip
+  - methods: listening_ports, connect_rdp, is_port_open, is_port_bindable, resolves_publicly, get_local_ip
 
 ### `net_utils/credentials.py`
 - `class Credentials`
@@ -743,10 +825,12 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class PreviewPlayblast(SequenceEncoder)`
   - methods: begin, add_frame, finish, cancel, clip_name, active, resolve_output_dir
 
-### `net_utils/preview/server.py` — Localhost static-file server for live browser / WebXR previews.
+### `net_utils/preview/routes.py` — The preview server's served surface: its URL vocabulary and the HTTP handler.
 - constants: VIEWER_CLOSED_PATH, SETTINGS_PATH, PLAYBLAST_PATH, PLAYBLAST_ACTIONS, SNAPSHOT_PATH
-- `class PreviewServer(LoggingMixin, _PreviewServerInternal)`
-  - methods: port, url, version, is_running, has_viewer, scripts, add_script, remove_script, set_scripts, manifest, start, stop, guest_port, guest_url, start_guest, stop_guest, admit_host, guest_count, share, unshare, share_info, share_url, publish, apply_settings, playblast, begin_playblast, finish_playblast, recording_path, save_snapshot, webxr_browser, open_in_browser
+
+### `net_utils/preview/server.py` — Localhost static-file server for live browser / WebXR previews.
+- `class PreviewServer(LoggingMixin, _ServeRootMixin, _SharingMixin, _PageOutputsMixin)`
+  - methods: port, url, version, is_running, has_viewer, manifest, start, stop, publish, apply_settings, webxr_browser, open_in_browser, scripts, add_script, remove_script, set_scripts, guest_port, guest_url, start_guest, stop_guest, admit_host, guest_count, share, unshare, share_info, share_url, playblast, begin_playblast, finish_playblast, recording_path, save_snapshot
 
 ### `net_utils/remote_file.py` — Read a file by ``http(s)`` URL with the same surface as a local read.
 - `class RemoteFile(_RemoteFileInternal)`
@@ -784,8 +868,8 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `str_utils/_str_utils.py`
 - constants: ANSI_ESCAPE_RE
-- `class StrUtils(CoreUtils)`
-  - methods: is_legal_name, illegal_name_chars, name_error, legal_name_matcher, to_legal_name, to_legal_filename, strip_ansi, sanitize, expand_wildcard, split_regex_modifier, apply_regex_modifier, attach_modifier, replace_placeholders, resolve_placeholders, name_pattern_context, resolve_name_pattern, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
+- `class StrUtils(_StrNamePatternInternal, _StrSearchInternal, _StrAffixInternal, CoreUtils)`
+  - methods: is_legal_name, illegal_name_chars, name_error, legal_name_matcher, to_legal_name, to_legal_filename, strip_ansi, sanitize, expand_wildcard, split_regex_modifier, apply_regex_modifier, attach_modifier, replace_placeholders, resolve_placeholders, name_pattern_context, resolve_name_pattern, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, natural_sort_key, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
 
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`
@@ -798,6 +882,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `str_utils/report_doc.py` — ``ReportDoc`` -- a report built once as blocks, rendered as HTML or plain text.
 - `class ReportDoc`
   - methods: heading, text, fields, table, items, extend, color, span, link, action, file, join, to_html, to_text
+
+### `str_utils/tooltip_format.py` — Rich-text tooltip DSL -- :class:`TooltipFormat`.
+- `class TooltipFormat(_TooltipFormatInternal)`
+  - methods: is_rich, kbd, hl, fmt, placeholder_preview, stored_items, wrap, display_ms
 
 ### `vid_utils/_vid_utils.py`
 - `class VidUtils(HelpMixin)`

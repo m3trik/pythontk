@@ -300,6 +300,46 @@ class Mapping(_MappingInternal):
         )
 
     @staticmethod
+    def seed_user_folder(ts: Optional[TemplateSet] = None) -> bool:
+        """Seed an empty user mapping folder with an example + format reference.
+
+        What a user opening the mappings folder for the first time needs: a
+        mapping to copy (``ts.write_skeleton("example")``) and the schema
+        reference beside it (``MAPPING_FORMAT.md``, generated from the same
+        ``MappingSpec.format_markdown`` SSoT as the shipped doc, so it is always
+        current).  A no-op once the folder holds anything, so it never clobbers
+        the user's files or re-creates ones they deleted on purpose.  Dotfiles
+        do not count: selecting a mapping writes the ``.active`` last-used
+        pointer there, and the first open after a selection must still seed.
+        Failures are swallowed -- seeding is a convenience, not a precondition.
+
+        Parameters:
+            ts: The template set whose user folder to seed; default
+                :meth:`templates`.
+
+        Returns:
+            True when the folder was empty and seeding was attempted.
+        """
+        ts = ts if ts is not None else Mapping.templates()
+        folder = Path(ts.user_dir)
+        try:
+            if any(p for p in folder.iterdir() if not p.name.startswith(".")):
+                return False
+        except OSError:
+            return False
+        try:
+            ts.write_skeleton("example")
+        except Exception:
+            pass
+        try:
+            (folder / "MAPPING_FORMAT.md").write_text(
+                MappingSpec.format_markdown(), encoding="utf-8"
+            )
+        except Exception:
+            pass
+        return True
+
+    @staticmethod
     def discover(directory: Optional[str] = None) -> List[str]:
         """List available mapping names (without ``.json``).
 

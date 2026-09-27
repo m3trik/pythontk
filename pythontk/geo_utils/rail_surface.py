@@ -12,7 +12,7 @@ draped banner, a ribbon, a terrain strip along a path…) lives entirely in the
 
 This is the reusable substrate under curve-driven surface generators such as
 the ``CurtainDrape`` engine vendored in the DCC packages
-(``mayatk``/``blendertk`` ``edit_utils._curtain_drape``): they resolve their
+(``mayatk``/``blendertk`` ``edit_utils.curtain._curtain_drape``): they resolve their
 own resolution + precompute their own feature state, then hand this primitive
 a displacement closure. A new generator is a new displacement — no new
 machinery.

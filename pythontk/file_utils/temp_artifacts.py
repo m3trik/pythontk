@@ -448,10 +448,12 @@ class CachedArtifact(LoggingMixin):
         if cache_path is None:
             return self.Result(out_path, False, scratch)
 
-        os.replace(out_path, cache_path)
+        from pythontk.file_utils._file_utils import FileUtils
+
+        FileUtils.replace_file(out_path, cache_path)
         for suffix in sidecars:
             if os.path.isfile(out_path + suffix):
-                os.replace(out_path + suffix, cache_path + suffix)
+                FileUtils.replace_file(out_path + suffix, cache_path + suffix)
             elif os.path.isfile(cache_path + suffix):
                 os.remove(cache_path + suffix)  # stale sidecar from a partial promote
         return self.Result(cache_path, False, scratch)
@@ -585,8 +587,10 @@ class ScratchTwins(LoggingMixin):
         while os.path.exists(f"{stem}_saved{n}{ext}"):
             n += 1
         kept = f"{stem}_saved{n}{ext}"
+        from pythontk.file_utils._file_utils import FileUtils
+
         try:
-            os.replace(path, kept)
+            FileUtils.replace_file(path, kept)
         except OSError:
             self.logger.warning(
                 f"Could not move a modified scratch aside; leaving it untouched "

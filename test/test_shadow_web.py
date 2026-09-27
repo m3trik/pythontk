@@ -47,7 +47,10 @@ except ImportError:  # pragma: no cover - the imaging stack is a test-only need 
 
 ptk.TestSandbox.activate()
 
-MESH_CONVERT_LOGGER = "pythontk.file_utils.mesh_convert._mesh_convert"
+#: The family logger: every mesh_convert module logs under it.
+MESH_CONVERT_LOGGER = "pythontk.file_utils.mesh_convert"
+#: Where ``MeshConvert.fbx_to_glb`` runs the converter from.
+FBX2GLTF_MODULE = "pythontk.file_utils.mesh_convert._fbx2gltf"
 TWO_PI = 2.0 * math.pi
 
 
@@ -850,7 +853,7 @@ class TestApplyGlbShadows(unittest.TestCase):
 
         with (
             patch.object(MeshConvert, "resolve_binary", return_value="FBX2glTF"),
-            patch(f"{MESH_CONVERT_LOGGER}.subprocess.run", side_effect=fake_run),
+            patch(f"{FBX2GLTF_MODULE}.subprocess.run", side_effect=fake_run),
         ):
             out = MeshConvert.fbx_to_glb(src, timeout=60, lightmaps=False)
         manifest = self._read(out)["extras"][MeshConvert.SHADOW_WEB_KEY]

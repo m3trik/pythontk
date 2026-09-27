@@ -70,6 +70,27 @@ class MetadataInternal:
             print(f"Error saving sidecar metadata: {e}")
 
     @classmethod
+    def _sync_sidecar(
+        cls, file_path: str, written, refused: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Keep the sidecar to what the file's own store refused.
+
+        The sidecar overlays every read, so a copy an earlier refusal parked
+        there would outlive a later clear -- or a value the store did take --
+        and still win the read. A file with nothing parked gets no sidecar.
+
+        Parameters:
+            file_path: The file whose sidecar to update.
+            written: The keys this set wrote, clears included: each leaves
+                the sidecar.
+            refused: ``{key: value}`` the store refused: parked in the sidecar.
+        """
+        changes = dict.fromkeys(written)
+        changes.update(refused or {})
+        if refused or not changes.keys().isdisjoint(cls._load_sidecar(file_path)):
+            cls._save_sidecar(file_path, changes)
+
+    @classmethod
     def _get(cls, file_path: str, *keys: str) -> Dict[str, Optional[str]]:
         """Retrieves metadata from a specified file.
         Supports Windows (via Shell.Application) and Linux (via extended attributes).
@@ -146,6 +167,13 @@ class MetadataInternal:
                         metadata[key] = None
                 except (OSError, AttributeError):
                     metadata[key] = None
+
+            # Overlay what a mount without xattrs sent to the sidecar
+            if cls.enable_sidecar:
+                sidecar_data = cls._load_sidecar(file_path)
+                for key in keys:
+                    if key in sidecar_data:
+                        metadata[key] = sidecar_data[key]
 
         return metadata
 
@@ -232,6 +260,7 @@ class MetadataInternal:
                 "Rating": "System.Rating",
             }
 
+            written = []
             for key, value in metadata.items():
                 canonical_name = key_map.get(key, key)
                 try:
@@ -251,6 +280,7 @@ class MetadataInternal:
                         )
                     else:
                         store.SetValue(pkey, value)
+                    written.append(key)
                 except Exception as e:
                     print(f"Error setting value for '{key}': {e}")
 
@@ -267,12 +297,11 @@ class MetadataInternal:
                         "This is common with cloud-synced storage. "
                         "Enable sidecar support (Metadata.enable_sidecar = True) to fix this."
                     )
+            else:
+                if cls.enable_sidecar:
+                    cls._sync_sidecar(file_path, written)
 
         else:  # POSIX (Linux/Mac)
-            if not hasattr(os, "setxattr"):
-                print("Error: os.setxattr is not available on this system.")
-                return
-
             # Map common friendly names to xattr keys
             key_map = {
                 "Comments": "user.comment",
@@ -284,6 +313,11 @@ class MetadataInternal:
                 "Copyright": "user.copyright",
             }
 
+            # NFS, exFAT and many FUSE/cloud mounts refuse xattrs: what they
+            # refuse goes to the sidecar when enabled -- as the Windows property
+            # store's failures do -- and is never silently dropped. Every other
+            # key (a clear too, which such a mount refuses as well) leaves it.
+            refused, error = {}, None
             for key, value in metadata.items():
                 xattr_key = key_map.get(key, f"user.{key.lower()}")
 
@@ -292,16 +326,27 @@ class MetadataInternal:
                     # Linux tags are often comma separated
                     value = ",".join(map(str, value))
 
+                if value is None:
+                    try:
+                        os.removexattr(file_path, xattr_key)
+                    except (OSError, AttributeError):
+                        pass
+                    continue
                 try:
-                    if value is None:
-                        try:
-                            os.removexattr(file_path, xattr_key)
-                        except OSError:
-                            pass
-                    else:
-                        os.setxattr(file_path, xattr_key, str(value).encode("utf-8"))
+                    if not hasattr(os, "setxattr"):
+                        raise OSError("os.setxattr is not available on this system")
+                    os.setxattr(file_path, xattr_key, str(value).encode("utf-8"))
                 except OSError as e:
-                    print(f"Error setting xattr '{key}': {e}")
+                    refused[key], error = value, e
+
+            if cls.enable_sidecar:
+                cls._sync_sidecar(file_path, metadata, refused)
+            elif refused:
+                raise RuntimeError(
+                    f"Error setting extended attributes: {error}.\n"
+                    "This is common on NFS, exFAT and FUSE/cloud-synced mounts. "
+                    "Enable sidecar support (Metadata.enable_sidecar = True) to fix this."
+                )
 
     @classmethod
     def _get_tag(cls, file_path: str, key: str) -> Optional[str]:

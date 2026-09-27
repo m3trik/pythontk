@@ -19,6 +19,7 @@ from pythontk.core_utils.logging_mixin import (
     LoggerExt,
     LevelAwareFormatter,
     DefaultTextLogHandler,
+    TableMixin,
 )
 
 from conftest import BaseTestCase
@@ -380,7 +381,7 @@ class DefaultTextLogHandlerTest(BaseTestCase):
 
 
 class LogBoxTest(BaseTestCase):
-    """Tests for _log_box and _truncate."""
+    """Tests for _log_box and TextLayout.truncate."""
 
     def setUp(self):
         super().setUp()
@@ -401,17 +402,17 @@ class LogBoxTest(BaseTestCase):
 
     def test_truncate_short_text_unchanged(self):
         """Text shorter than limit is returned unchanged."""
-        self.assertEqual(LoggerExt._truncate("hello", 10), "hello")
+        self.assertEqual(LoggerExt._layout.truncate("hello", 10), "hello")
 
     def test_truncate_long_text(self):
         """Text exceeding limit is truncated with ellipsis."""
-        result = LoggerExt._truncate("abcdefghij", 6)
+        result = LoggerExt._layout.truncate("abcdefghij", 6)
         self.assertTrue(result.endswith("…"))
-        self.assertLessEqual(LoggerExt._display_width(result), 6)
+        self.assertLessEqual(LoggerExt._layout.display_width(result), 6)
 
     def test_truncate_exact_fit(self):
         """Text exactly at the limit is returned unchanged."""
-        self.assertEqual(LoggerExt._truncate("abcde", 5), "abcde")
+        self.assertEqual(LoggerExt._layout.truncate("abcde", 5), "abcde")
 
     def test_log_box_single_emit(self):
         """log_box emits exactly one write to the stream (single string).
@@ -460,7 +461,9 @@ class LogBoxTest(BaseTestCase):
         output = self.stream.getvalue().strip()
         for line in output.split("\n"):
             self.assertLessEqual(
-                LoggerExt._display_width(line), 30, f"Line exceeds max_width: {line!r}"
+                LoggerExt._layout.display_width(line),
+                30,
+                f"Line exceeds max_width: {line!r}",
             )
 
     def test_log_box_max_width_from_attribute(self):
@@ -470,7 +473,7 @@ class LogBoxTest(BaseTestCase):
         self.logger.log_box("T", [long_item])
         output = self.stream.getvalue().strip()
         for line in output.split("\n"):
-            self.assertLessEqual(LoggerExt._display_width(line), 30)
+            self.assertLessEqual(LoggerExt._layout.display_width(line), 30)
 
     def test_log_box_returns_width(self):
         """log_box returns the computed box width."""
@@ -557,7 +560,7 @@ class LogBoxTest(BaseTestCase):
         self.logger.log_box("T", ["x" * 200])
         output = self.stream.getvalue().strip()
         for line in output.split("\n"):
-            self.assertLessEqual(LoggerExt._display_width(line), 100)
+            self.assertLessEqual(LoggerExt._layout.display_width(line), 100)
 
     def test_log_box_strips_html_for_levelaware_stream(self):
         """Default stream/file handlers attach ``LevelAwareFormatter(strip_html=True)``.
@@ -1012,20 +1015,22 @@ class LoggingMixinBugfixRegressionTest(BaseTestCase):
         from pythontk.core_utils.logging_mixin import LoggerExt, TableMixin
 
         path = "C:/Users/artist/AppData/Local/Temp/sandbox_18d85e21eb6d97bc/gone_Roughness.png"
-        lines = LoggerExt._wrap_text(path, 40)
+        lines = LoggerExt._layout.wrap_text(path, 40)
         self.assertEqual("".join(lines), path, "the path survives, in order")
         self.assertTrue(all(len(line) <= 40 for line in lines), lines)
         self.assertEqual(lines[-1], "gone_Roughness.png")
         self.assertTrue(all(line.endswith("/") for line in lines[:-1]), lines)
         # Backslashes too, and a word with no separator still hard-wraps.
         self.assertEqual(
-            LoggerExt._wrap_text("D:\\maps\\baked\\floor_Lightmap.exr", 20),
+            LoggerExt._layout.wrap_text("D:\\maps\\baked\\floor_Lightmap.exr", 20),
             ["D:\\maps\\baked\\", "floor_Lightmap.exr"],
         )
-        self.assertEqual(LoggerExt._wrap_text("x" * 25, 10), ["x" * 10] * 2 + ["x" * 5])
+        self.assertEqual(
+            LoggerExt._layout.wrap_text("x" * 25, 10), ["x" * 10] * 2 + ["x" * 5]
+        )
         # A folder wider than the column never leaves a line holding only
         # the separator the next cut would have started at.
-        wrapped = LoggerExt._wrap_text("abcdefghij/klmnopqrstuvwxyz", 10)
+        wrapped = LoggerExt._layout.wrap_text("abcdefghij/klmnopqrstuvwxyz", 10)
         self.assertNotIn("/", wrapped)
         self.assertEqual("".join(wrapped), "abcdefghij/klmnopqrstuvwxyz")
 
@@ -1332,7 +1337,7 @@ class LoggingMixinQualityPassRegressionTest(BaseTestCase):
 
         mixin = TableMixin()
         out = mixin.format_table([["✅", "ok"], ["x", "yy"]], headers=["s", "msg"])
-        widths = {LoggerExt._display_width(ln) for ln in out.split("\n")}
+        widths = {LoggerExt._layout.display_width(ln) for ln in out.split("\n")}
         self.assertEqual(
             len(widths),
             1,
@@ -1400,30 +1405,13 @@ class LoggingMixinReviewRegressionTest(BaseTestCase):
         output = self.stream.getvalue()
         self.assertIn("50% hello (100%)", output)
 
-    def test_fallback_char_width_treats_zero_width_marks_as_zero(self):
-        """Bug: without ``wcwidth`` the heuristic counted variation
-        selectors (U+FE0F) and the ZWJ (U+200D) as TWO columns and combining
-        marks as one — ``⚠️`` measured 4, ``é`` (decomposed) measured 2, so
-        every box/table containing one was over-padded in DCC pythons
-        (which ship no ``wcwidth``)."""
-        saved = LoggerExt._wcwidth_fn
-        LoggerExt._wcwidth_fn = False
-        try:
-            self.assertEqual(LoggerExt._char_width("\ufe0f"), 0)  # VS16
-            self.assertEqual(LoggerExt._char_width("\u200d"), 0)  # ZWJ
-            self.assertEqual(LoggerExt._char_width("\u0301"), 0)  # combining acute
-            self.assertEqual(LoggerExt._display_width("\u26a0\ufe0f"), 2)  # ⚠️
-            self.assertEqual(LoggerExt._display_width("e\u0301"), 1)  # decomposed é
-        finally:
-            LoggerExt._wcwidth_fn = saved
-
     def test_log_box_splits_embedded_newlines_and_coerces_non_strings(self):
         """Bug: an item holding a newline was measured as one long line
         and emitted as one padded row, so the box border broke in the
         middle of the row; a non-string item raised on width measurement."""
         self.logger.log_box("T\nsub", ["a\nb", 42], max_width=40)
         lines = self.stream.getvalue().strip().split("\n")
-        widths = {LoggerExt._display_width(ln) for ln in lines}
+        widths = {LoggerExt._layout.display_width(ln) for ln in lines}
         self.assertEqual(len(widths), 1, f"ragged box:\n{lines}")
         for ln in lines:
             self.assertTrue(ln[0] in "╔║╟╚" and ln[-1] in "╗║╢╝", repr(ln))
@@ -1470,7 +1458,7 @@ class LoggingMixinReviewRegressionTest(BaseTestCase):
             [["a" * 50, "b" * 50, "c" * 50]], ["one", "two", "three"], title="Totals"
         )
         lines = stream.getvalue().strip().split("\n")
-        widest = max(LoggerExt._display_width(ln) for ln in lines)
+        widest = max(LoggerExt._layout.display_width(ln) for ln in lines)
         self.assertLessEqual(widest, 60, "\n".join(lines))
 
         # And like a box, an explicit ``box_width`` wins over the handler.
@@ -1479,7 +1467,7 @@ class LoggingMixinReviewRegressionTest(BaseTestCase):
         stream.truncate()
         Report().log_table([["a" * 50, "b" * 50]], ["one", "two"])
         lines = stream.getvalue().strip().split("\n")
-        widest = max(LoggerExt._display_width(ln) for ln in lines)
+        widest = max(LoggerExt._layout.display_width(ln) for ln in lines)
         self.assertLessEqual(widest, 40, "\n".join(lines))
 
     def test_default_text_handler_asks_for_the_log_box_font_stack(self):
@@ -1543,30 +1531,6 @@ class LoggingMixinReviewRegressionTest(BaseTestCase):
         Panel.logger.handlers = [plain_mono]
         Panel.logger.log_divider(width=10)
         self.assertEqual(widget.messages, ["─" * 10])
-
-
-class CharWidthTest(BaseTestCase):
-    """``_char_width`` resolves the optional ``wcwidth`` import ONCE.
-
-    It is called per character of every box/divider line; a failed import
-    inside it re-walked ``sys.path`` on every call (measured 2 ms a
-    character -- 1.2 s for one scene-export summary box). Added: 2026-09-02
-    """
-
-    def test_import_is_resolved_once_and_widths_still_measure(self):
-        LoggerExt._wcwidth_fn = None
-        self.assertEqual(LoggerExt._char_width("a"), 1)
-        self.assertIsNotNone(LoggerExt._wcwidth_fn)  # a callable, or False
-        resolved = LoggerExt._wcwidth_fn
-        LoggerExt._char_width("b")
-        self.assertIs(LoggerExt._wcwidth_fn, resolved)
-        # The fallback heuristic answers the same wide glyphs either way.
-        LoggerExt._wcwidth_fn = False
-        try:
-            self.assertEqual(LoggerExt._char_width("\u2713"), 2)
-            self.assertEqual(LoggerExt._display_width("<b>ab</b>\u2713"), 4)
-        finally:
-            LoggerExt._wcwidth_fn = None
 
 
 class TextHandlerScopeTest(unittest.TestCase):
@@ -1679,6 +1643,512 @@ class TextHandlerScopeTest(unittest.TestCase):
 
         a, _ = self._pair()
         self.assertIs(a.logger.get_text_handler(), DefaultTextLogHandler)
+
+
+class LayoutCharacterizationTest(BaseTestCase):
+    """Golden output of every block the logger lays out: boxes, dividers,
+    groups and tables, character for character.
+
+    Pinned before ``logging_mixin`` was split into a package (2026-09-26), so
+    the layout's move out of ``LoggerExt`` is proven output-identical rather
+    than merely still-aligned. Inputs hold only characters whose width
+    ``wcwidth`` and the built-in heuristic agree on (ASCII, CJK, emoji of the
+    2-column blocks, a combining mark), so the goldens hold with or without
+    the optional package. NBSP -- the box's fill -- is shown as a middle dot.
+    """
+
+    NBSP_SHOWN = "\u00b7"
+    RAW_OPEN = (
+        "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;"
+        ' white-space:pre;">'
+    )
+
+    LINK_ITEM = (
+        "see "
+        + LoggerExt._log_link("pCube1_long_node_name", "select", node="|grp|pCube1")
+        + " for the details of this missing object"
+    )
+
+    BOX_CASES = {
+        "plain": (("Title", ["alpha", "beta gamma"]), {"max_width": 40}),
+        "wraps": (("Summary", ["word " * 12, "short"]), {"max_width": 30}),
+        "center": (("Centered title", ["x"]), {"align": "center", "max_width": 40}),
+        "right": (
+            ("Right", ["a longer item line"]),
+            {"align": "right", "max_width": 40},
+        ),
+        "wide": (
+            (
+                "\u6f22\u5b57 \u2705 \U0001f642",
+                ["cafe\u0301 ok", "\u6f22\u5b57" * 8, "\u2705 done"],
+            ),
+            {"max_width": 20},
+        ),
+        "path": (
+            ("Paths", ["D:/maps/baked/some_long_folder/floor_Lightmap_Roughness.exr"]),
+            {"max_width": 30},
+        ),
+        "path_backslash": (
+            (
+                "Paths",
+                ["D:\\maps\\baked\\floor_Lightmap_Roughness_with_a_long_name.exr"],
+            ),
+            {"max_width": 26},
+        ),
+        "link": (("Links", [LINK_ITEM]), {"max_width": 34}),
+        "title_only": (("Only a title",), {}),
+        "newlines_and_ints": (("Two\nlines", [1, 2.5, "a\nb"]), {"max_width": 30}),
+        "bare_string_items": (("Bare", "one item string"), {"max_width": 30}),
+        "tiny": (("Tiny box title", ["abcdefghijkl"]), {"max_width": 5}),
+        "long_title_wraps": (
+            ("A very long title that must wrap inside the box", ["i1", "i2"]),
+            {"max_width": 24},
+        ),
+        "level": (("Done", ["ok"]), {"level": "SUCCESS", "max_width": 30}),
+        "bg": (
+            ("Alert", ["bad", "worse"]),
+            {"level": "ERROR", "bg": "#222", "max_width": 30},
+        ),
+        "bg_level_name": (("Tinted", ["x"]), {"bg": "SUCCESS", "max_width": 30}),
+        "empty_item": (("Empty", [""]), {"max_width": 30}),
+        "default_width": (("Default", ["word " * 30]), {}),
+    }
+
+    TABLE_CASES = {
+        "basic": (([["a", 1], ["bb", 22]], ["name", "n"]), {}),
+        "title": (([["alpha", "x"], ["b", "yy"]], ["col", "v"]), {"title": "My table"}),
+        "clamp_total": (
+            ([["a" * 30, "b" * 30, "c" * 30]], ["h1", "h2", "h3"]),
+            {"max_width": 40},
+        ),
+        "col_max": (([["a" * 30, "short"]], ["h1", "h2"]), {"col_max_width": 10}),
+        "narrow": (
+            ([["abcdef", "ghijkl", "mnopqr", "stuvwx"]], ["a", "b", "c", "d"]),
+            {"max_width": 12},
+        ),
+        "ragged_rows": (([["only"], ["a", "b", "extra"]], ["h1", "h2"]), {}),
+        "wide_chars": (
+            (
+                [
+                    ["\u2705", "ok"],
+                    ["\u6f22\u5b57", "cafe\u0301"],
+                    ["\U0001f642x", "y"],
+                ],
+                ["s", "msg"],
+            ),
+            {},
+        ),
+        "wrap": (
+            (
+                [["x", "a long line of prose that wraps across rows\nsecond para"]],
+                ["k", "text"],
+            ),
+            {"max_width": 30, "wrap": True},
+        ),
+        "wrap_path": (
+            ([["tex", "D:/maps/baked/floor_Lightmap_Roughness.exr"]], ["k", "path"]),
+            {"max_width": 24, "wrap": True},
+        ),
+        "markup_false": (
+            ([["wood_<UDIM>.png", "<b>"]], ["file", "tag"]),
+            {"markup": False, "title": "<raw> title"},
+        ),
+        "markup_true": (
+            ([['<span style="color:red">red</span>', "x"]], ["colored", "v"]),
+            {},
+        ),
+        "long_title": (
+            ([["a", "b"]], ["h1", "h2"]),
+            {"title": "A title longer than the table", "max_width": 10},
+        ),
+        "empty": (([], ["h"]), {}),
+    }
+
+    BOX_GOLDEN = {
+        "plain": (
+            14,
+            (
+                "╔════════════╗\n"
+                "║·Title······║\n"
+                "╟────────────╢\n"
+                "║·alpha······║\n"
+                "║·beta gamma·║\n"
+                "╚════════════╝\n"
+            ),
+        ),
+        "wraps": (
+            28,
+            (
+                "╔══════════════════════════╗\n"
+                "║·Summary··················║\n"
+                "╟──────────────────────────╢\n"
+                "║·word word word word word·║\n"
+                "║·word word word word word·║\n"
+                "║·word word ···············║\n"
+                "║·short····················║\n"
+                "╚══════════════════════════╝\n"
+            ),
+        ),
+        "center": (
+            18,
+            (
+                "╔════════════════╗\n"
+                "║·Centered title·║\n"
+                "╟────────────────╢\n"
+                "║·x··············║\n"
+                "╚════════════════╝\n"
+            ),
+        ),
+        "right": (
+            22,
+            (
+                "╔════════════════════╗\n"
+                "║··············Right·║\n"
+                "╟────────────────────╢\n"
+                "║·a longer item line·║\n"
+                "╚════════════════════╝\n"
+            ),
+        ),
+        "wide": (
+            20,
+            (
+                "╔══════════════════╗\n"
+                "║·漢字 ✅ 🙂·······║\n"
+                "╟──────────────────╢\n"
+                "║·café ok··········║\n"
+                "║·漢字漢字漢字漢字·║\n"
+                "║·漢字漢字漢字漢字·║\n"
+                "║·✅ done··········║\n"
+                "╚══════════════════╝\n"
+            ),
+        ),
+        "path": (
+            30,
+            (
+                "╔════════════════════════════╗\n"
+                "║·Paths······················║\n"
+                "╟────────────────────────────╢\n"
+                "║·D:/maps/baked/·············║\n"
+                "║·some_long_folder/··········║\n"
+                "║·floor_Lightmap_Roughness.e·║\n"
+                "║·xr·························║\n"
+                "╚════════════════════════════╝\n"
+            ),
+        ),
+        "path_backslash": (
+            26,
+            (
+                "╔════════════════════════╗\n"
+                "║·Paths··················║\n"
+                "╟────────────────────────╢\n"
+                "║·D:\\maps\\baked\\·········║\n"
+                "║·floor_Lightmap_Roughne·║\n"
+                "║·ss_with_a_long_name.ex·║\n"
+                "║·r······················║\n"
+                "╚════════════════════════╝\n"
+            ),
+        ),
+        "link": (
+            33,
+            (
+                "╔═══════════════════════════════╗\n"
+                "║·Links·························║\n"
+                "╟───────────────────────────────╢\n"
+                "║·see pCube1_long_node_name for·║\n"
+                "║·the details of this missing···║\n"
+                "║·object························║\n"
+                "╚═══════════════════════════════╝\n"
+            ),
+        ),
+        "title_only": (
+            16,
+            ("╔══════════════╗\n║·Only a title·║\n╚══════════════╝\n"),
+        ),
+        "newlines_and_ints": (
+            9,
+            (
+                "╔═══════╗\n"
+                "║·Two···║\n"
+                "║·lines·║\n"
+                "╟───────╢\n"
+                "║·1·····║\n"
+                "║·2.5···║\n"
+                "║·a·····║\n"
+                "║·b·····║\n"
+                "╚═══════╝\n"
+            ),
+        ),
+        "bare_string_items": (
+            19,
+            (
+                "╔═════════════════╗\n"
+                "║·Bare············║\n"
+                "╟─────────────────╢\n"
+                "║·one item string·║\n"
+                "╚═════════════════╝\n"
+            ),
+        ),
+        "tiny": (
+            8,
+            (
+                "╔══════╗\n"
+                "║·Tiny·║\n"
+                "║·box··║\n"
+                "║·titl·║\n"
+                "║·e····║\n"
+                "╟──────╢\n"
+                "║·abcd·║\n"
+                "║·efgh·║\n"
+                "║·ijkl·║\n"
+                "╚══════╝\n"
+            ),
+        ),
+        "long_title_wraps": (
+            21,
+            (
+                "╔═══════════════════╗\n"
+                "║·A very long title·║\n"
+                "║·that must wrap····║\n"
+                "║·inside the box····║\n"
+                "╟───────────────────╢\n"
+                "║·i1················║\n"
+                "║·i2················║\n"
+                "╚═══════════════════╝\n"
+            ),
+        ),
+        "level": (
+            8,
+            ("╔══════╗\n║·Done·║\n╟──────╢\n║·ok···║\n╚══════╝\n"),
+        ),
+        "bg": (
+            9,
+            ("╔═══════╗\n║·Alert·║\n╟───────╢\n║·bad···║\n║·worse·║\n╚═══════╝\n"),
+        ),
+        "bg_level_name": (
+            10,
+            ("╔════════╗\n║·Tinted·║\n╟────────╢\n║·x······║\n╚════════╝\n"),
+        ),
+        "empty_item": (
+            9,
+            ("╔═══════╗\n║·Empty·║\n╟───────╢\n║·······║\n╚═══════╝\n"),
+        ),
+        "default_width": (
+            98,
+            (
+                "╔════════════════════════════════════════════════════════════════════════════════════════════════╗\n"
+                "║·Default························································································║\n"
+                "╟────────────────────────────────────────────────────────────────────────────────────────────────╢\n"
+                "║·word word word word word word word word word word word word word word word word word word word·║\n"
+                "║·word word word word word word word word word word word ········································║\n"
+                "╚════════════════════════════════════════════════════════════════════════════════════════════════╝\n"
+            ),
+        ),
+    }
+
+    BOX_HTML_GOLDEN = {
+        "link": (
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\">╔═══════════════════════════════╗\n"
+            "║·Links·························║\n"
+            "╟───────────────────────────────╢\n"
+            '║·see <a href="action://select?node=%7Cgrp%7CpCube1" style="text-decoration:underline">pCube1_long_node_name</a> for·║\n'
+            "║·the details of this missing···║\n"
+            "║·object························║\n"
+            "╚═══════════════════════════════╝</span>"
+        ),
+        "level": (
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\"><span style=\"color:#CCFFCC;font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre\">╔══════╗\n"
+            "║·Done·║\n"
+            "╟──────╢\n"
+            "║·ok···║\n"
+            "╚══════╝</span></span>"
+        ),
+        "bg": (
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\"><span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#FFCCCC;background-color:#222\">╔═══════╗</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#FFCCCC;background-color:#222\">║·Alert·║</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#FFCCCC;background-color:#222\">╟───────╢</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#FFCCCC;background-color:#222\">║·bad···║</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#FFCCCC;background-color:#222\">║·worse·║</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#FFCCCC;background-color:#222\">╚═══════╝</span></span>"
+        ),
+        "bg_level_name": (
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\"><span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#CCFFCC\">╔════════╗</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#CCFFCC\">║·Tinted·║</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#CCFFCC\">╟────────╢</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#CCFFCC\">║·x······║</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#CCFFCC\">╚════════╝</span></span>"
+        ),
+    }
+
+    TABLE_GOLDEN = {
+        "basic": ("name | n \n-----+---\na    | 1 \nbb   | 22"),
+        "title": ("My table\n--------\ncol   | v \n------+---\nalpha | x \nb     | yy"),
+        "clamp_total": (
+            "h1           | h2          | h3         \n"
+            "-------------+-------------+------------\n"
+            "aaaaaaaaa... | bbbbbbbb... | cccccccc..."
+        ),
+        "col_max": ("h1         | h2   \n-----------+------\naaaaaaa... | short"),
+        "narrow": ("a | b | c | d\n--+---+---+--\na | g | m | s"),
+        "ragged_rows": ("h1   | h2\n-----+---\nonly |   \na    | b "),
+        "wide_chars": (
+            "s    | msg \n-----+-----\n✅   | ok  \n漢字 | café\n🙂x  | y   "
+        ),
+        "wrap": (
+            "k | text                      \n"
+            "--+---------------------------\n"
+            "x | a long line of prose that \n"
+            "  | wraps across rows         \n"
+            "  | second para               "
+        ),
+        "wrap_path": (
+            "k  | path               \n"
+            "---+--------------------\n"
+            "te | D:/maps/baked/     \n"
+            "x  | floor_Lightmap_Roug\n"
+            "   | hness.exr          "
+        ),
+        "markup_false": (
+            "<raw> title\n"
+            "-----------\n"
+            "file            | tag\n"
+            "----------------+----\n"
+            "wood_<UDIM>.png | <b>"
+        ),
+        "markup_true": (
+            'colored | v\n--------+--\n<span style="color:red">red</span>     | x'
+        ),
+        "long_title": ("A title...\n-------\nh1 | h2\n---+---\na  | b "),
+        "empty": "",
+    }
+
+    DIVIDER_GOLDEN = [
+        (
+            "────────────\n"
+            "========\n"
+            "────────────────────────────────────────────────────────────────────────────────────────────────────\n"
+            "─────────────────\n"
+        ),
+        [
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\">────────────</span>",
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\">========</span>",
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\">────────────────────────────────────────────────────────────────────────────────────────────────────</span>",
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\">─────────────────</span>",
+        ],
+    ]
+
+    GROUP_GOLDEN = [
+        ("\nGroup title\n▎ first\n▎ second ✅\n\nIndented\n▎   x\nEmpty title only\n"),
+        [
+            (
+                "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\">\n"
+                '<span style="color:#FFF5B7; font-weight:bold">Group title</span>\n'
+                '<span style="color:#888888">▎ first</span>\n'
+                '<span style="color:#888888">▎ second ✅</span></span>'
+            ),
+            (
+                "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\">\n"
+                '<span style="color:#FFFFFF; font-weight:bold">Indented</span>\n'
+                '<span style="color:#123456">▎   x</span></span>'
+            ),
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\">Empty title only</span>",
+        ],
+    ]
+
+    LOG_TABLE_GOLDEN = [
+        (
+            "T\n"
+            "-\n"
+            "key  | value        \n"
+            "-----+--------------\n"
+            "a... | a long val...\n"
+            "b    | v            "
+        ),
+    ]
+
+    def setUp(self):
+        super().setUp()
+        self.logger = logging.Logger("layout_golden", logging.DEBUG)
+        LoggerExt.patch(self.logger)
+        for handler in self.logger.handlers[:]:  # patch()'s default stderr one
+            self.logger.removeHandler(handler)
+        self.stream = io.StringIO()
+        plain = logging.StreamHandler(self.stream)
+        plain.setLevel(logging.DEBUG)
+        plain.setFormatter(LevelAwareFormatter(logger=self.logger, strip_html=True))
+        self.logger.addHandler(plain)
+        self.widget = MockTextWidget()
+        html = DefaultTextLogHandler(self.widget, use_html=True, monospace=True)
+        html.setLevel(logging.DEBUG)
+        self.logger.addHandler(html)
+
+    def tearDown(self):
+        for handler in self.logger.handlers[:]:
+            handler.close()
+            self.logger.removeHandler(handler)
+        super().tearDown()
+
+    def _shown(self, text):
+        return text.replace(" ", self.NBSP_SHOWN)
+
+    def test_boxes(self):
+        for name, (args, kwargs) in self.BOX_CASES.items():
+            with self.subTest(box=name):
+                self.stream.seek(0)
+                self.stream.truncate()
+                self.widget.messages.clear()
+                width = self.logger.log_box(*args, **kwargs)
+                plain = self._shown(self.stream.getvalue())
+                html = self._shown(self.widget.messages[-1])
+                golden_width, golden_plain = self.BOX_GOLDEN[name]
+                self.assertEqual(width, golden_width)
+                self.assertEqual(plain, golden_plain)
+                self.assertEqual(
+                    html,
+                    self.BOX_HTML_GOLDEN.get(
+                        name, self.RAW_OPEN + golden_plain.rstrip("\n") + "</span>"
+                    ),
+                )
+
+    def test_dividers(self):
+        self.logger.log_divider(width=12)
+        self.logger.log_divider(width=8, char="=")
+        self.logger.log_divider()  # no handler reports a width: DEFAULT_BOX_WIDTH
+        self.logger.box_width = 17
+        self.logger.log_divider()
+        self.assertEqual(
+            [self.stream.getvalue(), self.widget.messages], self.DIVIDER_GOLDEN
+        )
+
+    def test_groups(self):
+        self.logger.log_group("Group title", ["first", "second ✅"], level="WARNING")
+        self.logger.log_group("Indented", ["x"], indent=4, item_color="#123456")
+        self.logger.log_group("Empty title only", [])
+        self.assertEqual(
+            [self.stream.getvalue(), self.widget.messages], self.GROUP_GOLDEN
+        )
+
+    def test_tables(self):
+        for name, (args, kwargs) in self.TABLE_CASES.items():
+            with self.subTest(table=name):
+                self.assertEqual(
+                    TableMixin().format_table(*args, **kwargs), self.TABLE_GOLDEN[name]
+                )
+
+    def test_log_table_takes_the_box_width(self):
+        class Panel(LoggingMixin):
+            pass
+
+        widget = MockTextWidget()
+        handler = DefaultTextLogHandler(widget, use_html=False, monospace=True)
+        handler.setLevel(logging.DEBUG)
+        Panel.logger.handlers = [handler]
+        Panel.logger.box_width = 20
+        Panel().log_table(
+            [["alpha", "a long value that clips"], ["b", "v"]],
+            ["key", "value"],
+            title="T",
+        )
+        self.assertEqual(widget.messages, self.LOG_TABLE_GOLDEN)
 
 
 if __name__ == "__main__":

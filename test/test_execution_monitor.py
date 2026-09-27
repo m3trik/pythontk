@@ -1,3 +1,4 @@
+import functools
 import unittest
 import time
 import threading
@@ -9,6 +10,7 @@ from unittest.mock import MagicMock, patch
 from pythontk.core_utils.execution_monitor._execution_monitor import ExecutionMonitor
 from pythontk import ExecutionMonitor as PublicExecutionMonitor
 from pythontk import CancelScope
+from pythontk.core_utils.x11 import X11
 
 from conftest import BaseTestCase
 
@@ -17,6 +19,19 @@ _SIDECAR = os.path.join(
     "_sidecar.py",
 )
 _HAS_DISPLAY = sys.platform == "win32" or bool(os.environ.get("DISPLAY"))
+
+
+def _with_windll(test):
+    """Run a test of a win32 branch on any OS: ``ctypes.windll`` exists only on
+    Windows, so it is patched in (a mock everywhere) and the test's own
+    ``ctypes.windll.user32.*`` patches resolve."""
+
+    @functools.wraps(test)
+    def wrapper(*args, **kwargs):
+        with patch("ctypes.windll", MagicMock(), create=True):
+            return test(*args, **kwargs)
+
+    return wrapper
 
 
 class TestExecutionMonitor(BaseTestCase):
@@ -328,6 +343,7 @@ class TestExecutionMonitor(BaseTestCase):
         self.assertEqual(result, "interrupted")
         logger.warning.assert_any_call("Operation cancelled by user.")
 
+    @_with_windll
     def test_is_escape_pressed_windows(self):
         """Test is_escape_pressed on Windows (mocked)."""
         with patch("sys.platform", "win32"):
@@ -366,6 +382,7 @@ class TestExecutionMonitor(BaseTestCase):
             f"{self._EM_MOD}.ExecutionMonitor._helper_script_path", return_value=None
         )
 
+    @_with_windll
     def test_show_long_execution_dialog_windows_custom_dialog(self):
         """The custom dialog viewer (primary win32 path) maps exit codes to
         results: 0/3 -> keep waiting, 10 -> cancel, 2 -> force sentinel.
@@ -408,6 +425,7 @@ class TestExecutionMonitor(BaseTestCase):
         the MessageBoxW fallback (the sidecar dialog is the primary path)."""
         return self._no_sidecar()
 
+    @_with_windll
     def test_show_long_execution_dialog_windows(self):
         """Test the MessageBoxW fallback on Windows — no force button by default."""
         with patch("sys.platform", "win32"):
@@ -426,6 +444,7 @@ class TestExecutionMonitor(BaseTestCase):
                         ExecutionMonitor.show_long_execution_dialog("Title", "Msg")
                     )
 
+    @_with_windll
     def test_show_long_execution_dialog_windows_force_kill(self):
         """Test the MessageBoxW fallback with force_action='kill' returns FORCE_KILL."""
         with patch("sys.platform", "win32"):
@@ -440,6 +459,7 @@ class TestExecutionMonitor(BaseTestCase):
                         "FORCE_KILL",
                     )
 
+    @_with_windll
     def test_show_long_execution_dialog_windows_force_interrupt(self):
         """Test the MessageBoxW fallback with force_action='interrupt' returns FORCE_INTERRUPT."""
         with patch("sys.platform", "win32"):
@@ -455,43 +475,27 @@ class TestExecutionMonitor(BaseTestCase):
                     )
 
     def test_is_escape_pressed_linux(self):
-        """Test is_escape_pressed on Linux (mocked)."""
+        """On Linux the probe is the X server's key state for XK_Escape; no
+        server (pure Wayland, SSH) reads as not pressed."""
         with patch("sys.platform", "linux"):
-            with patch("ctypes.cdll.LoadLibrary") as mock_load_lib:
-                mock_x11 = MagicMock()
-                mock_load_lib.return_value = mock_x11
+            for down, expected in ((True, True), (False, False), (None, False)):
+                with patch.object(X11, "key_down", return_value=down) as key_down:
+                    self.assertIs(ExecutionMonitor.is_escape_pressed(), expected)
+                key_down.assert_called_once_with(0xFF1B)
 
-                # Setup X11 mocks
-                mock_x11.XOpenDisplay.return_value = 1  # Valid display
-                mock_x11.XKeysymToKeycode.return_value = (
-                    9  # Keycode for Escape (example)
-                )
-
-                # Mock XQueryKeymap to return a keymap where the bit for keycode 9 is set
-                # Keycode 9 -> Byte 1 (9 // 8), Bit 1 (9 % 8)
-                # We need to populate the buffer passed to XQueryKeymap
-                def side_effect_query_keymap(display, keys_buffer):
-                    # keys_buffer is a c_char * 32
-                    # We want to set the bit at index 1
-                    # In Python ctypes array, we can set values by index
-                    # 1 << 1 = 2
-                    keys_buffer[1] = b"\x02"
-
-                mock_x11.XQueryKeymap.side_effect = side_effect_query_keymap
-
-                # Reset static variables in ExecutionMonitor to force re-initialization
-                ExecutionMonitor._x11_lib = None
-                ExecutionMonitor._x11_display = None
-
-                self.assertTrue(ExecutionMonitor.is_escape_pressed())
-
-                # Test not pressed
-                def side_effect_query_keymap_empty(display, keys_buffer):
-                    keys_buffer[1] = b"\x00"
-
-                mock_x11.XQueryKeymap.side_effect = side_effect_query_keymap_empty
-
-                self.assertFalse(ExecutionMonitor.is_escape_pressed())
+    def test_linux_focus_and_cursor_ask_the_x_server(self):
+        """Esc in another app must not cancel: the focused window's owner is
+        compared with this process. Unknown (no server, no window manager)
+        keeps the affordance, as off Windows before."""
+        with patch("sys.platform", "linux"):
+            with patch.object(X11, "active_window_pid", return_value=os.getpid()):
+                self.assertTrue(ExecutionMonitor.is_foreground_process())
+            with patch.object(X11, "active_window_pid", return_value=os.getpid() + 1):
+                self.assertFalse(ExecutionMonitor.is_foreground_process())
+            with patch.object(X11, "active_window_pid", return_value=None):
+                self.assertTrue(ExecutionMonitor.is_foreground_process())
+            with patch.object(X11, "pointer", return_value=(120, 45)):
+                self.assertEqual(ExecutionMonitor._get_cursor_pos(), (120, 45))
 
     def test_show_long_execution_dialog_linux_zenity(self):
         """Test show_long_execution_dialog on Linux using Zenity (mocked)."""
@@ -1236,6 +1240,7 @@ class TestExecutionMonitor(BaseTestCase):
 
         self.assertEqual(func(), "cancelled")
 
+    @_with_windll
     def test_is_escape_pressed_returns_bool(self):
         with patch("sys.platform", "win32"):
             with patch("ctypes.windll.user32.GetAsyncKeyState", return_value=0x8000):
@@ -1466,6 +1471,15 @@ class TestKillProcessIsBounded(unittest.TestCase):
 class TestExecutionMonitorPythonExecutable(unittest.TestCase):
     """`_get_python_executable` DCC-host resolution (maya/max/nuke/generic)."""
 
+    # Fixtures are spelled the way THIS host spells them (drive + ``.exe`` on
+    # Windows, ``/`` and no suffix elsewhere): the resolver runs through the real
+    # ``os.path``, so a Windows path is not a path at all on Linux.
+    _EXT = ".exe" if sys.platform == "win32" else ""
+
+    @staticmethod
+    def _path(*parts):
+        return os.path.join("C:\\" if sys.platform == "win32" else "/", *parts)
+
     def _test_resolution(self, current_exe, file_system, expected_result):
         """Helper to test resolution logic.
 
@@ -1474,79 +1488,73 @@ class TestExecutionMonitorPythonExecutable(unittest.TestCase):
             file_system: set/list of paths that "exist" for this case.
             expected_result: path that should be returned.
         """
+        existing = {os.path.normcase(f) for f in file_system}
         with patch("sys.executable", current_exe):
-            with patch("os.path.exists") as mock_exists:
-
-                def side_effect(path):
-                    path = path.lower().replace("\\", "/")
-                    return any(
-                        f.lower().replace("\\", "/") == path for f in file_system
-                    )
-
-                mock_exists.side_effect = side_effect
-
+            with patch("os.path.exists", lambda p: os.path.normcase(p) in existing):
                 result = ExecutionMonitor._get_python_executable()
-                if expected_result is None:
-                    self.assertIsNone(result)
-                    return
-                self.assertEqual(
-                    result.lower().replace("\\", "/"),
-                    expected_result.lower().replace("\\", "/"),
-                )
+        if expected_result is None:
+            self.assertIsNone(result)
+            return
+        self.assertEqual(os.path.normcase(result), os.path.normcase(expected_result))
 
     def test_standard_python(self):
         """Standard python should return itself."""
-        exe = r"C:\Python39\python.exe"
+        exe = self._path("Python39", "python" + self._EXT)
         self._test_resolution(exe, {exe}, exe)
 
     def test_maya(self):
-        """maya.exe should find mayapy.exe."""
-        exe = r"C:\Program Files\Autodesk\Maya2025\bin\maya.exe"
-        mayapy = r"C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe"
+        """The Maya GUI binary finds mayapy beside it (``maya.exe`` on Windows,
+        ``maya.bin`` behind Linux's ``maya`` launcher script)."""
+        bin_dir = self._path("autodesk", "maya2025", "bin")
+        exe = os.path.join(bin_dir, "maya.exe" if self._EXT else "maya.bin")
+        mayapy = os.path.join(bin_dir, "mayapy" + self._EXT)
         self._test_resolution(exe, {exe, mayapy}, mayapy)
 
     def test_mayabatch(self):
-        """mayabatch.exe should find mayapy.exe."""
-        exe = r"C:\Program Files\Autodesk\Maya2025\bin\mayabatch.exe"
-        mayapy = r"C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe"
+        """mayabatch should find mayapy."""
+        bin_dir = self._path("autodesk", "maya2025", "bin")
+        exe = os.path.join(bin_dir, "mayabatch" + self._EXT)
+        mayapy = os.path.join(bin_dir, "mayapy" + self._EXT)
         self._test_resolution(exe, {exe, mayapy}, mayapy)
 
     def test_3dsmax(self):
-        """3dsmax.exe should find 3dsmaxpy.exe."""
-        exe = r"C:\Max\3dsmax.exe"
-        maxpy = r"C:\Max\3dsmaxpy.exe"
+        """3dsmax should find 3dsmaxpy."""
+        exe = self._path("Max", "3dsmax" + self._EXT)
+        maxpy = self._path("Max", "3dsmaxpy" + self._EXT)
         self._test_resolution(exe, {exe, maxpy}, maxpy)
 
     def test_generic_app_bundled_python(self):
-        """SomeApp.exe with a sibling python.exe."""
-        exe = r"C:\App\SomeApp.exe"
-        python = r"C:\App\python.exe"
+        """SomeApp with a sibling python."""
+        exe = self._path("App", "SomeApp" + self._EXT)
+        python = self._path("App", "python" + self._EXT)
         self._test_resolution(exe, {exe, python}, python)
 
     def test_unknown_app_no_python(self):
-        """UnknownApp.exe with no python anywhere resolves to None.
+        """UnknownApp with no python anywhere resolves to None.
 
         Returning the host binary itself was never usable: the callers hand the
         result a *python script* to run, so inside a host with no discoverable
         interpreter (Blender 4.x before ``set_interpreter``) the "spinner" was a
         second copy of the host application.
         """
-        exe = r"C:\App\UnknownApp.exe"
-        with patch("sys.prefix", r"C:\App"), patch("sys.base_prefix", r"C:\App"):
+        exe = self._path("App", "UnknownApp" + self._EXT)
+        prefix = self._path("App")
+        with patch("sys.prefix", prefix), patch("sys.base_prefix", prefix):
             self._test_resolution(exe, {exe}, None)
 
     def test_embedded_python_under_sys_prefix(self):
         """A host binary whose bundled python lives under ``sys.prefix``
-        (Blender: ``<ver>/python/bin/python.exe``) resolves to that python."""
-        exe = r"C:\Blender\blender.exe"
-        python = r"C:\Blender\4.2\python\bin\python.exe"
-        with patch("sys.prefix", r"C:\Blender\4.2\python"):
+        (Blender: ``<ver>/python/bin/python``) resolves to that python."""
+        exe = self._path("Blender", "blender" + self._EXT)
+        prefix = self._path("Blender", "4.2", "python")
+        python = os.path.join(prefix, "bin", "python" + self._EXT)
+        with patch("sys.prefix", prefix):
             self._test_resolution(exe, {exe, python}, python)
 
     def test_nuke(self):
-        """Nuke13.0.exe with a sibling python.exe."""
-        exe = r"C:\Nuke\Nuke13.0.exe"
-        python = r"C:\Nuke\python.exe"
+        """Nuke13.0 with a sibling python."""
+        exe = self._path("Nuke", "Nuke13.0" + self._EXT)
+        python = self._path("Nuke", "python" + self._EXT)
         self._test_resolution(exe, {exe, python}, python)
 
 

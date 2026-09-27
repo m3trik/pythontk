@@ -9,8 +9,11 @@ This module provides:
 - Path management for test resources
 """
 
+import json
 import os
 import re
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -111,6 +114,50 @@ class TestPaths:
         return str(cls.IMGTK_TEST_DIR / filename)
 
 
+class X11Window:
+    """A real top-level X11 window owned by a child process -- the fixture for
+    window lookups by PID, with no GUI toolkit needed.
+
+    Maps a window, sets ``_NET_WM_PID`` and ``WM_NAME`` as Qt/GTK apps (Maya,
+    Blender, browsers) do -- Tk 9 sets no ``_NET_WM_PID`` -- prints ``up``, and
+    holds the window until its stdin closes. Run :meth:`script` with
+    ``python -c``.
+    """
+
+    _SCRIPT = """
+import ctypes, os, sys
+x = ctypes.cdll.LoadLibrary("libX11.so.6")
+vp, ul, i = ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int
+for name, args, res in (
+    ("XOpenDisplay", [ctypes.c_char_p], vp),
+    ("XDefaultRootWindow", [vp], ul),
+    ("XCreateSimpleWindow", [vp, ul, i, i, ctypes.c_uint, ctypes.c_uint,
+                             ctypes.c_uint, ul, ul], ul),
+    ("XInternAtom", [vp, ctypes.c_char_p, i], ul),
+    ("XChangeProperty", [vp, ul, ul, ul, i, i, vp, i], i),
+    ("XStoreName", [vp, ul, ctypes.c_char_p], i),
+    ("XMapWindow", [vp, ul], i),
+    ("XSync", [vp, i], i),
+):
+    fn = getattr(x, name)
+    fn.argtypes, fn.restype = args, res
+d = x.XOpenDisplay(None)
+w = x.XCreateSimpleWindow(d, x.XDefaultRootWindow(d), 10, 10, 120, 80, 0, 0, 0)
+pid = ctypes.c_long(os.getpid())  # format-32 data travels as C longs
+x.XChangeProperty(d, w, x.XInternAtom(d, b"_NET_WM_PID", 0), 6, 32, 0,
+                  ctypes.byref(pid), 1)
+x.XStoreName(d, w, TITLE.encode())
+x.XMapWindow(d, w)
+x.XSync(d, 0)
+print("up", flush=True)
+sys.stdin.readline()
+"""
+
+    @classmethod
+    def script(cls, title: str) -> str:
+        return f"TITLE = {title!r}\n" + cls._SCRIPT
+
+
 class BaseTestCase(unittest.TestCase):
     """Base test case with common utilities and assertions."""
 
@@ -141,3 +188,43 @@ class BaseTestCase(unittest.TestCase):
     def assertPathExists(self, path: str, msg: str = None):
         """Assert that a file or directory exists."""
         self.assertTrue(os.path.exists(path), msg or f"Path does not exist: {path}")
+
+    #: Executes a file the way ``m3trik/scripts/generate_api_registry.py`` does
+    #: (off disk, registered before exec), with ``import pythontk`` failing, and
+    #: reports the top-level modules the exec pulled in beyond the stdlib (the
+    #: list needs ``sys.stdlib_module_names``, 3.10+).
+    _STANDALONE_LOAD = """
+import importlib.util, json, sys
+sys.modules["pythontk"] = None
+before = set(sys.modules)
+spec = importlib.util.spec_from_file_location("_standalone", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+try:
+    spec.loader.exec_module(module)
+except Exception as exc:
+    print(json.dumps({"error": f"{type(exc).__name__}: {exc}", "foreign": []}))
+    raise SystemExit(0)
+stdlib = getattr(sys, "stdlib_module_names", None)
+roots = {name.partition(".")[0] for name in set(sys.modules) - before}
+foreign = sorted(roots - {spec.name} - set(stdlib)) if stdlib else []
+print(json.dumps({"error": None, "foreign": foreign}))
+"""
+
+    def assertLoadsStandalone(self, path: str):
+        """Assert that *path* imports with the stdlib alone, pythontk absent.
+
+        For a module ``generate_api_registry.py`` loads off disk, on a CI box
+        with nothing installed: executed in a fresh interpreter where
+        ``import pythontk`` fails.
+        """
+        proc = subprocess.run(
+            [sys.executable, "-c", self._STANDALONE_LOAD, str(path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertIsNone(result["error"], f"{path} does not load standalone")
+        self.assertEqual(result["foreign"], [], f"{path} imports beyond the stdlib")

@@ -13,7 +13,7 @@ except ImportError:
         sys.path.append(repo_root)
     import pythontk  # noqa: F401
 
-from pythontk.core_utils.app_launcher import AppLauncher
+from pythontk import AppLauncher
 
 
 def launch_substance_painter(file_path=None, headless=False, enable_remote=True):
