@@ -342,14 +342,14 @@ Lightweight, DCC-agnostic color primitives.
 
 Deprecation - retiring public surface through one mechanism, with a clock.
 
-- [`MIN_WINDOW_DAYS`](pythontk/pythontk/core_utils/deprecation.py#L126) — constant
-- **[`class DeprecationRecord`](pythontk/pythontk/core_utils/deprecation.py#L172)** — One retired name, what replaces it, and the release it stops working in.
+- [`MIN_WINDOW_DAYS`](pythontk/pythontk/core_utils/deprecation.py#L124) — constant
+- **[`class DeprecationRecord`](pythontk/pythontk/core_utils/deprecation.py#L170)** — One retired name, what replaces it, and the release it stops working in.
   - `DeprecationRecord.key(self) -> Tuple[str, str]` *(property)* — Identity in the roster: ``(kind, what)``.
   - `DeprecationRecord.package(self) -> str` *(property)* — Top-level package the deprecated name belongs to (may be empty).
   - `DeprecationRecord.not_before(self) -> str` *(property)* — The earliest date the name may go (``since`` + :data:`MIN_WINDOW_DAYS`),
   - `DeprecationRecord.message(self) -> str` — The warning text: what went, when it goes, what to use instead.
   - `DeprecationRecord.expired(self, version: str, today: Optional[datetime.date] = None) -> bool` — True once the alias has outlived its window: *version* has reached
-- **[`class Deprecation(_DeprecationInternal)`](pythontk/pythontk/core_utils/deprecation.py#L454)** — Retire a public name with a notice and a removal version.
+- **[`class Deprecation(_DeprecationInternal)`](pythontk/pythontk/core_utils/deprecation.py#L452)** — Retire a public name with a notice and a removal version.
   - `Deprecation.window_expired(remove_in: str, version: str, since: str = '', today: Optional[datetime.date] = None) -> bool` *(static)* — Whether a retirement is due -- THE rule, for both gates.
   - `Deprecation.version_key(version: str) -> Tuple[int, int, int]` *(static)* — Comparable key for a ``MAJOR.MINOR[.PATCH]`` release version.
   - `Deprecation.warn(cls, what: str, replacement: str, *, remove_in: str, reason: Optional[str] = None, module: Optional[str] = None, kind: str = 'symbol', stacklevel: int = 1, since: Optional[str] = None) -> DeprecationRecord` *(class)* — Emit a deprecation notice from inside a function body.

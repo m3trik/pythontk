@@ -1239,7 +1239,7 @@
         {
           "name": "DeprecationRecord",
           "summary": "One retired name, what replaces it, and the release it stops working in.",
-          "line": 172,
+          "line": 170,
           "bases": [],
           "members": [
             {
@@ -1248,7 +1248,7 @@
               "kind": "property",
               "signature": "(self) -> Tuple[str, str]",
               "summary": "Identity in the roster: ``(kind, what)``.",
-              "line": 217,
+              "line": 215,
               "deprecated": false
             },
             {
@@ -1257,7 +1257,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "Top-level package the deprecated name belongs to (may be empty).",
-              "line": 227,
+              "line": 225,
               "deprecated": false
             },
             {
@@ -1266,7 +1266,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "The earliest date the name may go (``since`` + :data:`MIN_WINDOW_DAYS`),",
-              "line": 232,
+              "line": 230,
               "deprecated": false
             },
             {
@@ -1275,7 +1275,7 @@
               "kind": "method",
               "signature": "(self) -> str",
               "summary": "The warning text: what went, when it goes, what to use instead.",
-              "line": 240,
+              "line": 238,
               "deprecated": false
             },
             {
@@ -1284,7 +1284,7 @@
               "kind": "method",
               "signature": "(self, version: str, today: Optional[datetime.date] = None) -> bool",
               "summary": "True once the alias has outlived its window: *version* has reached",
-              "line": 251,
+              "line": 249,
               "deprecated": false
             }
           ]
@@ -1292,7 +1292,7 @@
         {
           "name": "Deprecation",
           "summary": "Retire a public name with a notice and a removal version.",
-          "line": 454,
+          "line": 452,
           "bases": [
             "_DeprecationInternal"
           ],
@@ -1303,7 +1303,7 @@
               "kind": "staticmethod",
               "signature": "(remove_in: str, version: str, since: str = '', today: Optional[datetime.date] = None) -> bool",
               "summary": "Whether a retirement is due -- THE rule, for both gates.",
-              "line": 487,
+              "line": 485,
               "deprecated": false
             },
             {
@@ -1312,7 +1312,7 @@
               "kind": "staticmethod",
               "signature": "(version: str) -> Tuple[int, int, int]",
               "summary": "Comparable key for a ``MAJOR.MINOR[.PATCH]`` release version.",
-              "line": 514,
+              "line": 512,
               "deprecated": false
             },
             {
@@ -1321,7 +1321,7 @@
               "kind": "classmethod",
               "signature": "(cls, what: str, replacement: str, *, remove_in: str, reason: Optional[str] = None, module: Optional[str] = None, kind: str = 'symbol', stacklevel: int = 1, since: Optional[str] = None) -> DeprecationRecord",
               "summary": "Emit a deprecation notice from inside a function body.",
-              "line": 536,
+              "line": 534,
               "deprecated": false
             },
             {
@@ -1330,7 +1330,7 @@
               "kind": "classmethod",
               "signature": "(cls, replacement: str, *, remove_in: str, reason: Optional[str] = None, since: Optional[str] = None) -> Callable[[Any], Any]",
               "summary": "Deprecate a whole function, method or class.",
-              "line": 592,
+              "line": 590,
               "deprecated": false
             },
             {
@@ -1339,7 +1339,7 @@
               "kind": "classmethod",
               "signature": "(cls, old: str, *, remove_in: str, new: Optional[str] = None, transform: Optional[Callable[[Any], Any]] = None, drop: bool = False, reason: Optional[str] = None, since: Optional[str] = None) -> Callable[[Callable], Callable]",
               "summary": "Deprecate one keyword argument of a function that stays.",
-              "line": 643,
+              "line": 641,
               "deprecated": false
             },
             {
@@ -1348,7 +1348,7 @@
               "kind": "classmethod",
               "signature": "(cls, module_globals: Dict[str, Any], moved: Mapping[str, str], *, remove_in: str, reason: Optional[str] = None, since: Optional[str] = None) -> Dict[str, DeprecationRecord]",
               "summary": "Serve module attributes that moved, through a module ``__getattr__``.",
-              "line": 745,
+              "line": 743,
               "deprecated": false
             },
             {
@@ -1357,7 +1357,7 @@
               "kind": "classmethod",
               "signature": "(cls, aliases: Mapping[Any, Any], *, what: str, remove_in: str, module: Optional[str] = None, reason: Optional[str] = None, since: Optional[str] = None) -> Callable[[Any], Any]",
               "summary": "Build a resolver mapping retired members of a value vocabulary onto live ones.",
-              "line": 857,
+              "line": 859,
               "deprecated": false
             },
             {
@@ -1366,7 +1366,7 @@
               "kind": "classmethod",
               "signature": "(cls, *, module: Optional[str] = None, kind: Optional[str] = None) -> Tuple[DeprecationRecord, ...]",
               "summary": "Every deprecation registered so far, sorted by removal version.",
-              "line": 921,
+              "line": 923,
               "deprecated": false
             },
             {
@@ -1375,7 +1375,7 @@
               "kind": "classmethod",
               "signature": "(cls, version: str, *, module: Optional[str] = None, today: Optional[datetime.date] = None) -> Tuple[DeprecationRecord, ...]",
               "summary": "Registered deprecations that should already have been deleted.",
-              "line": 955,
+              "line": 957,
               "deprecated": false
             },
             {
@@ -1384,7 +1384,7 @@
               "kind": "classmethod",
               "signature": "(cls, version: Optional[str] = None, *, module: Optional[str] = None, today: Optional[datetime.date] = None) -> str",
               "summary": "Render the roster as lines, marking anything already overdue.",
-              "line": 981,
+              "line": 983,
               "deprecated": false
             }
           ]
@@ -1397,7 +1397,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 126,
+          "line": 124,
           "deprecated": false
         }
       ]
@@ -14688,7 +14688,7 @@
               "kind": "staticmethod",
               "signature": "(path: str, create_dir: bool = False, logger=None) -> bool",
               "summary": "Open the file explorer at the given path.",
-              "line": 1078,
+              "line": 1085,
               "deprecated": false
             },
             {
@@ -14697,7 +14697,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, as_list: bool = False, encoding: str = 'utf-8', default: Optional[Union[str, List[str]]] = None) -> Optional[Union[str, List[str]]]",
               "summary": "Read a text file, whole or as a list of lines, or return *default*.",
-              "line": 1129,
+              "line": 1136,
               "deprecated": false
             },
             {
@@ -14706,7 +14706,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, lines)",
               "summary": "Write the given list contents to the given file.",
-              "line": 1170,
+              "line": 1177,
               "deprecated": false
             },
             {
@@ -14715,7 +14715,7 @@
               "kind": "staticmethod",
               "signature": "(filepath, default=None, encoding: str = 'utf-8')",
               "summary": "Parse the JSON document at *filepath*, or return *default*.",
-              "line": 1184,
+              "line": 1191,
               "deprecated": false
             },
             {
@@ -14724,7 +14724,7 @@
               "kind": "classmethod",
               "signature": "(cls, filepath, data, *, indent=2, encoding: str = 'utf-8', sort_keys: bool = False) -> None",
               "summary": "Serialise *data* to *filepath* atomically, creating parent dirs.",
-              "line": 1211,
+              "line": 1218,
               "deprecated": false
             },
             {
@@ -14733,7 +14733,7 @@
               "kind": "staticmethod",
               "signature": "(src: str, dst: str) -> None",
               "summary": "``os.replace(src, dst)`` that waits out a momentary Windows lock.",
-              "line": 1253,
+              "line": 1260,
               "deprecated": false
             },
             {
@@ -14742,7 +14742,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, content: str, encoding: str = 'utf-8') -> None",
               "summary": "Write text to a file atomically.",
-              "line": 1283,
+              "line": 1290,
               "deprecated": false
             },
             {
@@ -14751,7 +14751,7 @@
               "kind": "staticmethod",
               "signature": "(target: str, write: Callable[[str], Any], promote: bool = True) -> str",
               "summary": "Produce *target* through *write*, so no reader meets a partial file.",
-              "line": 1349,
+              "line": 1356,
               "deprecated": false
             },
             {
@@ -14760,7 +14760,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str",
               "summary": "Copies a file to a specified folder, ensuring the folder exists.",
-              "line": 1407,
+              "line": 1414,
               "deprecated": false
             },
             {
@@ -14769,7 +14769,7 @@
               "kind": "classmethod",
               "signature": "(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]",
               "summary": "Moves one or more files to a specified folder.",
-              "line": 1446,
+              "line": 1453,
               "deprecated": false
             },
             {
@@ -14778,7 +14778,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, _runner=None)",
               "summary": "Open the OS file manager showing ``path`` (selecting the file when supported, else",
-              "line": 1573,
+              "line": 1582,
               "deprecated": false
             },
             {
@@ -14787,7 +14787,7 @@
               "kind": "classmethod",
               "signature": "(cls, paths, info, hash_algo=None, force_tuples=False)",
               "summary": "Returns file and directory information for a list of file strings based on specified parameters.",
-              "line": 1649,
+              "line": 1658,
               "deprecated": false
             },
             {
@@ -14796,7 +14796,7 @@
               "kind": "staticmethod",
               "signature": "(p: Union[str, List[str]], section: Union[str, None] = None, replace: Union[str, None] = None) -> Union[str, List[str]]",
               "summary": "Format a given filepath(s).",
-              "line": 1732,
+              "line": 1741,
               "deprecated": false
             },
             {
@@ -14805,7 +14805,7 @@
               "kind": "staticmethod",
               "signature": "(file_path: str, base_dir: str, prepend_base: bool = True, check_existence: bool = False) -> Union[str, List[str]]",
               "summary": "Convert an absolute file path to a relative path based on the given base directory.",
-              "line": 1802,
+              "line": 1811,
               "deprecated": false
             },
             {
@@ -14814,7 +14814,7 @@
               "kind": "staticmethod",
               "signature": "(source_paths: List[str], target_dir: str, base_dir: str) -> List[Tuple[str, str, str]]",
               "summary": "Remap a list of file paths to a new directory while preserving their relative",
-              "line": 1849,
+              "line": 1858,
               "deprecated": false
             },
             {
@@ -14823,7 +14823,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, **kwargs)",
               "summary": "Append a directory to the python path.",
-              "line": 1902,
+              "line": 1911,
               "deprecated": false
             },
             {
@@ -14832,7 +14832,7 @@
               "kind": "staticmethod",
               "signature": "(obj, inc_filename: bool = False) -> str",
               "summary": "Retrieve the absolute file path associated with a Python object.",
-              "line": 1924,
+              "line": 1933,
               "deprecated": false
             },
             {
@@ -14841,7 +14841,7 @@
               "kind": "staticmethod",
               "signature": "(filepath)",
               "summary": "The dotted module path a .py file has by its location on disk.",
-              "line": 2016,
+              "line": 2025,
               "deprecated": false
             },
             {
@@ -14850,7 +14850,7 @@
               "kind": "classmethod",
               "signature": "(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)",
               "summary": "Scan the specified directory or Python file and retrieve class information from each file.",
-              "line": 2054,
+              "line": 2063,
               "deprecated": false
             }
           ]
