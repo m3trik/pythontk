@@ -73,8 +73,6 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
-from pythontk.core_utils.module_resolver import _ModuleHook
-
 #: Modules whose frames are transparent when a warning is attributed to a
 #: caller. This module's own frames obviously, plus the lazy package resolver:
 #: a deprecated module attribute reached through ``pythontk.<Name>`` is served
@@ -778,6 +776,10 @@ class Deprecation(_DeprecationInternal):
         Returns:
             (dict) Attribute name -> its registered record.
         """
+        # Not at module level: generate_api_registry.py loads this file off
+        # disk with nothing installed, so the module imports the stdlib only.
+        from pythontk.core_utils.module_resolver import _ModuleHook
+
         module_name = module_globals.get("__name__", "")
         previous_getattr, stale_getattr = _ModuleHook.previous(
             module_globals, "__getattr__"

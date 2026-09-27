@@ -37,14 +37,19 @@ class FileTest(BaseTestCase):
 
     @classmethod
     def setUpClass(cls):
-        """Set up test paths used across file tests."""
+        """Lay out the tree the tests read: ``file1.txt`` (committed -- the tests
+        rewrite it, so its bytes are kept to put back), and ``file2.txt`` and
+        ``sub-directory``, made here."""
         cls.test_base_path = TestPaths.BASE_DIR
         cls.test_files_path = TestPaths.TEST_FILES_DIR
         cls.file1_path = cls.test_files_path / "file1.txt"
         cls.file2_path = cls.test_files_path / "file2.txt"
+        cls.sub_dir_path = cls.test_files_path / "sub-directory"
 
-        # Ensure test files exist
-        os.makedirs(cls.test_files_path, exist_ok=True)
+        os.makedirs(cls.sub_dir_path, exist_ok=True)
+        cls._file1_committed = (
+            cls.file1_path.read_bytes() if cls.file1_path.exists() else None
+        )
         with open(cls.file1_path, "w") as f:
             f.write("file1")
         with open(cls.file2_path, "w") as f:
@@ -52,15 +57,13 @@ class FileTest(BaseTestCase):
 
     @classmethod
     def tearDownClass(cls):
-        """Clean up test files."""
+        """Leave the tree as committed, whichever tests ran: a subset run left
+        ``file1.txt`` rewritten, and a release commits the working tree."""
+        if cls._file1_committed is not None:
+            cls.file1_path.write_bytes(cls._file1_committed)
         if os.path.exists(cls.file2_path):
             os.remove(cls.file2_path)
-        # file1.txt might be used by other tests, but we created it so we should probably clean it.
-        # However, existing tests might rely on it being there.
-        # Given the previous state, file1.txt existed but file2.txt didn't.
-        # I'll leave file1.txt alone if it was already there, but here I overwrote it.
-        # Let's just clean up file2.txt to be safe, or both.
-        pass
+        shutil.rmtree(cls.sub_dir_path, ignore_errors=True)
 
     # -------------------------------------------------------------------------
     # format_path Tests
@@ -311,10 +314,12 @@ class FileTest(BaseTestCase):
 
     def test_create_directory(self):
         """Test create_dir creates directories."""
-        sub_dir = str(self.test_files_path / "sub-directory")
-        result = FileUtils.create_dir(sub_dir)
+        new_dir = str(self.test_files_path / "created-directory")
+        self.addCleanup(shutil.rmtree, new_dir, ignore_errors=True)
+        self.assertFalse(os.path.exists(new_dir))
+        result = FileUtils.create_dir(new_dir)
         self.assertIsNone(result)
-        self.assertTrue(os.path.isdir(sub_dir))
+        self.assertTrue(os.path.isdir(new_dir))
 
     def test_create_nested_directory(self):
         """Test create_dir creates nested directories."""
@@ -1500,6 +1505,65 @@ class FileTest(BaseTestCase):
                 )
                 names = sorted(os.path.basename(p) for p in result)
                 self.assertEqual(names, ["deep.txt", "top.txt"], f"num_threads={nt}")
+
+    def test_get_dir_contents_lists_in_one_order_on_every_file_system(self):
+        """A Linux file system lists a directory in no particular order, NTFS
+        sorted (upper-cased, then as written), so on Linux the listing, and
+        which of two same-named presets won, changed with the disk; the
+        threaded walk also took results as they completed. Every listing is
+        now in NTFS order. Simulated with a ``scandir`` that lists in reverse,
+        which ``os.walk`` goes through too."""
+        from unittest.mock import patch
+
+        real_scandir = os.scandir
+
+        class ReversedListing:
+            def __init__(self, path="."):
+                with real_scandir(path) as entries:
+                    self._entries = iter(list(entries)[::-1])
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                return next(self._entries)
+
+            def close(self):
+                pass
+
+        files = ("b.txt", "A.txt", "_c.txt")
+        with tempfile.TemporaryDirectory() as root:
+            for sub in ("B", "a"):
+                os.makedirs(os.path.join(root, sub))
+                for name in files:
+                    open(os.path.join(root, sub, name), "w").close()
+            for name in files:
+                open(os.path.join(root, name), "w").close()
+            with patch.object(os, "scandir", ReversedListing):
+                flat = FileUtils.get_dir_contents(root, ["dir", "file"])
+                walked = {
+                    n: FileUtils.get_dir_contents(
+                        root, "filepath", recursive=True, num_threads=n
+                    )
+                    for n in (1, 4)
+                }
+
+        ordered = ["A.txt", "b.txt", "_c.txt"]
+        self.assertEqual(flat, ["a", "B"] + ordered)
+        expected = [
+            os.path.join(root, *parts)
+            for parts in [(n,) for n in ordered]
+            + [("a", n) for n in ordered]
+            + [("B", n) for n in ordered]
+        ]
+        for n, result in walked.items():
+            self.assertEqual(result, expected, f"num_threads={n}")
 
     def test_get_dir_contents_num_threads_all_cores_enters_parallel_branch(self):
         """Regression: num_threads=-1 ('use all cores') must enter the

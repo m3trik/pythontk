@@ -919,6 +919,8 @@ class FileUtils(HelpMixin):
                                   and the value is a list of items of that type.
         Returns:
             list/dict: A list or dictionary containing the results based on the `content` and `group_by_type` parameters.
+                Each directory's entries come in NTFS order (upper-cased, then as written) on every file
+                system, and a recursive listing walks depth first in that order.
 
         Examples:
             # Example 1: Basic usage with default `content`
@@ -949,6 +951,11 @@ class FileUtils(HelpMixin):
 
         grouped_result = {opt: [] for opt in options}
 
+        def listing_order(name):
+            # What NTFS returns, so Windows results stay as they were; a Linux
+            # file system lists a directory in no particular order.
+            return (name.upper(), name)
+
         # Non-recursive: use scandir for single directory (faster than os.walk)
         if not recursive:
             try:
@@ -966,6 +973,8 @@ class FileUtils(HelpMixin):
                         files = IterUtils.filter_list(files, inc_files, exc_files)
                     if has_dir_filter and dirs:
                         dirs = IterUtils.filter_list(dirs, inc_dirs, exc_dirs)
+                    files.sort(key=listing_order)
+                    dirs.sort(key=listing_order)
 
                     # Build results based on requested options
                     for opt in options:
@@ -1030,6 +1039,7 @@ class FileUtils(HelpMixin):
                 return any(FileUtils.is_under(root, p) for p in inc_roots)
 
             for root, dirs, files in os.walk(base, topdown=True):
+                dirs.sort(key=listing_order)  # In place: the walk descends in it.
                 if has_dir_filter:
                     if inc_dirs and _under_inc(root):
                         dirs[:] = IterUtils.filter_list(dirs, None, exc_dirs)
@@ -1038,27 +1048,24 @@ class FileUtils(HelpMixin):
                         if inc_dirs:
                             for d in dirs:
                                 inc_roots.add(os.path.normcase(os.path.join(root, d)))
-                yield root, dirs, files
+                yield root, dirs, sorted(files, key=listing_order)
 
         if num_threads == -1 or num_threads > 1:
             import multiprocessing
-            from concurrent.futures import ThreadPoolExecutor, as_completed
+            from concurrent.futures import ThreadPoolExecutor
 
             num_cores = (
                 multiprocessing.cpu_count() if num_threads == -1 else num_threads
             )
             with ThreadPoolExecutor(max_workers=num_cores) as executor:
-                # Pass a copy of dirs so workers never touch the walker's list.
-                futures = {
-                    executor.submit(process_directory, root, list(dirs), files): (
-                        root,
-                        dirs,
-                        files,
-                    )
+                # Pass a copy of dirs so workers never touch the walker's list;
+                # results are taken in walk order, not as they complete.
+                futures = [
+                    executor.submit(process_directory, root, list(dirs), files)
                     for root, dirs, files in walk_pruned(path)
-                }
+                ]
 
-                for future in as_completed(futures):
+                for future in futures:
                     data = future.result()
                     for opt in options:
                         grouped_result[opt].extend(data[opt])
@@ -1558,7 +1565,9 @@ class FileUtils(HelpMixin):
                 else:
                     # src is gone, or a directory the move may have part
                     # emptied: the stage can hold the only whole copy.
-                    log.error("move_file: interrupted; %s is (partly) at %s", src, staged)
+                    log.error(
+                        "move_file: interrupted; %s is (partly) at %s", src, staged
+                    )
             raise
         try:
             FileUtils.replace_file(staged, dst)

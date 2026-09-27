@@ -217,6 +217,17 @@ class DeprecationCalendarWindowTest(BaseTestCase):
         self.assertIn("2026-09-05", dated.values())
 
 
+class DeprecationStandaloneLoadTest(BaseTestCase):
+    """``generate_api_registry.py`` loads this module off disk, on a CI box with
+    no pythontk installed, for ``version_key`` and ``window_expired`` -- so it
+    imports nothing but the stdlib at module level. A module-level
+    ``_ModuleHook`` import failed pythontk's registry check (2026-09-27).
+    """
+
+    def test_it_loads_without_the_package(self):
+        self.assertLoadsStandalone(inspect.getsourcefile(Deprecation))
+
+
 class DeprecationWarnTest(BaseTestCase):
     """``Deprecation.warn`` -- the escape hatch for shapes the decorators miss.
 

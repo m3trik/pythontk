@@ -9,8 +9,11 @@ This module provides:
 - Path management for test resources
 """
 
+import json
 import os
 import re
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -185,3 +188,43 @@ class BaseTestCase(unittest.TestCase):
     def assertPathExists(self, path: str, msg: str = None):
         """Assert that a file or directory exists."""
         self.assertTrue(os.path.exists(path), msg or f"Path does not exist: {path}")
+
+    #: Executes a file the way ``m3trik/scripts/generate_api_registry.py`` does
+    #: (off disk, registered before exec), with ``import pythontk`` failing, and
+    #: reports the top-level modules the exec pulled in beyond the stdlib (the
+    #: list needs ``sys.stdlib_module_names``, 3.10+).
+    _STANDALONE_LOAD = """
+import importlib.util, json, sys
+sys.modules["pythontk"] = None
+before = set(sys.modules)
+spec = importlib.util.spec_from_file_location("_standalone", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+try:
+    spec.loader.exec_module(module)
+except Exception as exc:
+    print(json.dumps({"error": f"{type(exc).__name__}: {exc}", "foreign": []}))
+    raise SystemExit(0)
+stdlib = getattr(sys, "stdlib_module_names", None)
+roots = {name.partition(".")[0] for name in set(sys.modules) - before}
+foreign = sorted(roots - {spec.name} - set(stdlib)) if stdlib else []
+print(json.dumps({"error": None, "foreign": foreign}))
+"""
+
+    def assertLoadsStandalone(self, path: str):
+        """Assert that *path* imports with the stdlib alone, pythontk absent.
+
+        For a module ``generate_api_registry.py`` loads off disk, on a CI box
+        with nothing installed: executed in a fresh interpreter where
+        ``import pythontk`` fails.
+        """
+        proc = subprocess.run(
+            [sys.executable, "-c", self._STANDALONE_LOAD, str(path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertIsNone(result["error"], f"{path} does not load standalone")
+        self.assertEqual(result["foreign"], [], f"{path} imports beyond the stdlib")

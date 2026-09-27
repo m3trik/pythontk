@@ -7,6 +7,7 @@ Run with:
     python test_symbol_record.py
 """
 
+import inspect
 import json
 import unittest
 
@@ -45,6 +46,10 @@ class SymbolRecordTest(BaseTestCase):
         )
         base.update(overrides)
         return SymbolRecord(**base)
+
+    def test_it_loads_without_the_package(self):
+        """``generate_api_registry.py`` loads this file off disk, nothing installed."""
+        self.assertLoadsStandalone(inspect.getsourcefile(SymbolRecord))
 
     def test_field_order_is_frozen(self):
         """asdict() key order must match the registry sidecar contract."""
