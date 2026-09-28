@@ -2236,6 +2236,10 @@ class TestMoveToTrash(unittest.TestCase):
         name = f"ptk_trash_{os.getpid()}_{id(self)}.exr"
         path = self._file(name, data=b"recycled lightmap")
         item = FileUtils.move_to_trash(path)
+        if item == "":
+            # The documented "recycled, but no record names it" answer: this
+            # machine's bin keeps nothing to restore (a GitHub runner's D:).
+            self.skipTest("this volume's Recycle Bin keeps no record")
         self.assertTrue(item, "the bin's own record names it")
         self.addCleanup(self._purge, item)
         self.assertFalse(os.path.exists(path))

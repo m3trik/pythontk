@@ -219,6 +219,12 @@ class _EnvironmentMixin:
 
             codec = "mbcs"
             try:
+                codecs.lookup(codec)
+            except LookupError:
+                # No Windows code page on this host (a test forcing the win32
+                # branch on Linux CI): the strictest codec, never one that raises.
+                codec = "ascii"
+            try:
                 import winreg
 
                 key = r"SYSTEM\CurrentControlSet\Control\Nls\CodePage"

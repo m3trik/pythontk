@@ -721,6 +721,46 @@ def _ansi_codec_ok(text):
     return AppLauncher._ansi_encodable(text)
 
 
+class TestAnsiCodecFallback(unittest.TestCase):
+    """The ANSI codec answers on a host with no Windows code page to read.
+
+    With no ``winreg`` the codec fell back to ``mbcs``, which exists only on
+    Windows: every check then raised ``LookupError``. A test forcing the win32
+    branch on Linux CI (``python_args_via_env`` for the watchdog and dialog
+    sidecars) died there, and the dialog's silent catch fell through to the
+    native fallback.
+    """
+
+    def test_no_windows_code_page_still_answers(self):
+        import builtins
+        import codecs
+        from unittest import mock
+
+        real_import, real_lookup = builtins.__import__, codecs.lookup
+
+        def no_winreg(name, *args, **kwargs):
+            if name == "winreg":
+                raise ImportError(name)
+            return real_import(name, *args, **kwargs)
+
+        def no_mbcs(name):
+            if name.lower() == "mbcs":
+                raise LookupError(name)
+            return real_lookup(name)
+
+        saved = AppLauncher._ANSI_CODEC
+        AppLauncher._ANSI_CODEC = None
+        try:
+            with mock.patch("builtins.__import__", no_winreg):
+                with mock.patch("codecs.lookup", no_mbcs):
+                    codec = AppLauncher._ansi_codec()
+                    no_mbcs(codec)  # one this host has; raises for mbcs off Windows
+            self.assertTrue(AppLauncher._ansi_encodable("/tmp/plain"))
+            self.assertFalse(AppLauncher._ansi_encodable("/tmp/Жук"))
+        finally:
+            AppLauncher._ANSI_CODEC = saved
+
+
 @unittest.skipUnless(sys.platform == "win32", "the ANSI code page is a Windows notion")
 class TestAnsiSafePath(unittest.TestCase):
     """``ansi_safe_path``: a path Maya can open although it reads paths in the ANSI
@@ -745,7 +785,9 @@ class TestAnsiSafePath(unittest.TestCase):
         # 8.3 names are a per-volume setting; without one there is nothing to prove.
         if _ansi_codec_ok(self.cyr):
             self.skipTest("this ANSI code page holds Cyrillic")
-        if AppLauncher._short_name(os.path.dirname(self.cyr)) in (None, ""):
+        # A volume with them off answers the LONG name (a GitHub runner's D:), not None.
+        short = AppLauncher._short_name(os.path.dirname(self.cyr))
+        if not short or not os.path.basename(short).isascii():
             self.skipTest("no 8.3 short names on this volume")
 
     def test_an_ansi_path_is_returned_as_is(self):
