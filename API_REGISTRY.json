@@ -446,7 +446,7 @@
               "kind": "staticmethod",
               "signature": "(path, ascii_only=False)",
               "summary": "*path* spelled so a program that reads paths in the ANSI code page can open it.",
-              "line": 262,
+              "line": 268,
               "deprecated": false
             },
             {
@@ -455,7 +455,7 @@
               "kind": "staticmethod",
               "signature": "(source_root)",
               "summary": "Child env for launching a DIFFERENT app: this process's env, minus its",
-              "line": 335,
+              "line": 341,
               "deprecated": false
             },
             {
@@ -464,7 +464,7 @@
               "kind": "staticmethod",
               "signature": "()",
               "summary": "Child env for a desktop helper (``xdg-open``, a file manager) on POSIX.",
-              "line": 379,
+              "line": 385,
               "deprecated": false
             },
             {
@@ -473,7 +473,7 @@
               "kind": "staticmethod",
               "signature": "(path, user_scope=True)",
               "summary": "Appends a directory to the system PATH.",
-              "line": 401,
+              "line": 407,
               "deprecated": false
             },
             {
@@ -482,7 +482,7 @@
               "kind": "staticmethod",
               "signature": "(path)",
               "summary": "Checks if the path is permanently stored in the system configuration (e.g.",
-              "line": 467,
+              "line": 473,
               "deprecated": false
             },
             {
