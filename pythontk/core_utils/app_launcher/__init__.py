@@ -16,8 +16,9 @@ cross-call is spelled ``AppLauncher.<name>``, so patching the facade reaches it:
   pairs with).
 * :mod:`._environment` -- the environment a child inherits: ``process_environ``
   (the LIVE block, not the ``os.environ`` snapshot), ``handoff_env``,
-  ``desktop_env``, and the user's persisted PATH (``append_to_path``,
-  ``is_path_persisted``).
+  ``desktop_env``, ``python_args_via_env`` (a Python child's argv carried in
+  its env, off the command line), and the user's persisted PATH
+  (``append_to_path``, ``is_path_persisted``).
 * :mod:`._desktop` -- the interactive desktop: Windows sessions
   (``is_interactive_session``, ``launch_in_session``) and a process's windows
   (``wait_for_ready``, ``get_window_titles``).

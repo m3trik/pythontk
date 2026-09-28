@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.12.0"
+__version__ = "0.12.1"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -89,6 +89,11 @@ DEFAULT_INCLUDE = {
     "geo_utils.plate_emitter": "PlateEmitter",
     "geo_utils.shadow_projection": ["ShadowProjection", "ShadowModel", "ShadowRaster"],
     "geo_utils.shadow_horizon": ["ShadowHorizon", "HeightFieldMap", "HorizonMap"],
+    # Articulated rigs: the joint model + grab solver every runtime ports, and
+    # the geometry rules that propose a rig from the parts alone.
+    "geo_utils.articulation.model": "ArticulationModel",
+    "geo_utils.articulation.analysis": "ArticulationAnalysis",
+    "geo_utils.articulation.conformance": "ArticulationConformance",
     "img_utils.shadow_atlas": "ShadowAtlas",
     "geo_utils.uv.pack": ["UvPack", "PackIslandsResult"],
     "geo_utils.uv.budget": [

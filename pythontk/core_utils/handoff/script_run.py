@@ -95,12 +95,19 @@ class ScriptRunner(_ScriptRunnerInternal):
                 need the second: clearing would delete the app's input, and an app that
                 exits cleanly without saving would otherwise read as success and the
                 caller would silently re-ingest its own unmodified export.
-            launch_args: Maps the written script's path to the app's argv (default
-                ``[script_path]`` — interpreter style, e.g. ``mayapy script.py``).
+            launch_args: Maps the written script's path to the app's argv (e.g.
+                ``["--background", "--python", script_path]`` for Blender). Default: the
+                app is a Python interpreter (``mayapy``) and runs the script as
+                ``python script.py`` would, but with the path carried in the child's
+                environment (:meth:`pythontk.AppLauncher.python_args_via_env`), never on
+                its command line: mayapy decodes that in the ANSI code page, and the
+                script lives under %TEMP%, which holds the user's name.
             timeout: Max seconds before the child is killed (``subprocess.TimeoutExpired``
                 propagates with ``script_path`` attached, script kept). ``None`` = no limit.
             script_suffix / script_prefix: Naming for the temp script file.
-            cwd / env: Forwarded to the child process.
+            cwd / env: Forwarded to the child process. Either way the child's env also
+                carries the script path in :attr:`pythontk.AppLauncher.PYTHON_ARGV_VAR`,
+                for an app whose *launch_args* must not name it.
             on_output: Stream the child's output while it runs instead of only
                 collecting it at exit (:meth:`pythontk.AppLauncher.run`): called with
                 each line as it arrives and with ``None`` on quiet ticks; return
@@ -144,7 +151,8 @@ class ScriptRunner(_ScriptRunnerInternal):
         with open(script_path, "w", encoding="utf-8") as fh:
             fh.write(script_text)
 
-        args = list(launch_args(script_path)) if launch_args else [script_path]
+        shim_args, env = AppLauncher.python_args_via_env([script_path], env)
+        args = list(launch_args(script_path)) if launch_args else shim_args
         start = time.time()
         # hide_window: the child's output is captured — a console window (which
         # Windows would otherwise pop for a console-subsystem exe like mayapy when

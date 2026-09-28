@@ -37,6 +37,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pythontk as ptk  # noqa: E402
+from conftest import browser_runtime_available  # noqa: E402
 
 #: An ES module that reports what the page ended up with, through the viewer's
 #: own documented script seam -- so what is measured is what a real push shows,
@@ -674,9 +675,15 @@ SESSION_JS = """
   });
   const heard = [];
   const space = { addEventListener: (type, fn) => heard.push([type, fn]), removeEventListener() {} };
+  // three.js holds the session before 'sessionstart'; the page listens on it
+  // for a tracked hand's pinch.
+  const selects = {};
+  const session = { addEventListener: (type, fn) => { selects[type] = fn; }, removeEventListener() {} };
   const ownSpace = xr.getReferenceSpace;
+  const ownSession = xr.getSession;
   const begin = () => {
     xr.getReferenceSpace = () => space;
+    xr.getSession = () => session;
     xr.isPresenting = true;
     xr.dispatchEvent({ type: 'sessionstart' });
   };
@@ -684,7 +691,13 @@ SESSION_JS = """
     xr.isPresenting = false;
     xr.dispatchEvent({ type: 'sessionend' });
     xr.getReferenceSpace = ownSpace;
+    xr.getSession = ownSession;
   };
+  // A tracked hand: no gamepad, so only its pinch can hold.
+  const hand = { handedness: 'right', targetRaySpace: {} };
+  const handFrame = { session: { inputSources: [hand] }, getViewerPose: () => null, getPose: () => null };
+  const pinched = () => H.read(handFrame).squeeze.right;
+  const pinch = (type) => selects[type]({ type, inputSource: hand });
   const headsetFrame = () => {
     camera.position.set(4, 1.6, -3);
     camera.quaternion.setFromEuler(new THREE.Euler(0.1, 2.0, 0));
@@ -714,11 +727,18 @@ SESSION_JS = """
     heard: heard.map(([type]) => type),
     recenters: heard.length === 1 && heard[0][1] === H.recenter,
     layer: layerShown(),
+    selects: Object.keys(selects).sort(),
+    pinch: [],
   };
+  pinch('selectstart');
+  out.started.pinch.push(pinched());
+  pinch('selectend');
+  out.started.pinch.push(pinched());
+  pinch('selectstart');  // still pinching when the session ends
   headsetFrame();
   headsetFrame();
   finish();
-  out.ended = { view: view(), layer: layerShown(), place: R.place };
+  out.ended = { view: view(), layer: layerShown(), place: R.place, pinch: pinched() };
 
   begin();
   headsetFrame();
@@ -926,23 +946,8 @@ PLACED_JS = """
 """
 
 
-def _runtime_available():
-    """Playwright installed AND an Edge/Chrome channel it can drive."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return False
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(channel="msedge", headless=True)
-            browser.close()
-        return True
-    except Exception:  # noqa: BLE001 — no browser is a skip, not a failure
-        return False
-
-
 @unittest.skipUnless(
-    _runtime_available(), "needs playwright + an installed Edge/Chrome channel"
+    browser_runtime_available(), "needs playwright + an installed Edge/Chrome channel"
 )
 class TestPreviewViewerLive(unittest.TestCase):
     """The page, loaded and interrogated."""
@@ -4175,8 +4180,10 @@ export default function probe(viewer) {
 
     def test_a_session_start_and_end_are_wired(self):
         """The session's own events: it begins the headset afresh (the rig at
-        the origin), listens for the headset's recenter on the session's space,
-        shows the headset's layer -- and at the end hides it and resets."""
+        the origin), listens for the headset's recenter on the session's space
+        and for a tracked hand's pinch (its 'select') on the session, shows the
+        headset's layer -- and at the end hides it and resets, letting go of a
+        pinch still held."""
         session = self._session()["session"]
         started, ended = session["started"], session["ended"]
         origin = {"x": 0, "y": 0, "z": 0, "yaw": 0}
@@ -4184,9 +4191,12 @@ export default function probe(viewer) {
         self.assertEqual(started["place"], origin)
         self.assertEqual(started["heard"], ["reset"])
         self.assertIs(started["recenters"], True)
+        self.assertEqual(started["selects"], ["selectend", "selectstart"])
+        self.assertEqual(started["pinch"], [True, False], "a pinch holds till let go")
         self.assertIs(started["layer"], True)
         self.assertIs(ended["layer"], False)
         self.assertEqual(ended["place"], origin)
+        self.assertIs(ended["pinch"], False)
 
     # ------------------------------------------------------ dense surfaces
     def test_walking_and_aiming_over_a_dense_mesh_test_only_nearby_triangles(self):

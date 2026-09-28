@@ -23,6 +23,9 @@ Run with:
 """
 
 import os
+import stat
+import subprocess
+import sys
 import time
 import shutil
 import tempfile
@@ -293,11 +296,124 @@ class TestDetachedPolicy(TempArtifactsBase):
 
 class TestSessionPolicy(TempArtifactsBase):
     def test_cleanup_removes_like_scoped(self):
-        # atexit wiring can't be unit-tested meaningfully; explicit cleanup must work.
         ta = TempArtifacts("pfx", dir=self.dir, policy="session")
         p = self.touch(ta.path())
         ta.cleanup()
         self.assertFalse(os.path.exists(p))
+
+    def _leave_by(self, exit_line):
+        """A child fills a session store, then exits by *exit_line*; returns
+        the store's directory."""
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        body = (
+            "import os, sys\n"
+            f"sys.path.insert(0, {root!r})\n"
+            "from pythontk.file_utils.temp_artifacts import TempArtifacts\n"
+            "from pythontk.core_utils.process_exit import ProcessExit\n"
+            f"d = TempArtifacts('pfx', dir={self.dir!r}, policy='session').dir_path()\n"
+            "open(os.path.join(d, 'f.txt'), 'w').close()\n"
+            "print(d, end='', flush=True)\n" + exit_line
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", body], capture_output=True, text=True, timeout=60
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(proc.stdout, "the child never allocated")
+        return proc.stdout
+
+    def test_an_ordinary_exit_removes_the_store(self):
+        self.assertFalse(os.path.exists(self._leave_by("sys.exit(0)")))
+
+    def test_a_hard_exit_removes_the_store(self):
+        """``ProcessExit.hard_exit`` skips ``atexit`` -- and it is how every
+        DCC child and several test runners here end -- so the store has to
+        ask it directly. Before it did, each such exit leaked its whole test
+        sandbox: 791 of them, 572 MB, in the system temp dir after a week."""
+        self.assertFalse(os.path.exists(self._leave_by("ProcessExit.hard_exit(0)")))
+
+
+class TestHeldEntries(TempArtifactsBase):
+    """An entry that cannot be deleted costs only itself, never its tree.
+
+    ``shutil.rmtree`` stops at the first entry it cannot delete, and on Windows
+    that is routine: a helper a DCC spawns outlives it holding a file in the
+    DCC's temp dir. One held file kept a whole test sandbox where only that
+    file had to stay.
+    """
+
+    def _tree(self, store):
+        """A scratch dir three levels deep; returns (dir, [files])."""
+        d = store.dir_path()
+        os.makedirs(os.path.join(d, "a", "b"))
+        names = ("0.txt", os.path.join("a", "1.txt"), os.path.join("a", "b", "2.txt"))
+        return d, [self.touch(os.path.join(d, n)) for n in names + ("z.txt",)]
+
+    @staticmethod
+    def _holding(held):
+        """Refuse to delete *held*, as a handle another process holds does.
+
+        Matched by name: POSIX ``rmtree`` unlinks a bare name against a
+        directory descriptor, never the full path."""
+        real = os.unlink
+
+        def unlink(path, *args, **kwargs):
+            if os.path.basename(path) == os.path.basename(held):
+                raise PermissionError(13, "held by another process", path)
+            return real(path, *args, **kwargs)
+
+        return mock.patch("os.unlink", side_effect=unlink)
+
+    @staticmethod
+    def _present(files):
+        return [f for f in files if os.path.exists(f)]
+
+    def test_cleanup_removes_everything_but_the_held_entry(self):
+        ta = TempArtifacts("pfx", dir=self.dir, policy="scoped")
+        d, files = self._tree(ta)
+        with self._holding(files[1]):
+            self.assertEqual(ta.cleanup(), [])
+        self.assertEqual(self._present(files), [files[1]])
+        # Still tracked: once the holder lets go, the next cleanup finishes it.
+        self.assertEqual(ta.cleanup(), [d])
+        self.assertFalse(os.path.exists(d))
+
+    def test_release_removes_everything_but_the_held_entry(self):
+        ta = TempArtifacts("pfx", dir=self.dir, policy="detached")
+        d, files = self._tree(ta)
+        with self._holding(files[2]):
+            self.assertFalse(ta.release(d))
+        self.assertEqual(self._present(files), [files[2]])
+        self.assertTrue(ta.release(d))
+
+    def test_sweep_removes_everything_but_the_held_entry(self):
+        d, files = self._tree(TempArtifacts("pfx", dir=self.dir, policy="detached"))
+        for parent, dirs, names in os.walk(d):
+            for name in dirs + names:
+                self.age(os.path.join(parent, name), 30)
+        self.age(d, 30)
+        with self._holding(files[0]):
+            swept = TempArtifacts("pfx", dir=self.dir, max_age_days=7).sweep_stale()
+        self.assertEqual(swept, [], "reported as gone while an entry remains")
+        self.assertEqual(self._present(files), [files[0]])
+
+    def test_a_read_only_file_does_not_stop_removal(self):
+        """Windows refuses to delete a read-only entry (a git object, a file
+        copied off read-only media); it goes once made writable."""
+        ta = TempArtifacts("pfx", dir=self.dir, policy="scoped")
+        d, files = self._tree(ta)
+        os.chmod(files[1], stat.S_IREAD)
+        self.assertEqual(ta.cleanup(), [d])
+        self.assertFalse(os.path.exists(d))
+
+    @unittest.skipUnless(os.name == "nt", "only Windows refuses to delete an open file")
+    def test_a_file_held_open_costs_only_itself(self):
+        """The real case the patched ones stand in for."""
+        ta = TempArtifacts("pfx", dir=self.dir, policy="scoped")
+        d, files = self._tree(ta)
+        with open(files[1], "rb"):
+            self.assertEqual(ta.cleanup(), [])
+            self.assertEqual(self._present(files), [files[1]])
+        self.assertEqual(ta.cleanup(), [d])
 
 
 class CachedArtifactBase(TempArtifactsBase):

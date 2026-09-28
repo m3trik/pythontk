@@ -50,6 +50,7 @@ class _ServeRootMixin:
         "turntable": "turntable.js",
         "inspect": "inspect.js",
         "shadow_rig": "shadow_rig.js",
+        "articulated_rig": "articulated_rig.js",
         "playblast": "playblast.js",
         "snapshot": "snapshot.js",
     }
@@ -66,6 +67,10 @@ class _ServeRootMixin:
     #: out by removing the entry, or with :meth:`remove_script` after the push.
     AUTO_SCRIPTS: Dict[str, str] = {
         "shadow_rig": "shadow_web",
+        # An articulated rig is a prop a hand is meant to move; without its
+        # script the page shows it frozen at whatever the clip says, which
+        # reads as "the rig did not export" rather than as a missing option.
+        "articulated_rig": "articulation_web",
         # A deliverable that ships clips grows a picker and a transport in the
         # page; recording what that transport plays is the same kind of "not
         # optional in any useful sense" as the shadow rigs. There is no

@@ -135,6 +135,13 @@
   {
     "kind": "function",
     "module": "pythontk.file_utils._file_utils",
+    "name": "can_trash",
+    "qualname": "FileUtils.can_trash",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
     "name": "canonical_module_path",
     "qualname": "FileUtils.canonical_module_path",
     "tier": "bare"
@@ -1093,6 +1100,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "move_to_trash",
+    "qualname": "FileUtils.move_to_trash",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.str_utils._str_utils",
     "name": "name_error",
     "qualname": "StrUtils.name_error",
@@ -1646,6 +1660,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "trash_name",
+    "qualname": "FileUtils.trash_name",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.str_utils._str_utils",
     "name": "truncate",
     "qualname": "StrUtils.truncate",
@@ -1740,6 +1761,27 @@
     "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "AppSpec",
     "qualname": "AppSpec",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.articulation.analysis",
+    "name": "ArticulationAnalysis",
+    "qualname": "ArticulationAnalysis",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.articulation.conformance",
+    "name": "ArticulationConformance",
+    "qualname": "ArticulationConformance",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.articulation.model",
+    "name": "ArticulationModel",
+    "qualname": "ArticulationModel",
     "tier": "root"
   },
   {

@@ -1623,6 +1623,71 @@ class TestWriterStamp(SceneRecordsCase):
         os.remove(self.source)  # ...until the source is gone: a rename
         self.assertTrue(self.store.written_here("scenes/source.ma"))
 
+    # -- the first save (BACKLOG 2026-09-23) --------------------------------------
+
+    def _unsaved_records(self):
+        """What a scene holds after a lightmap bake and a baseline while
+        unsaved: every stamp ``""``, beside one a copied record brought."""
+        SR.LIGHTMAP_WRITERS.save(
+            self.store, {"a.exr": "", "b.exr": "scenes/elsewhere.ma"}
+        )
+        SR.HIERARCHY_BASELINE.save(
+            self.store, {"format": 1, "paths": ["|GRP"], "hash": "h", "scene": ""}
+        )
+
+    def test_the_stamp_records(self):
+        """Every record holding a writer stamp; each is a path record too."""
+        self.assertEqual(SR.with_stamps(), [SR.HIERARCHY_BASELINE, SR.LIGHTMAP_WRITERS])
+        self.assertEqual(SR.HIERARCHY_BASELINE.stamp_keys, ("scene",))
+        self.assertIsNone(SR.LIGHTMAP_WRITERS.stamp_keys, "every value")
+        for spec in SR.with_stamps():
+            self.assertTrue(spec.paths, spec.key)
+            if spec.path_keys is not None:  # every stamp key re-spelled too
+                self.assertLessEqual(set(spec.stamp_keys or ()), set(spec.path_keys))
+                self.assertIsNotNone(spec.stamp_keys, spec.key)
+
+    def test_a_first_save_stamps_what_was_made_unsaved(self):
+        """``""`` is the scene's own only while it is unsaved: left as it was,
+        whatever the bake stamped was nobody's once saved, so a re-bake never
+        retired those maps."""
+        self._unsaved_records()
+        self.store.respell_for_write(self.source, None, first_save=True)
+        self.assertEqual(
+            SR.LIGHTMAP_WRITERS.load(self.store),
+            {"a.exr": "scenes/source.ma", "b.exr": "scenes/elsewhere.ma"},
+        )
+        self.assertEqual(
+            SR.HIERARCHY_BASELINE.load(self.store)["scene"], "scenes/source.ma"
+        )
+        self.scene = self.source  # the save done: the scene is that file
+        self.assertTrue(self.store.written_here("scenes/source.ma"))
+
+    def test_a_copy_is_not_a_first_save_and_its_snapshot_puts_all_back(self):
+        """A copy of the scene -- an export, an autosave -- is written spelled
+        for ITS project, then the open scene gets its own spelling back,
+        exactly; an unsaved scene's copy keeps its ``""`` stamps."""
+        self._unsaved_records()
+        SR.LIGHTMAP_DIRS.save(self.store, {"a.exr": "sourceimages/lm"})
+        before = self.store.path_records()
+        other = os.path.join(os.path.dirname(self.proj), "other")
+        os.makedirs(os.path.join(other, "scenes"))
+        pathlib.Path(other, "workspace.mel").write_text("")
+        snapshot = self.store.respell_for_write(
+            os.path.join(other, "scenes", "copy.ma"), self.proj
+        )
+        self.assertEqual(snapshot, before)
+        self.assertEqual(
+            SR.LIGHTMAP_DIRS.load(self.store), {"a.exr": "../proj/sourceimages/lm"}
+        )
+        self.assertEqual(SR.LIGHTMAP_WRITERS.load(self.store)["a.exr"], "")
+        self.assertEqual(self.store.restore_path_records(snapshot), 2)
+        self.assertEqual(self.store.path_records(), before)
+
+    def test_no_stamp_stamps_nothing(self):
+        self._unsaved_records()
+        self.assertEqual(SR.stamp_unsaved(self.store, ""), 0)
+        self.assertEqual(SR.LIGHTMAP_WRITERS.load(self.store)["a.exr"], "")
+
 
 class TestMovedPaths(unittest.TestCase):
     """The pre-2026-09-26 deep paths warn and resolve until 0.13.0.

@@ -18,7 +18,8 @@ Layout under the root (``UserConfig.user_config_root()``)::
 
     .collections/<id>.json       one header per collection (never a shared index)
     .backups/auto-*.zip          automatic pre-import backups (newest kept)
-    <pkg>/<tool>[/<mode>]/       a store: .domain, .active, payloads, .<name>.preset
+    <pkg>/<tool>[/<mode>]/       a store: .domain, .active, .hidden, payloads,
+                                 .<name>.preset
 
 Bundle (a ``.zip``)::
 
@@ -37,6 +38,7 @@ import re
 import uuid
 import zipfile
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
@@ -47,6 +49,7 @@ from typing import (
     List,
     Mapping,
     Optional,
+    Set,
     Tuple,
     Union,
 )
@@ -141,6 +144,8 @@ class PresetEntry:
         tier: ``"user"`` or ``"builtin"``.
         path: The payload file.
         info: The sidecar metadata (read-only mapping; ``{}`` for a built-in).
+        hidden: Left out of its tool's dropdown (a user preset's sidecar says
+            so; a built-in's store lists it -- see ``PresetStore.set_hidden``).
     """
 
     domain: str
@@ -150,6 +155,7 @@ class PresetEntry:
     info: Mapping[str, Any] = field(
         default_factory=lambda: MappingProxyType({}), compare=False, hash=False
     )
+    hidden: bool = field(default=False, compare=False)
 
     @property
     def id(self) -> Optional[str]:
@@ -167,6 +173,22 @@ class PresetEntry:
     @property
     def tags(self) -> Tuple[str, ...]:
         return tuple(self.info.get("tags") or ())
+
+    @property
+    def description(self) -> str:
+        """What the preset is for: a user preset's own (its sidecar), a
+        built-in's shipped ``_meta.description`` (read-only), else ``""``."""
+        if self.tier == "builtin":
+            return self._shipped_description
+        return str(self.info.get("description") or "")
+
+    @cached_property
+    def _shipped_description(self) -> str:
+        """A built-in's description, read from its payload on first use: a scan
+        reads file names and sidecars only. The library parses JSON alone, so
+        another format's built-in reads as undescribed."""
+        load = json.loads if self.path.suffix == JSON_CODEC.ext else _opaque_load
+        return _PresetStoreInternal._meta_description(self.path, load)
 
     @property
     def read_only(self) -> bool:
@@ -483,18 +505,41 @@ class PresetLibrary(_PresetLibraryInternal):
                     out.append(entry)
             if builtin and collection is None and domain.builtin_dir:
                 user_set = set(user)
+                hidden = store._hidden_builtins()  # one read per store
                 for name in store.list("builtin"):
                     if name not in user_set:
-                        out.append(self._entry(domain, store, name, "builtin"))
+                        out.append(self._entry(domain, store, name, "builtin", hidden))
         return out
 
     @staticmethod
     def _entry(
-        domain: PresetDomain, store: PresetStore, name: str, tier: str
+        domain: PresetDomain,
+        store: PresetStore,
+        name: str,
+        tier: str,
+        hidden_builtins: Optional[Set[str]] = None,
     ) -> PresetEntry:
-        info = store.info(name) if tier == "user" else {}
+        """The record of *name* in *tier*.
+
+        Parameters:
+            hidden_builtins: The store's hidden built-ins, when the caller has
+                read them already (a scan reads them once per store).
+        """
+        if tier == "user":
+            info = store.info(name)
+            hidden = bool(info.get("hidden"))
+        else:
+            info = {}
+            if hidden_builtins is None:
+                hidden_builtins = store._hidden_builtins()
+            hidden = name in hidden_builtins
         return PresetEntry(
-            domain.key, name, tier, store.path(name, tier), MappingProxyType(info)
+            domain.key,
+            name,
+            tier,
+            store.path(name, tier),
+            MappingProxyType(info),
+            hidden,
         )
 
     def entry(self, key: str, name: str) -> Optional[PresetEntry]:
@@ -538,6 +583,24 @@ class PresetLibrary(_PresetLibraryInternal):
             count += 1
         return count
 
+    def set_hidden(self, entries: Iterable[PresetEntry], flag: bool = True) -> int:
+        """Leave presets out of their tools' dropdowns (or list them again).
+
+        Built-ins too -- hiding the shipped presets nobody here uses is the
+        main use. Nothing is deleted, and a panel keeps showing the preset it
+        is on (see :meth:`PresetStore.set_hidden`). A hide is this user's view:
+        a collection export never carries it, and an import keeps it.
+
+        Returns:
+            The number of presets set.
+        """
+        count = 0
+        store_of = self._stores()
+        for e in entries:
+            store_of(e.domain).set_hidden(e.name, flag)
+            count += 1
+        return count
+
     def assign(self, entries: Iterable[PresetEntry], collection: Optional[str]) -> int:
         """Tag user presets with *collection* (``None`` untags). Returns the count.
 
@@ -566,6 +629,23 @@ class PresetLibrary(_PresetLibraryInternal):
             store = store_of(e.domain)
             store.ensure_info(e.name)
             store.set_info(e.name, tags=clean or None)
+            count += 1
+        return count
+
+    def set_description(
+        self, entries: Iterable[PresetEntry], text: Optional[str]
+    ) -> int:
+        """Say what user presets are for (blank clears it). Returns the count.
+
+        Built-ins are skipped: theirs ships in their payload's ``_meta``.
+        """
+        clean = str(text or "").strip()
+        count = 0
+        store_of = self._stores()
+        for e in self._user_entries(entries):
+            store = store_of(e.domain)
+            store.ensure_info(e.name)
+            store.set_info(e.name, description=clean or None)
             count += 1
         return count
 
@@ -784,6 +864,9 @@ class PresetLibrary(_PresetLibraryInternal):
             store = store_of(e.domain)
             payload = e.path.read_bytes()
             info = store.ensure_info(e.name)
+            if is_collection:
+                # A hide is the author's own view, not part of what is shared.
+                info = {k: v for k, v in info.items() if k != "hidden"}
             base = f"{BUNDLE_ROOT}/{e.domain}"
             members.append((f"{base}/{e.path.name}", payload))
             members.append(
@@ -837,9 +920,14 @@ class PresetLibrary(_PresetLibraryInternal):
         return out
 
     def backup(
-        self, path: Optional[Union[str, os.PathLike]] = None, *, reason: str = "manual"
+        self,
+        path: Optional[Union[str, os.PathLike]] = None,
+        *,
+        reason: str = "manual",
+        keys: Optional[Iterable[str]] = None,
+        name: Optional[str] = None,
     ) -> Optional[Path]:
-        """Back up every user preset; ``None`` when there is nothing to back up.
+        """Back up user presets; ``None`` when there is nothing to back up.
 
         Without *path* the bundle goes to ``<root>/.backups/`` under a name no
         earlier backup holds (two in one second must not overwrite each other --
@@ -847,22 +935,35 @@ class PresetLibrary(_PresetLibraryInternal):
         manual backup is kept forever; an automatic one (any other *reason*, e.g.
         ``"import"``) is named ``auto-*`` and only the newest
         :data:`AUTO_BACKUP_KEEP` are kept.
+
+        Parameters:
+            path: Where to write the bundle (default: the backups folder).
+            reason: ``"manual"`` (kept), or what triggered an automatic one.
+            keys: Only these stores' presets (default: every store).
+            name: What the backup is called, in its header and in its file name
+                in the backups folder (default ``"Backup (<reason>)"``).
         """
         entries = self.entries(builtin=False)
+        if keys is not None:
+            keyset = set(keys)
+            entries = [e for e in entries if e.domain in keyset]
         if not entries:
             return None
         auto = reason != "manual"
         if path is None:
             stamp = _PresetStoreInternal._now().replace(":", "").replace("-", "")
             prefix = "auto-" if auto else ""
-            stem = f"{prefix}{stamp}-{self._slug(reason)}"
+            stem = f"{prefix}{stamp}-{self._slug(name or reason)}"
             path = self.root / BACKUPS_DIR / f"{stem}.zip"
             n = 2
             while path.exists():
                 path = self.root / BACKUPS_DIR / f"{stem}-{n}.zip"
                 n += 1
         written = self._write_bundle(
-            Path(path), entries, {"id": None, "name": f"Backup ({reason})"}, False
+            Path(path),
+            entries,
+            {"id": None, "name": name or f"Backup ({reason})"},
+            False,
         )
         if auto:
             self._prune_backups()
@@ -1032,10 +1133,15 @@ class PresetLibrary(_PresetLibraryInternal):
         local_info = store.info(name)
         if local == payload:
             # Same content: nothing of the user's can be lost, whatever the ids
-            # say -- only the metadata (lock, collection, tags) may differ.
+            # say -- only the metadata (lock, collection, tags) may differ. A
+            # hide counts only where the bundle says one (a backup): an import
+            # that says nothing keeps the local flag (see ``_install``).
             same_meta = all(
                 local_info.get(k) == info.get(k)
-                for k in ("read_only", "collection", "tags", "label")
+                for k in ("read_only", "collection", "tags", "label", "description")
+            ) and (
+                "hidden" not in info
+                or bool(local_info.get("hidden")) == bool(info["hidden"])
             )
             status, action = (
                 ("identical", "skip") if same_meta else ("update", "replace")
@@ -1145,9 +1251,20 @@ class PresetLibrary(_PresetLibraryInternal):
         info: Dict[str, Any],
         header: Dict[str, Any],
     ) -> None:
-        """Write an incoming payload + its sidecar over whatever is there."""
+        """Write an incoming payload + its sidecar over whatever is there.
+
+        A hide the bundle says nothing about (a collection never carries one)
+        is this user's, and stays on the preset it replaces.
+        """
+        keep_hidden = (
+            "hidden" not in info
+            and store.path(name, "user").is_file()
+            and bool(store.info(name).get("hidden"))
+        )
         self._write_bytes(store.path(name, "user"), payload)
         info = dict(info)
+        if keep_hidden:
+            info["hidden"] = True
         info.setdefault("id", uuid.uuid4().hex)
         info.setdefault("label", name)
         if header.get("kind") == "collection" and header.get("id"):

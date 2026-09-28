@@ -587,32 +587,6 @@ function fadedMaterials(parser) {
   return faded;
 }
 
-// glTF node index -> Object3D, through the loader's association table rather
-// than by name (the production assembly ships duplicate names). A name-verified
-// entry wins over an unverified one, and an index the table lacks (a mesh
-// shared by several nodes shares one association record) falls back to the
-// unique object carrying that glTF name in its userData.
-function nodeResolver(THREE, parser, model) {
-  const defs = parser.json.nodes || [];
-  const table = new Map();
-  for (const [object, assoc] of parser.associations) {
-    if (!object?.isObject3D || assoc?.nodes === undefined) continue;
-    const index = assoc.nodes;
-    const def = defs[index];
-    const named = !def?.name || object.name === THREE.PropertyBinding.sanitizeNodeName(def.name);
-    if (named || !table.has(index)) table.set(index, object);
-  }
-  return (index) => {
-    if (!Number.isInteger(index)) return null;
-    if (table.has(index)) return table.get(index);
-    const name = defs[index]?.name;
-    if (!name) return null;
-    const matches = [];
-    model.traverse((object) => { if (object.userData?.name === name) matches.push(object); });
-    return matches.length === 1 ? matches[0] : null;
-  };
-}
-
 /* ----------------------------------------------------------- the planes --- */
 
 const finite = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
@@ -797,12 +771,12 @@ function attachMap(THREE, session, parser, plane, material) {
   }));
 }
 
-function build(THREE, model, gltf, environment) {
+// `resolve`: glTF node index -> Object3D (`viewer.nodeResolver`).
+function build(THREE, model, gltf, environment, resolve) {
   const parser = gltf.parser;
   const manifest = readManifest(parser);
   if (!manifest || !Array.isArray(manifest.planes) || !manifest.planes.length) return null;
   const unit = finite(manifest.unit_scale, 1) > 0 ? finite(manifest.unit_scale, 1) : 1;
-  const resolve = nodeResolver(THREE, parser, model);
   const faded = fadedMaterials(parser);
   const materialDefs = parser.json.materials || [];
   const session = {
@@ -1152,7 +1126,7 @@ export default function shadowRig(viewer) {
     teardown(session);
     session = null;
     try {
-      session = build(THREE, model, gltf, viewer.scene.environment);
+      session = build(THREE, model, gltf, viewer.scene.environment, viewer.nodeResolver(gltf, model));
     } catch (error) {
       console.warn('shadow_rig: could not read the shadow manifest', error);
     }

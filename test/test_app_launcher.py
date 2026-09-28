@@ -620,6 +620,286 @@ class TestLiveEnviron(unittest.TestCase):
         self.assertEqual(env.get("PTK_DESKTOP_KEEP"), "1")
 
 
+class TestPythonArgsViaEnv(unittest.TestCase):
+    """``python_args_via_env``: a Python child's command line travels in its env.
+
+    mayapy.exe decodes its command line in the ANSI code page -- measured on Maya
+    2025: "José" arrived as "Jos\\udce9" and "Жук" as "???" -- while the
+    environment and the working directory arrive intact.
+    """
+
+    WORD = "José Жук"
+    PROBE = (
+        "import json, os, sys\n"
+        "with open(sys.argv[1], 'w', encoding='utf-8') as fh:\n"
+        "    json.dump({'argv': sys.argv, 'name': __name__, 'path0': sys.path[0],\n"
+        "               'var': os.environ.get('PYTHONTK_ARGV')}, fh)\n"
+    )
+
+    def setUp(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        self.dir = os.path.join(here, "temp_tests", f"argv {self.WORD} {os.getpid()}")
+        os.makedirs(self.dir)
+        import shutil
+
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.out = os.path.join(self.dir, "out.json")
+
+    def _run(self, python, argv, cwd=None):
+        import json
+        import subprocess
+
+        args, env = AppLauncher.python_args_via_env(argv)
+        subprocess.run([python, *args], env=env, cwd=cwd, timeout=300, check=True)
+        with open(self.out, encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def _script(self):
+        path = os.path.join(self.dir, "probe.py")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(self.PROBE)
+        return path
+
+    def test_the_command_line_is_ascii_and_the_env_carries_argv(self):
+        import json
+        from unittest.mock import patch
+
+        with patch.object(AppLauncher, "process_environ", return_value={"A": "1"}):
+            args, env = AppLauncher.python_args_via_env([self.WORD, 2])
+        self.assertEqual(args[0], "-c")
+        self.assertTrue(all(arg.isascii() for arg in args), args)
+        self.assertEqual(env["A"], "1")  # None = the env the child would inherit
+        self.assertTrue(env[AppLauncher.PYTHON_ARGV_VAR].isascii())
+        self.assertEqual(json.loads(env[AppLauncher.PYTHON_ARGV_VAR]), [self.WORD, "2"])
+        mine = {"B": "2"}
+        _, env = AppLauncher.python_args_via_env(["x.py"], mine)
+        self.assertEqual(set(env), {"B", AppLauncher.PYTHON_ARGV_VAR})
+        self.assertEqual(mine, {"B": "2"})  # the caller's mapping is not mutated
+        with self.assertRaises(ValueError):
+            AppLauncher.python_args_via_env([])
+
+    def test_a_script_runs_as_python_script_py_would(self):
+        script = self._script()
+        seen = self._run(sys.executable, [script, self.out])
+        self.assertEqual(seen["argv"], [script, self.out])
+        self.assertEqual(seen["name"], "__main__")
+        self.assertEqual(seen["path0"], self.dir)
+        self.assertIsNone(seen["var"])  # consumed: nothing the script spawns sees it
+
+    def test_a_module_runs_as_python_dash_m_would(self):
+        with open(os.path.join(self.dir, "probe_mod.py"), "w", encoding="utf-8") as fh:
+            fh.write(self.PROBE)
+        seen = self._run(sys.executable, ["-m", "probe_mod", self.out], cwd=self.dir)
+        self.assertEqual(
+            seen["argv"], [os.path.join(self.dir, "probe_mod.py"), self.out]
+        )
+        self.assertEqual(seen["name"], "__main__")
+        self.assertIsNone(seen["var"])
+
+    def test_run_keeps_output_it_cannot_decode(self):
+        """A child's output is in ITS encoding: mayapy writes cp1252 ("é" = 0xE9)
+        while Blender's Python decodes as UTF-8. The strict decode died in the
+        reader thread and the run came back with no output -- the very traceback a
+        failed hand-off embeds in its error. Measured through the Maya bridge."""
+        code = "import sys; sys.stdout.buffer.write(b'MARK \\x81\\xe9\\xff END\\n')"
+        result = AppLauncher.run(sys.executable, args=["-c", code], timeout=60)
+        self.assertIn("MARK", result.stdout)
+        self.assertIn("END", result.stdout)
+
+    def test_mayapy_receives_a_non_ascii_script_and_argument_intact(self):
+        from conftest import find_mayapy
+
+        mayapy = find_mayapy()
+        if not mayapy:
+            self.skipTest("mayapy.exe not installed")
+        script = self._script()
+        seen = self._run(mayapy, [script, self.out])
+        self.assertEqual(seen["argv"], [script, self.out])
+
+
+def _ansi_codec_ok(text):
+    return AppLauncher._ansi_encodable(text)
+
+
+class TestAnsiCodecFallback(unittest.TestCase):
+    """The ANSI codec answers on a host with no Windows code page to read.
+
+    With no ``winreg`` the codec fell back to ``mbcs``, which exists only on
+    Windows: every check then raised ``LookupError``. A test forcing the win32
+    branch on Linux CI (``python_args_via_env`` for the watchdog and dialog
+    sidecars) died there, and the dialog's silent catch fell through to the
+    native fallback.
+    """
+
+    def test_no_windows_code_page_still_answers(self):
+        import builtins
+        import codecs
+        from unittest import mock
+
+        real_import, real_lookup = builtins.__import__, codecs.lookup
+
+        def no_winreg(name, *args, **kwargs):
+            if name == "winreg":
+                raise ImportError(name)
+            return real_import(name, *args, **kwargs)
+
+        def no_mbcs(name):
+            if name.lower() == "mbcs":
+                raise LookupError(name)
+            return real_lookup(name)
+
+        saved = AppLauncher._ANSI_CODEC
+        AppLauncher._ANSI_CODEC = None
+        try:
+            with mock.patch("builtins.__import__", no_winreg):
+                with mock.patch("codecs.lookup", no_mbcs):
+                    codec = AppLauncher._ansi_codec()
+                    no_mbcs(codec)  # one this host has; raises for mbcs off Windows
+            self.assertTrue(AppLauncher._ansi_encodable("/tmp/plain"))
+            self.assertFalse(AppLauncher._ansi_encodable("/tmp/Жук"))
+        finally:
+            AppLauncher._ANSI_CODEC = saved
+
+
+@unittest.skipUnless(sys.platform == "win32", "the ANSI code page is a Windows notion")
+class TestAnsiSafePath(unittest.TestCase):
+    """``ansi_safe_path``: a path Maya can open although it reads paths in the ANSI
+    code page. Measured on Maya 2025 (cp1252 here): with a TEMP under "José Жук",
+    ``cmds.file`` save gave "An invalid path was specified" and open "File not
+    found", and Maya read TEMP as "???" and fell back to the CURRENT DIRECTORY for
+    its own temp files; the 8.3 short form of the same folders worked for all three.
+    """
+
+    CYR = "Жук"  # outside cp1252
+    LATIN = "José"  # inside it
+
+    def setUp(self):
+        import shutil
+
+        here = os.path.dirname(os.path.abspath(__file__))
+        self.root = os.path.join(here, "temp_tests", f"ansi {os.getpid()}")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.cyr = os.path.join(self.root, f"{self.LATIN} {self.CYR}", "sub")
+        os.makedirs(self.cyr)
+        AppLauncher._ANSI_WARNED.clear()
+        # 8.3 names are a per-volume setting; without one there is nothing to prove.
+        if _ansi_codec_ok(self.cyr):
+            self.skipTest("this ANSI code page holds Cyrillic")
+        # A volume with them off answers the LONG name (a GitHub runner's D:), not None.
+        short = AppLauncher._short_name(os.path.dirname(self.cyr))
+        if not short or not os.path.basename(short).isascii():
+            self.skipTest("no 8.3 short names on this volume")
+
+    def test_an_ansi_path_is_returned_as_is(self):
+        path = os.path.join(self.root, f"{self.LATIN}.ma")
+        self.assertIs(AppLauncher.ansi_safe_path(path), path)
+        self.assertIsNone(AppLauncher.ansi_safe_path(None))
+
+    def test_only_the_components_the_code_page_cannot_hold_are_shortened(self):
+        target = os.path.join(self.cyr, "payload.fbx")
+        with open(target, "w") as fh:
+            fh.write("x")
+        safe = AppLauncher.ansi_safe_path(target)
+        self.assertTrue(_ansi_codec_ok(safe), ascii(safe))
+        self.assertTrue(os.path.samefile(safe, target))
+        # Names the code page CAN hold are kept verbatim: a template that reads the
+        # payload's own name (or a folder like "temp_tests") sees what was written.
+        self.assertEqual(os.path.basename(safe), "payload.fbx")
+        self.assertEqual(os.path.basename(os.path.dirname(safe)), "sub")
+        self.assertIn(os.path.join(self.root, ""), safe)
+
+    def test_a_file_not_yet_written_keeps_its_name_under_a_short_folder(self):
+        target = os.path.join(self.cyr, ".out.saving.ma")
+        safe = AppLauncher.ansi_safe_path(target)
+        self.assertTrue(_ansi_codec_ok(safe), ascii(safe))
+        self.assertEqual(os.path.basename(safe), ".out.saving.ma")
+        self.assertTrue(os.path.samefile(os.path.dirname(safe), self.cyr))
+
+    def test_without_a_short_name_it_warns_once_and_keeps_the_path(self):
+        from unittest.mock import patch
+
+        target = os.path.join(self.cyr, "a.ma")
+        with patch.object(AppLauncher, "_short_name", return_value=None):
+            with self.assertLogs(
+                "pythontk.core_utils.app_launcher._environment", "WARNING"
+            ) as logs:
+                self.assertEqual(AppLauncher.ansi_safe_path(target), target)
+                self.assertEqual(
+                    AppLauncher.ansi_safe_path(os.path.join(self.cyr, "b.ma")),
+                    os.path.join(self.cyr, "b.ma"),
+                )
+        self.assertEqual(len(logs.records), 1, logs.output)
+        self.assertIn("TEMP", logs.output[0])
+
+    def test_ascii_only_shortens_every_non_ascii_component(self):
+        """``ascii_only``: for a path written INTO a file another program decodes as
+        ANSI. RizomUV 2020.1 reads a Lua payload's UTF-8 path bytes that way, so an
+        "é" the code page holds breaks there too (measured: ZomLoad / ZomSave under
+        "José Ångström" timed out, the 8.3 form passed)."""
+        latin = os.path.join(self.root, self.LATIN)
+        os.makedirs(latin)
+        target = os.path.join(latin, "payload.fbx")
+        with open(target, "w") as fh:
+            fh.write("x")
+        # The code page holds it.
+        self.assertIs(AppLauncher.ansi_safe_path(target), target)
+        for path in (target, os.path.join(self.cyr, "not_yet.lua")):
+            safe = AppLauncher.ansi_safe_path(path, ascii_only=True)
+            self.assertTrue(safe.isascii(), ascii(safe))
+            self.assertEqual(os.path.basename(safe), os.path.basename(path))
+            self.assertTrue(
+                os.path.samefile(os.path.dirname(safe), os.path.dirname(path))
+            )
+        plain = os.path.join(self.root, "plain.fbx")
+        self.assertIs(AppLauncher.ansi_safe_path(plain, ascii_only=True), plain)
+
+    def test_ascii_only_without_a_short_name_warns_once_and_keeps_the_path(self):
+        from unittest.mock import patch
+
+        target = os.path.join(self.root, f"{self.LATIN}.lua")
+        with patch.object(AppLauncher, "_short_name", return_value=None):
+            with self.assertLogs(
+                "pythontk.core_utils.app_launcher._environment", "WARNING"
+            ) as logs:
+                for _ in range(2):
+                    self.assertEqual(
+                        AppLauncher.ansi_safe_path(target, ascii_only=True), target
+                    )
+        self.assertEqual(len(logs.records), 1, logs.output)
+
+    def test_the_code_page_is_the_systems_not_this_processs(self):
+        """Blender's manifest declares UTF-8, so inside Blender ``mbcs`` holds every
+        character (GetACP() = 65001, measured) while the mayapy it launches reads
+        cp1252. The check reads the SYSTEM code page, which a manifest-less child
+        like Maya uses."""
+        import winreg
+
+        key = r"SYSTEM\CurrentControlSet\Control\Nls\CodePage"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as handle:
+            acp = winreg.QueryValueEx(handle, "ACP")[0]
+        expected = "utf-8" if acp == "65001" else f"cp{acp}"
+        self.assertEqual(AppLauncher._ansi_codec(), expected)
+
+    def test_off_windows_it_is_a_no_op(self):
+        from unittest.mock import patch
+
+        with patch.object(sys, "platform", "linux"):
+            self.assertEqual(AppLauncher.ansi_safe_path(self.cyr), self.cyr)
+
+    def test_a_python_childs_temp_is_handed_over_in_its_short_form(self):
+        # TMPDIR too: a Python child's tempfile reads it FIRST, and TestSandbox
+        # sets all three to its root -- a long TMPDIR beside a short TEMP handed
+        # mayapy's own tempfile paths back in the form Maya cannot open.
+        _, env = AppLauncher.python_args_via_env(
+            ["x.py"],
+            {"TEMP": self.cyr, "Tmp": self.cyr, "TMPDIR": self.cyr, "OTHER": self.cyr},
+        )
+        for key in ("TEMP", "Tmp", "TMPDIR"):
+            self.assertTrue(_ansi_codec_ok(env[key]), ascii(env[key]))
+            self.assertTrue(os.path.samefile(env[key], self.cyr))
+        self.assertEqual(env["OTHER"], self.cyr)  # only the temp roots are rewritten
+
+
 class TestAppLauncherSessions(unittest.TestCase):
     """Interactive-session detection + launch (added for headless DCC/SDK driving)."""
 

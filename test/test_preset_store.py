@@ -441,6 +441,114 @@ class PresetStoreInfoTest(_TempRootCase):
         self.assertIsNone(outside.key)
 
 
+class PresetStoreHiddenTest(_TempRootCase):
+    """Hiding a preset from its tool's dropdown: built-ins included, files kept."""
+
+    def setUp(self):
+        super().setUp()
+        self.builtin = os.path.join(self.root, "_shipped")
+        os.makedirs(self.builtin)
+        for name in ("stock", "spare"):
+            with open(os.path.join(self.builtin, f"{name}.json"), "w") as fh:
+                json.dump({"x": 0}, fh)
+        self.store = PresetStore("tool", "pkg", builtin_dir=self.builtin)
+        self.store.save("mine", {"v": 1})
+
+    def test_a_builtin_and_a_user_preset_can_be_hidden_and_shown(self):
+        self.assertTrue(self.store.set_hidden("stock"))
+        self.assertTrue(self.store.set_hidden("mine"))
+        self.assertTrue(self.store.is_hidden("stock"))
+        self.assertTrue(self.store.is_hidden("mine"))
+        self.assertFalse(self.store.is_hidden("spare"))
+        self.assertFalse(self.store.set_hidden("stock"), "already hidden: no change")
+        self.assertTrue(self.store.set_hidden("stock", False))
+        self.assertFalse(self.store.is_hidden("stock"))
+        # Hidden from the dropdown, not from the store: every file is kept.
+        self.assertEqual(self.store.list(), ["mine", "spare", "stock"])
+        self.assertEqual(self.store.load("mine"), {"v": 1})
+
+    def test_hiding_a_missing_preset_raises(self):
+        with self.assertRaises(KeyError):
+            self.store.set_hidden("ghost")
+
+    def test_the_builtin_list_is_never_a_preset_and_is_written_atomically(self):
+        from unittest import mock
+
+        from pythontk.core_utils.presets.store import _PresetStoreInternal
+
+        real = _PresetStoreInternal._atomic_write_text
+        with mock.patch.object(
+            _PresetStoreInternal, "_atomic_write_text", side_effect=real
+        ) as write:
+            self.store.set_hidden("stock")
+        written = [Path(call.args[0]).name for call in write.call_args_list]
+        self.assertEqual(written, [".hidden"])
+        self.assertEqual(self.store.list("user"), ["mine"])
+        self.assertEqual(self.store.list(), ["mine", "spare", "stock"])
+
+    def test_a_user_presets_flag_follows_a_rename(self):
+        self.store.save("a (b)", {"v": 1})
+        self.store.set_hidden("a (b)")
+        self.assertTrue(self.store.rename("a (b)", "c (d)"))
+        self.assertTrue(self.store.is_hidden("c (d)"))
+        self.assertTrue(self.store.is_hidden("c _d_"))  # the stem names it too
+
+    def test_delete_drops_the_flag_and_a_new_namesake_starts_visible(self):
+        self.store.set_hidden("mine")
+        self.assertTrue(self.store.delete("mine"))
+        self.store.save("mine", {"v": 2})
+        self.assertFalse(self.store.is_hidden("mine"))
+
+    def test_the_flag_belongs_to_the_preset_not_the_name(self):
+        # A user copy shadowing a hidden built-in is the user's own, and shows;
+        # deleting it brings the (still hidden) built-in back.
+        self.store.set_hidden("stock")
+        self.store.save("stock", {"x": 9})
+        self.assertFalse(self.store.is_hidden("stock"))
+        self.assertTrue(self.store.delete("stock"))
+        self.assertTrue(self.store.is_hidden("stock"))
+
+    def test_hiding_a_builtin_announces_a_store_that_had_no_folder(self):
+        # A tool with only shipped presets has no user folder yet: hiding one
+        # makes it, and the library must still find the store there.
+        store = PresetStore("fresh", "pkg", builtin_dir=self.builtin)
+        self.assertFalse(store.user_dir.exists())
+        store.set_hidden("stock")
+        self.assertTrue((store.user_dir / ".domain").is_file())
+
+
+class PresetStoreDescriptionTest(_TempRootCase):
+    """What a preset is for: the user's in its sidecar, a built-in's shipped."""
+
+    def setUp(self):
+        super().setUp()
+        self.builtin = os.path.join(self.root, "_shipped")
+        os.makedirs(self.builtin)
+        shipped = {
+            "documented": {"_meta": {"version": 1, "description": "For X."}, "x": 0},
+            "bare": {"x": 0},
+        }
+        for name, data in shipped.items():
+            with open(os.path.join(self.builtin, f"{name}.json"), "w") as fh:
+                json.dump(data, fh)
+        self.store = PresetStore("tool", "pkg", builtin_dir=self.builtin)
+
+    def test_a_user_description_lives_in_the_sidecar_and_survives_a_rename(self):
+        self.store.save("mine", {"v": 1})
+        self.store.set_info("mine", description="For hero shots.")
+        self.assertEqual(self.store.description("mine"), "For hero shots.")
+        self.assertEqual(self.store.load("mine"), {"v": 1})  # payload untouched
+        self.assertTrue(self.store.rename("mine", "hero"))
+        self.assertEqual(self.store.description("hero"), "For hero shots.")
+
+    def test_a_builtin_description_is_read_from_its_shipped_meta(self):
+        self.assertEqual(self.store.description("documented"), "For X.")
+        self.assertEqual(self.store.description("bare"), "")
+        self.assertEqual(self.store.description("ghost"), "")
+        with self.assertRaises(KeyError):  # read-only: built-ins have no sidecar
+            self.store.set_info("documented", description="Mine now.")
+
+
 class PresetStoreMarkerTest(_TempRootCase):
     """A store announces itself with a ``.domain`` marker, without creating dirs."""
 

@@ -20,7 +20,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/app_launcher/_app_launcher.py` — The :class:`AppLauncher` facade: the three launch shapes, over its job mixins.
 - `class AppLauncher(_AppLauncherInternal, _DiscoveryMixin, _EnvironmentMixin, _DesktopMixin, _ProcessesMixin)`
-  - methods: launch, run, spawn, write_batch_script, scan_for_executables, scan_install_dirs, resolve_app_path, looks_like_python, companion_python, find_app, process_environ, handoff_env, desktop_env, append_to_path, is_path_persisted, current_session_id, active_console_session_id, is_interactive_session, find_session_launcher, launch_in_session, wait_for_ready, get_window_titles, get_running_processes, close_process, process_tree
+  - methods: launch, run, spawn, write_batch_script, scan_for_executables, scan_install_dirs, resolve_app_path, looks_like_python, companion_python, find_app, process_environ, python_args_via_env, ansi_safe_path, handoff_env, desktop_env, append_to_path, is_path_persisted, current_session_id, active_console_session_id, is_interactive_session, find_session_launcher, launch_in_session, wait_for_ready, get_window_titles, get_running_processes, close_process, process_tree
 
 ### `core_utils/cancel_scope.py` — Cooperative cancellation — one scope shared by every cancel affordance.
 - constants: T
@@ -159,13 +159,13 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class Record`
   - methods: key, text, save
 - `class RecordSpec`
-  - methods: path_keys, make, encode, decode, read_text, write_text, load, save, clear, is_present
+  - methods: path_keys, stamp_keys, make, encode, decode, read_text, write_text, load, save, clear, is_present
 - `class SceneRecords`
-  - methods: resolve_class, codec, portable, rendering_policy, all, with_paths, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
+  - methods: resolve_class, codec, portable, rendering_policy, all, with_paths, with_stamps, stamp_unsaved, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
 
 ### `core_utils/engines/scene_export/scene_store.py` — The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
 - `class SceneStoreBase`
-  - methods: name, read, write, values, keys, channels, dump, scene_path, project_root, writer_stamp, written_here, project_root_of, rebase_paths, format_dump, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
+  - methods: name, read, write, values, keys, channels, dump, scene_path, project_root, writer_stamp, writer_stamp_of, written_here, project_root_of, rebase_paths, respell_for_write, path_records, restore_path_records, format_dump, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
 
 ### `core_utils/engines/shots/manifest/behaviors/_behaviors.py` — Behaviors — load JSON keying recipes and resolve them to keyframe math.
 - `class Behaviors(_BehaviorsInternal)`
@@ -400,7 +400,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/handoff/script_template.py` — Generic on-disk script-template discovery + ``__KEY__`` rendering.
 - constants: SEND_TO, SAVE_AS, ROUND_TRIP
 - `class ScriptTemplate(_ScriptTemplateInternal)`
-  - methods: list_templates, normalize_modes, declared_values, declared_modes, template_modes, list_template_modes, render_template
+  - methods: list_templates, normalize_modes, declared_values, declared_modes, template_modes, list_template_modes, child_path, render_template
 
 ### `core_utils/help_mixin.py` — HelpMixin - Enhanced help system leveraging Python's built-in help infrastructure.
 - `class HelpMixin`
@@ -494,25 +494,25 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class PresetDomain`
   - methods: package, store
 - `class PresetEntry`
-  - methods: id, label, collection, tags, read_only, modified
+  - methods: id, label, collection, tags, description, read_only, modified
 - `class ImportItem`
   - methods: label, choices
 - `class ImportPlan`
   - methods: kind, counts, pending
 - `class ImportResult`
 - `class PresetLibrary(_PresetLibraryInternal)`
-  - methods: root, domains, in_scope, domain, entries, entry, find, set_read_only, assign, set_tags, duplicate, rename, delete, collections, collection, create_collection, collection_named, update_collection, members, is_modified, delete_collection, export, backup, backups, read_header, plan_import, apply, clean_up, hash_bytes
+  - methods: root, domains, in_scope, domain, entries, entry, find, set_read_only, set_hidden, assign, set_tags, set_description, duplicate, rename, delete, collections, collection, create_collection, collection_named, update_collection, members, is_modified, delete_collection, export, backup, backups, read_header, plan_import, apply, clean_up, hash_bytes
 
 ### `core_utils/presets/store.py` — Qt-free, zero-dependency named-preset *store* for the ecosystem.
-- constants: JSON_CODEC, ACTIVE_SENTINEL, INFO_EXT, DOMAIN_MARKER
+- constants: JSON_CODEC, ACTIVE_SENTINEL, INFO_EXT, DOMAIN_MARKER, HIDDEN_BUILTINS
 - `class Codec`
 - `class PresetReadOnlyError(PermissionError)`
 - `class PresetStore(_PresetStoreInternal)`
-  - methods: ext, user_dir, builtin_dir, key, resolve_builtin_spec, info_path, info, write_info, set_info, ensure_info, is_read_only, unique_name, active, list, source, exists, path, load, save, delete, rename, sanitize_preset_name
+  - methods: ext, user_dir, builtin_dir, key, resolve_builtin_spec, info_path, info, write_info, set_info, ensure_info, is_read_only, description, is_hidden, set_hidden, unique_name, active, list, source, exists, path, load, save, delete, rename, sanitize_preset_name
 
 ### `core_utils/process_exit.py` — Exit a DCC-hosted interpreter without running ``DLL_PROCESS_DETACH``.
 - `class ProcessExit(_ProcessExitInternal)`
-  - methods: hard_exit
+  - methods: register, unregister, hard_exit
 
 ### `core_utils/process_stream.py` — App-agnostic line-stream primitives for launched processes and log files.
 - `class TeeStream`
@@ -567,7 +567,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/test_sandbox.py` — Process-level test isolation -- keep a test run off the developer's machine.
 - `class TestSandbox(_TestSandboxInternal)`
-  - methods: browser, temp, activate, is_active, user_config
+  - methods: browser, temp, trash, real_trash, activate, is_active, user_config
 
 ### `core_utils/upstream_patch.py` — UpstreamPatch - correcting a defect in code we do not own, with a way out.
 - `class UpstreamPatch`
@@ -584,11 +584,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/_file_utils.py`
 - `class FileUtils(HelpMixin)`
-  - methods: is_valid, is_cloud_placeholder, is_under, is_same_file, has_same_content, is_rooted_path, resolve_output_dir, relativize_output_dir, portable_path, rebase_portable_path, resolve_portable_path, path_length_limit, exceeds_path_length, free_space, is_locked, locking_processes, describe_lock, format_bytes, format_bytes_delta, create_dir, next_version_path, next_version_number, unique_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, read_json, write_json, replace_file, atomic_write_text, atomic_write, copy_file, move_file, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, canonical_module_path, get_classes_from_path
+  - methods: is_valid, is_cloud_placeholder, is_under, is_same_file, has_same_content, is_rooted_path, resolve_output_dir, relativize_output_dir, portable_path, rebase_portable_path, resolve_portable_path, path_length_limit, exceeds_path_length, free_space, is_locked, locking_processes, describe_lock, format_bytes, format_bytes_delta, create_dir, next_version_path, next_version_number, unique_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, read_json, write_json, replace_file, atomic_write_text, atomic_write, copy_file, move_file, move_to_trash, can_trash, trash_name, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, canonical_module_path, get_classes_from_path
 
 ### `file_utils/file_dependencies.py` — File dependencies -- files a record names by *name*, found where they are NOW.
 - `class FileDependencies(LoggingMixin)`
-  - methods: claims, remove_superseded, written_here, find_files, resolve, search_dirs, copy_files, relocate
+  - methods: claims, remove_superseded, set_aside, written_here, find_files, walk, resolve, search_dirs, copy_files, relocate
 
 ### `file_utils/file_naming.py` — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - `class RenamePlan(LoggingMixin)`
@@ -600,8 +600,8 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - constants: FBX2GLTF_VERSION, FBX2GLTF_PLATFORMS
 
 ### `file_utils/mesh_convert/_mesh_convert.py` — FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
-- `class MeshConvert(_Fbx2GltfMixin, _SidecarMixin, _LightmapsMixin, _ShadowRigsMixin, _AnimationMixin, _VisibilityMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`
-  - methods: open_glb, conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fix_glb_tangents, rendering_policy, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_clips, clip_spans, prune_glb_animations, compact_glb_animations, reduce_glb_animations, apply_glb_animations, effect_preview_channels, apply_glb_visibility, build_visibility_tracks, apply_glb_fades, check_glb_materials, fix_glb_phantom_opaque_alpha, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, drop_glb_texture_fallbacks, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, dedupe_glb_images, prune_glb_unreferenced_textures
+- `class MeshConvert(_Fbx2GltfMixin, _SidecarMixin, _LightmapsMixin, _ShadowRigsMixin, _ArticulationMixin, _AnimationMixin, _VisibilityMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`
+  - methods: open_glb, conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fix_glb_tangents, rendering_policy, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, apply_glb_lightmaps, apply_glb_shadows, apply_glb_articulation, apply_glb_clips, clip_spans, prune_glb_animations, compact_glb_animations, reduce_glb_animations, apply_glb_animations, effect_preview_channels, apply_glb_visibility, build_visibility_tracks, apply_glb_fades, check_glb_materials, fix_glb_phantom_opaque_alpha, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, set_glb_alpha_mode, set_glb_normal_scale, set_glb_base_color, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, drop_glb_texture_fallbacks, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, dedupe_glb_images, prune_glb_unreferenced_textures
 
 ### `file_utils/mesh_convert/export_verify.py` — Deliverable verification for exported FBX / GLB pairs.
 - `class Finding`
@@ -694,6 +694,21 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: marker_path, is_marked, load, save, create, promote, resolve, resolve_dir, scene_dir, source_images_dir, find, find_containing, for_path, parse_workspace_mel, write_workspace_mel
 - `class WorkspaceTemplates(object)`
   - methods: store, list, rules, rules_from, save, delete
+
+### `geo_utils/articulation/analysis.py` — Propose an articulated rig from the parts' geometry alone -- no DCC.
+- `class ShellFacts(NamedTuple)`
+  - methods: length, isotropy
+- `class ArticulationAnalysis`
+  - methods: shell, propose
+
+### `geo_utils/articulation/conformance.py` — The golden cases every port of :class:`ArticulationModel` is held to.
+- `class ArticulationConformance`
+  - methods: rigs, cases
+
+### `geo_utils/articulation/model.py` — The articulated-rig joint model and its grab solver -- pure math, no DCC.
+- constants: ROTATE_CHANNELS, TRANSLATE_CHANNELS, CHANNELS, ROTATE_ORDERS
+- `class ArticulationModel(_ArticulationModelInternal)`
+  - methods: from_record, joint_index, chain, rest_state, limits, clamp, local, pose, world, point, to_local, read, scale_of, solve
 
 ### `geo_utils/plate_emitter.py` — Emitter geometry for a flat light-fixture plate — pure math, no DCC.
 - `class PlateEmitter(NamedTuple)`

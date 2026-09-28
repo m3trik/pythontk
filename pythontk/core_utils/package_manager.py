@@ -709,17 +709,6 @@ class PackageManager(
                 # go (a file held open) leaves the directory as pip left it.
                 shutil.rmtree(path, ignore_errors=True)
 
-    #: The environment variable :meth:`_run_pip` hands pip's arguments over in (JSON).
-    _PIP_ARGV_VAR = "PYTHONTK_PIP_ARGV"
-    #: What :meth:`_run_pip` runs with ``-c``: exactly ``python -m pip <args>``, the
-    #: arguments read from :attr:`_PIP_ARGV_VAR` (dropped again before pip starts, so
-    #: nothing pip spawns inherits it).
-    _PIP_SHIM = (
-        "import json, os, runpy, sys; "
-        "sys.argv[1:] = json.loads(os.environ.pop('PYTHONTK_PIP_ARGV')); "
-        "runpy.run_module('pip', run_name='__main__', alter_sys=True)"
-    )
-
     def _run_pip(self, args, python_flags=None, env=None):
         """Run pip, returning the :class:`subprocess.CompletedProcess`.
 
@@ -728,21 +717,23 @@ class PackageManager(
         the *python_flags* / *env* it adds (interpreter flags land before ``-c``,
         which is the only place ``-s`` is honoured).
 
-        pip's arguments travel in the environment (:attr:`_PIP_ARGV_VAR`, JSON --
-        ASCII whatever they hold), never on the command line. mayapy.exe decodes its
-        ANSI command line as UTF-8: measured on Maya 2025, "José" arrived as
-        "Jos\\udce9" and "Жук" as "???", while the environment and the working
-        directory arrived intact. So a ``--target`` or ``--report`` path through a
-        user folder with a non-ASCII letter sent pip to a different directory, and
-        an install then imported nothing. A plain python.exe reads either route.
+        pip's arguments travel in the environment
+        (:meth:`pythontk.AppLauncher.python_args_via_env`), never on the command
+        line. mayapy.exe decodes its ANSI command line as UTF-8: measured on Maya
+        2025, "José" arrived as "Jos\\udce9" and "Жук" as "???", while the
+        environment and the working directory arrived intact. So a ``--target`` or
+        ``--report`` path through a user folder with a non-ASCII letter sent pip to
+        a different directory, and an install then imported nothing. A plain
+        python.exe reads either route.
         """
+        from pythontk.core_utils.app_launcher import AppLauncher
+
         args = [str(arg) for arg in args]
         prefix = [self.python_path] + list(python_flags or [])
-        run_env = dict(os.environ if env is None else env)
-        run_env[self._PIP_ARGV_VAR] = json.dumps(args)
+        shim_args, run_env = AppLauncher.python_args_via_env(["-m", "pip"] + args, env)
         try:
             return subprocess.run(
-                prefix + ["-c", self._PIP_SHIM],
+                prefix + shim_args,
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

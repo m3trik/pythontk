@@ -97,6 +97,14 @@ INFO_EXT = ".preset"
 # importing the tool that owns it.
 DOMAIN_MARKER = ".domain"
 
+# The BUILT-IN presets hidden from their tool's dropdown (``{"names": [<stem>]}``,
+# in ``user_dir``). A built-in has no sidecar to carry the flag, and a hide is the
+# user's view of a shipped file, so it lives beside ``.active``; a user preset
+# carries its own flag in its sidecar (``hidden``), which moves with a rename and
+# goes with a delete -- in older installs too, which keep a sidecar's unknown
+# keys. Dot-prefixed without a payload extension: no discovery glob matches it.
+HIDDEN_BUILTINS = ".hidden"
+
 
 class PresetReadOnlyError(PermissionError):
     """Raised when saving over a locked (read-only) user preset.
@@ -146,6 +154,27 @@ class _PresetStoreInternal(object):
     def _sidecar_name(stem: str) -> str:
         """File name of the management sidecar for payload stem *stem*."""
         return f".{stem}{INFO_EXT}"
+
+    @staticmethod
+    def _meta_description(path: Path, load: Callable[[str], Any]) -> str:
+        """The ``_meta.description`` a shipped payload carries, or ``""``.
+
+        Parameters:
+            path: The payload file.
+            load: The payload codec's parser.
+
+        Returns:
+            The description, stripped; ``""`` when the file is unreadable, not
+            parseable by *load* (an opaque codec raises for every file) or says
+            nothing.
+        """
+        try:
+            data = load(path.read_text(encoding="utf-8"))
+        except Exception:  # any codec's parse error: a description is optional
+            return ""
+        meta = data.get("_meta") if isinstance(data, dict) else None
+        text = meta.get("description") if isinstance(meta, dict) else None
+        return text.strip() if isinstance(text, str) else ""
 
     @staticmethod
     def _now() -> str:
@@ -352,9 +381,11 @@ class PresetStore(_PresetStoreInternal):
 
         Keys (all optional): ``id`` (uuid, survives renames), ``label`` (the name
         as typed -- file names lose punctuation), ``collection``, ``read_only``,
-        ``created``, ``author``, ``tags``, ``origin_hash`` (payload hash when
-        installed from / published to a collection). Built-ins carry none; they
-        are read-only by tier.
+        ``created``, ``author``, ``tags``, ``description`` (what the preset is
+        for), ``hidden`` (left out of its tool's dropdown; see
+        :meth:`set_hidden`), ``origin_hash`` (payload hash when installed from /
+        published to a collection). Built-ins carry none; they are read-only by
+        tier (see :meth:`description` and :meth:`is_hidden` for theirs).
         """
         return _PresetStoreInternal._read_json(self.info_path(name))
 
@@ -397,6 +428,99 @@ class PresetStore(_PresetStoreInternal):
         if tier == "builtin":
             return True
         return tier == "user" and bool(self.info(name).get("read_only"))
+
+    def description(self, name: str) -> str:
+        """What preset *name* is for, or ``""``.
+
+        A user preset's is the ``description`` in its sidecar (written with
+        :meth:`set_info`, so it follows a rename); a built-in's is read-only,
+        from its shipped payload's ``_meta.description``.
+        """
+        tier = self.source(name)
+        if tier == "user":
+            return str(self.info(name).get("description") or "")
+        if tier == "builtin":
+            return _PresetStoreInternal._meta_description(
+                self.path(name, "builtin"), self._codec.load
+            )
+        return ""
+
+    # ----------------------------------------------------------------- hidden
+    def is_hidden(self, name: str) -> bool:
+        """True when *name* is left out of its tool's dropdown (:meth:`set_hidden`)."""
+        tier = self.source(name)
+        if tier == "user":
+            return bool(self.info(name).get("hidden"))
+        return (
+            tier == "builtin"
+            and PresetStore.sanitize_preset_name(name) in self._hidden_builtins()
+        )
+
+    def set_hidden(self, name: str, hidden: bool = True) -> bool:
+        """Leave preset *name* out of its tool's dropdown, or list it again.
+
+        Nothing is deleted: the preset stays on disk and loads as before, and a
+        panel keeps showing the one it is on. A user preset carries the flag in
+        its sidecar, so it follows a rename and goes with a delete; a built-in,
+        which has no sidecar, is listed in the store's ``.hidden`` file
+        (:data:`HIDDEN_BUILTINS`). The flag is the preset's, not the name's: a
+        user copy saved over a hidden built-in shows until it is hidden itself.
+
+        Parameters:
+            name: The preset (any spelling of its name).
+            hidden: ``False`` lists it again.
+
+        Returns:
+            ``True`` when the flag changed.
+
+        Raises:
+            KeyError: *name* is in neither tier.
+        """
+        tier = self.source(name)
+        if tier is None:
+            raise KeyError(f"preset {name!r} not found in {self.name}")
+        hidden = bool(hidden)
+        if self.is_hidden(name) == hidden:
+            return False
+        if tier == "user":
+            self.ensure_info(name)
+            self.set_info(name, hidden=True if hidden else None)
+            return True
+        names = self._hidden_builtins()
+        stem = PresetStore.sanitize_preset_name(name)
+        if hidden:
+            names.add(stem)
+        else:
+            names.discard(stem)
+        self._write_hidden_builtins(names)
+        return True
+
+    def _hidden_builtins(self) -> Set[str]:
+        """The stems in the ``.hidden`` list: built-ins left out of the dropdown."""
+        data = _PresetStoreInternal._read_json(self.user_dir / HIDDEN_BUILTINS)
+        names = data.get("names")
+        if not isinstance(names, list):
+            return set()
+        return {
+            PresetStore.sanitize_preset_name(n)
+            for n in names
+            if isinstance(n, str) and n
+        }
+
+    def _write_hidden_builtins(self, names: Set[str]) -> None:
+        """Replace the ``.hidden`` list atomically; an empty one removes the file."""
+        path = self.user_dir / HIDDEN_BUILTINS
+        if names:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _PresetStoreInternal._atomic_write_text(
+                path, json.dumps({"names": sorted(names)}, indent=4)
+            )
+        else:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+        self._mark()
 
     def unique_name(self, base: str) -> str:
         """*base*, or ``"<base> 2"``, ``"<base> 3"``... -- the first free in either tier."""

@@ -267,11 +267,15 @@ class AppLauncher(
                     env=env,
                     creationflags=creationflags,
                 )
+        # errors="replace": the child writes in ITS encoding (mayapy: cp1252), which
+        # need not be ours (Blender decodes UTF-8). A strict decode died in the
+        # reader thread and returned no output at all -- tracebacks included.
         return subprocess.run(
             cmd,
             cwd=cwd,
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=timeout,
             shell=False,
             env=env,
