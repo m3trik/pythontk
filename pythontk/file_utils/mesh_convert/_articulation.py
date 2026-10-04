@@ -28,8 +28,9 @@ class _ArticulationMixin:
     ARTICULATION_KEY = SceneRecords.ARTICULATION.key
     #: Highest ``articulation`` schema this applier reads.
     ARTICULATION_VERSION = SceneRecords.ARTICULATION.version
-    #: Root-extras key the viewer's packaged ``articulated_rig`` script reads.
-    ARTICULATION_WEB_KEY = "articulation_web"
+    #: Root-extras key the viewer's packaged ``articulated_rig`` script reads
+    #: -- the record's declared web projection, shaped by ``ArticulationWeb``.
+    ARTICULATION_WEB_KEY = SceneRecords.ARTICULATION.web.key
     #: Where ``articulation_web`` binds by glTF NODE INDEX -- the paths a pass
     #: that renumbers nodes (``strip_glb_curve_proxies``) must follow.
     ARTICULATION_WEB_NODE_FIELDS = (
@@ -96,7 +97,7 @@ class _ArticulationMixin:
                     rigs = cls._bind_articulated_rigs(gltf, payload)
             if rigs:
                 manifest = {
-                    "version": 1,
+                    "version": SceneRecords.ARTICULATION.web.version,
                     "metadata_version": version,
                     "rigs": rigs,
                 }

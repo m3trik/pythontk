@@ -82,14 +82,14 @@ Ownership, because it decides where a fix goes:
 
 | Layer | Owns |
 |---|---|
-| `pythontk.PreviewServer` | the loopback server, `/manifest.json` versioning, viewer liveness, materializing the page **and the active viewer scripts**, and the **read-only guest listener** a share fronts |
-| `pythontk.ShareTunnel` | a loopback port at a public HTTPS link: the tunnel CLIs (registry), their lifetime, the stable alias -- knows nothing about the preview |
+| `pythontk.PreviewServer` | the loopback server, `/manifest.json` versioning, viewer liveness, materializing the page **and the active viewer scripts**, the **read-only guest listener** a share fronts, and **`/scene.json`**, the published scene as data |
+| `pythontk.ShareTunnel` | a loopback port at a public HTTPS link: the tunnel CLIs (registry), their lifetime, the HTTPS port a share takes beside another, the stable alias -- knows nothing about the preview |
 | `pythontk.GlbPipeline` | **the GLB build** -- downsize, convert, optimize, in that order, for the preview AND the Scene Exporters' GLB output |
 | `pythontk.PreviewDeliverer` | the build's dials (container, scratch, release) and the publish |
 | `pythontk.PreviewBridge` | the glTF-appropriate export defaults, the sidecar attach and the `push()` / `publish_file()` / `url` / `share()` / `stop()` surface |
 | `pythontk.MeshConvert` | every GLB edit, the sidecar envelope schema, the lightmap binding, **the published rendering policy** |
-| `net_utils/preview/viewer.html` | rebinding the carrier slot to a real `lightMap`, framing, headset locomotion, and **spending** the rendering policy it reads out of the file |
-| `net_utils/preview/scripts/*.js` | optional behaviour the page gains by activation, never by being edited |
+| `net_utils/preview/viewer.html` + `kernel/*.js` | the page (markup) and the viewer it imports: rebinding the carrier slot to a real `lightMap`, framing, headset locomotion, and **spending** the rendering policy it reads out of the file |
+| `net_utils/preview/features/` | optional behaviour the page gains by activation, never by being edited |
 | `mayatk` / `blendertk` | reading the host's selection, exporting the FBX inside the export bracket, reading scene state |
 
 Both DCC bridges are under 80 lines, most of that docstring. Everything else is shared, because
@@ -157,7 +157,19 @@ one either source publishes to.
 
 In the page, the model stands at its true size, centred on the floor; the view opens through the
 scene's start camera when it has one (see *Where a view starts*), and **Frame** frames the whole
-model (`f`). A second slot, `#lookdev`, is the area for dials that tune how the model *reads*: the **Normals** dial (`normalTexture.scale`, saved into the GLB through `POST /settings`).
+model (`f`).
+
+Beside Frame the bar carries **one button per category** -- **View**, **Environment**,
+**Inspect**, **Export**, **Rig** -- and each opens its window, top right, where every part of the
+page that files under that category has a section: the turntable's switch under View, the
+reflection probe's under Environment, the profiler under Inspect, the still and the playblast under
+Export, an articulated rig's sliders under Rig. A category shows once something files under it, so
+the bar stays the same few buttons however many scripts a push activates, and a phone-sized
+viewport keeps every control in reach. A window shuts from its bar button or its own ×; a script's
+shortcut (`t`, `i`) still drives its control. The bar's Export button says when a still or a
+playblast is being written with the window shut.
+
+A second slot, `#lookdev`, is the area for dials that tune how the model *reads*: the **Normals** dial (`normalTexture.scale`, saved into the GLB through `POST /settings`).
 Each dial hides itself when the model gives it nothing to do, and the area follows them;
 `LOOKDEV_ENABLED` holds the whole area back until there is a SET of dials worth a permanent
 seat. Adding the next dial is markup inside `#lookdev`, a sync called from `syncLookdev`, and
@@ -203,23 +215,47 @@ Maya
 
 The same measurement is `viewer.specs` for a script (and the `specs` of the `'load'` event).
 
-**Inspect** -- tick it among the WebXR Preview's viewer scripts, then press `i` or its button --
-opens a panel of what the preview *costs*, measured on the device rendering it:
+### Inspect -- what the preview costs
+
+**Inspect** -- tick it among the WebXR Preview's viewer scripts, then press `i` or its bar button --
+opens the Inspect window: what the preview *costs*, measured on the device rendering it:
 
 | Section | Reads |
 |---|---|
 | **Frame** | frame time (average, 95th percentile, worst) against the display's budget -- the headset's own rate in a session -- and the frames that missed it; the page's CPU time and the part spent submitting the draw; the GPU's time where the browser exposes a timer query (desktop Chromium does; many mobile and headset browsers do not, and the row says so); draw calls and triangles per frame |
-| **Model** | objects, draws, triangles, materials in the file and in three.js, lightmap coverage, animation |
-| **GPU memory** | estimated from what the model uploads: block-compressed KTX2 at its transcoded size, a mip chain where one is generated, and an image several materials share once (every lightmapped object samples its atlas through a texture of its own, and all of them share one image) |
-| **File** | what the GLB's bytes are: images, geometry, animation, its JSON |
-| **Load** | download, parse, setup, and the first frame's program compile and texture upload |
+| **Model** | objects, draws, triangles, materials in the file and in three.js, lightmap coverage, what lights the model (the reflection probe on or off, its size; else the studio), animation |
+| **GPU memory** | estimated from what the model uploads: block-compressed KTX2 at its transcoded size, a mip chain where one is generated, and an image several materials share once (every lightmapped object samples its atlas through a texture of its own, and all of them share one image); and the **environment** maps the page holds -- the probe and the studio, prefiltered, each by name and marked idle when it lights nothing |
+| **File** | what the GLB's bytes are: images, geometry, animation, the reflection probe, its JSON |
+| **Load** | download, parse, setup -- with the reflection probe's decode and prefilter as a line of its own, a part of setup -- and the first frame's program compile and texture upload |
 | **Issues** | the warning line's list, whole |
 
-**Copy report** puts all of it on the clipboard as JSON for a bug report, and every load logs a
-summary table to the console. In a headset, where the page's own chrome is not drawn at all, the
+The probe's per-pixel cost is the frame time with the Environment window's switch on against
+off; in a headset, set it before entering and read the card. **Copy report** puts all of it on the
+clipboard as JSON for a bug report, and every load logs a summary table to the console. In a headset, where the page's own chrome is not drawn at all, the
 panel rides beside your view as a card: open it on the desktop before entering, or press **B** or
 **Y** in the session. How long the *push* took is the panel's business rather than the page's --
 see *Cost and budget*.
+
+### The Environment window
+
+What lights the model: the bake's **reflection probe** when the file carries one (see *A bake's
+reflection probe replaces the studio*), else the page's studio. The window says which, what the
+probe is -- its size in the file, where it was captured, the box its reflections project onto, and
+which faces of that box are open (read as distant) -- and holds two switches:
+
+- **Reflection probe** turns it off and on for this view. Off, the model draws exactly as the same
+  file shipped without a probe would (the Lightmap Baker's own switch): the studio lights it and its
+  materials go back to their own programs. That is a preview the export can produce, not a page-only
+  look, and it is what makes Inspect's frame time with it on against off the probe's cost alone.
+  Each load starts with the probe on -- the deliverable as it ships -- and the HUD says "probe off"
+  while it is not.
+- **Show capture point and box** draws where the bake captured the probe and the box its
+  reflections project onto, over the model, in its frame -- the check that the bake put its probe
+  where it can see the room. An open face is drawn at the model's reach. It is no part of the model:
+  Frame and the HUD measure without it.
+
+The window is the page's chrome, so it is not drawn in a headset: set the switch on the desktop
+before entering. Scripts read the same through `viewer.environment`.
 
 ### In the headset
 
@@ -349,7 +385,8 @@ down. A provider that needs a one-time step first (Tailscale, until the tailnet 
 offered -- **Open Page** -- and the share waits for it in the background, the panel free meanwhile:
 once the step is taken the link comes up by itself, and the footer says what it waits on until then.
 The row's option box carries **Share Now** (also the retry after a failed share), **Copy Link**
-(which brings the link up when the row is on and it is not) and **Stop Sharing**, and the footer
+(which brings the link up when the row is on and it is not), **Copy Scene Link** (the scene as data,
+for someone's agent -- [below](#reading-the-scene-as-data)) and **Stop Sharing**, and the footer
 shows the link and how many guest tabs have it open right now (`guest_count`: polled within the
 viewer timeout), re-read every two seconds while the panel shows. Every address the panel logs --
 the link, the page a step takes, where to install a missing client -- is a link in the log.
@@ -371,9 +408,12 @@ which listener a request arrived on -- never by a header or a token a client cou
 owner's loop is untouched: its tab, its settings saves, its recordings and stills work exactly as
 before. The guest listener:
 
-- **reads an allow-list** -- the page, its manifest, and exactly the files that manifest names (the
-  asset, the active scripts). A scene push's stills and recordings land in the serve root too, a
-  publish passes through a `.part` file, and `scripts/` would list itself; none of it is the share.
+- **reads an allow-list** -- the page and the kernel modules it imports, its manifest, and exactly
+  the files that manifest names (the asset, the active scripts with the modules beside them), plus
+  `scene.json`: that same asset's JSON, read for the guest (see
+  [Reading the scene as data](#reading-the-scene-as-data)). A scene push's stills and recordings land in the serve root too, a
+  publish passes through a `.part` file, and a folder (`scripts/`, `features/`, `kernel/`) would
+  list itself; none of it is the share.
   It never lists a folder -- not even `/` on a root that holds no page.
 - **refuses every write** (`/settings`, `/snapshot`, `/playblast/*`: 403), and takes no body past
   4 KiB on any route (413, never buffered): its one write, the close beacon, carries none, and a still's
@@ -396,9 +436,23 @@ where to install) -- a provider is an entry, not a branch:
 
 | Provider | Link | Trade-off |
 |---|---|---|
-| `cloudflared` (default when installed) | random `https://<words>.trycloudflare.com` per share | no account; fast; TLS ends at Cloudflare's edge, which sees the traffic. The panel offers the download (one executable, `AppInstaller`'s `binary` type) |
-| `tailscale_funnel` | stable `https://<machine>.<tailnet>.ts.net` | bookmark once; TLS ends on this machine; relayed, so large pushes load slower; Funnel must be enabled for the tailnet |
+| `cloudflared` (default when installed) | random `https://<words>.trycloudflare.com` per share | no account; fast; TLS ends at Cloudflare's edge, which sees the traffic. Any number of shares at once. The panel offers the download (one executable, `AppInstaller`'s `binary` type) |
+| `tailscale_funnel` | stable `https://<machine>.<tailnet>.ts.net` | bookmark once; TLS ends on this machine; relayed, so large pushes load slower; Funnel must be enabled for the tailnet. Three shares at once per machine (below) |
 | `tailscale_serve` | the same name, tailnet only | nothing public; a headset needs the Tailscale app |
+
+**Several shares at once.** Each preview server has its own ports (the owner listener falls back
+from 8118 to an ephemeral port; the guest listener is always ephemeral), so two DCCs -- or two
+servers in one -- can each share. A quick tunnel is its own process and link, so cloudflared has no
+limit. Tailscale serves on the machine's one name, which holds **one share per HTTPS port**: a second
+foreground share on 443 is refused at once (`listener already exists for port 443`, exit 1 --
+measured on 1.102.2, also against a `tailscale serve --bg` of your own). A share therefore walks the
+provider's `https_ports` -- 443, 8443, 10000, the three Funnel accepts -- and takes the first free
+one, so the second share's link is `https://<machine>.<tailnet>.ts.net:8443` and the third's
+`:10000`. Tailscale forwards the Host a guest sent, port included, which is the spelling the share
+admits. A fourth fails naming the limit and the way past it (stop one, or share through cloudflared).
+Only that refusal moves a share; any other failure fails it as before. The first share on a machine
+keeps the bare name, so a bookmark of it stays right -- but which share gets it is first come, first
+served.
 
 `provider=None` takes `PYTHONTK_SHARE_PROVIDER`, else the first installed of `ShareTunnel.PREFERENCE`
 (public providers only) -- what the machine has, rather than a download it did not ask for. A
@@ -450,10 +504,65 @@ Each of these fails the share at once with the next step, rather than waiting ou
 - **The CLI is missing** -- the message names the install; the panel offers cloudflared's download
   (`ShareTunnel.settle`, the same shape as the KTX2 encoder's).
 
+- **Every Tailscale port already serving** -- three shares are up on this machine (or a serve of your
+  own holds a port); the share says so and names cloudflared, which has no such limit.
+
 What a share does not change: the link **is** the deliverable -- a guest can save the GLB, so stop
 sharing when the review is over. The Cloudflare quick tunnel's name is unguessable but not secret
 once sent; the Funnel name is stable and guessable. There is no guest authentication; a share is for
 people you send the link to.
+
+### Reading the scene as data
+
+**`/scene.json` says how the scene is built and lit, for a reader that cannot run the page.** The
+case it exists for: a developer whose engine renders the same asset differently points their agent
+(or their own tooling) at it and compares, rather than reverse-engineering a 4,000-line page. The
+panel's **Copy Scene Link** (on the Sharing row's option box) copies the share's
+(`share_info()["scene_url"]` -- always on the tunnel, since an alias is one redirect page, not a
+site); unshared, it copies this machine's (`PreviewServer.scene_url`), for a reader on it. The
+page's head names it too (`<link rel="alternate" type="application/json">`), for a reader handed
+only the page.
+
+Nothing in it is a re-description. It is two sources that are already the truth:
+
+- **the published GLB's own JSON chunk, verbatim** -- materials, textures, samplers, extensions,
+  extras (`scene_sidecar`, `lightmap_web` ...), nodes, meshes -- but for a base64 `data:` URI in
+  `buffers` / `images`, cut to its media type and size (bytes, not structure: one embedded texture
+  would be megabytes in a single item);
+- **the lighting recipe** the viewer renders it with (`rendering`): the asset's own
+  `extras.scene_sidecar.handoff.rendering`, found where the viewer's `readExtras` looks (the first
+  scene's extras, then the root's; an object or a JSON string) -- or, for an asset that publishes
+  none, `MeshConvert.RENDERING_POLICY`, the viewer's own fallback. `renderingSource` says which
+  (`"asset"` / `"viewer default"`), and `viewer.three` names the three.js release the served page
+  imports. The recipe is where most "renders differently" answers are: a lightmapped material takes
+  no environment diffuse and no key light, only reflections normalized by its bake -- an engine that
+  adds its usual ambient on top washes every baked surface out.
+
+**Sized for a reader with a context window.** A production GLB's JSON is megabytes (measured: 3.5 MB,
+two thirds accessors and buffer views), while what decides how it *looks* is tens of kilobytes. So
+the overview inlines the smallest top-level sections up to `PreviewServer.SCENE_INLINE_BYTES`
+(128 KiB) and indexes **every** section (`sections`: item count, bytes, inlined or not, and a `url`);
+a section is then read a page at a time within the same budget:
+
+```
+GET /scene.json                              overview: about, rendering, viewer, gltf (inlined), sections
+GET /scene.json?section=nodes                {"section", "total", "start", "items", "next"}
+GET /scene.json?section=nodes&start=1880     ... follow "next" until it is null
+GET /scene.json?section=asset                a section that is not a list: {"section", "value"}
+```
+
+Measured on that production GLB: a 71 KB overview (materials, extras, textures and the recipe
+inline), and its 2,202 nodes in five pages. Every answer carries `schema`
+(`pythontk.preview.scene/1`), `asset` and `version`, so a reader paging across a push can tell. The
+JSON is read per request rather than held (parsed, a production GLB's JSON is tens of megabytes of
+Python objects, in a server that lives as long as the DCC). Before a publish, or for an asset that
+is not a GLB, a `note` says why there is nothing more; an unknown section is a 404 and a bad
+`start` a 400. A guest reads it as it reads the asset -- it is that asset's JSON, read for them --
+and reading it counts as no tab.
+
+What it does not carry: what the page *measured* on the device rendering it (the Inspect panel's
+frame times, GPU memory, the materials it actually treated as baked). That stays on the page --
+**Copy Report** in Inspect.
 
 ## Extending it
 
@@ -490,7 +599,8 @@ the 94.7 MB -> ~15 MB pass.
 ### Scripts — work in the page
 
 The viewer page is the stable path. It gains behaviour when the server *activates* an ES module,
-which the page imports and calls once with its own API object:
+which the page imports and calls once with its own API object (the runtime's layout, and what of
+it is published, are under *The runtime's anatomy* below):
 
 ```python
 bridge.push(scripts=["turntable", "inspect"])            # this push only
@@ -508,14 +618,23 @@ tool serving a GLB it produced itself), and what they register persists across p
 default* — the server outlives every push, so a script registered once must not be dropped by the
 next push that simply says nothing about scripts. An explicit `[]` is still an instruction.
 
-A module's default export receives the viewer API: `THREE`, `scene`, `renderer`, `camera`,
+A module's default export receives the viewer API -- `apiVersion` (see below), `THREE`, `scene`, `renderer`, `camera`,
 `controls`, `pivot`, `model`, `bounds`, `policy`, `specs` (the load's measurement -- see *What the
 page tells you*), `guest` (true on a view-only share, where every
-write is refused -- see *Sharing a link*), `setStatus`, `addButton(label, onClick)`,
-`addPanel(title)` (a panel of label/value rows in the page's chrome, stacked top-right --
-`setRows`, `show`, an `addButton` of its own, and `addSlider(label, {min, max, step, value,
-format}, onInput)` for a labelled slider under the rows, whose `value` a script can set without
-firing `onInput`; hidden until shown, written as text),
+write is refused -- see *Sharing a link*), `setStatus`, `window(category, {title})` (the page's
+window for a category -- `'View'`, `'Environment'`, `'Inspect'`, `'Export'`, `'Rig'` or one of the
+script's own -- made on first ask with its bar button, shared by every script that names it:
+`section(title)` adds a block the script owns, with `setRows`, `addButton`, `addSlider`,
+`addToggle(label, {value, title}, onChange)` and `remove`; `show`, `toggle`, `shown`, `onShow(fn)`,
+and `setBadge(text)` to mark the bar button while a job runs. A script's controls go here, not on
+the bar), `addButton(label, onClick)` (a bar button of its own, for the rare action that cannot wait
+a click), `addPanel(title)` (a free panel of label/value rows in the page's chrome, stacked
+top-right after the windows -- `setRows`, `show`, an `addButton` of its own, `addToggle`, and
+`addSlider(label, {min, max, step, value, format}, onInput)` for a labelled slider under the rows,
+whose `value` a script can set without firing `onInput`; hidden until shown, written as text),
+`environment` (what lights the model: `probe` -- the bake's reflection probe on screen or null,
+`{on, width, height, bytes, bufferView, position, box, decodeMs, prefilterMs}` -- `setProbe(on)`,
+the Environment window's switch, and `maps`, the environment maps held in GPU memory),
 `addHeadsetCard({name, width, height, metres, radius, over})` (a card of text in the headset,
 where the page's chrome is not drawn -- a canvas in its colours on a plane in the headset's layer,
 hidden until shown, `over` the model when asked; `draw(paint)` repaints it and hands
@@ -556,10 +675,10 @@ an optional module must never make a good preview *look* broken, because the one
 is a headset where the console is not visible.
 
 Six ship in the box: **`turntable`** (hands-free rotation on the desktop, on the pivot so it
-survives a push; it holds still in a headset),
+survives a push; it holds still in a headset; a switch in the View window, `t`),
 **`inspect`** (the profiler: frame time against the display's budget, CPU and GPU time, draw calls,
 estimated GPU memory, the file's composition and the load's phases -- the numbers a GLB's size does
-not tell you; see *What the page tells you*) and **`shadow_rig`** (the runtime half of the DCC shadow
+not tell you; see *Inspect -- what the preview costs*) and **`shadow_rig`** (the runtime half of the DCC shadow
 rigs: reads the `extras.shadow_web` manifest `MeshConvert.apply_glb_shadows` writes during the
 conversion, gives every plane one `ShaderMaterial` — projected silhouettes and horizon maps in one
 program — batches the projected planes that share an atlas and carry no fade into an
@@ -567,23 +686,71 @@ program — batches the projected planes that share an atlas and carry no fade i
 of `ShadowProjection.model`; the contract is `mayatk/docs/shadow_rig_morphing.md`),
 **`articulated_rig`** (the runtime half of the DCC articulated rigs: reads the `extras.articulation_web`
 manifest `MeshConvert.apply_glb_articulation` writes, builds each rig's `ArticulationModel` -- a
-port of pythontk's, pinned by `ArticulationConformance` -- registers every grabbed part with
-`viewer.grab`, and shows the rig panel; see *Grabbing* below and `mayatk/docs/articulated_rig.md`),
-and
-**`snapshot`** (an **Export Image** button: the current view saved as a PNG — see *Exporting a
-still* below). `turntable`, `inspect` and `snapshot` are checkboxes on the WebXR Preview option box,
+port of pythontk's, pinned by its golden cases, `Conformance.cases("articulation")` -- registers every grabbed part with
+`viewer.grab`, and shows each rig's section of the Rig window; see *Grabbing* below and
+`mayatk/docs/articulated_rig.md`), and
+**`snapshot`** (**Export image…** in the Export window: the current view saved as a PNG — see
+*Exporting a still* below). `turntable`, `inspect` and `snapshot` are checkboxes on the WebXR Preview option box,
 which passes an explicit list every push: the panel
 is authoritative, so a script registered on the server by other code is cleared by the next push
 from there. **`playblast`** records the clip the transport is on to a movie file (see *Recording a clip*
 below). `shadow_rig`, `articulated_rig` and `playblast` are **on by themselves**:
-`PreviewServer.AUTO_SCRIPTS` maps each to the extras key it reads, and `publish()` activates it —
+`PreviewServer.AUTO_SCRIPTS` maps each to the extras key it reads -- the record's declared web
+projection (`SceneRecords.SHADOWS.web.key` ...), never spelled there -- and `publish()` activates it —
 appended to whatever the push named — for any GLB whose root extras carry that key (`shadow_web`,
 `articulation_web` and `animation_web` respectively; the JSON chunk is probed, never the geometry).
 Opt out by removing the registry entry or with `remove_script(name)` after the
-push. One caveat of the page's
-loading order: scripts and the asset load concurrently and the first `load` is not held for the
-imports, so a deliverable small enough to parse before a 40 KB module arrives shows still planes
-until the next push (the script says so in the console); a production GLB is never that small.
+push. A script the push activates is registered before the model it came with loads: the
+activation reaches the manifest no later than the asset, and the page holds a load until every
+script the manifest names has registered -- including one an earlier poll is still importing -- so
+even a deliverable that parses before a 40 KB module arrives is seen by it.
+
+### The runtime's anatomy
+
+The page is plain ES modules, served as they are written (no build step) and laid out the way the
+code standard's holon is (`m3trik/docs/CODE_STANDARD.md` section 0):
+
+| Part | Here |
+|:---|:---|
+| Charter | the composition root's header (`kernel/main.js`) and this document |
+| Surface (published) | the `viewer` object a script is handed (`kernel/api.js`), its events (`'load'`, `'frame'`, `'rendered'`, `'key'`), and the manifest keys of `kernel/records.js` |
+| Model | host-free modules on plain arrays, no three.js: each feature's `model.js` (`ArticulationModel`, the shadow model) and the shared vector and quaternion math (`kernel/math.js`) |
+| Adapters | three.js-bound modules: the kernel, and each feature's entry module |
+| Parts and kernel | `kernel/` is the viewer, one part per module (the stage, the model, lightmaps and the reflection probe, specs, animation, the headset's rig, surfaces, grab, start and locomotion, the session, the windows and the Environment window, the API, the load, the poll, the controls); `features/<name>` are the plug-ins -- a file, or a folder once a feature has a model of its own |
+| Seams | features activated through the manifest (`PreviewServer.SCRIPTS`, `add_script`); the kernel's events |
+| Contracts | `kernel/records.js`, generated by `m3trik/scripts/sync_scene_records.py` from `ptk.SceneRecords`: every record's key, version and web key, and the JSDoc typedefs of each declared manifest shape (`ArticulationWeb` ...) |
+| Proof | `m3trik/scripts/check_js_types.py` (`tsc --checkJs` over `jsconfig.json` at the repo root), `check_layers.py` (features over the kernel, peers of each other, by their imports), the Playwright suites, and the golden cases every model port is held to (`ptk.Conformance`) |
+
+**Served as laid out.** The server copies the page as `index.html`, the kernel to `kernel/`, and
+each active packaged feature to its own path -- `features/turntable.js`, or
+`features/shadow_rig/` with the model beside its adapter -- so a module's relative imports resolve
+in the page as they do on disk. A caller's own module (`add_script(name, path)`) is served at
+`scripts/<name>.js` and may import the kernel's pure modules by their served path
+(`../kernel/math.js`, `../kernel/records.js`) or a feature's model
+(`../features/articulated_rig/model.js`). A managed root is swept of whatever is no longer active;
+the manifest's page fingerprint covers the kernel, so an edit to any module of it reloads an open
+tab.
+
+**The API is published and versioned.** A feature inside this package is internal; the `viewer`
+object, its events and the manifest keys are what outside scripts and an app that vendors one
+depend on. `viewer.apiVersion` (`API_VERSION` in `kernel/api.js`, 1) is what a script checks it is
+written against: a member renamed or removed bumps it, and the old name keeps working, with a
+warning, for one window first -- the same rule `ptk.Deprecation` applies in Python.
+
+**Typed with JSDoc, checked by tsc.** The type toolbox, in this runtime's spelling:
+
+| Need | JavaScript |
+|:---|:---|
+| value object | an `@typedef` plus `Object.freeze` |
+| vocabulary | a string-union `@typedef`, or a frozen object |
+| JSON payload shape | an `@typedef` generated from the declaration (`kernel/records.js`) |
+| structural contract | an `@typedef` of the kernel API (`PanelRow`, the `viewer` members) |
+| distinct ids | a branded number type |
+| variants | a discriminated union on a `kind` field |
+| identity in saved data | a manifest key (`records.js`) |
+
+three.js reaches the page from a CDN, so the check declares its names `any` (`typings/` beside the
+`jsconfig.json`): what it holds is the runtime's own modules and the contracts between them.
 
 ### Grabbing — testing an interactive rig
 
@@ -807,15 +974,35 @@ keep direct lighting dynamic, or vertex-bake the low-frequency term.
   a ceiling 40 levels where it moved the floor 6 — a lighting artefact that reads as broken
   normals. The key light's intensity is off on a baked model; its direction still orients this,
   and the published policy states the rule as `lightmappedMaterials.normalRelief`.
-- **A baked material reflects at the level the export chose.** The environment is a bright studio,
-  not the room the bake lit, so at full strength its reflections lift every dark glossy baked
-  surface (measured on a production room: the darkest machine surfaces at 0.06 of display baked
-  alone, 0.22 with full reflections, 0.11 at a quarter). The Scene Exporter's **Baked Reflections**
-  row sets the level -- Off (the pure bake), Quarter (the default), Half, Full -- and the deliverable
-  publishes it as `lightmappedMaterials.envMapIntensity`; the page scales everything the
-  environment gives a baked material by it, with one uniform the baked shaders share.
+- **A baked material reflects the studio at the level the export chose.** The studio is not the
+  room the bake lit, so at full strength its reflections lift every dark glossy baked surface
+  (measured on a production room: the darkest machine surfaces at 0.06 of display baked alone,
+  0.22 with full reflections, 0.11 at a quarter). The Scene Exporter's **Baked Reflections** row
+  sets the level -- Off (the pure bake), Quarter, Half, Full (the default: each texel's reflection
+  is already scaled by its own bake, `lightmappedMaterials.reflectionNormalization`) -- and the
+  deliverable publishes it as `lightmappedMaterials.envMapIntensity`; the page scales everything
+  the studio gives a baked material by it, with one uniform the baked shaders share.
+- **A bake's reflection probe replaces the studio.** A lightmap is diffuse irradiance and a metal
+  has no diffuse, so a baked metal shows only what it reflects -- and an object the bake left out
+  is lit by nothing of the room. mayatk's lightmap bake therefore also captures the room it lit as
+  an HDR from one point (`LightmapBaker.bake_probe`), and the GLB carries it
+  (`extras.lightmap_web.probe`, Radiance bytes in a bufferView, its capture point and the room's
+  box in metres). The page (`kernel/probe.js`) prefilters it as the environment, reads it in the
+  model's own axes, box-projects reflections onto the room, and plays it at
+  `environment.probeIntensity` (1/pi -- the lightmaps' unit, a white card's radiance three.js reads
+  as irradiance); its reflections play whole. The studio is freed while the probe lights the model.
+  The Environment window switches it off and on -- off is the same file shipped without one -- and
+  draws where it was captured; Unity gets it too, as a box-projected Reflection Probe (unitytk's
+  `LightmapMetadataApplier`, intensity 1 there: Unity's lightmaps carry no 1/pi). Measured on a production soldering table against
+  Arnold's render of the same room, through the bake, its GLB and this page: a metal housing from
+  0.12 of Arnold's luminance to 0.62, its trays from 0.4 to 0.89-1.07, the unbaked magnifier's
+  parts from up to 2.8x too bright to 0.65-1.45x. The HUD adds "probe" when it is up.
+- **A lightmap is lit with its Fresnel.** The bake enters as an image-based light's irradiance
+  (`iblIrradiance`), so the diffuse it lights is weighted by one minus the specular's share, as the
+  environment's own diffuse is; added at full weight beside the reflection, a surface was lit
+  twice where it reflects most (`lightmappedMaterials.lightMapEnergy`).
 - **Un-baked materials in the same asset are ordinary PBR surfaces** and take the full environment,
-  diffuse and specular.
+  diffuse and specular -- the room's own probe when the asset carries one.
 
 There is no page-local lighting mode: the deliverable's own `handoff.rendering` is the one rig, and
 this page is one of its readers. The earlier **Light** toggle (`bake only` / `bake + env`) existed
@@ -836,6 +1023,15 @@ that one commitment rather than re-baking.
 
 Sampling cost is one extra texture fetch on UV2 and one multiply — cheaper than the analytic lights
 it replaces.
+
+**The reflection probe is a few MB, paid once.** A desktop probe is a 1024 × 512 Radiance image,
+~1.5 MB of the GLB (a mobile one half as wide). The load decodes it (CPU) and prefilters it (GPU)
+-- Inspect's Load section times both -- into one 768 × 1024 half-float map, 6.3 MB of GPU memory,
+which takes the studio's place: the studio's own 6.3 MB is freed while the probe lights the model,
+and the prefilter's scratch target, as large again, is freed with the generator that made it.
+Per frame it adds no draw call and no texture fetch -- it is read where the studio was -- and a few
+instructions per pixel for the model-space lookup and the box projection; Inspect's frame time with
+the Environment window's switch on against off is that cost on the device.
 
 ### Do we retain the original AO maps?
 
@@ -1046,10 +1242,10 @@ at all, since the picker already names it.
 
 ## Recording a clip
 
-**Export Playblast** writes the clip the transport is on to a movie file — one declared shot, the
-whole-timeline clip, or `FULL SEQUENCE` (every shot laid back onto the timeline it was cut from),
-which records as one continuous movie exactly as it plays. The button appears whenever the
-deliverable ships clips, because that is when the clip picker does: `playblast` is an
+**Export playblast…** (the Export window) writes the clip the transport is on to a movie file —
+one declared shot, the whole-timeline clip, or `FULL SEQUENCE` (every shot laid back onto the
+timeline it was cut from), which records as one continuous movie exactly as it plays. Its section
+appears whenever the deliverable ships clips, because that is when the clip picker does: `playblast` is an
 `AUTO_SCRIPTS` entry keyed on `animation_web`, so there is no checkbox to have forgotten on the push
 a reviewer just watched.
 
@@ -1101,7 +1297,7 @@ Details worth knowing:
   so most of the win is simply not blocking the render loop. The pool is half the machine's cores,
   clamped to 2–8; past 4 the curve is flat (2 workers 4.4x, 4 workers 5.2x, 8 workers 5.8x).
   A browser without `Worker` or `OffscreenCanvas` falls back to compressing on the main thread.
-- **Quality is a preset chosen in the prompt** — `QUALITY_PRESETS` in `scripts/playblast.js`:
+- **Quality is a preset chosen in the prompt** — `QUALITY_PRESETS` in `features/playblast.js`:
 
   | Preset | Long edge | CRF (`quality`) |
   |---|---|---|
@@ -1158,8 +1354,8 @@ Details worth knowing:
 
 ## Exporting a still
 
-**Export Image** saves the current view — the camera where the reviewer left it, the pose the
-transport is holding — as a PNG. It is the `snapshot` viewer script, a checkbox on the panel's
+**Export image…** (the Export window) saves the current view — the camera where the reviewer
+left it, the pose the transport is holding — as a PNG. It is the `snapshot` viewer script, a checkbox on the panel's
 Viewer Scripts row; the HUD and the control bar are page markup over the canvas and are not in it.
 
 ```
@@ -1205,8 +1401,8 @@ Push took 333 s: export 6.7 s, downsize 7.5 s, FBX2glTF 290 s (87%), GLB passes 
 
 The split matters because the fixes live in different places: FBX2glTF's share moves with what the
 scene exports (below), the passes and the texture pass with pythontk. The page's own costs --
-frame time, draw calls, GPU memory, download and parse -- are **Inspect**'s (see *What the page
-tells you*).
+frame time, draw calls, GPU memory, download and parse -- are **Inspect**'s (see *Inspect --
+what the preview costs*).
 
 Timings, measured end to end on a production assembly (366 MB FBX, 2485 nodes over 757 mesh
 transforms and 537 instanced shapes, 98k triangles, one 1591-frame take, 47 baked objects, 353 MB

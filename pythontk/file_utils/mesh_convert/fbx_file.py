@@ -19,7 +19,7 @@ damages the file it inspects.
 import struct
 import zlib
 from collections import Counter
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Collection, Dict, Iterator, List, Optional, Tuple, Union
 
 #: The 23-byte magic every binary FBX starts with.
 FBX_MAGIC = b"Kaydara FBX Binary  \x00\x1a\x00"
@@ -50,7 +50,13 @@ class _FbxFileInternal:
     }
 
     @classmethod
-    def _read_property(cls, f, decode_arrays: bool, raw_payloads: bool = True) -> Any:
+    def _read_property(
+        cls, f, decode_arrays: Union[bool, str], raw_payloads: bool = True
+    ) -> Any:
+        """One property. *decode_arrays* is True (an array as a list), False
+        (a ``("ARRAY", type, count)`` placeholder) or ``"span"`` -- a
+        ``("SPAN", type, count, first, last)`` read without building the list,
+        ``first``/``last`` ``None`` for an empty array."""
         kind = f.read(1)
         scalar = cls._SCALAR_PROPS.get(kind)
         if scalar:
@@ -65,6 +71,12 @@ class _FbxFileInternal:
                 return ("ARRAY", kind.decode(), count)
             if encoding == 1:
                 payload = zlib.decompress(payload)
+            if decode_arrays == "span":
+                if not count:
+                    return ("SPAN", kind.decode(), 0, None, None)
+                first = struct.unpack_from(fmt, payload, 0)[0]
+                last = struct.unpack_from(fmt, payload, (count - 1) * size)[0]
+                return ("SPAN", kind.decode(), count, first, last)
             return list(struct.unpack(f"<{count}{fmt[-1]}", payload))
         if kind in (b"S", b"R"):
             length = struct.unpack("<I", f.read(4))[0]
@@ -76,9 +88,19 @@ class _FbxFileInternal:
 
     @classmethod
     def _read_record(
-        cls, f, wide: bool, decode_arrays: bool, raw_payloads: bool = True
+        cls,
+        f,
+        wide: bool,
+        decode_arrays: Union[bool, Collection[str]],
+        raw_payloads: bool = True,
+        span_arrays: Collection[str] = (),
     ) -> Optional[Dict[str, Any]]:
-        """One node record, or ``None`` at a NULL sentinel."""
+        """One node record, or ``None`` at a NULL sentinel.
+
+        *decode_arrays* is a bool for every record, or the names of the records
+        whose array properties are inflated (``("KeyTime",)``); *span_arrays*
+        names records whose arrays are read as their span alone
+        (:meth:`_read_property`)."""
         if wide:
             header = f.read(24)
             if len(header) < 24:
@@ -93,14 +115,16 @@ class _FbxFileInternal:
         name = f.read(name_len).decode("utf-8", "replace")
         if end == 0:
             return None
-        props = [
-            cls._read_property(f, decode_arrays, raw_payloads)
-            for _ in range(prop_count)
-        ]
+        decode = (
+            decode_arrays if isinstance(decode_arrays, bool) else name in decode_arrays
+        )
+        if not decode and name in span_arrays:
+            decode = "span"
+        props = [cls._read_property(f, decode, raw_payloads) for _ in range(prop_count)]
         sentinel = 25 if wide else 13
         children: List[Dict[str, Any]] = []
         while f.tell() < end - sentinel:
-            child = cls._read_record(f, wide, decode_arrays, raw_payloads)
+            child = cls._read_record(f, wide, decode_arrays, raw_payloads, span_arrays)
             if child is None:
                 break
             children.append(child)
@@ -136,7 +160,11 @@ class FbxFile(_FbxFileInternal):
 
     @classmethod
     def load(
-        cls, path: str, decode_arrays: bool = False, raw_payloads: bool = True
+        cls,
+        path: str,
+        decode_arrays: Union[bool, Collection[str]] = False,
+        raw_payloads: bool = True,
+        span_arrays: Collection[str] = (),
     ) -> "FbxFile":
         """Parse *path*.
 
@@ -145,12 +173,18 @@ class FbxFile(_FbxFileInternal):
             decode_arrays: When False (default), array properties are read as
                 ``("ARRAY", type_char, count)`` placeholders and their
                 payloads skipped — the fast census mode. True inflates them
-                (zlib where encoded) into python lists.
+                (zlib where encoded) into python lists. A collection of record
+                names inflates only those records' arrays.
             raw_payloads: When False, ``R`` (raw binary) properties — the
                 embedded media, hundreds of MB on a textured export — are
                 skipped as ``("RAW", length)`` placeholders instead of being
                 copied into memory. A census that never looks at the bytes
                 (node and take counts) has no reason to hold them.
+            span_arrays: Names of records whose arrays are read as their span
+                alone -- ``("SPAN", type, count, first, last)``, no list built.
+                ``("KeyTime",)`` is what :meth:`take_curves` reads: every
+                curve's extent, at a fraction of the memory a full decode of a
+                production file's per-frame keys costs.
 
         Raises:
             ValueError: Not a binary FBX, or truncated before the header ends.
@@ -163,7 +197,9 @@ class FbxFile(_FbxFileInternal):
             wide = version >= 7500
             roots: List[Dict[str, Any]] = []
             while True:
-                record = cls._read_record(f, wide, decode_arrays, raw_payloads)
+                record = cls._read_record(
+                    f, wide, decode_arrays, raw_payloads, span_arrays
+                )
                 if record is None:
                     break
                 roots.append(record)
@@ -241,6 +277,109 @@ class FbxFile(_FbxFileInternal):
                     if len(props) >= 5 and props[0] == wanted:
                         found.append(props[4] if len(props) == 5 else props[4:])
         return found
+
+    #: FBX ticks per second (``FbxTime``'s unit) in every file this reader
+    #: has met -- Maya and Blender both write the 7.x default. A file whose
+    #: ``OtherFlags/TCDefinition`` is not 127 pins another rate; the times
+    #: below are returned as stored, in that file's ticks.
+    TICKS_PER_SECOND = 46186158000
+
+    def take_curves(self) -> Dict[str, Dict[Tuple[str, str, str], Tuple[Any, ...]]]:
+        """What each take animates: ``{take: {(target, property, channel):
+        (first_key, last_key, key_count)}}``, times in FBX ticks
+        (:attr:`TICKS_PER_SECOND`).
+
+        The census a take split is judged by. A channel the whole-timeline take
+        animates but a shot's take does not is a node that plays its rest pose
+        for that whole shot -- what Maya's ``FBXExportSplitAnimationIntoTakes``
+        makes of every curve with no key inside a take, unless every curve is
+        resampled. *target* is the animated object's name (a ``Model``, or the
+        object a custom property lives on), *property* the property animated
+        (``"Lcl Translation"``), *channel* the curve's component (``"d|X"``).
+
+        Reads the ``KeyTime`` arrays: load with ``span_arrays=("KeyTime",)``
+        (their extent alone -- what this needs) or ``decode_arrays``. A curve
+        read without either reports ``(None, None, count)``.
+        """
+        kind: Dict[Any, str] = {}
+        name: Dict[Any, str] = {}
+        spans: Dict[Any, Tuple[Any, ...]] = {}
+        for record in self.iter_objects():
+            props = record["props"]
+            if not props or not isinstance(props[0], int):
+                continue
+            kind[props[0]] = record["name"]
+            name[props[0]] = (
+                self._display_name(props[1]) if len(props) > 1 else None
+            ) or ""
+            if record["name"] != "AnimationCurve":
+                continue
+            times = next(
+                (
+                    child["props"][0]
+                    for child in record["children"]
+                    if child["name"] == "KeyTime" and child["props"]
+                ),
+                None,
+            )
+            if isinstance(times, list):
+                spans[props[0]] = (
+                    (times[0], times[-1], len(times)) if times else (None, None, 0)
+                )
+            elif isinstance(times, tuple) and len(times) == 5:  # SPAN
+                spans[props[0]] = (times[3], times[4], times[2])
+            elif isinstance(times, tuple) and len(times) == 3:  # ("ARRAY", t, n)
+                spans[props[0]] = (None, None, times[2])
+            else:
+                spans[props[0]] = (None, None, 0)
+
+        parents: Dict[Any, list] = {}
+        for _kind, child, parent, prop in self.connections():
+            parents.setdefault(child, []).append((parent, prop))
+
+        takes: Dict[str, Dict[Tuple[str, str, str], Tuple[Any, ...]]] = {}
+        for curve, span in spans.items():
+            for node, channel in parents.get(curve, ()):
+                if kind.get(node) != "AnimationCurveNode":
+                    continue
+                links = parents.get(node, ())
+                stacks = [
+                    stack
+                    for layer, _ in links
+                    if kind.get(layer) == "AnimationLayer"
+                    for stack, _ in parents.get(layer, ())
+                    if kind.get(stack) == "AnimationStack"
+                ]
+                targets = [(t, prop) for t, prop in links if prop is not None]
+                for stack in stacks:
+                    for target, prop in targets:
+                        takes.setdefault(name[stack], {})[
+                            (name.get(target, ""), prop, channel or "")
+                        ] = span
+        return takes
+
+    def take_spans(self) -> Dict[str, Tuple[float, float]]:
+        """Each take's ``(first, last)`` key in SECONDS, over every curve in it.
+
+        What FBX2glTF sizes a take by: the key extent of all its curves -- a
+        camera attribute's or a custom property's as much as a transform's --
+        whatever span the take itself declares, and the first of them is what
+        it rebases the clip onto (measured on 0.13.1, 2026-10-04: a focal
+        length keyed at 3 opened a take whose transforms start at 10, and the
+        take's declared 1-120 was ignored). Needs the key times
+        (:meth:`take_curves`); a take none of whose curves carries them is
+        left out rather than guessed.
+        """
+        spans: Dict[str, Tuple[float, float]] = {}
+        for take, curves in self.take_curves().items():
+            firsts = [c[0] for c in curves.values() if c[0] is not None]
+            lasts = [c[1] for c in curves.values() if c[1] is not None]
+            if firsts and lasts:
+                spans[take] = (
+                    min(firsts) / self.TICKS_PER_SECOND,
+                    max(lasts) / self.TICKS_PER_SECOND,
+                )
+        return spans
 
     def connections(self) -> List[Tuple[str, Any, Any, Optional[str]]]:
         """Every ``C`` record as ``(kind, child_id, parent_id, property)``.

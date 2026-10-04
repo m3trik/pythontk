@@ -15,18 +15,27 @@
              spent submitting the draw, and the GPU's time where the browser
              offers a timer query; draw calls and triangles per frame.
     Model    the page's own specs: objects, draws, triangles, materials,
-             lightmap coverage, animation.
+             lightmap coverage, what lights the model, animation.
     Memory   estimated GPU memory: textures at their real size (block-
              compressed KTX2 as transcoded, mip chains, an image shared by
-             several materials once) and geometry.
-    File     what the GLB spends its bytes on: images, geometry, animation.
-    Load     download, parse, setup, and the first frame's compile and upload.
+             several materials once), geometry, and the environment maps the
+             page holds -- the bake's reflection probe and the studio, each
+             6.3 MB at a desktop probe's size, in use or idle.
+    File     what the GLB spends its bytes on: images, geometry, animation,
+             the reflection probe.
+    Load     download, parse, setup -- the probe's decode and prefilter as a
+             part of it -- and the first frame's compile and upload.
     Issues   what the load found wrong with the deliverable.
 
-  The panel toggles with the Inspect button or `i`. In a headset -- where the
-  page's own chrome is not drawn at all -- it rides beside the view as a card,
-  toggled with B or Y. Copy Report puts all of it on the clipboard as JSON for a
-  bug report, and every load logs a summary table to the console.
+  The probe's per-pixel cost is the frame time with it on against off: the
+  Environment window's switch puts the model on the programs a file without a
+  probe draws with, so the difference is the probe's alone.
+
+  It is the Inspect window (`viewer.window`): its bar button or `i`. In a
+  headset -- where the page's own chrome is not drawn at all -- it rides
+  beside the view as a card, toggled with B or Y. Copy Report puts all of it
+  on the clipboard as JSON for a bug report, and every load logs a summary
+  table to the console.
 
   Activate:  bridge.push(scripts=["inspect"])
 */
@@ -43,7 +52,10 @@ const RATES = [60, 72, 75, 80, 90, 100, 120, 144, 165, 240];
 
 export default function inspect(viewer) {
   const { THREE, renderer } = viewer;
-  const panel = viewer.addPanel('Inspect');
+  const win = viewer.window('Inspect', {
+    title: 'Frame time, draw calls, GPU memory and load cost, measured here (i)',
+  });
+  const panel = win.section();
   const frames = frameWindow(WINDOW_MS);
   const gpu = gpuTimer(renderer);
   const card = headsetCard(viewer);
@@ -61,18 +73,20 @@ export default function inspect(viewer) {
   function paint() {
     painted = performance.now();
     const frame = stats();
-    panel.setRows(panelRows(viewer, frame, memory, file, gpu));
-    if (renderer.xr.isPresenting) card.draw(cardLines(viewer, frame, memory));
+    // Read at paint, not at load: the Environment window's switch frees one
+    // map and builds the other.
+    const environment = environmentMemory(viewer);
+    panel.setRows(panelRows(viewer, frame, memory, environment, file, gpu));
+    if (renderer.xr.isPresenting) card.draw(cardLines(viewer, frame, memory, environment));
   }
 
-  function toggle() {
-    open = !open;
-    panel.show(open);
+  // Opened and shut by its bar button, `i`, B or Y alike -- all through the
+  // window, which says so here.
+  const toggle = () => win.toggle();
+  win.onShow((shown) => {
+    open = shown;
     if (open) paint();
-  }
-
-  const button = viewer.addButton('Inspect', toggle);
-  button.title = 'Frame time, draw calls, GPU memory and load cost, measured here (i)';
+  });
   const copy = panel.addButton('Copy report', () => {
     const text = JSON.stringify(report(), null, 2);
     const said = (label) => {
@@ -109,6 +123,7 @@ export default function inspect(viewer) {
       frame: stats(),
       gpuObjects: gpuObjects(renderer),
       memory,
+      environment: environmentMemory(viewer),
       file,
     };
   }
@@ -123,7 +138,7 @@ export default function inspect(viewer) {
     file = fileBreakdown(detail.gltf, detail.specs);
     memory = gpuMemory(viewer, detail.model);
     frames.clear();
-    console.table(summary(detail.specs, memory, file));
+    console.table(summary(detail.specs, memory, environmentMemory(viewer), file));
     if (open) paint();
   });
 
@@ -328,10 +343,25 @@ function gpuMemory(viewer, model) {
   };
 }
 
-// What the GLB's bytes are: images, geometry and animation, by the buffer views
-// each references, and its JSON chunk. The rest -- padding, the header, views
-// nothing names -- is `other`. Measured on the production assembly this is the
-// number that said 73 of its 101 MB were animation accessors.
+// The environment maps the page holds (`viewer.environment.maps`): the bake's
+// reflection probe and the studio, prefiltered (PMREM, half-float), each at
+// its real size and whether it lights the model now. The studio is freed
+// while a probe lights the model, so both appear only while the probe is
+// switched off.
+function environmentMemory(viewer) {
+  const maps = (viewer.environment?.maps || []).map(({ name, texture, active }) => ({
+    name,
+    active,
+    bytes: textureBytes(texture, viewer.THREE),
+  }));
+  return { bytes: maps.reduce((sum, map) => sum + map.bytes, 0), maps };
+}
+
+// What the GLB's bytes are: images, geometry, animation and the reflection
+// probe, by the buffer views each references, and its JSON chunk. The rest --
+// padding, the header, views nothing names -- is `other`. Measured on the
+// production assembly this is the number that said 73 of its 101 MB were
+// animation accessors.
 function fileBreakdown(gltf, specs) {
   const json = gltf?.parser?.json;
   if (!json || !specs?.file?.bytes) return null;
@@ -352,6 +382,9 @@ function fileBreakdown(gltf, specs) {
     ])).map(viewOf),
     ...(json.skins || []).map((skin) => viewOf(skin.inverseBindMatrices)),
   ]);
+  // The bake's reflection probe rides a view of its own (Radiance bytes),
+  // named from the lightmap manifest rather than from an image.
+  const probe = bytesOf([specs.probe?.bufferView]);
   const total = specs.file.bytes;
   const described = specs.file.jsonBytes || 0;
   return {
@@ -359,8 +392,9 @@ function fileBreakdown(gltf, specs) {
     images,
     geometry,
     animation,
+    probe,
     json: described,
-    other: Math.max(0, total - images - geometry - animation - described),
+    other: Math.max(0, total - images - geometry - animation - probe - described),
   };
 }
 
@@ -377,14 +411,31 @@ function lightmapLine(lightmaps) {
   return `${count(lightmaps.lit)} of ${plural(lightmaps.objects, 'object')} lit${baked} · ${plural(lightmaps.maps, 'map')}`;
 }
 
+// What lights the model, for the Model section.
+function environmentLine(specs) {
+  const probe = specs.probe;
+  if (!probe) return 'studio';
+  return `reflection probe ${probe.on ? 'on' : 'off (studio)'} · ${probe.width} × ${probe.height}`;
+}
+
+// The environment maps, for the GPU memory section: each by name, and whether
+// it lights the model now or only sits in memory.
+function environmentMemoryLine(environment, formatBytes) {
+  const each = environment.maps
+    .map((map) => `${map.name} ${formatBytes(map.bytes)}${map.active ? '' : ' (idle)'}`)
+    .join(' · ');
+  return `${formatBytes(environment.bytes)}${each ? ` · ${each}` : ''}`;
+}
+
 function issueLine(issue) {
   const names = issue.names || [];
   return names.length ? `${issue.text}: ${names.join(', ')}` : issue.text;
 }
 
-function panelRows(viewer, frame, memory, file, gpu) {
+function panelRows(viewer, frame, memory, environment, file, gpu) {
   // The page's own spelling of a size, so the panel and the status line agree.
   const { formatBytes } = viewer;
+  /** @type {import('../kernel/windows.js').PanelRow[]} */
   const rows = [{ heading: 'Frame' }];
   if (frame) {
     const { budget } = frame;
@@ -414,6 +465,7 @@ function panelRows(viewer, frame, memory, file, gpu) {
       ['triangles', `${count(specs.triangles)} · ${count(specs.vertices)} vertices`],
       ['materials', `${count(specs.materials.file)} in the file · ${count(specs.materials.instances)} in three.js`],
       ['lightmaps', lightmapLine(specs.lightmaps)],
+      ['environment', environmentLine(specs)],
     );
     if (specs.animation.clips) {
       rows.push(['animation', `${plural(specs.animation.clips, 'clip')} · ${plural(specs.animation.materials, 'animated material')}`]);
@@ -428,6 +480,7 @@ function panelRows(viewer, frame, memory, file, gpu) {
         `${formatBytes(textures.bytes)} · ${plural(textures.images, 'image')}${textures.compressed ? `, ${count(textures.compressed)} block-compressed` : ''}`,
       ],
       ['geometry', formatBytes(memory.geometry.bytes)],
+      ['environment', environmentMemoryLine(environment, formatBytes)],
     );
   }
   if (file) {
@@ -437,8 +490,11 @@ function panelRows(viewer, frame, memory, file, gpu) {
       ['images', `${formatBytes(file.images)}${share(file.images, file.bytes)}`],
       ['geometry', `${formatBytes(file.geometry)}${share(file.geometry, file.bytes)}`],
       ['animation', `${formatBytes(file.animation)}${share(file.animation, file.bytes)}`],
-      ['JSON', `${formatBytes(file.json)}${share(file.json, file.bytes)}`],
     );
+    if (file.probe) {
+      rows.push(['reflection probe', `${formatBytes(file.probe)}${share(file.probe, file.bytes)}`]);
+    }
+    rows.push(['JSON', `${formatBytes(file.json)}${share(file.json, file.bytes)}`]);
   }
   if (specs) {
     rows.push(
@@ -446,8 +502,15 @@ function panelRows(viewer, frame, memory, file, gpu) {
       ['download', milliseconds(specs.load.fetchMs)],
       ['parse', milliseconds(specs.load.parseMs)],
       ['setup', milliseconds(specs.load.setupMs)],
-      ['first frame', milliseconds(specs.load.firstFrameMs)],
     );
+    if (specs.probe) {
+      rows.push([
+        'probe',
+        `${milliseconds(specs.load.probeMs)} of setup · decode ${milliseconds(specs.probe.decodeMs)}`
+          + ` · prefilter ${milliseconds(specs.probe.prefilterMs)}`,
+      ]);
+    }
+    rows.push(['first frame', milliseconds(specs.load.firstFrameMs)]);
     if (specs.issues.length) {
       rows.push({ heading: 'Issues' });
       for (const issue of specs.issues) rows.push({ text: issueLine(issue), level: 'warn' });
@@ -457,7 +520,7 @@ function panelRows(viewer, frame, memory, file, gpu) {
 }
 
 // The headset card's lines: the panel's, cut to what reads at arm's length.
-function cardLines(viewer, frame, memory) {
+function cardLines(viewer, frame, memory, environment) {
   const { specs, formatBytes } = viewer;
   const lines = [];
   if (frame) {
@@ -471,7 +534,10 @@ function cardLines(viewer, frame, memory) {
     lines.push({ text: `${count(frame.calls)} calls · ${count(frame.triangles)} tris` });
   }
   if (memory) {
-    lines.push({ text: `textures ${formatBytes(memory.textures.bytes)} · geometry ${formatBytes(memory.geometry.bytes)}` });
+    lines.push({
+      text: `textures ${formatBytes(memory.textures.bytes)} · geometry ${formatBytes(memory.geometry.bytes)}`
+        + ` · environment ${formatBytes(environment.bytes)}`,
+    });
   }
   if (specs) {
     const lit = specs.lightmaps ? ` · ${specs.lightmaps.lit} of ${specs.lightmaps.objects} lightmapped` : '';
@@ -482,7 +548,7 @@ function cardLines(viewer, frame, memory) {
 }
 
 // What every load logs, in the numbers a bug report quotes.
-function summary(specs, memory, file) {
+function summary(specs, memory, environment, file) {
   return {
     objects: specs?.objects,
     meshes: specs?.meshes,
@@ -491,6 +557,8 @@ function summary(specs, memory, file) {
     lightmapped: specs?.lightmaps ? `${specs.lightmaps.lit} of ${specs.lightmaps.objects} objects` : 'none',
     textureMB: memory ? Math.round(memory.textures.bytes / (1024 * 1024)) : null,
     geometryMB: memory ? Math.round(memory.geometry.bytes / (1024 * 1024)) : null,
+    environmentMB: Number((environment.bytes / (1024 * 1024)).toFixed(1)),
+    probe: specs?.probe ? `${specs.probe.width} × ${specs.probe.height}, ${specs.probe.on ? 'on' : 'off'}` : 'none',
     fileMB: file ? Number((file.bytes / (1024 * 1024)).toFixed(1)) : null,
     issues: specs?.issues.length ?? 0,
   };

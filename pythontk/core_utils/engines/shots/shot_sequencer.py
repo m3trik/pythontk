@@ -148,9 +148,9 @@ class _ShotSequencerHooks(object):
     ) -> None:
         """Move every key of *objects* inside the envelope by *delta*."""
 
-    @staticmethod
-    def _shift_audio(old_start: float, old_end: float, delta: float) -> None:
-        """Shift the audio inside ``[old_start, old_end]`` by *delta*."""
+    def _shift_audio(self, old_start: float, old_end: float, delta: float) -> None:
+        """Shift the audio inside ``[old_start, old_end]`` by *delta* -- and the
+        claims :attr:`ledger` holds on what moved."""
 
     def _move_audio_sequence(self, seq: Dict[str, Any], delta: float) -> None:
         """Move one audio sequence (``seq["kind"] == "audio"``) by *delta*."""

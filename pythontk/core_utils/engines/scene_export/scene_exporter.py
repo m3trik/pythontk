@@ -6,26 +6,31 @@ mayatk's and blendertk's ``SceneExporter`` subclass :class:`SceneExporterBase`
 and keep only what reaches their scene: the export write itself
 (``perform_export``), the object scope, the FBX/USD options and presets, and
 the naming tokens a scene spells.  What they share is here: the logging
-setup, the run's ``(current, total, message)`` progress stream, the
-check-override consent and the resume of the tasks a failed check stopped,
-the export button's contract (:meth:`SceneExporterBase.run_config_from_values`
-over :class:`~pythontk.ExportProfile`), and the export folder / log file
-plumbing.
+setup, the run's ``(current, total, message)`` progress stream, the task
+pipeline run with its per-check override decision, the export button's
+contract (:meth:`SceneExporterBase.run_config_from_values` over
+:class:`~pythontk.ExportProfile`), and the export folder / log file plumbing.
 
 Hooks (override in the DCC subclass; defaults describe no scene):
 
-==============================  =============================================
-``TASK_MANAGER_CLASS``          the host's ``TaskManager`` (a
-                                :class:`~pythontk.TaskFactory`), built with
-                                the exporter's logger
-``_saved_scene_path()``         the open scene's saved path, ``""`` unsaved
-``KEPT_EDITS_ADVICE``           what a run that stopped before its write
-                                tells the user about the edits it kept
-``confirm(question)``           consent for an export-time side effect (the
-                                panel overrides it with a dialog)
-==============================  =============================================
+=====================================  ======================================
+``TASK_MANAGER_CLASS``                 the host's ``TaskManager`` (a
+                                       :class:`~pythontk.TaskFactory`), built
+                                       with the exporter's logger
+``_saved_scene_path()``                the open scene's saved path, ``""``
+                                       unsaved
+``KEPT_EDITS_ADVICE``                  what a run that stopped before its
+                                       write tells the user about the edits
+                                       it kept
+``confirm(question)``                  consent for an export-time side effect
+                                       (the panel overrides it with a dialog)
+``decide_check_failure(check, ...)``   override this failed check, every one
+                                       from here, or stop (the panel overrides
+                                       it with a three-button dialog)
+=====================================  ======================================
 """
 
+import html
 import logging
 import os
 from typing import Any, Callable, Dict, List, Optional
@@ -58,7 +63,7 @@ class SceneExporterBase(LoggingMixin):
 
         self.task_manager = self.TASK_MANAGER_CLASS(self.logger)
         #: Checks a run failed but the user chose to override at the failure
-        #: point (see confirm_check_override). Re-stamped by every
+        #: point (see decide_check_failure). Re-stamped by every
         #: ``perform_export``, so the success banner reports the deliverable
         #: as shipped-with-failures rather than claiming a clean pass.
         self._overridden_checks: List[str] = []
@@ -116,20 +121,168 @@ class SceneExporterBase(LoggingMixin):
         """
         return bool(ptk.AppInstaller.consent(True, question))
 
+    #: The check-failure dialog's buttons, in order: label -> the answer
+    #: :attr:`pythontk.TaskFactory.failed_check_handler` takes.
+    CHECK_FAILURE_CHOICES: Dict[str, str] = {
+        "Override All": ptk.TaskFactory.CHECK_OVERRIDE_ALL,
+        "Override": ptk.TaskFactory.CHECK_OVERRIDE,
+        "Cancel": ptk.TaskFactory.CHECK_ABORT,
+    }
+    #: How much of a failure the dialog shows before deferring to the log.
+    CHECK_FAILURE_MAX_MESSAGES = 6
+    CHECK_FAILURE_MAX_REMAINING = 12
+
+    def decide_check_failure(
+        self, check: str, messages: List[str], remaining: List[str]
+    ) -> str:
+        """Seam: what to do about *check*, which just failed mid-run.
+
+        Asked at the failure point, while the tasks that ran are still staged:
+        overriding costs nothing here, where re-running with the panel's
+        Override Checks armed repeats every task over a scene the first run
+        already mutated. Answers one of ``ptk.TaskFactory.CHECK_*``: carry on
+        past this check (a later failure asks again), past every check from
+        here on, or stop before anything is written.
+
+        The panel overrides this with a three-button dialog over
+        :meth:`check_failure_html`. Headless it routes through
+        :meth:`confirm` -- a console ``[y/N]`` for this one check, and no when
+        nobody is there to ask, so a batch run still stops on a failed check.
+
+        Parameters:
+            check: The failed check's name.
+            messages: What the check reported.
+            remaining: The checks still to run, in order.
+        """
+        shown = messages[: self.CHECK_FAILURE_MAX_MESSAGES]
+        lines = [f"Check failed: {self.check_label(check)}."]
+        lines += [f"  {m}" for m in shown]
+        if len(messages) > len(shown):
+            lines.append(f"  ... {len(messages) - len(shown)} more in the log.")
+        if remaining:
+            lines.append(f"{len(remaining)} check(s) still to run.")
+        lines.append("\nOverride this check and continue the export?")
+        if self.confirm("\n".join(lines)):
+            return ptk.TaskFactory.CHECK_OVERRIDE
+        return ptk.TaskFactory.CHECK_ABORT
+
+    def check_label(self, check: str) -> str:
+        """*check*'s name as the panel spells it -- its row's label.
+
+        A check with no row (a headless caller's own) reads as its name made
+        legible: ``check_path_length`` -> "Path Length".
+        """
+        definition = self._definition_tables()[1].get(check) or {}
+        label = definition.get("setText") or definition.get("set_row_label")
+        if label:
+            return str(label)
+        name = check[len("check_") :] if check.startswith("check_") else check
+        return name.replace("_", " ").strip().title()
+
+    def check_failure_html(
+        self, check: str, messages: List[str], remaining: List[str]
+    ) -> str:
+        """The check-failure dialog's body: the failure, then what is left.
+
+        Rich text for the panel's message box: the failed check and what it
+        reported (capped at :attr:`CHECK_FAILURE_MAX_MESSAGES`, the rest
+        deferred to the log), the checks still to run (capped at
+        :attr:`CHECK_FAILURE_MAX_REMAINING`), any this run already overrode,
+        and what each button does. Every piece of text is escaped -- check
+        messages carry paths and node names, never markup. Built without
+        newlines: the box's rich-text pipeline turns each one into a break.
+        """
+        error = self.LOG_COLORS.get("ERROR", "#FFCCCC")
+        muted = self.LOG_COLORS.get("DEBUG", "#AAAAAA")
+
+        def esc(text) -> str:
+            # Whitespace collapsed: a newline inside a label or message is a
+            # stray break in the box (the pipeline renders each one).
+            return html.escape(" ".join(str(text).split()))
+
+        def block(lines, *, small=True, color="", gap=0) -> str:
+            # One block per section, each line inside its own font: a break
+            # left OUTSIDE a smaller font is laid out at the box's larger base
+            # size, which opened a gap above every section's last line.
+            tint = f" color='{color}'" if color else ""
+            size = " size='3'" if small else ""
+            margin = f" style='margin-top:{gap}px'" if gap else ""
+            body = "<br>".join(lines)
+            return f"<div{margin}><font{size}{tint}>{body}</font></div>"
+
+        parts = [
+            block(
+                [
+                    f"<b><font color='{error}'>Check failed:</font></b> "
+                    f"<hl>{esc(self.check_label(check))}</hl>"
+                ],
+                small=False,
+            )
+        ]
+        reported = [m for m in messages if str(m).strip()]
+        shown = reported[: self.CHECK_FAILURE_MAX_MESSAGES]
+        if shown:
+            lines = [f"&nbsp;&nbsp;{esc(m)}" for m in shown]
+            if len(reported) > len(shown):
+                more = len(reported) - len(shown)
+                lines.append(
+                    f"<font color='{muted}'>&nbsp;&nbsp;&hellip; {more} more in "
+                    "the log</font>"
+                )
+            parts.append(block(lines, color=error))
+
+        if remaining:
+            listed = remaining[: self.CHECK_FAILURE_MAX_REMAINING]
+            lines = [f"&nbsp;&nbsp;&bull; {esc(self.check_label(c))}" for c in listed]
+            if len(remaining) > len(listed):
+                more = len(remaining) - len(listed)
+                lines.append(f"&nbsp;&nbsp;&hellip; and {more} more")
+            parts.append(
+                block([f"<b>Still to run ({len(remaining)}):</b>"], small=False, gap=10)
+            )
+            parts.append(block(lines))
+        else:
+            parts.append(
+                block(["No checks left to run after this one."], color=muted, gap=10)
+            )
+        overridden = list(self._overridden_checks)
+        if overridden:
+            parts.append(
+                block(
+                    [
+                        "Already overridden this run: "
+                        + ", ".join(esc(self.check_label(c)) for c in overridden)
+                    ],
+                    color=muted,
+                    gap=6,
+                )
+            )
+        parts.append(
+            block(
+                [
+                    "<b>Override All</b> &mdash; export, and let every check from "
+                    "here on through (failures are still logged).",
+                    "<b>Override</b> &mdash; continue past this check; the next one "
+                    "that fails asks again.",
+                    "<b>Cancel</b> &mdash; stop before anything is written.",
+                ],
+                color=muted,
+                gap=12,
+            )
+        )
+        return "".join(parts)
+
+    @ptk.Deprecation.symbol(
+        "SceneExporterBase.decide_check_failure",
+        remove_in="0.14.0",
+        since="2026-10-04",
+        reason="A failed check is decided where it fails, one check at a time.",
+    )
     def confirm_check_override(self) -> bool:
-        """Ask, at the failure point, whether to export despite failed checks.
+        """Ask whether to export despite the failed checks of the last run.
 
-        The tasks have already run and the scene is still staged, so this is
-        the ONE moment at which overriding costs nothing. Arming the panel's
-        Override Checks toggle *after* a failed run instead means a second
-        export from scratch: every task re-runs (re-bake, re-optimize the
-        textures, re-rewrite the paths) on a scene the first run already
-        mutated. Answering yes here continues the SAME run straight to the
-        write.
-
-        Consent only, never an automatic pass: it routes through
-        :meth:`confirm`, whose default answers no when nobody is there to ask
-        (a batch run still aborts on a failed check).
+        Retired: a run asks :meth:`decide_check_failure` the moment each check
+        fails. Kept for callers that still ask once, after the run.
         """
         failed = list(getattr(self.task_manager, "_last_failed_checks", ()) or ())
         listed = ", ".join(failed[:10]) + (" \u2026" if len(failed) > 10 else "")
@@ -165,53 +318,56 @@ class SceneExporterBase(LoggingMixin):
             f"{', '.join(kept)}. {self.KEPT_EDITS_ADVICE}"
         )
 
-    def _resume_skipped_tasks(self, tasks: Dict[str, Any]) -> None:
-        """Run the tasks the failed check aborted, so an override still ships a
-        fully processed file.
+    def _run_task_pipeline(self, tasks: Dict[str, Any]) -> bool:
+        """Run *tasks* through the task manager; True when the write may follow.
 
-        The runner stops dispatching tasks at the first failed check -- every
-        one below it in the schedule is work an aborted write would throw
-        away. Overriding turns that write back on, so those tasks are no
-        longer wasted and must run before it: without this an overridden
-        export silently shipped a file that skipped, say, the texture
-        conversion the user asked for.
-
-        Only the skipped names are re-dispatched; the tasks above the failed
-        check already ran, and re-running them would repeat their mutation.
-        The first pass's staged state is still in effect (deferred restores
-        unwind once, from perform_export's ``finally``), and the run's modes
-        are NOT re-derived from this subset -- ``run_tasks`` reads them off
-        the full dict, so the resume goes through the dispatcher directly.
+        Each failed check is put to :meth:`decide_check_failure` the moment it
+        fails (``TaskFactory.failed_check_handler``), so an override carries
+        the SAME run on -- every task and check below the failure still runs,
+        and a later failure asks again unless the answer was Override All.
+        What was overridden is recorded for the success banner
+        (``_overridden_checks``). A failure that stands stops the run: the
+        verdict is logged with the edits the tasks kept, and the staged ones
+        unwind in ``perform_export``'s ``finally``. A raising task does the
+        same and re-raises.
         """
         tm = self.task_manager
-        skipped = [
-            n for n in (getattr(tm, "_last_skipped_tasks", ()) or ()) if n in tasks
-        ]
-        if not skipped:
-            return
-        self.logger.info(
-            f"Resuming {len(skipped)} task(s) the failed check had stopped: "
-            f"{', '.join(skipped)}."
-        )
-        # The second pass re-stamps the run counters the success banner reads.
-        # The first pass already counted every REQUESTED task, so its numbers
-        # are the ones that describe the run; keep them.
-        counts = (
-            getattr(tm, "_last_task_count", 0),
-            getattr(tm, "_last_check_count", 0),
-        )
-        # ...and the checks the abort skipped, which the second pass (tasks
-        # only) would clear: the banner must not count them as passed.
-        skipped_checks = list(getattr(tm, "_last_skipped_checks", ()) or ())
-        # The first pass closed its progress stream with every entry done,
-        # these included; rewind so the resumed entries advance to, never
-        # past, that mark.
-        self._progress_base = max(0, self._progress_current - len(skipped))
+
+        def decide(check: str, messages: List[str], remaining: List[str]) -> str:
+            answer = self.decide_check_failure(check, messages, remaining)
+            if answer in (
+                ptk.TaskFactory.CHECK_OVERRIDE,
+                ptk.TaskFactory.CHECK_OVERRIDE_ALL,
+            ):
+                self._overridden_checks.append(check)
+            return answer
+
+        tm.failed_check_handler = decide
         try:
-            tm._execute_tasks_and_checks({name: tasks[name] for name in skipped}, {})
+            proceed = tm.run_tasks(tasks)
+        except Exception as e:
+            # A raising task stops the run before its write, as a failed check
+            # does: the staged edits unwind in perform_export's finally, and
+            # what the tasks kept is named before the error goes on.
+            self._warn_stopped_before_write(f"Export stopped by an error: {e}.")
+            raise
         finally:
-            tm._last_task_count, tm._last_check_count = counts
-            tm._last_skipped_checks = skipped_checks
+            tm.failed_check_handler = None
+        # The runner's list is the record: an Override All lets later failures
+        # through without asking, so only it names every one.
+        self._overridden_checks = list(
+            getattr(tm, "_last_overridden_checks", None) or self._overridden_checks
+        )
+        if not proceed:
+            self._warn_stopped_before_write("Export blocked by failed checks.")
+            return False
+        if self._overridden_checks:
+            self.logger.warning(
+                "Checks overridden — writing the file despite "
+                f"{len(self._overridden_checks)} failed check(s): "
+                f"{', '.join(self._overridden_checks)}."
+            )
+        return True
 
     # ------------------------------------------------------------------
     # Progress -- one (current, total, message) stream for the whole run

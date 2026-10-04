@@ -12,13 +12,23 @@ definition the base derives, with no extra per-schema code:
   (unknown-but-harmless keys are warnings, not errors — see the module note),
 * :meth:`skeleton` — a fully-populated example ``dict`` a user can model a new
   file after,
-* :meth:`describe` / :meth:`to_markdown` — human-readable reference docs.
+* :meth:`describe` / :meth:`to_markdown` — human-readable reference docs,
+* :meth:`json_schema` — the same shape as a JSON Schema document, the form a
+  reader in another language generates its types from.
 
 This is the storage-agnostic *shape* SSoT.  Pair it with a
 :class:`~pythontk.core_utils.presets.store.PresetStore` (any codec — JSON or
 YAML) through :class:`~pythontk.core_utils.template_set.TemplateSet` to get a
 discoverable, user-extensible collection of template files whose schema is
 documented and enforced from one place.
+
+The second use is a *payload* shape: a JSON value one program writes and
+programs in other languages read (a scene record's payload, a manifest a
+glTF runtime binds).  There the field annotations ARE the contract, so such a
+spec sets :attr:`SchemaSpec.TYPED` and :meth:`validate` also checks every
+present value against its annotation; a template spec leaves it off, because
+its annotations describe the parsed object (a ``Tuple`` built from a list)
+rather than the file.
 
 Design note — errors vs. warnings
     :meth:`validate` deliberately splits *errors* (unknown method, wrong
@@ -32,11 +42,15 @@ Design note — errors vs. warnings
 
 from __future__ import annotations
 
+import collections.abc
 import copy
 import dataclasses
+import enum
 import logging
+import types
+import typing
 from dataclasses import dataclass, field, fields
-from typing import Any, Callable, Dict, List, Optional, Sequence, Type
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Type
 
 # Metadata namespace key — keeps schema metadata from colliding with any other
 # library that reads ``dataclasses.field(metadata=...)``.
@@ -45,6 +59,26 @@ _META = "schema_spec"
 # Sentinel: "no explicit example given — derive one from the field default or a
 # nested schema." Distinct from ``None``, which is a legitimate example value.
 MISSING = dataclasses.MISSING
+
+# ``int | None`` (Python 3.10+) has its own origin; ``Optional[int]`` is Union.
+_UNION_ORIGINS = tuple(
+    o for o in (typing.Union, getattr(types, "UnionType", None)) if o is not None
+)
+# Annotation origins read as a JSON array / a JSON object.
+_ARRAY_ORIGINS = (
+    list,
+    set,
+    frozenset,
+    collections.abc.Sequence,
+    collections.abc.MutableSequence,
+    collections.abc.Set,
+    collections.abc.Collection,
+    collections.abc.Iterable,
+)
+_OBJECT_ORIGINS = (dict, collections.abc.Mapping, collections.abc.MutableMapping)
+# The JSON Schema keyword for each scalar annotation -- bool BEFORE int, which
+# it subclasses.
+_SCALARS = (("boolean", bool), ("integer", int), ("number", float), ("string", str))
 
 
 class SchemaError(ValueError):
@@ -154,6 +188,279 @@ class _SchemaSpecInternal(object):
             return nested[0], True
         return nested, False
 
+    @staticmethod
+    def _doc_lines(spec: type) -> List[str]:
+        """*spec*'s docstring lines -- none for the constructor signature
+        ``@dataclass`` synthesises as ``__doc__`` when a subclass has no real
+        docstring, which would leak field types / ``<factory>`` / ``=None``
+        noise into a generated reference."""
+        doc = spec.__doc__ or ""
+        if doc.strip().startswith(spec.__name__ + "("):
+            return []
+        return doc.strip().splitlines()
+
+    @classmethod
+    def _summary(cls, spec: type) -> str:
+        """The first paragraph of *spec*'s docstring, on one line."""
+        lines: List[str] = []
+        for line in cls._doc_lines(spec):
+            if not line.strip():
+                break
+            lines.append(line.strip())
+        return " ".join(lines)
+
+    @staticmethod
+    def _hints(spec: type) -> Dict[str, Any]:
+        """``{field: annotation}`` for *spec*'s fields, string annotations (a
+        module under ``from __future__ import annotations``) resolved. One that
+        cannot be resolved -- a name local to a function -- reads as ``Any``."""
+        try:
+            hints = typing.get_type_hints(spec)
+        except Exception:  # noqa: BLE001 -- NameError, or an exotic annotation
+            hints = {}
+        resolved: Dict[str, Any] = {}
+        for f in fields(spec):
+            tp = hints.get(f.name, f.type)
+            resolved[f.name] = Any if isinstance(tp, str) else tp
+        return resolved
+
+    @staticmethod
+    def _json_kind(value: Any) -> str:
+        """The JSON type *value* is, for a message."""
+        if value is None:
+            return "null"
+        for kind, py in _SCALARS:
+            if isinstance(value, py):
+                return kind
+        if isinstance(value, Mapping):
+            return "object"
+        if isinstance(value, (list, tuple)):
+            return "array"
+        return type(value).__name__
+
+    @classmethod
+    def _type_schema(cls, tp: Any, defs: Dict[str, Any]) -> Dict[str, Any]:
+        """The JSON Schema of the annotation *tp*. A :class:`SchemaSpec` it
+        names is defined once in *defs* (by class name) and referenced."""
+        if tp is Any or tp is object:
+            return {}
+        if tp is type(None):
+            return {"type": "null"}
+        if isinstance(tp, type) and issubclass(tp, SchemaSpec):
+            return {"$ref": cls._define(tp, defs)}
+        origin, args = typing.get_origin(tp), typing.get_args(tp)
+        if origin in _UNION_ORIGINS:
+            return {"anyOf": [cls._type_schema(a, defs) for a in args]}
+        if origin is typing.Literal or (
+            isinstance(tp, type) and issubclass(tp, enum.Enum)
+        ):
+            values = list(args) if origin is typing.Literal else [m.value for m in tp]
+            kinds = {cls._json_kind(v) for v in values}
+            return (
+                {"type": kinds.pop(), "enum": values}
+                if len(kinds) == 1
+                else {"enum": values}
+            )
+        for kind, py in _SCALARS:
+            if tp is py:
+                return {"type": kind}
+        if origin is tuple or tp is tuple:
+            if len(args) == 2 and args[1] is Ellipsis:
+                return cls._array_schema(args[0], defs)
+            if not args:
+                return {"type": "array"}
+            items = [cls._type_schema(a, defs) for a in args]
+            return {
+                "type": "array",
+                "prefixItems": items,
+                "minItems": len(items),
+                "maxItems": len(items),
+            }
+        if origin in _ARRAY_ORIGINS or tp in (list, set, frozenset):
+            return cls._array_schema(args[0] if args else Any, defs)
+        if origin in _OBJECT_ORIGINS or tp is dict:
+            schema: Dict[str, Any] = {"type": "object"}
+            values = cls._type_schema(args[1] if len(args) == 2 else Any, defs)
+            if values:
+                schema["additionalProperties"] = values
+            return schema
+        return {}
+
+    @classmethod
+    def _array_schema(cls, item: Any, defs: Dict[str, Any]) -> Dict[str, Any]:
+        schema: Dict[str, Any] = {"type": "array"}
+        items = cls._type_schema(item, defs)
+        if items:
+            schema["items"] = items
+        return schema
+
+    @classmethod
+    def _define(cls, spec: type, defs: Dict[str, Any]) -> str:
+        """Define *spec* in *defs* (once) and return its ``$ref``.
+
+        Raises:
+            SchemaError: Another spec of the same class name is already there
+                -- two would share one ``$ref`` and one generated type.
+        """
+        name = spec.__name__
+        owner = defs.get(name, {}).get("x-spec")
+        if owner is not None and owner is not spec:
+            raise SchemaError(
+                f"two schemas named {name!r} in one document: "
+                f"{owner.__module__} and {spec.__module__}"
+            )
+        if name not in defs:
+            # Claimed BEFORE it is built: a spec nesting itself refers back to
+            # the claim instead of recursing forever.
+            defs[name] = {"x-spec": spec}
+            defs[name].update(cls._object_schema(spec, defs))
+        return f"#/$defs/{name}"
+
+    @classmethod
+    def _object_schema(cls, spec: type, defs: Dict[str, Any]) -> Dict[str, Any]:
+        """*spec* as a JSON Schema object: its fields' types from their
+        annotations (a ``nested=`` schema from its metadata), ``help`` as each
+        description, ``choices`` as each enum, the required keys.
+
+        Raises:
+            SchemaError: A typed spec whose annotation and ``nested=`` name
+                different schemas -- one declaration may not say two things.
+        """
+        hints = cls._hints(spec)
+        properties: Dict[str, Any] = {}
+        required: List[str] = []
+        for name, m in spec._specs().items():
+            hinted = cls._type_schema(hints.get(name, Any), defs)
+            nested, is_list = cls._nested_of(m)
+            if nested is not None:
+                ref = {"$ref": cls._define(nested, defs)}
+                fragment = {"type": "array", "items": ref} if is_list else ref
+                if spec.TYPED and hinted != fragment:
+                    raise SchemaError(
+                        f"{spec.__name__}.{name}: its annotation and nested= "
+                        "name different schemas"
+                    )
+            else:
+                fragment = dict(hinted)
+            if m["choices"] is not None:
+                fragment["enum"] = list(m["choices"])
+            if m["help"]:
+                fragment["description"] = m["help"]
+            properties[name] = fragment
+            if m["required"]:
+                required.append(name)
+        schema: Dict[str, Any] = {"type": "object"}
+        summary = cls._summary(spec)
+        if summary:
+            schema["description"] = summary
+        schema["properties"] = properties
+        if required:
+            schema["required"] = required
+        return schema
+
+    @staticmethod
+    def _strip_specs(node: Any) -> Any:
+        """*node* without the ``x-spec`` class claims :meth:`_define` leaves."""
+        if isinstance(node, dict):
+            return {
+                k: _SchemaSpecInternal._strip_specs(v)
+                for k, v in node.items()
+                if k != "x-spec"
+            }
+        if isinstance(node, list):
+            return [_SchemaSpecInternal._strip_specs(v) for v in node]
+        return node
+
+    @classmethod
+    def _type_errors(
+        cls, tp: Any, value: Any, path: str, res: "ValidationResult"
+    ) -> None:
+        """Every way *value* breaks the annotation *tp*, into *res*, each
+        located at *path* (``joints[0].t[2]``). An annotation this cannot read
+        checks nothing."""
+        if tp is Any or tp is object:
+            return
+        if tp is type(None):
+            if value is not None:
+                res.errors.append(f"{path}: expected null, got {cls._json_kind(value)}")
+            return
+        if isinstance(tp, type) and issubclass(tp, SchemaSpec):
+            res.merge(tp.validate(value), path=f"{path}.")
+            return
+        origin, args = typing.get_origin(tp), typing.get_args(tp)
+        if origin in _UNION_ORIGINS:
+            # A null meets the Optional; anything else answers to the other
+            # option(s), whose own message says what was wrong.
+            options = (
+                [a for a in args if a is not type(None)] if value is not None else args
+            )
+            for option in options:
+                probe = ValidationResult()
+                cls._type_errors(option, value, path, probe)
+                if not probe.errors:
+                    res.warnings.extend(probe.warnings)
+                    return
+            if len(options) == 1:
+                cls._type_errors(options[0], value, path, res)
+            else:
+                res.errors.append(
+                    f"{path}: {cls._json_kind(value)} matches none of its types"
+                )
+            return
+        if origin is typing.Literal or (
+            isinstance(tp, type) and issubclass(tp, enum.Enum)
+        ):
+            values = list(args) if origin is typing.Literal else [m.value for m in tp]
+            # A bool is never the int it equals (True == 1), either way round.
+            if not any(
+                v == value and isinstance(v, bool) == isinstance(value, bool)
+                for v in values
+            ):
+                res.errors.append(f"{path}: {value!r} is not one of {values}")
+            return
+        for kind, py in _SCALARS:
+            if tp is py:
+                ok = isinstance(value, (int, float) if py is float else py)
+                if py is not bool and isinstance(value, bool):
+                    ok = False
+                if not ok:
+                    res.errors.append(
+                        f"{path}: expected {kind}, got {cls._json_kind(value)}"
+                    )
+                return
+        fixed = (origin is tuple or tp is tuple) and args and args[-1] is not Ellipsis
+        if (
+            origin is tuple
+            or tp is tuple
+            or origin in _ARRAY_ORIGINS
+            or tp in (list, set, frozenset)
+        ):
+            if not isinstance(value, (list, tuple)):
+                res.errors.append(
+                    f"{path}: expected array, got {cls._json_kind(value)}"
+                )
+                return
+            if fixed and len(value) != len(args):
+                res.errors.append(
+                    f"{path}: expected {len(args)} items, got {len(value)}"
+                )
+                return
+            for i, item in enumerate(value):
+                item_tp = args[i] if fixed else (args[0] if args else Any)
+                cls._type_errors(item_tp, item, f"{path}[{i}]", res)
+            return
+        if origin in _OBJECT_ORIGINS or tp is dict:
+            if not isinstance(value, Mapping):
+                res.errors.append(
+                    f"{path}: expected object, got {cls._json_kind(value)}"
+                )
+                return
+            value_tp = args[1] if len(args) == 2 else Any
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    res.errors.append(f"{path}: key {key!r} is not a string")
+                cls._type_errors(value_tp, item, f"{path}.{key}", res)
+
 
 @dataclass
 class SchemaSpec(_SchemaSpecInternal):
@@ -163,6 +470,15 @@ class SchemaSpec(_SchemaSpecInternal):
     Override :meth:`from_dict` / :meth:`to_dict` for (de)serialisation of
     irregular shapes; the validate/skeleton/docs machinery is inherited.
     """
+
+    #: Whether :meth:`validate` also holds every present value to its field's
+    #: annotation (``Optional[float]``, ``Tuple[float, float, float]``,
+    #: ``List[OtherSpec]``, ...). On for a payload shape, where the annotation
+    #: is the contract; off for a template, whose annotations describe the
+    #: parsed object. Unannotated, so it is a class setting, not a field.
+    TYPED = False
+    #: The dialect :meth:`json_schema` writes.
+    JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
     # -- introspection ----------------------------------------------------
     @classmethod
@@ -229,9 +545,10 @@ class SchemaSpec(_SchemaSpecInternal):
         """Validate a raw ``dict`` against this schema.
 
         Errors: not-a-mapping, missing required key, bad ``choices`` value,
-        nested-schema errors, and anything a field's ``validate`` callable
-        reports.  Warnings: unrecognised top-level keys (``_``-prefixed keys
-        are reserved for annotations and skipped).
+        nested-schema errors, anything a field's ``validate`` callable
+        reports, and -- on a :attr:`TYPED` schema -- a value its annotation
+        does not admit.  Warnings: unrecognised top-level keys
+        (``_``-prefixed keys are reserved for annotations and skipped).
         """
         res = ValidationResult()
         if not isinstance(data, dict):
@@ -239,6 +556,7 @@ class SchemaSpec(_SchemaSpecInternal):
             return res
 
         specs = cls._specs()
+        hints = cls._hints(cls) if cls.TYPED else {}
         for key in data:
             if key not in specs and not str(key).startswith("_"):
                 res.warnings.append(f"unknown key {key!r} (ignored)")
@@ -269,6 +587,8 @@ class SchemaSpec(_SchemaSpecInternal):
                     res.merge(schema.validate(value), path=f"{name}.")
                 else:
                     res.errors.append(f"{name}: expected a mapping for nested schema")
+            elif cls.TYPED:
+                cls._type_errors(hints.get(name, Any), value, name, res)
 
             validator = m["validate"]
             if validator is not None:
@@ -354,13 +674,7 @@ class SchemaSpec(_SchemaSpecInternal):
         heading = "#" * _level
         head = title or cls.__name__
         lines: List[str] = [f"{heading} {head}", ""]
-        # Skip the constructor signature ``@dataclass`` auto-synthesises as
-        # ``__doc__`` when a subclass has no real docstring — emitting it would
-        # leak field types / ``<factory>`` / ``=None`` noise into a committed doc.
-        doc_str = cls.__doc__ or ""
-        if doc_str.strip().startswith(cls.__name__ + "("):
-            doc_str = ""
-        doc = doc_str.strip().splitlines()
+        doc = _SchemaSpecInternal._doc_lines(cls)
         if doc:
             lines += [doc[0].strip(), ""]
         lines += ["| Key | Required | Description | Example |", "|---|---|---|---|"]
@@ -385,6 +699,37 @@ class SchemaSpec(_SchemaSpecInternal):
         for ns in nested_specs:
             lines += ["", ns.to_markdown(_level=_level + 1)]
         return "\n".join(lines)
+
+    @classmethod
+    def json_schema(cls) -> Dict[str, Any]:
+        """This schema as a JSON Schema (draft 2020-12) document.
+
+        Derived from the same declaration :meth:`validate` enforces: each
+        field's type from its annotation (``Optional[float]`` is a number or
+        null, ``Tuple[float, float, float]`` exactly three numbers, a nested
+        schema a ``$ref`` into ``$defs``, by class name), its ``help`` as the
+        description, its ``choices`` as an enum, and the required keys.
+        Unknown keys are left allowed, as :meth:`validate` tolerates them.
+        It is the form a reader in another language generates its types
+        from, so the generated types can never drift from this definition.
+
+        Returns:
+            dict: ``{"$schema", "title", "description", "type": "object",
+            "properties", "required", "$defs"}`` (empty parts omitted).
+
+        Raises:
+            SchemaError: Two nested schemas share a class name, or a
+                :attr:`TYPED` field's annotation and ``nested=`` disagree.
+        """
+        defs: Dict[str, Any] = {}
+        document: Dict[str, Any] = {
+            "$schema": cls.JSON_SCHEMA_DIALECT,
+            "title": cls.__name__,
+        }
+        document.update(_SchemaSpecInternal._object_schema(cls, defs))
+        if defs:
+            document["$defs"] = defs
+        return _SchemaSpecInternal._strip_specs(document)
 
     @staticmethod
     def spec_field(

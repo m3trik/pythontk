@@ -49,6 +49,23 @@ def _gradient(size):
     return img
 
 
+def _relief_normals(size=128, convention="opengl"):
+    """An 8-bit tangent-space normal map of a real height field, stored in
+    *convention* -- relief the content detector reads with confidence."""
+    y, x = np.mgrid[0:size, 0:size].astype(np.float64)
+    h = np.sin(x / size * 6 * np.pi) * np.cos(y / size * 4 * np.pi) * 8.0
+    hx, hy = np.gradient(h, axis=1), np.gradient(h, axis=0)
+    green = hy if convention == "opengl" else -hy  # image rows run DOWN
+    n = np.stack([-hx, green, np.ones_like(h)], axis=-1)
+    n /= np.linalg.norm(n, axis=-1, keepdims=True)
+    return np.rint((n + 1.0) * 127.5).astype(np.float32)
+
+
+def _encode(xyz):
+    """A unit vector as 8-bit normal-map values."""
+    return (np.asarray(xyz, np.float32) + 1.0) * 0.5 * 255.0
+
+
 class TestBuildContract(unittest.TestCase):
     def test_shape_mismatch_raises(self):
         with self.assertRaises(ValueError):
@@ -162,6 +179,29 @@ class TestSources(unittest.TestCase):
         out, _ = ptk.UvTransfer.transfer(t, {0: np.full((8, 8), 7.0), 1: _noise(8)})
         self.assertEqual(out.shape, (8, 8, 3))
         self.assertTrue(np.allclose(out[-1, -1], 7.0))
+
+    def test_a_grey_source_in_an_rgba_layout_is_opaque(self):
+        """Grey fills the COLOUR channels; the alpha it does not have is
+        opaque. Repeated into all four, a metal-0 map beside a packed
+        MetallicSmoothness one wrote smoothness 0 over its whole region (and a
+        black albedo beside a cutout one would have punched a hole)."""
+        rgba = np.full((8, 8, 4), (10.0, 20.0, 30.0, 100.0), np.float32)
+        t = ptk.UvTransfer.build(QUAD, QUAD, 8, supersample=1, source_ids=[0, 1])
+        for grey in (np.zeros((8, 8)), (0.0,)):
+            with self.subTest(grey=type(grey).__name__):
+                out, _ = ptk.UvTransfer.transfer(t, {0: rgba, 1: grey}, value_max=255.0)
+                self.assertTrue(np.allclose(out[0, 0], (0.0, 0.0, 0.0, 255.0)))
+                self.assertTrue(np.allclose(out[-1, -1], (10.0, 20.0, 30.0, 100.0)))
+
+    def test_rgb_pads_opaque_at_the_stated_scale_not_a_guessed_one(self):
+        """An all-black RGB map (black metal, no emission) looks like 0..1
+        data, so a guessed scale padded its alpha at 1/255 -- transparent."""
+        rgba = np.full((8, 8, 4), 128.0, np.float32)
+        t = ptk.UvTransfer.build(QUAD, QUAD, 8, supersample=1, source_ids=[0, 1])
+        out, _ = ptk.UvTransfer.transfer(
+            t, {0: rgba, 1: np.zeros((8, 8, 3))}, value_max=255.0
+        )
+        self.assertTrue(np.allclose(out[0, 0], (0.0, 0.0, 0.0, 255.0)))
 
     def test_source_mask_prefills_gutter_before_sampling(self):
         # Source map: valid only on the left half (white); right half is black
@@ -375,6 +415,27 @@ class TestAutoSize(unittest.TestCase):
         self.assertEqual(lines, [])
 
 
+class TestDominantSource(unittest.TestCase):
+    """The source material a layout's assigned copy is modelled on: the one
+    covering the most TARGET-UV area, not the most triangles -- a dense
+    trim strip must not outvote the panel that fills the layout."""
+
+    def test_area_wins_over_triangle_count(self):
+        big = QUAD  # 2 triangles filling the square
+        small = np.concatenate([QUAD * 0.1] * 3)  # 6 tiny triangles
+        job = {
+            "dst": np.concatenate([big, small]),
+            "ids": np.array([0, 0] + [1] * 6),
+            "sources": [{"name": "panel"}, {"name": "trim"}],
+        }
+        self.assertEqual(ptk.UvTransfer.dominant_source(job), 0)
+
+    def test_a_job_naming_no_sources_has_none(self):
+        self.assertIsNone(
+            ptk.UvTransfer.dominant_source({"dst": QUAD, "ids": [0, 0], "sources": []})
+        )
+
+
 class TestMergeLayouts(unittest.TestCase):
     """A layout is the unit: disjoint per-material jobs on one set merge."""
 
@@ -411,6 +472,353 @@ class TestMergeLayouts(unittest.TestCase):
         self.assertEqual(list(ptk.UvTransfer.merge_layouts({"only": a}, "x")), ["only"])
 
 
+class TestLayoutJobs(unittest.TestCase):
+    """A run's outputs: what each target contributed, grouped into LAYOUTS --
+    by overlap, never by the names a host reads off the targets."""
+
+    SOURCES = [{"maps": {}, "constants": {}}]
+
+    @staticmethod
+    def _part(material, uv_set, dst, member):
+        return {
+            "material": material,
+            "uv_set": uv_set,
+            "src": QUAD,
+            "dst": dst,
+            "ids": np.zeros(2, np.int32),
+            "members": [member],
+        }
+
+    def test_two_set_names_that_do_not_overlap_are_one_layout(self):
+        """A production table whose parts came in through Maya (``map1``) and
+        an FBX (``UVChannel_1``) was ONE combined layout, and grouping by set
+        name transferred it into two materials (2026-10-03)."""
+        jobs = ptk.UvTransfer.layout_jobs(
+            [
+                self._part("tableMat", "map1", QUAD * [0.5, 1.0], "mat"),
+                self._part(
+                    "tableMat", "UVChannel_1", QUAD * [0.5, 1.0] + [0.5, 0.0], "legs"
+                ),
+            ],
+            self.SOURCES,
+        )
+        self.assertEqual(list(jobs), ["map1_UVChannel_1"])
+        job = jobs["map1_UVChannel_1"]
+        self.assertEqual(len(job["dst"]), 4)
+        self.assertEqual(job["members"], ["mat", "legs"])
+        self.assertIs(job["sources"], self.SOURCES)
+
+    def test_faces_that_wear_nothing_are_still_a_layout(self):
+        """What a target wears says nothing about where its texels go: faces
+        whose shading group lost its shader are transferred like any other."""
+        jobs = ptk.UvTransfer.layout_jobs(
+            [self._part(None, "map1", QUAD, "bare")], self.SOURCES
+        )
+        self.assertEqual(list(jobs), ["map1"])
+
+    def test_one_material_on_one_set_keeps_its_name(self):
+        jobs = ptk.UvTransfer.layout_jobs(
+            [self._part("matA", "map1", QUAD, "a")], self.SOURCES
+        )
+        self.assertEqual(list(jobs), ["matA"])
+
+    def test_parts_of_one_material_and_set_are_one_group(self):
+        jobs = ptk.UvTransfer.layout_jobs(
+            [
+                self._part("matA", "map1", QUAD * [0.5, 1.0], "a"),
+                self._part("matA", "map1", QUAD * [0.5, 1.0] + [0.5, 0.0], "b"),
+            ],
+            self.SOURCES,
+        )
+        self.assertEqual(list(jobs), ["matA"])
+        self.assertEqual(jobs["matA"]["members"], ["a", "b"])
+
+    def test_overlapping_groups_stay_apart_named_by_material(self):
+        jobs = ptk.UvTransfer.layout_jobs(
+            [
+                self._part("matA", "map1", QUAD, "a"),
+                self._part("matB", "map1", QUAD * 0.75, "b"),
+            ],
+            self.SOURCES,
+        )
+        self.assertEqual(set(jobs), {"matA", "matB"})
+
+    def test_a_material_two_sets_share_is_named_by_each_set(self):
+        jobs = ptk.UvTransfer.layout_jobs(
+            [
+                self._part("matA", "map1", QUAD, "a"),
+                self._part("matA", "uv2", QUAD * 0.75, "b"),
+            ],
+            self.SOURCES,
+        )
+        self.assertEqual(set(jobs), {"map1_matA", "uv2_matA"})
+
+    def test_nothing_contributed_is_no_job(self):
+        self.assertEqual(ptk.UvTransfer.layout_jobs([], self.SOURCES), {})
+
+
+class TestTransferMaterialsNormals(unittest.TestCase):
+    """``transfer_materials`` reads each source normal map's OWN convention."""
+
+    def setUp(self):
+        artifacts = ptk.TempArtifacts("uv_transfer_normals", policy="scoped")
+        self.addCleanup(artifacts.cleanup)
+        self.tmp = artifacts.dir_path()
+
+    def _map(self, name, img):
+        return ptk.UvTransfer.save_map(os.path.join(self.tmp, name), img)
+
+    def _normal(self, jobs, size):
+        out = ptk.UvTransfer.transfer_materials(
+            jobs,
+            output_dir=os.path.join(self.tmp, "out"),
+            channels=["normal"],
+            size=size,
+            supersample=1,
+            padding=0,
+        )
+        label = next(iter(jobs))
+        return ptk.UvTransfer.load_map(out[label]["normal"])[0]
+
+    def test_an_untagged_directx_map_rotates_as_directx(self):
+        relief = _relief_normals(64, "directx")
+        path = self._map("rock_Normal.png", relief)
+        got = self._normal(
+            {
+                "rock": {
+                    "src": QUAD,
+                    "dst": _rot90(QUAD),
+                    "ids": np.zeros(2, np.int32),
+                    "sources": [{"maps": {"normal": path}, "constants": {}}],
+                }
+            },
+            64,
+        )
+        table = ptk.UvTransfer.build(QUAD, _rot90(QUAD), 64, supersample=1)
+        as_dx, _ = ptk.UvTransfer.transfer_normals(table, relief, convention="directx")
+        as_gl, _ = ptk.UvTransfer.transfer_normals(table, relief, convention="opengl")
+        self.assertLess(np.abs(got - as_dx).max(), 1.5)
+        self.assertGreater(np.abs(got - as_gl).max(), 50.0)
+
+    def test_sources_in_two_conventions_come_out_in_one(self):
+        """Consolidated into ONE map, a source in the other convention is
+        converted (green flipped) first -- the convention of the source
+        covering most of the layout wins -- or that part of the result is lit
+        upside down."""
+        tilt = (0.0, 0.6, 0.8)
+        gl = np.empty((16, 16, 3), np.float32)
+        gl[:] = _encode(tilt)
+        dx = np.empty((16, 16, 3), np.float32)
+        dx[:] = _encode((0.0, -0.6, 0.8))  # the SAME tilt, stored DirectX
+        # Flat maps: the content cannot tell, so the filenames decide.
+        a = self._map("a_Normal_OpenGL.png", gl)
+        b = self._map("b_Normal_DirectX.png", dx)
+        got = self._normal(
+            {
+                "m": {
+                    "src": np.concatenate([QUAD, QUAD]),
+                    "dst": np.concatenate(
+                        [QUAD * [0.75, 1.0], QUAD * [0.25, 1.0] + [0.75, 0.0]]
+                    ),
+                    "ids": np.array([0, 0, 1, 1], np.int32),
+                    "sources": [
+                        {"maps": {"normal": a}, "constants": {}},
+                        {"maps": {"normal": b}, "constants": {}},
+                    ],
+                }
+            },
+            16,
+        )
+        self.assertLess(np.abs(got - _encode(tilt)).max(), 1.5)
+
+
+class TestMissingSourceMaps(unittest.TestCase):
+    """A source map the material names but the disk does not hold is SAID.
+
+    A production tray material named ``SOLDERING_TRAYS_Emission.png`` after
+    the file had become ``..._Emissive.png``; the transfer dropped the
+    emission channel without a word (2026-10-03)."""
+
+    def setUp(self):
+        artifacts = ptk.TempArtifacts("uv_transfer_missing", policy="scoped")
+        self.addCleanup(artifacts.cleanup)
+        self.tmp = artifacts.dir_path()
+
+    def _run(self, maps_a, maps_b=None):
+        sources = [{"maps": maps_a, "constants": {}}]
+        ids = np.zeros(2, np.int32)
+        dst = QUAD
+        if maps_b is not None:
+            sources.append({"maps": maps_b, "constants": {}})
+            ids = np.array([0, 0, 1, 1], np.int32)
+            dst = np.concatenate([QUAD * [0.5, 1.0], QUAD * [0.5, 1.0] + [0.5, 0.0]])
+        said = []
+        out = ptk.UvTransfer.transfer_materials(
+            {
+                "m": {
+                    "src": np.concatenate([QUAD] * (len(ids) // 2)),
+                    "dst": dst,
+                    "ids": ids,
+                    "sources": sources,
+                }
+            },
+            output_dir=os.path.join(self.tmp, "out"),
+            size=8,
+            supersample=1,
+            padding=0,
+            log=said.append,
+        )
+        return out["m"], "\n".join(said)
+
+    def test_a_channel_whose_maps_are_all_missing_is_reported(self):
+        gone = os.path.join(self.tmp, "tray_Emission.png")
+        written, said = self._run({"emission": gone})
+        self.assertNotIn("emission", written)
+        self.assertIn("tray_Emission.png", said)
+        self.assertIn("not on disk", said)
+
+    def test_a_missing_map_beside_a_present_one_is_reported(self):
+        here = ptk.UvTransfer.save_map(
+            os.path.join(self.tmp, "a_BaseColor.png"),
+            np.full((8, 8, 3), 200, np.float32),
+        )
+        gone = os.path.join(self.tmp, "b_BaseColor.png")
+        written, said = self._run({"baseColor": here}, {"baseColor": gone})
+        self.assertIn("baseColor", written)
+        self.assertIn("b_BaseColor.png", said)
+
+
+class TestInvalidSourceNormals(unittest.TestCase):
+    """Texels that are no tangent-space normal (Z below zero: a black,
+    unpainted background) transfer as they are -- and are SAID, naming the
+    map. A production table's normal map was black under some of its faces;
+    turned with their island, they came out as a yellow strip that read as a
+    transfer bug (2026-10-03)."""
+
+    def setUp(self):
+        artifacts = ptk.TempArtifacts("uv_transfer_badnormal", policy="scoped")
+        self.addCleanup(artifacts.cleanup)
+        self.tmp = artifacts.dir_path()
+
+    def _transfer(self, name, img):
+        """``(written channels, what was said)`` for a 90-degree turn of *img*."""
+        path = ptk.UvTransfer.save_map(os.path.join(self.tmp, name), img)
+        said = []
+        out = ptk.UvTransfer.transfer_materials(
+            {
+                "m": {
+                    "src": QUAD,
+                    "dst": _rot90(QUAD),
+                    "ids": np.zeros(2, np.int32),
+                    "sources": [{"name": "mat", "maps": {"normal": path}}],
+                }
+            },
+            output_dir=os.path.join(self.tmp, "out"),
+            size=16,
+            supersample=1,
+            padding=0,
+            log=said.append,
+        )
+        return out["m"], "\n".join(said)
+
+    def test_black_source_texels_are_reported_by_map(self):
+        img = np.empty((16, 16, 3), np.float32)
+        img[:] = _encode((0.0, 0.0, 1.0))
+        img[:, :4] = 0.0  # an unpainted, black strip
+        written, said = self._transfer("table_Normal.png", img)
+        self.assertIn("normal", written)  # transferred, not dropped
+        self.assertIn("table_Normal.png", said)
+        self.assertIn("no tangent-space normal", said)
+
+    def test_a_valid_map_says_nothing_of_the_kind(self):
+        img = np.empty((16, 16, 3), np.float32)
+        img[:] = _encode((0.6, 0.0, 0.8))
+        _written, said = self._transfer("ok_Normal.png", img)
+        self.assertNotIn("no tangent-space normal", said)
+
+
+class TestLayoutOverlaps(unittest.TestCase):
+    """Whether a lightmap layout can be baked: two surface points on one texel."""
+
+    #: A unit quad in the XZ plane, two triangles, positions matching ``QUAD``.
+    PTS = np.array(
+        [[[0, 0, 0], [1, 0, 0], [1, 0, 1]], [[0, 0, 0], [1, 0, 1], [0, 0, 1]]],
+        dtype=float,
+    )
+
+    def test_a_clean_layout_has_no_overlap_on_its_shared_edges(self):
+        overlaps, covered = ptk.UvTransfer.layout_overlaps(QUAD * 0.5, self.PTS)
+        self.assertEqual(overlaps, 0)
+        self.assertGreater(covered, 0)
+
+    def test_two_islands_stacked_on_one_texel_overlap(self):
+        """A second quad elsewhere in space, laid on the same UVs (a stacked or
+        mirrored island -- fine for a texture, unbakeable for a lightmap)."""
+        uv = np.concatenate([QUAD * 0.5, QUAD * 0.5])
+        pts = np.concatenate([self.PTS, self.PTS + [0, 2, 0]])
+        overlaps, covered = ptk.UvTransfer.layout_overlaps(uv, pts)
+        self.assertGreater(overlaps, covered // 2)
+
+    def test_the_same_islands_side_by_side_do_not(self):
+        uv = np.concatenate([QUAD * 0.5, QUAD * 0.5 + [0.5, 0]])
+        pts = np.concatenate([self.PTS, self.PTS + [0, 2, 0]])
+        self.assertEqual(ptk.UvTransfer.layout_overlaps(uv, pts)[0], 0)
+
+
+class TestOutputLabels(unittest.TestCase):
+    """A named re-run reads its own result back as a label; the name must not stack."""
+
+    def test_a_re_run_names_what_the_first_run_named(self):
+        first = ptk.UvTransfer.output_labels(
+            ["TABLE_ASSETS", "UVChannel_1"], "SolderingTable", suffix="_MAT"
+        )
+        # The second run's targets wear the first run's materials.
+        again = ptk.UvTransfer.output_labels(
+            ["SolderingTable_TABLE_ASSETS_MAT", "SolderingTable_UVChannel_1_MAT"],
+            "SolderingTable",
+            suffix="_MAT",
+        )
+        self.assertEqual(sorted(first.values()), ["TABLE_ASSETS", "UVChannel_1"])
+        self.assertEqual(sorted(again.values()), ["TABLE_ASSETS", "UVChannel_1"])
+
+    def test_every_stacked_copy_comes_off(self):
+        # The production scene after four runs.
+        label = "SolderingTable_SolderingTable_SolderingTable_TABLE_ASSETS_MAT"
+        out = ptk.UvTransfer.output_labels(
+            [label, "SolderingTable_UVChannel_1_MAT"], "SolderingTable", suffix="_MAT"
+        )
+        self.assertEqual(out[label], "TABLE_ASSETS")
+
+    def test_the_material_prefix_comes_off_too(self):
+        out = ptk.UvTransfer.output_labels(
+            ["MAT_hero_matA", "matB"], "hero", prefix="MAT_"
+        )
+        self.assertEqual(out, {"MAT_hero_matA": "matA", "matB": "matB"})
+
+    def test_only_a_whole_word_is_the_name(self):
+        # `heroic` is not `hero_` + something; the case must match as well.
+        out = ptk.UvTransfer.output_labels(["heroic_mat", "Hero_mat2"], "hero")
+        self.assertEqual(out, {"heroic_mat": "heroic_mat", "Hero_mat2": "Hero_mat2"})
+
+    def test_a_label_that_is_only_the_name_keeps_it(self):
+        out = ptk.UvTransfer.output_labels(
+            ["hero", "hero_MAT", "other"], "hero", suffix="_MAT"
+        )
+        self.assertEqual(out["hero"], "hero")
+        self.assertEqual(out["hero_MAT"], "hero_MAT")
+
+    def test_two_layouts_never_share_a_stem(self):
+        # Both strip to `matA`, and a third already IS `matA`: nobody moves.
+        labels = ["hero_matA", "hero_hero_matA", "matA"]
+        out = ptk.UvTransfer.output_labels(labels, "hero")
+        self.assertEqual(out, {label: label for label in labels})
+        self.assertEqual(len(set(out.values())), len(labels))
+
+    def test_no_name_leaves_every_label_alone(self):
+        out = ptk.UvTransfer.output_labels(["x_MAT", "y"], "", suffix="_MAT")
+        self.assertEqual(out, {"x_MAT": "x_MAT", "y": "y"})
+
+
 class TestPad(unittest.TestCase):
     def test_full_fill_leaves_no_background(self):
         dst = QUAD * 0.5
@@ -436,11 +844,43 @@ class TestPad(unittest.TestCase):
 
 
 class TestNormalConvention(unittest.TestCase):
-    """Handedness is read off the FILENAME through the shared map registry.
+    """Handedness is read off the map's CONTENT, then its FILENAME through the
+    shared map registry (the names below are not files: the filename path).
 
     Getting it wrong inverts a normal map's green channel, and rotated islands
-    mix X into Y, so a miss is not a cosmetic error -- it is a wrong bake.
+    mix X into Y, so a miss is not a cosmetic error -- it is a wrong transfer.
     """
+
+    def _write(self, name, img):
+        if not hasattr(self, "tmp"):
+            artifacts = ptk.TempArtifacts("uv_normal_convention", policy="scoped")
+            self.addCleanup(artifacts.cleanup)
+            self.tmp = artifacts.dir_path()
+        return ptk.UvTransfer.save_map(os.path.join(self.tmp, name), img)
+
+    def test_the_content_outranks_the_filename(self):
+        """What the rotation needs is the RELATIVE handedness of X and Y, which
+        the content measures; a filename only claims it."""
+        path = self._write(
+            "rock_Normal_OpenGL.png", _relief_normals(convention="directx")
+        )
+        self.assertEqual(ptk.UvTransfer.normal_convention(path), "directx")
+        path = self._write("rock_NormalDX.png", _relief_normals(convention="opengl"))
+        self.assertEqual(ptk.UvTransfer.normal_convention(path), "opengl")
+
+    def test_an_untagged_map_reads_its_content(self):
+        """``_Normal`` says nothing; read as OpenGL, a DirectX map's rotated
+        islands turned the wrong way."""
+        path = self._write("rock_Normal.png", _relief_normals(convention="directx"))
+        self.assertEqual(ptk.UvTransfer.normal_convention(path), "directx")
+
+    def test_a_flat_map_falls_back_to_its_filename(self):
+        flat = np.empty((32, 32, 3), np.float32)
+        flat[:] = (128, 128, 255)
+        dx = self._write("flat_NormalDX.png", flat)
+        self.assertEqual(ptk.UvTransfer.normal_convention(dx), "directx")
+        plain = self._write("flat_Normal.png", flat)
+        self.assertEqual(ptk.UvTransfer.normal_convention(plain), "opengl")
 
     def test_directx_spellings_across_delimiters_and_stems(self):
         for name in (
@@ -521,6 +961,311 @@ class TestNormalConvention(unittest.TestCase):
             ptk.UvTransfer.normal_convention("C:/tex/dx_project/rock_NormalGL.png"),
             "opengl",
         )
+
+
+class TestRemapLightmap(unittest.TestCase):
+    """A committed lightmap carried into another lightmap layout: HDR in, HDR
+    out, read through the object's own atlas rect."""
+
+    @staticmethod
+    def _hdr(size):
+        """Smooth HDR content well past 1.0 (and past 8-bit's 255)."""
+        g = _gradient(size) / 255.0
+        return (g * 300.0 + 0.5).astype(np.float32)
+
+    def test_identity_layout_keeps_hdr_values(self):
+        img = self._hdr(32)
+        out = ptk.UvTransfer.remap_lightmap(img, QUAD, QUAD)
+        self.assertEqual(out.shape, img.shape)
+        self.assertEqual(out.dtype, np.float32)
+        self.assertGreater(out.max(), 255.0)  # never clipped to a display range
+        # 1% of the 300 range: the supersampled taps at the map's outer edge
+        # (the bound the 8-bit identity tests allow, scaled to this ramp).
+        self.assertLess(np.abs(out - img).max(), 3.0)
+
+    def test_a_rotated_target_layout_rotates_the_map(self):
+        img = self._hdr(32)
+        out = ptk.UvTransfer.remap_lightmap(img, QUAD, _rot90(QUAD), supersample=1)
+        self.assertLess(np.abs(out - np.rot90(img, 1)).max(), 1.0)
+
+    def test_an_atlas_rect_reads_only_its_own_cell(self):
+        """The object owns the LEFT half of a shared map; its neighbour's much
+        brighter texels must not bleed in across the cell edge."""
+        atlas = np.full((32, 32, 3), 2.0, np.float32)
+        atlas[:, 16:] = 50.0  # another object's lighting
+        out = ptk.UvTransfer.remap_lightmap(
+            atlas, QUAD, QUAD, scale_offset=[0.5, 1.0, 0.0, 0.0], size=16
+        )
+        self.assertTrue(np.allclose(out, 2.0, atol=1e-4), out.max())
+
+    def test_the_rect_is_v_up_from_the_bottom(self):
+        """``offsetY`` counts from the BOTTOM of the map (Unity's convention),
+        and images store row 0 at the top."""
+        atlas = np.zeros((32, 32, 1), np.float32)
+        atlas[16:] = 7.0  # bottom half of the stored image = V in [0, 0.5]
+        out = ptk.UvTransfer.remap_lightmap(
+            atlas, QUAD, QUAD, scale_offset=[1.0, 0.5, 0.0, 0.0], size=16
+        )
+        self.assertTrue(np.allclose(out, 7.0, atol=1e-4))
+
+    def test_default_size_is_the_share_the_object_owned(self):
+        img = np.ones((64, 64, 3), np.float32)
+        size = lambda so: ptk.UvTransfer.remap_lightmap(  # noqa: E731
+            img, QUAD, QUAD, scale_offset=so, supersample=1
+        ).shape[0]
+        self.assertEqual(size(None), 64)
+        self.assertEqual(size([0.25, 0.25, 0.0, 0.0]), 16)
+        # A non power-of-two share rounds UP, so no texel density is lost...
+        self.assertEqual(size([0.3, 0.2, 0.0, 0.0]), 32)
+        # ...but never past the map it came from.
+        self.assertEqual(
+            ptk.UvTransfer.remap_lightmap(
+                np.ones((48, 48, 3), np.float32), QUAD, QUAD, supersample=1
+            ).shape[0],
+            48,
+        )
+
+    def test_an_explicit_size_wins(self):
+        out = ptk.UvTransfer.remap_lightmap(self._hdr(32), QUAD, QUAD, size=8)
+        self.assertEqual(out.shape[:2], (8, 8))
+
+    def test_the_gutter_is_filled(self):
+        """A target island smaller than the map leaves gutter; it is padded
+        from the island, not left black for the engine's mips to average in."""
+        img = np.full((16, 16, 3), 3.0, np.float32)
+        out = ptk.UvTransfer.remap_lightmap(img, QUAD, QUAD * 0.5, size=16)
+        self.assertTrue(np.allclose(out, 3.0, atol=1e-4))
+
+    def test_an_interior_atlas_cell_reads_its_own_texels(self):
+        """Offsets on both axes, away from the map's edges: the read is cropped
+        to the cell, so the crop's own coordinates must land on the same
+        texels the whole map would have given."""
+        atlas = np.zeros((64, 64, 3), np.float32)
+        for row in range(4):
+            for col in range(4):
+                atlas[row * 16 : (row + 1) * 16, col * 16 : (col + 1) * 16] = (
+                    row * 4 + col + 1
+                )
+        atlas[16:32, 32:48, 0] = _gradient(16)[..., 0] / 255.0 * 9.0 + 100.0
+        # Cell (row 1 from the top, column 2): U in [0.5, 0.75], V in [0.5, 0.75].
+        rect = [0.25, 0.25, 0.5, 0.5]
+        out = ptk.UvTransfer.remap_lightmap(
+            atlas, QUAD, QUAD, scale_offset=rect, size=16, supersample=1
+        )
+        expected = atlas[16:32, 32:48]
+        self.assertLess(np.abs(out - expected).max(), 1e-3)
+
+    def test_layouts_match(self):
+        self.assertTrue(ptk.UvTransfer.layouts_match(QUAD, QUAD.copy()))
+        self.assertFalse(ptk.UvTransfer.layouts_match(QUAD, QUAD + 1e-3))
+        self.assertFalse(ptk.UvTransfer.layouts_match(QUAD, QUAD[:1]))
+        self.assertTrue(ptk.UvTransfer.layouts_match(QUAD[:0], QUAD[:0]))
+
+
+class TestResampleLightmaps(unittest.TestCase):
+    """``resample_lightmaps`` -- the hosts' shared naming + remap + write."""
+
+    def setUp(self):
+        self.reads = []
+        self.writes = {}
+        self.maps = {"/src/a.exr": np.full((16, 16, 3), 2.0, np.float32)}
+
+    def _read(self, path):
+        self.reads.append(path)
+        return self.maps[path]
+
+    def _write(self, path, image):
+        self.writes[path] = image
+
+    def _job(self, owner, dst=None, path="/src/a.exr"):
+        return {
+            "owner": owner,
+            "name": owner.rsplit("|", 1)[-1],
+            "path": path,
+            "scale_offset": None,
+            "src": QUAD,
+            "dst": _rot90(QUAD) if dst is None else dst,
+        }
+
+    def _run(self, jobs, **kwargs):
+        return ptk.UvTransfer.resample_lightmaps(
+            jobs, output_dir="/out", read=self._read, write=self._write, **kwargs
+        )
+
+    def test_a_matching_layout_is_left_to_the_host_to_rebind(self):
+        out = self._run([self._job("|keep", dst=QUAD.copy()), self._job("|rot")])
+        self.assertEqual(list(out), ["|rot"])
+        self.assertEqual(list(self.writes), [out["|rot"]])
+
+    def test_one_map_takes_the_output_name_several_append_theirs(self):
+        self.assertEqual(
+            self._run([self._job("|a|crate")], output_name="hero"),
+            {"|a|crate": "/out/hero_Lightmap.exr"},
+        )
+        out = self._run(
+            [self._job("|a|crate"), self._job("|b|barrel")], output_name="hero"
+        )
+        self.assertEqual(out["|a|crate"], "/out/hero_crate_Lightmap.exr")
+        self.assertEqual(out["|b|barrel"], "/out/hero_barrel_Lightmap.exr")
+        self.assertEqual(
+            self._run([self._job("|a|crate")]),
+            {"|a|crate": "/out/crate_Lightmap.exr"},
+        )
+
+    def test_a_shared_source_map_is_read_once(self):
+        self._run([self._job("|a|one"), self._job("|b|two"), self._job("|c|three")])
+        self.assertEqual(self.reads, ["/src/a.exr"])
+
+    def test_a_name_someone_else_reads_is_never_written_over(self):
+        out = self._run(
+            [self._job("|a|crate")],
+            output_name="hero",
+            claims={"hero_lightmap.exr": {"|other"}},
+        )
+        self.assertEqual(out["|a|crate"], "/out/hero_Lightmap_1.exr")
+        # ...while the target's own previous map is its to replace.
+        out = self._run(
+            [self._job("|a|crate")],
+            output_name="hero",
+            claims={"hero_lightmap.exr": {"|a|crate"}},
+        )
+        self.assertEqual(out["|a|crate"], "/out/hero_Lightmap.exr")
+
+    def test_a_source_map_is_never_written_over(self):
+        self.maps["/out/hero_Lightmap.exr"] = self.maps["/src/a.exr"]
+        out = self._run(
+            [self._job("|a|crate", path="/out/hero_Lightmap.exr")], output_name="hero"
+        )
+        self.assertEqual(out["|a|crate"], "/out/hero_Lightmap_1.exr")
+
+    def test_the_written_map_is_the_remap(self):
+        self.maps["/src/a.exr"] = TestRemapLightmap._hdr(16)
+        out = self._run([self._job("|a|crate")], supersample=1)
+        got = self.writes[out["|a|crate"]]
+        self.assertLess(np.abs(got - np.rot90(self.maps["/src/a.exr"], 1)).max(), 1.0)
+
+
+class TestConcatenationOrder(unittest.TestCase):
+    """``UvTransfer.concatenation_order`` -- the parts of a combined mesh.
+
+    Maya's Combine and Blender's Join both append each part's faces after the
+    previous part's, its vertex indices offset by the vertices before it
+    (measured on Maya 2025 and Blender 5.1). The order is read back from the
+    topology; positions only break ties between identical pieces.
+    """
+
+    @staticmethod
+    def _grid(n_quads, at=(0.0, 0.0, 0.0)):
+        """A strip of *n_quads* separate quads standing at *at*."""
+        counts = [4] * n_quads
+        verts = list(range(4 * n_quads))
+        points = [
+            (at[0] + i * 2 + dx, at[1] + dy, at[2])
+            for i in range(n_quads)
+            for dx, dy in ((0, 0), (1, 0), (1, 1), (0, 1))
+        ]
+        return counts, verts, points
+
+    @staticmethod
+    def _tri_fan(at=(0.0, 0.0, 0.0)):
+        """Two triangles sharing an edge -- a topology no quad strip has."""
+        points = [
+            (at[0] + x, at[1] + y, at[2]) for x, y in ((0, 0), (1, 0), (1, 1), (0, 1))
+        ]
+        return [3, 3], [0, 1, 2, 0, 2, 3], points
+
+    @staticmethod
+    def _combine(*parts):
+        counts, verts, points = [], [], []
+        for c, v, p in parts:
+            verts += [i + len(points) for i in v]
+            counts += list(c)
+            points += list(p)
+        return counts, verts, points
+
+    def _order(self, target, parts):
+        return ptk.UvTransfer.concatenation_order(target, parts)
+
+    def test_the_combine_order_is_read_back(self):
+        quad, fan = self._grid(1), self._tri_fan(at=(5, 0, 0))
+        self.assertEqual(self._order(self._combine(fan, quad), [quad, fan]), [1, 0])
+        self.assertEqual(self._order(self._combine(quad, fan), [quad, fan]), [0, 1])
+
+    def test_identical_pieces_resolve_by_where_they_stand(self):
+        left, right = self._grid(1, at=(0, 0, 0)), self._grid(1, at=(9, 0, 0))
+        self.assertEqual(self._order(self._combine(right, left), [left, right]), [1, 0])
+
+    def test_a_target_built_from_some_of_the_parts(self):
+        a, b, c = (
+            self._grid(1),
+            self._tri_fan(at=(4, 0, 0)),
+            self._grid(2, at=(8, 0, 0)),
+        )
+        self.assertEqual(self._order(self._combine(c, a), [a, b, c]), [2, 0])
+
+    def test_a_piece_elsewhere_still_matches_by_topology(self):
+        """Topology is the contract; the host warns about the positions."""
+        quad, fan = self._grid(1), self._tri_fan()
+        moved = self._tri_fan(at=(0, 0, 7))
+        self.assertEqual(self._order(self._combine(quad, moved), [quad, fan]), [0, 1])
+
+    def test_a_prefix_match_backtracks(self):
+        """One quad is a topological prefix of two: the greedy pick of the
+        single quad leaves a face no part can fill, so the search backs up."""
+        single, double = self._grid(1), self._grid(2)
+        self.assertEqual(self._order(double, [single, double]), [1])
+
+    def test_no_ordering_reproduces_the_target(self):
+        quad, fan = self._grid(1), self._tri_fan()
+        self.assertIsNone(self._order(self._combine(quad, fan, fan), [quad, fan]))
+        self.assertIsNone(self._order(self._grid(3), [quad]))  # faces left over
+        counts, verts, points = self._combine(quad, fan)
+        stray = (counts, verts, points + [(0.0, 0.0, 99.0)])  # a loose vertex
+        self.assertIsNone(self._order(stray, [quad, fan]))
+        self.assertIsNone(self._order(([], [], []), [quad]))  # empty target
+
+    def test_hundreds_of_pieces_do_not_recurse(self):
+        """Iterative: a kit of more pieces than the recursion limit."""
+        import sys
+
+        n = sys.getrecursionlimit() + 200
+        parts = [self._grid(1, at=(i * 3, 0, 0)) for i in range(n)]
+        shuffled = list(reversed(range(n)))
+        target = self._combine(*[parts[i] for i in shuffled])
+        self.assertEqual(self._order(target, parts), shuffled)
+
+    @staticmethod
+    def _find(meshes, reads=None):
+        def read(i):
+            if reads is not None:
+                reads.append(i)
+            return meshes[i]
+
+        return ptk.UvTransfer.find_combined([len(m[0]) for m in meshes], read)
+
+    def test_find_combined_picks_the_target_out_of_a_selection(self):
+        a, b = self._grid(1), self._tri_fan(at=(4, 0, 0))
+        combined = self._combine(b, a)
+        self.assertEqual(self._find([a, combined, b]), (1, [2, 0]))
+
+    def test_find_combined_needs_every_other_mesh(self):
+        a, b, c = (
+            self._grid(1),
+            self._tri_fan(at=(4, 0, 0)),
+            self._grid(2, at=(9, 0, 0)),
+        )
+        self.assertIsNone(self._find([a, b, self._combine(a, c)]))  # b is not in it
+        self.assertIsNone(self._find([a, self._combine(a, a)]))  # two: ambiguous
+
+    def test_find_combined_reads_nothing_the_face_counts_rule_out(self):
+        """The usual Auto run -- nothing combined -- costs only the counts."""
+        reads = []
+        a, b, c = self._grid(1), self._tri_fan(), self._grid(2, at=(9, 0, 0))
+        self.assertIsNone(self._find([a, b, c], reads))  # 1 + 2 + 2: no half
+        self.assertEqual(reads, [])
+        combined = self._combine(b, a)
+        self._find([a, combined, b], reads)
+        self.assertEqual(sorted(reads), [0, 1, 2])  # each read once
 
 
 if __name__ == "__main__":

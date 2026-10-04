@@ -306,6 +306,24 @@ class SceneStoreBase:
     OWNERS: Dict[str, Tuple[str, str]] = {}
 
     @classmethod
+    def owner(cls, key: str) -> Optional[Any]:
+        """The class :attr:`OWNERS` names for record *key*, or ``None`` when it
+        names none or it does not import.
+
+        How a part ranked BELOW a record's owner reaches it without importing
+        upward: the shot store sits above the render-effect and audio tools,
+        which read the scene's effect recipe through it.
+        """
+        row = cls.OWNERS.get(key)
+        if not row:
+            return None
+        try:
+            return SceneRecords.resolve_class(*row)
+        except Exception:  # noqa: BLE001 - a missing owner answers None
+            logger.debug("Record owner %s.%s unavailable.", *row)
+            return None
+
+    @classmethod
     def owners(cls) -> Dict[str, Any]:
         """:attr:`OWNERS` resolved to classes.  One that does not import is
         left out, and its record then crosses as plain data."""

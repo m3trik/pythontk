@@ -1,0 +1,16 @@
+{
+  "description": "Pulse the highlight across the shot -- the scene's effect recipe (Render Effects) sets the cadence and, on a new channel, the colours.",
+  "kind": [
+    "scene"
+  ],
+  "effect": "pulse",
+  "place": "span",
+  "verify": {
+    "mode": "values_in_range"
+  },
+  "detect": [
+    "\\bhighlight(?:s|ed|ing)?\\b",
+    "^\\s*highlight(?:ed)?\\s+(?P<object>.+?)(?:\\s+(?:on|at|in|from|near|next\\s+to|appears?|when|and\\s+then)\\b.*)?$",
+    "^\\s*(?P<object>.+?)\\s+(?:is|are|appears?|becomes?)\\s+highlighted\\b"
+  ]
+}

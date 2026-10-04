@@ -172,6 +172,49 @@ class TestRegistry(SceneRecordsCase):
         self.assertEqual(legacy["remove_in"], SR.FBX_TAKES.remove_in)
         emissive = next(r for r in rows if r["key"] == SR.EMISSIVE_GROUPS.key)
         self.assertEqual(emissive["version_key"], "schema")
+        self.assertEqual(rows[0]["web"], SR.SHOTS.web.key)
+        self.assertIsNone(legacy["web"])
+
+
+# -- the contracts other languages read ------------------------------------------
+
+
+class TestContracts(SceneRecordsCase):
+    """Shapes and web projections: what another language reads is declared here
+    and everything that spelled it reads the declaration."""
+
+    def test_web_keys_are_unique_deliverable_wire_names(self):
+        projected = SR.web_projected()
+        keys = [s.web.key for s in projected]
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertTrue(all(s.scope is Scope.DELIVERABLE for s in projected))
+        self.assertTrue(all(k.endswith("_web") for k in keys), keys)
+
+    def test_every_declared_shape_resolves_to_a_typed_schema(self):
+        from pythontk import SchemaSpec
+
+        for spec in SR.all():
+            for shape in (SR.shape(spec), SR.web_shape(spec)):
+                if shape is None:
+                    continue
+                self.assertTrue(issubclass(shape, SchemaSpec), spec.key)
+                self.assertTrue(shape.TYPED, f"{spec.key}: {shape.__name__}")
+                shape.json_schema()  # one name per schema, annotations agree
+        self.assertIsNotNone(SR.shape(SR.ARTICULATION))
+        self.assertIsNotNone(SR.web_shape("articulation"))
+        self.assertIsNone(SR.shape(SR.HANDOFF))
+
+    def test_the_glb_appliers_and_the_preview_read_the_declarations(self):
+        from pythontk import MeshConvert, PreviewServer
+
+        self.assertEqual(MeshConvert.ARTICULATION_WEB_KEY, SR.ARTICULATION.web.key)
+        self.assertEqual(MeshConvert.SHADOW_WEB_KEY, SR.SHADOWS.web.key)
+        self.assertEqual(MeshConvert.LIGHTMAP_WEB_KEY, SR.LIGHTMAPS.web.key)
+        self.assertEqual(MeshConvert.ANIMATION_WEB_KEY, SR.SHOTS.web.key)
+        self.assertEqual(MeshConvert.ANIMATION_WEB_VERSION, SR.SHOTS.web.version)
+        # Every key a packaged script is activated on is a declared one.
+        declared = {s.web.key for s in SR.web_projected()}
+        self.assertLessEqual(set(PreviewServer.AUTO_SCRIPTS.values()), declared)
 
 
 # -- the codec ------------------------------------------------------------------
@@ -1351,6 +1394,10 @@ class TestStoreCrossings(unittest.TestCase):
         }
         with mock.patch.object(_CarrierStore, "OWNERS", table):
             self.assertEqual(_CarrierStore.owners(), {"a": RecordTransfer})
+            # One owner, by key: what a part ranked below it resolves.
+            self.assertIs(_CarrierStore.owner("a"), RecordTransfer)
+            self.assertIsNone(_CarrierStore.owner("b"))
+            self.assertIsNone(_CarrierStore.owner("not_declared"))
 
     def test_a_handoff_round_trips_through_the_store(self):
         SR.EMISSIVE_REGISTRY.save(

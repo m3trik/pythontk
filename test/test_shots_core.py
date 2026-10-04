@@ -43,10 +43,10 @@ from pythontk.core_utils.engines.shots.shot_detection import (
 class _ShotTest(unittest.TestCase):
     """Base case: isolate the cross-scene prefs file and class state.
 
-    ``mark_dirty`` → ``save`` → ``_save_user_prefs`` would otherwise write to the
-    user's real prefs JSON under ``user_config_root``; pointing
-    ``ShotStore._prefs_dir_override`` at a temp dir keeps every case sandboxed.
-    Class-level singleton state is reset so cases can't leak into one another.
+    ``_save_user_prefs`` writes the user's real prefs JSON under
+    ``user_config_root``; pointing ``ShotStore._prefs_dir_override`` at a temp
+    dir keeps every case sandboxed. Class-level singleton state is reset so
+    cases can't leak into one another.
     """
 
     def setUp(self):
@@ -759,6 +759,57 @@ class TestShotBlock(_ShotTest):
         self.assertEqual(result["z"], "scene_discovered")
 
 
+class TestMemberIdentity(_ShotTest):
+    """One identity rule for "is doc name X this shot member?":
+    ``ShotStore.member_key`` -- the leaf, namespace dropped -- used by the
+    planner, Assess and the sequencer's classification alike.
+
+    Bug: shot members are stored as long DAG paths while the manifest's
+    ``csv_objects`` hold the doc's short names, and each consumer compared
+    them its own way (raw, leaf, or not at all) -- the planner raw, so every
+    doc member read as scene-discovered.
+    Fixed: 2026-10-01
+    """
+
+    def test_member_key_drops_path_and_namespace(self):
+        key = ShotStore.member_key
+        self.assertEqual(key("|grp|PROPS:door_geo"), "door_geo")
+        self.assertEqual(key("a:b:door_geo"), "door_geo")
+        self.assertEqual(key("door_geo"), "door_geo")
+
+    def test_classify_matches_namespaced_members_to_doc_names(self):
+        shot = ShotBlock(
+            0,
+            "S",
+            0,
+            10,
+            objects=["|set|AC:door_geo", "|set|cam"],
+            metadata={
+                "csv_objects": [{"name": "door_geo", "kind": "scene"}],
+                "object_status": {"door_geo": "missing_behavior"},
+            },
+        )
+        result = shot.classify_objects()
+        self.assertEqual(result["|set|AC:door_geo"], "missing_behavior")
+        self.assertEqual(result["|set|cam"], "scene_discovered")
+
+    def test_pure_resolver_finds_every_name(self):
+        self.assertEqual(ShotStore().resolve_member("door"), ("door", "found"))
+
+    def test_new_statuses_have_colors(self):
+        from pythontk.core_utils.engines.shots.shot_model import SHOT_PALETTE
+
+        for key in (
+            "not_in_shot",
+            "ambiguous_object",
+            "behavior_conflict",
+            "unknown_behavior",
+            "not_in_doc",
+            "no_objects",
+        ):
+            self.assertIn(key, SHOT_PALETTE, key)
+
+
 # ===========================================================================
 # ShotStore — CRUD / observer / gap-lock / snap / compute_gap / (de)serialise
 # ===========================================================================
@@ -1220,6 +1271,19 @@ class TestUserPrefs(_ShotTest):
         s._restore_user_prefs()
         self.assertEqual(s.detection_mode, "all")
         self.assertEqual(s.detection_threshold, 7.0)
+
+    def test_a_save_never_writes_the_users_prefs(self):
+        """Bug: every store save -- a build, a sequencer drag, a test --
+        rewrote the cross-scene prefs with whatever store saved last, so each
+        test run reset the user's Shots preferences to the defaults.
+        Fixed: 2026-10-03
+        """
+        s = ShotStore([])
+        s.fit_mode = "fit_contents"
+        s.define_shot("A", 0, 10)  # mark_dirty -> save
+        self.assertFalse(ShotStore._prefs_path().exists())
+        s._save_user_prefs()  # the panel's explicit save still writes
+        self.assertTrue(ShotStore._prefs_path().exists())
 
     def test_prefs_path_uses_override_dir(self):
         # The temp override (set in setUp) keeps prefs out of the real config root.
@@ -1927,6 +1991,122 @@ class TestEditLedgerRemap(unittest.TestCase):
         self.assertEqual(led.key_records("c"), [(5.0, 0, "start")])
 
 
+class TestEditLedgerRenameCurve(unittest.TestCase):
+    """``ShotEditLedger.rename_curve`` re-keys every claim on a renamed curve.
+
+    A curve key built from its owner's name (blendertk's
+    ``"<object>|<path>|<index>"``) goes stale on a rename while the claims it
+    carries still stand; dropping them would hand the system's samples to the
+    animator.  Added 2026-10-04 with blendertk's rename-following reconcile.
+    """
+
+    def test_every_register_moves_to_the_new_key(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_key("old|location|0", 10.0, 1, "end")
+        led.record_step("old|location|0", 10.0, "auto", "auto")
+        self.assertTrue(led.rename_curve("old|location|0", "new|location|0"))
+        self.assertEqual(led.key_records("new|location|0"), [(10.0, 1, "end")])
+        self.assertEqual(led.step_times("new|location|0"), [10.0])
+        self.assertEqual(led.key_records("old|location|0"), [])
+        self.assertNotIn("old|location|0", led.curves)
+
+    def test_claims_already_on_the_new_key_are_kept_without_duplicates(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_key("a", 10.0, 1, "end")
+        led.record_key("b", 10.0, 2, "start")
+        led.record_key("b", 20.0, 2, "end")
+        led.rename_curve("a", "b")
+        self.assertEqual(led.key_records("b"), [(10.0, 2, "start"), (20.0, 2, "end")])
+
+    def test_an_unclaimed_or_same_name_rename_reports_false(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_key("a", 1.0, 0, "start")
+        self.assertFalse(led.rename_curve("nothing", "b"))
+        self.assertFalse(led.rename_curve("a", "a"))
+        self.assertEqual(led.key_records("a"), [(1.0, 0, "start")])
+
+
+class TestEditLedgerAuthored(unittest.TestCase):
+    """The ``authored`` register: keys a behavior (a fade, a highlight) wrote.
+
+    They are the manifest's to replace -- re-applying a behavior after its
+    shot moved or its template changed takes its own keys out first -- and
+    only theirs: a key on the same channel the ledger does not hold is the
+    animator's.  They travel with every move (``remap`` / ``shift``) like the
+    other claims, and a cut releases them with the key.
+    """
+
+    def _led(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_authored("door.opacity", 10.0, 3, "fade_in", "door")
+        led.record_authored("door.opacity", 25.0, 3, "fade_in", "door")
+        led.record_authored("door.opacity", 90.0, 3, "fade_out", "door")
+        led.record_authored("lid.opacity", 10.0, 4, "fade_in", "lid")
+        return led
+
+    def test_recorded_keys_are_owned_and_queryable(self):
+        led = self._led()
+        self.assertTrue(led.owns_authored("door.opacity", 25.0))
+        self.assertFalse(led.owns_authored("door.opacity", 26.0))
+        self.assertEqual(
+            led.authored(owner=3, obj="door", behavior="fade_in"),
+            [("door.opacity", 10.0), ("door.opacity", 25.0)],
+        )
+        self.assertEqual(led.authored(owner=4), [("lid.opacity", 10.0)])
+        self.assertFalse(
+            led.record_authored("door.opacity", 25.0, 3, "fade_in", "door")
+        )
+
+    def test_owns_any_covers_every_system_write_but_steps(self):
+        led = self._led()
+        led.record_key("door.tx", 1.0, 3, "start")
+        led.record_step("door.tx", 5.0, "auto", "auto")
+        self.assertTrue(led.owns_any("door.opacity", 90.0))
+        self.assertTrue(led.owns_any("door.tx", 1.0))
+        # A stepped tangent claims the key's TANGENT, not the key: the key
+        # itself is still the animator's.
+        self.assertFalse(led.owns_any("door.tx", 5.0))
+
+    def test_claims_follow_moves_and_cuts(self):
+        led = self._led()
+        led.shift("door.opacity", 0.0, 30.0, 100.0)
+        self.assertEqual(
+            led.authored(owner=3, behavior="fade_in"),
+            [("door.opacity", 110.0), ("door.opacity", 125.0)],
+        )
+        led.remap("lid.opacity", [(10.0, 12.0)])
+        self.assertTrue(led.owns_authored("lid.opacity", 12.0))
+        self.assertEqual(led.release("door.opacity", 90.0), 1)
+        self.assertEqual(led.authored(owner=3, behavior="fade_out"), [])
+
+    def test_release_authored_and_disown(self):
+        led = self._led()
+        self.assertTrue(led.release_authored("lid.opacity", 10.0))
+        self.assertEqual(led.authored(owner=4), [])
+        self.assertEqual(led.disown_shot(3), 3)
+        from pythontk.core_utils.engines.shots.shot_ledger import NO_OWNER
+
+        self.assertEqual(len(led.authored(owner=NO_OWNER)), 3)
+
+    def test_round_trips_and_tolerates_old_payloads(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = self._led()
+        again = ShotEditLedger.from_dict(led.to_dict())
+        self.assertEqual(again.authored(), led.authored())
+        # A scene saved before the register existed loads with it empty.
+        self.assertEqual(ShotEditLedger.from_dict({"keys": {}}).authored(), [])
+        self.assertNotIn("authored", ShotEditLedger().to_dict())
+
+
 class TestEditLedgerRelease(unittest.TestCase):
     """``ShotEditLedger.release`` drops EVERY claim a cut key held.
 
@@ -2592,6 +2772,73 @@ class TestMoveWindows(unittest.TestCase):
             [(40.0, [50.0], [40.0])],
             "B's opening sample collapses onto A's closing one",
         )
+
+
+class TestStoreEffectRecipe(unittest.TestCase):
+    """The scene's effect recipe is a store setting: saved with the scene,
+    changed through one call that tells every panel."""
+
+    def test_a_new_store_holds_the_defaults(self):
+        from pythontk.core_utils.engines.shots.effect_recipe import EffectRecipe
+
+        self.assertEqual(ShotStore().effect_recipe, EffectRecipe())
+
+    def test_round_trips_through_the_scene_record(self):
+        store = ShotStore()
+        store.update_effect_recipe(pulse_period=2.0, fade_frames=24)
+        again = ShotStore.from_dict(store.to_dict())
+        self.assertEqual(again.effect_recipe, store.effect_recipe)
+        self.assertEqual(again.effect_recipe.fade_frames, 24.0)
+
+    def test_a_scene_saved_before_the_recipe_loads_the_defaults(self):
+        state = ShotStore().to_dict()
+        del state["effect_recipe"]
+        self.assertEqual(
+            ShotStore.from_dict(state).effect_recipe, ShotStore().effect_recipe
+        )
+
+    def test_update_saves_and_announces_once(self):
+        store = ShotStore()
+        events, saved = [], []
+        store.add_listener(events.append)
+        store._schedule_flush = lambda: saved.append(store.effect_recipe.pulse_duty)
+        self.assertTrue(store.update_effect_recipe(pulse_duty=0.5))
+        self.assertEqual(saved, [0.5])
+        self.assertEqual([type(e).__name__ for e in events].count("SettingsChanged"), 1)
+        events.clear()
+        self.assertFalse(store.update_effect_recipe(pulse_duty=0.5))
+        self.assertEqual(events, [])
+        with self.assertRaises(TypeError):
+            store.update_effect_recipe(no_such_field=1)
+
+
+class TestLedgerRecipeStamps(unittest.TestCase):
+    """An authored claim carries the recipe its key was made under."""
+
+    def test_stamps_and_pairs(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_authored("door.highlight", 10.0, 3, "highlight", "door", "abc")
+        led.record_authored("door.highlight", 50.0, 3, "highlight", "door", "abc")
+        led.record_authored("door.opacity", 10.0, 3, "fade_in", "door")
+        led.record_authored("lid.opacity", 10.0, 4, "fade_in", "lid", "x")
+        self.assertEqual(led.authored_stamps(3, "door", "highlight"), {"abc"})
+        self.assertEqual(led.authored_stamps(3, "door", "fade_in"), {""})
+        self.assertEqual(led.authored_stamps(3, "door", "fade_out"), set())
+        self.assertEqual(
+            led.authored_pairs(3), {("door", "highlight"), ("door", "fade_in")}
+        )
+        again = ShotEditLedger.from_dict(led.to_dict())
+        self.assertEqual(again.authored_stamps(3, "door", "highlight"), {"abc"})
+
+    def test_a_claim_saved_before_stamps_loads_unstamped(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger.from_dict(
+            {"authored": {"c": [[10.0, 3, "fade_in", "door"]]}}
+        )
+        self.assertEqual(led.authored_stamps(3, "door", "fade_in"), {""})
 
 
 if __name__ == "__main__":

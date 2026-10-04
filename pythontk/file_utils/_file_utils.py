@@ -1546,9 +1546,12 @@ class FileUtils(HelpMixin):
             if os.stat(src).st_dev == os.stat(parent).st_dev:
                 shutil.move(src, dst)  # a rename here; one patch point for tests
                 return
+        # A fixed-length name, as atomic_write_text's: one built on dst's name
+        # (+23 characters) could not exist beside a dst near a limit -- a
+        # name's 255 characters, a path's 260 in a process that is not
+        # long-path aware -- and every overwrite into it failed.
         staged = os.path.join(
-            os.path.dirname(os.path.abspath(dst)),
-            f".{os.path.basename(dst)}.{os.getpid()}.{uuid.uuid4().hex[:8]}.moving",
+            os.path.dirname(os.path.abspath(dst)), f".{uuid.uuid4().hex[:12]}.moving"
         )
         log = logging.getLogger(__name__)
         try:
@@ -2201,7 +2204,7 @@ class FileUtils(HelpMixin):
         for filename in filenames:
             filepath = os.path.join(path, filename)
 
-            with open(filepath, "r", encoding="utf-8") as file:
+            with open(filepath, "r", encoding="utf-8-sig") as file:
                 module_ast = ast.parse(file.read())
                 if top_level_only:
                     classes = [

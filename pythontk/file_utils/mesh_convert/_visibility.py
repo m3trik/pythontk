@@ -412,8 +412,11 @@ class _VisibilityMixin:
 
         Returns ``None`` when there is nothing to publish, which is the
         producers' signal to CLEAR the channel rather than stamp an empty one.
+        *clip_spans* with no *tracks* is something: the whole-timeline origin
+        a shot scene needs whether or not it keys visibility, since
+        :meth:`apply_glb_clips` cuts no shot without it.
         """
-        if not tracks:
+        if not tracks and not clip_spans:
             return None
         payload: Dict[str, Any] = {
             "version": cls.VISIBILITY_TRACKS_VERSION,

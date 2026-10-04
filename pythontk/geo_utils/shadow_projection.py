@@ -53,7 +53,8 @@ readable by both.
 from __future__ import annotations
 
 import math
-from typing import NamedTuple, Optional, Sequence, Tuple
+import random
+from typing import Any, Dict, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -380,3 +381,188 @@ class ShadowRaster(NamedTuple):
     fractions: Tuple[float, float, float, float]
     #: The widest penumbra drawn, world units (0 for a sizeless source).
     penumbra: float
+
+
+class ShadowConformance:
+    """The golden cases every port of :meth:`ShadowProjection.model` is held to.
+
+    The model runs outside Python twice -- the WebXR runtime's ``shadow_rig``
+    feature (JavaScript) and unitytk's ``ShadowPlaneController.cs`` (C#) --
+    each placing a plane from it every frame. A port runs every case through
+    its own model and compares within :attr:`TOLERANCE`; the cases are
+    generated from this reference at test time
+    (``Conformance.cases("shadow_projection")``), so they cannot drift from it.
+
+    Every case is Y-up, the frame both runtimes place planes in: one source
+    -- a position, or the direction a sun shines -- over one bounding
+    cylinder; the point the model projects through (a sun's
+    :meth:`ShadowProjection.far_point`, which a port derives the same way);
+    the model the reference makes of it; and where a plane carrying the
+    case's canvas lands (:meth:`ShadowModel.placement`). The named cases come
+    first -- each clamp and fallback the model has -- then random ones.
+    """
+
+    #: Per quantity, the largest difference a port may show, in the cases'
+    #: units. The model and the placement are closed forms that agree to
+    #: rounding (measured 7e-15 and 1.4e-14 in the browser over 89 cases). The
+    #: far point a sun is written as sits a million object sizes out, where one
+    #: unit in the last place is ~5e-10 -- and the reference normalizes the
+    #: (already unit) direction once more on the way (measured 4.7e-10).
+    TOLERANCE: Dict[str, float] = {
+        "source": 1.0e-8,
+        "model": 1.0e-9,
+        "placement": 1.0e-9,
+    }
+
+    #: The canvas a plane whose record carries none is placed with (the
+    #: ``shadow_rig`` feature's default): as far behind the anchor as the far
+    #: edge is past it, to one top radius past the head, the full width.
+    CANVAS = (-1.0, 1.0, -0.5, 0.5)
+
+    @classmethod
+    def case(
+        cls,
+        contact: Sequence[float],
+        light: Optional[Sequence[float]] = None,
+        *,
+        direction: Optional[Sequence[float]] = None,
+        ground: float = 0.0,
+        radius: float = 0.5,
+        height: float = 1.0,
+        max_stretch: float = ShadowProjection.DEFAULT_MAX_STRETCH,
+        canvas: Sequence[float] = CANVAS,
+        name: str = "",
+    ) -> Dict[str, Any]:
+        """One case: its inputs and what the reference makes of them.
+
+        Parameters:
+            contact: The footprint centre on the target's underside.
+            light: A positional source (ignored with *direction*).
+            direction: The way a directional source shines; normalised here,
+                so a case carries the unit vector a port is handed.
+            ground, radius, height, max_stretch: As :meth:`ShadowProjection.model`.
+            canvas: The plane's canvas fractions (:meth:`ShadowModel.rect`).
+            name: A label for a failure message.
+
+        Returns:
+            ``{"name", "input": {"contact", "light", "direction", "ground",
+            "radius", "height", "max_stretch", "canvas"}, "source", "model":
+            {"anchor", "bearing", "k_base", "k_top", "reach", "base", "top",
+            "width", "overhead"}, "placement": {"centre", "along",
+            "across"}}`` -- plain JSON-able values.
+        """
+        contact = [float(v) for v in contact]
+        if direction is not None:
+            unit = ShadowProjection._unit(direction)
+            direction = [float(v) for v in unit]
+            source = list(
+                ShadowProjection.far_point(
+                    contact, direction, max(height, 2.0 * radius)
+                )
+            )
+            light = None
+        else:
+            source = [float(v) for v in light]
+            light = list(source)
+        model = ShadowProjection.model(
+            contact,
+            light,
+            ground,
+            radius,
+            height,
+            direction=direction,
+            max_stretch=max_stretch,
+        )
+        centre, along, across = model.placement(canvas)
+        return {
+            "name": name,
+            "input": {
+                "contact": contact,
+                "light": light,
+                "direction": direction,
+                "ground": float(ground),
+                "radius": float(radius),
+                "height": float(height),
+                "max_stretch": float(max_stretch),
+                "canvas": [float(f) for f in canvas],
+            },
+            "source": source,
+            "model": {
+                "anchor": list(model.anchor),
+                "bearing": list(model.bearing),
+                "k_base": model.k_base,
+                "k_top": model.k_top,
+                "reach": model.reach,
+                "base": model.base,
+                "top": model.top,
+                "width": model.width,
+                "overhead": model.overhead,
+            },
+            "placement": {"centre": list(centre), "along": along, "across": across},
+        }
+
+    @classmethod
+    def cases(cls, seed: int = 0, per_kind: int = 8) -> Dict[str, Any]:
+        """The conformance document: ``{"tolerance", "cases"}``.
+
+        Parameters:
+            seed: The random stream's seed -- the same seed, the same cases.
+            per_kind: Random cases of each kind (a point source, a sun) after
+                the named ones.
+        """
+        contact = (0.2, 0.0, 0.3)
+        named = [
+            cls.case(contact, (1.5, 2.0, -0.5), radius=0.6, height=1.2, name="point"),
+            # Within EPS of straight overhead: the bearing falls back.
+            cls.case(contact, (0.2 + 1e-8, 3.0, 0.3), name="overhead"),
+            # Between the contact and the top: the top disk projects nowhere.
+            cls.case(contact, (1.0, 0.6, 1.0), height=1.2, name="below_top"),
+            # A floating target, the source under its contact.
+            cls.case((0.0, 0.8, 0.0), (1.0, 0.5, 0.0), name="below_contact"),
+            # A floating target: the base disk grows too.
+            cls.case((0.0, 0.5, 0.0), (2.0, 3.0, 1.0), name="raised"),
+            cls.case(contact, direction=(-0.4, -0.8, 0.3), name="sun"),
+            # A grazing sun: the reach meets its cap.
+            cls.case(
+                contact, direction=(0.99, -0.05, 0.1), max_stretch=4.0, name="low_sun"
+            ),
+            cls.case(
+                (1.0, 0.25, -1.0), (0.0, 2.5, 0.0), ground=0.25, name="ground_offset"
+            ),
+            cls.case(
+                contact, (1.5, 2.0, -0.5), canvas=(-0.4, 1.6, -0.8, 0.6), name="canvas"
+            ),
+        ]
+        rng = random.Random(seed)
+        randoms = []
+        for k in range(per_kind):
+            for kind in ("point", "sun"):
+                foot = [rng.uniform(-3, 3), rng.uniform(0.0, 1.0), rng.uniform(-3, 3)]
+                shape = {
+                    "ground": foot[1] - rng.uniform(0.0, 0.5),
+                    "radius": rng.uniform(0.1, 2.0),
+                    "height": rng.uniform(0.2, 3.0),
+                    "max_stretch": rng.uniform(2.0, 8.0),
+                    "canvas": (
+                        rng.uniform(-1.2, -0.2),
+                        rng.uniform(0.5, 1.5),
+                        rng.uniform(-0.8, -0.2),
+                        rng.uniform(0.2, 0.8),
+                    ),
+                    "name": f"{kind}_{k}",
+                }
+                if kind == "point":
+                    light = [
+                        foot[0] + rng.uniform(-4, 4),
+                        foot[1] + rng.uniform(0.2, 6),
+                        foot[2] + rng.uniform(-4, 4),
+                    ]
+                    randoms.append(cls.case(foot, light, **shape))
+                else:
+                    shine = [
+                        rng.uniform(-1, 1),
+                        rng.uniform(-1.0, -0.05),
+                        rng.uniform(-1, 1),
+                    ]
+                    randoms.append(cls.case(foot, direction=shine, **shape))
+        return {"tolerance": dict(cls.TOLERANCE), "cases": named + randoms}

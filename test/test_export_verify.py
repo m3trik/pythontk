@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import struct
+import zlib
 import sys
 import tempfile
 import unittest
@@ -180,9 +181,27 @@ def build_glb(
 # ---------------------------------------------------------------------------
 
 
+class Longs(list):
+    """An array property written with the ``l`` (int64 array) tag -- a
+    curve's ``KeyTime``. *compress* writes it zlib-encoded, as Maya does."""
+
+    def __init__(self, values, compress=False):
+        super().__init__(values)
+        self.compress = compress
+
+
 def _fbx_prop(value) -> bytes:
     if isinstance(value, bytes):
         return b"S" + struct.pack("<I", len(value)) + value
+    if isinstance(value, Longs):
+        data = struct.pack(f"<{len(value)}q", *value)
+        if value.compress:
+            data = zlib.compress(data)
+        return (
+            b"l"
+            + struct.pack("<III", len(value), int(value.compress), len(data))
+            + data
+        )
     if isinstance(value, int):
         return b"L" + struct.pack("<q", value)
     raise TypeError(type(value))
@@ -234,6 +253,66 @@ def build_fbx(path: str, takes=("Shot_1",)) -> str:
         payload += chunk
         offset += len(chunk)
     payload += b"\x00" * 25  # top-level NULL sentinel
+    with open(path, "wb") as handle:
+        handle.write(b"Kaydara FBX Binary  \x00\x1a\x00")
+        handle.write(struct.pack("<I", 7700))
+        handle.write(payload)
+    return path
+
+
+#: FBX ticks per frame at the fixtures' 30 fps.
+TICK = 46186158000 // 30
+
+
+def build_take_fbx(path: str, takes) -> str:
+    """A binary FBX whose takes animate real curves.
+
+    *takes* is ``{take: {(model, channel): (first_frame, last_frame)}}``; each
+    curve gets a key on every frame of its span (zlib-encoded, as Maya writes
+    them), wired stack <- layer <- curve node (on the model's
+    ``Lcl Translation``) <- curve, the graph a DCC writes.
+    """
+    models = sorted({model for curves in takes.values() for model, _ in curves})
+    model_ids = {model: 1000 + i for i, model in enumerate(models)}
+    objects = [
+        ("Model", [uid, model.encode() + b"\x00\x01Model", b"Mesh"], [])
+        for model, uid in model_ids.items()
+    ]
+    connections = []
+    uid = 5000
+    for take, curves in takes.items():
+        stack, layer = uid, uid + 1
+        uid += 2
+        objects += [
+            ("AnimationStack", [stack, take.encode() + b"\x00\x01AnimStack", b""], []),
+            ("AnimationLayer", [layer, b"BaseLayer\x00\x01AnimLayer", b""], []),
+        ]
+        connections.append(("C", [b"OO", layer, stack], []))
+        for (model, channel), (first, last) in curves.items():
+            node, curve = uid, uid + 1
+            uid += 2
+            times = Longs(range(first * TICK, (last + 1) * TICK, TICK), compress=True)
+            objects += [
+                ("AnimationCurveNode", [node, b"T\x00\x01AnimCurveNode", b""], []),
+                (
+                    "AnimationCurve",
+                    [curve, b"\x00\x01AnimCurve", b""],
+                    [("KeyTime", [times], [])],
+                ),
+            ]
+            connections += [
+                ("C", [b"OO", node, layer], []),
+                ("C", [b"OP", node, model_ids[model], b"Lcl Translation"], []),
+                ("C", [b"OP", curve, node, channel.encode()], []),
+            ]
+    roots = [("Objects", [], objects), ("Connections", [], connections)]
+    payload = b""
+    offset = len(b"Kaydara FBX Binary  \x00\x1a\x00") + 4
+    for name, props, children in roots:
+        chunk = _fbx_record(name, props, children, offset)
+        payload += chunk
+        offset += len(chunk)
+    payload += b"\x00" * 25
     with open(path, "wb") as handle:
         handle.write(b"Kaydara FBX Binary  \x00\x1a\x00")
         handle.write(struct.pack("<I", 7700))
@@ -557,6 +636,63 @@ class TestFbxFile(_FixtureCase):
         self.assertIsInstance(content[0], bytes)
         self.assertEqual(content[1], ("RAW", len(content[0])))
 
+    def test_take_curves_reads_each_take_s_channels_and_their_spans(self):
+        """The census a take split is judged by -- read from the key times
+        alone (``span_arrays``), with the same answer a full decode gives."""
+        path = build_take_fbx(
+            self.path("takes.fbx"),
+            {
+                "Take 001": {("lift", "d|Y"): (1, 100), ("door", "d|Y"): (1, 100)},
+                "A02": {("door", "d|Y"): (51, 100)},
+            },
+        )
+        lean = FbxFile.load(path, span_arrays=("KeyTime",), raw_payloads=False)
+        full = FbxFile.load(path, decode_arrays=("KeyTime",))
+        curves = lean.take_curves()
+
+        self.assertEqual(curves, full.take_curves())
+        self.assertEqual(
+            curves["A02"],
+            {("door", "Lcl Translation", "d|Y"): (51 * TICK, 100 * TICK, 50)},
+        )
+        self.assertEqual(len(curves["Take 001"]), 2)
+
+    def test_take_spans_is_each_take_s_key_extent_over_every_curve(self):
+        """What FBX2glTF sizes a take by: the first and last key of ANY curve
+        in it, whatever the take declares (measured 2026-10-04 on FBX2glTF
+        0.13.1: a camera's focal length keyed at 3 opened a take whose
+        transforms start at 10, and the take's own 1-120 span was ignored).
+        So the converter rebases each clip onto exactly this first key."""
+        path = build_take_fbx(
+            self.path("spans.fbx"),
+            {
+                "Take 001": {("lift", "d|Y"): (10, 100), ("door", "d|Y"): (3, 120)},
+                "A02": {("door", "d|Y"): (51, 100)},
+            },
+        )
+        spans = FbxFile.load(
+            path, span_arrays=("KeyTime",), raw_payloads=False
+        ).take_spans()
+
+        second = TICK / FbxFile.TICKS_PER_SECOND
+        self.assertEqual(sorted(spans), ["A02", "Take 001"])
+        self.assertAlmostEqual(spans["Take 001"][0], 3 * second)
+        self.assertAlmostEqual(spans["Take 001"][1], 120 * second)
+        self.assertAlmostEqual(spans["A02"][0], 51 * second)
+
+    def test_take_spans_leaves_out_a_take_it_cannot_measure(self):
+        """Read without key times, nothing can be measured -- and nothing is
+        guessed."""
+        path = build_take_fbx(self.path("spans.fbx"), {"T": {("a", "d|X"): (1, 10)}})
+        self.assertEqual(FbxFile.load(path).take_spans(), {})
+
+    def test_take_curves_without_key_times_still_counts_them(self):
+        path = build_take_fbx(self.path("takes.fbx"), {"T": {("a", "d|X"): (1, 10)}})
+        self.assertEqual(
+            FbxFile.load(path).take_curves()["T"],
+            {("a", "Lcl Translation", "d|X"): (None, None, 10)},
+        )
+
     def test_not_an_fbx(self):
         junk = self.path("junk.fbx")
         with open(junk, "wb") as handle:
@@ -564,6 +700,67 @@ class TestFbxFile(_FixtureCase):
         self.assertFalse(FbxFile.is_fbx(junk))
         with self.assertRaises(ValueError):
             FbxFile.load(junk)
+
+
+class TestFbxTakeChannels(_FixtureCase):
+    """``check_fbx_take_channels``: a declared take that lost a channel to the
+    split, or stops short of its window, is a shot Unity plays wrong."""
+
+    WINDOWS = [
+        {"name": "A01", "start": 1, "end": 50},
+        {"name": "A02", "start": 51, "end": 100},
+    ]
+
+    def _run(self, takes, clip_mode=None):
+        fbx = build_take_fbx(self.path("asset.fbx"), takes)
+        sidecar = build_sidecar(self.path("s.json"), self.WINDOWS, clip_mode=clip_mode)
+        rows = (
+            ExportVerifier(fbx=fbx, sidecar=sidecar)
+            .run(["check_fbx_take_channels"])
+            .rows
+        )
+        return [(row.status, row.detail) for row in rows]
+
+    def _exact(self):
+        whole = {("lift", "d|Y"): (1, 100), ("door", "d|Y"): (1, 100)}
+        return {
+            "Take 001": whole,
+            "A01": {key: (1, 50) for key in whole},
+            "A02": {key: (51, 100) for key in whole},
+        }
+
+    def test_exact_slices_pass(self):
+        rows = self._run(self._exact())
+        self.assertEqual([status for status, _ in rows], ["PASS"], rows)
+        self.assertIn("2 take(s)", rows[0][1])
+
+    def test_a_channel_lost_to_the_split_fails_naming_it(self):
+        """The measured loss: a node keyed only inside A01 has no channel in A02."""
+        takes = self._exact()
+        del takes["A02"][("lift", "d|Y")]
+        rows = self._run(takes)
+        self.assertEqual([status for status, _ in rows], ["FAIL"], rows)
+        self.assertIn("A02", rows[0][1])
+        self.assertIn("lift.Lcl Translation.d|Y", rows[0][1])
+
+    def test_a_take_keyed_short_of_its_window_fails(self):
+        """The other half: a take whose keys stop at its last in-window key."""
+        takes = self._exact()
+        takes["A01"][("door", "d|Y")] = (1, 40)
+        rows = self._run(takes)
+        self.assertEqual([status for status, _ in rows], ["FAIL"], rows)
+        self.assertIn("short of the take's 1-50 window", rows[0][1])
+
+    def test_a_file_without_a_whole_timeline_take_is_held_to_the_windows(self):
+        takes = self._exact()
+        del takes["Take 001"]
+        rows = self._run(takes)
+        self.assertEqual([status for status, _ in rows], ["PASS"], rows)
+        self.assertIn("no whole-timeline take", rows[0][1])
+
+    def test_full_sequence_only_has_no_takes_to_slice(self):
+        rows = self._run({"Take 001": {("lift", "d|Y"): (1, 100)}}, clip_mode="full")
+        self.assertEqual([status for status, _ in rows], ["SKIP"], rows)
 
 
 class TestExportVerifier(_FixtureCase):

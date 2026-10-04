@@ -41,14 +41,14 @@ class _AnimationMixin:
     #: meant to carry them as clips; one stack alone is also what a split that
     #: silently failed leaves.
     SHOT_CLIP_MODE_KEY = "clip_mode"
-    #: Root-extras key the web viewer reads to choose and place clips
-    #: (``preview/viewer.html``) -- the animation twin of
-    #: :attr:`LIGHTMAP_WEB_KEY`, and written by the same kind of applier:
-    #: derived from the in-band channels at conversion time, so the decoded,
-    #: index-bound view exists in one place instead of in every consumer.
-    ANIMATION_WEB_KEY = "animation_web"
+    #: Root-extras key the web viewer reads to choose and place clips -- the
+    #: animation twin of :attr:`LIGHTMAP_WEB_KEY`, and written by the same
+    #: kind of applier: derived from the in-band channels at conversion time,
+    #: so the decoded, index-bound view exists in one place instead of in
+    #: every consumer. The shots record's declared web projection.
+    ANIMATION_WEB_KEY = SceneRecords.SHOTS.web.key
     #: Schema version of that block.
-    ANIMATION_WEB_VERSION = 1
+    ANIMATION_WEB_VERSION = SceneRecords.SHOTS.web.version
 
     @staticmethod
     def _animation_span(gltf: dict, animation: dict) -> Optional[Tuple[float, float]]:
@@ -140,8 +140,10 @@ class _AnimationMixin:
         ``t=0``, because the converter rebases every stack onto its first key.
         Three ways, in order: the stack's own ``extras`` (there after this pass
         has run once, which is what makes a second run exact rather than
-        merely harmless); the producer's published ``clip_span`` for the whole
-        timeline; and otherwise nothing -- a guessed origin would slide every
+        merely harmless); the file's ``clip_span`` for the whole timeline --
+        measured from the FBX by the conversion (:meth:`_stamp_clip_spans`),
+        else as the producer published it; and otherwise nothing -- a guessed
+        origin would slide every
         shot by the same wrong amount, which is worse than the split this
         replaces, so the clips are left as exported.
 
@@ -210,15 +212,10 @@ class _AnimationMixin:
 
             zero = (source.get("extras") or {}).get(GlbClips.ZERO_FRAME_KEY)
             if not isinstance(zero, (int, float)):
-                spans = (channel or {}).get("clip_span")
-                span = cls._numeric_pairs(
-                    [
-                        spans.get(cls.DEFAULT_CLIP_SPAN)
-                        if isinstance(spans, dict)
-                        else None
-                    ]
+                span = cls._published_origin(
+                    lambda key: cls.data_export_channel(gltf, key)
                 )
-                if not span:
+                if span is None:
                     logger.warning(
                         "Clips: nothing says which authored frame %r puts at "
                         "t=0 (no %r span published), and the converter rebases "
@@ -228,7 +225,7 @@ class _AnimationMixin:
                         cls.DEFAULT_CLIP_SPAN,
                     )
                     return None
-                zero = float(span[0][0])
+                zero = span[0]
 
             return GlbClips.rebuild(
                 edit,
@@ -243,6 +240,104 @@ class _AnimationMixin:
     #: converter's retained whole-timeline stack. Not a legal take name, so it
     #: cannot collide with one.
     DEFAULT_CLIP_SPAN = "*"
+
+    @classmethod
+    def _published_origin(
+        cls, read: Callable[[str], Any]
+    ) -> Optional[Tuple[float, float]]:
+        """The first and last frame the whole-timeline stack carries, as the
+        producer published them (the ``visibility_tracks`` channel's
+        :attr:`DEFAULT_CLIP_SPAN` entry); ``None`` when nothing publishes one.
+
+        The one reader of that number, for every party that needs it: the
+        clip rebuild cuts the shots against it, the converter-input strip
+        keeps the converter's split takes without it, and the verifier checks
+        the shipped stack against it.
+
+        Parameters:
+            read: Channel key -> that channel's DECODED payload, ``None`` when
+                absent -- the reader ``SceneRecords.declared_takes`` takes.
+        """
+        channel = read(cls.VISIBILITY_TRACKS_KEY)
+        spans = channel.get("clip_span") if isinstance(channel, dict) else None
+        span = spans.get(cls.DEFAULT_CLIP_SPAN) if isinstance(spans, dict) else None
+        pair = cls._numeric_pairs([span])
+        return (float(pair[0][0]), float(pair[0][1])) if pair else None
+
+    #: Frames a published clip span may sit from the file's own before
+    #: :meth:`_stamp_clip_spans` says so: ticks convert to frames through the
+    #: published rate, and an NTSC scene (29.97 against the file's 30) moves a
+    #: frame by a hundredth.
+    CLIP_SPAN_DRIFT_FRAMES = 0.5
+
+    @classmethod
+    def _stamp_clip_spans(
+        cls, gltf: Dict[str, Any], measured: Dict[str, Tuple[float, float]]
+    ) -> Dict[str, List[float]]:
+        """Write each clip's MEASURED span onto the file's ``clip_span``.
+
+        *measured* is ``FbxFile.take_spans`` of the FBX the converter read --
+        each take's first and last key in seconds, which is exactly what
+        FBX2glTF sizes the clip by and rebases it onto. A producer's
+        published span predicts that number before the file exists, and the
+        predictions drift: a hand-off published the range the last export
+        left in the FBX plugin (shots 23 frames early), Blender the first
+        authored key of a take it bakes over its whole window (a gate lost a
+        shot's visible run) -- both measured 2026-10-04. So the file's own
+        wins, ahead of every pass that reads the channel, and a disagreement
+        is logged naming both.
+
+        A declared take is stamped under its name; ``*`` from the one stack
+        the file does not declare (the whole-timeline stack the shots are cut
+        from) -- with two, which one the rebuild cuts from is not this
+        stamp's to guess. The rest of the channel rides through; a file that
+        publishes none gets the measurement alone.
+
+        Returns:
+            The entries stamped; empty when nothing was measured or no rate
+            places the frames in time (the published spans then stand).
+        """
+        metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
+        channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+        fps = cls._resolve_clip_fps(
+            metadata if isinstance(metadata, dict) else {}, [], channel
+        )
+        if not fps or not measured:
+            return {}
+        windows = cls._take_windows(gltf)
+        keys = {take: take for take in measured if take in windows}
+        loose = [take for take in measured if take not in windows]
+        if len(loose) == 1:
+            keys[loose[0]] = cls.DEFAULT_CLIP_SPAN
+        stamped = cls._rounded(
+            {
+                key: [measured[take][0] * fps, measured[take][1] * fps]
+                for take, key in keys.items()
+            },
+            cls.VISIBILITY_TRACK_DIGITS,
+        )
+        if not stamped:
+            return {}
+        payload = (
+            dict(channel)
+            if isinstance(channel, dict)
+            else {"version": cls.VISIBILITY_TRACKS_VERSION, "tracks": [], "fps": fps}
+        )
+        published = payload.get("clip_span")
+        published = published if isinstance(published, dict) else {}
+        for key, (first, _last) in stamped.items():
+            pair = cls._numeric_pairs([published.get(key)])
+            if pair and abs(float(pair[0][0]) - first) > cls.CLIP_SPAN_DRIFT_FRAMES:
+                logger.warning(
+                    "Clips: %r was published as opening at frame %g, but its "
+                    "take in the FBX opens at %g -- placed by the file.",
+                    key,
+                    pair[0][0],
+                    first,
+                )
+        payload["clip_span"] = {**published, **stamped}
+        cls.overlay_data_export(gltf, {cls.VISIBILITY_TRACKS_KEY: payload})
+        return stamped
 
     #: What Maya (and so FBX2glTF) names the whole-timeline AnimStack. The
     #: clip :meth:`_synthesize_clips` makes for a file that carries none is

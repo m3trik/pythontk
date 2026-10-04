@@ -9,7 +9,11 @@ outlive the reason they were made:
 * **Boundary keys** - a sample on a shot bound, so a shot's content is its own
   and a neighbour's move cannot retime it.
 
-Both are correct while the boundary that produced them is where it was.  Once
+* **Authored keys** - the samples a behavior (a manifest fade, a highlight)
+  keys on its own channels, so re-applying it replaces exactly those and a
+  key on the same channel the ledger does not hold reads as the animator's.
+
+The first two are correct while the boundary that produced them is where it was.  Once
 the boundary moves, the step reads as a hand-authored hold and the key as a
 hand-placed pose - indistinguishable from the animator's own work, and left
 behind on every adjust.
@@ -63,8 +67,8 @@ class _ShotEditLedgerInternal(object):
         return sorted(recs, key=lambda r: r[0])
 
     def _registers(self):
-        """Both registers, so maintenance walks them without naming each."""
-        return (self._steps, self._keys)
+        """Every register, so maintenance walks them without naming each."""
+        return (self._steps, self._keys, self._authored)
 
     def _drop_if_empty(self, mapping: dict, curve: str) -> None:
         if curve in mapping and not mapping[curve]:
@@ -81,6 +85,11 @@ class ShotEditLedger(_ShotEditLedgerInternal):
       key carried BEFORE the system stepped it.
     * ``keys`` - ``[time, owner_shot_id, edge]``, the owner naming the shot
       bound (``"start"`` / ``"end"``) the sample was created for.
+    * ``authored`` - ``[time, owner_shot_id, behavior, obj, stamp]``, a key
+      a behavior wrote on one of its channels for that shot's object; *stamp*
+      is the effect recipe it was keyed under (``EffectRecipe.fingerprint``,
+      ``""`` for a template that keys no recipe), so Assess can tell keys an
+      older recipe made.
 
     Every mutator is idempotent on an already-recorded entry, so the enforce
     pass can run as often as it likes without stacking duplicates.
@@ -90,9 +99,10 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         self.eps = float(eps)
         self._steps: Dict[str, List[list]] = {}
         self._keys: Dict[str, List[list]] = {}
+        self._authored: Dict[str, List[list]] = {}
 
     def __bool__(self) -> bool:
-        return bool(self._steps or self._keys)
+        return bool(self._steps or self._keys or self._authored)
 
     def __repr__(self) -> str:  # pragma: no cover - diagnostics only
         return (
@@ -114,8 +124,8 @@ class ShotEditLedger(_ShotEditLedgerInternal):
 
     @property
     def curves(self) -> set:
-        """Every curve name either register mentions."""
-        return set(self._steps) | set(self._keys)
+        """Every curve name any register mentions."""
+        return set(self._steps) | set(self._keys) | set(self._authored)
 
     # ---- stepped tangents -------------------------------------------------
 
@@ -234,11 +244,18 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         """
         if hi is None:
             stepped = self.release_step(curve, lo) is not None
-            return int(stepped) + int(self.release_key(curve, lo))
+            return (
+                int(stepped)
+                + int(self.release_key(curve, lo))
+                + int(self.release_authored(curve, lo))
+            )
         steps = [t for t in self.step_times(curve) if lo <= t <= hi]
         keys = [t for t in self.key_times(curve) if lo <= t <= hi]
-        return sum(self.release_step(curve, t) is not None for t in steps) + sum(
-            self.release_key(curve, t) for t in keys
+        authored = [r[0] for r in self._authored.get(curve, ()) if lo <= r[0] <= hi]
+        return (
+            sum(self.release_step(curve, t) is not None for t in steps)
+            + sum(self.release_key(curve, t) for t in keys)
+            + sum(self.release_authored(curve, t) for t in authored)
         )
 
     def key_times(self, curve: str) -> List[float]:
@@ -269,7 +286,100 @@ class ShotEditLedger(_ShotEditLedgerInternal):
                     rec[1] = NO_OWNER
                     rec[2] = ""
                     n += 1
+        for recs in self._authored.values():
+            for rec in recs:
+                if rec[1] == shot_id:
+                    rec[1] = NO_OWNER
+                    n += 1
         return n
+
+    # ---- authored keys (behaviors) ---------------------------------------
+
+    def record_authored(
+        self,
+        curve: str,
+        time: float,
+        owner: int,
+        behavior: str,
+        obj: str,
+        stamp: str = "",
+    ) -> bool:
+        """Claim a key a behavior wrote on *curve* for shot *owner*'s *obj*.
+
+        Parameters:
+            stamp: The effect recipe the key was made under
+                (``EffectRecipe.fingerprint``); ``""`` when none.
+
+        Returns:
+            ``False`` when the key is already claimed (by any behavior).
+        """
+        recs = self._authored.setdefault(curve, [])
+        if self._index_of(recs, time, self.eps) is not None:
+            return False
+        recs.append([float(time), int(owner), str(behavior), str(obj), str(stamp)])
+        self._authored[curve] = self._sorted(recs)
+        return True
+
+    def owns_authored(self, curve: str, time: float) -> bool:
+        """True when a behavior wrote the key at ``(curve, time)``."""
+        recs = self._authored.get(curve)
+        return bool(recs) and self._index_of(recs, time, self.eps) is not None
+
+    def owns_any(self, curve: str, time: float) -> bool:
+        """True when the system wrote the KEY at ``(curve, time)`` -- a bound
+        sample or a behavior key.  A stepped tangent claims only the key's
+        tangent, so it does not count: the key is still the animator's."""
+        return self.owns_key(curve, time) or self.owns_authored(curve, time)
+
+    def release_authored(self, curve: str, time: float) -> bool:
+        """Drop the behavior claim at ``(curve, time)``.  ``True`` when held."""
+        recs = self._authored.get(curve)
+        if not recs:
+            return False
+        i = self._index_of(recs, time, self.eps)
+        if i is None:
+            return False
+        recs.pop(i)
+        self._drop_if_empty(self._authored, curve)
+        return True
+
+    def authored(
+        self,
+        owner: Optional[int] = None,
+        obj: Optional[str] = None,
+        behavior: Optional[str] = None,
+    ) -> List[Tuple[str, float]]:
+        """``(curve, time)`` of every behavior key matching the given filters,
+        ordered by curve then time."""
+        return [
+            (crv, rec[0])
+            for crv in sorted(self._authored)
+            for rec in self._authored[crv]
+            if (owner is None or rec[1] == owner)
+            and (obj is None or rec[3] == obj)
+            and (behavior is None or rec[2] == behavior)
+        ]
+
+    def authored_stamps(self, owner: int, obj: str, behavior: str) -> set:
+        """The recipe stamps of the keys *behavior* wrote on shot *owner*'s
+        *obj* -- one when they were all keyed in one pass, ``""`` for a key
+        claimed before stamps existed; empty when it claims none."""
+        return {
+            rec[4] if len(rec) > 4 else ""
+            for recs in self._authored.values()
+            for rec in recs
+            if rec[1] == owner and rec[3] == obj and rec[2] == behavior
+        }
+
+    def authored_pairs(self, owner: int) -> set:
+        """``{(obj, behavior)}`` every behavior key shot *owner* holds names --
+        what a build compares against the doc to find what it dropped."""
+        return {
+            (rec[3], rec[2])
+            for recs in self._authored.values()
+            for rec in recs
+            if rec[1] == owner
+        }
 
     # ---- remapping --------------------------------------------------------
     #
@@ -344,8 +454,35 @@ class ShotEditLedger(_ShotEditLedgerInternal):
 
     def forget_curve(self, curve: str) -> None:
         """Drop every claim on *curve* (it was deleted, or is unreachable)."""
-        self._steps.pop(curve, None)
-        self._keys.pop(curve, None)
+        for reg in self._registers():
+            reg.pop(curve, None)
+
+    def rename_curve(self, old: str, new: str) -> bool:
+        """Move every claim on curve *old* to *new* (the curve was renamed).
+
+        For a DCC whose curve key derives from its owner's name -- blendertk's
+        ``"<object>|<data_path>|<index>"`` -- and so goes stale when the owner
+        is renamed while the claims it carries still stand.  Claims already on
+        *new* are kept; one at the same time (within :attr:`eps`) as a moved
+        claim is not duplicated.
+
+        Returns:
+            ``True`` when *old* held any claim.
+        """
+        if old == new:
+            return False
+        moved = False
+        for reg in self._registers():
+            recs = reg.pop(old, None)
+            if not recs:
+                continue
+            kept = list(reg.get(new, []))
+            for rec in recs:
+                if not any(abs(r[0] - rec[0]) <= self.eps for r in kept):
+                    kept.append(rec)
+            reg[new] = self._sorted(kept)
+            moved = True
+        return moved
 
     # ---- serialisation ----------------------------------------------------
 
@@ -360,6 +497,11 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         if self._keys:
             out["keys"] = {
                 crv: [list(r) for r in recs] for crv, recs in sorted(self._keys.items())
+            }
+        if self._authored:
+            out["authored"] = {
+                crv: [list(r) for r in recs]
+                for crv, recs in sorted(self._authored.items())
             }
         return out
 
@@ -390,6 +532,20 @@ class ShotEditLedger(_ShotEditLedgerInternal):
                     owner = int(rec[1]) if len(rec) > 1 else NO_OWNER
                     edge = str(rec[2]) if len(rec) > 2 else ""
                     led._keys.setdefault(crv, []).append([float(rec[0]), owner, edge])
+                except (IndexError, TypeError, ValueError):
+                    continue
+        for crv, recs in ((data or {}).get("authored") or {}).items():
+            for rec in recs:
+                try:
+                    led._authored.setdefault(crv, []).append(
+                        [
+                            float(rec[0]),
+                            int(rec[1]),
+                            str(rec[2]),
+                            str(rec[3]),
+                            str(rec[4]) if len(rec) > 4 else "",
+                        ]
+                    )
                 except (IndexError, TypeError, ValueError):
                     continue
         for reg in led._registers():

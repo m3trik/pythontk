@@ -66,11 +66,8 @@ class _ImgRasterizeInternal:
         tris = np.asarray(triangles, dtype=float).reshape(-1, 3, 2)
         ss = max(1, int(supersample))
         dim = int(size) * ss
-        mask = np.zeros((dim, dim), dtype=np.uint8)
-        for tri in tris:
-            px = tri[:, 0] * dim
-            py = (1.0 - tri[:, 1]) * dim
-            cls._fill_triangle(mask, np.stack([px, py], axis=1))
+        pts = np.stack([tris[..., 0] * dim, (1.0 - tris[..., 1]) * dim], axis=-1)
+        mask = cls._scanline_fill(pts, dim)
         if ss > 1:
             # Accumulate each ss x ss block into one output-sized integer
             # buffer rather than casting the whole supersampled grid to
@@ -92,6 +89,80 @@ class _ImgRasterizeInternal:
             # way, matching the round-half-to-even this replaces), and the
             # maximum is 255 exactly -- nothing to clip.
             mask = ((acc + n // 2) // n).astype(np.uint8)
+        return mask
+
+    @staticmethod
+    def _scanline_fill(pts: "np.ndarray", dim: int) -> "np.ndarray":
+        """``(dim, dim)`` uint8 (0/255) of the pixel CENTERS inside any triangle of *pts*.
+
+        :meth:`_fill_triangle`'s rule exactly -- a centre on an edge is inside,
+        vertices stay in floating point, geometry past the frame is cropped --
+        for every triangle at once: each covered row of each triangle becomes
+        one ``[first, last]`` span of centres, written as +1/-1 into a row
+        difference array and integrated once. The per-triangle loop it
+        replaces paid a Python iteration and a float grid over each
+        triangle's whole bbox: 13 s of a 96-tile production bake's refill,
+        against well under one here.
+        """
+        mask = np.zeros((dim, dim), dtype=np.uint8)
+        if not len(pts):
+            return mask
+        a, b, c = pts[:, 0], pts[:, 1], pts[:, 2]
+        area = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (c[:, 0] - a[:, 0]) * (
+            b[:, 1] - a[:, 1]
+        )
+        pts = pts[np.abs(area) > 1e-12]  # degenerate triangles cover nothing
+        if not len(pts):
+            return mask
+        ys = pts[..., 1]
+        r0 = np.clip(np.ceil(ys.min(1) - 0.5), 0, dim).astype(np.int64)
+        r1 = np.clip(np.floor(ys.max(1) - 0.5), -1, dim - 1).astype(np.int64)
+        rows = np.maximum(r1 - r0 + 1, 0)
+        if not rows.sum():
+            return mask
+        tri = np.repeat(np.arange(len(pts)), rows)
+        row = np.arange(int(rows.sum())) - np.repeat(np.cumsum(rows) - rows, rows)
+        row = row + r0[tri]
+        y = row + 0.5
+        lo = np.full(len(row), np.inf)
+        hi = np.full(len(row), -np.inf)
+        for i, j in ((0, 1), (1, 2), (2, 0)):
+            p, q = pts[tri, i], pts[tri, j]
+            dy = q[:, 1] - p[:, 1]
+            crosses = (y >= np.minimum(p[:, 1], q[:, 1])) & (
+                y <= np.maximum(p[:, 1], q[:, 1])
+            )
+            flat = crosses & (dy == 0)
+            slant = crosses & (dy != 0)
+            t = np.where(slant, (y - p[:, 1]) / np.where(dy == 0, 1.0, dy), 0.0)
+            x = p[:, 0] + t * (q[:, 0] - p[:, 0])
+            lo = np.where(slant, np.minimum(lo, x), lo)
+            hi = np.where(slant, np.maximum(hi, x), hi)
+            # A horizontal edge lying ON the row: its whole span is inside.
+            lo = np.where(flat, np.minimum(lo, np.minimum(p[:, 0], q[:, 0])), lo)
+            hi = np.where(flat, np.maximum(hi, np.maximum(p[:, 0], q[:, 0])), hi)
+        c0 = np.clip(np.ceil(lo - 0.5), 0, dim).astype(np.int64)
+        c1 = np.clip(np.floor(hi - 0.5), -1, dim - 1).astype(np.int64)
+        keep = c1 >= c0
+        row, c0, c1 = row[keep], c0[keep], c1[keep]
+        # A band of rows at a time: the difference array of the whole grid is
+        # 4 bytes a sample (268 MB for a 2048 map at supersample 4) against the
+        # mask's one, inside whatever host process is baking.
+        order = np.argsort(row, kind="stable")
+        row, c0, c1 = row[order], c0[order], c1[order]
+        band = max(1, (1 << 22) // (dim + 1))
+        width = dim + 1
+        for top in range(0, dim, band):
+            a, b = np.searchsorted(row, [top, top + band])
+            if a == b:
+                continue
+            local = (row[a:b] - top) * width
+            rows_here = min(band, dim - top)
+            size = rows_here * width
+            diff = np.bincount(local + c0[a:b], minlength=size)[:size]
+            diff -= np.bincount(local + c1[a:b] + 1, minlength=size)[:size]
+            covered = np.cumsum(diff.reshape(rows_here, width), axis=1)[:, :dim] > 0
+            mask[top : top + rows_here][covered] = 255
         return mask
 
     @staticmethod

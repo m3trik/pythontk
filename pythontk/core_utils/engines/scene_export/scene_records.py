@@ -12,8 +12,10 @@ engine (``scene_records`` / ``scene_store`` / ``export_snapshot`` /
 ``record_transfer``):
 
 - **Declare once, derive everything.** :class:`RecordSpec` is the declaration:
-  key, scope, version, description, kind and dependencies.  Nothing else
-  spells a channel name.
+  key, scope, version, description, kind and dependencies -- and, where
+  another language reads it, its payload's shape and the manifest a GLB
+  publishes it as (:class:`WebProjection`).  Nothing else spells a channel
+  name, and the other languages' types are generated from the shapes.
 - **Storage is dumb, records are smart.** :class:`SceneStoreBase` is the whole
   contract a DCC implements: ``read`` / ``write`` / ``keys`` / ``values`` per
   :class:`Scope`, strings only.  Encoding, the version envelope, tolerant
@@ -122,6 +124,30 @@ class Merge(str, Enum):
 
 
 @dataclass(frozen=True)
+class WebProjection:
+    """How a deliverable record is published for the glTF runtimes.
+
+    A GLB conversion (``MeshConvert``) reads the record off the carrier, binds
+    it to the file -- names resolved to glTF node indices, maps to texture
+    indices -- and publishes the result in the root ``extras`` under
+    :attr:`key`: the manifest a viewer script reads, and the key
+    ``PreviewServer.AUTO_SCRIPTS`` activates that script on.
+
+    Parameters:
+        key: The root-extras key -- a wire contract, like the record's own key.
+        version: The manifest's own schema version, which its applier stamps
+            (independent of the record's: the binding can change alone).
+        shape: ``(module, class)`` of the :class:`~pythontk.SchemaSpec`
+            declaring the manifest (:meth:`SceneRecords.web_shape`); ``None``
+            while it is undeclared.
+    """
+
+    key: str
+    version: int = 1
+    shape: Optional[Tuple[str, str]] = None
+
+
+@dataclass(frozen=True)
 class Record:
     """One produced value of a :class:`RecordSpec`, ready to store."""
 
@@ -208,6 +234,15 @@ class RecordSpec:
             A tuple of keys names the only values that are (the hierarchy
             baseline's ``scene``).  A stamp is a path too: declare it in
             :attr:`paths` as well.
+        shape: ``(module, class)`` of the :class:`~pythontk.SchemaSpec`
+            declaring the payload (:meth:`SceneRecords.shape`) -- resolved
+            lazily, like :attr:`SceneRecords.CODECS`, so declaring a record
+            never imports its model. It validates a payload, and the types
+            another language reads it through are generated from it
+            (``m3trik/scripts/sync_scene_records.py``). ``None`` while the
+            payload is described only in prose.
+        web: The record's :class:`WebProjection` -- how a GLB conversion
+            publishes it for the glTF runtimes; ``None`` when it publishes none.
     """
 
     key: str
@@ -229,6 +264,8 @@ class RecordSpec:
     section: Optional[str] = None
     paths: Union[bool, Tuple[str, ...]] = False
     stamps: Union[bool, Tuple[str, ...]] = False
+    shape: Optional[Tuple[str, str]] = None
+    web: Optional[WebProjection] = None
 
     @property
     def path_keys(self) -> Optional[Tuple[str, ...]]:
@@ -358,6 +395,9 @@ class SceneRecords:
             "is the join key to the imported animation clip"
         ),
         consumers=("unity", "glb", "verifier"),
+        # The file's clips joined to the shots by glTF animation index
+        # (MeshConvert.apply_glb_animations).
+        web=WebProjection("animation_web"),
     )
     #: No longer written (the ranges ride ``shot_metadata``'s clips); declared
     #: so a file written before 0.11.0 still reads (:meth:`declared_takes`),
@@ -392,9 +432,14 @@ class SceneRecords:
         description=(
             "per-object baked-lightmap records: map file name, uvIndex, "
             "intensity, scaleOffset, and the object's scene hierarchy (which "
-            "tells apart objects that share a name)"
+            "tells apart objects that share a name); and the bake's reflection "
+            "probe, when it captured one: its HDR's file name, capture point and "
+            "projection box, in scene units beside unit_scale"
         ),
         consumers=("unity", "glb"),
+        # The maps embedded, keyed by the material each binds to
+        # (MeshConvert.apply_glb_lightmaps).
+        web=WebProjection("lightmap_web"),
     )
     SHADOWS = RecordSpec(
         "shadow_metadata",
@@ -406,6 +451,9 @@ class SceneRecords:
             "silhouette texture file name, and the authored intensity"
         ),
         consumers=("unity", "glb"),
+        # Each plane, its source and contact as node indices, its maps as
+        # texture indices (MeshConvert.apply_glb_shadows).
+        web=WebProjection("shadow_web", version=2),
     )
     ARTICULATION = RecordSpec(
         "articulation",
@@ -419,6 +467,13 @@ class SceneRecords:
             "it rides -- the ArticulationModel a runtime poses"
         ),
         consumers=("unity", "glb"),
+        shape=("pythontk.geo_utils.articulation.record", "ArticulationRecord"),
+        # Every joint and grabbed part bound to its glTF node
+        # (MeshConvert.apply_glb_articulation).
+        web=WebProjection(
+            "articulation_web",
+            shape=("pythontk.geo_utils.articulation.record", "ArticulationWeb"),
+        ),
     )
     EMISSIVE_GROUPS = RecordSpec(
         "emissive_groups",
@@ -438,7 +493,9 @@ class SceneRecords:
         owner="Render Effects",
         description=(
             "keyed visibility per node, as stepped on/off frames, with the "
-            "authored opacity ramp and each take's first/last authored frame"
+            "authored opacity ramp and each take's first/last authored frame; "
+            "on a shot scene keying none, the exporter's measured whole-timeline "
+            "clip origin alone"
         ),
         kind=Kind.DERIVED,
         after=("shot_metadata",),
@@ -576,6 +633,25 @@ class SceneRecords:
         paths=True,
         stamps=True,
     )
+    #: The reflection probe the lightmap bake captured -- the room it lit, as
+    #: an HDR from one point: the file's name, that point, and the box its
+    #: reflections project onto, in scene units with ``unit_scale`` (metres
+    #: per unit) beside them.  Published inside :attr:`LIGHTMAPS` as its
+    #: ``probe``; the file's folder and writer ride :attr:`LIGHTMAP_DIRS` and
+    #: :attr:`LIGHTMAP_WRITERS` like any map's.  It describes its own scene,
+    #: so another scene's copy is dropped.
+    LIGHTMAP_PROBE = RecordSpec(
+        "lightmap_probe",
+        Scope.PRIVATE,
+        1,
+        owner="Lightmap Baker",
+        description=(
+            "the reflection probe the lightmap bake captured: file name, "
+            "capture point and projection box"
+        ),
+        merge=Merge.OWN,
+        respell=False,
+    )
 
     #: The domain codecs: record key -> (module, class) whose classmethod
     #: ``merge_record(own, other, ctx)`` is a :attr:`Merge.CODEC` record's
@@ -612,6 +688,27 @@ class SceneRecords:
         if row is None:
             return None
         return cls.resolve_class(*row)
+
+    @classmethod
+    def shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]:
+        """The :class:`~pythontk.SchemaSpec` declaring *item*'s payload
+        (:attr:`RecordSpec.shape`), imported on first use; ``None`` while the
+        payload is undeclared."""
+        spec = cls.resolve(item)
+        return cls.resolve_class(*spec.shape) if spec.shape else None
+
+    @classmethod
+    def web_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]:
+        """The :class:`~pythontk.SchemaSpec` declaring *item*'s web manifest
+        (:attr:`WebProjection.shape`), or ``None``."""
+        web = cls.resolve(item).web
+        return cls.resolve_class(*web.shape) if web and web.shape else None
+
+    @classmethod
+    def web_projected(cls) -> List[RecordSpec]:
+        """The records a GLB conversion publishes for the glTF runtimes
+        (:attr:`RecordSpec.web`), in declaration order."""
+        return [s for s in cls.all() if s.web]
 
     @classmethod
     def portable(cls) -> List[RecordSpec]:
@@ -985,6 +1082,7 @@ class SceneRecords:
                 "consumers": list(s.consumers),
                 "merge": s.merge.value,
                 "portable": s.portable,
+                "web": s.web.key if s.web else None,
                 "description": s.description,
             }
             for s in cls.all()

@@ -50,6 +50,10 @@ class _Recorder(TaskFactory):
         self.calls.append(("check_bad", value))
         return (False, ["reason"])
 
+    def check_worse(self, value):
+        self.calls.append(("check_worse", value))
+        return (False, ["another reason"])
+
     def check_empty(self, value):
         self.calls.append(("check_empty", value))
         return []  # a natural "no messages" shape -- must not crash
@@ -156,6 +160,95 @@ class TaskFactoryTest(unittest.TestCase):
         self.assertEqual(r._last_failed_checks, ["check_bad"])
         self.assertTrue(r.run_tasks({"check_ok": True}))
         self.assertEqual(r._last_failed_checks, [])
+
+    # -- failed_check_handler: decided where the check fails -----------------
+
+    class _Gated(_Recorder):
+        """check_bad gates task_plain; everything below it reads task_noargs."""
+
+        TASK_ORDER = ["task_plain", "task_noargs"]
+        CHECK_DEPENDENCIES = {
+            "check_bad": ("task_plain",),
+            "check_ok": ("task_noargs",),
+            "check_worse": ("task_noargs",),
+        }
+
+    ALL = {
+        "task_plain": "x",
+        "task_noargs": True,
+        "check_bad": True,
+        "check_ok": True,
+        "check_worse": True,
+    }
+
+    def _asking(self, *answers):
+        """A _Gated whose handler records each question and gives *answers*."""
+        r = self._Gated()
+        asked = []
+        replies = list(answers)
+
+        def handler(check, messages, remaining):
+            asked.append((check, messages, remaining))
+            return replies.pop(0)
+
+        r.failed_check_handler = handler
+        return r, asked
+
+    def test_an_override_carries_the_same_run_on_past_the_failure(self):
+        """Overriding used to be asked once, AFTER the run had dropped every
+        task and check below the failure, so an accepted override shipped with
+        those checks never evaluated. Asked at the failure point instead, an
+        override lets the run carry on as if the check had passed.
+        Added: 2026-10-04
+        """
+        r, asked = self._asking(TaskFactory.CHECK_OVERRIDE, TaskFactory.CHECK_OVERRIDE)
+        self.assertTrue(r.run_tasks(dict(self.ALL)))
+        self.assertEqual(
+            asked[0], ("check_bad", ["reason"], ["check_ok", "check_worse"])
+        )
+        ran = [c[0] for c in r.calls]
+        self.assertIn("task_noargs", ran, "the task below the failure must run")
+        self.assertIn("check_ok", ran, "the checks below it must still be made")
+        self.assertEqual(r._last_skipped_tasks, [])
+        self.assertEqual(r._last_skipped_checks, [])
+        self.assertEqual(r._last_failed_checks, ["check_bad", "check_worse"])
+        self.assertEqual(r._last_overridden_checks, ["check_bad", "check_worse"])
+
+    def test_a_single_override_asks_again_at_the_next_failure(self):
+        r, asked = self._asking(TaskFactory.CHECK_OVERRIDE, TaskFactory.CHECK_ABORT)
+        self.assertFalse(r.run_tasks(dict(self.ALL)))
+        self.assertEqual([a[0] for a in asked], ["check_bad", "check_worse"])
+        self.assertEqual(asked[1][2], [], "nothing is left after the last check")
+        self.assertEqual(r._last_overridden_checks, ["check_bad"])
+
+    def test_override_all_asks_once_and_lets_every_later_failure_through(self):
+        r, asked = self._asking(TaskFactory.CHECK_OVERRIDE_ALL)
+        self.assertTrue(r.run_tasks(dict(self.ALL)))
+        self.assertEqual(len(asked), 1)
+        self.assertIn("check_worse", [c[0] for c in r.calls], "still evaluated")
+        self.assertEqual(r._last_overridden_checks, ["check_bad", "check_worse"])
+
+    def test_an_abort_keeps_the_stop_at_the_first_failure(self):
+        """Declining is the old verdict exactly: the tasks below the failure
+        are dropped with the checks that read them, and nothing more is asked.
+        """
+        r, asked = self._asking(TaskFactory.CHECK_ABORT)
+        self.assertFalse(r.run_tasks(dict(self.ALL)))
+        self.assertEqual(len(asked), 1)
+        self.assertEqual(r._last_skipped_tasks, ["task_noargs"])
+        self.assertEqual(r._last_skipped_checks, ["check_ok", "check_worse"])
+        self.assertEqual(r._last_overridden_checks, [])
+
+    def test_a_raising_handler_stops_the_run(self):
+        """A prompt that breaks is no consent: the run fails closed."""
+        r = self._Gated()
+
+        def broken(check, messages, remaining):
+            raise RuntimeError("dialog died")
+
+        r.failed_check_handler = broken
+        self.assertFalse(r.run_tasks(dict(self.ALL)))
+        self.assertEqual(r._last_overridden_checks, [])
 
     def test_what_a_run_keeps_is_named_once_and_closed_with_the_run(self):
         """A task whose edit no restore unwinds -- a repair, a write-back edit --

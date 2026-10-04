@@ -160,16 +160,13 @@ class _ExportVerifierInternal:
 
     @staticmethod
     def _published_span(sidecar: Optional[dict]) -> Optional[List[float]]:
-        """The whole-timeline ``clip_span`` entry every clip was cut against."""
-        tracks = ((sidecar or {}).get("data_export") or {}).get("visibility_tracks")
-        spans = (tracks or {}).get("clip_span")
-        pair = (spans or {}).get(MeshConvert.DEFAULT_CLIP_SPAN)
-        if isinstance(pair, (list, tuple)) and len(pair) == 2:
-            try:
-                return [float(pair[0]), float(pair[1])]
-            except (TypeError, ValueError):
-                return None
-        return None
+        """The whole-timeline ``clip_span`` entry every clip was cut against
+        (``MeshConvert._published_origin``, the reader the rebuild uses)."""
+        export = (sidecar or {}).get("data_export")
+        origin = MeshConvert._published_origin(
+            export.get if isinstance(export, dict) else lambda key: None
+        )
+        return list(origin) if origin else None
 
 
 class ExportVerifier(_ExportVerifierInternal):
@@ -258,9 +255,14 @@ class ExportVerifier(_ExportVerifierInternal):
 
     @property
     def fbx(self) -> Optional[FbxFile]:
+        """The FBX, parsed once: no gate reads its embedded media, and the take
+        gates read each curve's extent alone (``span_arrays``), so a
+        production file's textures and per-frame keys are never held."""
         if self._fbx is None and self._fbx_error is None and self.fbx_path:
             try:
-                self._fbx = FbxFile.load(self.fbx_path)
+                self._fbx = FbxFile.load(
+                    self.fbx_path, raw_payloads=False, span_arrays=("KeyTime",)
+                )
             except (OSError, ValueError) as e:
                 self._fbx_error = str(e)
         return self._fbx
@@ -820,6 +822,100 @@ class ExportVerifier(_ExportVerifierInternal):
         if missing:
             return [Finding(FAIL, "fbx_takes", f"declared but absent: {missing}")]
         return [Finding(PASS, "fbx_takes", f"{len(takes)} declared take(s) present")]
+
+    #: Channels a failing take names before the rest are counted.
+    _LISTED_CHANNELS = 3
+
+    def check_fbx_take_channels(self) -> List[Finding]:
+        """Every declared take is an exact slice of the animation: it animates
+        each channel the whole-timeline take does, keyed across its window.
+
+        Maya's take split restricts each curve to a take's window before
+        writing it unless every curve is resampled, so a curve with no key
+        inside a take gives that take NO channel -- the node plays its rest
+        pose for the whole shot in every consumer of the takes (Unity builds
+        its clips from them) -- and a take's keys stop at its last in-window
+        key, a clip shorter than its shot. Measured in Unity 6000.3: a 50-frame
+        shot imported 40 frames long with two of three nodes frozen, the next
+        shot as a clip with no curves at all. The whole-timeline take, when the
+        file carries one, is the reference; a file without one (Blender
+        windows each take itself) is held to the windows alone.
+        """
+        name = "fbx_take_channels"
+        if self.fbx is None:
+            return [Finding(SKIP, name, "no readable FBX")]
+        declared = {
+            t["name"]: t
+            for t in self._declared_takes(self.sidecar)
+            if t.get("name") and "start" in t and "end" in t
+        }
+        if not declared:
+            return [Finding(SKIP, name, self.sidecar_error or "no sidecar takes")]
+        if self._published_clip_mode(self.sidecar) == "full":
+            return [Finding(SKIP, name, "Full Sequence Only: no shot takes to slice")]
+        curves = self.fbx.take_curves()
+        whole = [take for take in curves if take not in declared]
+        reference = set().union(*(set(curves[take]) for take in whole))
+        tick = FbxFile.TICKS_PER_SECOND / self.fps
+
+        def listed(keys) -> str:
+            keys = sorted(keys)
+            shown = ", ".join(
+                f"{t}.{p}.{c}" for t, p, c in keys[: self._LISTED_CHANNELS]
+            )
+            more = len(keys) - self._LISTED_CHANNELS
+            return shown + (f" (+{more} more)" if more > 0 else "")
+
+        rows: List[Finding] = []
+        checked = 0
+        for take, window in declared.items():
+            channels = curves.get(take)
+            if channels is None:
+                continue  # an absent take is check_fbx_takes' to name
+            checked += 1
+            missing = reference - set(channels)
+            if missing:
+                rows.append(
+                    Finding(
+                        FAIL,
+                        name,
+                        f"{take}: {len(missing)} channel(s) the whole timeline "
+                        f"animates are absent -- they play their rest pose for "
+                        f"the whole shot: {listed(missing)}",
+                    )
+                )
+            lo, hi = float(window["start"]) * tick, float(window["end"]) * tick
+            short = [
+                key
+                for key, (first, last, _count) in channels.items()
+                if first is not None and (first > lo + tick or last < hi - tick)
+            ]
+            if short:
+                rows.append(
+                    Finding(
+                        FAIL,
+                        name,
+                        f"{take}: {len(short)} channel(s) keyed short of the take's "
+                        f"{window['start']:g}-{window['end']:g} window: "
+                        f"{listed(short)}",
+                    )
+                )
+        if not checked:
+            return [Finding(SKIP, name, "no declared take is in the file")]
+        if rows:
+            return rows
+        scope = (
+            f"all {len(reference)} channel(s) of the whole timeline"
+            if whole
+            else "every channel (no whole-timeline take to compare)"
+        )
+        return [
+            Finding(
+                PASS,
+                name,
+                f"{checked} take(s) carry {scope} across their windows",
+            )
+        ]
 
     # ---- cross / baseline gates -------------------------------------------
 

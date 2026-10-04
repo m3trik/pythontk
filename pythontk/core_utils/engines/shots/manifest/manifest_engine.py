@@ -35,6 +35,7 @@ from pythontk.core_utils.engines.shots.manifest.manifest_model import (
     FitMode,
     ObjectStatus,
     PlannedShot,
+    ShotPairing,
     StepStatus,
 )
 
@@ -101,15 +102,30 @@ class ShotManifest(_ShotManifestInternal):
     :meth:`_discover_scene_objects`, :meth:`rewire_audio`,
     :meth:`apply_behaviors`, :meth:`_object_exists`, :meth:`_verify_behavior`,
     :meth:`_keyframe_range`, :meth:`_audio_exists`,
-    :meth:`_audio_grow_duration`), each with a pure default; the DCC toolkits
-    subclass this and override them.
+    :meth:`_audio_grow_duration`, :meth:`_placed_clip_keys`), each with a pure
+    default; the DCC toolkits subclass this and override them.
+
+    The scene's :class:`~pythontk.EffectRecipe` (``store.effect_recipe``) is
+    what every recipe-driven behavior is keyed, verified and sized from: a
+    Build stamps the keys it writes with the recipe they were made under, and
+    Assess flags those an older recipe made (``stale_behavior``).
 
     Parameters:
         store: Target ``ShotStore`` instance to populate.
+        match: How a step finds its shot (:meth:`pair`): ``"name"`` (the
+            stored binding, then the name) or ``"name_then_order"`` (then
+            the remaining steps and shots in timeline order).
     """
 
-    def __init__(self, store: ShotStore):
+    #: Metadata keys the manifest writes on a shot (:meth:`_step_metadata`);
+    #: a build replaces these and keeps every other key it finds.
+    MANIFEST_METADATA = frozenset(
+        ("section", "section_title", "csv_objects", "behaviors", "voice_text", "step")
+    )
+
+    def __init__(self, store: ShotStore, match: str = "name"):
         self.store = store
+        self.match = match
         self._fps_cache: Optional[float] = None
         # Per-cycle caches (cleared at the top of update()/assess()):
         # transform → standard-attr curves, and per-curve key data.
@@ -141,6 +157,8 @@ class ShotManifest(_ShotManifestInternal):
         }
         if step.audio and step.audio.upper() != "N/A":
             meta["voice_text"] = step.audio
+        # The binding: which doc step this shot is, whatever it is named.
+        meta["step"] = step.step_id
         if pass_through:
             meta.update(pass_through)
         return meta
@@ -160,6 +178,19 @@ class ShotManifest(_ShotManifestInternal):
         self._fps_cache = float(getattr(self.store, "scene_fps", None) or 24.0)
         return self._fps_cache
 
+    @property
+    def recipe(self):
+        """The scene's :class:`~pythontk.EffectRecipe` -- the store's."""
+        return self.store.effect_recipe
+
+    def _stamp(self, behavior: str) -> str:
+        """The recipe stamp *behavior*'s keys carry: the fingerprint of the
+        effect it keys, ``""`` for a template keying its own channels."""
+        from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
+
+        effect = Behaviors.effect_of(behavior)
+        return self.recipe.fingerprint(effect) if effect else ""
+
     def _measure_audio(self, obj: BuilderObject) -> Optional[float]:
         """Return *obj*'s audio-clip length in frames, or ``None`` (hook).
 
@@ -172,14 +203,61 @@ class ShotManifest(_ShotManifestInternal):
         return None
 
     def _resolve_names_keep_missing(self, names: List[str]) -> List[str]:
-        """Resolve object names, keeping the caller's form for missing ones (hook).
+        """Resolve object names, keeping the caller's form for missing ones.
 
-        Pure default: identity — pure / Blender names are already unique.  The
-        Maya subclass overrides to long-name-resolve via the scene while
-        keeping unresolved (missing / ambiguous) names in their original form
-        so the pinned-object system can surface them instead of dropping them.
+        Through :meth:`_resolve_object` (the store's one resolver), so a build
+        stores the node a namespaced reference really is; an unresolved
+        (missing / ambiguous) name stays as written so the pinned-object system
+        can surface it instead of dropping it.
         """
-        return list(names)
+        out = []
+        for name in names:
+            node, reason = self._resolve_object(name)
+            out.append(node if reason == "found" else name)
+        return out
+
+    def _resolve_object(self, name: str) -> Tuple[str, str]:
+        """``(node, reason)`` for a doc object name: ``"found"`` / ``"missing"``
+        / ``"ambiguous"`` -- the store's :meth:`~ShotStore.resolve_member`,
+        confirmed by :meth:`_object_exists`."""
+        node, reason = self.store.resolve_member(name)
+        if reason == "found" and not self._object_exists(node):
+            return name, "missing"
+        return node, reason
+
+    def _key_samples(
+        self, obj: str, behavior: str, start: float, end: float
+    ) -> List[Tuple[str, float]]:
+        """``(curve, time)`` of every key in ``[start, end]`` on the channels
+        *behavior* keys on *obj* (hook).
+
+        Pure default: ``[]`` -- no scene curves.  DCC subclasses return the
+        keys on the template's channels (and their mirrors), naming curves
+        the way their ledger does.
+        """
+        return []
+
+    def _delete_keys(self, curve: str, times: List[float]) -> None:
+        """Delete the keys at *times* on *curve* (hook).  Pure default: no-op."""
+
+    def _placed_clip_keys(
+        self, name: str, start: float, end: float
+    ) -> List[Tuple[str, float]]:
+        """``(curve, time)`` of audio clip *name*'s keys placed exactly where a
+        build places them over ``[start, end]`` (hook).
+
+        A build before the manifest claimed its clip keys left them unclaimed,
+        and a build no longer clears a whole track, so these are adopted
+        (:meth:`adopt_placed_clips`) before a shot moves -- or the clip would
+        play at its old place too.  Pure default: ``[]`` (no audio keys).
+        """
+        return []
+
+    def _is_asset_candidate(self, name: str) -> bool:
+        """Whether shot member *name* reads as a doc asset (hook) -- what
+        auto-fill offers.  Pure default: ``True``; DCC subclasses leave out
+        cameras, lights, joints and the like."""
+        return True
 
     def _filter_to_animated(
         self, names: List[str], start: float, end: float
@@ -332,6 +410,10 @@ class ShotManifest(_ShotManifestInternal):
         Returns:
             ``(actions, behavior_result, assessment)`` tuple.
         """
+        if apply_behaviors:
+            # Before any shot moves: a clip keyed by a build that did not claim
+            # it is the manifest's, and must move with its claim.
+            self.adopt_placed_clips()
         actions = self.update(
             steps,
             ranges=ranges,
@@ -343,7 +425,9 @@ class ShotManifest(_ShotManifestInternal):
 
         behavior_result: Dict[str, list] = {"applied": [], "skipped": []}
         if apply_behaviors:
+            self.release_dropped(steps)
             behavior_result = self.apply_behaviors()
+            self._record_authored(behavior_result)
 
         # Rewire managed audio nodes so the sequencer/timeline reflects any
         # key changes authored above.  Idempotent.
@@ -393,6 +477,251 @@ class ShotManifest(_ShotManifestInternal):
 
     # ---- compute-then-commit internals -----------------------------------
 
+    # ---- pairing -----------------------------------------------------------
+
+    def pair(self, steps: List[BuilderStep]) -> ShotPairing:
+        """Which shot each step is -- the one place a step finds its shot.
+
+        In order: the shot whose ``metadata["step"]`` binding names the step
+        (written by every build, so a renamed shot stays paired and an
+        inserted step shifts nothing); then the shot of the step's name
+        unless that shot is bound to another step; then, with ``match="name_then_order"``, the remaining
+        steps and shots in doc and timeline order.  A shot nothing pairs with
+        is an orphan -- reported, never removed by a build.
+        """
+        shots = self.store.sorted_shots()
+        by_binding: Dict[str, Any] = {}
+        for shot in shots:
+            bound = (shot.metadata or {}).get("step")
+            if bound and bound not in by_binding:
+                by_binding[bound] = shot
+        by_name = {shot.name: shot for shot in shots}
+        pairing = ShotPairing()
+        used: set = set()
+
+        def take(sid: str, shot, how: str) -> None:
+            pairing.shots[sid] = shot
+            pairing.how[sid] = how
+            used.add(shot.shot_id)
+
+        ids = [step.step_id for step in steps]
+        for sid in ids:
+            shot = by_binding.get(sid)
+            if shot is not None and shot.shot_id not in used:
+                take(sid, shot, "binding")
+        for sid in ids:
+            shot = by_name.get(sid)
+            if sid in pairing.shots or shot is None or shot.shot_id in used:
+                continue
+            if (shot.metadata or {}).get("step") not in (None, sid):
+                continue  # bound to another step
+            take(sid, shot, "name")
+        if self.match == "name_then_order":
+            todo = [sid for sid in ids if sid not in pairing.shots]
+            free = [shot for shot in shots if shot.shot_id not in used]
+            for sid, shot in zip(todo, free):
+                take(sid, shot, "order")
+        pairing.orphans = [shot for shot in shots if shot.shot_id not in used]
+        return pairing
+
+    # ---- behavior-key ownership (the ledger's ``authored`` register) -------
+
+    def unowned_keys(
+        self, obj: str, behavior: str, start: float, end: float
+    ) -> List[Tuple[str, float]]:
+        """Keys on *behavior*'s channels of *obj* in ``[start, end]`` that the
+        system did not write -- the animator's, which a build never touches."""
+        led = self.store.edit_ledger
+        return [
+            (curve, t)
+            for curve, t in self._key_samples(obj, behavior, start, end)
+            if not led.owns_any(curve, t)
+        ]
+
+    def release_authored(self, shot_id: int, obj: str, behavior: str) -> int:
+        """Delete the keys *behavior* wrote on *obj* for shot *shot_id* and drop
+        their claims -- what re-applying it does first.  Returns how many."""
+        led = self.store.edit_ledger
+        records = led.authored(owner=shot_id, obj=obj, behavior=behavior)
+        by_curve: Dict[str, List[float]] = {}
+        for curve, t in records:
+            by_curve.setdefault(curve, []).append(t)
+        for curve, times in by_curve.items():
+            self._delete_keys(curve, times)
+            for t in times:
+                led.release_authored(curve, t)
+        if records:
+            self.store.mark_dirty()
+        return len(records)
+
+    def release_dropped(self, steps: List[BuilderStep]) -> int:
+        """Delete the keys of behaviors a step's doc no longer lists.
+
+        The manifest's own output, so a build takes it out: a behavior
+        unticked or dropped from the sheet, or an object dropped from the step,
+        leaves claims on its shot that nothing in the doc answers.  Locked
+        shots keep theirs, and so does a shot no step pairs with (an orphan is
+        never edited by a build -- removing it is the user's call, and leaves
+        its keys).  Returns how many keys were released.
+        """
+        released = 0
+        for pairs, shot in self._dropped_pairs(steps):
+            for obj, behavior in pairs:
+                released += self.release_authored(shot.shot_id, obj, behavior)
+        return released
+
+    def _dropped_pairs(self, steps: List[BuilderStep]):
+        """``[(sorted [(obj, behavior)], shot)]`` -- per paired, unlocked
+        shot, the claims its step's doc no longer lists."""
+        led = self.store.edit_ledger
+        pairing = self.pair(steps)
+        out = []
+        for step in steps:
+            shot = pairing.shots.get(step.step_id)
+            if shot is None or shot.locked:
+                continue
+            listed = {(o.name, b) for o in step.objects for b in o.behaviors or ()}
+            dropped = sorted(led.authored_pairs(shot.shot_id) - listed)
+            if dropped:
+                out.append((dropped, shot))
+        return out
+
+    def adopt_placed_clips(self) -> int:
+        """Claim the audio keys a build placed before it claimed them.
+
+        For every unlocked shot's audio behavior with no claim, the keys
+        :meth:`_placed_clip_keys` finds exactly where a build puts them are
+        recorded as the manifest's -- so the next build moves its clip rather
+        than leaving it to play at its old place too.  Returns how many keys
+        were adopted.
+        """
+        led = self.store.edit_ledger
+        n = 0
+        for shot in self.store.sorted_shots():
+            if shot.locked:
+                continue
+            for entry in (shot.metadata or {}).get("behaviors", ()):
+                name, behavior = entry.get("name", ""), entry.get("behavior", "")
+                is_audio = entry.get("kind") == "audio" or entry.get("source_path")
+                if not (name and behavior and is_audio):
+                    continue
+                if led.authored(owner=shot.shot_id, obj=name, behavior=behavior):
+                    continue
+                for curve, t in self._placed_clip_keys(name, shot.start, shot.end):
+                    if led.owns_any(curve, t):
+                        continue
+                    n += led.record_authored(
+                        curve, t, shot.shot_id, behavior, name, self._stamp(behavior)
+                    )
+        if n:
+            self.store.mark_dirty()
+        return n
+
+    def is_stale(self, shot_id: int, obj: str, behavior: str) -> bool:
+        """Whether *behavior*'s keys on shot *shot_id*'s *obj* were made under
+        an older effect recipe than the scene's.
+
+        Only a recipe-keyed ramp (a fade or a pulse) can be stale, and only
+        keys the manifest claims say what made them: a key claimed before
+        stamps existed reads as stale (an older recipe made it), and a
+        behavior with no claims has nothing to judge.
+        """
+        from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
+
+        effect = Behaviors.effect_of(behavior)
+        if effect not in ("fade_in", "fade_out", "pulse"):
+            return False
+        stamps = self.store.edit_ledger.authored_stamps(shot_id, obj, behavior)
+        current = self.recipe.fingerprint(effect)
+        return any(stamp != current for stamp in stamps)
+
+    def reapply_object(self, shot, obj: BuilderObject) -> bool:
+        """Re-key every behavior of one doc object over *shot*'s range.
+
+        The per-object "Apply" action: an explicit request, so the
+        animator-keys guard does not apply -- but ownership does.  Every
+        behavior's previous keys are released before any is re-keyed (one at a
+        time, a later release deleted the key an earlier behavior had just
+        written on a shared frame) and the new ones recorded, each placed where
+        a build places it (:meth:`Behaviors.anchor_overrides`).  Wrap the call
+        in ``store.scene_edit`` for one undo step.  The keys of a behavior the
+        doc dropped for the object go too.  Returns whether anything was
+        applied or released.
+        """
+        from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
+
+        behaviors = list(obj.behaviors or [])
+        claimed = {
+            b
+            for o, b in self.store.edit_ledger.authored_pairs(shot.shot_id)
+            if o == obj.name
+        }
+        if not behaviors and not claimed:
+            return False
+        node, reason = self._resolve_object(obj.name)
+        if reason != "found":
+            return False
+        # Its listed behaviors' keys AND those of behaviors the doc dropped for
+        # it: the Apply re-keys exactly what the doc lists now.
+        for behavior in sorted(claimed | set(behaviors)):
+            self.release_authored(shot.shot_id, obj.name, behavior)
+        anchors = Behaviors.anchor_overrides(behaviors)
+        for behavior, anchor in zip(behaviors, anchors):
+            kwargs: Dict[str, Any] = {
+                "source_path": obj.source_path or "",
+                "recipe": self.recipe,
+                "fps": self._resolve_fps(),
+            }
+            if anchor is not None:
+                kwargs["anchor_override"] = anchor
+            written = self._apply_one(node, behavior, shot.start, shot.end, **kwargs)
+            self._record_authored(
+                {
+                    "applied": [
+                        {
+                            "object": obj.name,
+                            "behavior": behavior,
+                            "shot_id": shot.shot_id,
+                            "keys": list(written or ()),
+                        }
+                    ]
+                }
+            )
+        return True
+
+    def _apply_one(
+        self, node: str, behavior: str, start: float, end: float, **kwargs
+    ) -> List[Tuple[str, float]]:
+        """Key one *behavior* on *node* over ``[start, end]`` and return the
+        ``(curve, time)`` keys written (hook).  Pure default: nothing keyed."""
+        return []
+
+    def _record_authored(self, behavior_result: Dict[str, list]) -> int:
+        """Claim the keys the applier reports writing (``applied[*]["keys"]``),
+        each stamped with the recipe it was keyed under (:meth:`_stamp`)."""
+        led = self.store.edit_ledger
+        n = 0
+        stamps: Dict[str, str] = {}
+        for entry in behavior_result.get("applied", ()):
+            shot_id = entry.get("shot_id")
+            if shot_id is None:
+                continue
+            behavior = entry.get("behavior", "")
+            if behavior not in stamps:
+                stamps[behavior] = self._stamp(behavior)
+            for curve, t in entry.get("keys") or ():
+                n += led.record_authored(
+                    curve,
+                    t,
+                    shot_id,
+                    behavior,
+                    entry.get("object", ""),
+                    stamps[behavior],
+                )
+        if n:
+            self.store.mark_dirty()
+        return n
+
     def _compute_plan(
         self,
         steps: List[BuilderStep],
@@ -413,27 +742,26 @@ class ShotManifest(_ShotManifestInternal):
             Ordered list of :class:`PlannedShot` instructions.
         """
         sorted_shots = self.store.sorted_shots()
-        built_map = {s.name: s for s in sorted_shots}
-        csv_ids = {step.step_id for step in steps}
+        pairing = self.pair(steps)
+        key = ShotStore.member_key
         plan: List[PlannedShot] = []
 
-        # Track removals
+        # Removals: only when asked, and only of shots no step pairs with.
         if remove_missing:
-            for name, shot in list(built_map.items()):
-                if name not in csv_ids:
-                    dummy_step = BuilderStep(
-                        step_id=name,
-                        section="",
-                        section_title="",
-                        description="",
+            for shot in pairing.orphans:
+                dummy_step = BuilderStep(
+                    step_id=shot.name,
+                    section="",
+                    section_title="",
+                    description="",
+                )
+                plan.append(
+                    PlannedShot(
+                        step=dummy_step,
+                        action="removed",
+                        existing_shot_id=shot.shot_id,
                     )
-                    plan.append(
-                        PlannedShot(
-                            step=dummy_step,
-                            action="removed",
-                            existing_shot_id=shot.shot_id,
-                        )
-                    )
+                )
 
         # Cursor for new shots (after all existing shots).
         # We maintain a virtual cursor that advances as we plan
@@ -445,7 +773,7 @@ class ShotManifest(_ShotManifestInternal):
         cumulative_ripple = 0.0
 
         for step in steps:
-            existing = built_map.get(step.step_id)
+            existing = pairing.shots.get(step.step_id)
             meta = self._step_metadata(
                 step, pass_through=getattr(step, "_pass_through", None)
             )
@@ -485,6 +813,7 @@ class ShotManifest(_ShotManifestInternal):
                             fit_mode="fit_contents",
                             fps=fps,
                             measure_audio=self._measure_audio,
+                            recipe=self.recipe,
                         )
                         dur = max(rng[1] - rng[0], _content_dur)
                     else:
@@ -503,6 +832,7 @@ class ShotManifest(_ShotManifestInternal):
                                 fit_mode,
                                 fps,
                                 measure_audio=self._measure_audio,
+                                recipe=self.recipe,
                             )
                     end = start + dur
 
@@ -584,21 +914,34 @@ class ShotManifest(_ShotManifestInternal):
                 for e in raw_csv
                 if not (isinstance(e, dict) and e.get("kind") == "audio")
             )
-            scene_discovered = set(existing.objects) - old_csv_objs
+            # Doc names vs stored (long, namespaced) members: one identity rule.
+            csv_keys = {key(n) for n in csv_objs}
+            old_keys = {key(n) for n in old_csv_objs}
+            member_keys = {key(n) for n in existing.objects}
+            scene_discovered = {n for n in existing.objects if key(n) not in old_keys}
 
             old_behaviors: Dict[str, List[str]] = {}
             for entry in existing.metadata.get("behaviors", []):
-                old_behaviors.setdefault(entry["name"], []).append(
+                old_behaviors.setdefault(key(entry["name"]), []).append(
                     entry.get("behavior", "")
                 )
             for k in old_behaviors:
                 old_behaviors[k] = sorted(old_behaviors[k])
 
-            new_objs = csv_objs - old_csv_objs
+            new_objs = {n for n in csv_objs if key(n) not in old_keys}
+            dropped = {n for n in old_csv_objs if key(n) not in csv_keys}
             changed_beh = {
                 name
-                for name in csv_objs & old_csv_objs
-                if csv_obj_map.get(name, []) != old_behaviors.get(name, [])
+                for name in csv_objs
+                if key(name) in old_keys
+                and csv_obj_map.get(name, []) != old_behaviors.get(key(name), [])
+            }
+            # A doc object in the scene but not among the members (removed from
+            # the shot by hand, or never added): a build puts it back.
+            absent = {
+                n
+                for n in csv_objs
+                if key(n) not in member_keys and self._resolve_object(n)[1] == "found"
             }
 
             old_audio = {
@@ -608,9 +951,7 @@ class ShotManifest(_ShotManifestInternal):
             }
             audio_changed = new_audio != old_audio
 
-            has_content_change = bool(
-                new_objs or (old_csv_objs - csv_objs) or changed_beh
-            )
+            has_content_change = bool(new_objs or dropped or changed_beh or absent)
 
             if has_content_change or repositioned or audio_changed:
                 action: Action = "patched"
@@ -643,12 +984,23 @@ class ShotManifest(_ShotManifestInternal):
             return {"start": ps.start, "end": ps.end}
         return {}
 
-    @staticmethod
-    def _content_kwargs(existing, ps: PlannedShot) -> Dict[str, Any]:
-        """``metadata``/``description`` kwargs where the CSV differs from the store."""
+    @classmethod
+    def _content_kwargs(cls, existing, ps: PlannedShot) -> Dict[str, Any]:
+        """``metadata``/``description`` kwargs where the doc differs from the store.
+
+        The manifest's own keys (:attr:`MANIFEST_METADATA`, plus the step's
+        pass-through columns) are replaced; every other key -- Assess's
+        ``object_status``, another tool's -- is kept.
+        """
         kwargs: Dict[str, Any] = {}
-        if existing.metadata != ps.metadata:
-            kwargs["metadata"] = ps.metadata
+        merged = {
+            k: v
+            for k, v in (existing.metadata or {}).items()
+            if k not in cls.MANIFEST_METADATA
+        }
+        merged.update(ps.metadata)
+        if existing.metadata != merged:
+            kwargs["metadata"] = merged
         if existing.description != ps.description:
             kwargs["description"] = ps.description
         return kwargs
@@ -735,7 +1087,11 @@ class ShotManifest(_ShotManifestInternal):
                             csv_objs = {
                                 o.name for o in ps.step.objects if o.kind != "audio"
                             }
-                            scene_objs = set(ps.objects) - csv_objs
+                            key = ShotStore.member_key
+                            csv_keys = {key(n) for n in csv_objs}
+                            scene_objs = {
+                                n for n in ps.objects if key(n) not in csv_keys
+                            }
                             if scene_objs:
                                 scene_objs = set(
                                     self._filter_to_animated(
@@ -759,6 +1115,47 @@ class ShotManifest(_ShotManifestInternal):
         return actions
 
     # ---- assess ----------------------------------------------------------
+
+    def fill_missing_assets(self, steps: List[BuilderStep]) -> Dict[str, List[str]]:
+        """Give every step that lists no scene objects what its paired shot holds.
+
+        Only a paired shot (:meth:`pair`) links a step to scene time: its
+        members, plus what animates inside its range (what Assess reports as
+        additional), are the step's objects.  A step without a shot stays
+        empty -- its range would be a guess.  Members the scene no longer
+        holds (:meth:`_object_exists`) and non-assets
+        (:meth:`_is_asset_candidate`: cameras, lights, ...) are left out.
+        Names are member keys -- the leaf, namespace dropped -- as a doc
+        writes them, added in place with ``origin="shot"`` and no behaviors.
+
+        Returns:
+            ``{step_id: [names added]}`` for every step that was filled.
+        """
+        pairing = self.pair(steps)
+        key = ShotStore.member_key
+        self._animated_transforms = None  # one discovery cycle per call
+        self._curve_data = None
+        filled: Dict[str, List[str]] = {}
+        for step in steps:
+            if any(o.kind != "audio" for o in step.objects):
+                continue
+            shot = pairing.shots.get(step.step_id)
+            if shot is None:
+                continue
+            members = [n for n in shot.objects if self._object_exists(n)]
+            animated = self._discover_scene_objects(
+                shot.start, shot.end, {key(n) for n in members}
+            )
+            names = list(
+                dict.fromkeys(
+                    key(n) for n in members + animated if self._is_asset_candidate(n)
+                )
+            )
+            if not names:
+                continue
+            step.objects.extend(BuilderObject(name=n, origin="shot") for n in names)
+            filled[step.step_id] = names
+        return filled
 
     def assess(
         self,
@@ -802,9 +1199,6 @@ class ShotManifest(_ShotManifestInternal):
         Returns:
             One :class:`StepStatus` per step with per-object results.
         """
-        if exists_fn is None:
-            exists_fn = self._object_exists
-
         if verify_fn is None:
             verify_fn = self._verify_behavior
 
@@ -818,11 +1212,26 @@ class ShotManifest(_ShotManifestInternal):
         if keyframe_range_fn is None:
             keyframe_range_fn = self._keyframe_range
 
-        built_map = {s.name: s for s in self.store.sorted_shots()}
+        pairing = self.pair(steps)
+        key = ShotStore.member_key
+        from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
+
+        known = set(Behaviors.list_behaviors())
+        dropped_by_step = {
+            shot.shot_id: pairs for pairs, shot in self._dropped_pairs(steps)
+        }
+
+        if exists_fn is not None:  # caller seam: a plain exists check
+
+            def resolve(name):
+                return name, ("found" if exists_fn(name) else "missing")
+
+        else:
+            resolve = self._resolve_object
 
         results: List[StepStatus] = []
         for step in steps:
-            shot = built_map.get(step.step_id)
+            shot = pairing.shots.get(step.step_id)
             built = shot is not None
             is_locked = built and shot.locked
 
@@ -846,6 +1255,8 @@ class ShotManifest(_ShotManifestInternal):
                 )
                 continue
 
+            members = {key(n) for n in shot.objects} if built else set()
+            dropped = dropped_by_step.get(shot.shot_id, []) if built else []
             obj_statuses = []
             for obj in step.objects:
                 if obj.kind == "audio":
@@ -872,23 +1283,32 @@ class ShotManifest(_ShotManifestInternal):
                         )
                     )
                     continue
-                exists = exists_fn(obj.name)
+                node, reason = resolve(obj.name)
+                exists = reason == "found"
                 key_range = None
-                broken = []
-                if not exists:
+                unknown = [b for b in obj.behaviors if b not in known]
+                broken = list(unknown)
+                stale: List[str] = []
+                if reason == "missing":
                     status = "missing_object"
+                elif reason == "ambiguous":
+                    status = "ambiguous_object"
+                elif built and key(node) not in members:
+                    status = "not_in_shot"
                 elif built and obj.behaviors:
-                    # Check each declared behavior individually, modeling
-                    # the distributed anchors apply_to_shots used to place
-                    # multi-behavior objects (idx / (total-1)) — exact-mode
-                    # verify against the template's default anchors would
-                    # permanently flag them right after a successful build.
-                    total = len(obj.behaviors)
-                    for idx, b in enumerate(obj.behaviors):
-                        anchor = idx / max(total - 1, 1) if total > 1 else None
+                    # Check each declared behavior individually, at the anchor
+                    # the build placed it (Behaviors.anchor_overrides) —
+                    # exact-mode verify against the template's default anchors
+                    # would permanently flag a multi-behavior object right
+                    # after a successful build.
+                    failed = []
+                    anchors = Behaviors.anchor_overrides(obj.behaviors)
+                    for b, anchor in zip(obj.behaviors, anchors):
+                        if b in unknown:
+                            continue
                         try:
                             ok = verify_fn(
-                                obj.name,
+                                node,
                                 b,
                                 shot.start,
                                 shot.end,
@@ -896,13 +1316,36 @@ class ShotManifest(_ShotManifestInternal):
                             )
                         except TypeError:
                             # Caller-supplied 4-arg verify_fn (old seam).
-                            ok = verify_fn(obj.name, b, shot.start, shot.end)
+                            ok = verify_fn(node, b, shot.start, shot.end)
                         if not ok:
-                            broken.append(b)
-                    status = "missing_behavior" if broken else "valid"
-                elif built and not obj.behaviors:
+                            failed.append(b)
+                    broken.extend(failed)
+                    # Unsatisfied over keys the animator owns: a build will not
+                    # overwrite them, so it is a conflict, not a fix.
+                    conflicts = [
+                        b
+                        for b in failed
+                        if self.unowned_keys(node, b, shot.start, shot.end)
+                    ]
+                    # Verified keys an older recipe made: Build re-keys them.
+                    stale = [
+                        b
+                        for b in obj.behaviors
+                        if b not in failed
+                        and b not in unknown
+                        and self.is_stale(shot.shot_id, obj.name, b)
+                    ]
+                    if unknown:
+                        status = "unknown_behavior"
+                    elif conflicts:
+                        status = "behavior_conflict"
+                    elif failed:
+                        status = "missing_behavior"
+                    else:
+                        status = "stale_behavior" if stale else "valid"
+                elif built:
                     # User-animated: query actual keyframe extent
-                    key_range = keyframe_range_fn(obj.name)
+                    key_range = keyframe_range_fn(node)
                     status = "user_animated" if key_range else "valid"
                 else:
                     status = "valid"
@@ -914,17 +1357,17 @@ class ShotManifest(_ShotManifestInternal):
                         behaviors=list(obj.behaviors),
                         broken_behaviors=broken,
                         key_range=key_range,
+                        stale_behaviors=stale,
                     )
                 )
 
-            # Detect additional objects (in shot but not in CSV)
+            # Additional objects: members, or animation in the shot's range,
+            # the doc does not list.  Reported only -- Assess writes nothing
+            # (the sequencer's own discovery maintains membership).
             additional = []
             if shot is not None:
-                from pythontk.core_utils.engines.shots.shot_model import ShotStore
-
-                _short = ShotStore.leaf_name
-                csv_short = {_short(o.name) for o in step.objects}
-                stored_extra = [n for n in shot.objects if _short(n) not in csv_short]
+                doc_keys = {key(o.name) for o in step.objects}
+                stored_extra = [n for n in shot.objects if key(n) not in doc_keys]
                 # Filter stored extras to only those with actual motion
                 # (removes flat-key objects from previous builds).
                 if stored_extra:
@@ -932,27 +1375,21 @@ class ShotManifest(_ShotManifestInternal):
                         stored_extra, shot.start, shot.end
                     )
                 additional = stored_extra
-                # Also discover scene objects with keys in this shot's
-                # range that aren't tracked in the CSV or the store.
                 # Skip in selected-keys mode: only the explicitly
                 # selected keys' objects are relevant.
                 if not skip_scene_discovery:
-                    known = csv_short | {_short(n) for n in shot.objects}
-                    scene_extra = self._discover_scene_objects(
-                        shot.start, shot.end, known
+                    additional.extend(
+                        self._discover_scene_objects(
+                            shot.start, shot.end, doc_keys | members
+                        )
                     )
-                    additional.extend(scene_extra)
-                    # Merge discovered objects into the shot so the sequencer
-                    # can display them (it reads shot.objects).  Mark dirty —
-                    # this mutates persisted state outside update_shot.
-                    if scene_extra:
-                        shot.objects = sorted(set(shot.objects) | set(scene_extra))
-                        self.store.mark_dirty()
 
             # Compute shrinkable frames (unused tail)
             shrinkable = 0.0
             if built and shot is not None:
-                content_end = self._compute_content_end(step, shot, obj_statuses)
+                content_end = self._compute_content_end(
+                    step, shot, obj_statuses, self.recipe, self._resolve_fps()
+                )
                 if content_end < shot.end:
                     shrinkable = shot.end - content_end
 
@@ -963,6 +1400,7 @@ class ShotManifest(_ShotManifestInternal):
                     objects=obj_statuses,
                     additional_objects=additional,
                     shrinkable_frames=shrinkable,
+                    dropped_behaviors=[list(pair) for pair in dropped],
                 )
             )
         return results
@@ -972,15 +1410,18 @@ class ShotManifest(_ShotManifestInternal):
         step: BuilderStep,
         scene,
         obj_statuses: List[ObjectStatus],
+        recipe=None,
+        fps: Optional[float] = None,
     ) -> float:
-        """Return the latest frame used by content in this step."""
+        """Return the latest frame used by content in this step (an effect's
+        length is the *recipe*'s, at *fps*)."""
         from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
 
         latest = scene.start  # at minimum, content starts at scene start
         for obj, obj_st in zip(step.objects, obj_statuses):
             for beh in obj.behaviors:
                 try:
-                    tmpl = Behaviors.load_behavior(beh)
+                    tmpl = Behaviors.keyed(beh, recipe, fps)
                 except FileNotFoundError:
                     continue
                 for _attr, attr_def in tmpl.get("attributes", {}).items():
@@ -1040,6 +1481,7 @@ class ShotManifest(_ShotManifestInternal):
         fit_mode: FitMode,
         fps: float,
         measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None,
+        recipe=None,
     ) -> Tuple[float, float, float]:
         """Compute final shot duration for *step* under the given fit policy.
 
@@ -1051,14 +1493,16 @@ class ShotManifest(_ShotManifestInternal):
             step: The step whose objects drive the duration.
             initial_shot_length: Baseline length the fit policy is applied against.
             fit_mode: ``"extend_only"`` or ``"fit_contents"``.
-            fps: Scene frame rate.  Retained for signature compatibility — the
-                pure core does not probe audio itself; a DCC layer binds its
-                frame-rate into *measure_audio* when it needs one.
+            fps: Scene frame rate -- an effect template's lengths (the pulse's
+                in seconds) become frames at it.  Audio is not probed here: a
+                DCC layer binds its rate into *measure_audio*.
             measure_audio: Optional callable ``(BuilderObject) -> Optional[float]``
                 returning an audio clip's length in frames, or ``None`` when it is
                 unresolvable.  Injected by the DCC layer.  ``None`` (or a ``None`` /
                 non-positive return) contributes no audio length, so a purely
                 behavior-template step is sized entirely by its templates.
+            recipe: The scene's :class:`~pythontk.EffectRecipe` (the defaults
+                when omitted) -- what an effect template is sized from.
 
         Returns:
             ``(duration, behavior_span, audio_span)`` — the resolved shot
@@ -1079,7 +1523,7 @@ class ShotManifest(_ShotManifestInternal):
                 if not b:
                     continue
                 try:
-                    tmpl = Behaviors.load_behavior(b)
+                    tmpl = Behaviors.keyed(b, recipe, fps)
                 except FileNotFoundError:
                     continue
                 if tmpl.get("duration") == "from_source":

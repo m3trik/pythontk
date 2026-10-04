@@ -60,8 +60,14 @@ KeyExists = Callable[[str, float], bool]
 class _ShotTransferInternal(object):
     """Internal helpers for ShotTransfer."""
 
-    #: Ledger registers, in the ledger's own dict spelling.
-    _REGISTERS = ("steps", "keys")
+    #: Ledger registers, in the ledger's own dict spelling. ``authored`` (the
+    #: manifest's behavior keys) travels too: a key arriving without its claim
+    #: reads as the animator's on the far side, where every Build then leaves
+    #: it alone.
+    _REGISTERS = ("steps", "keys", "authored")
+    #: Registers whose records name an owning shot at index 1 -- renumbered
+    #: with the shot by a merge.
+    _OWNED_REGISTERS = ("keys", "authored")
     #: Per-shot metadata that names scene objects.
     _CSV_OBJECTS = "csv_objects"
     _OBJECT_STATUS = "object_status"
@@ -568,7 +574,7 @@ class ShotTransfer(_ShotTransferInternal):
             for curve, records in (incoming_ledger.get(reg) or {}).items():
                 have = target.setdefault(curve, [])
                 for rec in records:
-                    if reg == "keys" and len(rec) > 1:
+                    if reg in cls._OWNED_REGISTERS and len(rec) > 1:
                         try:
                             rec[1] = local_ids.get(int(rec[1]), rec[1])
                         except (TypeError, ValueError):

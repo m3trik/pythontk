@@ -46,6 +46,40 @@ class StrUtils(
     LEGAL_NAME_PATTERN = _LEGAL_NAME_RE.pattern
     #: :attr:`LEGAL_NAME_PATTERN` in words, for tooltips and refusals.
     LEGAL_NAME_RULE = "letters, digits and '_'"
+    #: The cases :meth:`set_case` applies -- what a case picker offers.
+    CASES = ("upper", "lower", "capitalize", "swapcase", "title", "pascal", "camel")
+    #: The legal-name rules :meth:`apply_name_rule` applies, by name: ``legal``
+    #: (:meth:`to_legal_name`), ``sanitized`` (:meth:`sanitize`, case kept)
+    #: and ``filename`` (:meth:`to_legal_filename`).
+    NAME_RULES = ("legal", "sanitized", "filename")
+
+    @classmethod
+    def apply_name_rule(cls, name: str, rule: str) -> str:
+        """*name* made legal by the :attr:`NAME_RULES` rule called *rule* --
+        for a caller that lets its user pick the rule by name.
+
+        Parameters:
+            name (str): The text to convert.
+            rule (str): One of :attr:`NAME_RULES`.
+
+        Returns:
+            (str) The converted name.
+
+        Raises:
+            ValueError: *rule* is not one of :attr:`NAME_RULES`.
+
+        Example:
+            apply_name_rule("Red Door  Lock.", "legal") --> 'Red_Door__Lock_'
+            apply_name_rule("Red Door  Lock.", "sanitized") --> 'Red_Door_Lock'
+            apply_name_rule("Red Door: Lock", "filename") --> 'Red Door Lock'
+        """
+        if rule == "legal":
+            return cls.to_legal_name(name)
+        if rule == "sanitized":
+            return cls.sanitize(name, preserve_case=True)
+        if rule == "filename":
+            return cls.to_legal_filename(name)
+        raise ValueError(f"{rule!r} is not one of {list(cls.NAME_RULES)}")
 
     @staticmethod
     def is_legal_name(name) -> bool:
@@ -609,7 +643,7 @@ class StrUtils(
         Parameters:
             string (str/list): The string(s) to format.
             case (str): The desired return case. Accepts all python case operators.
-                    valid: 'upper', 'lower', 'capitalize', 'swapcase', 'title' (default), 'pascal', 'camel', None.
+                    valid: :attr:`CASES` ('upper', 'lower', 'capitalize', 'swapcase', 'title' (default), 'pascal', 'camel'), or None.
         Returns:
             (str/list) List if 'string' given as list.
         """
@@ -1463,6 +1497,87 @@ class StrUtils(
         return _StrAffixInternal.strip_any_affix(
             string, known, exclude=exclude, one=one, case_sensitive=case_sensitive
         )
+
+    @staticmethod
+    def common_name(
+        paths,
+        *,
+        sep: str = "|",
+        strip=(),
+        max_length: int = 32,
+    ) -> str:
+        """A short name for what a set of hierarchy items is collectively called.
+
+        The default a tool reaches for when the user names nothing -- an
+        output named after its source instead of a generic tag:
+
+        * **One item** -- its own name.
+        * **Several** -- the leading name tokens they all share
+          (``chair_leg`` + ``chair_seat`` -> ``chair``); failing that, the
+          deepest group holding them all (``|kit|TABLE_LOC|TABLE`` +
+          ``|kit|TABLE_LOC|MAT`` -> ``TABLE_LOC``); failing that, the first
+          item's name.
+
+        Each candidate drops one *strip* affix (a naming convention's type
+        markers, so ``TABLE_LOC`` reads ``TABLE``) and any namespace. The
+        result keeps only name-legal characters and is capped at *max_length*
+        on a token boundary.
+
+        Parameters:
+            paths: Hierarchy paths (``|grp|mesh``) or plain names.
+            sep: The path separator.
+            strip: Affixes to drop -- e.g.
+                ``pythontk.NamingConvention.all_affixes()``. A name that is
+                nothing BUT an affix is kept as is.
+            max_length: Longest result; trailing tokens go first.
+
+        Returns:
+            The name, or ``""`` when *paths* holds no names.
+
+        Example:
+            common_name(["|kit|TABLE_LOC|TABLE", "|kit|TABLE_LOC|MAT"], strip=["_LOC"])
+            # 'TABLE'
+        """
+        import re
+
+        chains = []
+        for path in paths:
+            parts = [t.rsplit(":", 1)[-1] for t in str(path).split(sep) if t]
+            if parts:
+                chains.append(parts)
+        if not chains:
+            return ""
+        known = [a for a in strip if a]
+
+        def clean(name):
+            bare = StrUtils.strip_any_affix(name, known).strip("_") if known else name
+            return bare or name
+
+        leaves = [clean(c[-1]) for c in chains]
+        name = leaves[0]
+        if len(chains) > 1:
+            shared = []
+            for column in zip(*(leaf.split("_") for leaf in leaves)):
+                if len(set(column)) != 1:
+                    break
+                shared.append(column[0])
+            stem = "_".join(shared).strip("_")
+            depth = 0
+            for column in zip(*(c[:-1] for c in chains)):
+                if len(set(column)) != 1:
+                    break
+                depth += 1
+            if len(stem) >= 3:
+                name = stem
+            elif depth:
+                name = clean(chains[0][depth - 1])
+        name = re.sub(r"_+", "_", re.sub(r"[^A-Za-z0-9_]", "_", name)).strip("_")
+        if len(name) > max_length:
+            tokens = name.split("_")
+            while len(tokens) > 1 and len("_".join(tokens)) > max_length:
+                tokens.pop()
+            name = "_".join(tokens)[:max_length]
+        return name
 
     @staticmethod
     def infer_affix_mode(

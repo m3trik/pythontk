@@ -15,8 +15,12 @@ Run with:
     python -m pytest test_plugin_core.py -v
 """
 
+import contextlib
+import io
 import os
 import shutil
+import socket
+import struct
 import sys
 import tempfile
 import threading
@@ -422,6 +426,26 @@ class TestWireContract(_EnvGuard):
             self.client.invoke("boom")
         self.assertIn("op failed", str(ctx.exception))
 
+    def test_a_peer_reset_is_not_reported_as_an_error(self):
+        """A client that drops mid-request must not dump a traceback in the host.
+
+        Measured in Painter: a reset connection printed the full
+        ``socketserver`` traceback (``WinError 10054``) into the host's log
+        for a disconnect nothing could act on.
+        """
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            sock = socket.create_connection(self.plugin.address, timeout=2.0)
+            # Linger 0 makes close() send RST instead of FIN: a hard reset.
+            sock.setsockopt(
+                socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+            )
+            sock.sendall(b"GET /hea")  # an unfinished request line
+            sock.close()
+            # The server is serial, so this answer means the reset was handled.
+            self.assertTrue(self.client.ping(timeout=2.0))
+        self.assertNotIn("Traceback", captured.getvalue())
+
     def test_stop_releases_the_port(self):
         self.plugin.stop()
         self.assertFalse(self.plugin.is_running())
@@ -451,6 +475,53 @@ class TestRootExport(unittest.TestCase):
         self.assertTrue(hasattr(ptk, "RpcPlugin"))
         self.assertTrue(hasattr(ptk, "OpRegistry"))
         self.assertTrue(hasattr(ptk, "MainThreadMarshaller"))
+
+
+class TestDisconnectPolicy(unittest.TestCase):
+    """Both servers drop a vanished peer quietly and report everything else.
+
+    ``preview/routes.py``'s ``_PreviewHTTPServer`` and ``plugin_core``'s
+    ``_ReusableServer`` each override ``handle_error`` (plugin_core is staged
+    stdlib-only, so it cannot import the other). Asserted together, as
+    :class:`TestBindPolicy` does for the bind flag, so the two cannot drift.
+    """
+
+    @staticmethod
+    def _servers():
+        from pythontk.net_utils.preview import routes
+        from pythontk.net_utils.rpc import plugin_core
+
+        return (routes._PreviewHTTPServer, plugin_core._ReusableServer)
+
+    def _report(self, server_cls, exc):
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            try:
+                raise exc
+            except type(exc):
+                # Unbound: handle_error reads only sys.exc_info() and its args.
+                server_cls.handle_error(
+                    server_cls.__new__(server_cls), None, ("127.0.0.1", 0)
+                )
+        return captured.getvalue()
+
+    def test_a_vanished_peer_is_silent(self):
+        for server_cls in self._servers():
+            for exc in (
+                ConnectionResetError(),
+                ConnectionAbortedError(),
+                BrokenPipeError(),
+            ):
+                with self.subTest(server=server_cls.__name__, exc=type(exc)):
+                    self.assertEqual(self._report(server_cls, exc), "")
+
+    def test_any_other_error_still_reports(self):
+        for server_cls in self._servers():
+            with self.subTest(server=server_cls.__name__):
+                self.assertIn(
+                    "a real handler bug",
+                    self._report(server_cls, ValueError("a real handler bug")),
+                )
 
 
 class TestBindPolicy(unittest.TestCase):

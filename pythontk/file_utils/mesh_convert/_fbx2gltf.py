@@ -22,7 +22,7 @@ import shutil
 import struct
 import subprocess
 from time import perf_counter
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from pythontk.file_utils.mesh_convert.glb.edit import GlbTarget
 
@@ -87,8 +87,6 @@ class _Fbx2GltfMixin:
     TIMEOUT_SECONDS_PER_NODE_FRAME = 3e-4
     #: The converter's default bake rate (``bake24``).
     CONVERSION_BAKE_FPS = 24.0
-    #: Binary-FBX time unit: ticks per second (``FbxTime``).
-    _FBX_TICKS_PER_SECOND = 46186158000
     #: ``timeout=AUTO_TIMEOUT`` (the default) derives the budget from the input.
     #: Negative because no real timeout can be, so it cannot collide with a
     #: caller's value -- and unlike ``None`` it is not already meaningful to
@@ -135,21 +133,31 @@ class _Fbx2GltfMixin:
     def bake_node_frames(cls, src: str) -> int:
         """Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
 
-        ``Model`` records are the nodes; each take in the ``Takes`` section
-        contributes its ``LocalTime`` span at :attr:`CONVERSION_BAKE_FPS`.
-        ``0`` for a file with no takes -- and for one that is not a readable
-        binary FBX, so a budget derived from this degrades rather than raises.
+        ``Model`` records are the nodes. Each take contributes the span the
+        converter bakes, at :attr:`CONVERSION_BAKE_FPS`: the key extent of its
+        curves (``FbxFile.take_spans``), which is what FBX2glTF sizes a take
+        by -- a take declaring 1-120 baked 3-200 (2026-10-04) -- else, for a
+        take whose keys cannot be read, the ``LocalTime`` span the ``Takes``
+        section declares. ``0`` for a file with no takes -- and for one that
+        is not a readable binary FBX, so a budget derived from this degrades
+        rather than raises.
         """
         from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 
         try:
-            fbx = FbxFile.load(src, raw_payloads=False)
+            fbx = FbxFile.load(src, span_arrays=("KeyTime",), raw_payloads=False)
         except (OSError, ValueError, struct.error):
             return 0
         nodes = fbx.objects_census().get("Model", 0)
-        frames = 0.0
+        spans = {take: last - first for take, (first, last) in fbx.take_spans().items()}
         for take in (fbx.section("Takes") or {}).get("children", []):
-            if take.get("name") != "Take":
+            props = take.get("props") or [b""]
+            name = (
+                props[0].decode("utf-8", "replace")
+                if isinstance(props[0], bytes)
+                else ""
+            )
+            if take.get("name") != "Take" or name in spans:
                 continue
             for child in take.get("children", []):
                 if (
@@ -158,8 +166,23 @@ class _Fbx2GltfMixin:
                 ):
                     start, end = child["props"][:2]
                     if isinstance(start, int) and isinstance(end, int) and end > start:
-                        frames += (end - start) / cls._FBX_TICKS_PER_SECOND
-        return int(nodes * frames * cls.CONVERSION_BAKE_FPS)
+                        spans[name] = (end - start) / FbxFile.TICKS_PER_SECOND
+        return int(nodes * sum(spans.values()) * cls.CONVERSION_BAKE_FPS)
+
+    @staticmethod
+    def _measured_take_spans(src: str) -> Dict[str, Tuple[float, float]]:
+        """``FbxFile.take_spans`` of *src* -- where FBX2glTF puts each clip's
+        t=0 -- or ``{}`` when the file cannot be read (the published spans
+        then stand)."""
+        from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
+
+        try:
+            return FbxFile.load(
+                src, span_arrays=("KeyTime",), raw_payloads=False
+            ).take_spans()
+        except (OSError, ValueError, struct.error) as error:
+            logger.debug("Take spans not measured: %s", error)
+            return {}
 
     @classmethod
     def _platform_exe_name(cls) -> str:
@@ -610,6 +633,21 @@ class _Fbx2GltfMixin:
                         # preview -- has to say so in ITS result instead.
                         if report is not None:
                             report["data_export"] = list(overlaid)
+                # Right after the overlay, ahead of the same passes: each
+                # clip's t=0 is where FBX2glTF put it -- the first key of its
+                # take in the FBX it read -- so the spans come from that file
+                # rather than from the producer's prediction of it. Not over
+                # a visibility channel the caller overlaid: that is the
+                # caller's statement for this build (an effect preview places
+                # its ramp over its own extent).
+                if cls.VISIBILITY_TRACKS_KEY not in (data_export or {}):
+                    try:
+                        if cls._stamp_clip_spans(
+                            edit.gltf, cls._measured_take_spans(src_abs)
+                        ):
+                            edit.dirty = True
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Measured clip spans skipped: %s", exc)
                 if sidecar:
                     # Guarded like every other pass in this chain: the apply
                     # handles its own per-section and container failures, and

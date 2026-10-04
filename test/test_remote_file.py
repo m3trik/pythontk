@@ -227,6 +227,34 @@ class OpenTest(unittest.TestCase):
         self.assertIn("Name or service not known", str(ctx.exception))
         self.assertIn("connection", str(ctx.exception).lower())
 
+    def test_a_firewall_block_names_the_blocked_program(self):
+        """WinError 10013: the OS refused the socket, so 'check the connection'
+        sends the user to the wrong place -- name the program to allow."""
+        blocked = OSError(
+            13,
+            "An attempt was made to access a socket in a way "
+            "forbidden by its access permissions",
+        )
+        blocked.winerror = 10013
+        with patch(_URLOPEN, side_effect=URLError(blocked)):
+            with self.assertRaises(RemoteFile.Error) as ctx:
+                RemoteFile.open(_SHEET + "edit#gid=0")
+        msg = str(ctx.exception)
+        self.assertIn("firewall", msg.lower())
+        self.assertIn(os.path.basename(sys.executable), msg)
+        self.assertNotIn("Check the connection", msg)
+
+    def test_an_unshared_sheet_names_the_sharing_remedy(self):
+        """Google answers an unshared sheet's export with 401 -- say 'share it'."""
+        url = _SHEET + "export?format=csv&gid=0"
+        err = HTTPError(url, 401, "Unauthorized", None, None)
+        with patch(_URLOPEN, side_effect=err):
+            with self.assertRaises(RemoteFile.Error) as ctx:
+                RemoteFile.open(_SHEET + "edit#gid=0")
+        msg = str(ctx.exception)
+        self.assertIn("HTTP 401", msg)
+        self.assertIn("Anyone with the link", msg)
+
     def test_timeout_becomes_remote_error(self):
         with patch(_URLOPEN, side_effect=TimeoutError("timed out")):
             with self.assertRaises(RemoteFile.Error):

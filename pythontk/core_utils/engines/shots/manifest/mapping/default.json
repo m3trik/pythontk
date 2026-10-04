@@ -4,7 +4,150 @@
         "description": ["Description", "Step Contents", "Contents", "Details"],
         "assets": ["Assets", "Asset Names", "Asset", "Objects"],
         "audio": ["Audio", "Voice", "Voice Support", "VO"],
+        "behaviors": ["Behaviors", "Behavior"],
+        "object_source": "column_else_description",
         "exclude_steps": ["SETUP"],
-        "exclude_values": {"assets": ["N/A", ""]}
+        "exclude_values": {"assets": ["N/A", ""]},
+        "metadata_pass": {
+            "step_name": ["Step Name"],
+            "hint": ["Hint"],
+            "placard_text": ["Text On Placard"],
+            "export_name": ["FBX/GLB Names"],
+            "audio_file": ["Audio Files"]
+        }
+    },
+    "match": "name",
+    "options": {
+        "step_ids": {
+            "kind": "choice",
+            "label": "Step IDs",
+            "tooltip": "How the sheet writes its step IDs and section rows.",
+            "default": "classic",
+            "choices": {
+                "classic": {
+                    "label": "A01.)  +  named steps (SETUP)",
+                    "tooltip": "IDs like A01.); a bare word (SETUP) is a step; sections are SECTION X: Title rows.",
+                    "set": {}
+                },
+                "numbered": {
+                    "label": "A01 / IN_01 / B03.5  +  INTRO banners",
+                    "tooltip": "IDs like A01, IN_01 or B03.5 (A01.) still reads); INTRO and OUTRO rows start a section. B03.5 becomes the shot B03_5.",
+                    "set": {
+                        "columns": {
+                            "step_pattern": ["^([A-Z]+_?\\d+(?:\\.\\d+)?)(?:\\.\\))?$"],
+                            "section_pattern": ["(?i)^SECTION\\s+([A-Z0-9]+)\\s*:\\s*(.*)", "^(INTRO|OUTRO)$"]
+                        }
+                    }
+                }
+            }
+        },
+        "behaviors": {
+            "kind": "choice",
+            "label": "Behaviors",
+            "tooltip": "Where each row's behaviors come from.",
+            "default": "description",
+            "choices": {
+                "description": {
+                    "label": "From the description",
+                    "tooltip": "Phrases in the row's text that a behavior template detects (\"fades in\").",
+                    "set": {}
+                },
+                "column": {
+                    "label": "From the Behaviors column",
+                    "tooltip": "Names or phrases listed in the Behaviors column, one row at a time.",
+                    "set": {"columns": {"behavior_source": "column"}}
+                },
+                "column_else_description": {
+                    "label": "Column, else description",
+                    "tooltip": "The Behaviors column where a row fills it, else the row's text.",
+                    "set": {"columns": {"behavior_source": "column_else_description"}}
+                }
+            }
+        },
+        "objects": {
+            "kind": "choice",
+            "label": "Objects",
+            "tooltip": "Where each step's objects come from.",
+            "default": "column_else_description",
+            "choices": {
+                "column_else_description": {
+                    "label": "Asset column, else the description",
+                    "tooltip": "A step whose asset cells are empty lists what its text names by a behavior (\"Highlight Red Door\" -> Red_Door, highlighted).",
+                    "set": {}
+                },
+                "column": {
+                    "label": "Asset column only",
+                    "tooltip": "Only names in the asset column; Auto-fill Missing Assets can take the rest from the scene.",
+                    "set": {"columns": {"object_source": "column"}}
+                }
+            }
+        },
+        "object_case": {
+            "kind": "choice",
+            "label": "Object Case",
+            "tooltip": "Case of the object names read from the description (StrUtils.set_case).",
+            "field": "columns.object_case",
+            "default": "keep",
+            "choices": {"keep": {"label": "As written", "tooltip": "Highlight Red Door -> Red Door"}}
+        },
+        "object_name_rule": {
+            "kind": "choice",
+            "label": "Object Names",
+            "tooltip": "How the object names read from the description are made legal (StrUtils.apply_name_rule).",
+            "field": "columns.object_name_rule",
+            "default": "legal",
+            "choices": {
+                "legal": {"label": "Legal (Red_Door)", "tooltip": "Every non-alphanumeric becomes _, one for one -- the Maya and Qt name rule."},
+                "sanitized": {"label": "Sanitized (Red_Door)", "tooltip": "Each run of non-alphanumerics becomes one _, trailing ones dropped."},
+                "filename": {"label": "File-safe (Red Door)", "tooltip": "Only characters no file name may hold are removed; spaces stay."},
+                "keep": {"label": "As written (Red Door)", "tooltip": "The text as the doc spells it."}
+            }
+        },
+        "match": {
+            "kind": "choice",
+            "label": "Match Shots",
+            "tooltip": "How a step finds its shot in the scene. A build records the pairing on the shot, so later doc edits never shift it.",
+            "default": "name",
+            "choices": {
+                "name": {
+                    "label": "By name",
+                    "tooltip": "The shot named after the step (or already bound to it).",
+                    "set": {}
+                },
+                "name_then_order": {
+                    "label": "By name, then order",
+                    "tooltip": "Then the remaining steps and shots in timeline order -- for a scene whose shots were named before the doc.",
+                    "set": {"match": "name_then_order"}
+                }
+            }
+        },
+        "audio": {
+            "kind": "choice",
+            "label": "Audio",
+            "tooltip": "Whether each step's voice text names an audio clip to key.",
+            "default": "text",
+            "choices": {
+                "text": {
+                    "label": "Voice text only",
+                    "tooltip": "The voice column is narration text; no clip is keyed.",
+                    "set": {}
+                },
+                "derive": {
+                    "label": "Derive clip names",
+                    "tooltip": "Each step keys a clip named from its step ID and the first 3 words of its voice text.",
+                    "set": {
+                        "audio_resolve": {"method": "derive", "words": 3},
+                        "default_behaviors": {"audio": ["set_clip"]}
+                    }
+                }
+            }
+        },
+        "fill_missing_assets": {
+            "kind": "bool",
+            "label": "Auto-fill Missing Assets",
+            "tooltip": "Steps the sheet lists no assets for take what their paired shot holds: its members and what animates in its range (no shot, no names -- Build first). Copy Asset Names writes them back to the sheet.",
+            "default": false,
+            "set": {"fill_missing_assets": true}
+        }
     }
 }

@@ -7,9 +7,10 @@ The model runs in three places besides Python -- unitytk's C#
 (``articulated_rig.js``) and whatever production app vendors that script --
 and a port is only as good as the cases that pin it. These are generated
 from the Python reference at test time, so they can never drift from it: a
-port's test asks :meth:`ArticulationConformance.cases` for the document,
-runs every case through its own model and compares within
-:attr:`ArticulationConformance.TOLERANCE`.
+port's test asks for the document (``Conformance.cases("articulation")``,
+the registry every ported model's cases are listed in, or
+:meth:`ArticulationConformance.cases` directly), runs every case through its
+own model and compares within :attr:`ArticulationConformance.TOLERANCE`.
 
 Every case is one rig (:meth:`rigs` -- a magnifier-shaped arm with every
 joint type, a branching tree, and a ball in each of the six rotate orders)

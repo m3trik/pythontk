@@ -61,18 +61,17 @@ def _fake_encode(self, capture, output, **kwargs):
 
 
 def _script():
-    return (PreviewServer.SCRIPTS_DIR / "playblast.js").read_text(encoding="utf-8")
+    source = PreviewServer.SCRIPTS_DIR / PreviewServer.SCRIPTS["playblast"]
+    return source.read_text(encoding="utf-8")
 
 
 def _viewer_api():
     """Names the viewer page publishes on the object it hands each script.
 
-    Read out of the page rather than listed here, so a rename of an API member
+    Read out of the kernel's API module rather than listed here, so a rename of an API member
     fails the scripts that used it instead of drifting past them.
     """
-    page = (PreviewServer.SCRIPTS_DIR.parent / "viewer.html").read_text(
-        encoding="utf-8"
-    )
+    page = (PreviewServer.SCRIPTS_DIR / "kernel" / "api.js").read_text(encoding="utf-8")
     block = page.split("const viewer = {", 1)[1].split("\n};", 1)[0]
     return set(re.findall(r"^  (?:get |async )?(\w+)\s*[({:,]", block, re.M))
 

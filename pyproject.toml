@@ -83,7 +83,12 @@ ignore = ["E402"]  # house pattern: try-guarded DCC imports precede the other im
 # wins, so a tenant can rank above its own folder. A module may import its own
 # part or any part below it; "a | b" makes peers of one rank. Checked by
 # m3trik/scripts/check_layers.py against a frozen baseline of today's exceptions.
+# The WebXR runtime's ES modules are held to the same order by their relative
+# imports: each feature ("<folder>/*": every child its own part, peers of one
+# rank) over the kernel the page is.
 order = [
+    "net_utils/preview/features/*",
+    "net_utils/preview/kernel",
     "net_utils/preview",
     "file_utils/mesh_convert",
     "core_utils/engines",

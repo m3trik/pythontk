@@ -1000,6 +1000,15 @@ class MathTest(BaseTestCase):
         self.assertEqual(MathUtils.convert_length_unit(1, "cm", "parsec"), "Error")
         self.assertEqual(MathUtils.convert_length_unit("abc", "cm", "m"), "Error")
 
+    def test_metres_per_unit_reads_the_one_length_table(self):
+        """What a record's ``unit_scale`` is: metres per DCC unit, any case,
+        *default* for a unit the table does not know."""
+        self.assertEqual(MathUtils.metres_per_unit("cm"), 0.01)
+        self.assertAlmostEqual(MathUtils.metres_per_unit("FT"), 0.3048)
+        self.assertEqual(MathUtils.metres_per_unit("km"), 1000.0)
+        self.assertIsNone(MathUtils.metres_per_unit("parsec"))
+        self.assertEqual(MathUtils.metres_per_unit("parsec", 1.0), 1.0)
+
     def test_calculate_uv_padding(self):
         # Pixel gutter scales with the map: 1/256 of it.
         self.assertEqual(MathUtils.calculate_uv_padding(1024), 4.0)

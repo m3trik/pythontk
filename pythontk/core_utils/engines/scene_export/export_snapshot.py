@@ -59,7 +59,10 @@ class ExportContext:
             ``both``), declared on the shot record; ``None`` = undeclared.
         clip_span: The first and last frame the exported stack CARRIES, the
             frame every GLB clip is cut against; measured by the pipeline
-            from the final keys, ``None`` when nothing measured it.
+            from the final keys, ``None`` when nothing measured it. A
+            statement for readers of the carrier: a GLB conversion measures
+            the written file itself and logs a disagreement
+            (``MeshConvert._stamp_clip_spans``).
         source: Producer identity and provenance for the handoff block
             (``application``, ``version``, ``scene``).
         rendering: The export's choices over the lighting recipe the handoff

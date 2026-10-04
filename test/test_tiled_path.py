@@ -181,6 +181,88 @@ class TestRepresentative(TiledPathCase):
         self.assertIsNone(TiledPath.representative(None))
 
 
+class TestRename(TiledPathCase):
+    """Rename a file -- or every tile of a set -- in place (added 2026-10-04)."""
+
+    def listing(self):
+        return sorted(os.listdir(self.dir))
+
+    def test_a_single_file_is_renamed(self):
+        self.touch("rock_Base_Color.png")
+        pairs = TiledPath.rename(self.path("rock_Base_Color.png"), "stone.png")
+        self.assertEqual(
+            pairs, [(self.path("rock_Base_Color.png"), self.path("stone.png"))]
+        )
+        self.assertEqual(self.listing(), ["stone.png"])
+
+    def test_every_tile_of_a_set_carries_its_own_number(self):
+        self.touch("rock.1001.png", "rock.1002.png", "rock.thumb.png")
+        pairs = TiledPath.rename(self.path("rock.<UDIM>.png"), "stone.<UDIM>.png")
+        self.assertEqual(
+            [os.path.basename(n) for _o, n in pairs],
+            [
+                "stone.1001.png",
+                "stone.1002.png",
+            ],
+        )
+        self.assertEqual(
+            self.listing(), ["rock.thumb.png", "stone.1001.png", "stone.1002.png"]
+        )
+
+    def test_a_dry_run_plans_without_touching_the_disk(self):
+        self.touch("rock.png")
+        pairs = TiledPath.rename(self.path("rock.png"), "stone.png", dry_run=True)
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(self.listing(), ["rock.png"])
+
+    def test_a_case_only_change_is_not_a_collision(self):
+        self.touch("Rock.PNG")
+        TiledPath.rename(self.path("Rock.PNG"), "rock.png")
+        self.assertEqual(self.listing(), ["rock.png"])
+
+    def test_nothing_is_renamed_over_another_file(self):
+        self.touch("rock.1001.png", "rock.1002.png", "stone.1002.png")
+        with self.assertRaises(FileExistsError):
+            TiledPath.rename(self.path("rock.<UDIM>.png"), "stone.<UDIM>.png")
+        self.assertEqual(
+            self.listing(), ["rock.1001.png", "rock.1002.png", "stone.1002.png"]
+        )
+
+    def test_the_new_name_keeps_the_tokens_and_names_no_folder(self):
+        self.touch("rock.1001.png", "flat.png")
+        for path, name in (
+            ("rock.<UDIM>.png", "stone.png"),  # dropped the token
+            ("rock.<UDIM>.png", "stone.<f>.png"),  # another kind
+            ("flat.png", "flat.<UDIM>.png"),  # gained one
+            ("flat.png", "sub/flat.png"),  # a folder
+            ("flat.png", "sub" + chr(92) + "flat.png"),  # a Windows one
+            ("flat.png", ""),
+            ("gone.png", "here.png"),  # nothing on disk
+        ):
+            with self.subTest(path=path, name=name):
+                with self.assertRaises(ValueError):
+                    TiledPath.rename(self.path(path), name)
+        self.assertEqual(self.listing(), ["flat.png", "rock.1001.png"])
+
+    def test_a_failure_part_way_puts_the_done_ones_back(self):
+        from unittest import mock
+
+        self.touch("rock.1001.png", "rock.1002.png")
+        real = os.rename
+        calls = []
+
+        def flaky(src, dst):
+            calls.append(src)
+            if len(calls) == 2:  # the second tile fails
+                raise PermissionError("locked")
+            return real(src, dst)
+
+        with mock.patch("os.rename", flaky):
+            with self.assertRaises(PermissionError):
+                TiledPath.rename(self.path("rock.<UDIM>.png"), "stone.<UDIM>.png")
+        self.assertEqual(self.listing(), ["rock.1001.png", "rock.1002.png"])
+
+
 class TestRootExport(unittest.TestCase):
     def test_the_root_serves_the_class(self):
         import pythontk as ptk

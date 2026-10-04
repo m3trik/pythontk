@@ -131,7 +131,7 @@ class TestEncode(unittest.TestCase):
 
     def test_no_curve_ref_means_no_ledger(self):
         section = ShotTransfer.encode(_store_state(), spell=_leaf)
-        self.assertEqual(section["ledger"], {"steps": {}, "keys": {}})
+        self.assertEqual(section["ledger"], {"steps": {}, "keys": {}, "authored": {}})
 
     def test_encode_does_not_mutate_the_state(self):
         state = _store_state()
@@ -588,6 +588,66 @@ class TestMerge(unittest.TestCase):
         )
         ShotTransfer.merge(existing, incoming)
         self.assertEqual((existing, incoming), before)
+
+
+class TestAuthoredClaims(unittest.TestCase):
+    """The manifest's behavior keys cross WITH their claims.
+
+    A claim is how a build knows a key is its own: without one the far side
+    reads the manifest's fade as an animator's key, Assess calls it a conflict
+    and every Build leaves it alone. The codec carried the ``steps`` and
+    ``keys`` registers and dropped ``authored``.
+    """
+
+    CURVES = {"pCube1_opacity": ("|grp|pCube1", "opacity")}
+
+    def _state(self):
+        store = ShotStore()
+        store.define_shot("Intro", 0.0, 48.0, objects=["|grp|pCube1"])
+        led = store.edit_ledger
+        led.record_authored("pCube1_opacity", 0.0, 0, "fade_in", "Cube", "a1b2")
+        led.record_authored("pCube1_opacity", 15.0, 0, "fade_in", "Cube", "a1b2")
+        return store.to_dict()
+
+    def _section(self):
+        return ShotTransfer.encode(
+            self._state(), spell=_leaf, curve_ref=self.CURVES.get
+        )
+
+    def test_encode_carries_the_authored_register(self):
+        ledger = self._section()["ledger"]
+        self.assertEqual(
+            ledger["authored"]["pCube1"]["opacity"],
+            [[0.0, 0, "fade_in", "Cube", "a1b2"], [15.0, 0, "fade_in", "Cube", "a1b2"]],
+        )
+
+    def test_decoded_claims_are_owned_with_their_stamp(self):
+        decoded = ShotTransfer.decode(
+            self._section(),
+            resolve=lambda leaf: leaf,
+            curve_key=lambda node, label: f'{node}|["{label}"]|-1',
+            scene_fps=24.0,
+            frame_offset=1.0,
+        )
+        led = ShotStore.from_dict(decoded).edit_ledger
+        curve = 'pCube1|["opacity"]|-1'
+        self.assertEqual(
+            led.authored(owner=0, obj="Cube", behavior="fade_in"),
+            [(curve, 1.0), (curve, 16.0)],
+        )
+        self.assertEqual(led.authored_stamps(0, "Cube", "fade_in"), {"a1b2"})
+
+    def test_merge_renumbers_a_claims_owner_with_its_shot(self):
+        existing = ShotStore()
+        existing.define_shot("Mine", 100.0, 200.0)
+        incoming = ShotStore.from_dict(self._state()).to_dict()
+        id_map = {}
+        merged = ShotTransfer.merge(existing.to_dict(), incoming, id_map=id_map)
+        led = ShotEditLedger.from_dict(merged["edit_ledger"])
+        new_id = id_map[0]
+        self.assertNotEqual(new_id, 0)
+        self.assertEqual(len(led.authored(owner=new_id)), 2)
+        self.assertEqual(led.authored(owner=0), [])
 
 
 if __name__ == "__main__":

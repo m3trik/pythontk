@@ -271,6 +271,17 @@ class TestApplyGlbArticulation(unittest.TestCase):
         self.assertEqual(rig["joints"][0]["rotate_order"], "zyx")
         self.assertEqual(manifest["metadata_version"], 1)
 
+    def test_the_manifest_and_its_record_are_the_declared_shapes(self):
+        """The applier's output IS ``ArticulationWeb`` and its input
+        ``ArticulationRecord``: the declarations the runtimes' types are
+        generated from are held to what the pipeline really writes."""
+        record = _rig_record()
+        self.assertEqual(ptk.ArticulationRecord.validate(_payload(record)).errors, [])
+        manifest = MeshConvert.apply_glb_articulation(self._glb(_arm_nodes(record)))
+        res = ptk.ArticulationWeb.validate(manifest)
+        self.assertEqual((res.errors, res.warnings), ([], []))
+        self.assertEqual(manifest["version"], ptk.SceneRecords.ARTICULATION.web.version)
+
     def test_a_grabbed_part_binds_under_its_own_joint_when_the_name_repeats(self):
         record = _rig_record()
         nodes = _arm_nodes(
@@ -433,11 +444,12 @@ class TestServerAutoActivation(unittest.TestCase):
 # ============================================================================
 
 
-#: The probe: imports the script's model port, waits for the script's session
-#: on load, runs the test's action, and leaves helpers on `window.__probe` for
-#: the Python side to call between real input events.
+#: The probe: imports the feature's model port by its own served path (as an
+#: app vendoring it would), waits for the script's session on load, runs the
+#: test's action, and leaves helpers on `window.__probe` for the Python side to
+#: call between real input events.
 PROBE_JS = """
-import { ArticulationModel } from './articulated_rig.js';
+import { ArticulationModel } from '../features/articulated_rig/model.js';
 
 export default function probe(viewer) {
   const report = { ready: false, errors: [], loads: 0 };
@@ -673,7 +685,7 @@ class TestArticulatedRigLive(unittest.TestCase):
         return found
 
     def test_the_js_model_matches_every_conformance_case(self):
-        doc = ArticulationConformance.cases(seed=2, per_rig=3)
+        doc = ptk.Conformance.cases("articulation", seed=2, per_rig=3)
         found = self._load(CONFORMANCE_JS.replace("__DOC__", json.dumps(doc)))
         self.assertEqual(found["count"], len(doc["cases"]))
         for quantity, tolerance in doc["tolerance"].items():

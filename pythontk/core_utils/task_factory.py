@@ -45,6 +45,22 @@ class TaskFactory:
     #: :meth:`_report_progress` for the stream and its cancel contract.
     progress_callback: Optional[Callable[..., Any]] = None
 
+    #: What :attr:`failed_check_handler` may answer: proceed past this one
+    #: failed check, past it and every later one, or stop the run.
+    CHECK_OVERRIDE = "override"
+    CHECK_OVERRIDE_ALL = "override_all"
+    CHECK_ABORT = "abort"
+
+    #: Per-run hook asked the moment a check fails --
+    #: ``handler(check, messages, remaining) -> CHECK_*`` with the check's
+    #: messages and the names of the checks still to run, in order. An
+    #: override lets the run carry on as if the check had passed (an
+    #: ``override_all`` answers for every later failure too, without asking);
+    #: anything else, or no handler, stops it -- see
+    #: :meth:`_execute_tasks_and_checks`. Set by the consumer for the duration
+    #: of a run, like :attr:`progress_callback`.
+    failed_check_handler: Optional[Callable[[str, List[str], List[str]], str]] = None
+
     #: What the current run left in the host for good (:meth:`record_kept_edit`).
     #: An empty tuple on the class, rebound per instance on each record, so a
     #: manager built without ``__init__`` (a ``__new__`` test fixture) records
@@ -55,6 +71,7 @@ class TaskFactory:
         self.logger = logger
         self._method_cache = {}
         self.progress_callback = None
+        self.failed_check_handler = None
         #: Restores registered by :meth:`stage_deferred_restore`, keyed so the
         #: first stager of a given state wins. Insertion-ordered; run LIFO.
         self._deferred_restores: Dict[str, Callable] = {}
@@ -203,6 +220,7 @@ class TaskFactory:
         self,
         tasks: Dict[str, Any],
         gate: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
+        on_check_failed: Optional[Callable[[str, List[str], List[str]], Any]] = None,
     ) -> Dict[str, Any]:
         """Run the entries of *tasks* in order, yielding their results.
 
@@ -216,6 +234,9 @@ class TaskFactory:
                 reaches *results*, so a skipped check is not a failed one.
                 Used by :meth:`_execute_tasks_and_checks` to drop the work that
                 a failed check has already made pointless.
+            on_check_failed: ``on_check_failed(name, messages, remaining)``,
+                called as soon as a check fails, before the next entry -- with
+                the names of the checks still to dispatch, in order.
         """
         task_results = {}
 
@@ -292,7 +313,14 @@ class TaskFactory:
 
                 # Handle check failures efficiently
                 if is_check and not self._is_success(result):
-                    self._log_check_failed(task_name, self._get_log_messages(result))
+                    messages = self._get_log_messages(result)
+                    self._log_check_failed(task_name, messages)
+                    if on_check_failed is not None:
+                        on_check_failed(
+                            task_name,
+                            list(messages),
+                            self._pending_checks(valid_tasks, position),
+                        )
 
             except Exception as e:
                 self.logger.error(f"Error during task {task_name}: {e}")
@@ -302,6 +330,20 @@ class TaskFactory:
         # skipped, and a skipped entry is a done entry.
         self._report_progress(len(valid_tasks), len(valid_tasks), None)
         yield task_results
+
+    def _pending_checks(self, run_list: Dict[str, Any], position: int) -> List[str]:
+        """The checks after *position* in *run_list* that will dispatch.
+
+        What a failure at *position* puts in the balance: a switched-off check
+        never runs, so it is not "remaining". The gate is not consulted -- an
+        override is what keeps the rest of the run alive.
+        """
+        return [
+            name
+            for name in list(run_list)[position + 1 :]
+            if name.startswith("check_")
+            and not self._task_is_disabled(self._method_cache[name], run_list[name])
+        ]
 
     def _positional_count(self, method) -> int:
         """How many positional parameters *method* takes.
@@ -460,7 +502,12 @@ class TaskFactory:
         tasks_only: Dict[str, Any],
         checks_only: Dict[str, Any],
     ) -> bool:
-        """Execute tasks and checks with unified logic."""
+        """Execute tasks and checks with unified logic.
+
+        Returns True when the run may proceed to its work: every check passed,
+        or every one that failed was overridden at its failure point through
+        :attr:`failed_check_handler`.
+        """
         failed_checks = []
         all_checks_passed = True
 
@@ -475,19 +522,55 @@ class TaskFactory:
 
         skipped_tasks: List[str] = []
         skipped_checks: List[str] = []
+        overridden: List[str] = []
+        #: "all" once the handler answered override-all; "stop" once a failure
+        #: stands -- from then on the run is over and nothing more is asked.
+        verdict = {"all": False, "stop": False}
+
+        def on_check_failed(name: str, messages: List[str], remaining: List[str]):
+            """Ask, at the failure point, whether the run carries on past it."""
+            if verdict["stop"]:
+                return
+            if verdict["all"]:
+                overridden.append(name)
+                self.logger.warning(f"Check overridden: {name} (override all).")
+                return
+            handler = getattr(self, "failed_check_handler", None)
+            answer = self.CHECK_ABORT
+            if handler is not None:
+                try:
+                    answer = handler(name, messages, remaining)
+                except Exception as e:  # noqa: BLE001 -- a broken prompt stops
+                    self.logger.error(f"failed_check_handler failed: {e}")
+            if answer in (self.CHECK_OVERRIDE, self.CHECK_OVERRIDE_ALL):
+                verdict["all"] = answer == self.CHECK_OVERRIDE_ALL
+                overridden.append(name)
+                self.logger.warning(
+                    f"Check overridden: {name}"
+                    + (
+                        " — and every later check that fails."
+                        if verdict["all"]
+                        else "."
+                    )
+                )
+            else:
+                verdict["stop"] = True
 
         def gate(name: str, results: Dict[str, Any]) -> bool:
             """Whether *name* is still worth running.
 
-            Everything runs until a check fails.  After that the run is over --
-            its only consumer was a write that will not happen -- so every
-            remaining TASK is dropped, and with it every check that needed one.
-            Checks that were already decidable keep running: they cost nothing
-            more, and reporting every failure the user can act on in one pass
-            is what the old run-all-checks-last order gave for free.
+            Everything runs until a check fails and is not overridden.  After
+            that the run is over -- its only consumer was a write that will not
+            happen -- so every remaining TASK is dropped, and with it every
+            check that needed one.  Checks that were already decidable keep
+            running: they cost nothing more, and reporting every failure the
+            user can act on in one pass is what the old run-all-checks-last
+            order gave for free.
             """
             if not any(
-                k.startswith("check_") and not self._is_success(v)
+                k.startswith("check_")
+                and not self._is_success(v)
+                and k not in overridden
                 for k, v in results.items()
             ):
                 return True
@@ -505,11 +588,14 @@ class TaskFactory:
                 f"Running {len(ordered_tasks)} export task(s) and "
                 f"{len(ordered_checks)} validation check(s)..."
             )
-            with self._manage_context(schedule, gate=gate) as results:
-                all_checks_passed = self._process_check_results(
+            with self._manage_context(
+                schedule, gate=gate, on_check_failed=on_check_failed
+            ) as results:
+                self._process_check_results(
                     {k: v for k, v in results.items() if k.startswith("check_")},
                     failed_checks,
                 )
+            all_checks_passed = all(name in overridden for name in failed_checks)
 
         # Store counts so the caller (SceneExporter) can include them
         # in a single consolidated summary after the file is written.
@@ -523,8 +609,12 @@ class TaskFactory:
         # The NAMES behind the verdict, for a caller that wants to report (or
         # ask about) what failed rather than just that something did -- the
         # bool return says nothing a user can act on. Always rewritten, so a
-        # passing run clears the previous run's list.
+        # passing run clears the previous run's list. An overridden check is
+        # still a failed one and is listed here too.
         self._last_failed_checks = list(failed_checks)
+        # ...and the ones the handler let the run carry on past, which a
+        # caller reports as shipped-with-failures rather than passed.
+        self._last_overridden_checks = list(overridden)
         # ...and the tasks the abort dropped, in their scheduled order. A
         # caller that decides to proceed ANYWAY (an exporter overriding the
         # verdict) must be able to run exactly these rather than the whole
@@ -558,6 +648,7 @@ class TaskFactory:
             all_checks_passed,
             self._last_task_count,
             self._last_check_count,
+            overridden=overridden,
         )
         return all_checks_passed
 
@@ -615,16 +706,26 @@ class TaskFactory:
         all_checks_passed: bool,
         tasks_count: int,
         checks_count: int,
+        overridden: Optional[List[str]] = None,
     ) -> None:
-        """Log the execution summary."""
+        """Log the execution summary; *overridden* failures are marked so."""
+        overridden = overridden or []
         if not all_checks_passed:
             self.logger.log_box(
                 "SUMMARY OF FAILED CHECKS",
-                [f"- {check}" for check in failed_checks],
+                [
+                    f"- {check}" + (" (overridden)" if check in overridden else "")
+                    for check in failed_checks
+                ],
                 level="ERROR",
             )
             self.logger.error("Export aborted due to failed checks.")
         else:
+            if overridden:
+                self.logger.warning(
+                    f"{len(overridden)} failed check(s) overridden: "
+                    f"{', '.join(overridden)}."
+                )
             self._log_checks_passed(tasks_count, checks_count, len(failed_checks))
 
     def _log_checks_passed(

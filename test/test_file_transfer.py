@@ -115,6 +115,27 @@ class MoveFileTest(BaseTestCase):
             self.assertEqual(f.read(), "new content")
         self.assertEqual(sorted(os.listdir(self.dst_dir)), ["a.txt"])
 
+    def test_a_destination_near_the_name_limit_still_takes_an_overwrite(self):
+        """The stage was the destination's name plus ~23 characters, so a
+        destination near a limit -- a name's 255 characters, or a path's 260
+        in a process that is not long-path aware (Maya) -- staged under a name
+        that cannot exist, and every overwrite into it failed: a soldering
+        table's lightmap atlas, 238 characters under its texture folder, was
+        never placed and the bake lost it (2026-10-03). The stage is a
+        fixed-length sibling. Measured on the name limit, which every OS has."""
+        name = "n" * 246 + ".txt"
+        src = self._src("a.txt", "new content")
+        existing = os.path.join(self.dst_dir, name)
+        try:
+            with open(existing, "w") as f:
+                f.write("old")
+        except OSError:
+            self.skipTest("this process cannot hold a 250-character name here")
+        out = FileUtils.move_file(src, self.dst_dir, new_name=name, overwrite=True)
+        with open(out) as f:
+            self.assertEqual(f.read(), "new content")
+        self.assertEqual(os.listdir(self.dst_dir), [name])
+
     @staticmethod
     def _age(path: str, days: float = 30.0) -> None:
         """Backdate *path* past TempArtifacts' stale-sweep age gate."""

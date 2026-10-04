@@ -15,7 +15,7 @@ import unittest
 
 import numpy as np
 
-from pythontk import ImgUtils, ShadowProjection
+from pythontk import ImgUtils, ShadowConformance, ShadowProjection
 
 
 class TestProject(unittest.TestCase):
@@ -368,6 +368,63 @@ class TestCanvasAttachment(unittest.TestCase):
         np.testing.assert_allclose(model.rect(stamp), drawn, atol=1e-9)
         higher = ShadowProjection.model((0, 1, 0), (6, 9, 0), radius=self.R, height=1.0)
         self.assertAlmostEqual(self._feet(higher.rect(stamp)), 0.25, places=9)
+
+
+class TestShadowConformance(unittest.TestCase):
+    """The golden cases the ports run: each is the reference's own answer."""
+
+    def setUp(self):
+        self.doc = ShadowConformance.cases(seed=3, per_kind=4)
+
+    def test_every_case_is_the_reference_model_and_placement(self):
+        for case in self.doc["cases"]:
+            given = case["input"]
+            model = ShadowProjection.model(
+                given["contact"],
+                given["light"],
+                given["ground"],
+                given["radius"],
+                given["height"],
+                direction=given["direction"],
+                max_stretch=given["max_stretch"],
+            )
+            centre, along, across = model.placement(given["canvas"])
+            self.assertEqual(case["model"]["anchor"], list(model.anchor), case["name"])
+            self.assertEqual(case["model"]["reach"], model.reach, case["name"])
+            self.assertEqual(case["placement"]["centre"], list(centre), case["name"])
+            self.assertEqual(case["placement"]["along"], along, case["name"])
+            self.assertEqual(case["placement"]["across"], across, case["name"])
+
+    def test_a_sun_carries_its_unit_direction_and_far_point(self):
+        sun = next(c for c in self.doc["cases"] if c["name"] == "sun")
+        given = sun["input"]
+        self.assertIsNone(given["light"])
+        self.assertAlmostEqual(math.hypot(*given["direction"]), 1.0, places=12)
+        far = ShadowProjection.far_point(
+            given["contact"],
+            given["direction"],
+            max(given["height"], 2 * given["radius"]),
+        )
+        self.assertEqual(sun["source"], list(far))
+
+    def test_the_named_cases_reach_every_clamp_and_fallback(self):
+        named = {c["name"]: c["model"] for c in self.doc["cases"]}
+        self.assertTrue(named["overhead"]["overhead"])
+        self.assertFalse(named["point"]["overhead"])
+        # A source under the top: the top disk's factor meets its cap.
+        self.assertGreater(named["below_top"]["k_top"], named["below_top"]["k_base"])
+        # A source under a floating contact: the base factor meets 1 + max_stretch.
+        self.assertAlmostEqual(
+            named["below_contact"]["k_base"], 1.0 + ShadowProjection.DEFAULT_MAX_STRETCH
+        )
+        self.assertGreater(named["raised"]["k_base"], 1.0)
+        # A grazing sun: the reach is capped at max_stretch heights.
+        self.assertAlmostEqual(named["low_sun"]["reach"], 4.0)
+
+    def test_the_random_cases_cover_both_kinds(self):
+        kinds = {c["name"].rsplit("_", 1)[0] for c in self.doc["cases"][9:]}
+        self.assertEqual(kinds, {"point", "sun"})
+        self.assertEqual(len(self.doc["cases"]), 9 + 2 * 4)
 
 
 if __name__ == "__main__":

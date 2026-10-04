@@ -328,6 +328,22 @@ class _ReusableServer(HTTPServer):
 
     allow_reuse_address = os.name != "nt"
 
+    def handle_error(self, request, client_address):
+        """A peer that vanished mid-connection is routine here, not an error.
+
+        Clients probe and abandon connections (a timed-out ping, a port check,
+        a DCC closing mid-request), and the stock handler printed a full
+        traceback per reset into the host's log -- noise the user can't act
+        on. Same filter as ``preview/routes.py``'s ``_PreviewHTTPServer``;
+        anything else still reports as before.
+        """
+        if isinstance(
+            sys.exc_info()[1],
+            (ConnectionResetError, ConnectionAbortedError, BrokenPipeError),
+        ):
+            return
+        super().handle_error(request, client_address)
+
 
 def _make_handler(plugin):
     """Build the request handler class bound to *plugin*.

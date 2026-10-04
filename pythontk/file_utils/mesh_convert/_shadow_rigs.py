@@ -32,8 +32,9 @@ class _ShadowRigsMixin:
     #: Highest ``shadow_metadata`` schema this applier knows how to read --
     #: the record's declared version, like the lightmap and visibility ones.
     SHADOW_METADATA_VERSION = SceneRecords.SHADOWS.version
-    #: Root-extras key the viewer's packaged ``shadow_rig`` script reads.
-    SHADOW_WEB_KEY = "shadow_web"
+    #: Root-extras key the viewer's packaged ``shadow_rig`` script reads --
+    #: the record's declared web projection.
+    SHADOW_WEB_KEY = SceneRecords.SHADOWS.web.key
     #: Where ``shadow_web`` binds by glTF NODE INDEX -- the paths a pass that
     #: renumbers nodes (``strip_glb_curve_proxies``) must follow.
     SHADOW_WEB_NODE_FIELDS = (
@@ -524,7 +525,7 @@ class _ShadowRigsMixin:
                 )
             if planes:
                 manifest = {
-                    "version": 2,
+                    "version": SceneRecords.SHADOWS.web.version,
                     "metadata_version": version,
                     "unit_scale": unit_scale,
                     "planes": planes,

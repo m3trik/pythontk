@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, Optional, Union
 from urllib.parse import urlparse
 
 from pythontk.net_utils.preview.routes import (
+    SCENE_PATH,
     _VIEWER_ID,
     _PreviewHandler,
     _PreviewHTTPServer,
@@ -71,7 +72,8 @@ class _SharingMixin:
         request, so nothing a guest sends can make it the owner's:
 
         * reads are an allow-list -- the page, its manifest, and exactly what
-          that names (the asset, the scripts outside :attr:`OWNER_SCRIPTS`);
+          that names (the asset, the scripts outside :attr:`OWNER_SCRIPTS`),
+          plus :meth:`describe_scene`, that same asset's JSON read for them;
         * every write is refused, and a guest's close beacon retires only
           that guest's tab;
         * its polls count toward :meth:`guest_count`, never toward
@@ -163,13 +165,14 @@ class _SharingMixin:
             self._mark_closed(viewer_id)
 
     def _guest_files(self) -> set:
-        """Served paths a guest may fetch besides the page: what its manifest names."""
+        """Served paths a guest may fetch besides the page: the kernel modules
+        it imports, and what its manifest names -- each script with the
+        modules it imports beside it, and the asset."""
+        files = set(self._kernel_files()) if self._viewer else set()
         with self._lock:
-            files = {
-                f"{self.SCRIPTS_ROUTE}/{name}.js"
-                for name in self._scripts
-                if name not in self.OWNER_SCRIPTS
-            }
+            for name, source in self._scripts.items():
+                if name not in self.OWNER_SCRIPTS:
+                    files.update(self._served_files(name, source))
             if self._asset:
                 files.add(self._asset)
         return files
@@ -340,11 +343,14 @@ class _SharingMixin:
         on its own, which is how a dropped share shows.
 
         Returns:
-            ``{"url", "tunnel_url", "provider", "label", "public", "guests",
-            "guest_url", "alias_error"}``. ``url`` is the link to hand out:
-            the alias's address when there is an alias AND its last update
-            landed, else the tunnel's own -- a stale alias must never be what
-            gets sent.
+            ``{"url", "tunnel_url", "scene_url", "provider", "label",
+            "public", "guests", "guest_url", "alias_error"}``. ``url`` is the
+            link to hand out: the alias's address when there is an alias AND
+            its last update landed, else the tunnel's own -- a stale alias
+            must never be what gets sent. ``scene_url`` is where the share
+            serves :meth:`describe_scene` -- the link for someone's tools or
+            agent -- always on the tunnel, since an alias is one redirect page
+            rather than a site.
         """
         with self._lock:
             tunnel, alias_url = self._tunnel, self._alias_url
@@ -357,6 +363,11 @@ class _SharingMixin:
         return {
             "url": alias_url if alias_live else tunnel_url,
             "tunnel_url": tunnel_url,
+            # None with tunnel_url: a client that exits between the check
+            # above and the read reads as a link that is gone, not a crash.
+            "scene_url": (
+                f"{tunnel_url.rstrip('/')}/{SCENE_PATH}" if tunnel_url else None
+            ),
             "provider": tunnel.provider,
             "label": tunnel.label,
             "public": tunnel.public,

@@ -13,6 +13,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/class_property.py`](#core_utils--class_property)
 - [`core_utils/cli.py`](#core_utils--cli)
 - [`core_utils/color.py`](#core_utils--color) — Lightweight, DCC-agnostic color primitives.
+- [`core_utils/conformance.py`](#core_utils--conformance) — The conformance registry: golden-case documents for every ported model.
 - [`core_utils/deprecation.py`](#core_utils--deprecation) — Deprecation - retiring public surface through one mechanism, with a clock.
 - [`core_utils/doc_audit.py`](#core_utils--doc_audit) — Audit markdown code examples against the live package surface.
 - [`core_utils/engines/instancing/assembly_sorter.py`](#core_utils--engines--instancing--assembly_sorter) — Sort separated mesh parts into repeated-assembly copies.
@@ -33,6 +34,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/engines/scene_export/scene_exporter.py`](#core_utils--engines--scene_export--scene_exporter) — The Scene Exporter's orchestration shell, written once for both DCCs.
 - [`core_utils/engines/scene_export/scene_records.py`](#core_utils--engines--scene_export--scene_records) — Scene records -- every piece of tool-authored scene metadata, declared once.
 - [`core_utils/engines/scene_export/scene_store.py`](#core_utils--engines--scene_export--scene_store) — The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
+- [`core_utils/engines/shots/effect_recipe.py`](#core_utils--engines--shots--effect_recipe) — Effect recipe -- how each render effect and audio clip is keyed, once per scene.
 - [`core_utils/engines/shots/manifest/behaviors/_behaviors.py`](#core_utils--engines--shots--manifest--behaviors--_behaviors) — Behaviors — load JSON keying recipes and resolve them to keyframe math.
 - [`core_utils/engines/shots/manifest/behaviors/_spec.py`](#core_utils--engines--shots--manifest--behaviors--_spec) — Schema for a *behavior* template file, defined as a dataclass.
 - [`core_utils/engines/shots/manifest/manifest_engine.py`](#core_utils--engines--shots--manifest--manifest_engine) — Shot Manifest engine — pure planning/orchestration core with scene hooks.
@@ -123,6 +125,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`geo_utils/articulation/analysis.py`](#geo_utils--articulation--analysis) — Propose an articulated rig from the parts' geometry alone -- no DCC.
 - [`geo_utils/articulation/conformance.py`](#geo_utils--articulation--conformance) — The golden cases every port of :class:`ArticulationModel` is held to.
 - [`geo_utils/articulation/model.py`](#geo_utils--articulation--model) — The articulated-rig joint model and its grab solver -- pure math, no DCC.
+- [`geo_utils/articulation/record.py`](#geo_utils--articulation--record) — The ``articulation`` record's payload and its web projection, declared once.
 - [`geo_utils/plate_emitter.py`](#geo_utils--plate_emitter) — Emitter geometry for a flat light-fixture plate — pure math, no DCC.
 - [`geo_utils/pointcloud.py`](#geo_utils--pointcloud) — Point-cloud geometry — analyze and group unordered sets of points.
 - [`geo_utils/polyline.py`](#geo_utils--polyline) — Pure polyline / curve geometry — generate, measure, sample, reshape.
@@ -342,6 +345,16 @@ Lightweight, DCC-agnostic color primitives.
   - `Palette.ui(cls) -> 'Palette'` *(class)* — Common UI element colours for dark themes.
   - `Palette.diff(cls) -> 'Palette'` *(class)* — Comparison / diff palette for dark-theme tree views.
 
+<a id="core_utils--conformance"></a>
+### `core_utils/conformance.py`
+
+The conformance registry: golden-case documents for every ported model.
+
+- **[`class Conformance`](pythontk/pythontk/core_utils/conformance.py#L23)** — The registry of golden-case providers, by model name.
+  - `Conformance.names(cls) -> List[str]` *(class)* — The models with golden cases, in declaration order.
+  - `Conformance.provider(cls, name: str) -> Any` *(class)* — The provider class registered under *name*.
+  - `Conformance.cases(cls, name: str, seed: int = 0, **options: Any) -> Dict[str, Any]` *(class)* — The conformance document of the model *name*.
+
 <a id="core_utils--deprecation"></a>
 ### `core_utils/deprecation.py`
 
@@ -553,9 +566,9 @@ Applying a hand-off manifest's ``rig`` section to a target scene -- the ONE
 
 Point-cloud verification for a rebuilt rig -- pure math, no DCC.
 
-- [`UNIT_METRES`](pythontk/pythontk/core_utils/engines/rig_graph/rig_verify.py#L21) — constant
-- [`VERIFY_TOLERANCE_M`](pythontk/pythontk/core_utils/engines/rig_graph/rig_verify.py#L33) — constant
-- **[`class RigVerify`](pythontk/pythontk/core_utils/engines/rig_graph/rig_verify.py#L36)** — Compare sampled world points of one object against ground truth.
+- [`UNIT_METRES`](pythontk/pythontk/core_utils/engines/rig_graph/rig_verify.py#L24) — constant
+- [`VERIFY_TOLERANCE_M`](pythontk/pythontk/core_utils/engines/rig_graph/rig_verify.py#L32) — constant
+- **[`class RigVerify`](pythontk/pythontk/core_utils/engines/rig_graph/rig_verify.py#L35)** — Compare sampled world points of one object against ground truth.
   - `RigVerify.compare(want: Sequence[Point], got: Sequence[Point]) -> Dict[str, Any]` *(static)* — Measure *got* against *want*, point by point, at one frame.
   - `RigVerify.compare_frames(cls, want: Mapping[Any, Sequence[Point]], got: Mapping[Any, Sequence[Point]]) -> Dict[str, Any]` *(class)* — :meth:`compare` over every frame both sides sampled;
   - `RigVerify.default_tolerance(unit: str) -> float` *(static)* — :data:`VERIFY_TOLERANCE_M` expressed in *unit* (``"cm"`` -> 1.0,
@@ -592,7 +605,7 @@ The Scene Exporter panels' shared contract, written once.
   - `ExportProfile.glb_options(cls) -> Dict[str, Dict[str, Any]]` *(class)* — ``{row key: {label: value}}`` for :attr:`GLB_ROWS`, as a producer
   - `ExportProfile.glb_defaults(cls) -> Dict[str, Any]` *(class)* — ``{row key: value}`` -- where each :attr:`GLB_ROWS` row starts in
   - `ExportProfile.frame_rate_options(cls) -> Dict[str, Optional[str]]` *(class)* — Frame Rate check -- every ``VidUtils.FRAME_RATES`` entry labelled
-- **[`class ExportRun`](pythontk/pythontk/core_utils/engines/scene_export/export_profile.py#L983)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
+- **[`class ExportRun`](pythontk/pythontk/core_utils/engines/scene_export/export_profile.py#L985)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
   - `ExportRun.glb_only(self) -> bool` *(property)* — The GLB is the deliverable;
   - `ExportRun.create_glb(self) -> bool` *(property)* — A ``.glb`` is written this run (alone, or beside the FBX).
   - `ExportRun.usd(self) -> bool` *(property)* — The deliverable is a USD layer.
@@ -615,7 +628,7 @@ Export assembly: compute every record once, then commit once.
   - `ExportContext.note(self, text: str) -> None` — Record one sentence for the report.
   - `ExportContext.record(self, spec: Union[RecordSpec, str], store=None, default: Any = None) -> Any` — The payload of *spec* as produced in THIS assembly, else -- when a
   - `ExportContext.refreshes(self, spec: RecordSpec) -> bool` — Whether this context's mode refreshes *spec*.
-- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L127)** — The records one export ships, assembled once and committed once.
+- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L130)** — The records one export ships, assembled once and committed once.
   - `ExportSnapshot.assemble(cls, producers: Mapping[Union[RecordSpec, str], Producer], ctx: Optional[ExportContext] = None, only: Optional[Iterable[Union[RecordSpec, str]]] = None) -> 'ExportSnapshot'` *(class)* — Run *producers* in dependency order and collect their records.
   - `ExportSnapshot.publish(cls, store, records: Mapping[Union[RecordSpec, str], Any], ctx: Optional[ExportContext] = None) -> 'ExportSnapshot'` *(class)* — Commit *records* that are already in hand -- the AUTHORING-time
   - `ExportSnapshot.commit(self, store) -> Dict[str, Optional[str]]` — Write every produced record to *store* in one pass, then stamp the
@@ -707,9 +720,12 @@ The scene-data sidecar -- what an export shipped, beside the deliverable.
 
 The Scene Exporter's orchestration shell, written once for both DCCs.
 
-- **[`class SceneExporterBase(LoggingMixin)`](pythontk/pythontk/core_utils/engines/scene_export/scene_exporter.py#L37)** — The DCC-free half of a Scene Exporter: progress, consent, run config.
+- **[`class SceneExporterBase(LoggingMixin)`](pythontk/pythontk/core_utils/engines/scene_export/scene_exporter.py#L42)** — The DCC-free half of a Scene Exporter: progress, consent, run config.
   - `SceneExporterBase.confirm(self, question: str) -> bool` — Yes/no consent for an export-time side effect (a tool download).
-  - `SceneExporterBase.confirm_check_override(self) -> bool` — Ask, at the failure point, whether to export despite failed checks.
+  - `SceneExporterBase.decide_check_failure(self, check: str, messages: List[str], remaining: List[str]) -> str` — Seam: what to do about *check*, which just failed mid-run.
+  - `SceneExporterBase.check_label(self, check: str) -> str` — *check*'s name as the panel spells it -- its row's label.
+  - `SceneExporterBase.check_failure_html(self, check: str, messages: List[str], remaining: List[str]) -> str` — The check-failure dialog's body: the failure, then what is left.
+  - `SceneExporterBase.confirm_check_override(self) -> bool` **DEPRECATED (remove in 0.14.0)** — Ask whether to export despite the failed checks of the last run.
   - `SceneExporterBase.run_config_from_values(self, values: Dict[str, Any], override_checks: bool = False, ignore_groups_case_sensitive: bool = False) -> Dict[str, Any]` — Widget values -> the inputs :meth:`perform_export` takes.
   - `SceneExporterBase.generate_log_file_path(self, export_path: str) -> str` — Generate the log file path based on the export path.
   - `SceneExporterBase.setup_file_logging(self, log_file_path: str)` — Setup file logging to log actions during export.
@@ -720,14 +736,15 @@ The Scene Exporter's orchestration shell, written once for both DCCs.
 
 Scene records -- every piece of tool-authored scene metadata, declared once.
 
-- **[`class Scope(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L69)** — Where a record lives, and therefore what it can never do.
-- **[`class Kind(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L80)** — What a record is a function of, which decides WHEN it is refreshed.
-- **[`class Merge(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L97)** — What happens to a record when another scene's copy arrives beside the
-- **[`class Record`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L125)** — One produced value of a :class:`RecordSpec`, ready to store.
+- **[`class Scope(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L71)** — Where a record lives, and therefore what it can never do.
+- **[`class Kind(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L82)** — What a record is a function of, which decides WHEN it is refreshed.
+- **[`class Merge(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L99)** — What happens to a record when another scene's copy arrives beside the
+- **[`class WebProjection`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L127)** — How a deliverable record is published for the glTF runtimes.
+- **[`class Record`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L151)** — One produced value of a :class:`RecordSpec`, ready to store.
   - `Record.key(self) -> str` *(property)*
   - `Record.text(self) -> str` *(property)* — The stored form (JSON).
   - `Record.save(self, store) -> Optional[str]` — Write this record through *store*;
-- **[`class RecordSpec`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L146)** — The one declaration of a record: identity, contract and codec.
+- **[`class RecordSpec`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L172)** — The one declaration of a record: identity, contract and codec.
   - `RecordSpec.path_keys(self) -> Optional[Tuple[str, ...]]` *(property)* — The payload keys whose values are paths (:attr:`paths`): the named
   - `RecordSpec.stamp_keys(self) -> Optional[Tuple[str, ...]]` *(property)* — The payload keys whose values are writer stamps (:attr:`stamps`):
   - `RecordSpec.make(self, payload: Any) -> Record` — A :class:`Record` of *payload*, the envelope's ``version`` applied.
@@ -739,9 +756,12 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `RecordSpec.save(self, store, payload: Any) -> Optional[str]` — Publish *payload* (the publish / clear idiom in one call).
   - `RecordSpec.clear(self, store) -> Optional[str]` — Clear the record;
   - `RecordSpec.is_present(self, store) -> bool` — Whether *store* holds a non-empty value for this record.
-- **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L339)** — The registry: every record, declared once, and what derives from it.
+- **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L376)** — The registry: every record, declared once, and what derives from it.
   - `SceneRecords.resolve_class(module: str, name: str) -> Any` *(static)* — The class a ``(module, name)`` row names -- :attr:`CODECS`',
   - `SceneRecords.codec(cls, spec: RecordSpec) -> Optional[Any]` *(class)* — The codec class of a :attr:`Merge.CODEC` record, else ``None``.
+  - `SceneRecords.shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]` *(class)* — The :class:`~pythontk.SchemaSpec` declaring *item*'s payload
+  - `SceneRecords.web_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]` *(class)* — The :class:`~pythontk.SchemaSpec` declaring *item*'s web manifest
+  - `SceneRecords.web_projected(cls) -> List[RecordSpec]` *(class)* — The records a GLB conversion publishes for the glTF runtimes
   - `SceneRecords.portable(cls) -> List[RecordSpec]` *(class)* — The records that cross a DCC hand-off, in declaration order.
   - `SceneRecords.rendering_policy(overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(static)* — What a deliverable claims about how it should be lit.
   - `SceneRecords.all(cls) -> List[RecordSpec]` *(class)* — Every declared record, in declaration order.
@@ -784,6 +804,7 @@ The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
   - `SceneStoreBase.path_records(cls) -> Dict[Tuple[Scope, str], Optional[str]]` *(class)* — The stored text of every path record (:meth:`SceneRecords.with_paths`),
   - `SceneStoreBase.restore_path_records(cls, snapshot: Mapping[Tuple[Scope, str], Optional[str]]) -> int` *(class)* — Put the path records back as *snapshot* (:meth:`path_records`) holds
   - `SceneStoreBase.format_dump(cls, decode: bool = True) -> str` *(class)* — Pretty JSON of :meth:`dump`, or ``""`` when nothing is stored.
+  - `SceneStoreBase.owner(cls, key: str) -> Optional[Any]` *(class)* — The class :attr:`OWNERS` names for record *key*, or ``None`` when it
   - `SceneStoreBase.owners(cls) -> Dict[str, Any]` *(class)* — :attr:`OWNERS` resolved to classes.
   - `SceneStoreBase.transfer_sections(cls, spell: Optional[Callable[[str], str]] = None, objects=None) -> Dict[str, Any]` *(class)* — What a hand-off producer adds to its sidecar: every portable record
   - `SceneStoreBase.receive_sections(cls, manifest: Optional[Mapping[str, Any]], resolve: Optional[Callable[[str], Optional[str]]] = None, source: str = '', **adapters: Any) -> 'TransferContext'` *(class)* — Land a hand-off sidecar's records in this scene
@@ -792,18 +813,46 @@ The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
   - `SceneStoreBase.merge_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None, source_path_base: Optional[str] = None) -> 'TransferContext'` *(class)* — Merge another scene's *carriers* -- an imported reference's, made
   - `SceneStoreBase.discard_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None, source_path_base: Optional[str] = None) -> 'TransferContext'` *(class)* — Remove another scene's *carriers* without merging their records --
 
+<a id="core_utils--engines--shots--effect_recipe"></a>
+### `core_utils/engines/shots/effect_recipe.py`
+
+Effect recipe -- how each render effect and audio clip is keyed, once per scene.
+
+- [`RGB`](pythontk/pythontk/core_utils/engines/shots/effect_recipe.py#L37) — constant
+- **[`class EffectRecipe(_EffectRecipeInternal)`](pythontk/pythontk/core_utils/engines/shots/effect_recipe.py#L85)** — How each render effect and audio clip is keyed -- one per scene.
+  - `EffectRecipe.from_dict(cls, data: Optional[Dict[str, Any]]) -> 'EffectRecipe'` *(class)* — A recipe from :meth:`to_dict`'s shape.
+  - `EffectRecipe.to_dict(self) -> Dict[str, Any]` — Plain-dict form for the scene payload (colours as lists).
+  - `EffectRecipe.replace(self, **changes: Any) -> 'EffectRecipe'` — A copy with *changes* applied (coerced like a new recipe).
+  - `EffectRecipe.effect_names(cls) -> List[str]` *(class)* — Every effect a recipe keys, in declaration order.
+  - `EffectRecipe.fingerprint(self, effect: str) -> str` — A short stable stamp of what *effect* is keyed from.
+  - `EffectRecipe.colors(self) -> Tuple[RGB, RGB]` *(property)* — ``(bright, dim)`` -- the pulse's colour ramp.
+  - `EffectRecipe.pulse_cadence(self, fps: float) -> Dict[str, float]` — The pulse as ``RampKeys.pulse`` keyword arguments, in FRAMES at *fps*.
+  - `EffectRecipe.plan(self, effect: str, start: float, end: float, fps: float, whole_frames: bool = True) -> List[Tuple[float, float]]` — The ``(frame, value)`` keys *effect* writes over ``start..end``.
+  - `EffectRecipe.window(self, effect: str, start: float, end: float, place: Place = 'start', anchor: Optional[float] = None) -> Tuple[float, float]` — The frames *effect* occupies when placed in the range ``start..end``.
+  - `EffectRecipe.envelope(self, effect: str, place: Place = 'start', fps: Optional[float] = None) -> Dict[str, Dict[str, Dict[str, Any]]]` — *effect* as a behavior template's ``attributes`` block.
+  - `EffectRecipe.pulse_cycles(self, length: float) -> float` — How many cycles a pulse *length* seconds long holds.
+
 <a id="core_utils--engines--shots--manifest--behaviors--_behaviors"></a>
 ### `core_utils/engines/shots/manifest/behaviors/_behaviors.py`
 
 Behaviors — load JSON keying recipes and resolve them to keyframe math.
 
-- **[`class Behaviors(_BehaviorsInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L83)** — Load JSON keying recipes and resolve them to keyframe math.
+- **[`class Behaviors(_BehaviorsInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_behaviors.py#L110)** — Load JSON keying recipes and resolve them to keyframe math.
   - `Behaviors.templates() -> TemplateSet` *(static)* — The shared :class:`~pythontk.TemplateSet` backing behavior discovery.
   - `Behaviors.load_behavior(name: str, search_path: Optional[Path] = None) -> Dict[str, Any]` *(static)* — Load a JSON behavior template by stem name.
+  - `Behaviors.phrase_table() -> Dict[str, List[Any]]` *(static)* — ``{name: [compiled detect phrases]}`` for every loadable template
+  - `Behaviors.subjects(text: str, table: Optional[Dict[str, List[Any]]] = None) -> List[Tuple[str, str]]` *(static)* — ``[(subject, behavior)]`` -- the objects *text* names by a behavior.
+  - `Behaviors.detect(text: str, table: Optional[Dict[str, List[Any]]] = None) -> List[str]` *(static)* — Behaviors whose template ``detect`` phrases occur in *text*.
+  - `Behaviors.from_cell(cell: str, table: Optional[Dict[str, List[Any]]] = None) -> List[str]` *(static)* — Behaviors listed in one behaviors-column cell, in order.
   - `Behaviors.list_behaviors(search_path: Optional[Path] = None, kind: Optional[str] = None) -> List[str]` *(static)* — Return stem names of all available behavior templates.
   - `Behaviors.resolve_keys(block_def: Dict, start: float, end: float) -> List[Dict[str, Any]]` *(static)* — Resolve an ``in`` or ``out`` block to absolute keyframe dicts.
+  - `Behaviors.effect_of(behavior: Any) -> Optional[str]` *(static)* — The recipe effect a behavior keys (``"fade_in"``, ``"pulse"``, ...),
+  - `Behaviors.keyed(behavior: Any, recipe: Optional[EffectRecipe] = None, fps: Optional[float] = None) -> Dict[str, Any]` *(static)* — A template as it is keyed: an ``effect`` stated as ``attributes``.
+  - `Behaviors.place_of(tmpl: Dict[str, Any]) -> Any` *(static)* — Where an effect template puts its effect: its ``place``, else where
   - `Behaviors.phase_durations(tmpl: Dict[str, Any]) -> Tuple[float, float]` *(static)* — Sum a template's ``in`` / ``out`` phase durations across all attributes.
-  - `Behaviors.compute_duration(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None) -> float` *(static)* — Derive duration from the behavior templates referenced in *behavior_entries*.
+  - `Behaviors.anchor_overrides(behaviors: List[str]) -> List[Optional[float]]` *(static)* — The ``anchor_override`` each of one object's *behaviors* is keyed at.
+  - `Behaviors.compute_duration(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None, recipe: Optional[EffectRecipe] = None) -> float` *(static)* — Derive duration from the behavior templates referenced in *behavior_entries*.
+  - `Behaviors.apply_to_shots(shots: list, apply_fn: Callable, exists_fn: Optional[Callable] = None, has_keys_fn: Optional[Callable] = None, store: Any = None, resolve_fn: Optional[Callable[[str], str]] = None, conflict_fn: Optional[Callable] = None, release_fn: Optional[Callable] = None) -> Dict[str, list]` *(static)* — Apply declared behaviors from shot metadata through *apply_fn*.
 
 <a id="core_utils--engines--shots--manifest--behaviors--_spec"></a>
 ### `core_utils/engines/shots/manifest/behaviors/_spec.py`
@@ -811,10 +860,13 @@ Behaviors — load JSON keying recipes and resolve them to keyframe math.
 Schema for a *behavior* template file, defined as a dataclass.
 
 - [`KNOWN_VERIFY_MODES`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L27) — constant
-- **[`class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L74)** — Schema for one behavior template (see ``BEHAVIOR_FORMAT.md``).
+- **[`class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/behaviors/_spec.py#L109)** — Schema for one behavior template (see ``BEHAVIOR_FORMAT.md``).
   - `BehaviorSpec.format_markdown(cls) -> str` *(class)* — Generate the full ``BEHAVIOR_FORMAT.md`` reference from the schema SSoT.
   - `BehaviorSpec.validate_duration(value: Any) -> List[str]` *(static)* — ``duration`` is a frame count or the literal ``"from_source"``.
   - `BehaviorSpec.validate_verify(value: Any) -> List[str]` *(static)*
+  - `BehaviorSpec.validate_effect(value: Any) -> List[str]` *(static)* — ``effect`` names one of the scene recipe's effects.
+  - `BehaviorSpec.validate_place(value: Any) -> List[str]` *(static)* — ``place`` = ``start`` | ``end`` | ``span`` | a fraction 0-1.
+  - `BehaviorSpec.validate_detect(value: Any) -> List[str]` *(static)* — ``detect`` = a list of regexes (matched case-insensitively).
   - `BehaviorSpec.validate_attributes(value: Any) -> List[str]` *(static)* — ``attributes`` = {attr: {in?/out?: {offset,duration,values,anchor,tangent}}}.
 
 <a id="core_utils--engines--shots--manifest--manifest_engine"></a>
@@ -822,39 +874,55 @@ Schema for a *behavior* template file, defined as a dataclass.
 
 Shot Manifest engine — pure planning/orchestration core with scene hooks.
 
-- **[`class ShotManifest(_ShotManifestInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_engine.py#L91)** — Creates shot store entries from parsed steps and applies behaviors.
+- **[`class ShotManifest(_ShotManifestInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_engine.py#L92)** — Creates shot store entries from parsed steps and applies behaviors.
+  - `ShotManifest.recipe(self)` *(property)* — The scene's :class:`~pythontk.EffectRecipe` -- the store's.
   - `ShotManifest.rewire_audio(self, tracks: Optional[List[str]] = None) -> Dict[str, List[str]]` — Reconcile managed audio nodes with keyed track state (hook).
   - `ShotManifest.apply_behaviors(self) -> Dict[str, list]` — Apply detected behaviors to the store's shots (hook).
   - `ShotManifest.sync(self, steps: List[BuilderStep], apply_behaviors: bool = True, ranges: Optional[Dict[str, Tuple[float, float]]] = None, remove_missing: bool = True, zero_duration_fallback: bool = False, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH, skip_scene_discovery: bool = False) -> Tuple[Dict[str, str], Dict[str, list], List[StepStatus]]` — Full build pipeline: plan -> commit -> apply behaviors -> assess.
   - `ShotManifest.update(self, steps: List[BuilderStep], ranges: Optional[Dict[str, Tuple[float, float]]] = None, remove_missing: bool = True, zero_duration_fallback: bool = False, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH) -> Dict[str, str]` — Sync parsed steps to the ShotStore (data only, no behaviors).
+  - `ShotManifest.pair(self, steps: List[BuilderStep]) -> ShotPairing` — Which shot each step is -- the one place a step finds its shot.
+  - `ShotManifest.unowned_keys(self, obj: str, behavior: str, start: float, end: float) -> List[Tuple[str, float]]` — Keys on *behavior*'s channels of *obj* in ``[start, end]`` that the
+  - `ShotManifest.release_authored(self, shot_id: int, obj: str, behavior: str) -> int` — Delete the keys *behavior* wrote on *obj* for shot *shot_id* and drop
+  - `ShotManifest.release_dropped(self, steps: List[BuilderStep]) -> int` — Delete the keys of behaviors a step's doc no longer lists.
+  - `ShotManifest.adopt_placed_clips(self) -> int` — Claim the audio keys a build placed before it claimed them.
+  - `ShotManifest.is_stale(self, shot_id: int, obj: str, behavior: str) -> bool` — Whether *behavior*'s keys on shot *shot_id*'s *obj* were made under
+  - `ShotManifest.reapply_object(self, shot, obj: BuilderObject) -> bool` — Re-key every behavior of one doc object over *shot*'s range.
+  - `ShotManifest.fill_missing_assets(self, steps: List[BuilderStep]) -> Dict[str, List[str]]` — Give every step that lists no scene objects what its paired shot holds.
   - `ShotManifest.assess(self, steps: List[BuilderStep], exists_fn: Optional[Callable[[str], bool]] = None, verify_fn: Optional[Callable] = None, keyframe_range_fn: Optional[Callable[[str], Optional[Tuple[float, float]]]] = None, audio_exists_fn: Optional[Callable[[str], bool]] = None, skip_scene_discovery: bool = False) -> List[StepStatus]` — Compare parsed steps against the current store state.
   - `ShotManifest.from_csv(cls, filepath: str, store: Optional[ShotStore] = None, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> Tuple['ShotManifest', List[BuilderStep]]` *(class)* — Convenience: parse a CSV and return a ready-to-build engine.
-  - `ShotManifest.resolve_duration(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None) -> Tuple[float, float, float]` *(static)* — Compute final shot duration for *step* under the given fit policy.
+  - `ShotManifest.resolve_duration(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None, recipe=None) -> Tuple[float, float, float]` *(static)* — Compute final shot duration for *step* under the given fit policy.
 
 <a id="core_utils--engines--shots--manifest--manifest_model"></a>
 ### `core_utils/engines/shots/manifest/manifest_model.py`
 
 Pure Shot Manifest data model + CSV parser.
 
-- [`DEFAULT_INITIAL_SHOT_LENGTH`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L483) — constant
-- [`DEFAULT_FIT_MODE`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L484) — constant
-- [`AUDIO_PLACEHOLDER_DURATION`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L490) — constant
-- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L135)** — The shot manifest's data model and CSV parser.
+- [`DEFAULT_INITIAL_SHOT_LENGTH`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L754) — constant
+- [`DEFAULT_FIT_MODE`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L755) — constant
+- [`AUDIO_PLACEHOLDER_DURATION`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L761) — constant
+- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L406)** — The shot manifest's data model and CSV parser.
   - `ManifestModel.describe_read_failure(cls, path: str, exc: OSError) -> str` *(class)* — Explain a CSV that exists but cannot be read, without over-committing.
   - `ManifestModel.detect_behaviors(text: str) -> List[str]` *(static)* — Return behavior names inferred from descriptive *text*.
+  - `ManifestModel.asset_column(source: str, fills: Dict[str, List[str]], columns: Optional['ColumnMap'] = None) -> List[str]` *(static)* — The source sheet's asset column, row for row, with *fills* written
+  - `ManifestModel.column_clipboard(cells: List[str]) -> Tuple[str, str]` *(static)* — ``(tsv, html)`` clipboard forms of one column of *cells*.
   - `ManifestModel.parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]` *(static)* — Parse a structured CSV into a list of :class:`BuilderStep`.
-- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L380)** — One asset within a step.
-- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L390)** — One step (= one future sequencer shot).
+  - `ManifestModel.prose_name(subject: str, case: str, rule: str) -> str` *(static)* — The object name a doc's prose *subject* stands for: *case*
+  - `ManifestModel.validate_patterns(value: Any) -> List[str]` *(static)* — Validate a row-grammar field: a list of regexes that compile.
+- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L579)** — One asset within a step.
+- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L593)** — One step (= one future sequencer shot).
   - `BuilderStep.display_text(self) -> str` *(property)* — Text shown in the tree Description column.
   - `BuilderStep.from_detection(cls, candidates: List[Dict]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert detection candidates to BuilderSteps + pre-filled ranges.
-- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L460)** — Immutable build instruction computed before any store mutation.
-- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L499)** — Assessment result for one object within a step.
-- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L515)** — Assessment result for one step.
+  - `BuilderStep.from_shots(cls, shots: List[Any]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert existing store shots back into BuilderSteps + their ranges.
+- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L731)** — Immutable build instruction computed before any store mutation.
+- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L770)** — Assessment result for one object within a step.
+- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L792)** — Assessment result for one step.
   - `StepStatus.status(self) -> str` *(property)* — Worst-of-children rollup.
+  - `StepStatus.needs_build(self) -> bool` *(property)* — Whether a Build would change this step: its shot is not built, an
   - `StepStatus.missing_count(self) -> int` *(property)*
   - `StepStatus.total_count(self) -> int` *(property)*
   - `StepStatus.find_object(results: List['StepStatus'], name: str, step_id: Optional[str] = None) -> Optional[ObjectStatus]` *(static)* — The first assessed :class:`ObjectStatus` named *name* in *results*.
-- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L587)** — Maps logical fields to CSV header names (case-insensitive).
+- **[`class ShotPairing`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L896)** — Which shot each step is -- :meth:`ShotManifest.pair`'s answer.
+- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L916)** — Maps logical fields to CSV header names (case-insensitive), plus the
   - `ColumnMap.to_dict(self) -> Dict[str, Any]` — Serialise to a JSON-safe dict (tuples → lists).
   - `ColumnMap.from_dict(cls, data: Dict[str, Any]) -> 'ColumnMap'` *(class)* — Reconstruct from a dict produced by :meth:`to_dict`.
 
@@ -863,13 +931,17 @@ Pure Shot Manifest data model + CSV parser.
 
 CSV mapping resolver — interprets JSON mapping files.
 
-- [`DEFAULT_DIR`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L75) — constant
-- **[`class Mapping(_MappingInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L275)** — Resolve a CSV's columns through a declarative JSON mapping file.
+- [`DEFAULT_DIR`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L78) — constant
+- **[`class Mapping(_MappingInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_mapping.py#L286)** — Resolve a CSV's columns through a declarative JSON mapping file.
   - `Mapping.templates() -> TemplateSet` *(static)* — The shared :class:`~pythontk.TemplateSet` backing mapping discovery.
   - `Mapping.seed_user_folder(ts: Optional[TemplateSet] = None) -> bool` *(static)* — Seed an empty user mapping folder with an example + format reference.
   - `Mapping.discover(directory: Optional[str] = None) -> List[str]` *(static)* — List available mapping names (without ``.json``).
+  - `Mapping.retired(name: str) -> Optional[Tuple[str, Dict[str, Any]]]` *(static)* — ``(replacement, option values)`` for a retired template, else ``None``.
   - `Mapping.load_mapping(name: str, directory: Optional[str] = None) -> Dict[str, Any]` *(static)* — Read a mapping JSON by *name*, validate it, and return the parsed dict.
-  - `Mapping.resolve(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None) -> List[BuilderStep]` *(static)* — Parse a CSV through a mapping and return fully resolved steps.
+  - `Mapping.option_specs(mapping: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]` *(static)* — The settings *mapping* exposes, one plain dict each, in file order.
+  - `Mapping.apply_options(mapping: Optional[Dict[str, Any]], values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]` *(static)* — The effective template: *mapping* with each option's patch merged in.
+  - `Mapping.resolve(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None, options: Optional[Dict[str, Any]] = None) -> List[BuilderStep]` *(static)* — Parse a CSV through a mapping and return fully resolved steps.
+  - `Mapping.choice_values(opt: Dict[str, Any]) -> Tuple[Any, ...]` *(static)* — A choice option's values: its schema ``field``'s allowed values,
 
 <a id="core_utils--engines--shots--manifest--mapping--_spec"></a>
 ### `core_utils/engines/shots/manifest/mapping/_spec.py`
@@ -878,9 +950,12 @@ Schema for a CSV *mapping* file, defined as a dataclass.
 
 - [`AUDIO_METHODS`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L41) — constant
 - **[`class AudioMethod`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L29)** — Descriptor for one ``audio_resolve`` strategy (drives validate/docs).
-- **[`class MappingSpec(SchemaSpec, _MappingSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L112)** — Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``).
+- **[`class MappingSpec(SchemaSpec, _MappingSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L203)** — Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``).
   - `MappingSpec.format_markdown(cls) -> str` *(class)* — Generate the full ``MAPPING_FORMAT.md`` reference from the schema SSoT.
   - `MappingSpec.validate_audio_resolve(value: Any) -> List[str]` *(static)* — Validate the polymorphic ``audio_resolve`` block.
+  - `MappingSpec.field_choices(path: str) -> Optional[Tuple[Any, ...]]` *(static)* — The allowed values of the schema field at dotted *path*
+  - `MappingSpec.validate_match(value: Any) -> List[str]` *(static)* — ``match`` is ``name`` or ``name_then_order``.
+  - `MappingSpec.validate_options(value: Any) -> List[str]` *(static)* — Validate the ``options`` block: ``{key: option}`` where an option is
   - `MappingSpec.validate_default_behaviors(value: Any) -> List[str]` *(static)* — Validate the ``default_behaviors`` block ({kind: [behavior names]}).
 
 <a id="core_utils--engines--shots--manifest--range_resolver"></a>
@@ -924,11 +999,11 @@ Pure shot-boundary detection math.
 
 Ledger of the edits the shot system authors on a scene's animation.
 
-- [`NO_OWNER`](pythontk/pythontk/core_utils/engines/shots/shot_ledger.py#L39) — constant
-- **[`class ShotEditLedger(_ShotEditLedgerInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_ledger.py#L74)** — What the shot system wrote on scene curves, and how to take it back.
+- [`NO_OWNER`](pythontk/pythontk/core_utils/engines/shots/shot_ledger.py#L43) — constant
+- **[`class ShotEditLedger(_ShotEditLedgerInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_ledger.py#L78)** — What the shot system wrote on scene curves, and how to take it back.
   - `ShotEditLedger.step_count(self) -> int` *(property)* — Number of stepped tangents the system currently claims.
   - `ShotEditLedger.key_count(self) -> int` *(property)* — Number of samples the system currently claims.
-  - `ShotEditLedger.curves(self) -> set` *(property)* — Every curve name either register mentions.
+  - `ShotEditLedger.curves(self) -> set` *(property)* — Every curve name any register mentions.
   - `ShotEditLedger.record_step(self, curve: str, time: float, in_type: str, out_type: str) -> bool` — Claim the step the system is about to write at ``(curve, time)``.
   - `ShotEditLedger.owns_step(self, curve: str, time: float) -> bool` — True when the system wrote the step at ``(curve, time)``.
   - `ShotEditLedger.release_step(self, curve: str, time: float) -> Optional[Tuple[str, str]]` — Drop the claim at ``(curve, time)``, returning ``(in, out)`` types.
@@ -942,9 +1017,17 @@ Ledger of the edits the shot system authors on a scene's animation.
   - `ShotEditLedger.key_records(self, curve: str) -> List[Tuple[float, int, str]]` — ``(time, owner_shot_id, edge)`` for every claimed sample on *curve*.
   - `ShotEditLedger.keyed_curves(self) -> List[str]` — Curve names carrying at least one claimed sample.
   - `ShotEditLedger.disown_shot(self, shot_id: int) -> int` — Re-point every claim owned by *shot_id* at :data:`NO_OWNER`.
+  - `ShotEditLedger.record_authored(self, curve: str, time: float, owner: int, behavior: str, obj: str, stamp: str = '') -> bool` — Claim a key a behavior wrote on *curve* for shot *owner*'s *obj*.
+  - `ShotEditLedger.owns_authored(self, curve: str, time: float) -> bool` — True when a behavior wrote the key at ``(curve, time)``.
+  - `ShotEditLedger.owns_any(self, curve: str, time: float) -> bool` — True when the system wrote the KEY at ``(curve, time)`` -- a bound
+  - `ShotEditLedger.release_authored(self, curve: str, time: float) -> bool` — Drop the behavior claim at ``(curve, time)``.
+  - `ShotEditLedger.authored(self, owner: Optional[int] = None, obj: Optional[str] = None, behavior: Optional[str] = None) -> List[Tuple[str, float]]` — ``(curve, time)`` of every behavior key matching the given filters,
+  - `ShotEditLedger.authored_stamps(self, owner: int, obj: str, behavior: str) -> set` — The recipe stamps of the keys *behavior* wrote on shot *owner*'s
+  - `ShotEditLedger.authored_pairs(self, owner: int) -> set` — ``{(obj, behavior)}`` every behavior key shot *owner* holds names --
   - `ShotEditLedger.shift(self, curve: str, lo: float, hi: float, delta: float) -> int` — Add *delta* to every claim on *curve* inside ``[lo, hi]``.
   - `ShotEditLedger.remap(self, curve: str, pairs) -> int` — Move claims from each ``old_time`` to its ``new_time``.
   - `ShotEditLedger.forget_curve(self, curve: str) -> None` — Drop every claim on *curve* (it was deleted, or is unreachable).
+  - `ShotEditLedger.rename_curve(self, old: str, new: str) -> bool` — Move every claim on curve *old* to *new* (the curve was renamed).
   - `ShotEditLedger.to_dict(self) -> Dict[str, Any]` — Plain-dict form for the scene payload.
   - `ShotEditLedger.from_dict(cls, data: Optional[Dict[str, Any]]) -> 'ShotEditLedger'` *(class)* — Rebuild from :meth:`to_dict`.
 
@@ -953,22 +1036,22 @@ Ledger of the edits the shot system authors on a scene's animation.
 
 DCC-agnostic shot data model and persistent store.
 
-- [`CLIP_NAME_STRATEGIES`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L179) — constant
-- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L72)** — Interface for saving / loading ShotStore data.
+- [`CLIP_NAME_STRATEGIES`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L185) — constant
+- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L73)** — Interface for saving / loading ShotStore data.
   - `ScenePersistence.save(self, data: Dict[str, Any]) -> None`
   - `ScenePersistence.load(self) -> Optional[Dict[str, Any]]`
-- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L109)** — Represents a single shot (contiguous animation range).
+- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L117)** — Represents a single shot (contiguous animation range).
   - `ShotBlock.duration(self) -> float` *(property)*
   - `ShotBlock.classify_objects(self) -> Dict[str, str]` — Return ``{obj_name: status_key}`` using stored metadata.
-- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L191)** — Base class for typed :class:`ShotStore` events.
-- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L203)** — A new shot was created and added to the store.
-- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L211)** — An existing shot's fields were modified.
-- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L219)** — A shot was removed from the store.
-- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L227)** — The active (selected) shot changed.
-- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L235)** — Detection-relevant settings were modified.
-- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L242)** — A :meth:`ShotStore.batch_update` context has exited.
-- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L249)** — The active store was discarded (scene change / new scene).
-- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L303)** — Central store for shot data with pluggable persistence.
+- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L197)** — Base class for typed :class:`ShotStore` events.
+- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L209)** — A new shot was created and added to the store.
+- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L217)** — An existing shot's fields were modified.
+- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L225)** — A shot was removed from the store.
+- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L233)** — The active (selected) shot changed.
+- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L241)** — Detection-relevant settings were modified.
+- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L248)** — A :meth:`ShotStore.batch_update` context has exited.
+- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L255)** — The active store was discarded (scene change / new scene).
+- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L309)** — Central store for shot data with pluggable persistence.
   - `ShotStore.snapshot_bounds(self) -> list` — Return the current shot state for the boundary ledger.
   - `ShotStore.push_boundary_snapshot(self, tag: Any = None) -> None` — Record the current bounds as an undo restore point.
   - `ShotStore.tag_boundary_snapshot(self, tag: Any) -> bool` — Attach *tag* to the newest restore point.
@@ -985,6 +1068,7 @@ DCC-agnostic shot data model and persistent store.
   - `ShotStore.active_shot_id(self) -> Optional[int]` *(property)* — The currently selected shot, or ``None``.
   - `ShotStore.set_active_shot(self, shot_id: Optional[int]) -> None` — Set the active shot and notify listeners.
   - `ShotStore.is_empty(self) -> bool` — ``True`` when the store declares no shots.
+  - `ShotStore.update_effect_recipe(self, **changes: Any) -> bool` — Change fields of the scene's :attr:`effect_recipe`.
   - `ShotStore.notify_settings_changed(self) -> None` — Fire a ``"settings_changed"`` event.
   - `ShotStore.add_listener(self, callback: Callable[[StoreEvent], None]) -> None` — Register a listener called on store mutations.
   - `ShotStore.remove_listener(self, callback: Callable[[StoreEvent], None]) -> None` — Remove a previously registered listener.
@@ -1000,6 +1084,7 @@ DCC-agnostic shot data model and persistent store.
   - `ShotStore.clear_active(cls) -> None` *(class)* — Reset the active store and persistence backend.
   - `ShotStore.add_invalidation_listener(cls, callback: Callable[['StoreInvalidated'], None]) -> None` *(class)* — Register a callback fired when the active store is discarded.
   - `ShotStore.remove_invalidation_listener(cls, callback: Callable[['StoreInvalidated'], None]) -> None` *(class)* — Remove a previously registered invalidation listener.
+  - `ShotStore.watch_settings(cls, callback: Callable[[], None]) -> Callable[[], None]` *(class)* — Call *callback* whenever the active store's settings change -- and
   - `ShotStore.invalidate(cls) -> None` *(class)* — Drop the active store (the scene changed) and fire the invalidation listeners.
   - `ShotStore.flush_pending(cls) -> None` *(class)* — Store what the active store holds but has not written yet.
   - `ShotStore.snap(self, frame: float, direction: str = 'nearest') -> float` — Return *frame* on a whole frame when snapping is on.
@@ -1037,6 +1122,8 @@ DCC-agnostic shot data model and persistent store.
   - `ShotStore.is_detection_relevant(self) -> bool` *(property)* — True when detection settings are actionable.
   - `ShotStore.detect_and_define(self, overwrite: bool = False) -> List[ShotBlock]` — Detect shot regions and define them in the store.
   - `ShotStore.leaf_name(node) -> str` *(static)* — Leaf name with namespace preserved: ``"|grp|ns:obj"`` -> ``"ns:obj"``.
+  - `ShotStore.member_key(node) -> str` *(static)* — The identity a doc name and a shot member are compared by: the leaf
+  - `ShotStore.resolve_member(self, name: str) -> Tuple[str, str]` — Resolve a doc object *name* to a scene node (scene hook).
   - `ShotStore.resolve_clip_specs(shots: List['ShotBlock'], strategy: str = 'name') -> List[Tuple[str, int, int]]` *(static)* — Resolve ``[(clip_name, start, end), …]`` — the single source of truth for
   - `ShotStore.declared_range(cls, strategy: str = 'name') -> Optional[Tuple[int, int]]` *(class)* — The ``(start, end)`` frames the active store's shots span, or None.
 
@@ -1137,7 +1224,7 @@ Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
 
 Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
 
-- **[`class ShotTransfer(_ShotTransferInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_transfer.py#L172)** — Encode a shot store into a manifest section and decode it into a store.
+- **[`class ShotTransfer(_ShotTransferInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_transfer.py#L178)** — Encode a shot store into a manifest section and decode it into a store.
   - `ShotTransfer.swap_up_axis(cls, label: str) -> str` *(class)* — *label* as the far side of a Y-up / Z-up crossing spells the channel.
   - `ShotTransfer.encode(cls, state: Dict[str, Any], *, spell: Optional[Spell] = None, curve_ref: Optional[CurveRef] = None, objects: Optional[Iterable[str]] = None, channels: Optional[Dict[str, Dict[str, Any]]] = None, audio: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]` *(class)* — The ``shots`` section for a store's :meth:`~pythontk.ShotStore.to_dict`.
   - `ShotTransfer.decode(cls, section: Dict[str, Any], *, resolve: Optional[Resolve] = None, curve_key: Optional[CurveKey] = None, key_exists: Optional[KeyExists] = None, scene_fps: Optional[float] = None, frame_offset: float = 0.0, converted: Optional[Callable[[str], bool]] = None, write_channels: Optional[Callable[[str, Dict[str, Any]], Any]] = None, write_audio: Optional[Callable[[List[Dict[str, Any]]], Any]] = None) -> Dict[str, Any]` *(class)* — A store dict (``from_dict`` shape) for a ``shots`` section.
@@ -1197,7 +1284,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapFactory.prepare_maps(cls, source: Union[str, List[str]], output_dir: str = None, group_by_set: bool = True, max_workers: int = 1, progress_callback: Callable = None, prefix: str = '', suffix: str = '', discover_dir: str = None, **kwargs) -> Union[List[str], Dict[str, List[str]]]` *(class)* — Main factory method.
   - `MapFactory.pack_transparency_into_albedo(cls, albedo_map_path: str, alpha_map_path: str, output_dir: Optional[str] = None, suffix: Optional[str] = '_AlbedoTransparency', invert_alpha: bool = False, output_path: Optional[str] = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Combines an albedo texture with a transparency map by packing the transparency into the alpha chann…
   - `MapFactory.pack_smoothness_into_metallic(cls, metallic_map_path: str, alpha_map_path: str, output_dir: str = None, suffix: str = '_MetallicSmoothness', invert_alpha: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Packs a smoothness (or inverted roughness) texture into the alpha channel of a metallic texture map.
-  - `MapFactory.detect_normal_map_format(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]` *(class)* — Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.
+  - `MapFactory.detect_normal_map_format(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]` *(class)* — Whether a normal map is OpenGL (Y+) or DirectX (Y-), read off its content.
   - `MapFactory.convert_normal_map_format(cls, file: str, target_format: str, output_path: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']` *(class)* — Converts a normal map between OpenGL (Y+) and DirectX (Y-) formats by inverting the green channel.
   - `MapFactory.convert_bump_to_normal(cls, bump_map: Union[str, 'Image.Image'], output_path: str = None, intensity: float = 1.0, output_format: str = 'opengl', smooth_filter: bool = True, filter_radius: float = 0.5, edge_wrap: bool = False, save: bool = True, **kwargs) -> Union[str, 'Image.Image']` *(class)* — Convert a bump/height map to a tangent-space normal map.
   - `MapFactory.extract_gloss_from_spec(cls, specular_map: str, channel: str = 'A') -> Union['Image.Image', None]` *(class)* — Extracts gloss from a specific channel in the specular map.
@@ -2086,21 +2173,22 @@ Structured run logs and threshold-based acceptance gates for pipeline
 
 Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 
-- [`MISSING`](pythontk/pythontk/core_utils/schema_spec.py#L47) — constant
-- **[`class SchemaError(ValueError)`](pythontk/pythontk/core_utils/schema_spec.py#L50)** — Raised by :meth:`ValidationResult.raise_if_errors` when a file is invalid.
-- **[`class FieldDoc`](pythontk/pythontk/core_utils/schema_spec.py#L55)** — One row of a schema's generated reference.
-- **[`class ValidationResult`](pythontk/pythontk/core_utils/schema_spec.py#L68)** — Outcome of :meth:`SchemaSpec.validate` — separated errors and warnings.
+- [`MISSING`](pythontk/pythontk/core_utils/schema_spec.py#L61) — constant
+- **[`class SchemaError(ValueError)`](pythontk/pythontk/core_utils/schema_spec.py#L84)** — Raised by :meth:`ValidationResult.raise_if_errors` when a file is invalid.
+- **[`class FieldDoc`](pythontk/pythontk/core_utils/schema_spec.py#L89)** — One row of a schema's generated reference.
+- **[`class ValidationResult`](pythontk/pythontk/core_utils/schema_spec.py#L102)** — Outcome of :meth:`SchemaSpec.validate` — separated errors and warnings.
   - `ValidationResult.ok(self) -> bool` *(property)* — ``True`` when there are no errors (warnings are tolerable).
   - `ValidationResult.raise_if_errors(self, prefix: str = '') -> None` — Raise :class:`SchemaError` joining all errors, or do nothing.
   - `ValidationResult.raise_or_warn(self, *, prefix: str = '', logger: Optional[logging.Logger] = None, strict: bool = False) -> None` — Enforce a validated file: raise on errors, log (or, if *strict*, raise on) warnings.
   - `ValidationResult.merge(self, other: 'ValidationResult', path: str = '') -> None` — Fold *other* in, prefixing each message with *path* (e.g.
-- **[`class SchemaSpec(_SchemaSpecInternal)`](pythontk/pythontk/core_utils/schema_spec.py#L159)** — Base for declarative template schemas (see module docstring).
+- **[`class SchemaSpec(_SchemaSpecInternal)`](pythontk/pythontk/core_utils/schema_spec.py#L466)** — Base for declarative template schemas (see module docstring).
   - `SchemaSpec.from_dict(cls, data: Dict[str, Any]) -> 'SchemaSpec'` *(class)* — Build an instance from a raw ``dict``, recursing into nested schemas.
   - `SchemaSpec.to_dict(self) -> Dict[str, Any]` — Serialise to a JSON/YAML-safe ``dict``;
   - `SchemaSpec.validate(cls, data: Any) -> ValidationResult` *(class)* — Validate a raw ``dict`` against this schema.
   - `SchemaSpec.skeleton(cls) -> Dict[str, Any]` *(class)* — A fully-populated example ``dict`` to model a new file after.
   - `SchemaSpec.describe(cls) -> List[FieldDoc]` *(class)* — Structured field-by-field reference (powers :meth:`to_markdown`).
   - `SchemaSpec.to_markdown(cls, title: Optional[str] = None, _level: int = 2) -> str` *(class)* — Markdown reference for this schema, recursing into nested schemas.
+  - `SchemaSpec.json_schema(cls) -> Dict[str, Any]` *(class)* — This schema as a JSON Schema (draft 2020-12) document.
   - `SchemaSpec.spec_field(*, help: str = '', example: Any = MISSING, required: bool = False, nested: Optional[Type['SchemaSpec']] = None, choices: Optional[Sequence[Any]] = None, validate: Optional[Callable[[Any], List[str]]] = None, default: Any = MISSING, default_factory: Any = MISSING)` *(static)* — A :func:`dataclasses.field` carrying schema metadata.
 
 <a id="core_utils--singleton_mixin"></a>
@@ -2409,9 +2497,9 @@ Deliverable verification for exported FBX / GLB pairs.
   - `VerificationReport.counts(self) -> Dict[str, int]`
   - `VerificationReport.summary(self) -> str` — Human-readable table plus a one-line verdict.
   - `VerificationReport.to_json(self) -> str`
-- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L175)** — Run file-level gates over an exported GLB and/or FBX.
+- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L172)** — Run file-level gates over an exported GLB and/or FBX.
   - `ExportVerifier.reader(self) -> Optional[GlbReader]` *(property)*
-  - `ExportVerifier.fbx(self) -> Optional[FbxFile]` *(property)*
+  - `ExportVerifier.fbx(self) -> Optional[FbxFile]` *(property)* — The FBX, parsed once: no gate reads its embedded media, and the take
   - `ExportVerifier.gate_names(self) -> List[str]` — Every registered gate, in run order.
   - `ExportVerifier.run(self, checks: Optional[Sequence[str]] = None) -> VerificationReport` — Run *checks* (default: all) and return the report.
   - `ExportVerifier.check_glb_container(self) -> List[Finding]` — The GLB parses and carries a scene graph.
@@ -2425,6 +2513,7 @@ Deliverable verification for exported FBX / GLB pairs.
   - `ExportVerifier.check_clip_origin(self) -> List[Finding]` — The stack is as long as the span its clips were cut against.
   - `ExportVerifier.check_fbx_container(self) -> List[Finding]` — The FBX parses;
   - `ExportVerifier.check_fbx_takes(self) -> List[Finding]` — Declared sidecar takes all exist as AnimationStacks.
+  - `ExportVerifier.check_fbx_take_channels(self) -> List[Finding]` — Every declared take is an exact slice of the animation: it animates
   - `ExportVerifier.check_cross_clips(self) -> List[Finding]` — GLB clip names exist as FBX stacks (the conversion kept them).
   - `ExportVerifier.check_baseline_diff(self) -> List[Finding]` — Structural drift vs a previous known-good GLB.
 
@@ -2434,8 +2523,8 @@ Deliverable verification for exported FBX / GLB pairs.
 Zero-dependency binary-FBX reader: header, node records, objects, takes.
 
 - [`FBX_MAGIC`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L25) — constant
-- **[`class FbxFile(_FbxFileInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L118)** — A parsed binary FBX, held read-only.
-  - `FbxFile.load(cls, path: str, decode_arrays: bool = False, raw_payloads: bool = True) -> 'FbxFile'` *(class)* — Parse *path*.
+- **[`class FbxFile(_FbxFileInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L142)** — A parsed binary FBX, held read-only.
+  - `FbxFile.load(cls, path: str, decode_arrays: Union[bool, Collection[str]] = False, raw_payloads: bool = True, span_arrays: Collection[str] = ()) -> 'FbxFile'` *(class)* — Parse *path*.
   - `FbxFile.is_fbx(path: str) -> bool` *(static)* — True when *path* starts with the binary-FBX magic.
   - `FbxFile.section(self, name: str) -> Optional[Dict[str, Any]]` — Top-level record *name* (``"Objects"``, ``"Connections"`` …).
   - `FbxFile.iter_objects(self) -> Iterator[Dict[str, Any]]` — Yield every child record of the ``Objects`` section.
@@ -2443,6 +2532,8 @@ Zero-dependency binary-FBX reader: header, node records, objects, takes.
   - `FbxFile.object_names(self, kind: str) -> List[str]` — Display names of every Objects child whose record name is *kind*.
   - `FbxFile.take_names(self) -> List[str]` — Animation take names — the ``AnimationStack`` display names.
   - `FbxFile.user_properties(self, name: str, kind: str = 'Model') -> List[Any]` — Every value a *kind* object carries for the user property *name*.
+  - `FbxFile.take_curves(self) -> Dict[str, Dict[Tuple[str, str, str], Tuple[Any, ...]]]` — What each take animates: ``{take: {(target, property, channel):
+  - `FbxFile.take_spans(self) -> Dict[str, Tuple[float, float]]` — Each take's ``(first, last)`` key in SECONDS, over every curve in it.
   - `FbxFile.connections(self) -> List[Tuple[str, Any, Any, Optional[str]]]` — Every ``C`` record as ``(kind, child_id, parent_id, property)``.
 
 <a id="file_utils--mesh_convert--fbx_media"></a>
@@ -2637,6 +2728,7 @@ Tile / frame tokens in a file path -- the one vocabulary every host reads.
   - `TiledPath.wildcard(cls, path: Optional[str], wildcard: Optional[str] = '*') -> str` *(class)* — *path* with every token replaced by *wildcard*.
   - `TiledPath.spell(cls, path: Optional[str], tile: int = 1001) -> str` *(class)* — *path* with each TILE token spelled for UDIM tile number *tile*.
   - `TiledPath.tiles(cls, path: Optional[str]) -> List[str]` *(class)* — Every file on disk *path*'s token denotes, sorted (the SET).
+  - `TiledPath.rename(cls, path: str, new_name: str, dry_run: bool = False) -> List[Tuple[str, str]]` *(class)* — Rename every file *path* denotes to *new_name*, in its own folder.
   - `TiledPath.representative(cls, path: Optional[str]) -> Optional[str]` *(class)* — The one concrete file *path*'s token denotes (collapse to one).
 
 <a id="file_utils--usd"></a>
@@ -2733,7 +2825,7 @@ Propose an articulated rig from the parts' geometry alone -- no DCC.
 
 The golden cases every port of :class:`ArticulationModel` is held to.
 
-- **[`class ArticulationConformance`](pythontk/pythontk/geo_utils/articulation/conformance.py#L31)** — Golden cases for the ports of :class:`ArticulationModel`.
+- **[`class ArticulationConformance`](pythontk/pythontk/geo_utils/articulation/conformance.py#L32)** — Golden cases for the ports of :class:`ArticulationModel`.
   - `ArticulationConformance.rigs() -> Dict[str, Dict[str, Any]]` *(static)* — The rigs the cases pose, by name.
   - `ArticulationConformance.cases(cls, seed: int = 0, per_rig: int = 4) -> Dict[str, Any]` *(class)* — The conformance document: ``{"tolerance", "rigs", "cases"}``.
 
@@ -2761,6 +2853,21 @@ The articulated-rig joint model and its grab solver -- pure math, no DCC.
   - `ArticulationModel.read(self, locals_: Sequence[Tuple[Sequence[float], Sequence[float]]], hint: Optional[Sequence[float]] = None) -> List[float]` — The state that poses the joints at *locals_* -- one local
   - `ArticulationModel.scale_of(self, locals_: Sequence[Tuple[Sequence[float], Sequence[float]]]) -> float` — How many of the runtime's units one of the record's makes, measured
   - `ArticulationModel.solve(self, state: Sequence[float], joint: int, local_point: Sequence[float], target: Sequence[float], rotation: Optional[Sequence[float]] = None) -> List[float]` — The state that brings *local_point* on joint *joint*'s link to the
+
+<a id="geo_utils--articulation--record"></a>
+### `geo_utils/articulation/record.py`
+
+The ``articulation`` record's payload and its web projection, declared once.
+
+- **[`class ArticulationChannel(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L33)** — One channel a joint turns or slides on, with its limits.
+- **[`class ArticulationJoint(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L60)** — One joint: its node, its rest frame in its parent's space, its channels.
+- **[`class ArticulationGrab(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L95)** — A part a hand grabs, and the joint it rides.
+- **[`class ArticulationRig(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L108)** — One rig: its joints, parents first, and the parts a hand grabs.
+- **[`class ArticulationRecord(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L129)** — The ``articulation`` record's payload: every articulated rig in the scene.
+- **[`class ArticulationWebJoint(ArticulationJoint)`](pythontk/pythontk/geo_utils/articulation/record.py#L148)** — A joint bound to the one glTF node carrying its name.
+- **[`class ArticulationWebGrab(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L155)** — A grabbed part bound to its glTF node.
+- **[`class ArticulationWebRig(ArticulationRig)`](pythontk/pythontk/geo_utils/articulation/record.py#L171)** — One rig bound to the file: its joints and grabbed parts carry node indices.
+- **[`class ArticulationWeb(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L189)** — The ``extras.articulation_web`` manifest: the record's rigs, bound to the file's glTF nodes.
 
 <a id="geo_utils--plate_emitter"></a>
 ### `geo_utils/plate_emitter.py`
@@ -2842,20 +2949,23 @@ Height-field shadow maps: a ground shadow that follows the light at runtime.
 
 Planar shadow projection — the geometry of a ground shadow, pure numpy, no DCC.
 
-- **[`class ShadowModel(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_projection.py#L64)** — The analytic shadow of a bounding cylinder (see :meth:`ShadowProjection.model`).
+- **[`class ShadowModel(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_projection.py#L65)** — The analytic shadow of a bounding cylinder (see :meth:`ShadowProjection.model`).
   - `ShadowModel.near(self) -> float` *(property)* — The near edge along ``u``, relative to the anchor (``-base``).
   - `ShadowModel.length(self) -> float` *(property)* — Extent along ``u`` (``reach + base + top``).
   - `ShadowModel.across(self) -> Vec2` *(property)* — Unit ``w`` — across the bearing, the plane's local +X.
   - `ShadowModel.rect(self, fractions: Sequence[float]) -> Rect` — The canvas rectangle *fractions* denote at this model, absolute in
   - `ShadowModel.placement(self, fractions: Sequence[float]) -> Tuple[Vec2, float, float]` — Where a plane carrying a canvas of *fractions* sits at this model:
-- **[`class ShadowProjection`](pythontk/pythontk/geo_utils/shadow_projection.py#L145)** — Planar shadow projection: exact per-point mapping plus the live model.
+- **[`class ShadowProjection`](pythontk/pythontk/geo_utils/shadow_projection.py#L146)** — Planar shadow projection: exact per-point mapping plus the live model.
   - `ShadowProjection.horizontal_axes(up: int = 1) -> Tuple[int, int]` *(static)* — The two horizontal axis indices, in order, for the vertical *up*.
   - `ShadowProjection.far_point(cls, contact, direction, scale: float) -> Tuple[float, float, float]` *(class)* — A directional source written as a point: *scale* x :attr:`FAR_FACTOR`
   - `ShadowProjection.model(cls, contact, light=None, ground: float = 0.0, radius: float = 0.5, height: float = 1.0, *, up: int = 1, direction=None, max_stretch: Optional[float] = None) -> ShadowModel` *(class)* — The shadow of the bounding cylinder standing on *contact*.
   - `ShadowProjection.project(cls, points, light=None, ground: float = 0.0, *, up: int = 1, direction=None, max_length: Optional[float] = None) -> Optional[Tuple[np.ndarray, np.ndarray]]` *(class)* — Project world *points* onto the ground plane along the light's rays.
   - `ShadowProjection.to_frame(ground_points, model: ShadowModel) -> np.ndarray` *(static)* — ``(N, 2)`` ground coordinates -> ``(u, w)`` relative to the model's
   - `ShadowProjection.fractions(rect: Rect, model: ShadowModel) -> Tuple[float, float, float, float]` *(static)* — Express a ``(u, w)`` canvas *rect* as the stamp a plane carries so a
-- **[`class ShadowRaster(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_projection.py#L372)** — What a rasterized shadow texture was drawn into (``ImgUtils.rasterize_shadow``).
+- **[`class ShadowRaster(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_projection.py#L373)** — What a rasterized shadow texture was drawn into (``ImgUtils.rasterize_shadow``).
+- **[`class ShadowConformance`](pythontk/pythontk/geo_utils/shadow_projection.py#L386)** — The golden cases every port of :meth:`ShadowProjection.model` is held to.
+  - `ShadowConformance.case(cls, contact: Sequence[float], light: Optional[Sequence[float]] = None, *, direction: Optional[Sequence[float]] = None, ground: float = 0.0, radius: float = 0.5, height: float = 1.0, max_stretch: float = ShadowProjection.DEFAULT_MAX_STRETCH, canvas: Sequence[float] = CANVAS, name: str = '') -> Dict[str, Any]` *(class)* — One case: its inputs and what the reference makes of them.
+  - `ShadowConformance.cases(cls, seed: int = 0, per_kind: int = 8) -> Dict[str, Any]` *(class)* — The conformance document: ``{"tolerance", "cases"}``.
 
 <a id="geo_utils--uv--budget"></a>
 ### `geo_utils/uv/budget.py`
@@ -2919,20 +3029,29 @@ UV island packing via the optional ``xatlas`` engine (arrays in -> arrays out).
 
 Texture transfer between two UV layouts of the SAME triangles (arrays in -> arrays out).
 
-- **[`class TransferTable`](pythontk/pythontk/geo_utils/uv/transfer.py#L77)** — The per-texel correspondence from a target layout back to its source.
+- **[`class TransferTable`](pythontk/pythontk/geo_utils/uv/transfer.py#L84)** — The per-texel correspondence from a target layout back to its source.
   - `TransferTable.passes(self) -> int` *(property)*
   - `TransferTable.nbytes(self) -> int` *(property)*
   - `TransferTable.coverage(self) -> 'np.ndarray'` *(property)* — Fraction of sub-samples covered per texel, ``float32`` in [0, 1].
   - `TransferTable.mask(self) -> 'np.ndarray'` *(property)* — Bool: texels touched by any sub-sample (what the output owns).
   - `TransferTable.frames(self) -> 'np.ndarray'` *(property)* — ``(N, 2, 2)`` tangent-frame rotations, source -> target, per triangle.
-- **[`class UvTransfer(HelpMixin)`](pythontk/pythontk/geo_utils/uv/transfer.py#L130)** — Remap textures between two UV layouts of the same triangles (see module doc).
+- **[`class UvTransfer(HelpMixin)`](pythontk/pythontk/geo_utils/uv/transfer.py#L137)** — Remap textures between two UV layouts of the same triangles (see module doc).
   - `UvTransfer.build(cls, src_tris, dst_tris, size: Union[int, Tuple[int, int]], *, supersample: int = 2, source_ids=None) -> TransferTable` *(class)* — Rasterize *dst_tris* and record, per texel, the source UV it maps to.
-  - `UvTransfer.transfer(cls, table: TransferTable, sources, *, source_masks=None, bilinear: bool = True) -> Tuple['np.ndarray', 'np.ndarray']` *(class)* — Remap *sources* through *table*.
+  - `UvTransfer.transfer(cls, table: TransferTable, sources, *, source_masks=None, bilinear: bool = True, value_max: Optional[float] = None) -> Tuple['np.ndarray', 'np.ndarray']` *(class)* — Remap *sources* through *table*.
   - `UvTransfer.transfer_normals(cls, table: TransferTable, sources, *, convention: str = 'opengl', source_masks=None, bilinear: bool = True, value_range: Tuple[float, float] = (0.0, 255.0)) -> Tuple['np.ndarray', 'np.ndarray']` *(class)* — Remap tangent-space normal maps, re-expressing XY in the target frame.
   - `UvTransfer.pad(cls, image, coverage, width: int = -1) -> 'np.ndarray'` *(class)* — Fill the gutter around covered texels (edge padding / dilation).
   - `UvTransfer.merge_layouts(cls, jobs: Dict[str, Dict[str, Any]], name: str, *, probe_size: int = 256) -> Dict[str, Dict[str, Any]]` *(class)* — Merge per-material *jobs* that share one UV layout into one job.
+  - `UvTransfer.layout_jobs(cls, parts: Sequence[Dict[str, Any]], sources: Sequence[Dict[str, Any]], *, log: Optional[Callable[[str], None]] = None) -> Dict[str, Dict[str, Any]]` *(class)* — A run's outputs, ``{label: job}``, from what each target contributed.
+  - `UvTransfer.layout_overlaps(cls, uv_tris, points, size: int = 256) -> Tuple[int, int]` *(class)* — ``(overlapping texels, covered texels)`` of a layout -- whether it bakes.
+  - `UvTransfer.output_labels(labels: Sequence[str], base: str, *, prefix: str = '', suffix: str = '') -> Dict[str, str]` *(static)* — ``{label: label to name the output by}`` for a run named *base*.
   - `UvTransfer.transfer_materials(cls, jobs: Dict[str, Dict[str, Any]], *, output_dir: str, channels: Optional[Sequence[str]] = None, size: Optional[int] = None, supersample: int = 2, padding: int = -1, name_format: str = '{material}_{channel}', normal_convention: Optional[str] = None, source_mask_from_uvs: bool = True, log=None) -> Dict[str, Dict[str, str]]` *(class)* — Transfer every channel of every target material and write the maps.
-  - `UvTransfer.normal_convention(cls, path: str, override: Optional[str] = None) -> str` *(class)* — The tangent-space convention *path*'s filename declares.
+  - `UvTransfer.concatenation_order(cls, target, parts, tolerance: Optional[float] = None) -> Optional[List[int]]` *(class)* — Which *parts*, in which order, join end to end into *target*.
+  - `UvTransfer.find_combined(cls, face_counts: Sequence[int], read: Callable[[int], Tuple[Any, Any, Any]], tolerance: Optional[float] = None) -> Optional[Tuple[int, List[int]]]` *(class)* — The one mesh of a selection combined from ALL the others.
+  - `UvTransfer.layouts_match(cls, src_tris, dst_tris, tolerance: Optional[float] = None) -> bool` *(class)* — True when two parameterizations of the same triangles are one layout.
+  - `UvTransfer.remap_lightmap(cls, image, src_tris, dst_tris, *, scale_offset: Optional[Sequence[float]] = None, size: Optional[int] = None, supersample: int = 2, padding: int = -1) -> 'np.ndarray'` *(class)* — Resample one object's lightmap into another lightmap layout.
+  - `UvTransfer.resample_lightmaps(cls, jobs: Sequence[Dict[str, Any]], *, output_dir: str, read, write, output_name: Optional[str] = None, claims=None, size: Optional[int] = None, supersample: int = 2, padding: int = -1, log=None) -> Dict[str, str]` *(class)* — Write each job's lightmap resampled into its target's lightmap layout.
+  - `UvTransfer.dominant_source(cls, job: Dict[str, Any]) -> Optional[int]` *(class)* — Index of the source covering the most of *job*'s target layout.
+  - `UvTransfer.normal_convention(cls, path: str, override: Optional[str] = None) -> str` *(class)* — The tangent-space convention of the normal map at *path*.
   - `UvTransfer.load_map(path: str) -> Tuple['np.ndarray', float]` *(static)* — ``(HxWxC float32, value max)`` -- 255 for 8-bit, 65535 for 16-bit.
   - `UvTransfer.save_map(path: str, arr: 'np.ndarray', value_max: float = 255.0) -> str` *(static)* — Write *arr* (in ``0..value_max``) as PNG -- 16-bit grey, else 8-bit.
   - `UvTransfer.triangle_frames(cls, src_tris, dst_tris) -> 'np.ndarray'` *(class)* — ``(N, 2, 2)`` rotation (+reflection) taking each source triangle's
@@ -2964,6 +3083,8 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.unique_dir_stems(dirs)` *(static)* — Unique, order-preserving output stems for a set of directories.
   - `ImgUtils.get_images(cls, directory, inc=None, exc='')` *(class)* — Get bitmap images from a given directory as PIL images.
   - `ImgUtils.get_image_size(image_path: str) -> Optional[Tuple[int, int]]` *(static)* — ``(width, height)`` of an image, read as cheaply as possible.
+  - `ImgUtils.get_image_mode(image_path: str) -> Optional[str]` *(static)* — The image's channel layout, read as cheaply as possible.
+  - `ImgUtils.texture_facts(cls, path: str, fields: Sequence[str] = TEXTURE_FACTS) -> Dict[str, Any]` *(class)* — What a texture listing shows beside a path, each read only if asked.
   - `ImgUtils.is_equirectangular(cls, image_path: str, tolerance: float = 0.05) -> Optional[bool]` *(class)* — Whether *image_path* is shaped like a latlong environment map (2:1).
   - `ImgUtils.is_environment_map(cls, image_path: str, *, latlong_only: bool = True, skip_lightmaps: bool = True) -> bool` *(class)* — True if *image_path* can light a scene as a dome / world environment.
   - `ImgUtils.get_image_info(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]` *(class)* — Get information about image files.
@@ -2985,6 +3106,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.dilate_image(image: 'np.ndarray', mask: Optional['np.ndarray'] = None, iterations: int = -1, connectivity: int = 8, return_mask: bool = False) -> 'np.ndarray'` *(static)* — Extend valid pixels outward into empty (background) regions.
   - `ImgUtils.denoise_image(cls, image: 'np.ndarray', mask: Optional['np.ndarray'] = None, radius: int = 2, strength: float = 3.0, noise: Optional[float] = None, outliers: float = 5.0) -> 'np.ndarray'` *(class)* — Edge-preserving denoise of a linear-light image (HDR-safe), within *mask*.
   - `ImgUtils.fill_empty_texels(cls, image: 'np.ndarray', mask: Optional['np.ndarray'] = None) -> 'np.ndarray'` *(class)* — Fill EVERY empty texel with its nearest valid texel's color.
+  - `ImgUtils.extrapolate_fill(cls, image: 'np.ndarray', mask: 'np.ndarray', rings: int = 1, clamp: float = 2.0) -> Tuple['np.ndarray', 'np.ndarray']` *(class)* — Grow *mask* by *rings* texels, continuing its content's slope.
   - `ImgUtils.compute_atlas_layout(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Lay out N weighted items as non-overlapping rects tiling the unit square.
   - `ImgUtils.atlas_pixel_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[int, int, int, int]]` *(static)* — Convert normalized ``scaleOffset`` rects to integer pixel rects.
   - `ImgUtils.flip_rect_v(rect: Sequence[float]) -> List[float]` *(static)* — A ``[sx, sy, ox, oy]`` atlas rect, V-flipped between UV conventions.
@@ -2992,6 +3114,10 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.inset_atlas_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], gutter: int) -> List[Tuple[float, float, float, float]]` *(static)* — Shrink each atlas rect by a pixel gutter on every side.
   - `ImgUtils.snap_atlas_rects(cls, rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[float, float, float, float]]` *(class)* — Snap normalized atlas rects onto the atlas's integer texel grid.
   - `ImgUtils.inset_rects_to_texel_centers(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], bboxes: Optional[Sequence[Optional[Tuple[float, float, float, float]]]] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Re-aim each rect so its content's edge UVs sample border-texel CENTERS.
+  - `ImgUtils.uv_crop_extent(bbox: Optional[Tuple[float, float, float, float]], max_coverage: float = 0.85) -> Tuple[float, float]` *(static)* — The ``(u, v)`` fraction of a map :meth:`crop_to_uv_bbox` keeps.
+  - `ImgUtils.crop_to_uv_bbox(img: 'np.ndarray', bbox: Optional[Tuple[float, float, float, float]], cell: Sequence[float], max_coverage: float = 0.85) -> Tuple['np.ndarray', List[float], Tuple[float, float, float, float]]` *(static)* — Crop a baked map to its UV island's bounds and fold the crop into its atlas rect.
+  - `ImgUtils.resize_into_cell(cls, image: 'np.ndarray', size: Tuple[int, int], coverage: Optional['np.ndarray'] = None, edge_centers: bool = True) -> Tuple['np.ndarray', 'np.ndarray']` *(class)* — Resample a tile into the atlas cell it is published in.
+  - `ImgUtils.stitch_seams(cls, image: 'np.ndarray', pairs: 'np.ndarray', iterations: int = 64) -> 'np.ndarray'` *(class)* — Make each pair of atlas positions read one value: a seam between two cells.
   - `ImgUtils.assemble_atlas(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'` *(class)* — Composite per-item images into one atlas at normalized ``scaleOffset`` rects.
   - `ImgUtils.radial_gradient(size: Tuple[int, int], center: Tuple[float, float] = (0.5, 0.5), max_radius: Optional[float] = None, falloff_power: float = 1.0, invert: bool = False, dtype: type = None) -> 'np.ndarray'` *(static)* — Generate a normalized radial gradient as a 2D numpy array.
   - `ImgUtils.rasterize_uv_triangles(cls, triangles, size: int = 512, supersample: int = 4) -> 'np.ndarray'` *(class)* — Rasterize filled UV-space triangles into a single-channel coverage image.
@@ -3008,12 +3134,16 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.pack_channel_into_alpha(cls, image: Union[str, Image.Image], alpha: Union[str, Image.Image], output_path: Optional[str] = None, invert_alpha: bool = False, resize_alpha: bool = True, preserve_existing_alpha: bool = False) -> str | Image.Image` *(class)* — Packs a channel from the alpha source image into the alpha channel of the base image.
   - `ImgUtils.srgb_to_linear(cls, data)` *(class)* — Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.
   - `ImgUtils.linear_to_srgb(cls, data)` *(class)* — Friendly wrapper: accepts PIL Image, numpy array, or list/tuple.
+  - `ImgUtils.convert_scene_linear(cls, image, src, dst='scene-linear Rec.709-sRGB', bgr=False)` *(class)* — Re-express linear light from one colour space's primaries in another's.
+  - `ImgUtils.quantize_8bit(cls, unit)` *(class)* — Quantize values in 0..1 to uint8 by stochastic rounding.
   - `ImgUtils.encode_hdr_for_web(cls, path, percentile=None)` *(class)* — Encode a linear-float HDR image (EXR/HDR) as sRGB PNG bytes for the web.
+  - `ImgUtils.encode_hdr_radiance(cls, path) -> bytes` *(class)* — Encode a linear-float HDR image (EXR/HDR) as Radiance ``.hdr`` bytes.
   - `ImgUtils.generate_mipmaps(cls, image: Union[str, Image.Image]) -> List[Image.Image]` *(class)* — Generate a mipmap chain for an image.
   - `ImgUtils.depalettize_image(cls, image: Image.Image) -> Image.Image` *(class)* — Converts a paletted image (Mode P) to RGB or RGBA.
   - `ImgUtils.is_image_constant(cls, image: Union[str, PILImage.Image], tolerance: int = 0) -> Tuple[bool, Optional[Tuple[int, ...]]]` *(class)* — Check if an image is constant color.
   - `ImgUtils.get_base_texture_name(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str` *(class)* — Extracts the base texture name from a filename or path,
   - `ImgUtils.extract_channels(cls, image_path: Union[str, 'Image.Image'], channel_config: Dict[str, Dict[str, Any]], output_dir: str = None, base_name: str = None, save: bool = True, **kwargs) -> Dict[str, Union[str, 'Image.Image']]` *(class)* — Generic channel extraction utility.
+  - `ImgUtils.detect_normal_map_format(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]` *(class)* — Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.
 
 <a id="img_utils--exposure_equalizer"></a>
 ### `img_utils/exposure_equalizer.py`
@@ -3106,6 +3236,7 @@ One atlas per shadow-rig type: equal cells, a tile rewritten in place.
 - **[`class MathUtils(_MathClusteringInternal, _MathCurveFitInternal, HelpMixin)`](pythontk/pythontk/math_utils/_math_utils.py#L21)**
   - `MathUtils.eval_expression(expression: str) -> str` *(static)* — Evaluate a math expression string (calculator engine).
   - `MathUtils.convert_length_unit(cls, value: float, from_unit: str, to_unit: str) -> str` *(class)* — Convert a length ``value`` between units (mm, cm, m, km, in, ft, yd, mi).
+  - `MathUtils.metres_per_unit(cls, unit: str, default: Optional[float] = None) -> Optional[float]` *(class)* — Metres in one *unit* (a :attr:`LENGTH_UNIT_FACTORS` key, any case).
   - `MathUtils.calculate_uv_padding(map_size: int, normalize: bool = False, factor: int = 256) -> float` *(static)* — Texture gutter width for a given map size — one rule, every consumer.
   - `MathUtils.uv_tile_margin(cls, map_size: int, factor: int = 256) -> float` *(class)* — Normalized border a UV tile keeps clear — one rule, every consumer.
   - `MathUtils.udim_to_tile(udim: int) -> Tuple[int, int]` *(static)* — UDIM tile number to its (u, v) tile offset — one rule, every packer.
@@ -3280,13 +3411,14 @@ The preview server's served surface: its URL vocabulary and the HTTP handler.
 - [`PLAYBLAST_PATH`](pythontk/pythontk/net_utils/preview/routes.py#L46) — constant
 - [`PLAYBLAST_ACTIONS`](pythontk/pythontk/net_utils/preview/routes.py#L51) — constant
 - [`SNAPSHOT_PATH`](pythontk/pythontk/net_utils/preview/routes.py#L55) — constant
+- [`SCENE_PATH`](pythontk/pythontk/net_utils/preview/routes.py#L60) — constant
 
 <a id="net_utils--preview--server"></a>
 ### `net_utils/preview/server.py`
 
 Localhost static-file server for live browser / WebXR previews.
 
-- **[`class PreviewServer(LoggingMixin, _ServeRootMixin, _SharingMixin, _PageOutputsMixin)`](pythontk/pythontk/net_utils/preview/server.py#L120)** — Serve a directory of preview assets on loopback, with a live manifest.
+- **[`class PreviewServer(LoggingMixin, _ServeRootMixin, _SharingMixin, _PageOutputsMixin, _SceneDescriptionMixin)`](pythontk/pythontk/net_utils/preview/server.py#L128)** — Serve a directory of preview assets on loopback, with a live manifest.
   - `PreviewServer.port(self) -> Optional[int]` *(property)* — The bound port, or ``None`` before :meth:`start`.
   - `PreviewServer.url(self) -> Optional[str]` *(property)* — The viewer URL, or ``None`` before :meth:`start`.
   - `PreviewServer.version(self) -> int` *(property)* — Number of published revisions;
@@ -3318,13 +3450,15 @@ Localhost static-file server for live browser / WebXR previews.
   - `PreviewServer.finish_playblast(self, token: str, target: Optional[str] = None) -> Dict[str, Any]` — Encode a recording and report where it went.
   - `PreviewServer.recording_path(self, token: str) -> Optional[Path]` — The file a finished recording produced, or None.
   - `PreviewServer.save_snapshot(self, data: bytes, content_type: str = 'image/png') -> Dict[str, Any]` — Write a still of the page's view, and report where it went.
+  - `PreviewServer.scene_url(self) -> Optional[str]` *(property)* — Where :meth:`describe_scene` is served on this machine, or ``None``
+  - `PreviewServer.describe_scene(self, section: Optional[str] = None, start: int = 0) -> Dict[str, Any]` — The published scene as data: the payload served at ``/scene.json``.
 
 <a id="net_utils--remote_file"></a>
 ### `net_utils/remote_file.py`
 
 Read a file by ``http(s)`` URL with the same surface as a local read.
 
-- **[`class RemoteFile(_RemoteFileInternal)`](pythontk/pythontk/net_utils/remote_file.py#L89)** — Fetch the bytes behind an ``http(s)`` URL, with share links normalized.
+- **[`class RemoteFile(_RemoteFileInternal)`](pythontk/pythontk/net_utils/remote_file.py#L97)** — Fetch the bytes behind an ``http(s)`` URL, with share links normalized.
   - `RemoteFile.is_url(source: str) -> bool` *(static)* — True when *source* is an ``http`` or ``https`` URL.
   - `RemoteFile.normalize(cls, url: str) -> str` *(class)* — The download form of *url*;
   - `RemoteFile.open(cls, url: str, *, timeout: Optional[float] = None, headers: Optional[Dict[str, str]] = None)` *(class)* — Open *url* (normalized) and return the response for streaming.
@@ -3379,7 +3513,7 @@ The in-application half of the RPC pair: registry + marshaller + server.
 - **[`class MainThreadMarshaller(_MainThreadMarshallerInternal)`](pythontk/pythontk/net_utils/rpc/plugin_core.py#L200)** — Run a callable on the host's Qt main thread and block for its result.
   - `MainThreadMarshaller.is_active(self)` — True when :meth:`run` will marshal rather than call direct.
   - `MainThreadMarshaller.run(self, fn, *args, timeout=None, **kwargs)` — Call *fn*, on the main thread when one is reachable.
-- **[`class RpcPlugin(object)`](pythontk/pythontk/net_utils/rpc/plugin_core.py#L410)** — One host plugin: a registry, a marshaller, and the server that joins them.
+- **[`class RpcPlugin(object)`](pythontk/pythontk/net_utils/rpc/plugin_core.py#L426)** — One host plugin: a registry, a marshaller, and the server that joins them.
   - `RpcPlugin.import_ops(package)` *(static)* — Import *package* (dotted name), forcing its ``@register`` side effects.
   - `RpcPlugin.port(self)` *(property)* — Configured port: ``<PREFIX>_PORT`` if set and numeric, else the default.
   - `RpcPlugin.is_hosted(self)` — True only inside the real host application.
@@ -3395,7 +3529,7 @@ The in-application half of the RPC pair: registry + marshaller + server.
 
 Expose a local HTTP port at a public HTTPS link, through a tunnel CLI.
 
-- **[`class ShareTunnel(LoggingMixin, _ShareTunnelInternal)`](pythontk/pythontk/net_utils/share_tunnel.py#L427)** — Expose ``http://<host>:<port>`` at a public HTTPS link while running.
+- **[`class ShareTunnel(LoggingMixin, _ShareTunnelInternal)`](pythontk/pythontk/net_utils/share_tunnel.py#L511)** — Expose ``http://<host>:<port>`` at a public HTTPS link while running.
   - `ShareTunnel.resolve_provider(cls, provider: Optional[str] = None) -> str` *(class)* — The provider a share uses.
   - `ShareTunnel.executable(cls, provider: str) -> Optional[str]` *(class)* — Path to *provider*'s CLI, or ``None`` when it is not installed.
   - `ShareTunnel.not_installed_error(cls, provider: str, detail: str = '') -> FileNotFoundError` *(class)* — The fix-shaped error for a provider whose CLI is missing.
@@ -3426,6 +3560,7 @@ Expose a local HTTP port at a public HTTPS link, through a tunnel CLI.
 
 - [`ANSI_ESCAPE_RE`](pythontk/pythontk/str_utils/_str_utils.py#L21) — constant
 - **[`class StrUtils(_StrNamePatternInternal, _StrSearchInternal, _StrAffixInternal, CoreUtils)`](pythontk/pythontk/str_utils/_str_utils.py#L32)**
+  - `StrUtils.apply_name_rule(cls, name: str, rule: str) -> str` *(class)* — *name* made legal by the :attr:`NAME_RULES` rule called *rule* --
   - `StrUtils.is_legal_name(name) -> bool` *(static)* — Whether *name* is a non-empty string of :attr:`LEGAL_NAME_PATTERN`
   - `StrUtils.illegal_name_chars(name: str) -> List[str]` *(static)* — The distinct characters of *name* a legal name may not hold, in the
   - `StrUtils.name_error(cls, name, subject: str = 'names', reason: str = '') -> Optional[str]` *(class)* — Why *name* is not a legal name, as one sentence, or ``None`` when it is.
@@ -3461,6 +3596,7 @@ Expose a local HTTP port at a public HTTPS link, through a tunnel CLI.
   - `StrUtils.format_suffix(string: str, suffix: str = '', strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False) -> str` *(static)* — Re-format the suffix for the given string.
   - `StrUtils.strip_known_affix(string: str, prefix: str = '', suffix: str = '', *, case_sensitive: bool = False) -> str` *(static)* — Strip a configured prefix and/or suffix from a string.
   - `StrUtils.strip_any_affix(string: str, known, *, exclude=(), one: bool = True, case_sensitive: bool = True) -> str` *(static)* — Strip whichever affix in *known* the string carries, from either end.
+  - `StrUtils.common_name(paths, *, sep: str = '|', strip=(), max_length: int = 32) -> str` *(static)* — A short name for what a set of hierarchy items is collectively called.
   - `StrUtils.infer_affix_mode(text: str, delimiter: str = '_', *, default: str = 'prefix') -> str` *(static)* — Infer ``"prefix"`` or ``"suffix"`` from *delimiter* placement in *text*.
   - `StrUtils.split_affix(text: str, mode: str = 'auto', *, default: str = 'prefix', delimiter: str = '_') -> Tuple[str, str]` *(static)* — Split an affix string into a ``(prefix, suffix)`` pair per *mode*.
   - `StrUtils.delimit_affix(text: str, mode: str = 'suffix', *, delimiter: str = '_') -> str` *(static)* — Give a bare affix token its boundary delimiter, on *mode*'s side.

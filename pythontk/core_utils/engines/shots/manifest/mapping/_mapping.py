@@ -51,7 +51,7 @@ import json
 import logging
 import re as _re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from pythontk import TemplateSet
 
@@ -61,7 +61,10 @@ from pythontk.core_utils.engines.shots.manifest.manifest_model import (
     BuilderStep,
     ColumnMap,
 )
-from pythontk.core_utils.engines.shots.manifest.mapping._spec import MappingSpec
+from pythontk.core_utils.engines.shots.manifest.mapping._spec import (
+    MappingSpec,
+    _MappingSpecInternal,
+)
 
 # Log under the package name, not this private impl module, so the logger name
 # stays stable across the __init__ -> _mapping split.
@@ -78,6 +81,14 @@ DEFAULT_DIR: Path = Path(__file__).parent
 
 class _MappingInternal(object):
     """Internal helpers for Mapping."""
+
+    @staticmethod
+    def choice_values(opt: Dict[str, Any]) -> Tuple[Any, ...]:
+        """A choice option's values: its schema ``field``'s allowed values,
+        else its authored ``choices`` keys."""
+        if "field" in opt:
+            return _MappingSpecInternal.field_choices(str(opt["field"])) or ()
+        return tuple(opt.get("choices") or {})
 
     @staticmethod
     def _build_pipeline(
@@ -357,6 +368,19 @@ class Mapping(_MappingInternal):
             return []
         return sorted(p.stem for p in d.glob("*.json") if not p.stem.startswith("_"))
 
+    #: Retired built-in templates -> ``(replacement, option values)``: what a
+    #: saved ``.active`` pointer to one resolves to while its notice runs.
+    _RETIRED: Dict[str, Tuple[str, Dict[str, Any]]] = {
+        "speedrun": ("default", {"audio": "derive"}),
+    }
+
+    @staticmethod
+    def retired(name: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """``(replacement, option values)`` for a retired template, else ``None``."""
+        if name in Mapping.templates().names():
+            return None  # a user template of that name wins
+        return Mapping._RETIRED.get(name)
+
     @staticmethod
     def load_mapping(
         name: str,
@@ -375,13 +399,31 @@ class Mapping(_MappingInternal):
         caller can surface a precise message instead of a stack trace.
 
         Parameters:
-            name: Mapping stem (e.g. ``"speedrun"``) or a full ``.json`` path.
+            name: Mapping stem (e.g. ``"default"``) or a full ``.json`` path.
             directory: Optional folder override.
 
         Raises:
             FileNotFoundError: If no matching mapping exists.
             pythontk.SchemaError: If the mapping is structurally invalid.
         """
+        retired = Mapping.retired(name) if directory is None else None
+        if retired is not None:
+            from pythontk.core_utils.deprecation import Deprecation
+
+            replacement, values = retired
+            Deprecation.warn(
+                f"shot-manifest mapping {name!r}",
+                f"{replacement!r} with options {values!r}",
+                remove_in="0.14.0",
+                since="2026-10-01",
+                kind="value",
+            )
+            data = Mapping.load_mapping(replacement)
+            options = data.get("options") or {}
+            for key, value in values.items():
+                if key in options:
+                    options[key] = dict(options[key], default=value)
+            return data
         if name.endswith(".json"):
             path = Path(name)
             if not path.is_file():
@@ -404,12 +446,94 @@ class Mapping(_MappingInternal):
         return data
 
     @staticmethod
+    def option_specs(mapping: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The settings *mapping* exposes, one plain dict each, in file order.
+
+        Shaped for a UI widget factory (uitk's ``AttributeSpec`` reads these
+        names): ``key``, ``kind`` (``bool`` | ``choice``), ``label``,
+        ``tooltip``, ``default``, and for a choice ``choices`` as
+        ``[(label, value, tooltip), ...]`` -- a ``field`` choice offers that
+        schema field's allowed values (labelled from ``choices`` where given,
+        else spelled out), so the list can never drift from what the field
+        accepts.
+        """
+        specs: List[Dict[str, Any]] = []
+        for key, opt in ((mapping or {}).get("options") or {}).items():
+            kind = opt.get("kind", "bool")
+            spec: Dict[str, Any] = {
+                "key": key,
+                "kind": kind,
+                "label": opt.get("label", key),
+                "tooltip": opt.get("tooltip", ""),
+            }
+            if kind == "choice":
+                authored = opt.get("choices") or {}
+                values = _MappingInternal.choice_values(opt)
+                spec["choices"] = [
+                    (
+                        authored.get(v, {}).get(
+                            "label", str(v).replace("_", " ").title()
+                        ),
+                        v,
+                        authored.get(v, {}).get("tooltip", ""),
+                    )
+                    for v in values
+                ]
+                spec["default"] = opt.get("default", next(iter(values), None))
+            else:
+                spec["default"] = bool(opt.get("default", False))
+            specs.append(spec)
+        return specs
+
+    @staticmethod
+    def apply_options(
+        mapping: Optional[Dict[str, Any]],
+        values: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """The effective template: *mapping* with each option's patch merged in.
+
+        Every option contributes the patch for its value -- *values[key]*
+        when that is a valid value, else the option's default -- merged over
+        the template (``UserConfig.deep_merge``: dicts merge, lists and
+        scalars replace).  The ``options`` block itself is dropped, so the
+        result is an ordinary template and applying it again is a no-op.
+
+        Parameters:
+            mapping: A loaded template (``load_mapping``).
+            values: ``{option key: value}``, e.g. a UI's saved selections.
+        """
+        from pythontk.core_utils.user_config import UserConfig
+
+        mapping = mapping or {}
+        values = values or {}
+        result = {k: v for k, v in mapping.items() if k != "options"}
+        for spec in Mapping.option_specs(mapping):
+            opt = mapping["options"][spec["key"]]
+            value = values.get(spec["key"], spec["default"])
+            if spec["kind"] == "choice" and "field" in opt:
+                if value not in _MappingInternal.choice_values(opt):
+                    value = spec["default"]
+                patch = value  # the field's value, nested along its path
+                for part in reversed(str(opt["field"]).split(".")):
+                    patch = {part: patch}
+            elif spec["kind"] == "choice":
+                choice = opt.get("choices", {}).get(value)
+                if choice is None:
+                    choice = opt.get("choices", {}).get(spec["default"], {})
+                patch = choice.get("set", {})
+            else:
+                patch = opt.get("set", {}) if bool(value) else opt.get("unset", {})
+            result = UserConfig.deep_merge(result, patch)
+        return result
+
+    @staticmethod
     def resolve(
         csv_path: str,
         mapping: Optional[Dict[str, Any]] = None,
         *,
         name: Optional[str] = None,
         directory: Optional[str] = None,
+        options: Optional[Dict[str, Any]] = None,
     ) -> List[BuilderStep]:
         """Parse a CSV through a mapping and return fully resolved steps.
 
@@ -421,11 +545,14 @@ class Mapping(_MappingInternal):
             mapping: Pre-loaded mapping dict.
             name: Mapping file stem to load via :func:`load_mapping`.
             directory: Search directory for :func:`load_mapping`.
+            options: Values for the template's options (:meth:`apply_options`);
+                an option left out takes its default.
         """
         if mapping is None and name is not None:
             mapping = Mapping.load_mapping(name, directory)
 
-        col_map, post = _MappingInternal._build_pipeline(mapping or {})
+        mapping = Mapping.apply_options(mapping, options)
+        col_map, post = _MappingInternal._build_pipeline(mapping)
         return ManifestModel.parse_csv(csv_path, columns=col_map, post_process=post)
 
 

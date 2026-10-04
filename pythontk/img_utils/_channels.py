@@ -1,15 +1,21 @@
 # !/usr/bin/python
 # coding=utf-8
 """Per-channel image operations: inversion, swizzling, packing grayscale maps
-into channels and extracting them back out (the bodies behind the
+into channels and extracting them back out, and reading a normal map's
+handedness from how its X and Y channels integrate (the bodies behind the
 :class:`ImgUtils` facade).
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Dict, Union, Any, Optional
 
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore
 try:
     from PIL import Image, ImageOps, ImageChops
 except ImportError:
@@ -315,3 +321,96 @@ class _ImgChannelInternal:
             results[src_chan] = out_path
 
         return results
+
+    @classmethod
+    def detect_normal_map_format(
+        cls,
+        image: Union[str, "Image.Image"],
+        threshold: float = 0.25,
+        min_gradient_std: float = 1.0,
+    ) -> Optional[str]:
+        """Body of :meth:`ImgUtils.detect_normal_map_format`."""
+        try:
+            # convert("RGB") always returns our own copy (PIL copies even when
+            # the mode already matches), so the in-place thumbnail() below never
+            # mutates a caller-supplied Image.
+            img = cls.ensure_image(image).convert("RGB")
+
+            # Reducing first keeps the common case cheap, but it is a LOW-PASS
+            # over exactly the gradients this statistic reads, so it cannot be
+            # the last word: on maps whose relief is fine and shallow it
+            # averages the signal flat (measured on real OpenGL bakes: r fell
+            # -0.368 -> -0.105 and -0.19 -> -0.09, both under the threshold, a
+            # correct answer downgraded to "don't know"). So the reduction is a
+            # FAST PATH -- taken when it answers, re-read at native resolution
+            # when it does not. Full res costs ~68 ms on a 2048 map against the
+            # ~50 ms already spent decoding it, so the escalation is cheap and
+            # only the indeterminate minority pays it.
+            reduced = img
+            if max(img.size) > 512:
+                # `resize` rather than `copy() + thumbnail()`: thumbnail is
+                # in-place, and the full-size image has to survive for the
+                # re-read below, so taking it that way costs a full-size copy
+                # first (48 MB on a 4k map). Same `reducing_gap` two-step, same
+                # aspect rule, byte-identical output, and measurably faster.
+                width, height = img.size
+                scale = 512 / max(width, height)
+                reduced = img.resize(
+                    (max(1, round(width * scale)), max(1, round(height * scale))),
+                    reducing_gap=2.0,
+                )
+
+            correlation = cls._normal_handedness_correlation(reduced, min_gradient_std)
+            if (correlation is None or abs(correlation) <= threshold) and (
+                reduced is not img
+            ):
+                full = cls._normal_handedness_correlation(img, min_gradient_std)
+                if full is not None:
+                    correlation = full
+
+            if correlation is None:
+                return None
+            if correlation < -threshold:
+                return "OpenGL"
+            if correlation > threshold:
+                return "DirectX"
+            return None
+
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                f"Error detecting normal map format: {e}"
+            )
+            return None
+
+    @staticmethod
+    def _normal_handedness_correlation(
+        img: "Image.Image", min_gradient_std: float
+    ) -> Optional[float]:
+        """``corr(dR/dy, dG/dx)`` for *img*, or ``None`` if it is meaningless.
+
+        The integrability statistic behind :meth:`detect_normal_map_format`,
+        split out so the same computation serves both the reduced fast path and
+        the native-resolution re-read. Negative = OpenGL, positive = DirectX;
+        the caller owns the threshold.
+
+        ``None`` means "no usable signal here", not "flat": either channel's
+        gradient falling under *min_gradient_std* (8-bit units) makes the
+        correlation noise, and a non-finite result (a constant channel) is the
+        same answer arrived at by division.
+        """
+        # Only R and G carry the signal, so only R and G are materialized --
+        # `np.array(img)` would build the blue plane too, a third of the
+        # allocation for nothing (measured on a 2048 map: 218 -> 201 MB peak,
+        # and marginally faster). Identical correlation to 0e+00.
+        dRy = np.gradient(  # dR/dy along image rows
+            np.asarray(img.getchannel("R"), dtype=np.float32), axis=0
+        ).ravel()
+        dGx = np.gradient(  # dG/dx along image cols
+            np.asarray(img.getchannel("G"), dtype=np.float32), axis=1
+        ).ravel()
+        # Variance floor: flat or near-flat inputs produce meaningless
+        # correlations (often NaN, often spuriously signed).
+        if dRy.std() < min_gradient_std or dGx.std() < min_gradient_std:
+            return None
+        correlation = np.corrcoef(dRy, dGx)[0, 1]
+        return float(correlation) if np.isfinite(correlation) else None
