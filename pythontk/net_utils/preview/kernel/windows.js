@@ -187,9 +187,10 @@ function insertInOrder(parent, element, rank) {
  * into one. `title` is the bar button's tooltip.
  *
  * Returns `{category, element, button, shown, show(on), toggle(),
- * onShow(fn), setBadge(text), section(title)}`: `onShow(fn)` calls
- * `fn(shown)` whenever it opens or closes; `setBadge(text)` marks the bar
- * button (a job running with the window shut), `''` clears it; `section`
+ * onShow(fn), setBadge(text, owner), section(title)}`: `onShow(fn)` calls
+ * `fn(shown)` whenever it opens or closes; `setBadge(text, owner)` marks the
+ * bar button (a job running with the window shut), `''` clears *owner*'s --
+ * each owner holds its own, and the button shows the newest one; `section`
  * adds a block the caller owns -- `{element, shown, show(on), remove(),
  * setRows, addButton, addSlider, addToggle}`, its `title` a heading over it.
  */
@@ -225,6 +226,10 @@ export function windowFor(category, { title = '' } = {}) {
   insertInOrder(el.categories, button, rank);
 
   const listeners = [];
+  //: Each job's badge, by owner, in the order set: the button wears the
+  //: latest. One window runs several jobs -- a still saved while a playblast
+  //: encodes -- and each clears only its own.
+  const badges = new Map();
   const show = (on = true) => {
     const shown = Boolean(on);
     if (frame.hidden === !shown) return;
@@ -252,9 +257,12 @@ export function windowFor(category, { title = '' } = {}) {
     show,
     toggle() { show(frame.hidden); },
     onShow(fn) { listeners.push(fn); },
-    setBadge(text) {
-      button.textContent = text ? `${category} · ${text}` : category;
-      button.classList.toggle('busy', Boolean(text));
+    setBadge(text, owner = '') {
+      badges.delete(owner); // set again, it is the latest
+      if (text) badges.set(owner, String(text));
+      const shown = [...badges.values()].pop();
+      button.textContent = shown ? `${category} · ${shown}` : category;
+      button.classList.toggle('busy', Boolean(shown));
     },
     section(heading = '') {
       const block = node('div', 'section');

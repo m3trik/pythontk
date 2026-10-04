@@ -688,6 +688,76 @@ class TestMissingSourceMaps(unittest.TestCase):
         self.assertIn("b_BaseColor.png", said)
 
 
+class TestTransferMaterialsOutputs(unittest.TestCase):
+    """Where ``transfer_materials`` writes: never over a file it is told to
+    avoid, nor over another output of the same run."""
+
+    def setUp(self):
+        artifacts = ptk.TempArtifacts("uv_transfer_outputs", policy="scoped")
+        self.addCleanup(artifacts.cleanup)
+        self.tmp = artifacts.dir_path()
+        self.out_dir = os.path.join(self.tmp, "out")
+
+    def _source(self, folder, name="held_BaseColor.png"):
+        return ptk.UvTransfer.save_map(os.path.join(folder, name), _noise(16))
+
+    @staticmethod
+    def _job(path):
+        return {
+            "src": QUAD,
+            "dst": _mirror_u(QUAD),
+            "ids": np.zeros(2, np.int32),
+            "sources": [{"name": "held_MAT", "maps": {"baseColor": path}}],
+        }
+
+    def _transfer(self, jobs, **kwargs):
+        return ptk.UvTransfer.transfer_materials(
+            jobs, output_dir=self.out_dir, size=16, supersample=1, padding=0, **kwargs
+        )
+
+    @staticmethod
+    def _same(a, b):
+        return os.path.normcase(os.path.abspath(a)) == os.path.normcase(
+            os.path.abspath(b)
+        )
+
+    def test_a_map_to_avoid_is_never_written_over(self):
+        """A re-run named like the last one wrote ``held_BaseColor.png`` over
+        the very file a kept SOURCE material reads (an iteration on its own
+        previous result): the source's look was lost for good. The host names
+        the maps that must survive the run."""
+        src = self._source(self.out_dir)
+        with open(src, "rb") as f:
+            before = f.read()
+        out = self._transfer(
+            {"held": self._job(src)}, name_format="held_{channel}", avoid=[src]
+        )
+        with open(src, "rb") as f:
+            self.assertEqual(f.read(), before)
+        written = out["held"]["baseColor"]
+        self.assertFalse(self._same(written, src))
+        self.assertTrue(
+            self._same(written, os.path.join(self.out_dir, "held_BaseColor_1.png"))
+        )
+        self.assertTrue(os.path.isfile(written))
+
+    def test_a_re_run_rewrites_its_own_maps(self):
+        """Nothing to avoid: a re-run is another attempt at one deliverable and
+        writes the same files, never a second set beside them."""
+        src = self._source(self.tmp)
+        first = self._transfer({"held": self._job(src)})
+        self.assertEqual(self._transfer({"held": self._job(src)}), first)
+
+    def test_two_outputs_of_one_run_never_share_a_file(self):
+        """Two layouts whose names sanitize alike (``a b``, ``a_b``) wrote ONE
+        file, the second over the first, and both materials were handed it."""
+        src = self._source(self.tmp)
+        out = self._transfer({"a b": self._job(src), "a_b": self._job(src)})
+        first, second = out["a b"]["baseColor"], out["a_b"]["baseColor"]
+        self.assertFalse(self._same(first, second))
+        self.assertTrue(os.path.isfile(first) and os.path.isfile(second))
+
+
 class TestInvalidSourceNormals(unittest.TestCase):
     """Texels that are no tangent-space normal (Z below zero: a black,
     unpainted background) transfer as they are -- and are SAID, naming the
@@ -1115,6 +1185,25 @@ class TestResampleLightmaps(unittest.TestCase):
     def test_a_shared_source_map_is_read_once(self):
         self._run([self._job("|a|one"), self._job("|b|two"), self._job("|c|three")])
         self.assertEqual(self.reads, ["/src/a.exr"])
+
+    def test_interleaved_source_maps_are_each_read_once(self):
+        """Only the LAST map was kept, so jobs on maps a, b, a re-read a -- a
+        4k float EXR each time. Each job still takes the name its place in
+        the given order gives it, whatever order the maps are read in."""
+        self.maps["/src/b.exr"] = np.full((16, 16, 3), 3.0, np.float32)
+        out = self._run(
+            [
+                self._job("|q|one"),
+                self._job("|p|crate", path="/src/b.exr"),
+                self._job("|r|crate"),
+            ]
+        )
+        self.assertEqual(self.reads, ["/src/a.exr", "/src/b.exr"])
+        self.assertEqual(out["|p|crate"], "/out/crate_Lightmap.exr")
+        self.assertEqual(out["|r|crate"], "/out/crate_Lightmap_1.exr")
+        # ...and each from its own map.
+        self.assertAlmostEqual(float(self.writes[out["|p|crate"]].max()), 3.0, 5)
+        self.assertAlmostEqual(float(self.writes[out["|r|crate"]].max()), 2.0, 5)
 
     def test_a_name_someone_else_reads_is_never_written_over(self):
         out = self._run(

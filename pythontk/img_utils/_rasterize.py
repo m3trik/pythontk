@@ -91,18 +91,34 @@ class _ImgRasterizeInternal:
             mask = ((acc + n // 2) // n).astype(np.uint8)
         return mask
 
-    @staticmethod
-    def _scanline_fill(pts: "np.ndarray", dim: int) -> "np.ndarray":
+    #: Cells of the row difference array :meth:`_scanline_fill` holds at once
+    #: (a band of rows): 8 bytes each, 32 MB, where the whole grid's is 537 MB
+    #: for a 2048 map at supersample 4.
+    _SCANLINE_CELLS = 1 << 22
+    #: Row spans :meth:`_scanline_fill` builds at once. Each holds ~140 bytes
+    #: of scratch while it is cut against its triangle's edges, so this keeps
+    #: that near 70 MB however tall or many the triangles are.
+    _SCANLINE_SPANS = 1 << 19
+
+    @classmethod
+    def _scanline_fill(cls, pts: "np.ndarray", dim: int) -> "np.ndarray":
         """``(dim, dim)`` uint8 (0/255) of the pixel CENTERS inside any triangle of *pts*.
 
         :meth:`_fill_triangle`'s rule exactly -- a centre on an edge is inside,
         vertices stay in floating point, geometry past the frame is cropped --
-        for every triangle at once: each covered row of each triangle becomes
-        one ``[first, last]`` span of centres, written as +1/-1 into a row
-        difference array and integrated once. The per-triangle loop it
-        replaces paid a Python iteration and a float grid over each
-        triangle's whole bbox: 13 s of a 96-tile production bake's refill,
-        against well under one here.
+        for many triangles at once: each covered row of each triangle becomes
+        one ``[first, last]`` span of centres (:meth:`_row_spans`), written as
+        +1/-1 into a row difference array and integrated once. The
+        per-triangle loop it replaces paid a Python iteration and a float grid
+        over each triangle's whole bbox: 13 s of a 96-tile production bake's
+        refill, against well under one here.
+
+        Its scratch is bounded, inside whatever host process is baking: the
+        difference array is held a band of rows at a time
+        (:attr:`_SCANLINE_CELLS`), and a band's spans are built a chunk of
+        triangles at a time (:attr:`_SCANLINE_SPANS`). Built all at once, the
+        spans cost scratch in proportion to the triangles' SUMMED height --
+        2048 tall strips at 2048 x 4 supersample took 2.0 GB.
         """
         mask = np.zeros((dim, dim), dtype=np.uint8)
         if not len(pts):
@@ -117,12 +133,50 @@ class _ImgRasterizeInternal:
         ys = pts[..., 1]
         r0 = np.clip(np.ceil(ys.min(1) - 0.5), 0, dim).astype(np.int64)
         r1 = np.clip(np.floor(ys.max(1) - 0.5), -1, dim - 1).astype(np.int64)
-        rows = np.maximum(r1 - r0 + 1, 0)
-        if not rows.sum():
-            return mask
-        tri = np.repeat(np.arange(len(pts)), rows)
-        row = np.arange(int(rows.sum())) - np.repeat(np.cumsum(rows) - rows, rows)
-        row = row + r0[tri]
+        width = dim + 1
+        band = max(1, int(cls._SCANLINE_CELLS) // width)
+        budget = max(1, int(cls._SCANLINE_SPANS))
+        for top in range(0, dim, band):
+            rows_here = min(band, dim - top)
+            first = np.maximum(r0, top)
+            count = np.minimum(r1, top + rows_here - 1) - first + 1
+            here = np.flatnonzero(count > 0)
+            if not len(here):
+                continue
+            size = rows_here * width
+            diff = None
+            # Coverage is a union, so chunks of triangles add into the band
+            # independently: each chunk's spans within the budget, a triangle
+            # taller than it on its own a chunk by itself.
+            ends = np.cumsum(count[here])
+            start = 0
+            while start < len(here):
+                done = int(ends[start - 1]) if start else 0
+                stop = max(
+                    start + 1,
+                    int(np.searchsorted(ends, done + budget, side="right")),
+                )
+                tris = here[start:stop]
+                row, c0, c1 = cls._row_spans(pts[tris], first[tris], count[tris], dim)
+                local = (row - top) * width
+                if diff is None:
+                    diff = np.bincount(local + c0, minlength=size)
+                else:
+                    diff += np.bincount(local + c0, minlength=size)
+                diff -= np.bincount(local + c1 + 1, minlength=size)
+                start = stop
+            covered = np.cumsum(diff.reshape(rows_here, width), axis=1)[:, :dim] > 0
+            mask[top : top + rows_here][covered] = 255
+        return mask
+
+    @staticmethod
+    def _row_spans(pts, first, count, dim: int):
+        """``(row, c0, c1)``: the centres ``c0..c1`` each triangle of *pts*
+        covers on each of its *count* rows from *first* (rows whose span holds
+        no centre left out)."""
+        tri = np.repeat(np.arange(len(pts)), count)
+        row = np.arange(len(tri)) - np.repeat(np.cumsum(count) - count, count)
+        row = row + first[tri]
         y = row + 0.5
         lo = np.full(len(row), np.inf)
         hi = np.full(len(row), -np.inf)
@@ -144,26 +198,7 @@ class _ImgRasterizeInternal:
         c0 = np.clip(np.ceil(lo - 0.5), 0, dim).astype(np.int64)
         c1 = np.clip(np.floor(hi - 0.5), -1, dim - 1).astype(np.int64)
         keep = c1 >= c0
-        row, c0, c1 = row[keep], c0[keep], c1[keep]
-        # A band of rows at a time: the difference array of the whole grid is
-        # 4 bytes a sample (268 MB for a 2048 map at supersample 4) against the
-        # mask's one, inside whatever host process is baking.
-        order = np.argsort(row, kind="stable")
-        row, c0, c1 = row[order], c0[order], c1[order]
-        band = max(1, (1 << 22) // (dim + 1))
-        width = dim + 1
-        for top in range(0, dim, band):
-            a, b = np.searchsorted(row, [top, top + band])
-            if a == b:
-                continue
-            local = (row[a:b] - top) * width
-            rows_here = min(band, dim - top)
-            size = rows_here * width
-            diff = np.bincount(local + c0[a:b], minlength=size)[:size]
-            diff -= np.bincount(local + c1[a:b] + 1, minlength=size)[:size]
-            covered = np.cumsum(diff.reshape(rows_here, width), axis=1)[:, :dim] > 0
-            mask[top : top + rows_here][covered] = 255
-        return mask
+        return row[keep], c0[keep], c1[keep]
 
     @staticmethod
     def _fill_triangle(mask, tri, value=255):

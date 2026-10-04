@@ -37,7 +37,11 @@ Served surface:
                                 "title", "userPos", "locomotion", "scripts",
                                 "xrRuntime"}``;
                                 also the heartbeat behind :meth:`PreviewServer.has_viewer`
-    ``GET /scripts/<name>.js`` -> an active viewer script (see :attr:`PreviewServer.SCRIPTS`)
+    ``GET /kernel/<module>.js`` -> the viewer itself: the modules the page imports
+    ``GET /features/...``    -> an active packaged viewer script, and the modules
+                                beside it (see :attr:`PreviewServer.SCRIPTS`)
+    ``GET /scripts/<name>.js`` -> a caller's own active viewer script
+                                (see :meth:`PreviewServer.add_script`)
     ``GET /<name>``          -> any published asset, by name
     ``POST /viewer-closed``  -> the viewer's unload beacon, so a closed tab is
                                 known at once rather than after a timeout
@@ -52,10 +56,11 @@ Served surface:
                                 ``?section=&start=`` (see
                                 :meth:`PreviewServer.describe_scene`)
 
-The guest listener serves ``GET /``, ``/manifest.json`` (marked
-``"guest": true``, without the owner-only scripts), ``/scene.json`` and
-exactly the files that manifest names; it takes the close beacon and refuses
-every other write.
+The guest listener serves ``GET /`` and the kernel it imports,
+``/manifest.json`` (marked ``"guest": true``, without the owner-only scripts),
+``/scene.json`` and exactly the files that manifest names (each script with
+the modules beside it); it takes the close beacon and refuses every other
+write.
 
 Layout: this module holds the :class:`PreviewServer` facade -- lifecycle, the
 live manifest and viewer liveness, publish and its delivery dials, and the

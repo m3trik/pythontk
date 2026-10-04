@@ -2047,6 +2047,25 @@ class CommonNameTest(unittest.TestCase):
         self.assertEqual(self._name(["|odd name-1"]), "odd_name_1")
         self.assertEqual(StrUtils.common_name([]), "")
 
+    def test_a_candidate_with_no_legal_character_falls_back(self):
+        """Bug: a candidate written wholly outside the legal set (a group
+        named in another script) legalised to "" and the call answered ""
+        though its items had legal names.
+        Fixed: 2026-10-04
+        """
+        chair = "\u6905\u5b50"  # a group named in Chinese
+        self.assertEqual(
+            self._name([f"|{chair}|seat_GEO", f"|{chair}|leg_GEO"]), "seat"
+        )
+        self.assertEqual(self._name([chair, "chair_GEO"]), "chair")
+        self.assertEqual(self._name([chair]), "", "nothing legal to say")
+
+    def test_numbered_duplicates_share_their_stem(self):
+        """Blender numbers a duplicate ``Cube.001``: the tokens a legal name
+        keeps are what the items share, not ``_``-runs alone."""
+        self.assertEqual(self._name(["Cube.001", "Cube.002"]), "Cube")
+        self.assertEqual(self._name(["|a|door-left", "|b|door-right"]), "door")
+
 
 class StrUtilsLayoutTest(unittest.TestCase):
     """The facade split by job keeps every public method on StrUtils itself."""

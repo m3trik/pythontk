@@ -425,8 +425,6 @@ class GlbPipeline(LoggingMixin):
         measures it from the file it reads (``MeshConvert._stamp_clip_spans``),
         whatever the producer published.
         """
-        import struct
-
         from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
         from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
 
@@ -434,7 +432,7 @@ class GlbPipeline(LoggingMixin):
             return
         try:
             fbx = FbxFile.load(src, raw_payloads=False)
-        except (OSError, ValueError, struct.error) as error:
+        except (OSError, ValueError) as error:
             log.debug("Split-take strip skipped (unreadable FBX): %s", error)
             return
         declared = cls._declared_takes(fbx)

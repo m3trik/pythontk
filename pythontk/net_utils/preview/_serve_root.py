@@ -255,6 +255,14 @@ class _ServeRootMixin:
         # Swept like the scripts: a module an update retired must not linger
         # beside the ones the new page imports.
         kernel = self._kernel_files()
+        if not kernel:
+            # A packaging failure: the page alone never starts, since it
+            # imports kernel/main.js. Said here, where it is a fact about the
+            # install, rather than left to a blank tab.
+            self.logger.warning(
+                "Viewer kernel missing from the package: %s",
+                self.SCRIPTS_DIR / self.KERNEL_ROUTE,
+            )
         for route, module in kernel.items():
             self._sync_file(module, self.root / route)
         self._sweep(self.KERNEL_ROUTE, kernel)

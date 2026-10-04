@@ -53,8 +53,8 @@ class _ArticulationMixin:
         UNDER its joint's node -- a production assembly repeats part names,
         and the joint says which one is meant. The manifest is the record
         with a ``node`` index on every joint and grab entry; the packaged
-        ``preview/scripts/articulated_rig.js`` builds its model from it and
-        poses the joints.
+        viewer script (``preview/features/articulated_rig/``) builds its
+        model from it and poses the joints.
 
         A rig whose joints are not all in the file (a selection export that
         left it out) is out of scope and skipped, counted once; an ambiguous

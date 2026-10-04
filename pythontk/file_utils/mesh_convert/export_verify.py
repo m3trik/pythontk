@@ -160,11 +160,24 @@ class _ExportVerifierInternal:
 
     @staticmethod
     def _published_span(sidecar: Optional[dict]) -> Optional[List[float]]:
-        """The whole-timeline ``clip_span`` entry every clip was cut against
+        """The whole-timeline ``clip_span`` entry the producer published
         (``MeshConvert._published_origin``, the reader the rebuild uses)."""
         export = (sidecar or {}).get("data_export")
         origin = MeshConvert._published_origin(
             export.get if isinstance(export, dict) else lambda key: None
+        )
+        return list(origin) if origin else None
+
+    @staticmethod
+    def _cut_span(gltf: Optional[dict]) -> Optional[List[float]]:
+        """The whole-timeline ``clip_span`` entry the GLB carries: what its
+        clips were cut against -- measured from the FBX the conversion read
+        (``MeshConvert._stamp_clip_spans``), else the producer's as it rode
+        in. The same reader as :meth:`_published_span`."""
+        if not isinstance(gltf, dict):
+            return None
+        origin = MeshConvert._published_origin(
+            lambda key: MeshConvert.data_export_channel(gltf, key)
         )
         return list(origin) if origin else None
 
@@ -742,10 +755,19 @@ class ExportVerifier(_ExportVerifierInternal):
 
         Compared on the whole-timeline clip, whose length IS the stack's: a
         declared take is cut to its own window and cannot show the drift.
+
+        The span judged is the one the GLB carries, because that is what its
+        clips were cut against: the conversion measures it from the FBX it
+        reads (``MeshConvert._stamp_clip_spans``), so a producer's prediction
+        that is off no longer misplaces a single clip -- and judging that
+        prediction FAILed a file cut right. A published span that disagrees
+        with the file's is a WARN naming both; a GLB carrying none is judged
+        against the published one.
         """
         if self.reader is None:
             return [Finding(SKIP, "clip_origin", "no readable GLB")]
-        span = self._published_span(self.sidecar)
+        published = self._published_span(self.sidecar)
+        span = self._cut_span(self.reader.gltf) or published
         if span is None:
             detail = self.sidecar_error or "no published clip_span"
             return [Finding(SKIP, "clip_origin", detail)]
@@ -763,25 +785,38 @@ class ExportVerifier(_ExportVerifierInternal):
             ]
         clip = loose[0]
         carried = spans[clip][2] - round(spans[clip][0] * self.fps)
-        published = span[1] - span[0]
-        drift = carried - published
+        length = span[1] - span[0]
+        drift = carried - length
+        rows: List[Finding] = []
         if abs(drift) > 1:
-            return [
+            rows.append(
                 Finding(
                     FAIL,
                     "clip_origin",
                     f"{clip}: stack carries {carried:.0f}f but clips were cut "
-                    f"against a {published:.0f}f span ({span[0]:g}-{span[1]:g}), "
-                    f"{drift:+.0f}f out -- the published origin is not this "
-                    "stack's, so every clip is cut from the wrong frame",
+                    f"against a {length:.0f}f span ({span[0]:g}-{span[1]:g}), "
+                    f"{drift:+.0f}f out -- that origin is not this stack's, so "
+                    "every clip is cut from the wrong frame",
                 )
-            ]
-        return [
+            )
+        if published and any(abs(p - s) > 1 for p, s in zip(published, span)):
+            rows.append(
+                Finding(
+                    WARN,
+                    "clip_origin",
+                    f"{clip}: the producer published {published[0]:g}-"
+                    f"{published[1]:g}, but the clips were cut against "
+                    f"{span[0]:g}-{span[1]:g}, the span the file carries (the "
+                    "conversion measures it from the FBX) -- the producer's "
+                    "prediction is off",
+                )
+            )
+        return rows or [
             Finding(
                 PASS,
                 "clip_origin",
-                f"{clip}: {carried:.0f}f matches the published span "
-                f"{span[0]:g}-{span[1]:g}",
+                f"{clip}: {carried:.0f}f matches the span its clips were cut "
+                f"against ({span[0]:g}-{span[1]:g})",
             )
         ]
 
@@ -839,7 +874,10 @@ class ExportVerifier(_ExportVerifierInternal):
         shot imported 40 frames long with two of three nodes frozen, the next
         shot as a clip with no curves at all. The whole-timeline take, when the
         file carries one, is the reference; a file without one (Blender
-        windows each take itself) is held to the windows alone.
+        windows each take itself) is held to the windows alone. A declared
+        take whose stack carries no curve is judged like any other: against
+        the whole timeline it lost every channel; held to its window alone it
+        is a still shot.
         """
         name = "fbx_take_channels"
         if self.fbx is None:
@@ -854,6 +892,7 @@ class ExportVerifier(_ExportVerifierInternal):
         if self._published_clip_mode(self.sidecar) == "full":
             return [Finding(SKIP, name, "Full Sequence Only: no shot takes to slice")]
         curves = self.fbx.take_curves()
+        present = set(self.fbx.take_names())
         whole = [take for take in curves if take not in declared]
         reference = set().union(*(set(curves[take]) for take in whole))
         tick = FbxFile.TICKS_PER_SECOND / self.fps
@@ -869,9 +908,11 @@ class ExportVerifier(_ExportVerifierInternal):
         rows: List[Finding] = []
         checked = 0
         for take, window in declared.items():
-            channels = curves.get(take)
-            if channels is None:
+            if take not in present:
                 continue  # an absent take is check_fbx_takes' to name
+            # A stack with no curve is not absent: it animates nothing, which
+            # take_curves leaves out -- and check_fbx_takes reads names alone.
+            channels = curves.get(take, {})
             checked += 1
             missing = reference - set(channels)
             if missing:

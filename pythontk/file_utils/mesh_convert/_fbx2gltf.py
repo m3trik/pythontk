@@ -19,12 +19,24 @@ import os
 import platform as _platform
 import shlex
 import shutil
-import struct
 import subprocess
 from time import perf_counter
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Union,
+)
 
 from pythontk.file_utils.mesh_convert.glb.edit import GlbTarget
+
+if TYPE_CHECKING:
+    from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +106,7 @@ class _Fbx2GltfMixin:
     AUTO_TIMEOUT = -1.0
 
     @classmethod
-    def conversion_timeout(cls, src: str) -> float:
+    def conversion_timeout(cls, src: str, fbx: Optional["FbxFile"] = None) -> float:
         """Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
 
         A flat budget cannot fit both a prop and a production assembly, and the
@@ -108,7 +120,8 @@ class _Fbx2GltfMixin:
         Two terms, and the larger wins: the input's size (per MB) and the
         bake it implies (per node-frame -- see
         :attr:`TIMEOUT_SECONDS_PER_NODE_FRAME`; the census comes from
-        :class:`FbxFile`, sub-second even on a production assembly). The
+        :class:`FbxFile`, seconds on a production assembly, so a caller that
+        already holds the parse passes it). The
         second exists because the first is wrong on its own: a textureless
         export of an animated assembly is small and slow, and a budget that
         reads only its size discards its finished deliverable.
@@ -116,21 +129,27 @@ class _Fbx2GltfMixin:
         An unreadable size, or a file the census cannot parse, falls back to
         what CAN be read -- and to the floor when nothing can: a budget must
         never be the reason a conversion is not attempted.
+
+        Parameters:
+            src: The FBX to be converted.
+            fbx: *src* already parsed for its curves, as :meth:`bake_node_frames`
+                takes it; parsed here when not given.
         """
         try:
             megabytes = os.path.getsize(src) / (1024 * 1024)
         except OSError:
             megabytes = 0.0
+        node_frames = cls.bake_node_frames(src, fbx=fbx)
         return float(
             max(
                 cls.DEFAULT_TIMEOUT,
                 megabytes * cls.TIMEOUT_SECONDS_PER_MB,
-                cls.bake_node_frames(src) * cls.TIMEOUT_SECONDS_PER_NODE_FRAME,
+                node_frames * cls.TIMEOUT_SECONDS_PER_NODE_FRAME,
             )
         )
 
     @classmethod
-    def bake_node_frames(cls, src: str) -> int:
+    def bake_node_frames(cls, src: str, fbx: Optional["FbxFile"] = None) -> int:
         """Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
 
         ``Model`` records are the nodes. Each take contributes the span the
@@ -141,13 +160,18 @@ class _Fbx2GltfMixin:
         section declares. ``0`` for a file with no takes -- and for one that
         is not a readable binary FBX, so a budget derived from this degrades
         rather than raises.
+
+        Parameters:
+            src: The FBX to be converted.
+            fbx: *src* already parsed for its curves (``FbxFile.load`` with
+                ``span_arrays=("KeyTime",)``), by a caller that reads them too
+                -- :meth:`fbx_to_glb` places every clip by the same parse.
+                Parsed here when not given.
         """
         from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 
-        try:
-            fbx = FbxFile.load(src, span_arrays=("KeyTime",), raw_payloads=False)
-        except (OSError, ValueError, struct.error):
-            return 0
+        if fbx is None:
+            fbx = cls._read_curves(src)
         nodes = fbx.objects_census().get("Model", 0)
         spans = {take: last - first for take, (first, last) in fbx.take_spans().items()}
         for take in (fbx.section("Takes") or {}).get("children", []):
@@ -170,19 +194,19 @@ class _Fbx2GltfMixin:
         return int(nodes * sum(spans.values()) * cls.CONVERSION_BAKE_FPS)
 
     @staticmethod
-    def _measured_take_spans(src: str) -> Dict[str, Tuple[float, float]]:
-        """``FbxFile.take_spans`` of *src* -- where FBX2glTF puts each clip's
-        t=0 -- or ``{}`` when the file cannot be read (the published spans
-        then stand)."""
+    def _read_curves(src: str) -> "FbxFile":
+        """*src* parsed for what a conversion reads of it -- its census and
+        each curve's key extent, never its media -- or an EMPTY file when it
+        cannot be read, so each reader degrades to "nothing measured" rather
+        than raising: the budget falls back to the size, and the published
+        clip spans stand."""
         from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 
         try:
-            return FbxFile.load(
-                src, span_arrays=("KeyTime",), raw_payloads=False
-            ).take_spans()
-        except (OSError, ValueError, struct.error) as error:
-            logger.debug("Take spans not measured: %s", error)
-            return {}
+            return FbxFile.load(src, span_arrays=("KeyTime",), raw_payloads=False)
+        except (OSError, ValueError) as error:
+            logger.debug("FBX curves not read: %s", error)
+            return FbxFile(src, 0, [])
 
     @classmethod
     def _platform_exe_name(cls) -> str:
@@ -463,6 +487,24 @@ class _Fbx2GltfMixin:
             required=True, auto_install=auto_install, prompt=prompt
         )
 
+        # The input's curves, parsed ONCE for both readers of them -- the
+        # budget and the spans every clip is placed by (``_stamp_clip_spans``)
+        # -- because a production FBX takes seconds to parse (8 s, a 133 MB
+        # Maya assembly, 2026-10-04) and each reader parsed it again. Released
+        # before the converter runs. Neither reads it when the caller gave a
+        # budget and overlaid the visibility channel: that overlay is the
+        # caller's statement for this build (an effect preview places its ramp
+        # over its own extent), so the measurement is not stamped over it.
+        stamp = cls.VISIBILITY_TRACKS_KEY not in (data_export or {})
+        auto = timeout is not None and timeout < 0
+        fbx = cls._read_curves(src_abs) if stamp or auto else None
+        measured = fbx.take_spans() if stamp else {}
+        if auto:
+            # The default. An explicit number wins outright (a caller that says
+            # 60 means 60) and ``None`` still means no limit.
+            timeout = cls.conversion_timeout(src_abs, fbx=fbx)
+        del fbx
+
         # FBX2glTF wants the output base WITHOUT extension; --binary forces .glb.
         # --user-properties copies FBX user properties into per-node glTF
         # ``extras`` (measured against v0.13.1 + Maya 2025: the DataNodes
@@ -491,11 +533,6 @@ class _Fbx2GltfMixin:
         ]
         if extra_args:
             cmd.extend(extra_args)
-
-        if timeout is not None and timeout < 0:
-            # The default. An explicit number wins outright (a caller that says
-            # 60 means 60) and ``None`` still means no limit.
-            timeout = cls.conversion_timeout(src_abs)
 
         # The SDK's import EXTRACTS every embedded texture into `<stem>.fbm`
         # beside the FBX it reads -- payload-sized (311 MB on a production
@@ -636,15 +673,12 @@ class _Fbx2GltfMixin:
                 # Right after the overlay, ahead of the same passes: each
                 # clip's t=0 is where FBX2glTF put it -- the first key of its
                 # take in the FBX it read -- so the spans come from that file
-                # rather than from the producer's prediction of it. Not over
-                # a visibility channel the caller overlaid: that is the
-                # caller's statement for this build (an effect preview places
-                # its ramp over its own extent).
-                if cls.VISIBILITY_TRACKS_KEY not in (data_export or {}):
+                # (measured above, with the budget) rather than from the
+                # producer's prediction of it. Not over a visibility channel
+                # the caller overlaid.
+                if stamp:
                     try:
-                        if cls._stamp_clip_spans(
-                            edit.gltf, cls._measured_take_spans(src_abs)
-                        ):
+                        if cls._stamp_clip_spans(edit.gltf, measured):
                             edit.dirty = True
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("Measured clip spans skipped: %s", exc)

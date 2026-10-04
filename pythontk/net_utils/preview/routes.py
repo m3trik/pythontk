@@ -122,6 +122,21 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
 
     server_version = "pythontk-preview"
 
+    #: The page's own types, named rather than guessed -- ``guess_type`` reads
+    #: this before ``mimetypes``, the same on either listener. ``mimetypes``
+    #: reads the Windows registry (``HKCR\.js\Content Type``), which an
+    #: installer can leave at ``text/plain``; a browser refuses to run a module
+    #: script typed as anything but JavaScript, and the kernel is ES modules,
+    #: so on such a machine the page stayed blank.
+    extensions_map = {
+        **SimpleHTTPRequestHandler.extensions_map,
+        ".js": "text/javascript",
+        ".mjs": "text/javascript",
+        ".json": "application/json",
+        ".wasm": "application/wasm",
+        ".glb": "model/gltf-binary",
+    }
+
     #: Keep-alive, which needs an accurate ``Content-Length`` on every response
     #: -- every path here sends one, and the 204s have no body by definition.
     #:

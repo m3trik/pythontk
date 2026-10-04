@@ -118,7 +118,8 @@ class ShotManifest(_ShotManifestInternal):
     """
 
     #: Metadata keys the manifest writes on a shot (:meth:`_step_metadata`);
-    #: a build replaces these and keeps every other key it finds.
+    #: a build replaces these and the doc's pass-through columns, and keeps
+    #: every other key it finds.
     MANIFEST_METADATA = frozenset(
         ("section", "section_title", "csv_objects", "behaviors", "voice_text", "step")
     )
@@ -159,8 +160,9 @@ class ShotManifest(_ShotManifestInternal):
             meta["voice_text"] = step.audio
         # The binding: which doc step this shot is, whatever it is named.
         meta["step"] = step.step_id
-        if pass_through:
-            meta.update(pass_through)
+        # A blank cell writes nothing (and, being the doc's column, takes out
+        # the value it held -- _content_kwargs).
+        meta.update({k: v for k, v in (pass_through or {}).items() if v})
         return meta
 
     # ---- scene hooks (overridable; pure defaults) ------------------------
@@ -643,10 +645,10 @@ class ShotManifest(_ShotManifestInternal):
         behavior's previous keys are released before any is re-keyed (one at a
         time, a later release deleted the key an earlier behavior had just
         written on a shared frame) and the new ones recorded, each placed where
-        a build places it (:meth:`Behaviors.anchor_overrides`).  Wrap the call
-        in ``store.scene_edit`` for one undo step.  The keys of a behavior the
-        doc dropped for the object go too.  Returns whether anything was
-        applied or released.
+        a build places it (:meth:`Behaviors.anchor_overrides`) -- an audio
+        clip on its track, by name.  Wrap the call in ``store.scene_edit`` for
+        one undo step.  The keys of a behavior the doc dropped for the object
+        go too.  Returns whether anything was applied or released.
         """
         from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
 
@@ -658,9 +660,14 @@ class ShotManifest(_ShotManifestInternal):
         }
         if not behaviors and not claimed:
             return False
-        node, reason = self._resolve_object(obj.name)
-        if reason != "found":
-            return False
+        if obj.kind == "audio" or obj.source_path:
+            # A clip is keyed by its track name, as a build's audio pass keys
+            # it: no scene node answers to it, so resolving read it as missing.
+            node = obj.name
+        else:
+            node, reason = self._resolve_object(obj.name)
+            if reason != "found":
+                return False
         # Its listed behaviors' keys AND those of behaviors the doc dropped for
         # it: the Apply re-keys exactly what the doc lists now.
         for behavior in sorted(claimed | set(behaviors)):
@@ -988,16 +995,16 @@ class ShotManifest(_ShotManifestInternal):
     def _content_kwargs(cls, existing, ps: PlannedShot) -> Dict[str, Any]:
         """``metadata``/``description`` kwargs where the doc differs from the store.
 
-        The manifest's own keys (:attr:`MANIFEST_METADATA`, plus the step's
-        pass-through columns) are replaced; every other key -- Assess's
-        ``object_status``, another tool's -- is kept.
+        The manifest's own keys (:attr:`MANIFEST_METADATA`, plus every
+        pass-through column the step's doc has -- a blank cell included, so
+        clearing it takes the value out) are replaced; every other key --
+        Assess's ``object_status``, another tool's, a column the doc does not
+        have -- is kept.
         """
         kwargs: Dict[str, Any] = {}
-        merged = {
-            k: v
-            for k, v in (existing.metadata or {}).items()
-            if k not in cls.MANIFEST_METADATA
-        }
+        columns = getattr(ps.step, "_pass_through", None) or ()
+        owned = cls.MANIFEST_METADATA | set(columns)
+        merged = {k: v for k, v in (existing.metadata or {}).items() if k not in owned}
         merged.update(ps.metadata)
         if existing.metadata != merged:
             kwargs["metadata"] = merged
@@ -1320,13 +1327,6 @@ class ShotManifest(_ShotManifestInternal):
                         if not ok:
                             failed.append(b)
                     broken.extend(failed)
-                    # Unsatisfied over keys the animator owns: a build will not
-                    # overwrite them, so it is a conflict, not a fix.
-                    conflicts = [
-                        b
-                        for b in failed
-                        if self.unowned_keys(node, b, shot.start, shot.end)
-                    ]
                     # Verified keys an older recipe made: Build re-keys them.
                     stale = [
                         b
@@ -1335,6 +1335,15 @@ class ShotManifest(_ShotManifestInternal):
                         and b not in unknown
                         and self.is_stale(shot.shot_id, obj.name, b)
                     ]
+                    # Over keys the animator owns, Build's guard leaves a
+                    # behavior as it is -- unsatisfied or stale alike, so it
+                    # is a conflict, not a fix.
+                    conflicts = [
+                        b
+                        for b in failed + stale
+                        if self.unowned_keys(node, b, shot.start, shot.end)
+                    ]
+                    stale = [b for b in stale if b not in conflicts]
                     if unknown:
                         status = "unknown_behavior"
                     elif conflicts:

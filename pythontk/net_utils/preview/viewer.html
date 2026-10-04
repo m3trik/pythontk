@@ -268,18 +268,40 @@
 </div>
 
 <script>
-  // Boot watchdog — a CLASSIC script on purpose. The viewer rides module
-  // imports from unpkg.com (three.js), and when that fetch is blocked (offline
-  // box, default-deny outbound firewall — a real deployment here) the module
-  // graph simply never executes: no error event, no status change, just a dark
-  // page stuck on "connecting…" with the actual failure invisible. The kernel's
-  // composition root flips the flag once every import has resolved; if it
-  // hasn't within 8s, say what is actually wrong. A slow CDN that boots later
-  // overwrites this on next poll.
+  // Boot watchdog — a CLASSIC script on purpose: it runs whatever happens to
+  // the modules. The kernel's composition root flips the flag once every
+  // module has run; if it hasn't within 8s, say what stopped it rather than
+  // leave a dark page stuck on "connecting…" with the failure invisible. A
+  // slow CDN that boots later overwrites this on next poll.
+  //
+  // What stopped it is recorded as it happens, in the capture phase, which
+  // sees both kinds: a module that THREW (a graphics context that could not be
+  // made) reports on the window with its message, and a module that never
+  // ARRIVED (missing, or refused for its type) fails the kernel's script tag,
+  // whose error does not bubble. three.js is among the modules that arrive, so
+  // a failed tag asks for it again: when that fails too, the CDN is the cause.
+  // So is a CDN that never answers -- the viewer rides module imports from
+  // unpkg.com, and when that fetch is blocked (offline box, default-deny
+  // outbound firewall — a real deployment here) the module graph simply never
+  // executes, with no error event at all -- hence the CDN when nothing was
+  // recorded.
+  addEventListener('error', (event) => {
+    if (window.__viewerBooted || window.__bootError) return;
+    if (event.target instanceof HTMLScriptElement) {
+      import('three').then(() => {
+        if (!window.__bootError) {
+          window.__bootError = "the viewer's kernel failed to load — a module is missing "
+            + 'or was refused; the browser console names it.';
+        }
+      }, () => {});
+    } else if (event.message) {
+      window.__bootError = `the viewer failed to start — ${event.message.replace(/^Uncaught /, '')}`;
+    }
+  }, true);
   setTimeout(() => {
     if (window.__viewerBooted) return;
     const status = document.getElementById('status');
-    status.textContent = 'three.js failed to load — needs unpkg.com.';
+    status.textContent = window.__bootError || 'three.js failed to load — needs unpkg.com.';
     status.className = 'error';
   }, 8000);
 </script>

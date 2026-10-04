@@ -283,8 +283,8 @@ class _ShadowRigsMixin:
         lengths stay DCC units with ``unit_scale`` beside them, as the record
         has them; ``metadata_version`` says which schema the record arrived in
         (a v1 record -- name, texture, intensity -- is filled from
-        :attr:`SHADOW_PLANE_DEFAULTS`). The packaged
-        ``preview/scripts/shadow_rig.js`` reads the manifest on load,
+        :attr:`SHADOW_PLANE_DEFAULTS`). The packaged viewer script
+        (``preview/features/shadow_rig/``) reads the manifest on load,
         evaluates ``ShadowProjection.model`` per frame and drives the planes.
 
         Names resolve exactly first, then by namespace-stripped leaf against

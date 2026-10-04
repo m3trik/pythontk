@@ -278,14 +278,16 @@ export const viewer = {
    * name returns it. `{title}` is its bar button's tooltip.
    *
    * Returns `{category, element, button, shown, show(on), toggle(),
-   * onShow(fn), setBadge(text), section(title)}`. `section` adds a block the
-   * caller owns -- `{element, shown, show(on), remove(), setRows(rows),
-   * addButton(label, onClick), addSlider(label, opts, onInput),
-   * addToggle(label, {value, title}, onChange)}` -- `addToggle` returns
-   * `{element, value, hidden, disabled}`, its `value` settable without
-   * calling `onChange`. `onShow(fn)` calls `fn(shown)` as the window opens
-   * and closes; `setBadge(text)` marks the bar button while a job runs with
-   * the window shut, `''` clears it.
+   * onShow(fn), setBadge(text, owner), section(title)}`. `section` adds a
+   * block the caller owns -- `{element, shown, show(on), remove(),
+   * setRows(rows), addButton(label, onClick), addSlider(label, opts,
+   * onInput), addToggle(label, {value, title}, onChange)}` -- `addToggle`
+   * returns `{element, value, hidden, disabled}`, its `value` settable
+   * without calling `onChange`. `onShow(fn)` calls `fn(shown)` as the window
+   * opens and closes; `setBadge(text, owner)` marks the bar button while a
+   * job runs with the window shut, `''` clears it -- per *owner* (the
+   * script's name), since scripts share a window: the button shows the
+   * newest one standing.
    */
   window: windowFor,
   /**

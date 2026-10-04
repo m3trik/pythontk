@@ -40,7 +40,7 @@ decoded result as it reads a saved scene.
 from copy import deepcopy
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+from pythontk.core_utils.engines.shots.shot_ledger import NO_OWNER, ShotEditLedger
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
 
 __all__ = ["ShotTransfer"]
@@ -163,15 +163,10 @@ class _ShotTransferInternal(object):
         if ratio != 1.0:
             out["gap"] = round(float(store.get("gap") or 0.0) * ratio, 2)
         if ledger and out.get("edit_ledger"):
-            # Canonical first, so a legacy record shape retimes too.
-            canonical = ShotEditLedger.from_dict(out["edit_ledger"]).to_dict()
-            out["edit_ledger"] = {
-                reg: {
-                    curve: cls._retime(records, ratio, offset)
-                    for curve, records in claims.items()
-                }
-                for reg, claims in canonical.items()
-            }
+            # Through the ledger, so a legacy record shape retimes too.
+            claims = ShotEditLedger.from_dict(out["edit_ledger"])
+            claims.retime(ratio, offset)
+            out["edit_ledger"] = claims.to_dict()
         return out
 
 
@@ -495,7 +490,8 @@ class ShotTransfer(_ShotTransferInternal):
         its own settings and clock and gains the incoming shots after its last
         one under fresh ids: memberships, hidden / pinned lists, markers,
         locked gaps and ledger claims come along, with every shot id (a locked
-        gap's pair, a claim's owner) remapped to the id the shot was given,
+        gap's pair, a claim's owner) remapped to the id the shot was given --
+        a claim no incoming shot owns arrives owned by none --
         and every time rescaled onto the scene's clock when the two stores'
         ``scene_fps`` differ -- the DCC lands the other scene's keys at the
         same seconds, so its shots must land there too.
@@ -574,11 +570,15 @@ class ShotTransfer(_ShotTransferInternal):
             for curve, records in (incoming_ledger.get(reg) or {}).items():
                 have = target.setdefault(curve, [])
                 for rec in records:
-                    if reg in cls._OWNED_REGISTERS and len(rec) > 1:
-                        try:
-                            rec[1] = local_ids.get(int(rec[1]), rec[1])
-                        except (TypeError, ValueError):
-                            pass
+                    if reg in cls._OWNED_REGISTERS:
+                        # A claim no incoming shot owns (a removed shot's,
+                        # left on its id) arrives owned by none, as
+                        # ``disown_shot`` leaves it: kept on its number, it
+                        # passed to the shot here that holds that number.
+                        owner = local_ids.get(rec[1], NO_OWNER)
+                        if owner == NO_OWNER and reg == "keys":
+                            rec[2] = ""
+                        rec[1] = owner
                     if rec not in have:
                         have.append(rec)
             if not target:

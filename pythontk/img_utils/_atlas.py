@@ -14,6 +14,8 @@ try:
 except ImportError:
     np = None  # type: ignore
 
+from pythontk.img_utils._filters import _ImgFilterInternal
+
 
 class _ImgAtlasInternal:
     """Bodies of :class:`ImgUtils`' atlas-layout methods (an ``ImgUtils`` base).
@@ -431,7 +433,7 @@ class _ImgAtlasInternal:
                         idx.ravel(), weights=upd[..., ch].ravel(), minlength=len(live)
                     )
             values += delta / weight
-        flat[live] = values.astype(out.dtype)
+        flat[live] = _ImgFilterInternal._restore_dtype(values, out.dtype)
         return out
 
     @classmethod
@@ -504,4 +506,4 @@ class _ImgAtlasInternal:
 
         if squeeze:
             canvas = canvas[..., 0]
-        return canvas.astype(dtype, copy=False)
+        return _ImgFilterInternal._restore_dtype(canvas, dtype)

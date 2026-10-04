@@ -1673,6 +1673,18 @@ class DenoiseImageTest(unittest.TestCase):
         single = ImgUtils.denoise_image(noisy[..., 0])
         self.assertEqual(single.shape, noisy.shape[:2])
 
+    def test_an_8bit_image_rounds_instead_of_truncating(self):
+        """Cast straight back to an integer dtype, every denoised texel was
+        truncated toward dark: half an LSB low on average, everywhere."""
+        noisy = self._noisy(self._ramp_with_a_shadow()) * 90.0
+        u8 = np.clip(np.rint(noisy), 0, 255).astype(np.uint8)
+        out = ImgUtils.denoise_image(u8)
+        smooth = ImgUtils.denoise_image(u8.astype(np.float32))
+        self.assertEqual(out.dtype, np.uint8)
+        np.testing.assert_array_equal(
+            out, np.clip(np.rint(smooth), 0, 255).astype(np.uint8)
+        )
+
     def test_the_cv2_path_and_the_numpy_path_agree(self):
         """cv2 is the fast path (float32 filters), numpy the fallback for a
         Python without it (float64 integral images) -- the same filter, so the
@@ -2331,6 +2343,27 @@ class ConvertSceneLinearTest(unittest.TestCase):
             img, "ACES - ACEScg", "Utility - Linear - sRGB"
         )
         np.testing.assert_allclose(a, b, atol=2e-3)
+        # Blender 5.1's config (datafiles/colormanagement/config.ocio): its
+        # names and aliases for the same spaces. Several raised KeyError.
+        for name, space in (
+            ("Linear Rec.709", "scene-linear Rec.709-sRGB"),
+            ("Linear BT.709", "scene-linear Rec.709-sRGB"),
+            ("lin_rec709_srgb", "scene-linear Rec.709-sRGB"),
+            ("lin_rec709_scene", "scene-linear Rec.709-sRGB"),
+            ("Linear DCI-P3 D65", "scene-linear DCI-P3 D65"),
+            ("lin_p3d65_scene", "scene-linear DCI-P3 D65"),
+            ("Linear BT.2020", "scene-linear Rec.2020"),
+            ("lin_rec2020_scene", "scene-linear Rec.2020"),
+            ("Linear ACEScg", "ACEScg"),
+            ("lin_ap1_scene", "ACEScg"),
+            ("Linear ACES", "ACES2065-1"),
+            ("lin_ap0_scene", "ACES2065-1"),
+        ):
+            with self.subTest(name=name):
+                np.testing.assert_array_equal(
+                    ImgUtils.convert_scene_linear(img, name),
+                    ImgUtils.convert_scene_linear(img, space),
+                )
 
     def test_an_unknown_space_raises(self):
         with self.assertRaises(KeyError):
@@ -2489,6 +2522,23 @@ class StitchSeamsTest(unittest.TestCase):
         np.testing.assert_array_equal(out, img)
         self.assertIsNot(out, img)
 
+    def test_an_8bit_image_saturates_instead_of_wrapping(self):
+        """Solved in float and cast straight back, a tap pushed past 255
+        WRAPPED: a bright texel beside dark ones, raised to make its read meet
+        the other side's, came back 79 where the solve said 335."""
+        img = np.zeros((4, 8), np.uint8)
+        img[1, 1] = 250
+        img[1, 2] = img[2, 1] = img[2, 2] = 10
+        img[1, 5] = 240
+        pairs = np.array([[1.5, 1.5, 5.0, 1.0]])  # a 4-tap read against one texel
+        out = ImgUtils.stitch_seams(img, pairs)
+        solved = ImgUtils.stitch_seams(img.astype(np.float32), pairs)
+        self.assertEqual(out.dtype, np.uint8)
+        self.assertEqual(int(out[1, 1]), 255)
+        np.testing.assert_array_equal(
+            out, np.clip(np.rint(solved), 0, 255).astype(np.uint8)
+        )
+
 
 class ExtrapolateFillTest(unittest.TestCase):
     """ImgUtils.extrapolate_fill -- grow a mask by continuing its content's slope.
@@ -2555,6 +2605,18 @@ class ExtrapolateFillTest(unittest.TestCase):
         self.assertTrue(grown[0, 3])
         self.assertFalse(grown[0, 7], "the far frame edge is not a neighbour")
         self.assertAlmostEqual(float(out[0, 3]), 0.5, places=6)  # clamp: 0.5 * 1.0
+
+    def test_an_8bit_ramp_saturates_instead_of_wrapping(self):
+        """Extrapolated in float and cast straight back, an 8-bit ramp running
+        past 255 WRAPPED: 60, 130, 200 continued to 270, stored as 14."""
+        img = np.zeros((1, 6), np.uint8)
+        img[0, :3] = [60, 130, 200]
+        mask = np.zeros((1, 6), bool)
+        mask[0, :3] = True
+        out, grown = ImgUtils.extrapolate_fill(img, mask, rings=1)
+        self.assertTrue(grown[0, 3])
+        self.assertEqual(out.dtype, np.uint8)
+        self.assertEqual(out[0].tolist(), [60, 130, 200, 255, 0, 0])
 
 
 class FillEmptyTexelsTest(unittest.TestCase):
@@ -2713,6 +2775,18 @@ class AtlasAssembleTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             ImgUtils.assemble_atlas([np.zeros((2, 2, 3), np.float32)], [], 4)
 
+    def test_an_8bit_atlas_rounds_and_saturates(self):
+        """Resized in float and cast straight back, an 8-bit atlas truncated
+        each averaged texel toward dark (63.75 -> 63) and wrapped a background
+        past the range (256 -> 0)."""
+        img = np.zeros((2, 2, 3), np.uint8)
+        img[0, 0] = 255  # a 2x2 averaged into one texel: 63.75
+        atlas = ImgUtils.assemble_atlas(
+            [img], [(0.5, 0.5, 0.0, 0.0)], 2, background=256.0
+        )
+        self.assertEqual(atlas.dtype, np.uint8)
+        self.assertEqual(atlas[..., 0].tolist(), [[255, 255], [64, 255]])
+
     def test_grayscale_round_trips_2d(self):
         rects = ImgUtils.compute_atlas_layout([1.0])
         img = np.full((2, 2), 0.25, np.float32)
@@ -2762,11 +2836,11 @@ class RasterizeUvTrianglesTest(unittest.TestCase):
     production bake's refill); the rule is unchanged and pinned here.
     """
 
-    def test_spans_match_the_per_triangle_centre_rule(self):
+    @staticmethod
+    def _assert_matches_the_reference(rng, trials):
         from pythontk.img_utils._rasterize import _ImgRasterizeInternal as R
 
-        rng = np.random.default_rng(11)
-        for _ in range(60):
+        for _ in range(trials):
             tris = rng.random((int(rng.integers(1, 12)), 3, 2)) * 1.2 - 0.1
             dim = int(rng.integers(6, 48))
             pts = np.stack([tris[..., 0] * dim, (1 - tris[..., 1]) * dim], -1)
@@ -2774,6 +2848,57 @@ class RasterizeUvTrianglesTest(unittest.TestCase):
             for tri in pts:
                 R._fill_triangle(ref, tri)
             np.testing.assert_array_equal(R._scanline_fill(pts, dim), ref)
+
+    @staticmethod
+    def _tall_strips(n):
+        """*n* triangles, two to each of side-by-side strips 0.8 of the frame
+        tall: their heights sum to 0.8 n frames (a fluted column's unwrap)."""
+        xs = np.linspace(0.05, 0.95, n // 2 + 1)
+        tris = []
+        for a, b in zip(xs[:-1], xs[1:]):
+            tris += [[(a, 0.1), (b, 0.1), (b, 0.9)], [(a, 0.1), (b, 0.9), (a, 0.9)]]
+        return np.array(tris)
+
+    def test_spans_match_the_per_triangle_centre_rule(self):
+        self._assert_matches_the_reference(np.random.default_rng(11), 60)
+
+    def test_bands_and_chunks_cover_what_one_pass_does(self):
+        """Spans are built a band of rows and a bounded chunk of triangles at a
+        time: bands a row or two tall and chunks of a triangle or two (a
+        triangle taller than a chunk on its own) change no texel."""
+        from unittest import mock
+        from pythontk.img_utils._rasterize import _ImgRasterizeInternal as R
+
+        with mock.patch.object(R, "_SCANLINE_CELLS", 64):
+            with mock.patch.object(R, "_SCANLINE_SPANS", 5):
+                self._assert_matches_the_reference(np.random.default_rng(23), 40)
+
+    def test_scratch_does_not_grow_with_the_triangles_summed_height(self):
+        """Every (triangle, row) span was built at once, so the scratch grew
+        with the triangles' SUMMED height: 2048 tall strips at 2048 x 4
+        supersample took 2.0 GB (now 0.2). Spans are built a bounded chunk at
+        a time -- the budget lowered here, so a small frame needs many."""
+        import tracemalloc
+        from unittest import mock
+        from pythontk.img_utils._rasterize import _ImgRasterizeInternal as R
+
+        def peak(n):
+            tris = self._tall_strips(n)
+            tracing = tracemalloc.is_tracing()
+            if not tracing:
+                tracemalloc.start()
+            tracemalloc.reset_peak()
+            base = tracemalloc.get_traced_memory()[0]
+            try:
+                ImgUtils.rasterize_uv_triangles(tris, size=128, supersample=2)
+                return tracemalloc.get_traced_memory()[1] - base
+            finally:
+                if not tracing:
+                    tracemalloc.stop()
+
+        with mock.patch.object(R, "_SCANLINE_SPANS", 1 << 12):
+            few, many = peak(250), peak(2000)
+        self.assertLess(many, 1.5 * few, f"{few} B for 250 strips, {many} for 2000")
 
     def test_a_quad_on_texel_lines_is_fully_covered_inside(self):
         quad = [

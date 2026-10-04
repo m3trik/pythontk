@@ -1186,13 +1186,13 @@ class TestShadowRigLive(unittest.TestCase):
         # the user has open would poll this test server.
         server = ptk.PreviewServer(viewer=True, title="shadow-test", port=0)
         server.start()
-        # The shim BEFORE the probe, and the page up before the publish. The
-        # page imports the manifest's scripts in order and does not await them
-        # before loading the asset, so a 5 KB fixture can be on screen before a
-        # 34 KB module has arrived (measured: every run in this process). With
-        # the probe last, its presence proves the shim is in, and a push then
-        # lands on a page that has it -- the production order too: the server
-        # outlives every push. Auto-activation is pinned by the server tests.
+        # The shim BEFORE the probe, and the page up before the publish -- the
+        # production order: the server outlives every push. The page imports
+        # the manifest's scripts in order, so with the probe last its presence
+        # proves the shim is in, and the push then lands on a page that has it.
+        # (A push naming the asset and the scripts together is held for them
+        # too: test_preview_viewer_live pins that.) Auto-activation is pinned
+        # by the server tests.
         server.add_script("shadow_rig")
         server.add_script("probe", probe)
         console = []

@@ -1458,10 +1458,19 @@ class ShotStore(_ShotStoreInternal):
         return shot
 
     def remove_shot(self, shot_id: int) -> bool:
-        """Remove a shot by ID.  Returns ``True`` if found."""
+        """Remove a shot by ID.  Returns ``True`` if found.
+
+        Records only: the keys the system wrote for the shot stay in the
+        scene, so their claims stay too, owned by no shot
+        (:meth:`ShotEditLedger.disown_shot`).  Left on the id, they passed to
+        the next shot :meth:`define_shot` gave it -- whose Build then deleted
+        them as behaviors its doc had dropped.  A restore point holds the
+        ledger as it was, so undoing the removal gives them back.
+        """
         for i, s in enumerate(self.shots):
             if s.shot_id == shot_id:
                 self.shots.pop(i)
+                self.edit_ledger.disown_shot(shot_id)
                 self._rekey_gap_locks()
                 self._notify(ShotRemoved(shot_id=shot_id))
                 self.mark_dirty()
@@ -1684,11 +1693,12 @@ class ShotStore(_ShotStoreInternal):
         object the scene holds, so there is nothing of it to cut and nothing
         moves -- where a Shot Sequencer delete cuts a shot's keys and ripples
         every later shot upstream into the space it leaves, which would retime
-        the shots that ARE live.  The samples each removed shot claimed go
-        with it rather than being disowned: they name keys the scene no longer
-        holds, and a claim left behind is inherited by any key later set on
-        that curve and frame.  The gap locks re-key onto the shots that remain
-        (:meth:`remove_shot`), and listeners hear one batch.
+        the shots that ARE live.  The claims each removed shot held -- its
+        bound samples and its behaviors' keys -- go with it rather than being
+        disowned: they name keys the scene no longer holds, and a claim left
+        behind is inherited by any key later set on that curve and frame.  The
+        gap locks re-key onto the shots that remain (:meth:`remove_shot`), and
+        listeners hear one batch.
         """
         stale = self.stale_shots()
         if not stale:
@@ -1700,6 +1710,9 @@ class ShotStore(_ShotStoreInternal):
                 for time, owner, _edge in ledger.key_records(curve):
                     if owner in ids:
                         ledger.release_key(curve, time)
+            for shot_id in ids:
+                for curve, time in ledger.authored(owner=shot_id):
+                    ledger.release_authored(curve, time)
             for shot in stale:
                 self.remove_shot(shot.shot_id)
             if self.active_shot_id in ids:
@@ -2029,6 +2042,9 @@ class ShotStore(_ShotStoreInternal):
         if strat in CLIP_NAME_STRATEGIES:
             store.clip_name_strategy = str(strat)
         store.edit_ledger = ShotEditLedger.from_dict(data.get("edit_ledger"))
+        # Claims a removed shot left on its id (data saved before removal
+        # disowned them) would pass to the next shot given that id.
+        store.edit_ledger.disown_absent(shot.shot_id for shot in store.shots)
         store.effect_recipe = EffectRecipe.from_dict(data.get("effect_recipe"))
         return store
 
@@ -2038,8 +2054,9 @@ class ShotStore(_ShotStoreInternal):
         """Scale all shot timings from the current ``scene_fps`` to *new_fps*.
 
         Called automatically when the scene framerate changes.  Updates
-        ``scene_fps``, rescales shot boundaries, gap, and markers,
-        then fires a :class:`BatchComplete` so the UI repaints.
+        ``scene_fps``, rescales shot boundaries, gap, markers and the edit
+        ledger's claims (the keys they name moved with the clock), then
+        fires a :class:`BatchComplete` so the UI repaints.
         """
         old_fps = self.scene_fps
         if not old_fps or abs(new_fps - old_fps) < 0.01:
@@ -2055,6 +2072,8 @@ class ShotStore(_ShotStoreInternal):
         for marker in self.markers:
             if "time" in marker:
                 marker["time"] = self.snap(marker["time"] * ratio)
+        # Never snapped: a claim follows its key, wherever the clock put it.
+        self.edit_ledger.retime(ratio)
         self.scene_fps = new_fps
         self.mark_dirty()
         self._notify(BatchComplete())

@@ -11,6 +11,7 @@ asset.
 
 import base64
 import json
+import mimetypes
 import os
 import re
 import struct
@@ -211,6 +212,23 @@ class PreviewServerTestCase(unittest.TestCase):
     def test_viewer_can_be_disabled(self):
         self._serve(viewer=False)
         self.assertFalse((self.root / "index.html").exists())
+
+    def test_a_page_installed_without_its_kernel_says_so(self):
+        """The page is markup; the viewer is the ``kernel/`` it imports. An
+        install that carried the page without its modules served a tab that
+        never started, and nothing on this side said why -- where it is a
+        packaging fact, and the one place it can be read."""
+        package = Path(self.temp.dir_path())
+        (package / "viewer.html").write_bytes(
+            (PreviewServer.SCRIPTS_DIR / "viewer.html").read_bytes()
+        )
+        with (
+            unittest.mock.patch.object(PreviewServer, "SCRIPTS_DIR", package),
+            self.assertLogs(PreviewServer.logger, level="WARNING") as caught,
+        ):
+            self._serve()
+        self.assertTrue((self.root / "index.html").is_file(), "the page itself ships")
+        self.assertTrue(any("kernel" in line for line in caught.output), caught.output)
 
     # -- manifest -------------------------------------------------------
 
@@ -1030,8 +1048,10 @@ class PreviewScriptsTestCase(unittest.TestCase):
 
         `SCRIPTS_DIR` resolves beside this module, so from a source tree every
         script is found and every assertion passes -- while an installed wheel
-        that does not carry `*.js` has no `preview/scripts/` at all, and each
-        one 404s for real users only. The viewer page has the same exposure and
+        that does not carry `*.js` has no `preview/kernel/` or
+        `preview/features/` at all, and each module 404s for real users only
+        (the release workflow's installed-wheel check names one of each). The
+        viewer page has the same exposure and
         was in fact missing from `MANIFEST.in` (it survived on `package-data`
         alone, so an sdist-based install shipped no page either).
         """
@@ -1361,7 +1381,9 @@ class PreviewScriptsTestCase(unittest.TestCase):
                 self.assertEqual(self._shortcuts(source), (1, expected))
 
     def test_the_viewer_imports_what_the_manifest_names(self):
-        """The page half of the contract, pinned to the field name it reads."""
+        """The page half of the contract, pinned to the field name it reads.
+        That the first load waits for the scripts is driven, not read, in
+        ``test_preview_viewer_live``."""
         self._serve()
         page = _served_page(self.root)
         self.assertIn("loadScripts(manifest.scripts)", page)
@@ -3873,6 +3895,25 @@ class PreviewGuestTestCase(unittest.TestCase):
         # The viewer IS its kernel: a guest's page imports every module of it.
         for module in sorted((PreviewServer.SCRIPTS_DIR / "kernel").glob("*.js")):
             self.assertEqual(self._guest("GET", f"/kernel/{module.name}")[0], 200)
+
+    def test_the_kernel_is_typed_as_javascript_whatever_the_registry_says(self):
+        """REGRESSION (2026-10-04): a browser refuses to run a module script
+        typed as anything but JavaScript, and the kernel is ES modules. The
+        stdlib typed a file through ``mimetypes``, which on Windows reads
+        ``HKCR\\.js\\Content Type`` -- ``text/plain`` on a machine an installer
+        touched -- so there the whole viewer stayed blank. The handler names
+        the page's own types instead, on both listeners."""
+        mimetypes.guess_type("main.js")  # initialised, so the patch is the live table
+        with unittest.mock.patch.dict(
+            mimetypes.types_map, {".js": "text/plain", ".mjs": "text/plain"}
+        ):
+            self.assertEqual(mimetypes.guess_type("main.js")[0], "text/plain")
+            for listener in (self._owner, self._guest):
+                with self.subTest(listener=listener.__name__):
+                    status, _, headers = listener("GET", "/kernel/main.js")
+                    self.assertEqual(status, 200)
+                    types = {k.lower(): v for k, v in headers.items()}
+                    self.assertEqual(types["content-type"], "text/javascript")
 
     def test_a_guest_reads_nothing_else_in_the_serve_root(self):
         """A scene push's stills and recordings land in the serve root, and a

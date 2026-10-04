@@ -176,25 +176,48 @@ class _ImgColorSpaceInternal:
             (-0.000573943188, 0.028467768408, 0.972106174780),
         ),
     }
-    #: The same spaces under the names the ACES 1.x / OCIO v2 studio configs and
-    #: Blender give them (matched case-insensitively).
+    #: The same spaces under the names the ACES 1.x / OCIO v2 studio configs
+    #: give them, and every name and alias Blender 5.1's config does
+    #: (``datafiles/colormanagement/config.ocio``), matched case-insensitively.
     _SCENE_LINEAR_ALIASES = {
         "aces - acescg": "acescg",
         "lin_ap1": "acescg",
+        "lin_ap1_scene": "acescg",
+        "linear acescg": "acescg",
+        "acescg: linear - ap1": "acescg",
         "aces - aces2065-1": "aces2065-1",
         "lin_ap0": "aces2065-1",
+        "lin_ap0_scene": "aces2065-1",
+        "linear aces": "aces2065-1",
+        "aces2065_1": "aces2065-1",
+        "aces: linear - ap0": "aces2065-1",
         "utility - linear - srgb": "scene-linear rec.709-srgb",
         "utility - linear - rec.709": "scene-linear rec.709-srgb",
         "linear rec.709 (srgb)": "scene-linear rec.709-srgb",
         "linear rec.709": "scene-linear rec.709-srgb",
         "lin_rec709": "scene-linear rec.709-srgb",
+        "lin_rec709_scene": "scene-linear rec.709-srgb",
+        "lin_rec709_srgb": "scene-linear rec.709-srgb",
         "lin_srgb": "scene-linear rec.709-srgb",
+        "linrec709": "scene-linear rec.709-srgb",
+        "linear": "scene-linear rec.709-srgb",
+        "linear bt.709": "scene-linear rec.709-srgb",
+        "linear bt.709 i-d65": "scene-linear rec.709-srgb",
+        "linear tristimulus": "scene-linear rec.709-srgb",
+        "cgi: linear - rec.709": "scene-linear rec.709-srgb",
         "utility - linear - p3-d65": "scene-linear dci-p3 d65",
+        "linear dci-p3 d65": "scene-linear dci-p3 d65",
+        "linear dci-p3 i-d65": "scene-linear dci-p3 d65",
         "linear p3-d65": "scene-linear dci-p3 d65",
         "lin_p3d65": "scene-linear dci-p3 d65",
+        "lin_p3d65_scene": "scene-linear dci-p3 d65",
+        "apple dci-p3 d65": "scene-linear dci-p3 d65",
         "utility - linear - rec.2020": "scene-linear rec.2020",
         "linear rec.2020": "scene-linear rec.2020",
+        "linear bt.2020": "scene-linear rec.2020",
+        "linear bt.2020 i-d65": "scene-linear rec.2020",
         "lin_rec2020": "scene-linear rec.2020",
+        "lin_rec2020_scene": "scene-linear rec.2020",
     }
 
     @classmethod

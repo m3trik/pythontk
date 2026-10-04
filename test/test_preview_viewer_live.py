@@ -32,6 +32,7 @@ import pathlib
 import struct
 import subprocess
 import sys
+import threading
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1506,6 +1507,78 @@ class TestPreviewViewerLive(unittest.TestCase):
             "a cancelled prompt wrote a movie anyway",
         )
 
+    @unittest.skipUnless(
+        ptk.VidUtils.resolve_ffmpeg(required=False), "needs ffmpeg on PATH"
+    )
+    def test_a_still_saved_during_an_encode_leaves_the_encodes_badge(self):
+        """REGRESSION (2026-10-04): the still and the playblast share the bar's
+        Export button, and each cleared its badge outright -- a still saved
+        while a recording encoded took "encoding" off the bar with the encode
+        still running. Each job now clears its own, and the button shows the
+        newest badge standing. The encode is held at the server (its finish
+        waits) so the still lands inside it, whatever the machine's speed."""
+        badge = "#categories button[data-category='Export']"
+        status = (
+            "(pattern) => new RegExp(pattern).test("
+            "document.getElementById('status').textContent)"
+        )
+        release = threading.Event()
+
+        def drive(server, page):
+            finish = server.finish_playblast
+
+            def held(**kwargs):
+                release.wait(120)
+                return finish(**kwargs)
+
+            server.finish_playblast = held
+            try:
+                page.evaluate("(name) => window.__select(name)", "SHOT_B")
+                self._press(page, "Export", "Export playblast")
+                page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
+                page.select_option(
+                    "#dialogFields label:has-text('Quality') select", "draft"
+                )
+                page.click("#dialogConfirm")
+                page.wait_for_function(
+                    "(sel) => document.querySelector(sel).textContent"
+                    " === 'Export · encoding'",
+                    arg=badge,
+                    timeout=300_000,
+                )
+                self._press(page, "Export", "Export image")
+                page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
+                page.click("#dialogConfirm")
+                page.wait_for_function(
+                    status, arg="image (saved|export failed)", timeout=120_000
+                )
+                still = page.eval_on_selector("#status", "el => el.textContent")
+                during = page.eval_on_selector(badge, "el => el.textContent")
+            finally:
+                release.set()
+            page.wait_for_function(
+                status, arg="playblast (saved|failed)", timeout=300_000
+            )
+            return {
+                "still": still,
+                "during": during,
+                "movie": page.eval_on_selector("#status", "el => el.textContent"),
+                "after": page.eval_on_selector(badge, "el => el.textContent"),
+            }
+
+        found = self._load(
+            self._shots_only_glb(),
+            probe=self._record_probe(),
+            then=drive,
+            scripts=["snapshot"],
+        )
+
+        self.assertEqual(found["errors"], [])
+        self.assertIn("image saved", found["still"])
+        self.assertEqual(found["during"], "Export · encoding", "the still cleared it")
+        self.assertIn("playblast saved", found["movie"])
+        self.assertEqual(found["after"], "Export")
+
     def test_the_prompt_keeps_the_keyboard_off_the_page_behind_it(self):
         """Blocking the page's shortcuts did not take the keyboard whole: Tab
         still walked focus out of the prompt to the controls behind it, which
@@ -1799,6 +1872,7 @@ class TestPreviewViewerLive(unittest.TestCase):
         environment=None,
         baked_reflections=None,
         probe=None,
+        probe_intensity=None,
     ):
         """A GLB whose material wears a BAKED map, built by the real applier.
 
@@ -1824,7 +1898,8 @@ class TestPreviewViewerLive(unittest.TestCase):
         *probe* gives the bake a reflection probe, as a host's bake records
         one: ``{"image": float (h, w, 3) RGB radiance in the probe's
         equirectangular layout, "position": [x, y, z], "box": [[min], [max]]
-        or None}``, in metres (``unit_scale`` 1).
+        or None}``, in metres (``unit_scale`` 1); *probe_intensity* publishes
+        the level it plays at (``environment.probeIntensity``).
         """
         import cv2
         import numpy as np
@@ -1907,6 +1982,8 @@ class TestPreviewViewerLive(unittest.TestCase):
         rendering = {}
         if environment is not None:
             rendering["environment"] = {"intensity": environment}
+        if probe_intensity is not None:
+            rendering.setdefault("environment", {})["probeIntensity"] = probe_intensity
         if baked_reflections is not None:
             rendering["lightmappedMaterials"] = {"envMapIntensity": baked_reflections}
         if rendering:
@@ -2392,6 +2469,149 @@ class TestPreviewViewerLive(unittest.TestCase):
         found = self._load(self._animated_glb())
 
         self.assertEqual(found["console_errors"], [])
+
+    # ------------------------------------------------------- the page's boot
+    def test_a_script_named_with_the_asset_is_in_before_the_asset_loads(self):
+        """The first manifest names the asset and the scripts together, and
+        the page holds the asset until each script has registered: a small GLB
+        parses in less time than an ES module takes to arrive, and a script
+        that misses the first 'load' -- the only one a single push gives it --
+        leaves that model untouched (the shadow rigs stood still). Driven, not
+        read: the probe's module is held at the network with the asset ready,
+        so the asset must not be asked for until the probe is in, and the
+        probe must then be told of the first model. Mutation-checked
+        (2026-10-04): with kernel/poll.js not awaiting `loadScripts`, the page
+        fetched the asset while the script was still held."""
+        import time
+
+        from playwright.sync_api import sync_playwright
+
+        server = ptk.PreviewServer(viewer=True, title="live-test", port=0).start()
+        server.add_script("probe", self.probe)
+        server.publish(self._animated_glb())
+        held, asked = [], []
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    channel="msedge",
+                    headless=True,
+                    args=["--enable-unsafe-swiftshader"],
+                )
+                page = browser.new_page()
+                page.route("**/scripts/probe.js", lambda route: held.append(route))
+                page.on(
+                    "request",
+                    lambda r: asked.append(r.url) if "/scene.glb" in r.url else None,
+                )
+                page.goto(server.url, wait_until="domcontentloaded", timeout=120_000)
+                deadline = time.monotonic() + 120
+                while not held and time.monotonic() < deadline:
+                    page.wait_for_timeout(100)
+                # A poll and a half with the module held and the asset ready.
+                page.wait_for_timeout(1500)
+                fetched_early = list(asked)
+                if held:
+                    held[0].continue_()
+                page.wait_for_function(
+                    "() => document.getElementById('status').className === 'live'",
+                    timeout=180_000,
+                )
+                found = page.evaluate("() => window.__probe") or {}
+                browser.close()
+        finally:
+            server.stop()
+
+        self.assertTrue(held, "the page never asked for the script")
+        self.assertEqual(
+            fetched_early, [], "the asset was fetched ahead of a script it shipped with"
+        )
+        self.assertEqual(found.get("loads"), 1, "the script missed the first 'load'")
+        self.assertEqual(found.get("errors"), [])
+
+    def test_a_page_that_cannot_start_says_what_stopped_it(self):
+        """REGRESSION (2026-10-04): the boot watchdog blamed the CDN for any
+        kernel that did not start ("three.js failed to load — needs
+        unpkg.com"), since its flag is set only once every module has run: a
+        graphics context that could not be made, a kernel module missing or
+        refused for its type, all read as a blocked unpkg.com. The page now
+        records what stopped it and says that; the CDN is named when its own
+        modules are what failed, or when nothing was recorded at all -- a
+        blocked fetch that never answers raises nothing."""
+        from playwright.sync_api import sync_playwright
+
+        no_webgl = (
+            "const made = HTMLCanvasElement.prototype.getContext;"
+            "HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {"
+            " return /webgl/i.test(kind) ? null : made.call(this, kind, ...rest); };"
+        )
+        cases = {
+            # A device or a policy with no WebGL: three.js throws building the stage.
+            "graphics": {"init": no_webgl},
+            "missing module": {
+                "route": (
+                    "**/kernel/session.js",
+                    lambda route: route.fulfill(status=404, body=""),
+                )
+            },
+            # What a registry that types .js as text/plain did to every module.
+            "refused module": {
+                "route": (
+                    "**/kernel/main.js",
+                    lambda route: route.fulfill(
+                        status=200, content_type="text/plain", body="export {};"
+                    ),
+                )
+            },
+            "blocked CDN": {
+                "route": ("https://unpkg.com/**", lambda route: route.abort())
+            },
+        }
+        server = ptk.PreviewServer(viewer=True, title="live-test", port=0).start()
+        said = {}
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    channel="msedge",
+                    headless=True,
+                    args=["--enable-unsafe-swiftshader"],
+                )
+                pages = {}
+                for name, case in cases.items():
+                    page = browser.new_context().new_page()
+                    if "init" in case:
+                        page.add_init_script(case["init"])
+                    if "route" in case:
+                        page.route(*case["route"])
+                    page.goto(
+                        server.url, wait_until="domcontentloaded", timeout=120_000
+                    )
+                    pages[name] = page
+                # Side by side, so one watchdog's wait covers them all.
+                for name, page in pages.items():
+                    page.wait_for_function(
+                        "() => document.getElementById('status').className === 'error'",
+                        timeout=60_000,
+                    )
+                    said[name] = page.eval_on_selector(
+                        "#status", "el => el.textContent"
+                    )
+                browser.close()
+        finally:
+            server.stop()
+
+        with self.subTest(case="graphics"):
+            self.assertIn("failed to start", said["graphics"])
+            self.assertIn("WebGL context", said["graphics"])
+        for name in ("missing module", "refused module"):
+            with self.subTest(case=name):
+                self.assertIn("kernel failed to load", said[name])
+        for name in ("graphics", "missing module", "refused module"):
+            with self.subTest(case=name, blames="cdn"):
+                self.assertNotIn("unpkg", said[name])
+        with self.subTest(case="blocked CDN"):
+            self.assertEqual(
+                said["blocked CDN"], "three.js failed to load — needs unpkg.com."
+            )
 
     # -------------------------------------------------- the lighting policy
     # glTF has no lightmap slot, so a bake travels DISGUISED as occlusion on
@@ -3163,6 +3383,37 @@ class TestPreviewViewerLive(unittest.TestCase):
         self.assertEqual(found["maps"], [["studio", True]])
         self.assertIn("the studio (three.js RoomEnvironment)", found["rows"])
         self.assertEqual(found["switches"], [False, False])
+
+    def test_the_environment_window_states_the_level_the_probe_plays_at(self):
+        """REGRESSION (2026-10-04): the window said "1/π: the bake's units"
+        whatever the deliverable published, while the page plays its
+        `environment.probeIntensity` -- a producer's own level was reported as
+        the unit. It now gives the level played, named as the bake's unit
+        only when it is that one."""
+        room = {"image": self._probe_image([]), "position": [0, 0, 0], "box": None}
+        pbr = {"metallicFactor": 1.0, "roughnessFactor": 0.3}
+
+        def read(server, page):
+            return {
+                "rows": self._window_rows(page, "Environment"),
+                "intensity": page.evaluate(
+                    "() => window.__api.scene.environmentIntensity"
+                ),
+            }
+
+        for published, level, played in (
+            (None, "0.32 (1/π: the bake's units)", 1 / math.pi),
+            (0.5, "0.50", 0.5),
+        ):
+            with self.subTest(published=published):
+                glb = self._lightmapped_glb(
+                    pbr=pbr, probe=room, probe_intensity=published
+                )
+                found = self._load(glb, then=read)
+                self.assertEqual(found["console_errors"], [])
+                rows = found["rows"]
+                self.assertEqual(rows[rows.index("level") + 1], level, rows)
+                self.assertAlmostEqual(found["intensity"], played, places=4)
 
     def test_inspect_counts_the_probe_in_memory_the_file_and_the_load(self):
         """The probe's cost where Inspect reads cost: its environment map in

@@ -626,8 +626,10 @@ window for a category -- `'View'`, `'Environment'`, `'Inspect'`, `'Export'`, `'R
 script's own -- made on first ask with its bar button, shared by every script that names it:
 `section(title)` adds a block the script owns, with `setRows`, `addButton`, `addSlider`,
 `addToggle(label, {value, title}, onChange)` and `remove`; `show`, `toggle`, `shown`, `onShow(fn)`,
-and `setBadge(text)` to mark the bar button while a job runs. A script's controls go here, not on
-the bar), `addButton(label, onClick)` (a bar button of its own, for the rare action that cannot wait
+and `setBadge(text, owner)` to mark the bar button while a job runs -- each owner (the script's
+name) sets and clears its own, and the button shows the newest one standing. A script's controls go
+here, not on the bar), `addButton(label, onClick)` (a bar button of its own, for the rare action
+that cannot wait
 a click), `addPanel(title)` (a free panel of label/value rows in the page's chrome, stacked
 top-right after the windows -- `setRows`, `show`, an `addButton` of its own, `addToggle`, and
 `addSlider(label, {min, max, step, value, format}, onInput)` for a labelled slider under the rows,
@@ -726,10 +728,11 @@ each active packaged feature to its own path -- `features/turntable.js`, or
 `features/shadow_rig/` with the model beside its adapter -- so a module's relative imports resolve
 in the page as they do on disk. A caller's own module (`add_script(name, path)`) is served at
 `scripts/<name>.js` and may import the kernel's pure modules by their served path
-(`../kernel/math.js`, `../kernel/records.js`) or a feature's model
-(`../features/articulated_rig/model.js`). A managed root is swept of whatever is no longer active;
-the manifest's page fingerprint covers the kernel, so an edit to any module of it reloads an open
-tab.
+(`../kernel/math.js`, `../kernel/records.js`), or a feature's model while that feature is active
+(`../features/articulated_rig/model.js`): a feature's folder is served only while it is active, so
+a script importing one needs that feature activated beside it. A managed root is swept of whatever
+is no longer active; the manifest's page fingerprint covers the kernel, so an edit to any module of
+it reloads an open tab.
 
 **The API is published and versioned.** A feature inside this package is internal; the `viewer`
 object, its events and the manifest keys are what outside scripts and an app that vendors one
@@ -1487,7 +1490,9 @@ are capped at 0.75). The deliverable's per-frame animation keys are the third le
 
 - **The page needs `unpkg.com`.** three.js loads from a CDN. Behind a default-deny outbound
   firewall the module never executes — no error event, just a dark page. A classic-script watchdog
-  says so after 8 s rather than leaving it silent.
+  says so after 8 s rather than leaving it silent -- and says what else stopped the page when it
+  was something else: a module that threw (no WebGL context), or a kernel module missing or refused
+  for its type, which the browser console names.
 - **WebXR needs localhost or HTTPS.** Opened over a plain-HTTP LAN address, `navigator.xr` is
   absent and the VR button simply never appears; the page says which case it is in. Anything
   that is not this machine -- a standalone headset, a reviewer -- gets HTTPS from a share.

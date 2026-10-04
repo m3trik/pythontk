@@ -1771,7 +1771,8 @@ class ImgUtils(
                 a texel must stand to be clamped as a spike; ``0`` disables it.
 
         Returns:
-            The denoised image, same shape and dtype; texels outside *mask*
+            The denoised image, same shape and dtype (an integer one rounded
+            to nearest and saturated at its range); texels outside *mask*
             unchanged.
         """
         return super().denoise_image(image, mask, radius, strength, noise, outliers)
@@ -1846,7 +1847,8 @@ class ImgUtils(
                 the texel it continues from.
 
         Returns:
-            ``(image, mask)``: the filled copy and the grown mask.
+            ``(image, mask)``: the filled copy (same dtype; an integer one's
+            new texels rounded and saturated at its range) and the grown mask.
         """
         return super().extrapolate_fill(image, mask, rings, clamp)
 
@@ -2210,7 +2212,8 @@ class ImgUtils(
             iterations: Solver iterations.
 
         Returns:
-            The stitched copy (same dtype).
+            The stitched copy (same dtype; an integer one rounded and
+            saturated at its range).
         """
         return _ImgAtlasInternal.stitch_seams(image, pairs, iterations)
 
@@ -2233,8 +2236,9 @@ class ImgUtils(
         (row 0 == top == v 1): an item later bound with the *same* scaleOffset
         samples exactly the pixels written here.
 
-        HDR-safe (works in float32, returns the input dtype). Requires cv2 for the
-        resize -- guard call sites / tests with ``cv2`` availability.
+        HDR-safe (works in float32, returns the input dtype -- an integer one
+        rounded and saturated at its range). Requires cv2 for the resize --
+        guard call sites / tests with ``cv2`` availability.
 
         Parameters:
             images: One HxW or HxWxC array per item; all must share channel count.
@@ -2308,7 +2312,8 @@ class ImgUtils(
         geometry" and can be thresholded on as such (what a lightmap bake
         needs to tell an island's own texels from the ones it merely
         overlaps). ``supersample`` sets that rate: 4 resolves coverage to
-        1/16 and costs ``(size * 4)²`` bytes of scratch.
+        1/16 and costs ``(size * 4)²`` bytes of scratch, plus up to ~0.2 GB of
+        working buffers whatever the triangles' summed height.
 
         Parameters:
             triangles: (N, 3, 2) array-like of UV coordinates (V up, usually
@@ -2794,9 +2799,13 @@ class ImgUtils(
         The spaces are Maya's default OCIO config's scene-linear ones, by their
         matrices to ACES2065-1 there: ``ACEScg``, ``ACES2065-1``,
         ``scene-linear Rec.709-sRGB``, ``scene-linear DCI-P3 D65``,
-        ``scene-linear Rec.2020`` -- also under the ACES / OCIO v2 / Blender
-        names for the same spaces (``ACES - ACEScg``, ``Utility - Linear -
-        sRGB``, ``Linear Rec.709 (sRGB)``, ``lin_ap1``, ...), case-insensitive.
+        ``scene-linear Rec.2020`` -- also under the names the ACES / OCIO v2
+        configs give the same spaces (``ACES - ACEScg``, ``Utility - Linear -
+        sRGB``, ``Linear Rec.709 (sRGB)``, ...) and every name and alias
+        Blender 5.1's config does (``Linear Rec.709``, ``Linear DCI-P3 D65``,
+        ``lin_rec709_srgb``, ``Linear ACEScg``, ...), case-insensitive. Nothing
+        is clipped: a colour outside *dst*'s gamut comes back with a negative
+        component (ACEScg's pure red is (1.71, -0.13, -0.02) in Rec.709).
 
         Parameters:
             image: ``(..., C)`` array, ``C >= 3``; channels past the third

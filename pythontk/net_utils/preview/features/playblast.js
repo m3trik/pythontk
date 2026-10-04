@@ -574,7 +574,7 @@ export default function playblast(viewer) {
     const { width, height } = job;
     // No ✕: see the button handler -- there is nothing left to cancel.
     button.textContent = 'Encoding…';
-    exports.setBadge('encoding');
+    exports.setBadge('encoding', 'playblast');
     try {
       const report = await post('finish', { token: job.token });
       const seconds = Number(report.duration || 0).toFixed(1);
@@ -774,7 +774,7 @@ export default function playblast(viewer) {
     if (job && job.wasPlaying) viewer.setPlaying(true);
     job = null;
     button.textContent = LABEL;
-    exports.setBadge('');
+    exports.setBadge('', 'playblast');
   }
 
   //: Progress goes on the BUTTON, not the status line: the status line says
@@ -785,7 +785,7 @@ export default function playblast(viewer) {
   //: Export window's bar button says one runs, for when the window is shut.
   function label(text) {
     button.textContent = `${text}  ✕`;
-    exports.setBadge('recording');
+    exports.setBadge('recording', 'playblast');
   }
 
   async function post(action, payload) {

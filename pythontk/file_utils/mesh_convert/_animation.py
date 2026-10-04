@@ -290,7 +290,9 @@ class _AnimationMixin:
         A declared take is stamped under its name; ``*`` from the one stack
         the file does not declare (the whole-timeline stack the shots are cut
         from) -- with two, which one the rebuild cuts from is not this
-        stamp's to guess. The rest of the channel rides through; a file that
+        stamp's to guess. The rest of the channel rides through, back into
+        the carrier it was read from: another carrier's own channel (a
+        referenced module brings its own) is left as it is. A file that
         publishes none gets the measurement alone.
 
         Returns:
@@ -336,7 +338,15 @@ class _AnimationMixin:
                     first,
                 )
         payload["clip_span"] = {**published, **stamped}
-        cls.overlay_data_export(gltf, {cls.VISIBILITY_TRACKS_KEY: payload})
+        # Not through overlay_data_export, which clears the channel from EVERY
+        # carrier -- right for a caller's statement about this build, but this
+        # read one carrier, and on every conversion a module's tracks left the
+        # GLB with the others.
+        found = cls._data_export_carrier(gltf, cls.VISIBILITY_TRACKS_KEY)
+        if found is None:
+            cls.overlay_data_export(gltf, {cls.VISIBILITY_TRACKS_KEY: payload})
+        else:
+            cls._write_data_export(found[0], cls.VISIBILITY_TRACKS_KEY, payload)
         return stamped
 
     #: What Maya (and so FBX2glTF) names the whole-timeline AnimStack. The

@@ -166,7 +166,7 @@ export default function snapshot(viewer) {
   async function save(preset) {
     busy = true;
     button.textContent = 'Saving…';
-    exports.setBadge('saving');
+    exports.setBadge('saving', 'snapshot');
     try {
       const pad = capture(preset);
       // `toBlob` copies the pad when it is CALLED, so what follows may await.
@@ -191,7 +191,7 @@ export default function snapshot(viewer) {
     } finally {
       busy = false;
       button.textContent = LABEL;
-      exports.setBadge('');
+      exports.setBadge('', 'snapshot');
     }
   }
 }

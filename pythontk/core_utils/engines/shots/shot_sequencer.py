@@ -1971,8 +1971,8 @@ class ShotSequencer(_ShotSequencerHooks):
         # measured 2026-09-06 (an empty inserted shot, a respace, a delete),
         # "Shot 3.3" played 33 frames differently on four curves because the
         # deleted shot's end pin now stood mid-ramp with a recomputed tangent.
+        # The removal disowns what is left (ShotStore.remove_shot).
         self._reconcile_boundary_keys(bounds={shot_id: (None, None)})
-        self.ledger.disown_shot(shot_id)
         self.store.remove_shot(shot_id)
 
         closed = 0.0
@@ -2033,7 +2033,6 @@ class ShotSequencer(_ShotSequencerHooks):
                 # Inner bounds vanish with the merge; their pins go too where
                 # provably redundant (see delete_shot).
                 self._reconcile_boundary_keys(bounds={s.shot_id: (None, None)})
-                self.ledger.disown_shot(s.shot_id)
                 self.store.remove_shot(s.shot_id)
             self.store.update_shot(
                 keeper.shot_id,

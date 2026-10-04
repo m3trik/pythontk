@@ -565,6 +565,49 @@ class TestFbxToGlb(unittest.TestCase):
             MeshConvert.fbx_to_glb(self.src, dst, auto_install=False, timeout=42)
         self.assertEqual(captured["kwargs"].get("timeout"), 42)
 
+    def test_the_input_is_parsed_once_for_the_budget_and_the_clip_spans(self):
+        """The budget's census and the measured clip spans each parsed the
+        input for the same curves -- 8 s apiece on a 133 MB Maya assembly
+        (2026-10-04 review). One parse serves both, with the same answers."""
+        from test_export_verify import build_take_fbx
+
+        src = build_take_fbx(
+            os.path.join(self.tmp, "takes.fbx"),
+            {"Take 001": {("lift", "d|Y"): (1, 100)}},
+        )
+        measured = FbxFile.load(src, span_arrays=("KeyTime",)).take_spans()
+        budget = MeshConvert.conversion_timeout(src)
+        captured, loads, stamped = {}, [], []
+
+        def _run(cmd, **kw):
+            captured.update(kw)
+            _write_glb_file(
+                cmd[cmd.index("-o") + 1] + ".glb", {"asset": {"version": "2.0"}}
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+        real_load = FbxFile.load
+
+        def counted(*args, **kwargs):
+            loads.append(args[0])
+            return real_load(*args, **kwargs)
+
+        def stamp(gltf, spans):
+            stamped.append(spans)
+            return {}
+
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch("subprocess.run", side_effect=_run),
+            patch.object(FbxFile, "load", side_effect=counted),
+            patch.object(MeshConvert, "_stamp_clip_spans", side_effect=stamp),
+        ):
+            MeshConvert.fbx_to_glb(src, auto_install=False)
+
+        self.assertEqual(len(loads), 1, loads)
+        self.assertEqual(stamped, [measured])
+        self.assertEqual(captured["timeout"], budget)
+
 
 class TestCheckGlbMaterials(unittest.TestCase):
     """Verify the post-conversion material sanity check."""
@@ -2123,6 +2166,20 @@ class TestGlbEditSession(unittest.TestCase):
         self.assertEqual(
             MeshConvert.bake_node_frames(path),
             int(2 * seconds * MeshConvert.CONVERSION_BAKE_FPS),
+        )
+
+    def test_a_truncated_fbx_degrades_the_budget_rather_than_raising(self):
+        """Cut inside a zlib-encoded key array, the budget's census raised
+        ``zlib.error`` out of ``fbx_to_glb`` -- past its documented
+        exceptions and every task manager's catch -- before the conversion
+        was attempted (2026-10-04 review). A budget is never the reason a
+        conversion is not attempted."""
+        from test_export_verify import build_truncated_fbx
+
+        cut = build_truncated_fbx(os.path.join(self.tmp, "cut.fbx"))
+        self.assertEqual(MeshConvert.bake_node_frames(cut), 0)
+        self.assertEqual(
+            MeshConvert.conversion_timeout(cut), MeshConvert.DEFAULT_TIMEOUT
         )
 
     def test_describe_texture_pass_owns_up_to_the_power_of_two_snap(self):
@@ -10494,6 +10551,48 @@ class TestApplyGlbClips(unittest.TestCase):
         stamped = self._stamp(path, {"Take 001": (0.0, 1.0), "Take 002": (0.5, 2.0)})
         self.assertFalse(stamped)
         self.assertEqual(self._channel(path)["clip_span"], {"*": [0, 100]})
+
+    def test_the_stamp_leaves_every_other_carrier_s_channel_alone(self):
+        """A referenced module brings its own carrier. The stamp wrote back
+        through ``overlay_data_export``, which clears the channel from EVERY
+        carrier, so on every conversion the module's visibility tracks left
+        the GLB (2026-10-04 review). Written back where it was read, only."""
+        key = MeshConvert.VISIBILITY_TRACKS_KEY
+
+        def carrier(name, channels):
+            props = {
+                k: {"type": "eFbxString", "value": json.dumps(v)}
+                for k, v in channels.items()
+            }
+            return {"name": name, "extras": {"fromFBX": {"userProperties": props}}}
+
+        module = {
+            "version": 1,
+            "fps": self.FPS,
+            "tracks": [{"node": "B", "visibility": [[1, 0], [50, 1]]}],
+        }
+        gltf = {
+            "nodes": [
+                carrier(
+                    "data_export",
+                    {
+                        "fbx_takes": self._shots(),
+                        "shot_metadata": {"version": 1, "fps": self.FPS},
+                        key: {**module, "tracks": [], "clip_span": {"*": [0, 100]}},
+                    },
+                ),
+                carrier("modB:data_export", {key: module}),
+            ]
+        }
+
+        stamped = MeshConvert._stamp_clip_spans(gltf, {"Take 001": (0.0, 2.0)})
+
+        self.assertEqual(stamped, {"*": [0.0, 60.0]})
+        self.assertEqual(
+            MeshConvert.data_export_channel(gltf, key)["clip_span"], {"*": [0.0, 60.0]}
+        )
+        props = gltf["nodes"][1]["extras"]["fromFBX"]["userProperties"]
+        self.assertEqual(json.loads(props[key]["value"]), module)
 
 
 class TestOptimizeGlbWebpSemantics(unittest.TestCase):

@@ -188,6 +188,31 @@ A01.),Static setup with no motion,obj_a,vo
         finally:
             os.remove(path)
 
+    def test_an_object_on_two_rows_is_one_object(self):
+        """Bug: every asset-cell row became an object of its own, so one
+        object listed on two rows of a step was two -- Build placed their
+        behaviors together, Assess and Apply each row's alone, and an Apply
+        deleted the other row's keys.  Behaviors keep row order, repeats too.
+        Fixed: 2026-10-04
+        """
+        path = _write_csv(
+            "Step,Step Contents,Asset Names\n"
+            "A01.),Door fades in then fades out,door\n"
+            ",Door fades in again,door\n"
+            ",,lid\n"
+        )
+        try:
+            (step,) = ManifestModel.parse_csv(path)
+        finally:
+            os.remove(path)
+        self.assertEqual(
+            [(o.name, o.behaviors) for o in step.objects],
+            [
+                ("door", ["fade_in", "fade_out", "fade_in"]),
+                ("lid", ["fade_in", "fade_out"]),
+            ],
+        )
+
     def test_metadata_pass_first_row_wins(self):
         cm = ColumnMap(metadata_pass={"priority": ("Priority",)})
         steps = ManifestModel.parse_csv(self.path, columns=cm)
@@ -806,13 +831,10 @@ class TestAutoFillAssets(unittest.TestCase):
     )
 
     def setUp(self):
-        self._prefs = tempfile.mkdtemp(prefix="mani_fill_")
-        ShotStore._prefs_dir_override = self._prefs
         self.store = ShotStore()
         self.path = _write_csv(self.CSV)
 
     def tearDown(self):
-        ShotStore._prefs_dir_override = None
         os.remove(self.path)
 
     def _steps(self):
@@ -1223,13 +1245,8 @@ class TestManifestEngine(unittest.TestCase):
     """The pure ShotManifest planner + commit against a real ShotStore."""
 
     def setUp(self):
-        self._prefs = tempfile.mkdtemp(prefix="mani_engine_")
-        ShotStore._prefs_dir_override = self._prefs
         self.store = ShotStore()
         self.mani = ShotManifest(self.store)
-
-    def tearDown(self):
-        ShotStore._prefs_dir_override = None
 
     def _steps(self, ids):
         return [
@@ -1422,13 +1439,8 @@ class _ScenicStore(ShotStore):
 
 class _EngineCase(unittest.TestCase):
     def setUp(self):
-        self._prefs = tempfile.mkdtemp(prefix="mani_reconcile_")
-        ShotStore._prefs_dir_override = self._prefs
         _ScenicStore.missing, _ScenicStore.ambiguous = set(), set()
         self.store = _ScenicStore()
-
-    def tearDown(self):
-        ShotStore._prefs_dir_override = None
 
     @staticmethod
     def _step(sid, *objs, behaviors=None):
@@ -1546,6 +1558,37 @@ class TestReconcileMembership(_EngineCase):
         self.assertEqual(kept["review"], "ok")
         self.assertEqual(kept["object_status"], {"door": "valid"})
         self.assertEqual([e["name"] for e in kept["csv_objects"]], ["door", "lid"])
+
+    def test_a_cleared_pass_through_cell_leaves_the_shot(self):
+        """Bug: a pass-through column (a hint, a priority) cleared in the doc
+        kept its old value on the shot -- only a cell that said something was
+        recorded, so nothing told the build the key was the doc's to drop.  A
+        doc that says nothing of the column (no sheet) keeps it.
+        Fixed: 2026-10-04
+        """
+        columns = ColumnMap(metadata_pass={"hint": ("Hint",)})
+
+        def parse(hint):
+            path = _write_csv(
+                "Step,Step Contents,Asset Names,Hint\n"
+                f"A01.),Door fades in,door,{hint}\n"
+            )
+            try:
+                return ManifestModel.parse_csv(path, columns=columns)
+            finally:
+                os.remove(path)
+
+        mani = ShotManifest(self.store)
+        mani.update(parse("Press the red button"), initial_shot_length=50)
+        shot = self.store.shot_by_name("A01")
+        self.assertEqual(shot.metadata["hint"], "Press the red button")
+
+        steps, ranges = BuilderStep.from_shots(self.store.sorted_shots())
+        mani.update(steps, ranges=ranges, remove_missing=False)
+        self.assertEqual(shot.metadata["hint"], "Press the red button")
+
+        mani.update(parse(""), remove_missing=False)
+        self.assertNotIn("hint", self.store.shot_by_name("A01").metadata)
 
     def test_an_orphan_shot_is_kept_unless_removal_is_asked_for(self):
         mani = ShotManifest(self.store)
@@ -1818,6 +1861,32 @@ class TestStepsFromShots(unittest.TestCase):
             ],
         )
 
+    def test_an_object_an_older_build_listed_per_row_is_one_object(self):
+        """A build before the parse merged one object's rows listed it once
+        per row; read back, each copy took every behavior, doubling them.
+        Fixed: 2026-10-04
+        """
+        from pythontk.core_utils.engines.shots.shot_model import ShotBlock
+
+        step = BuilderStep(
+            step_id="A01",
+            section="A",
+            section_title="",
+            description="",
+            objects=[
+                BuilderObject(name="door", behaviors=["fade_in", "fade_out"]),
+                BuilderObject(name="door", behaviors=["fade_in"]),
+            ],
+        )
+        shot = ShotBlock(
+            0, "A01", 1.0, 40.0, metadata=ShotManifest._step_metadata(step)
+        )
+        (got,), _ranges = BuilderStep.from_shots([shot])
+        self.assertEqual(
+            [(o.name, o.behaviors) for o in got.objects],
+            [("door", ["fade_in", "fade_out", "fade_in"])],
+        )
+
     def test_a_manifest_step_with_no_assets_keeps_its_members_additional(self):
         """An empty CSV object list is still the manifest's plan: members the
         build discovered must not become planned objects."""
@@ -1969,6 +2038,87 @@ class TestReapplyObject(unittest.TestCase):
             sorted(self.host.curve.items()), [(200, "fade_in"), (300, "fade_out")]
         )
 
+    def test_an_audio_row_is_keyed_by_its_track_name(self):
+        """Bug: Apply on an audio row resolved the track's name as a scene
+        object; a DCC resolves only nodes, so the clip read as missing and
+        nothing was keyed.  A build keys a clip by its name.
+        Fixed: 2026-10-04
+        """
+        calls = []
+
+        class Host(ShotManifest):
+            def _resolve_object(self, name):
+                return name, "missing"  # no scene node answers to the name
+
+            def _apply_one(self, node, behavior, start, end, **kwargs):
+                calls.append((node, behavior, kwargs.get("source_path")))
+                return [("vo_track", start)]
+
+        host = Host(self.store)
+        clip = BuilderObject(
+            "A01_Hello", ["set_clip"], kind="audio", source_path="a.wav"
+        )
+        self.assertTrue(host.reapply_object(self.shot, clip))
+        self.assertEqual(calls, [("A01_Hello", "set_clip", "a.wav")])
+        self.assertEqual(
+            self.store.edit_ledger.authored(owner=self.shot.shot_id),
+            [("vo_track", 100.0)],
+        )
+        # A scene object nothing resolves is still left alone.
+        self.assertFalse(
+            host.reapply_object(self.shot, BuilderObject("door", ["fade_in"]))
+        )
+        self.assertEqual(len(calls), 1)
+
+    def test_an_object_on_two_rows_reapplies_where_its_build_keyed(self):
+        """One object on two rows of a step is one object (the parse merges
+        it), so its Apply re-keys every behavior at the build's anchors and
+        takes out none of the keys the build left."""
+        path = _write_csv(
+            "Step,Step Contents,Asset Names\n"
+            "A01.),Door fades in then fades out,door\n"
+            ",Door fades in again,door\n"
+        )
+        try:
+            (step,) = ManifestModel.parse_csv(path)
+        finally:
+            os.remove(path)
+
+        class Host(ShotManifest):
+            def __init__(self, store):
+                super().__init__(store)
+                self.curve, self.anchors = {}, []
+
+            def apply_behaviors(self):
+                return beh.Behaviors.apply_to_shots(
+                    self.store.sorted_shots(),
+                    apply_fn=self._apply_one,
+                    release_fn=lambda shot, name, b: self.release_authored(
+                        shot.shot_id, name, b
+                    ),
+                )
+
+            def _apply_one(self, node, behavior, start, end, **kwargs):
+                anchor = kwargs.get("anchor_override")
+                self.anchors.append(anchor)
+                t = start + (anchor or 0.0) * (end - start)
+                self.curve[t] = behavior
+                return [("door.v", t)]
+
+            def _delete_keys(self, curve, times):
+                for t in times:
+                    self.curve.pop(t, None)
+
+        host = Host(self.store)
+        host.sync([step], ranges={"A01": (100.0, 300.0)})
+        built = dict(host.curve)
+        self.assertEqual(built, {100.0: "fade_in", 200.0: "fade_out", 300.0: "fade_in"})
+        host.anchors.clear()
+        (door,) = step.objects
+        host.reapply_object(host.pair([step]).shots["A01"], door)
+        self.assertEqual(host.anchors, [0.0, 0.5, 1.0])
+        self.assertEqual(host.curve, built)
+
 
 class TestRecipeOwnership(unittest.TestCase):
     """The manifest keys from the scene's effect recipe: its keys carry the
@@ -2098,6 +2248,88 @@ class TestRecipeOwnership(unittest.TestCase):
         self._build(self._steps())
         self.assertEqual(self.host.curves["Door.highlight"], {100.0: "highlight"})
 
+    def test_a_removed_shots_keys_never_pass_to_the_shot_that_takes_its_id(self):
+        """Bug: removing a shot (the panel's orphan removal, Delete All Shots)
+        left its behavior claims on its id; the next shot built was given that
+        id, and its Build deleted the removed shot's keys as behaviors its doc
+        had dropped.
+        Fixed: 2026-10-04
+        """
+        from pythontk.core_utils.engines.shots.shot_ledger import NO_OWNER
+
+        def step(sid, name, behavior):
+            return BuilderStep(
+                sid, "A", "", "", objects=[BuilderObject(name, [behavior])]
+            )
+
+        door, lid = step("A01", "Door", "fade_in"), step("A02", "Lid", "fade_out")
+        self.host.sync(
+            [door, lid], ranges={"A01": (100.0, 300.0), "A02": (300.0, 500.0)}
+        )
+        removed = self.store.shot_by_name("A02")
+        self.assertEqual(self.host.curves["Lid.fade_out"], {500.0: "fade_out"})
+        self.store.remove_shot(removed.shot_id)  # the doc dropped A02; keys stay
+
+        gate = step("A03", "Gate", "fade_in")
+        self.host.sync([door, gate], remove_missing=False)
+        self.assertEqual(self.store.shot_by_name("A03").shot_id, removed.shot_id)
+        self.assertEqual(self.host.curves["Lid.fade_out"], {500.0: "fade_out"})
+        self.assertEqual(
+            self.store.edit_ledger.authored(owner=NO_OWNER), [("Lid.fade_out", 500.0)]
+        )
+        self.assertEqual(self.host.assess([door, gate])[1].dropped_behaviors, [])
+
+    def test_a_stale_behavior_over_animator_keys_is_a_conflict(self):
+        """Bug: a fade keyed under an older recipe, with an animator key on
+        its channel inside the shot, read "stale -- Build re-keys it"; Build
+        leaves a behavior over keys it does not own, so the step asked for a
+        Build that never changed it.
+        Fixed: 2026-10-04
+        """
+
+        class Host(self._Host):
+            """Guards a build as both DCC hosts do."""
+
+            def apply_behaviors(self):
+                return beh.Behaviors.apply_to_shots(
+                    self.store.sorted_shots(),
+                    apply_fn=self._key,
+                    conflict_fn=lambda node, b, s, e: bool(
+                        self.unowned_keys(node, b, s, e)
+                    ),
+                    release_fn=lambda shot, name, b: self.release_authored(
+                        shot.shot_id, name, b
+                    ),
+                )
+
+            def _key_samples(self, obj, behavior, start, end):
+                curve = f"{obj}.{behavior}"
+                times = sorted(self.curves.get(curve, {}))
+                return [(curve, t) for t in times if start <= t <= end]
+
+        self.host = Host(self.store)
+        steps = self._steps("fade_in")
+        self._build(steps)
+        self.store.update_effect_recipe(fade_frames=30)
+        self.assertEqual(self._door(steps)[1].status, "stale_behavior")
+
+        self.host.curves["Door.fade_in"][200.0] = "animator"
+        step, door = self._door(steps)
+        self.assertEqual(door.status, "behavior_conflict")
+        self.assertEqual(door.stale_behaviors, [])
+        self.assertFalse(step.needs_build)
+        # Build agrees: it leaves the fade and the animator's key alone.
+        _actions, result, _status = self.host.sync(
+            steps, ranges={"A01": (100.0, 300.0)}
+        )
+        self.assertEqual(
+            [(r["object"], r["behavior"]) for r in result["skipped"]],
+            [("Door", "fade_in")],
+        )
+        self.assertEqual(
+            self.host.curves["Door.fade_in"], {100.0: "fade_in", 200.0: "animator"}
+        )
+
     def test_apply_releases_what_the_doc_dropped_for_the_object(self):
         shot = self._build(self._steps("fade_in", "highlight"))
         self.host.reapply_object(shot, BuilderObject("Door", ["fade_in"]))
@@ -2158,6 +2390,35 @@ class TestRecipeOwnership(unittest.TestCase):
             release_fn=lambda *a: calls.append("release"),
         )
         self.assertEqual(calls, [])
+
+    def test_a_behavior_whose_release_failed_is_not_keyed_again(self):
+        """Bug: the audio pass skipped a clip its old keys could not be
+        released for, but the pass for every other behavior keyed over the old
+        keys anyway -- reported failed AND applied.
+        Fixed: 2026-10-04
+        """
+        shot = self.store.define_shot("A01", 100.0, 300.0)
+        entries = [
+            {"name": name, "behavior": "fade_in", "kind": "scene"}
+            for name in ("door", "lid")
+        ]
+        self.store.update_shot(shot.shot_id, metadata={"behaviors": entries})
+
+        def release(_shot, name, _behavior):
+            if name == "door":
+                raise RuntimeError("curve is locked")
+
+        with self.assertLogs(beh.__name__, "WARNING"):
+            result = beh.Behaviors.apply_to_shots(
+                self.store.sorted_shots(),
+                apply_fn=lambda node, b, s, e, **_kw: [(f"{node}.v", s)],
+                release_fn=release,
+            )
+        self.assertEqual(
+            [(r["object"], r["behavior"]) for r in result["failed"]],
+            [("door", "fade_in")],
+        )
+        self.assertEqual([r["object"] for r in result["applied"]], ["lid"])
 
     def test_a_highlight_sizes_its_shot_to_hold_a_beat(self):
         """The pulse keys from the recipe, so a shot sized to fit one holds

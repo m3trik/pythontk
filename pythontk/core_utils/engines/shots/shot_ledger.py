@@ -32,7 +32,7 @@ Times are matched by TOLERANCE, never by equality - a key sits where the last
 move left it, which is the requested frame plus float noise.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 # Half-width of the window a recorded time is matched within.  Keys land on
 # whole frames by default, so this only has to clear the float noise a relative
@@ -293,6 +293,27 @@ class ShotEditLedger(_ShotEditLedgerInternal):
                     n += 1
         return n
 
+    def disown_absent(self, shot_ids: Iterable[int]) -> int:
+        """Re-point every claim whose owner is not one of *shot_ids* at
+        :data:`NO_OWNER`.
+
+        For data saved before a removed shot's claims were disowned: such an
+        owner is no loaded shot, and the next shot given its id would inherit
+        its claims (its Build then deletes them as dropped behaviors).
+
+        Returns:
+            The number of claims re-pointed.
+        """
+        live = set(shot_ids)
+        absent = {
+            rec[1]
+            for register in (self._keys, self._authored)
+            for recs in register.values()
+            for rec in recs
+            if rec[1] != NO_OWNER and rec[1] not in live
+        }
+        return sum(self.disown_shot(owner) for owner in absent)
+
     # ---- authored keys (behaviors) ---------------------------------------
 
     def record_authored(
@@ -306,17 +327,27 @@ class ShotEditLedger(_ShotEditLedgerInternal):
     ) -> bool:
         """Claim a key a behavior wrote on *curve* for shot *owner*'s *obj*.
 
+        A claim no shot owns (:meth:`disown_shot`: its shot was removed, its
+        key stayed) is taken over: the key now on that frame is this
+        behavior's, and refusing the claim left it owned by nobody -- the
+        shot that keyed it could never take it out again.
+
         Parameters:
             stamp: The effect recipe the key was made under
                 (``EffectRecipe.fingerprint``); ``""`` when none.
 
         Returns:
-            ``False`` when the key is already claimed (by any behavior).
+            ``False`` when a shot already claims the key (by any behavior).
         """
+        rec = [float(time), int(owner), str(behavior), str(obj), str(stamp)]
         recs = self._authored.setdefault(curve, [])
-        if self._index_of(recs, time, self.eps) is not None:
-            return False
-        recs.append([float(time), int(owner), str(behavior), str(obj), str(stamp)])
+        i = self._index_of(recs, time, self.eps)
+        if i is not None:
+            if recs[i][1] != NO_OWNER:
+                return False
+            recs[i] = rec
+        else:
+            recs.append(rec)
         self._authored[curve] = self._sorted(recs)
         return True
 
@@ -448,6 +479,31 @@ class ShotEditLedger(_ShotEditLedgerInternal):
                 recs[i][0] = new_t
             moved += len(landing)
             reg[curve] = self._sorted(recs)
+        return moved
+
+    def retime(self, ratio: float, offset: float = 0.0) -> int:
+        """Put every claim on another clock: its time scaled by *ratio*, then
+        shifted by *offset*.
+
+        What a frame-rate change does to the keys the claims name -- a live
+        store's (:meth:`~pythontk.ShotStore.rescale_to_fps`) and a hand-off's
+        landing on the receiving scene's clock (``ShotTransfer``) alike.  A
+        time is rounded to 1e-4, well inside :attr:`eps`: the claim still
+        finds its key, and a saved record carries no float noise.
+
+        Returns:
+            The number of claims retimed.
+        """
+        if abs(ratio - 1.0) < 1.0e-12 and abs(offset) < 1.0e-12:
+            return 0
+        moved = 0
+        for reg in self._registers():
+            for curve in list(reg):
+                recs = reg[curve]
+                for rec in recs:
+                    rec[0] = round(rec[0] * ratio + offset, 4)
+                moved += len(recs)
+                reg[curve] = self._sorted(recs)
         return moved
 
     # ---- disposal ---------------------------------------------------------

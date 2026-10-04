@@ -136,3 +136,40 @@ jobs:
 
       - name: Registry matches source
         run: python m3trik/scripts/generate_api_registry.py pythontk --check
+
+  js-types:
+    # The WebXR preview's runtime (net_utils/preview kernel/ + features/) is
+    # plain ES modules typed with JSDoc and served as written, so `tsc
+    # --checkJs` is the one check that its modules, the published `viewer` API
+    # and the generated record typedefs still agree. m3trik's own CI runs the
+    # same gate, but only on m3trik's pushes: a pythontk-only JS change would
+    # otherwise reach PyPI unchecked. Same sibling layout as api-registry.
+    # `TSC` pins TypeScript's major; exit 2 (no compiler) fails the step.
+    name: JavaScript types (tsc --checkJs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: pythontk
+
+      - uses: actions/checkout@v4
+        with:
+          repository: m3trik/m3trik
+          ref: main
+          path: m3trik
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: JavaScript type check
+        env:
+          TSC: npx --yes -p typescript@5 tsc
+        run: python m3trik/scripts/check_js_types.py

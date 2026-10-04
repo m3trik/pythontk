@@ -49,7 +49,8 @@ export function refreshXrSupport() {
         // or not presenting leaves `requestSession` PENDING instead, so nothing
         // rejects, nothing starts, and the button sits there saying ENTER VR --
         // the same dead-button symptom, with no error anywhere to explain it.
-        // Same treatment as the CDN watchdog: say so rather than hang silently.
+        // Same treatment as the page's boot watchdog (viewer.html): say so
+        // rather than hang silently.
         enterTimer = setTimeout(() => {
           if (renderer.xr.isPresenting) return;
           // Only overwrite our own "starting" text: a rejection that already
@@ -77,7 +78,7 @@ export function refreshXrSupport() {
     el.hint.textContent = supported ? HINT_READY : noDeviceHint();
   }).catch((error) => {
     // Say which case it is in rather than rejecting into the console, where a
-    // headset user cannot see it. Same reasoning as the CDN watchdog above.
+    // headset user cannot see it. Same reasoning as the page's boot watchdog.
     el.hint.textContent = 'WebXR device check failed: ' + error;
   });
 }

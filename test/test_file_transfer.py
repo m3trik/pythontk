@@ -80,14 +80,19 @@ class MoveFileTest(BaseTestCase):
         """Overwriting deleted the destination BEFORE moving the source, so a
         move that failed (a full disk, a locked file) lost the old file and
         left the new one wherever it was -- the delete-then-move the lightmap
-        baker documents losing a finished map to."""
+        baker documents losing a finished map to. Pinned across volumes (the
+        rename refused with EXDEV), where the move is a copy a full disk can
+        fail."""
+        import errno
         from unittest import mock
 
         src = self._src("a.txt", "new content")
         existing = os.path.join(self.dst_dir, "a.txt")
         with open(existing, "w") as f:
             f.write("old")
-        with mock.patch("shutil.move", side_effect=OSError(28, "No space left")):
+        with mock.patch(
+            "os.replace", side_effect=OSError(errno.EXDEV, "cross-device link")
+        ), mock.patch("shutil.move", side_effect=OSError(28, "No space left")):
             with self.assertRaises(OSError):
                 FileUtils.move_file(src, self.dst_dir, overwrite=True)
         with open(existing) as f:
@@ -135,6 +140,49 @@ class MoveFileTest(BaseTestCase):
         with open(out) as f:
             self.assertEqual(f.read(), "new content")
         self.assertEqual(os.listdir(self.dst_dir), [name])
+
+    def test_a_same_volume_overwrite_stages_nothing(self):
+        """The fixed-length stage (``.<12 hex>.moving``, 20 characters) is
+        LONGER than a short destination name, so beside a destination near a
+        path's 260 characters in a process that is not long-path aware (Maya)
+        it could not exist and the overwrite failed (2026-10-04 review). On
+        one volume nothing needs staging: one rename replaces the destination
+        atomically, and a refused one leaves the source where it was."""
+        import errno
+        from unittest import mock
+
+        src = self._src("a.txt", "new content")
+        existing = os.path.join(self.dst_dir, "a.txt")
+        with open(existing, "w") as f:
+            f.write("old")
+        limit = len(os.path.abspath(existing))
+        real_move, real_replace = shutil.move, FileUtils.replace_file
+        swaps = []
+
+        def capped(source, target, *args, **kwargs):
+            # The path limit, at the destination's length: nothing longer
+            # can exist in this folder.
+            if len(os.path.abspath(target)) > limit:
+                raise OSError(errno.ENAMETOOLONG, "path too long", target)
+            return real_move(source, target, *args, **kwargs)
+
+        def recorded(source, target):
+            swaps.append((source, target))
+            real_replace(source, target)
+
+        with mock.patch("shutil.move", side_effect=capped), mock.patch.object(
+            FileUtils, "replace_file", side_effect=recorded
+        ):
+            FileUtils.move_file(src, self.dst_dir, overwrite=True)
+        with open(existing) as f:
+            self.assertEqual(f.read(), "new content")
+        self.assertFalse(os.path.exists(src))
+        self.assertEqual(os.listdir(self.dst_dir), ["a.txt"])
+        self.assertEqual(
+            [os.path.normcase(os.path.abspath(p)) for swap in swaps for p in swap],
+            [os.path.normcase(os.path.abspath(p)) for p in (src, existing)],
+            "one rename, from the source itself: no .moving stage",
+        )
 
     @staticmethod
     def _age(path: str, days: float = 30.0) -> None:
@@ -201,6 +249,8 @@ class MoveFileTest(BaseTestCase):
             raise PermissionError(13, "held open")
 
         with mock.patch("os.rename", side_effect=cross_volume), mock.patch(
+            "os.replace", side_effect=cross_volume
+        ), mock.patch(
             "shutil.rmtree", side_effect=partial_rmtree
         ), self.assertLogs("pythontk.file_utils._file_utils", "ERROR") as logs:
             with self.assertRaises(PermissionError):

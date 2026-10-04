@@ -1044,11 +1044,13 @@ export default function shadowRig(viewer) {
   const { THREE } = viewer;
   let session = null;
 
-  // The page imports its scripts and loads the asset concurrently and does
-  // not await the imports first, so a very small deliverable can be on screen
-  // before this module has arrived -- and everything here needs the loader's
-  // parser, which only the 'load' event carries. Said once, in the console,
-  // rather than left to look like a broken export: the next push is caught.
+  // The page registers the scripts a push names before it loads that push's
+  // asset, so this hears the 'load' of every model it arrived with. Activated
+  // LATER -- added to a running server whose model is already up -- it
+  // arrives after that model's 'load', and everything here needs the
+  // loader's parser, which only that event carries. Said once, in the
+  // console, rather than left to look like a broken export: the next push is
+  // caught.
   if (viewer.model) {
     console.warn('shadow_rig: a model loaded before this script; its shadow rigs stay still until the next push');
   }

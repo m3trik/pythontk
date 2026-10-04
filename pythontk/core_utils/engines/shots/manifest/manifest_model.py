@@ -143,8 +143,6 @@ class _ManifestModelInternal(object):
                 behavior_source == "column_else_description" and cell
             ):
                 return Behaviors.from_cell(cell, phrases), bool(cell)
-            if behavior_source == "column":
-                return [], False
             return Behaviors.detect(description, phrases), bool(description)
 
         def _asset_names(cell: str) -> List[str]:
@@ -152,6 +150,16 @@ class _ManifestModelInternal(object):
             # listing several (as ``asset_column`` writes them) splits safely.
             names = (n.strip() for n in cell.splitlines())
             return [n for n in names if n and n.upper() not in asset_excludes]
+
+        def _add_object(step: BuilderStep, name: str, behaviors: List[str]) -> None:
+            # One object however many rows name it: its behaviors join the
+            # earlier row's, in row order (repeats kept), as the build keys
+            # them -- two objects were anchored row by row by Assess and Apply.
+            for obj in step.objects:
+                if obj.name == name and obj.kind == "scene":
+                    obj.behaviors.extend(behaviors)
+                    return
+            step.objects.append(BuilderObject(name=name, behaviors=list(behaviors)))
 
         # Per-step accumulators (first-row-wins for metadata_pass; behaviors
         # are the inherit source for continuation rows without a description)
@@ -239,16 +247,15 @@ class _ManifestModelInternal(object):
                     continue
                 seen_ids.add(step_id)
                 step_behaviors = row_behaviors
-                # Collect metadata_pass values for this step row
+                # Every metadata_pass column the doc has, a blank cell as "":
+                # the doc speaks for the key, so a cleared cell clears it.
                 step_pass = {}
                 for key, idx in cols.metadata_pass.items():
-                    val = (
+                    step_pass[key] = (
                         _ManifestModelInternal._strip_cell(row[idx])
                         if len(row) > idx
                         else ""
                     )
-                    if val:
-                        step_pass[key] = val
                 current_step = BuilderStep(
                     step_id=step_id,
                     section=current_section,
@@ -263,9 +270,7 @@ class _ManifestModelInternal(object):
                 if asset:
                     assets_spoken.add(step_id)
                 for name in _asset_names(asset):
-                    current_step.objects.append(
-                        BuilderObject(name=name, behaviors=list(step_behaviors))
-                    )
+                    _add_object(current_step, name, step_behaviors)
                 if read_prose:
                     _note_subjects(step_id, description)
                 continue
@@ -292,9 +297,7 @@ class _ManifestModelInternal(object):
                     # has absorbed earlier continuation rows' text too.
                     behaviors = row_behaviors if speaks else step_behaviors
                     for name in names:
-                        current_step.objects.append(
-                            BuilderObject(name=name, behaviors=list(behaviors))
-                        )
+                        _add_object(current_step, name, behaviors)
 
         # A missing header row used to fail silently: every data row was
         # skipped and the caller saw 0 steps with no explanation.
@@ -696,6 +699,10 @@ class BuilderStep:
                     key = (entry.get("name", ""), entry.get("kind", "scene"))
                 else:
                     key = (entry, "scene")
+                if any((o.name, o.kind) == key for o in objects):
+                    # One object, as the parse makes it: a build before it
+                    # merged two rows listed the object once per row.
+                    continue
                 objects.append(
                     BuilderObject(
                         name=key[0],

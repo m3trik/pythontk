@@ -19,7 +19,18 @@ import hashlib
 import json
 import logging
 import os
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Union
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+)
 
 # Eager: the channel keys below are SceneRecords' own, read at class
 # definition.
@@ -1392,6 +1403,31 @@ class _SidecarMixin:
         unparsable channel is warned and read as absent -- a half-decoded
         manifest is worse than none.
         """
+        found = cls._data_export_carrier(gltf, key)
+        if found is None:
+            return None
+        node, props = found
+        entry = props[key]
+        # FBX2glTF wraps each property as {"type": ..., "value": ...}.
+        raw = entry.get("value") if isinstance(entry, dict) else entry
+        if isinstance(raw, str) and not raw.strip():
+            # A producer with nothing to publish CLEARS its channel to "" rather
+            # than deleting the attribute, so an empty string is "absent", not
+            # "unparsable".
+            return None
+        try:
+            return json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError) as error:
+            logger.warning("Unparsable %s on node %r: %s", key, node.get("name"), error)
+            return None
+
+    @staticmethod
+    def _data_export_carrier(gltf: dict, key: str) -> Optional[Tuple[dict, dict]]:
+        """``(node, holder)`` for the *key* channel :meth:`data_export_channel`
+        reads -- the carrier node, and the dict in it that holds the channel
+        -- or ``None`` when no node carries one. The one place the reader's
+        precedence lives, so a writer can put a channel back where it was read.
+        """
         for node in gltf.get("nodes", []) or []:
             extras = node.get("extras") or {}
             # The same TWO on-disk shapes :meth:`_reconcile_node_markers` walks,
@@ -1407,27 +1443,21 @@ class _SidecarMixin:
                 (extras.get("fromFBX") or {}).get("userProperties") or {},
                 extras,
             ):
-                entry = props.get(key)
-                if entry is None:
-                    continue
-                # FBX2glTF wraps each property as {"type": ..., "value": ...}.
-                raw = entry.get("value") if isinstance(entry, dict) else entry
-                if isinstance(raw, str) and not raw.strip():
-                    # A producer with nothing to publish CLEARS its channel to
-                    # "" rather than deleting the attribute, so an empty string
-                    # is "absent", not "unparsable".
-                    return None
-                try:
-                    return json.loads(raw) if isinstance(raw, str) else raw
-                except (TypeError, ValueError) as error:
-                    logger.warning(
-                        "Unparsable %s on node %r: %s",
-                        key,
-                        node.get("name"),
-                        error,
-                    )
-                    return None
+                if props.get(key) is not None:
+                    return node, props
         return None
+
+    @staticmethod
+    def _write_data_export(node: dict, key: str, value: Any) -> None:
+        """Write *value* as *node*'s *key* channel, in the shape every producer
+        publishes and the reader decodes: JSON text in the node's top-level
+        extras. A nested copy goes, so the reader cannot meet a stale one
+        first."""
+        extras = node.setdefault("extras", {})
+        props = (extras.get("fromFBX") or {}).get("userProperties")
+        if isinstance(props, dict):
+            props.pop(key, None)
+        extras[key] = value if isinstance(value, str) else json.dumps(value)
 
     #: What a converted ``data_export`` carrier node is called, and what
     #: :meth:`overlay_data_export` names one it has to create.
@@ -1496,10 +1526,7 @@ class _SidecarMixin:
                 index = gltf.get("scene", 0)
                 if isinstance(index, int) and 0 <= index < len(scenes):
                     scenes[index].setdefault("nodes", []).append(len(gltf["nodes"]) - 1)
-            extras = carrier.setdefault("extras", {})
             for key, value in written.items():
-                # JSON text, the shape every producer publishes and the reader
-                # decodes.
-                extras[key] = value if isinstance(value, str) else json.dumps(value)
+                cls._write_data_export(carrier, key, value)
                 changed.add(key)
         return sorted(changed)

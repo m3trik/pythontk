@@ -24,6 +24,9 @@ ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 # a validating field runs it on every keystroke.
 _LEGAL_NAME_RE = re.compile(r"[A-Za-z0-9_]+")
 _ILLEGAL_NAME_CHAR_RE = re.compile(r"[^A-Za-z0-9_]")
+# What separates a name's tokens once legal: ``_`` and every character a legal
+# name does not keep (StrUtils.common_name).
+_LEGAL_NAME_SPLIT_RE = re.compile(r"[^A-Za-z0-9]+")
 
 # A run of decimal digits, captured so ``split`` keeps it (StrUtils.natural_sort_key).
 _DIGIT_RUN_RE = re.compile(r"(\d+)")
@@ -1513,15 +1516,18 @@ class StrUtils(
 
         * **One item** -- its own name.
         * **Several** -- the leading name tokens they all share
-          (``chair_leg`` + ``chair_seat`` -> ``chair``); failing that, the
-          deepest group holding them all (``|kit|TABLE_LOC|TABLE`` +
-          ``|kit|TABLE_LOC|MAT`` -> ``TABLE_LOC``); failing that, the first
-          item's name.
+          (``chair_leg`` + ``chair_seat`` -> ``chair``, ``Cube.001`` +
+          ``Cube.002`` -> ``Cube``: a token runs between the characters a
+          legal name does not keep); failing that, the deepest group holding
+          them all (``|kit|TABLE_LOC|TABLE`` + ``|kit|TABLE_LOC|MAT`` ->
+          ``TABLE_LOC``); failing that, the first item's name.
 
         Each candidate drops one *strip* affix (a naming convention's type
         markers, so ``TABLE_LOC`` reads ``TABLE``) and any namespace. The
         result keeps only name-legal characters and is capped at *max_length*
-        on a token boundary.
+        on a token boundary. A candidate with none of them (a name written
+        wholly in another script) gives way to the next, then to each item's
+        own name in turn.
 
         Parameters:
             paths: Hierarchy paths (``|grp|mesh``) or plain names.
@@ -1532,14 +1538,13 @@ class StrUtils(
             max_length: Longest result; trailing tokens go first.
 
         Returns:
-            The name, or ``""`` when *paths* holds no names.
+            The name, or ``""`` when *paths* holds no name with a character a
+            legal name keeps.
 
         Example:
             common_name(["|kit|TABLE_LOC|TABLE", "|kit|TABLE_LOC|MAT"], strip=["_LOC"])
             # 'TABLE'
         """
-        import re
-
         chains = []
         for path in paths:
             parts = [t.rsplit(":", 1)[-1] for t in str(path).split(sep) if t]
@@ -1554,10 +1559,10 @@ class StrUtils(
             return bare or name
 
         leaves = [clean(c[-1]) for c in chains]
-        name = leaves[0]
+        candidates = []
         if len(chains) > 1:
             shared = []
-            for column in zip(*(leaf.split("_") for leaf in leaves)):
+            for column in zip(*(_LEGAL_NAME_SPLIT_RE.split(leaf) for leaf in leaves)):
                 if len(set(column)) != 1:
                     break
                 shared.append(column[0])
@@ -1568,10 +1573,16 @@ class StrUtils(
                     break
                 depth += 1
             if len(stem) >= 3:
-                name = stem
+                candidates.append(stem)
             elif depth:
-                name = clean(chains[0][depth - 1])
-        name = re.sub(r"_+", "_", re.sub(r"[^A-Za-z0-9_]", "_", name)).strip("_")
+                candidates.append(clean(chains[0][depth - 1]))
+        for candidate in candidates + leaves:
+            name = re.sub(r"_+", "_", _ILLEGAL_NAME_CHAR_RE.sub("_", candidate))
+            name = name.strip("_")
+            if name:
+                break
+        else:
+            return ""
         if len(name) > max_length:
             tokens = name.split("_")
             while len(tokens) > 1 and len("_".join(tokens)) > max_length:

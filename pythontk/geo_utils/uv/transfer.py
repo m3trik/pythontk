@@ -812,6 +812,7 @@ class UvTransfer(HelpMixin):
         name_format: str = "{material}_{channel}",
         normal_convention: Optional[str] = None,
         source_mask_from_uvs: bool = True,
+        avoid: Optional[Sequence[str]] = None,
         log=None,
     ) -> Dict[str, Dict[str, str]]:
         """Transfer every channel of every target material and write the maps.
@@ -847,14 +848,25 @@ class UvTransfer(HelpMixin):
                 most of the layout (:meth:`_unify_normal_conventions`).
             source_mask_from_uvs: Rasterize each source layout into a coverage
                 mask and pre-fill that source's gutter before sampling.
+            avoid: Paths never to write: files something still reads once
+                the run is done (the maps of a source material the host
+                keeps). An output whose name lands on one takes the first
+                free ``<stem>_<k>.png`` instead (:meth:`FileUtils.unique_path`).
+                Two outputs of one run never share a file either way; any
+                other name is the run's to replace, so a re-run rewrites its
+                own maps rather than writing a new set beside them.
             log: Optional ``callable(str)`` for progress lines.
 
         Returns:
             ``{target material: {channel: written path}}``.
         """
+        from pythontk.file_utils._file_utils import FileUtils
+
         cls._require_numpy()
         say = log or (lambda m: None)
         os.makedirs(output_dir, exist_ok=True)
+        taken: set = set()
+        avoid = tuple(avoid or ())
         results: Dict[str, Dict[str, str]] = {}
         for t_mat, job in jobs.items():
             src_tris = np.asarray(job["src"], dtype=float).reshape(-1, 3, 2)
@@ -993,7 +1005,9 @@ class UvTransfer(HelpMixin):
                     material=cls._safe_name(t_mat),
                     channel=cls.CHANNEL_TOKENS.get(channel, channel),
                 )
-                path = os.path.join(output_dir, f"{stem}.png").replace("\\", "/")
+                path = FileUtils.unique_path(
+                    output_dir, stem, ".png", taken, avoid=avoid
+                ).replace("\\", "/")
                 cls.save_map(path, img, value_max)
                 written[channel] = path
                 say(f"  {channel}: {path}")
@@ -1364,38 +1378,52 @@ class UvTransfer(HelpMixin):
         base = StrUtils.sanitize(output_name, preserve_case=True) if output_name else ""
         taken: set = set()
         avoid = {j["path"] for j in jobs}
-        loaded: Dict[str, Any] = {}
-        written: Dict[str, str] = {}
+        # Every name first, in the jobs' order: what a job's map is called
+        # never depends on the order the source maps are read in.
+        outputs: List[str] = []
         for job in todo:
             parts = [base] if base else []
             if not base or len(todo) > 1:
                 parts.append(StrUtils.sanitize(str(job["name"]), preserve_case=True))
-            path = FileUtils.unique_path(
-                output_dir,
-                "_".join(parts + ["Lightmap"]),
-                ".exr",
-                taken,
-                claims,
-                owners=[job["owner"]],
-                avoid=avoid,
-            ).replace("\\", "/")
-            if job["path"] not in loaded:
-                # One map at a time: a 4k float map is ~200 MB, and jobs that
-                # share an atlas arrive together far more often than not.
-                loaded = {job["path"]: read(job["path"])}
-            image = cls.remap_lightmap(
-                loaded[job["path"]],
-                job["src"],
-                job["dst"],
-                scale_offset=job.get("scale_offset"),
-                size=size,
-                supersample=supersample,
-                padding=padding,
+            outputs.append(
+                FileUtils.unique_path(
+                    output_dir,
+                    "_".join(parts + ["Lightmap"]),
+                    ".exr",
+                    taken,
+                    claims,
+                    owners=[job["owner"]],
+                    avoid=avoid,
+                ).replace("\\", "/")
             )
-            write(path, image)
-            written[job["owner"]] = path
-            say(f"{job['name']}: lightmap resampled into its own layout -> {path}")
-        return written
+        # Then a source map at a time, read once for every job on it and
+        # dropped before the next is read: a 4k float map is ~200 MB, and the
+        # host's job order interleaves the maps freely.
+        by_map: Dict[str, List[int]] = {}
+        for i, job in enumerate(todo):
+            by_map.setdefault(job["path"], []).append(i)
+        for source, members in by_map.items():
+            image = read(source)
+            for i in members:
+                job = todo[i]
+                write(
+                    outputs[i],
+                    cls.remap_lightmap(
+                        image,
+                        job["src"],
+                        job["dst"],
+                        scale_offset=job.get("scale_offset"),
+                        size=size,
+                        supersample=supersample,
+                        padding=padding,
+                    ),
+                )
+                say(
+                    f"{job['name']}: lightmap resampled into its own layout "
+                    f"-> {outputs[i]}"
+                )
+            del image
+        return {job["owner"]: path for job, path in zip(todo, outputs)}
 
     @staticmethod
     def _uv_areas(tris) -> "np.ndarray":

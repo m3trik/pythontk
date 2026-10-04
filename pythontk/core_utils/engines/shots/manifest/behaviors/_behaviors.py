@@ -677,7 +677,8 @@ class Behaviors(_BehaviorsInternal):
                 non-audio entries when given, so an object animated on other
                 channels still gets its fade.
             release_fn: ``(shot, doc_name, behavior)`` run before a behavior is
-                applied: takes out the keys it wrote last time.
+                applied: takes out the keys it wrote last time. A behavior
+                whose release raises is recorded failed and not applied.
 
         Returns:
             ``{"applied", "skipped", "failed"}`` lists of ``{object, behavior,
@@ -851,13 +852,16 @@ class Behaviors(_BehaviorsInternal):
                 return (name, behavior) if conflict_fn is not None else (name, None)
 
             # Take out the keys each behavior wrote last time -- ALL of them,
-            # before any is re-keyed.
+            # before any is re-keyed.  One whose release failed is not keyed
+            # again (as in pass 1): its old keys are still there.
+            unreleased: set = set()
             for entry in non_audio:
                 name, behavior = entry["name"], entry["behavior"]
                 if not blocked.get(_guard(name, behavior)) and _call_exists(
                     nodes[name], entry
                 ):
-                    _release(shot, name, behavior)
+                    if not _release(shot, name, behavior):
+                        unreleased.add((name, behavior))
 
             for entry in non_audio:
                 obj_name, behavior = entry["name"], entry["behavior"]
@@ -874,6 +878,8 @@ class Behaviors(_BehaviorsInternal):
                 if blocked.get(_guard(obj_name, behavior)):
                     skipped.append(rec)  # keys the animator owns -- never overwritten
                     continue
+                if (obj_name, behavior) in unreleased:
+                    continue  # recorded as failed by its release
                 try:
                     written = _call_apply(
                         node, behavior, shot, entry.get("source_path") or "", anchor

@@ -56,8 +56,12 @@ def build_glb(
     zero_frame: float = None,
     hold_frames: float = 0.0,
     hold_moves: bool = False,
+    data_export: dict = None,
 ) -> str:
-    """Write a tiny, valid GLB: two nodes, one clip, one skin, two images."""
+    """Write a tiny, valid GLB: two nodes, one clip, one skin, two images.
+
+    *data_export* (``{channel key: value}``) adds a ``data_export`` carrier
+    node publishing those channels, as a conversion leaves them."""
     bin_parts = []
     views = []
     accessors = []
@@ -162,6 +166,10 @@ def build_glb(
         gltf["nodes"].append({"name": "stray"})
         gltf["scenes"][0]["nodes"].append(len(gltf["nodes"]) - 1)
         gltf["skins"][0]["skeleton"] = len(gltf["nodes"]) - 1
+    if data_export:
+        extras = {key: json.dumps(value) for key, value in data_export.items()}
+        gltf["nodes"].append({"name": "data_export", "extras": extras})
+        gltf["scenes"][0]["nodes"].append(len(gltf["nodes"]) - 1)
 
     json_chunk = _pad4(json.dumps(gltf).encode("utf-8"), b" ")
     bin_chunk = _pad4(b"".join(bin_parts), b"\x00")
@@ -264,18 +272,27 @@ def build_fbx(path: str, takes=("Shot_1",)) -> str:
 TICK = 46186158000 // 30
 
 
-def build_take_fbx(path: str, takes) -> str:
+def build_take_fbx(path: str, takes, names=None) -> str:
     """A binary FBX whose takes animate real curves.
 
     *takes* is ``{take: {(model, channel): (first_frame, last_frame)}}``; each
     curve gets a key on every frame of its span (zlib-encoded, as Maya writes
     them), wired stack <- layer <- curve node (on the model's
-    ``Lcl Translation``) <- curve, the graph a DCC writes.
+    ``Lcl Translation``) <- curve, the graph a DCC writes. A key
+    ``(model, channel, layer)`` keys its curve on that layer of the take
+    instead of ``BaseLayer``. *names* writes a model under another display
+    name -- ``{"b": "a"}`` is two models both called ``a``, uids 1000 and
+    1001 in sorted key order.
     """
-    models = sorted({model for curves in takes.values() for model, _ in curves})
+    names = names or {}
+    models = sorted({key[0] for curves in takes.values() for key in curves})
     model_ids = {model: 1000 + i for i, model in enumerate(models)}
     objects = [
-        ("Model", [uid, model.encode() + b"\x00\x01Model", b"Mesh"], [])
+        (
+            "Model",
+            [uid, names.get(model, model).encode() + b"\x00\x01Model", b"Mesh"],
+            [],
+        )
         for model, uid in model_ids.items()
     ]
     connections = []
@@ -288,7 +305,21 @@ def build_take_fbx(path: str, takes) -> str:
             ("AnimationLayer", [layer, b"BaseLayer\x00\x01AnimLayer", b""], []),
         ]
         connections.append(("C", [b"OO", layer, stack], []))
-        for (model, channel), (first, last) in curves.items():
+        layers = {"BaseLayer": layer}
+        for (model, channel, *on), (first, last) in curves.items():
+            layer_name = on[0] if on else "BaseLayer"
+            if layer_name not in layers:
+                layers[layer_name] = uid
+                uid += 1
+                objects.append(
+                    (
+                        "AnimationLayer",
+                        [uid - 1, layer_name.encode() + b"\x00\x01AnimLayer", b""],
+                        [],
+                    )
+                )
+                connections.append(("C", [b"OO", uid - 1, stack], []))
+            layer = layers[layer_name]
             node, curve = uid, uid + 1
             uid += 2
             times = Longs(range(first * TICK, (last + 1) * TICK, TICK), compress=True)
@@ -317,6 +348,22 @@ def build_take_fbx(path: str, takes) -> str:
         handle.write(b"Kaydara FBX Binary  \x00\x1a\x00")
         handle.write(struct.pack("<I", 7700))
         handle.write(payload)
+    return path
+
+
+def build_truncated_fbx(path: str, inside: bytes = b"KeyTime") -> str:
+    """A take FBX cut short part way through the first record named *inside*:
+    by default inside its zlib-encoded key array, the cut a span read
+    decompresses; ``b"Connections"`` cuts where nothing is decoded at all."""
+    build_take_fbx(
+        path, {"Take 001": {("lift", "d|Y"): (1, 2000), ("door", "d|Y"): (1, 2000)}}
+    )
+    with open(path, "rb") as handle:
+        data = handle.read()
+    at = data.index(inside) + len(inside)
+    cut = data.index(b"\x78\x9c", at) + 40 if inside == b"KeyTime" else at + 30
+    with open(path, "wb") as handle:
+        handle.write(data[:cut])
     return path
 
 
@@ -693,6 +740,56 @@ class TestFbxFile(_FixtureCase):
             {("a", "Lcl Translation", "d|X"): (None, None, 10)},
         )
 
+    def test_same_named_targets_and_layered_curves_all_count(self):
+        """A channel was keyed by its target's NAME, so a later curve replaced
+        an earlier one: two models sharing a name (a production 12-shot Maya
+        FBX holds 478 such names -- each referenced module brings its own), or
+        one channel keyed on two layers. ``take_spans`` then measured whichever
+        curve was written last: a stack keyed 1-100 measured 5-50, the origin
+        every clip is cut against (2026-10-04 review). A name that is not
+        unique among the targets is labelled ``name#uid``; a channel keyed on
+        two layers is their union."""
+        second = TICK / FbxFile.TICKS_PER_SECOND
+        wide, narrow = (("a", "d|Y"), (1, 100)), (("b", "d|Y"), (5, 50))
+        for order in ((wide, narrow), (narrow, wide)):
+            with self.subTest("twins", order=[key for key, _ in order]):
+                path = build_take_fbx(
+                    self.path("twins.fbx"), {"Take 001": dict(order)}, names={"b": "a"}
+                )
+                fbx = FbxFile.load(path, span_arrays=("KeyTime",))
+                self.assertEqual(
+                    sorted(fbx.take_curves()["Take 001"]),
+                    [
+                        ("a#1000", "Lcl Translation", "d|Y"),
+                        ("a#1001", "Lcl Translation", "d|Y"),
+                    ],
+                )
+                first, last = fbx.take_spans()["Take 001"]
+                self.assertAlmostEqual(first, 1 * second)
+                self.assertAlmostEqual(last, 100 * second)
+        base, layer = (("a", "d|Y"), (10, 50)), (("a", "d|Y", "Layer1"), (1, 100))
+        for order in ((base, layer), (layer, base)):
+            with self.subTest("layers", order=[key for key, _ in order]):
+                path = build_take_fbx(self.path("layers.fbx"), {"T": dict(order)})
+                self.assertEqual(
+                    FbxFile.load(path, span_arrays=("KeyTime",)).take_curves()["T"],
+                    {("a", "Lcl Translation", "d|Y"): (1 * TICK, 100 * TICK, 141)},
+                )
+
+    def test_a_truncated_file_is_refused_wherever_it_is_cut(self):
+        """``ValueError``, as documented, whatever the cut lands in. Inside a
+        zlib-encoded key array the span read raised ``zlib.error`` -- past
+        every caller's ``(OSError, ValueError)``, out of a conversion's
+        timeout budget (2026-10-04 review); anywhere else the reader parsed
+        what was left and called the file sound."""
+        for inside in (b"KeyTime", b"Connections"):
+            path = build_truncated_fbx(self.path("cut.fbx"), inside)
+            for kwargs in ({}, {"span_arrays": ("KeyTime",)}, {"decode_arrays": True}):
+                with self.subTest(inside=inside, read=kwargs):
+                    with self.assertRaises(ValueError) as caught:
+                        FbxFile.load(path, raw_payloads=False, **kwargs)
+                    self.assertIn("Truncated or corrupt FBX", str(caught.exception))
+
     def test_not_an_fbx(self):
         junk = self.path("junk.fbx")
         with open(junk, "wb") as handle:
@@ -711,8 +808,8 @@ class TestFbxTakeChannels(_FixtureCase):
         {"name": "A02", "start": 51, "end": 100},
     ]
 
-    def _run(self, takes, clip_mode=None):
-        fbx = build_take_fbx(self.path("asset.fbx"), takes)
+    def _run(self, takes, clip_mode=None, names=None):
+        fbx = build_take_fbx(self.path("asset.fbx"), takes, names=names)
         sidecar = build_sidecar(self.path("s.json"), self.WINDOWS, clip_mode=clip_mode)
         rows = (
             ExportVerifier(fbx=fbx, sidecar=sidecar)
@@ -761,6 +858,46 @@ class TestFbxTakeChannels(_FixtureCase):
     def test_full_sequence_only_has_no_takes_to_slice(self):
         rows = self._run({"Take 001": {("lift", "d|Y"): (1, 100)}}, clip_mode="full")
         self.assertEqual([status for status, _ in rows], ["SKIP"], rows)
+
+    def test_a_take_with_no_curves_fails(self):
+        """A declared take whose stack carries no curve at all -- the split's
+        worst case, every channel lost -- read as ABSENT: skipped as
+        ``fbx_takes``' to name, and that gate checks names alone, so it passed
+        both; with every take hollow, "no declared take is in the file"
+        (2026-10-04 review). Present, it is judged like any take."""
+        takes = self._exact()
+        takes["A02"] = {}
+        rows = self._run(takes)
+        self.assertEqual([status for status, _ in rows], ["FAIL"], rows)
+        self.assertIn("A02: 2 channel(s)", rows[0][1])
+
+        takes["A01"] = {}
+        rows = self._run(takes)
+        self.assertEqual([status for status, _ in rows], ["FAIL", "FAIL"], rows)
+
+    def test_a_take_with_no_curves_is_legal_without_a_whole_timeline_take(self):
+        """Blender windows each take itself, so there is nothing to compare a
+        shot against: one that animates nothing is a still shot."""
+        takes = self._exact()
+        del takes["Take 001"]
+        takes["A02"] = {}
+        rows = self._run(takes)
+        self.assertEqual([status for status, _ in rows], ["PASS"], rows)
+        self.assertIn("2 take(s)", rows[0][1])
+
+    def test_a_twin_s_channel_lost_to_the_split_fails(self):
+        """Two nodes sharing a name were one channel to the gate, so a shot
+        that lost one twin's curve still held the other's and passed."""
+        whole = {("a", "d|Y"): (1, 100), ("b", "d|Y"): (1, 100)}
+        takes = {
+            "Take 001": whole,
+            "A01": {key: (1, 50) for key in whole},
+            "A02": {("a", "d|Y"): (51, 100)},
+        }
+        rows = self._run(takes, names={"b": "a"})
+        self.assertEqual([status for status, _ in rows], ["FAIL"], rows)
+        self.assertIn("A02: 1 channel(s)", rows[0][1])
+        self.assertIn("a#1001.Lcl Translation.d|Y", rows[0][1])
 
 
 class TestExportVerifier(_FixtureCase):
@@ -913,6 +1050,67 @@ class TestExportVerifier(_FixtureCase):
         )
         report = ExportVerifier(glb=glb).run(["check_clip_origin"])
         self.assertEqual(report.rows[0].status, SKIP)
+
+    # The conversion measures the stack's span from the FBX it reads and
+    # stamps it into the GLB (``MeshConvert._stamp_clip_spans``), so the clips
+    # are cut against the FILE's span, whatever the producer predicted.
+
+    @staticmethod
+    def _cut_against(span):
+        """The GLB carrier's ``visibility_tracks``, publishing *span* as ``*``."""
+        return {
+            "visibility_tracks": {
+                "version": 1,
+                "fps": 30.0,
+                "tracks": [],
+                "clip_span": {"*": list(span)},
+            }
+        }
+
+    def test_clip_origin_judges_the_span_the_file_was_cut_against(self):
+        """A producer whose prediction was off FAILed a deliverable cut right
+        -- "every clip is cut from the wrong frame" -- when the conversion had
+        placed every clip by the FBX's own keys (2026-10-04 review). The stack
+        is judged against the span the GLB carries; the producer's is a WARN
+        naming both."""
+        glb = build_glb(
+            self.path("asset.glb"),
+            clip_end=0.5,  # 15 frames carried
+            data_export=self._cut_against([100, 115]),
+        )
+        build_sidecar(self.path(".asset.scene_data.json"), [], span=[100, 108])
+        report = ExportVerifier(glb=glb).run(["check_clip_origin"])
+        self.assertTrue(report.ok, report.summary())
+        self.assertEqual([row.status for row in report.rows], [WARN])
+        self.assertIn("published 100-108", report.rows[0].detail)
+        self.assertIn("cut against 100-115", report.rows[0].detail)
+
+        # Without a sidecar the file still says what it was cut against.
+        report = ExportVerifier(glb=glb, sidecar=None).run(["check_clip_origin"])
+        self.assertEqual([row.status for row in report.rows], [PASS])
+
+    def test_clip_origin_fails_a_file_cut_against_a_span_its_stack_lacks(self):
+        glb = build_glb(
+            self.path("asset.glb"),
+            clip_end=0.5,
+            data_export=self._cut_against([100, 108]),
+        )
+        build_sidecar(self.path(".asset.scene_data.json"), [], span=[100, 115])
+        report = ExportVerifier(glb=glb).run(["check_clip_origin"])
+        self.assertEqual([row.status for row in report.rows], [FAIL, WARN])
+        self.assertIn("8f span (100-108)", report.rows[0].detail)
+
+    def test_a_truncated_fbx_fails_its_container_gate_with_the_reason(self):
+        """Cut inside a key array, the reader's ``zlib.error`` escaped as
+        "check raised"; cut anywhere else, the gate PASSed the remains."""
+        for inside in (b"KeyTime", b"Connections"):
+            with self.subTest(inside=inside):
+                fbx = build_truncated_fbx(self.path("cut.fbx"), inside)
+                report = ExportVerifier(fbx=fbx, sidecar=None).run(
+                    ["check_fbx_container"]
+                )
+                self.assertEqual([row.status for row in report.rows], [FAIL])
+                self.assertIn("Truncated or corrupt FBX", report.rows[0].detail)
 
     def test_nan_fails_animation_gate(self):
         glb = build_glb(self.path("asset.glb"), nan_output=True)

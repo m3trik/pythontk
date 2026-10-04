@@ -16,6 +16,7 @@ Read-only by design: there is no writer here, so this can never be what
 damages the file it inspects.
 """
 
+import os
 import struct
 import zlib
 from collections import Counter
@@ -138,6 +139,19 @@ class _FbxFileInternal:
             return None
         return bytes(raw).split(_NAME_CLASS_SEPARATOR, 1)[0].decode("utf-8", "replace")
 
+    @staticmethod
+    def _merged_span(a: Tuple[Any, ...], b: Tuple[Any, ...]) -> Tuple[Any, ...]:
+        """Two curves' ``(first, last, count)`` as one channel's: the earlier
+        first key, the later last, every key counted. An end a curve was read
+        without (``None``) defers to the other's."""
+        firsts = [time for time in (a[0], b[0]) if time is not None]
+        lasts = [time for time in (a[1], b[1]) if time is not None]
+        return (
+            min(firsts) if firsts else None,
+            max(lasts) if lasts else None,
+            a[2] + b[2],
+        )
+
 
 class FbxFile(_FbxFileInternal):
     """A parsed binary FBX, held read-only.
@@ -187,22 +201,40 @@ class FbxFile(_FbxFileInternal):
                 production file's per-frame keys costs.
 
         Raises:
-            ValueError: Not a binary FBX, or truncated before the header ends.
+            ValueError: Not a binary FBX, or truncated or corrupt: a record
+                that runs past the end of the file, or data that cannot be
+                decoded.
         """
         with open(path, "rb") as f:
             magic = f.read(len(FBX_MAGIC))
             if magic != FBX_MAGIC:
                 raise ValueError(f"Not a binary FBX: {path}")
-            version = struct.unpack("<I", f.read(4))[0]
-            wide = version >= 7500
-            roots: List[Dict[str, Any]] = []
-            while True:
-                record = cls._read_record(
-                    f, wide, decode_arrays, raw_payloads, span_arrays
-                )
-                if record is None:
-                    break
-                roots.append(record)
+            size = os.fstat(f.fileno()).st_size
+            # A cut or corrupt file is this method's documented refusal, never
+            # an exception no caller catches: a short read the struct or zlib
+            # decode chokes on (``zlib.error`` reached past every caller's
+            # ``(OSError, ValueError)``, a conversion's timeout budget among
+            # them), or -- where nothing is decoded -- a record that ends past
+            # the file, whose remains read as a whole file otherwise.
+            try:
+                version = struct.unpack("<I", f.read(4))[0]
+                wide = version >= 7500
+                roots: List[Dict[str, Any]] = []
+                while True:
+                    record = cls._read_record(
+                        f, wide, decode_arrays, raw_payloads, span_arrays
+                    )
+                    if record is None:
+                        break
+                    if f.tell() > size:
+                        raise ValueError(
+                            f"record {record['name']!r} runs past the end of the file"
+                        )
+                    roots.append(record)
+            except (struct.error, zlib.error, ValueError) as error:
+                raise ValueError(
+                    f"Truncated or corrupt FBX: {path}: {error}"
+                ) from error
         return cls(path, version, roots)
 
     @staticmethod
@@ -294,8 +326,10 @@ class FbxFile(_FbxFileInternal):
         for that whole shot -- what Maya's ``FBXExportSplitAnimationIntoTakes``
         makes of every curve with no key inside a take, unless every curve is
         resampled. *target* is the animated object's name (a ``Model``, or the
-        object a custom property lives on), *property* the property animated
+        object a custom property lives on) -- ``name#uid`` where more than one
+        animated object carries that name, *property* the property animated
         (``"Lcl Translation"``), *channel* the curve's component (``"d|X"``).
+        A channel keyed on more than one layer is their union.
 
         Reads the ``KeyTime`` arrays: load with ``span_arrays=("KeyTime",)``
         (their extent alone -- what this needs) or ``decode_arrays``. A curve
@@ -337,25 +371,41 @@ class FbxFile(_FbxFileInternal):
         for _kind, child, parent, prop in self.connections():
             parents.setdefault(child, []).append((parent, prop))
 
-        takes: Dict[str, Dict[Tuple[str, str, str], Tuple[Any, ...]]] = {}
+        found: List[Tuple[str, Any, str, str, Tuple[Any, ...]]] = []
         for curve, span in spans.items():
             for node, channel in parents.get(curve, ()):
                 if kind.get(node) != "AnimationCurveNode":
                     continue
                 links = parents.get(node, ())
-                stacks = [
+                stacks = dict.fromkeys(
                     stack
                     for layer, _ in links
                     if kind.get(layer) == "AnimationLayer"
                     for stack, _ in parents.get(layer, ())
                     if kind.get(stack) == "AnimationStack"
-                ]
+                )
                 targets = [(t, prop) for t, prop in links if prop is not None]
                 for stack in stacks:
                     for target, prop in targets:
-                        takes.setdefault(name[stack], {})[
-                            (name.get(target, ""), prop, channel or "")
-                        ] = span
+                        found.append((name[stack], target, prop, channel or "", span))
+
+        # Keyed by name alone, one target's curve replaced another's: Maya
+        # writes every NodeAttribute nameless, and a referenced module's nodes
+        # beside the scene's own short names (478 repeats in one 12-shot
+        # production FBX) -- and ``take_spans`` measured whichever was written
+        # last. A uid is stable across the takes of one file, the comparison
+        # the take gate makes.
+        named = Counter(name.get(target, "") for target in {f[1] for f in found})
+        takes: Dict[str, Dict[Tuple[str, str, str], Tuple[Any, ...]]] = {}
+        for take, target, prop, channel, span in found:
+            label = name.get(target, "")
+            if named[label] > 1:
+                label = f"{label}#{target}"
+            curves = takes.setdefault(take, {})
+            key = (label, prop, channel)
+            curves[key] = (
+                self._merged_span(curves[key], span) if key in curves else span
+            )
         return takes
 
     def take_spans(self) -> Dict[str, Tuple[float, float]]:

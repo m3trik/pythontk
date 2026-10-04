@@ -649,6 +649,27 @@ class TestAuthoredClaims(unittest.TestCase):
         self.assertEqual(len(led.authored(owner=new_id)), 2)
         self.assertEqual(led.authored(owner=0), [])
 
+    def test_a_claim_no_incoming_shot_owns_arrives_owned_by_none(self):
+        """Bug: a merged claim whose owner was no incoming shot -- a removed
+        shot's, left on its id by a store saved before a removal disowned --
+        kept that number, and so passed to the shot here that holds it.
+        Fixed: 2026-10-04
+        """
+        from pythontk.core_utils.engines.shots.shot_ledger import NO_OWNER
+
+        existing = ShotStore()
+        for i, name in enumerate(("A", "B", "C")):
+            existing.define_shot(name, i * 100.0, i * 100.0 + 50.0)
+        incoming = ShotStore()
+        incoming.define_shot("In", 0.0, 48.0)
+        incoming.edit_ledger.record_authored("lid.v", 5.0, 2, "fade_in", "lid")
+        incoming.edit_ledger.record_key("lid.tx", 48.0, 2, "end")
+        merged = ShotTransfer.merge(existing.to_dict(), incoming.to_dict())
+        led = ShotEditLedger.from_dict(merged["edit_ledger"])
+        self.assertEqual(led.authored_pairs(2), set(), "shot C inherits nothing")
+        self.assertEqual(led.authored(owner=NO_OWNER), [("lid.v", 5.0)])
+        self.assertEqual(led.key_records("lid.tx"), [(48.0, NO_OWNER, "")])
+
 
 if __name__ == "__main__":
     unittest.main()

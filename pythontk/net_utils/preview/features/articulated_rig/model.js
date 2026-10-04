@@ -405,6 +405,6 @@ export class ArticulationModel {
     const world = this.world(state);
     const [p, q] = world[joint];
     const point = add(p, qrot(q, localPoint));
-    return [world, point, norm(sub(target, point))];
+    return /** @type {[any[], number[], number]} */ ([world, point, norm(sub(target, point))]);
   }
 }

@@ -377,7 +377,23 @@ class _ImgFilterInternal:
 
         if squeeze:
             out = out[..., 0]
-        return out.astype(arr.dtype, copy=False)
+        return cls._restore_dtype(out, arr.dtype)
+
+    @staticmethod
+    def _restore_dtype(values: "np.ndarray", dtype) -> "np.ndarray":
+        """Float *values* back in an image's own *dtype*; an integer one is
+        rounded to nearest and saturated at its range first.
+
+        A bare ``astype`` truncates toward zero -- every texel biased dark by
+        up to one LSB -- and WRAPS a value past the range: an 8-bit ramp
+        extrapolated to 270 was stored as 14.
+        """
+        dtype = np.dtype(dtype)
+        if np.issubdtype(dtype, np.integer):
+            info = np.iinfo(dtype)
+            values = np.rint(values)
+            np.clip(values, info.min, info.max, out=values)
+        return values.astype(dtype, copy=False)
 
     @staticmethod
     def _cv2():
@@ -545,7 +561,7 @@ class _ImgFilterInternal:
             if not new.any():
                 break
             scale = count[new][:, None] if out.ndim == 3 else count[new]
-            out[ys[new], xs[new]] = (acc[new] / scale).astype(out.dtype)
+            out[ys[new], xs[new]] = cls._restore_dtype(acc[new] / scale, out.dtype)
             grown[ys[new], xs[new]] = True
         return out, grown
 

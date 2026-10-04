@@ -21,7 +21,7 @@ import { formatBytes } from './format.js';
 import { applyLighting } from './lightmaps.js';
 import { current } from './model.js';
 import { probeEnvironment, probeState, probeTarget, setProbeOn } from './probe.js';
-import { onBeforeDraw, policy, scene, studioTarget } from './scene.js';
+import { DEFAULT_PROBE_INTENSITY, onBeforeDraw, policy, scene, studioTarget } from './scene.js';
 import { paintStats, specs } from './specs.js';
 import { windowFor } from './windows.js';
 
@@ -174,11 +174,16 @@ function rowsFor(probe) {
         + (named.length ? ` · open (read as distant): ${named.join(', ')}` : ''),
     ]);
   }
-  rows.push([
-    'level',
-    probe.on ? "1/π: the bake's units" : policy.environmentIntensity.toFixed(2),
-  ]);
+  rows.push(['level', probe.on ? probeLevel() : policy.environmentIntensity.toFixed(2)]);
   return rows;
+}
+
+// The level the probe plays at: the deliverable's, which a producer may
+// publish other than the default -- named as the bake's unit only when it is.
+function probeLevel() {
+  const level = policy.probeIntensity;
+  const unit = Math.abs(level - DEFAULT_PROBE_INTENSITY) < 1e-6;
+  return `${level.toFixed(2)}${unit ? " (1/π: the bake's units)" : ''}`;
 }
 
 // Bring the window, the HUD's line and the helpers up to date with the model

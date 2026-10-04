@@ -853,6 +853,59 @@ class TestShotStoreCrud(_ShotTest):
         self.assertFalse(s.remove_shot(shot.shot_id))
         self.assertEqual(s.shots, [])
 
+    def test_a_removed_shot_leaves_its_claims_to_no_shot(self):
+        """Bug: ``remove_shot`` left the shot's claims on its id, and
+        ``define_shot`` hands the next shot that id -- which then held the
+        removed shot's keys as its own (its Build deleted them as behaviors
+        its doc had dropped).  The keys stay in the scene, so their claims
+        stay too, owned by no shot; undoing the removal gives them back.
+        Fixed: 2026-10-04
+        """
+        from pythontk.core_utils.engines.shots.shot_ledger import NO_OWNER
+
+        s = ShotStore()
+        s.define_shot("A", 0, 10)
+        b = s.define_shot("B", 20, 30)
+        s.edit_ledger.record_key("c", 30.0, b.shot_id, "end")
+        s.edit_ledger.record_authored("d", 20.0, b.shot_id, "fade_in", "door", "x")
+        s.push_boundary_snapshot()
+        s.remove_shot(b.shot_id)
+        self.assertEqual(s.edit_ledger.key_records("c"), [(30.0, NO_OWNER, "")])
+        self.assertEqual(s.edit_ledger.authored(owner=NO_OWNER), [("d", 20.0)])
+
+        self.assertTrue(s.restore_boundary_snapshot())
+        self.assertEqual(s.edit_ledger.key_records("c"), [(30.0, b.shot_id, "end")])
+        self.assertEqual(s.edit_ledger.authored(owner=b.shot_id), [("d", 20.0)])
+        self.assertTrue(s.redo_boundary_snapshot())
+        self.assertEqual(s.edit_ledger.authored(owner=b.shot_id), [])
+
+        c = s.define_shot("C", 20, 30)
+        self.assertEqual(c.shot_id, b.shot_id, "the id is handed on")
+        self.assertEqual(s.edit_ledger.authored_pairs(c.shot_id), set())
+        self.assertEqual(s.edit_ledger.key_records("c"), [(30.0, NO_OWNER, "")])
+
+    def test_a_loaded_claim_no_shot_owns_is_owned_by_none(self):
+        """Bug: data saved before ``remove_shot`` disowned claims still names
+        removed shots as owners, so the next shot given such an id inherited
+        them on load.  Loading leaves them to no shot; live owners keep theirs.
+        Fixed: 2026-10-04
+        """
+        from pythontk.core_utils.engines.shots.shot_ledger import NO_OWNER
+
+        s = ShotStore()
+        a = s.define_shot("A", 0, 10)
+        s.edit_ledger.record_key("c", 10.0, a.shot_id, "end")
+        s.edit_ledger.record_key("c", 30.0, 7, "end")  # shot 7 was removed
+        s.edit_ledger.record_authored("d", 20.0, 7, "fade_in", "door", "x")
+
+        loaded = ShotStore.from_dict(s.to_dict())
+        self.assertEqual(
+            loaded.edit_ledger.key_records("c"),
+            [(10.0, a.shot_id, "end"), (30.0, NO_OWNER, "")],
+        )
+        self.assertEqual(loaded.edit_ledger.authored(owner=NO_OWNER), [("d", 20.0)])
+        self.assertEqual(loaded.edit_ledger.authored_pairs(7), set())
+
     def test_append_shot_gap_placement(self):
         s = _store([])
         a = s.append_shot("A", duration=10)  # start 0
@@ -1029,6 +1082,26 @@ class TestShotStoreDerived(_ShotTest):
         s.gap = 7.0
         s.define_shot("A", 0, 10)
         self.assertEqual(s.compute_gap(), 7.0)
+
+    def test_rescale_to_fps_moves_every_claim(self):
+        """Bug: a frame-rate change moved the shot bounds and left every
+        ledger claim on the old clock -- its key moved with the clock, so the
+        claim named a frame nothing sat on, and the key read as the
+        animator's.  The hand-off already retimed claims on a clock change.
+        Fixed: 2026-10-04
+        """
+        s = _store([])
+        s.scene_fps = 30.0
+        shot = s.define_shot("A", 100, 300)
+        led = s.edit_ledger
+        led.record_authored("door.v", 100.0, shot.shot_id, "fade_in", "door", "s")
+        led.record_key("door.tx", 300.0, shot.shot_id, "end")
+        led.record_step("door.tx", 290.0, "auto", "auto")
+        s.rescale_to_fps(24.0)
+        self.assertEqual((shot.start, shot.end), (80.0, 240.0))
+        self.assertEqual(led.authored(owner=shot.shot_id), [("door.v", 80.0)])
+        self.assertEqual(led.key_records("door.tx"), [(240.0, shot.shot_id, "end")])
+        self.assertEqual(led.step_times("door.tx"), [232.0])
 
 
 class TestShotStoreSerialisation(_ShotTest):
@@ -1607,6 +1680,24 @@ class TestStaleShots(_ShotTest):
         self.assertIsNone(store.active_shot_id)
         self.assertEqual(store.remove_stale_shots(), [], "nothing left to remove")
 
+    def test_remove_stale_shots_drops_their_behavior_claims_too(self):
+        """Bug: only the bound samples went; the claims of the keys the
+        shot's behaviors wrote stayed on its id, for the next shot given it.
+        Fixed: 2026-10-04
+        """
+        store = self._store(
+            [
+                ShotBlock(0, "Gone", 0, 10, ["lost"]),
+                ShotBlock(1, "Live", 20, 30, ["x"]),
+            ],
+            held={"x"},
+        )
+        ledger = store.edit_ledger
+        ledger.record_authored("lostOpacity", 0.0, 0, "fade_in", "lost")
+        ledger.record_authored("xOpacity", 20.0, 1, "fade_in", "x")
+        store.remove_stale_shots()
+        self.assertEqual(ledger.authored(), [("xOpacity", 20.0)])
+
     def test_a_scene_check_that_raises_declares_every_shot(self):
         """The check must never cost the shot record: a producer that raised
         would leave the carrier's stored (stale) record to ship instead."""
@@ -2095,6 +2186,26 @@ class TestEditLedgerAuthored(unittest.TestCase):
         from pythontk.core_utils.engines.shots.shot_ledger import NO_OWNER
 
         self.assertEqual(len(led.authored(owner=NO_OWNER)), 3)
+
+    def test_a_disowned_claim_passes_to_the_next_key_on_its_frame(self):
+        """Bug: a claim whose shot was removed (disowned: its key stays)
+        refused every later claim on its frame, so a shot keying that frame
+        never owned its own key -- its re-apply left the key behind.
+        Fixed: 2026-10-04
+        """
+        from pythontk.core_utils.engines.shots.shot_ledger import NO_OWNER
+
+        led = self._led()
+        led.disown_shot(3)
+        self.assertTrue(
+            led.record_authored("door.opacity", 10.0, 7, "fade_in", "door", "new")
+        )
+        self.assertEqual(led.authored(owner=7), [("door.opacity", 10.0)])
+        self.assertEqual(led.authored_stamps(7, "door", "fade_in"), {"new"})
+        self.assertEqual(len(led.authored(owner=NO_OWNER)), 2)
+        # A claim a shot still owns stays its own.
+        self.assertFalse(led.record_authored("lid.opacity", 10.0, 7, "fade_in", "lid"))
+        self.assertEqual(led.authored(owner=4), [("lid.opacity", 10.0)])
 
     def test_round_trips_and_tolerates_old_payloads(self):
         from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
@@ -2810,6 +2921,58 @@ class TestStoreEffectRecipe(unittest.TestCase):
         self.assertEqual(events, [])
         with self.assertRaises(TypeError):
             store.update_effect_recipe(no_such_field=1)
+
+    def test_watch_settings_follows_the_active_store(self):
+        """What a panel showing a store setting subscribes with: it hears the
+        active store's setting changes and batches, moves to the next store
+        when the scene changes (and is told so), never hears the store it
+        left, and unsubscribing leaves nothing registered."""
+        saved = (
+            ShotStore._active,
+            ShotStore._persistence,
+            ShotStore._prefs_dir_override,
+            ShotStore._invalidation_listeners,
+        )
+
+        def restore():
+            (
+                ShotStore._active,
+                ShotStore._persistence,
+                ShotStore._prefs_dir_override,
+                ShotStore._invalidation_listeners,
+            ) = saved
+
+        self.addCleanup(restore)
+        prefs = tempfile.TemporaryDirectory()
+        self.addCleanup(prefs.cleanup)
+        ShotStore._active, ShotStore._persistence = None, None
+        ShotStore._prefs_dir_override = prefs.name
+        ShotStore._invalidation_listeners = []
+
+        calls = []
+        unsubscribe = ShotStore.watch_settings(lambda: calls.append(1))
+        first = ShotStore.active()
+        first.update_effect_recipe(fade_frames=20)
+        self.assertEqual(len(calls), 1)
+        with first.batch_update():
+            first.define_shot("A", 0, 10)
+        self.assertEqual(len(calls), 2)
+
+        ShotStore.invalidate()  # a scene opened
+        self.assertEqual(len(calls), 3, "told the store changed")
+        self.assertEqual(first._listeners, [])
+        second = ShotStore.active()
+        self.assertIsNot(second, first)
+        second.update_effect_recipe(fade_frames=21)
+        self.assertEqual(len(calls), 4)
+        first.update_effect_recipe(fade_frames=30)
+        self.assertEqual(len(calls), 4, "the store it left is not heard")
+
+        unsubscribe()
+        second.update_effect_recipe(fade_frames=22)
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(second._listeners, [])
+        self.assertEqual(ShotStore._invalidation_listeners, [])
 
 
 class TestLedgerRecipeStamps(unittest.TestCase):
