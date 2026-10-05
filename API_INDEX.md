@@ -232,7 +232,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/shots/shot_ledger.py` — Ledger of the edits the shot system authors on a scene's animation.
 - constants: NO_OWNER
 - `class ShotEditLedger(_ShotEditLedgerInternal)`
-  - methods: step_count, key_count, curves, record_step, owns_step, release_step, step_times, stepped_curves, record_key, owns_key, release_key, release, key_times, key_records, keyed_curves, disown_shot, record_authored, owns_authored, owns_any, release_authored, authored, authored_stamps, authored_pairs, shift, remap, forget_curve, rename_curve, to_dict, from_dict
+  - methods: step_count, key_count, curves, record_step, owns_step, release_step, step_times, stepped_curves, record_key, owns_key, release_key, release, key_times, key_records, keyed_curves, disown_shot, disown_absent, record_authored, owns_authored, owns_any, release_authored, authored, authored_stamps, authored_pairs, shift, remap, retime, forget_curve, rename_curve, to_dict, from_dict
 
 ### `core_utils/engines/shots/shot_model.py` — DCC-agnostic shot data model and persistent store.
 - constants: CLIP_NAME_STRATEGIES

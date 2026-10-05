@@ -897,10 +897,10 @@ Shot Manifest engine — pure planning/orchestration core with scene hooks.
 
 Pure Shot Manifest data model + CSV parser.
 
-- [`DEFAULT_INITIAL_SHOT_LENGTH`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L754) — constant
-- [`DEFAULT_FIT_MODE`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L755) — constant
-- [`AUDIO_PLACEHOLDER_DURATION`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L761) — constant
-- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L406)** — The shot manifest's data model and CSV parser.
+- [`DEFAULT_INITIAL_SHOT_LENGTH`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L761) — constant
+- [`DEFAULT_FIT_MODE`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L762) — constant
+- [`AUDIO_PLACEHOLDER_DURATION`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L768) — constant
+- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L409)** — The shot manifest's data model and CSV parser.
   - `ManifestModel.describe_read_failure(cls, path: str, exc: OSError) -> str` *(class)* — Explain a CSV that exists but cannot be read, without over-committing.
   - `ManifestModel.detect_behaviors(text: str) -> List[str]` *(static)* — Return behavior names inferred from descriptive *text*.
   - `ManifestModel.asset_column(source: str, fills: Dict[str, List[str]], columns: Optional['ColumnMap'] = None) -> List[str]` *(static)* — The source sheet's asset column, row for row, with *fills* written
@@ -908,21 +908,21 @@ Pure Shot Manifest data model + CSV parser.
   - `ManifestModel.parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]` *(static)* — Parse a structured CSV into a list of :class:`BuilderStep`.
   - `ManifestModel.prose_name(subject: str, case: str, rule: str) -> str` *(static)* — The object name a doc's prose *subject* stands for: *case*
   - `ManifestModel.validate_patterns(value: Any) -> List[str]` *(static)* — Validate a row-grammar field: a list of regexes that compile.
-- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L579)** — One asset within a step.
-- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L593)** — One step (= one future sequencer shot).
+- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L582)** — One asset within a step.
+- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L596)** — One step (= one future sequencer shot).
   - `BuilderStep.display_text(self) -> str` *(property)* — Text shown in the tree Description column.
   - `BuilderStep.from_detection(cls, candidates: List[Dict]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert detection candidates to BuilderSteps + pre-filled ranges.
   - `BuilderStep.from_shots(cls, shots: List[Any]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert existing store shots back into BuilderSteps + their ranges.
-- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L731)** — Immutable build instruction computed before any store mutation.
-- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L770)** — Assessment result for one object within a step.
-- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L792)** — Assessment result for one step.
+- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L738)** — Immutable build instruction computed before any store mutation.
+- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L777)** — Assessment result for one object within a step.
+- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L799)** — Assessment result for one step.
   - `StepStatus.status(self) -> str` *(property)* — Worst-of-children rollup.
   - `StepStatus.needs_build(self) -> bool` *(property)* — Whether a Build would change this step: its shot is not built, an
   - `StepStatus.missing_count(self) -> int` *(property)*
   - `StepStatus.total_count(self) -> int` *(property)*
   - `StepStatus.find_object(results: List['StepStatus'], name: str, step_id: Optional[str] = None) -> Optional[ObjectStatus]` *(static)* — The first assessed :class:`ObjectStatus` named *name* in *results*.
-- **[`class ShotPairing`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L896)** — Which shot each step is -- :meth:`ShotManifest.pair`'s answer.
-- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L916)** — Maps logical fields to CSV header names (case-insensitive), plus the
+- **[`class ShotPairing`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L903)** — Which shot each step is -- :meth:`ShotManifest.pair`'s answer.
+- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L923)** — Maps logical fields to CSV header names (case-insensitive), plus the
   - `ColumnMap.to_dict(self) -> Dict[str, Any]` — Serialise to a JSON-safe dict (tuples → lists).
   - `ColumnMap.from_dict(cls, data: Dict[str, Any]) -> 'ColumnMap'` *(class)* — Reconstruct from a dict produced by :meth:`to_dict`.
 
@@ -1017,6 +1017,7 @@ Ledger of the edits the shot system authors on a scene's animation.
   - `ShotEditLedger.key_records(self, curve: str) -> List[Tuple[float, int, str]]` — ``(time, owner_shot_id, edge)`` for every claimed sample on *curve*.
   - `ShotEditLedger.keyed_curves(self) -> List[str]` — Curve names carrying at least one claimed sample.
   - `ShotEditLedger.disown_shot(self, shot_id: int) -> int` — Re-point every claim owned by *shot_id* at :data:`NO_OWNER`.
+  - `ShotEditLedger.disown_absent(self, shot_ids: Iterable[int]) -> int` — Re-point every claim whose owner is not one of *shot_ids* at
   - `ShotEditLedger.record_authored(self, curve: str, time: float, owner: int, behavior: str, obj: str, stamp: str = '') -> bool` — Claim a key a behavior wrote on *curve* for shot *owner*'s *obj*.
   - `ShotEditLedger.owns_authored(self, curve: str, time: float) -> bool` — True when a behavior wrote the key at ``(curve, time)``.
   - `ShotEditLedger.owns_any(self, curve: str, time: float) -> bool` — True when the system wrote the KEY at ``(curve, time)`` -- a bound
@@ -1026,6 +1027,7 @@ Ledger of the edits the shot system authors on a scene's animation.
   - `ShotEditLedger.authored_pairs(self, owner: int) -> set` — ``{(obj, behavior)}`` every behavior key shot *owner* holds names --
   - `ShotEditLedger.shift(self, curve: str, lo: float, hi: float, delta: float) -> int` — Add *delta* to every claim on *curve* inside ``[lo, hi]``.
   - `ShotEditLedger.remap(self, curve: str, pairs) -> int` — Move claims from each ``old_time`` to its ``new_time``.
+  - `ShotEditLedger.retime(self, ratio: float, offset: float = 0.0) -> int` — Put every claim on another clock: its time scaled by *ratio*, then
   - `ShotEditLedger.forget_curve(self, curve: str) -> None` — Drop every claim on *curve* (it was deleted, or is unreachable).
   - `ShotEditLedger.rename_curve(self, old: str, new: str) -> bool` — Move every claim on curve *old* to *new* (the curve was renamed).
   - `ShotEditLedger.to_dict(self) -> Dict[str, Any]` — Plain-dict form for the scene payload.
@@ -1224,7 +1226,7 @@ Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
 
 Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
 
-- **[`class ShotTransfer(_ShotTransferInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_transfer.py#L178)** — Encode a shot store into a manifest section and decode it into a store.
+- **[`class ShotTransfer(_ShotTransferInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_transfer.py#L173)** — Encode a shot store into a manifest section and decode it into a store.
   - `ShotTransfer.swap_up_axis(cls, label: str) -> str` *(class)* — *label* as the far side of a Y-up / Z-up crossing spells the channel.
   - `ShotTransfer.encode(cls, state: Dict[str, Any], *, spell: Optional[Spell] = None, curve_ref: Optional[CurveRef] = None, objects: Optional[Iterable[str]] = None, channels: Optional[Dict[str, Dict[str, Any]]] = None, audio: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]` *(class)* — The ``shots`` section for a store's :meth:`~pythontk.ShotStore.to_dict`.
   - `ShotTransfer.decode(cls, section: Dict[str, Any], *, resolve: Optional[Resolve] = None, curve_key: Optional[CurveKey] = None, key_exists: Optional[KeyExists] = None, scene_fps: Optional[float] = None, frame_offset: float = 0.0, converted: Optional[Callable[[str], bool]] = None, write_channels: Optional[Callable[[str, Dict[str, Any]], Any]] = None, write_audio: Optional[Callable[[List[Dict[str, Any]]], Any]] = None) -> Dict[str, Any]` *(class)* — A store dict (``from_dict`` shape) for a ``shots`` section.
@@ -2423,8 +2425,8 @@ Batch renaming: a dry-run-aware plan executor and a file-system engine.
 
 The FBX2glTF CLI driver behind :meth:`MeshConvert.fbx_to_glb`, and the
 
-- [`FBX2GLTF_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L33) — constant
-- [`FBX2GLTF_PLATFORMS`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L34) — constant
+- [`FBX2GLTF_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L45) — constant
+- [`FBX2GLTF_PLATFORMS`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L46) — constant
 
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
@@ -2433,8 +2435,8 @@ FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
 
 - **[`class MeshConvert(_Fbx2GltfMixin, _SidecarMixin, _LightmapsMixin, _ShadowRigsMixin, _ArticulationMixin, _AnimationMixin, _VisibilityMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L46)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
-  - `MeshConvert.conversion_timeout(cls, src: str) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
-  - `MeshConvert.bake_node_frames(cls, src: str) -> int` *(class)* — Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
+  - `MeshConvert.conversion_timeout(cls, src: str, fbx: Optional['FbxFile'] = None) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
+  - `MeshConvert.bake_node_frames(cls, src: str, fbx: Optional['FbxFile'] = None) -> int` *(class)* — Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
   - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]` *(class)* — Remove every curve-proxy node (and its channels) from a GLB.
@@ -2497,7 +2499,7 @@ Deliverable verification for exported FBX / GLB pairs.
   - `VerificationReport.counts(self) -> Dict[str, int]`
   - `VerificationReport.summary(self) -> str` — Human-readable table plus a one-line verdict.
   - `VerificationReport.to_json(self) -> str`
-- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L172)** — Run file-level gates over an exported GLB and/or FBX.
+- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L185)** — Run file-level gates over an exported GLB and/or FBX.
   - `ExportVerifier.reader(self) -> Optional[GlbReader]` *(property)*
   - `ExportVerifier.fbx(self) -> Optional[FbxFile]` *(property)* — The FBX, parsed once: no gate reads its embedded media, and the take
   - `ExportVerifier.gate_names(self) -> List[str]` — Every registered gate, in run order.
@@ -2522,8 +2524,8 @@ Deliverable verification for exported FBX / GLB pairs.
 
 Zero-dependency binary-FBX reader: header, node records, objects, takes.
 
-- [`FBX_MAGIC`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L25) — constant
-- **[`class FbxFile(_FbxFileInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L142)** — A parsed binary FBX, held read-only.
+- [`FBX_MAGIC`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L26) — constant
+- **[`class FbxFile(_FbxFileInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L156)** — A parsed binary FBX, held read-only.
   - `FbxFile.load(cls, path: str, decode_arrays: Union[bool, Collection[str]] = False, raw_payloads: bool = True, span_arrays: Collection[str] = ()) -> 'FbxFile'` *(class)* — Parse *path*.
   - `FbxFile.is_fbx(path: str) -> bool` *(static)* — True when *path* starts with the binary-FBX magic.
   - `FbxFile.section(self, name: str) -> Optional[Dict[str, Any]]` — Top-level record *name* (``"Objects"``, ``"Connections"`` …).
@@ -3044,7 +3046,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `UvTransfer.layout_jobs(cls, parts: Sequence[Dict[str, Any]], sources: Sequence[Dict[str, Any]], *, log: Optional[Callable[[str], None]] = None) -> Dict[str, Dict[str, Any]]` *(class)* — A run's outputs, ``{label: job}``, from what each target contributed.
   - `UvTransfer.layout_overlaps(cls, uv_tris, points, size: int = 256) -> Tuple[int, int]` *(class)* — ``(overlapping texels, covered texels)`` of a layout -- whether it bakes.
   - `UvTransfer.output_labels(labels: Sequence[str], base: str, *, prefix: str = '', suffix: str = '') -> Dict[str, str]` *(static)* — ``{label: label to name the output by}`` for a run named *base*.
-  - `UvTransfer.transfer_materials(cls, jobs: Dict[str, Dict[str, Any]], *, output_dir: str, channels: Optional[Sequence[str]] = None, size: Optional[int] = None, supersample: int = 2, padding: int = -1, name_format: str = '{material}_{channel}', normal_convention: Optional[str] = None, source_mask_from_uvs: bool = True, log=None) -> Dict[str, Dict[str, str]]` *(class)* — Transfer every channel of every target material and write the maps.
+  - `UvTransfer.transfer_materials(cls, jobs: Dict[str, Dict[str, Any]], *, output_dir: str, channels: Optional[Sequence[str]] = None, size: Optional[int] = None, supersample: int = 2, padding: int = -1, name_format: str = '{material}_{channel}', normal_convention: Optional[str] = None, source_mask_from_uvs: bool = True, avoid: Optional[Sequence[str]] = None, log=None) -> Dict[str, Dict[str, str]]` *(class)* — Transfer every channel of every target material and write the maps.
   - `UvTransfer.concatenation_order(cls, target, parts, tolerance: Optional[float] = None) -> Optional[List[int]]` *(class)* — Which *parts*, in which order, join end to end into *target*.
   - `UvTransfer.find_combined(cls, face_counts: Sequence[int], read: Callable[[int], Tuple[Any, Any, Any]], tolerance: Optional[float] = None) -> Optional[Tuple[int, List[int]]]` *(class)* — The one mesh of a selection combined from ALL the others.
   - `UvTransfer.layouts_match(cls, src_tris, dst_tris, tolerance: Optional[float] = None) -> bool` *(class)* — True when two parameterizations of the same triangles are one layout.
@@ -3150,7 +3152,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
 
 Cross-set exposure / white-balance equalization.
 
-- **[`class ExposureEqualizer`](pythontk/pythontk/img_utils/exposure_equalizer.py#L37)** — Equalize exposure / WB across a list of source directories.
+- **[`class ExposureEqualizer`](pythontk/pythontk/img_utils/exposure_equalizer.py#L40)** — Equalize exposure / WB across a list of source directories.
   - `ExposureEqualizer.is_available(self) -> bool`
   - `ExposureEqualizer.equalize_directories(self, source_dirs: Sequence[str], output_root: str, reference_dir: Optional[str] = None, suffix: str = '_eq', sample_count: int = 20, strength: float = 1.0, reference_strategy: str = 'first', quality: int = 100, preserve_exif: bool = True, per_image: bool = False, overwrite_output: bool = True) -> List[str]` — Equalize every image in ``source_dirs`` against the reference set.
 
@@ -3159,7 +3161,7 @@ Cross-set exposure / white-balance equalization.
 
 Perceptual-hash + sharpness curation for large image sets.
 
-- **[`class ImageCurator`](pythontk/pythontk/img_utils/image_curator.py#L46)** — Pre-SfM content-dedup + sharpness culling.
+- **[`class ImageCurator`](pythontk/pythontk/img_utils/image_curator.py#L49)** — Pre-SfM content-dedup + sharpness culling.
   - `ImageCurator.is_available(self) -> bool`
   - `ImageCurator.dhash(image, size: int = 8) -> int` *(static)* — Difference hash.
   - `ImageCurator.hamming(a: int, b: int) -> int` *(static)*
@@ -3418,7 +3420,7 @@ The preview server's served surface: its URL vocabulary and the HTTP handler.
 
 Localhost static-file server for live browser / WebXR previews.
 
-- **[`class PreviewServer(LoggingMixin, _ServeRootMixin, _SharingMixin, _PageOutputsMixin, _SceneDescriptionMixin)`](pythontk/pythontk/net_utils/preview/server.py#L128)** — Serve a directory of preview assets on loopback, with a live manifest.
+- **[`class PreviewServer(LoggingMixin, _ServeRootMixin, _SharingMixin, _PageOutputsMixin, _SceneDescriptionMixin)`](pythontk/pythontk/net_utils/preview/server.py#L133)** — Serve a directory of preview assets on loopback, with a live manifest.
   - `PreviewServer.port(self) -> Optional[int]` *(property)* — The bound port, or ``None`` before :meth:`start`.
   - `PreviewServer.url(self) -> Optional[str]` *(property)* — The viewer URL, or ``None`` before :meth:`start`.
   - `PreviewServer.version(self) -> int` *(property)* — Number of published revisions;
@@ -3559,7 +3561,7 @@ Expose a local HTTP port at a public HTTPS link, through a tunnel CLI.
 ### `str_utils/_str_utils.py`
 
 - [`ANSI_ESCAPE_RE`](pythontk/pythontk/str_utils/_str_utils.py#L21) — constant
-- **[`class StrUtils(_StrNamePatternInternal, _StrSearchInternal, _StrAffixInternal, CoreUtils)`](pythontk/pythontk/str_utils/_str_utils.py#L32)**
+- **[`class StrUtils(_StrNamePatternInternal, _StrSearchInternal, _StrAffixInternal, CoreUtils)`](pythontk/pythontk/str_utils/_str_utils.py#L35)**
   - `StrUtils.apply_name_rule(cls, name: str, rule: str) -> str` *(class)* — *name* made legal by the :attr:`NAME_RULES` rule called *rule* --
   - `StrUtils.is_legal_name(name) -> bool` *(static)* — Whether *name* is a non-empty string of :attr:`LEGAL_NAME_PATTERN`
   - `StrUtils.illegal_name_chars(name: str) -> List[str]` *(static)* — The distinct characters of *name* a legal name may not hold, in the
@@ -3682,7 +3684,7 @@ Rich-text tooltip DSL -- :class:`TooltipFormat`.
 
 Extract still frames from a video file via OpenCV.
 
-- **[`class FrameExtractor`](pythontk/pythontk/vid_utils/frame_extractor.py#L26)** — Extract frames from a video file at a configurable step interval.
+- **[`class FrameExtractor`](pythontk/pythontk/vid_utils/frame_extractor.py#L29)** — Extract frames from a video file at a configurable step interval.
   - `FrameExtractor.score_sharpness(frame) -> float` *(static)* — Variance-of-Laplacian sharpness score.
   - `FrameExtractor.extract_frames(self, video_path: str, output_folder: str, step: int = 5, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None) -> List[str]` — Save every ``step``-th frame from ``video_path`` to ``output_folder``.
   - `FrameExtractor.extract_frames_sharpest(self, video_path: str, output_folder: str, window_sec: float = 1.0, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None, min_sharpness: float = 0.0) -> List[str]` — Bucket frames by time window;

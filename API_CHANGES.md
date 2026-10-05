@@ -2,7 +2,7 @@
 
 _Diff vs the last release (origin/main @ 96c11f8)._
 
-## Added (115)
+## Added (117)
 
 - `core_utils/conformance.py::Conformance(class)`
 - `core_utils/conformance.py::Conformance.cases(cls, name: str, seed: int = 0, **options: Any) -> Dict[str, Any]`
@@ -67,11 +67,13 @@ _Diff vs the last release (origin/main @ 96c11f8)._
 - `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.authored(self, owner: Optional[int] = None, obj: Optional[str] = None, behavior: Optional[str] = None) -> List[Tuple[str, float]]`
 - `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.authored_pairs(self, owner: int) -> set`
 - `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.authored_stamps(self, owner: int, obj: str, behavior: str) -> set`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.disown_absent(self, shot_ids: Iterable[int]) -> int`
 - `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.owns_any(self, curve: str, time: float) -> bool`
 - `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.owns_authored(self, curve: str, time: float) -> bool`
 - `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.record_authored(self, curve: str, time: float, owner: int, behavior: str, obj: str, stamp: str = '') -> bool`
 - `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.release_authored(self, curve: str, time: float) -> bool`
 - `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.rename_curve(self, old: str, new: str) -> bool`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.retime(self, ratio: float, offset: float = 0.0) -> int`
 - `core_utils/engines/shots/shot_model.py::ShotStore.member_key(node) -> str`
 - `core_utils/engines/shots/shot_model.py::ShotStore.resolve_member(self, name: str) -> Tuple[str, str]`
 - `core_utils/engines/shots/shot_model.py::ShotStore.update_effect_recipe(self, **changes: Any) -> bool`
@@ -126,7 +128,7 @@ _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived 
 
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.confirm_check_override` — remove in 0.14.0, not before 2026-11-03
 
-## Signature changed (5)
+## Signature changed (8)
 
 - `core_utils/engines/shots/manifest/behaviors/_behaviors.py::Behaviors.compute_duration`
   - was: `(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None) -> float`
@@ -137,9 +139,18 @@ _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived 
 - `core_utils/engines/shots/manifest/mapping/_mapping.py::Mapping.resolve`
   - was: `(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None) -> List[BuilderStep]`
   - now: `(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None, options: Optional[Dict[str, Any]] = None) -> List[BuilderStep]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.bake_node_frames`
+  - was: `(cls, src: str) -> int`
+  - now: `(cls, src: str, fbx: Optional['FbxFile'] = None) -> int`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.conversion_timeout`
+  - was: `(cls, src: str) -> float`
+  - now: `(cls, src: str, fbx: Optional['FbxFile'] = None) -> float`
 - `file_utils/mesh_convert/fbx_file.py::FbxFile.load`
   - was: `(cls, path: str, decode_arrays: bool = False, raw_payloads: bool = True) -> 'FbxFile'`
   - now: `(cls, path: str, decode_arrays: Union[bool, Collection[str]] = False, raw_payloads: bool = True, span_arrays: Collection[str] = ()) -> 'FbxFile'`
 - `geo_utils/uv/transfer.py::UvTransfer.transfer`
   - was: `(cls, table: TransferTable, sources, *, source_masks=None, bilinear: bool = True) -> Tuple['np.ndarray', 'np.ndarray']`
   - now: `(cls, table: TransferTable, sources, *, source_masks=None, bilinear: bool = True, value_max: Optional[float] = None) -> Tuple['np.ndarray', 'np.ndarray']`
+- `geo_utils/uv/transfer.py::UvTransfer.transfer_materials`
+  - was: `(cls, jobs: Dict[str, Dict[str, Any]], *, output_dir: str, channels: Optional[Sequence[str]] = None, size: Optional[int] = None, supersample: int = 2, padding: int = -1, name_format: str = '{material}_{channel}', normal_convention: Optional[str] = None, source_mask_from_uvs: bool = True, log=None) -> Dict[str, Dict[str, str]]`
+  - now: `(cls, jobs: Dict[str, Dict[str, Any]], *, output_dir: str, channels: Optional[Sequence[str]] = None, size: Optional[int] = None, supersample: int = 2, padding: int = -1, name_format: str = '{material}_{channel}', normal_convention: Optional[str] = None, source_mask_from_uvs: bool = True, avoid: Optional[Sequence[str]] = None, log=None) -> Dict[str, Dict[str, str]]`
