@@ -55,6 +55,12 @@ jobs:
           xvfb-run -a pytest --tb=short -v --cov=pythontk --cov-report=xml --cov-report=term test/
 
       - name: Upload coverage to Codecov
+        # A report, never a gate. `fail_ci_if_error` judges only the uploader's
+        # result, and the action dies before the uploader runs when codecov's
+        # endpoints refuse TLS (2026-10-04: an expired certificate failed both
+        # legs of a green suite, and the required `test` with them), so the
+        # step itself must not fail the leg.
+        continue-on-error: true
         uses: codecov/codecov-action@v4
         with:
           file: ./test/coverage.xml
