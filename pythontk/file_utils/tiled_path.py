@@ -224,6 +224,101 @@ class TiledPath:
         )
 
     @classmethod
+    def rename(
+        cls, path: str, new_name: str, dry_run: bool = False
+    ) -> List[Tuple[str, str]]:
+        """Rename every file *path* denotes to *new_name*, in its own folder.
+
+        *new_name* is a file NAME carrying the same tokens, in the same order,
+        as *path*'s: each tile keeps its own values, spelled into the new name
+        (``rock.<UDIM>.png`` -> ``stone.<UDIM>.png`` renames ``rock.1001.png``
+        to ``stone.1001.png`` and so on). A token-free path renames its one
+        file. Files only -- whatever references them is the caller's to repoint.
+
+        Safe over the set: nothing is renamed unless every target is free (a
+        case-only change of the same file is not a collision), and a rename that
+        fails part-way puts the ones already done back before it raises.
+
+        Parameters:
+            path: The file or token pattern, absolute or already resolved.
+            new_name: The new file name -- no folder.
+            dry_run: Plan and check only; touch nothing.
+
+        Returns:
+            ``[(old, new)]`` forward-slashed, in tile order: what was (or, with
+            *dry_run*, would be) renamed. ``[]`` when the name is unchanged.
+
+        Raises:
+            ValueError: *new_name* is empty or names a folder, carries other
+                tokens than *path*, or *path* denotes nothing on disk.
+            FileExistsError: A target is another existing file.
+            OSError: A rename failed (after the rollback).
+        """
+        path = (path or "").replace("\\", "/")
+        old_name = os.path.basename(path)
+        new_name = str(new_name or "").strip()
+        if not new_name or new_name in (".", "..") or re.search(r"[\\/]", new_name):
+            raise ValueError(f"Not a file name: {new_name!r}.")
+
+        def tokens(name):
+            return [m.group(0).lower() for m in cls.TOKEN_RE.finditer(name)]
+
+        if tokens(new_name) != tokens(old_name):
+            raise ValueError(
+                f"{new_name!r} must keep the tokens of {old_name!r} "
+                f"({', '.join(tokens(old_name)) or 'none'}), in order: they "
+                "name the tiles, which keep their numbers."
+            )
+        files = cls.tiles(path)
+        if not files:
+            raise ValueError(f"Nothing on disk to rename: {path}")
+        if new_name == old_name:
+            return []
+
+        # Each token of the old name becomes a group; a tile's groups are the
+        # values its new name is spelled with.
+        parts, cursor = [], 0
+        for match in cls.TOKEN_RE.finditer(old_name):
+            parts.append(re.escape(old_name[cursor : match.start()]) + "(.+?)")
+            cursor = match.end()
+        parts.append(re.escape(old_name[cursor:]) + r"\Z")
+        tile_re = re.compile("".join(parts), re.IGNORECASE)
+        pairs: List[Tuple[str, str]] = []
+        for old in files:
+            found = tile_re.match(os.path.basename(old))
+            if not found:
+                raise ValueError(f"{old} does not spell {old_name!r}.")
+            values = iter(found.groups())
+            new = cls.TOKEN_RE.sub(lambda _m: next(values), new_name)
+            pairs.append((old, f"{os.path.dirname(old)}/{new}"))
+
+        targets = set()
+        for old, new in pairs:
+            key = os.path.normcase(os.path.abspath(new))
+            if key in targets:
+                raise FileExistsError(f"Two files would be renamed to {new}.")
+            targets.add(key)
+            same = key == os.path.normcase(os.path.abspath(old))
+            if os.path.exists(new) and not same:
+                raise FileExistsError(f"Already exists: {new}")
+        if dry_run:
+            return pairs
+
+        done: List[Tuple[str, str]] = []
+        try:
+            for old, new in pairs:
+                os.rename(old, new)
+                done.append((old, new))
+        except OSError:
+            for old, new in reversed(done):
+                try:
+                    os.rename(new, old)
+                except OSError:
+                    pass  # the original error is the one worth raising
+            raise
+        return pairs
+
+    @classmethod
     def representative(cls, path: Optional[str]) -> Optional[str]:
         """The one concrete file *path*'s token denotes (collapse to one).
 

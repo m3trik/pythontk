@@ -32,8 +32,9 @@ class _ShadowRigsMixin:
     #: Highest ``shadow_metadata`` schema this applier knows how to read --
     #: the record's declared version, like the lightmap and visibility ones.
     SHADOW_METADATA_VERSION = SceneRecords.SHADOWS.version
-    #: Root-extras key the viewer's packaged ``shadow_rig`` script reads.
-    SHADOW_WEB_KEY = "shadow_web"
+    #: Root-extras key the viewer's packaged ``shadow_rig`` script reads --
+    #: the record's declared web projection.
+    SHADOW_WEB_KEY = SceneRecords.SHADOWS.web.key
     #: Where ``shadow_web`` binds by glTF NODE INDEX -- the paths a pass that
     #: renumbers nodes (``strip_glb_curve_proxies``) must follow.
     SHADOW_WEB_NODE_FIELDS = (
@@ -282,8 +283,8 @@ class _ShadowRigsMixin:
         lengths stay DCC units with ``unit_scale`` beside them, as the record
         has them; ``metadata_version`` says which schema the record arrived in
         (a v1 record -- name, texture, intensity -- is filled from
-        :attr:`SHADOW_PLANE_DEFAULTS`). The packaged
-        ``preview/scripts/shadow_rig.js`` reads the manifest on load,
+        :attr:`SHADOW_PLANE_DEFAULTS`). The packaged viewer script
+        (``preview/features/shadow_rig/``) reads the manifest on load,
         evaluates ``ShadowProjection.model`` per frame and drives the planes.
 
         Names resolve exactly first, then by namespace-stripped leaf against
@@ -524,7 +525,7 @@ class _ShadowRigsMixin:
                 )
             if planes:
                 manifest = {
-                    "version": 2,
+                    "version": SceneRecords.SHADOWS.web.version,
                     "metadata_version": version,
                     "unit_scale": unit_scale,
                     "planes": planes,

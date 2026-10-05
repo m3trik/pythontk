@@ -2,9 +2,10 @@
 # coding=utf-8
 """Tests for pythontk.SchemaSpec — dataclass-defined template schemas."""
 
+import json
 import unittest
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pythontk.core_utils.schema_spec import SchemaSpec, SchemaError
 
@@ -301,6 +302,197 @@ class SchemaSpecNestedListTest(unittest.TestCase):
 
         with self.assertRaises(SchemaError):
             Bad.validate({"items": []})
+
+
+# -- payload shapes: typed fields and the JSON Schema -------------------------
+
+
+@dataclass
+class Leg(SchemaSpec):
+    """One leg."""
+
+    TYPED = True
+
+    side: str = SchemaSpec.spec_field(
+        help="Which side.", required=True, choices=("left", "right")
+    )
+    length: Optional[float] = SchemaSpec.spec_field(
+        help="Metres, or null.", required=True
+    )
+    tip: Tuple[float, float, float] = SchemaSpec.spec_field(required=True)
+    tags: Dict[str, int] = SchemaSpec.spec_field(default_factory=dict)
+    mode: Literal["walk", "run"] = SchemaSpec.spec_field(default="walk")
+
+
+@dataclass
+class Body(SchemaSpec):
+    """A body.
+
+    Its legs, by their own schema.
+    """
+
+    TYPED = True
+
+    count: int = SchemaSpec.spec_field(help="How many.", required=True)
+    legs: List[Leg] = SchemaSpec.spec_field(
+        help="The legs.", required=True, nested=[Leg], default_factory=list
+    )
+    lead: Optional[Leg] = SchemaSpec.spec_field(help="The leading leg.")
+
+
+class TypedValidateTest(unittest.TestCase):
+    """A TYPED schema holds every present value to its annotation."""
+
+    VALID = {"count": 2, "legs": [{"side": "left", "length": 0.5, "tip": [0, 1, 2]}]}
+
+    def test_a_valid_payload_passes(self):
+        self.assertEqual(Body.validate(self.VALID).errors, [])
+
+    def test_a_null_meets_its_optional(self):
+        doc = {"count": 1, "legs": [{"side": "left", "length": None, "tip": [0, 0, 0]}]}
+        self.assertEqual(Body.validate(doc).errors, [])
+
+    def test_a_bool_is_never_a_number(self):
+        res = Body.validate({"count": True, "legs": []})
+        self.assertEqual(res.errors, ["count: expected integer, got boolean"])
+
+    def test_an_int_is_a_float(self):
+        doc = {"count": 1, "legs": [{"side": "right", "length": 3, "tip": [1, 2, 3]}]}
+        self.assertTrue(Body.validate(doc).ok)
+
+    def test_errors_are_located_through_nesting(self):
+        doc = {
+            "count": 1,
+            "legs": [
+                {
+                    "side": "left",
+                    "length": "far",
+                    "tip": [0, "y", 2],
+                    "tags": {"a": 1.5},
+                }
+            ],
+        }
+        self.assertEqual(
+            Body.validate(doc).errors,
+            [
+                "legs[0].length: expected number, got string",
+                "legs[0].tip[1]: expected number, got string",
+                "legs[0].tags.a: expected integer, got number",
+            ],
+        )
+
+    def test_a_fixed_tuple_counts_its_items(self):
+        doc = {"count": 1, "legs": [{"side": "left", "length": 1, "tip": [0, 1]}]}
+        self.assertIn("legs[0].tip: expected 3 items, got 2", Body.validate(doc).errors)
+
+    def test_a_literal_admits_its_values_only(self):
+        doc = dict(self.VALID, legs=[dict(self.VALID["legs"][0], mode="fly")])
+        self.assertIn(
+            "legs[0].mode: 'fly' is not one of ['walk', 'run']",
+            Body.validate(doc).errors,
+        )
+
+    def test_an_annotated_schema_validates_without_nested_metadata(self):
+        res = Body.validate(
+            dict(self.VALID, lead={"side": "up", "length": 1, "tip": [0, 0, 0]})
+        )
+        self.assertEqual(
+            res.errors, ["lead.side: 'up' is not one of ['left', 'right']"]
+        )
+
+    def test_unknown_keys_stay_warnings(self):
+        res = Body.validate(dict(self.VALID, extra=1))
+        self.assertTrue(res.ok)
+        self.assertEqual(res.warnings, ["unknown key 'extra' (ignored)"])
+
+    def test_an_untyped_schema_checks_no_types(self):
+        self.assertTrue(Demo.validate({"title": 5, "count": "three"}).ok)
+
+
+class JsonSchemaTest(unittest.TestCase):
+    """``json_schema`` -- the declaration as the document other languages read."""
+
+    def test_the_document_names_its_dialect_title_and_first_paragraph(self):
+        doc = Body.json_schema()
+        self.assertEqual(doc["$schema"], SchemaSpec.JSON_SCHEMA_DIALECT)
+        self.assertEqual(doc["title"], "Body")
+        self.assertEqual(doc["description"], "A body.")
+        self.assertEqual(doc["required"], ["count", "legs"])
+
+    def test_field_types_come_from_the_annotations(self):
+        leg = Body.json_schema()["$defs"]["Leg"]["properties"]
+        self.assertEqual(
+            leg["length"],
+            {
+                "anyOf": [{"type": "number"}, {"type": "null"}],
+                "description": "Metres, or null.",
+            },
+        )
+        self.assertEqual(
+            leg["tip"],
+            {
+                "type": "array",
+                "prefixItems": [{"type": "number"}] * 3,
+                "minItems": 3,
+                "maxItems": 3,
+            },
+        )
+        self.assertEqual(
+            leg["tags"], {"type": "object", "additionalProperties": {"type": "integer"}}
+        )
+        self.assertEqual(leg["mode"], {"type": "string", "enum": ["walk", "run"]})
+        self.assertEqual(
+            leg["side"],
+            {"type": "string", "enum": ["left", "right"], "description": "Which side."},
+        )
+
+    def test_nested_schemas_are_defined_once_and_referenced(self):
+        doc = Body.json_schema()
+        self.assertEqual(sorted(doc["$defs"]), ["Leg"])
+        self.assertEqual(doc["properties"]["legs"]["items"], {"$ref": "#/$defs/Leg"})
+        self.assertEqual(
+            doc["properties"]["lead"]["anyOf"],
+            [{"$ref": "#/$defs/Leg"}, {"type": "null"}],
+        )
+
+    def test_the_document_is_json(self):
+        json.dumps(Body.json_schema())
+        json.dumps(Demo.json_schema())  # a template schema too
+
+    def test_a_typed_annotation_contradicting_nested_is_refused(self):
+        @dataclass
+        class Liar(SchemaSpec):
+            """Says two things."""
+
+            TYPED = True
+            legs: List[Inner] = SchemaSpec.spec_field(
+                nested=[Leg], default_factory=list
+            )
+
+        with self.assertRaises(SchemaError):
+            Liar.json_schema()
+
+    def test_two_schemas_of_one_name_are_refused(self):
+        def make():
+            @dataclass
+            class Leg(SchemaSpec):
+                """A different leg."""
+
+                name: str = SchemaSpec.spec_field(required=True)
+
+            return Leg
+
+        other = make()
+
+        @dataclass
+        class Both(SchemaSpec):
+            """Two legs of one name."""
+
+            a: Leg = SchemaSpec.spec_field(nested=Leg)
+            b: Any = SchemaSpec.spec_field(nested=other)
+
+        with self.assertRaises(SchemaError):
+            Both.json_schema()
 
 
 if __name__ == "__main__":

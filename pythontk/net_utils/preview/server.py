@@ -37,7 +37,11 @@ Served surface:
                                 "title", "userPos", "locomotion", "scripts",
                                 "xrRuntime"}``;
                                 also the heartbeat behind :meth:`PreviewServer.has_viewer`
-    ``GET /scripts/<name>.js`` -> an active viewer script (see :attr:`PreviewServer.SCRIPTS`)
+    ``GET /kernel/<module>.js`` -> the viewer itself: the modules the page imports
+    ``GET /features/...``    -> an active packaged viewer script, and the modules
+                                beside it (see :attr:`PreviewServer.SCRIPTS`)
+    ``GET /scripts/<name>.js`` -> a caller's own active viewer script
+                                (see :meth:`PreviewServer.add_script`)
     ``GET /<name>``          -> any published asset, by name
     ``POST /viewer-closed``  -> the viewer's unload beacon, so a closed tab is
                                 known at once rather than after a timeout
@@ -47,17 +51,24 @@ Served surface:
                                 (see :mod:`pythontk.net_utils.preview.playblast`)
     ``POST /snapshot``       -> a still of the page's view, as a PNG body
                                 (see :meth:`PreviewServer.save_snapshot`)
+    ``GET /scene.json``      -> the published scene as data: its glTF JSON and
+                                the lighting recipe it renders with, paged by
+                                ``?section=&start=`` (see
+                                :meth:`PreviewServer.describe_scene`)
 
-The guest listener serves ``GET /``, ``/manifest.json`` (marked
-``"guest": true``, without the owner-only scripts) and exactly the files that
-manifest names; it takes the close beacon and refuses every other write.
+The guest listener serves ``GET /`` and the kernel it imports,
+``/manifest.json`` (marked ``"guest": true``, without the owner-only scripts),
+``/scene.json`` and exactly the files that manifest names (each script with
+the modules beside it); it takes the close beacon and refuses every other
+write.
 
 Layout: this module holds the :class:`PreviewServer` facade -- lifecycle, the
 live manifest and viewer liveness, publish and its delivery dials, and the
 browser it opens. Its other jobs are private mixins beside it (``_serve_root``:
 the viewer page, the viewer scripts and the atomic writes; ``_sharing``: the
-guest listener and its tunnel; ``_page_outputs``: recordings and stills), and
-the HTTP handler with the route names is :mod:`.routes`, re-exported here.
+guest listener and its tunnel; ``_page_outputs``: recordings and stills;
+``_scene_description``: the scene as data), and the HTTP handler with the
+route names is :mod:`.routes`, re-exported here.
 """
 
 from __future__ import annotations
@@ -85,6 +96,7 @@ from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.file_utils.temp_artifacts import TempArtifacts
 from pythontk.net_utils._net_utils import NetUtils
 from pythontk.net_utils.preview._page_outputs import _PageOutputsMixin
+from pythontk.net_utils.preview._scene_description import _SceneDescriptionMixin
 from pythontk.net_utils.preview._serve_root import _ServeRootMixin
 from pythontk.net_utils.preview._sharing import _SharingMixin
 
@@ -93,6 +105,7 @@ from pythontk.net_utils.preview._sharing import _SharingMixin
 from pythontk.net_utils.preview.routes import (
     PLAYBLAST_ACTIONS as PLAYBLAST_ACTIONS,
     PLAYBLAST_PATH as PLAYBLAST_PATH,
+    SCENE_PATH as SCENE_PATH,
     SETTINGS_PATH as SETTINGS_PATH,
     SNAPSHOT_PATH as SNAPSHOT_PATH,
     VIEWER_CLOSED_PATH as VIEWER_CLOSED_PATH,
@@ -117,7 +130,13 @@ def _mesh_convert():
     return MeshConvert
 
 
-class PreviewServer(LoggingMixin, _ServeRootMixin, _SharingMixin, _PageOutputsMixin):
+class PreviewServer(
+    LoggingMixin,
+    _ServeRootMixin,
+    _SharingMixin,
+    _PageOutputsMixin,
+    _SceneDescriptionMixin,
+):
     """Serve a directory of preview assets on loopback, with a live manifest.
 
     Parameters:
@@ -355,8 +374,8 @@ class PreviewServer(LoggingMixin, _ServeRootMixin, _SharingMixin, _PageOutputsMi
                 # URLs rather than names: the page imports these directly, and
                 # the route is this module's business, not the viewer's.
                 "scripts": [
-                    f"{self.SCRIPTS_ROUTE}/{name}.js"
-                    for name in self._scripts
+                    self._script_url(name, source)
+                    for name, source in self._scripts.items()
                     if not (guest and name in self.OWNER_SCRIPTS)
                 ],
             }

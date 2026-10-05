@@ -211,6 +211,110 @@ class ImgTest(BaseTestCase):
                 ImgUtils.validate_image_integrity(crlf), (False, "incomplete header")
             )
 
+    @staticmethod
+    def _exr_channels(*channels):
+        """An EXR ``channels`` (chlist) attribute: ``(name, pixel type)`` pairs,
+        pixel type 0 uint / 1 half / 2 float."""
+        import struct
+
+        value = b"".join(
+            name + b"\0" + struct.pack("<iB3xii", kind, 0, 1, 1)
+            for name, kind in channels
+        )
+        return (b"channels", b"chlist", value + b"\0")
+
+    def test_get_image_mode_reads_the_layout_without_decoding(self):
+        """The channel layout a texture table shows beside its size: PIL's
+        mode name where PIL reads the file (a lazy open, header only), the
+        EXR ``channels`` header and Radiance's fixed RGB float where it does
+        not -- the lightmaps are EXR. Added: 2026-10-04
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            for mode, ext in (("RGBA", "png"), ("RGB", "jpg"), ("L", "png")):
+                path = os.path.join(tmp, f"{mode}.{ext}")
+                ImgUtils.create_image(mode, (8, 4), 0).save(path)
+                self.assertEqual(ImgUtils.get_image_mode(path), mode, path)
+
+            def exr(name, *channels):
+                path = os.path.join(tmp, name)
+                with open(path, "wb") as f:
+                    f.write(
+                        self._exr_header(
+                            (0, 0, 7, 3),
+                            before=[
+                                (b"comments", b"string", b"x" * 5000),
+                                self._exr_channels(*channels),
+                            ],
+                        )
+                    )
+                return path
+
+            # EXR lists channels alphabetically; the mode reads in RGBA order.
+            half = exr("half.exr", (b"B", 1), (b"G", 1), (b"R", 1))
+            self.assertEqual(ImgUtils.get_image_mode(half), "RGB;16F")
+            full = exr("full.exr", (b"A", 2), (b"B", 2), (b"G", 2), (b"R", 2))
+            self.assertEqual(ImgUtils.get_image_mode(full), "RGBA;32F")
+            luma = exr("luma.exr", (b"Y", 1))
+            self.assertEqual(ImgUtils.get_image_mode(luma), "L;16F")
+            layered = exr("aov.exr", (b"diffuse.R", 1), (b"spec.R", 1))
+            self.assertEqual(ImgUtils.get_image_mode(layered), "2ch;16F")
+            no_list = os.path.join(tmp, "no_list.exr")
+            with open(no_list, "wb") as f:
+                f.write(self._exr_header((0, 0, 7, 3)))
+            self.assertIsNone(ImgUtils.get_image_mode(no_list))
+
+            hdr = os.path.join(tmp, "env.hdr")
+            with open(hdr, "wb") as f:
+                f.write(b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 4 +X 8\n")
+            self.assertEqual(ImgUtils.get_image_mode(hdr), "RGB;32F")
+
+            bad = os.path.join(tmp, "bad.bin")
+            with open(bad, "wb") as f:
+                f.write(b"not an image")
+            self.assertIsNone(ImgUtils.get_image_mode(bad))
+            self.assertIsNone(ImgUtils.get_image_mode(os.path.join(tmp, "gone.png")))
+
+    def test_texture_facts_reads_only_what_is_asked(self):
+        """A texture table's optional columns: each fact read only when its
+        column shows, a tile set summed / sized by its first tile, and an
+        online-only placeholder never opened. Added: 2026-10-04"""
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for tile in (1001, 1002):
+                ImgUtils.create_image("RGBA", (16, 8), 0).save(
+                    os.path.join(tmp, f"rock.{tile}.png")
+                )
+            pattern = os.path.join(tmp, "rock.<UDIM>.png")
+            tile_bytes = os.path.getsize(os.path.join(tmp, "rock.1001.png"))
+
+            with mock.patch.object(ImgUtils, "get_image_mode") as mode:
+                facts = ImgUtils.texture_facts(pattern, ("bytes",))
+            mode.assert_not_called()
+            self.assertEqual(facts["tiles"], 2)
+            self.assertEqual(
+                facts["bytes"],
+                tile_bytes + os.path.getsize(os.path.join(tmp, "rock.1002.png")),
+            )
+            self.assertNotIn("mode", facts)
+
+            facts = ImgUtils.texture_facts(pattern, ("dimensions", "mode"))
+            self.assertEqual((facts["dimensions"], facts["mode"]), ((16, 8), "RGBA"))
+
+            self.assertEqual(ImgUtils.texture_facts(os.path.join(tmp, "x.png")), {})
+
+            single = os.path.join(tmp, "flat.png")
+            ImgUtils.create_image("RGB", (4, 4), 0).save(single)
+            with (
+                mock.patch.object(FileUtils, "is_cloud_placeholder", return_value=True),
+                mock.patch.object(ImgUtils, "get_image_size") as sizer,
+            ):
+                facts = ImgUtils.texture_facts(single)
+            sizer.assert_not_called()
+            self.assertTrue(facts["online_only"])
+            self.assertIsNone(facts["dimensions"])
+            self.assertGreater(facts["bytes"], 0, "a stat downloads nothing")
+
     def test_is_environment_map_by_shape_and_name(self):
         """An HDR picker's filter over a folder that also holds baked lightmaps
         (a production sourceimages held 72, every one square). Sandboxed: the
@@ -1395,6 +1499,44 @@ class TestImgUtilsMemory(unittest.TestCase):
         self.assertEqual(smooth.getpixel((0, 0)), 150)
 
 
+class OpenExrFlagTest(unittest.TestCase):
+    """OpenCV reads ``OPENCV_IO_ENABLE_OPENEXR`` once, when cv2 loads: a module
+    that imports cv2 at its top without setting it first leaves OpenEXR off
+    for the whole process (measured, opencv-python 4.13), and every later EXR
+    read or write in the session fails -- a DCC that loaded a photogrammetry
+    panel before a lightmap bake could no longer encode its maps.
+    Fixed: 2026-10-04."""
+
+    @staticmethod
+    def _module_statements(tree):
+        """Module-level statements, a top-level ``try``'s body included."""
+        for node in tree.body:
+            if isinstance(node, ast.Try):
+                yield from node.body
+            else:
+                yield node
+
+    def test_every_top_level_cv2_import_sets_the_exr_flag_first(self):
+        import pythontk
+
+        root = Path(pythontk.__file__).parent
+        offenders = []
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+            flag = cv2_line = None
+            for node in self._module_statements(tree):
+                if cv2_line is None and isinstance(node, ast.Import):
+                    if any(alias.name == "cv2" for alias in node.names):
+                        cv2_line = node.lineno
+                if flag is None and "OPENCV_IO_ENABLE_OPENEXR" in ast.unparse(node):
+                    flag = node.lineno
+            if cv2_line is not None and (flag is None or flag > cv2_line):
+                offenders.append(f"{path.relative_to(root).as_posix()}:{cv2_line}")
+        self.assertEqual(
+            offenders, [], "cv2 imported before OPENCV_IO_ENABLE_OPENEXR is set"
+        )
+
+
 class DilateImageTest(unittest.TestCase):
     """ImgUtils.dilate_image -- texture edge-padding / gutter fill."""
 
@@ -1568,6 +1710,18 @@ class DenoiseImageTest(unittest.TestCase):
         self.assertEqual((out.dtype, out.shape), (noisy.dtype, noisy.shape))
         single = ImgUtils.denoise_image(noisy[..., 0])
         self.assertEqual(single.shape, noisy.shape[:2])
+
+    def test_an_8bit_image_rounds_instead_of_truncating(self):
+        """Cast straight back to an integer dtype, every denoised texel was
+        truncated toward dark: half an LSB low on average, everywhere."""
+        noisy = self._noisy(self._ramp_with_a_shadow()) * 90.0
+        u8 = np.clip(np.rint(noisy), 0, 255).astype(np.uint8)
+        out = ImgUtils.denoise_image(u8)
+        smooth = ImgUtils.denoise_image(u8.astype(np.float32))
+        self.assertEqual(out.dtype, np.uint8)
+        np.testing.assert_array_equal(
+            out, np.clip(np.rint(smooth), 0, 255).astype(np.uint8)
+        )
 
     def test_the_cv2_path_and_the_numpy_path_agree(self):
         """cv2 is the fast path (float32 filters), numpy the fallback for a
@@ -2078,6 +2232,45 @@ class SnapAtlasRectsTest(unittest.TestCase):
         self.assertEqual(rect, (0.0, 0.5, 0.25, 0.25))
 
 
+class CropToUvBboxTest(unittest.TestCase):
+    """ImgUtils.crop_to_uv_bbox / uv_crop_extent -- a partial island fills its cell."""
+
+    def test_crop_admits_no_edge_extension_texel(self):
+        # The production seam: a crop padded a whole texel past the island's
+        # high edge, and an edge-extension texel is not this object's lighting
+        # (a point just past a wall panel's edge bakes dark). A source whose
+        # island region is uniform must crop to island texels ONLY.
+        import numpy as np
+
+        img = np.full((24, 24, 3), 9.0, np.float32)  # outside: an extreme value
+        img[6:18, 6:18] = 1.0  # island u/v [0.25, 0.75] -> texels 6..18
+        cropped, rect, bounds = ImgUtils.crop_to_uv_bbox(
+            img, (0.25, 0.25, 0.75, 0.75), [0.5, 0.5, 0.0, 0.0]
+        )
+        self.assertEqual(float(cropped.max()), 1.0, "an extension texel leaked in")
+        self.assertEqual(bounds, (0.25, 0.25, 0.75, 0.75))
+        sx, sy, ox, oy = rect  # the cropped region still maps onto the whole cell
+        self.assertAlmostEqual(ox + sx * 0.25, 0.0, places=6)
+        self.assertAlmostEqual(ox + sx * 0.75, 0.5, places=6)
+
+    def test_a_near_full_or_missing_island_is_not_cropped(self):
+        import numpy as np
+
+        img = np.ones((16, 16, 3), np.float32)
+        cell = [0.5, 0.5, 0.25, 0.0]
+        for bbox in (None, (0.02, 0.03, 0.97, 0.98), (0.4, 0.4, 0.4, 0.9)):
+            out, rect, bounds = ImgUtils.crop_to_uv_bbox(img, bbox, cell)
+            self.assertIs(out, img, bbox)
+            self.assertEqual((rect, bounds), (cell, (0.0, 0.0, 1.0, 1.0)), bbox)
+
+    def test_extent_is_what_the_crop_keeps(self):
+        self.assertEqual(ImgUtils.uv_crop_extent(None), (1.0, 1.0))
+        self.assertEqual(ImgUtils.uv_crop_extent((0.0, 0.0, 0.9, 0.95)), (1.0, 1.0))
+        eu, ev = ImgUtils.uv_crop_extent((0.0, 0.004, 0.332, 0.996))
+        self.assertAlmostEqual(eu, 0.332)
+        self.assertAlmostEqual(ev, 0.992)
+
+
 class InsetRectsToTexelCentersTest(unittest.TestCase):
     """ImgUtils.inset_rects_to_texel_centers — edge UVs sample border-texel centers.
 
@@ -2139,6 +2332,329 @@ class InsetRectsToTexelCentersTest(unittest.TestCase):
             ImgUtils.inset_rects_to_texel_centers([noisy], 128),
             ImgUtils.inset_rects_to_texel_centers([clean], 128),
         )
+
+
+class ConvertSceneLinearTest(unittest.TestCase):
+    """ImgUtils.convert_scene_linear -- linear light between colour-space primaries.
+
+    The defect this exists for: Arnold renders, and arnoldRenderToTexture
+    writes, in the scene's rendering space -- ACEScg by default -- and every
+    lightmap consumer reads linear Rec.709. A pure-red sRGB texture baked to
+    (0.611, 0.070, 0.021) (measured, mtoa 5.5, 2026-10-02), and a production
+    room's lightmap shipped its lighting tint ~30% under-saturated.
+    """
+
+    # What Maya's default config makes of a pure-red sRGB texel in ACEScg.
+    ACESCG_RED = (0.6131, 0.0702, 0.0206)
+
+    def test_acescg_red_comes_back_rec709_red(self):
+        img = np.array([[self.ACESCG_RED]], np.float32)
+        out = ImgUtils.convert_scene_linear(img, "ACEScg")
+        np.testing.assert_allclose(out[0, 0], (1.0, 0.0, 0.0), atol=1e-3)
+
+    def test_white_is_white_in_every_space(self):
+        img = np.ones((2, 2, 3), np.float32)
+        for space in (
+            "ACEScg",
+            "ACES2065-1",
+            "scene-linear DCI-P3 D65",
+            "scene-linear Rec.2020",
+        ):
+            np.testing.assert_allclose(
+                ImgUtils.convert_scene_linear(img, space), img, atol=1e-5, err_msg=space
+            )
+
+    def test_the_same_space_is_untouched(self):
+        img = np.random.default_rng(0).random((4, 4, 3)).astype(np.float32)
+        out = ImgUtils.convert_scene_linear(img, "scene-linear Rec.709-sRGB")
+        np.testing.assert_array_equal(out, img)
+
+    def test_bgr_order_and_alpha_ride_through(self):
+        img = np.array([[self.ACESCG_RED[::-1] + (0.25,)]], np.float32)  # BGRA
+        out = ImgUtils.convert_scene_linear(img, "ACEScg", bgr=True)
+        np.testing.assert_allclose(out[0, 0], (0.0, 0.0, 1.0, 0.25), atol=1e-3)
+
+    def test_an_aces_config_name_resolves_to_the_same_space(self):
+        img = np.array([[self.ACESCG_RED]], np.float32)
+        a = ImgUtils.convert_scene_linear(img, "ACEScg")
+        b = ImgUtils.convert_scene_linear(
+            img, "ACES - ACEScg", "Utility - Linear - sRGB"
+        )
+        np.testing.assert_allclose(a, b, atol=2e-3)
+        # Blender 5.1's config (datafiles/colormanagement/config.ocio): its
+        # names and aliases for the same spaces. Several raised KeyError.
+        for name, space in (
+            ("Linear Rec.709", "scene-linear Rec.709-sRGB"),
+            ("Linear BT.709", "scene-linear Rec.709-sRGB"),
+            ("lin_rec709_srgb", "scene-linear Rec.709-sRGB"),
+            ("lin_rec709_scene", "scene-linear Rec.709-sRGB"),
+            ("Linear DCI-P3 D65", "scene-linear DCI-P3 D65"),
+            ("lin_p3d65_scene", "scene-linear DCI-P3 D65"),
+            ("Linear BT.2020", "scene-linear Rec.2020"),
+            ("lin_rec2020_scene", "scene-linear Rec.2020"),
+            ("Linear ACEScg", "ACEScg"),
+            ("lin_ap1_scene", "ACEScg"),
+            ("Linear ACES", "ACES2065-1"),
+            ("lin_ap0_scene", "ACES2065-1"),
+        ):
+            with self.subTest(name=name):
+                np.testing.assert_array_equal(
+                    ImgUtils.convert_scene_linear(img, name),
+                    ImgUtils.convert_scene_linear(img, space),
+                )
+
+    def test_an_unknown_space_raises(self):
+        with self.assertRaises(KeyError):
+            ImgUtils.convert_scene_linear(np.ones((1, 1, 3)), "ARRI LogC (v3-EI800)")
+
+
+class ResizeIntoCellTest(unittest.TestCase):
+    """ImgUtils.resize_into_cell -- a tile resampled into the cell it is published in.
+
+    The defect this exists for: atlas tiles were resized EDGE-TO-EDGE into
+    their cells (INTER_AREA) while their rects are published with the source
+    edges on border-texel CENTERS (:meth:`inset_rects_to_texel_centers`), so
+    every edge sample read content from half a texel inside; and the border
+    ring a partial coverage left was refilled from the ring inside it. On a
+    production room's 18-texel wall cells two coplanar panels met with a 31%
+    step under a perfectly smooth light field.
+    """
+
+    def _ramp(self, w=64, h=8):
+        x = np.arange(w, dtype=np.float32) + 0.5  # texel centres
+        return np.tile(x[None, :], (h, 1)), x
+
+    def test_edge_centers_land_source_edges_on_border_texel_centers(self):
+        img, _x = self._ramp(64)
+        out, cov = ImgUtils.resize_into_cell(img, (9, 4), edge_centers=True)
+        self.assertEqual(out.shape, (4, 9))
+        step = 64 / 8  # output centres span the source edge to edge
+        # Interior texels: a box mean of a ramp is its centre.
+        for i in range(1, 8):
+            self.assertAlmostEqual(float(out[0, i]), i * step, places=4)
+        # Border texels average the half of their footprint inside the source.
+        self.assertAlmostEqual(float(out[0, 0]), step / 4, places=4)
+        self.assertAlmostEqual(float(out[0, 8]), 64 - step / 4, places=4)
+        np.testing.assert_allclose(cov, 1.0)
+
+    def test_without_edge_centers_it_is_a_plain_area_resize(self):
+        rng = np.random.default_rng(3)
+        img = rng.random((32, 48, 3)).astype(np.float32)
+        out, _cov = ImgUtils.resize_into_cell(img, (12, 8), edge_centers=False)
+        blocks = img.reshape(8, 4, 12, 4, 3).mean(axis=(1, 3))
+        np.testing.assert_allclose(out, blocks, rtol=1e-5, atol=1e-6)
+
+    def test_coverage_weights_out_the_gutter(self):
+        # Left half island at 2.0, right half gutter garbage (coverage 0).
+        img = np.zeros((8, 8, 3), np.float32)
+        img[:, :4] = 2.0
+        img[:, 4:] = 50.0
+        coverage = np.zeros((8, 8), np.float32)
+        coverage[:, :4] = 1.0
+        out, cov = ImgUtils.resize_into_cell(
+            img, (1, 1), coverage=coverage, edge_centers=False
+        )
+        np.testing.assert_allclose(out[0, 0], 2.0, rtol=1e-6)
+        self.assertAlmostEqual(float(cov[0, 0]), 0.5, places=6)
+
+    def test_uncovered_cell_texels_are_zero_with_zero_coverage(self):
+        img = np.full((8, 8), 3.0, np.float32)
+        coverage = np.zeros((8, 8), np.float32)
+        coverage[:, :2] = 1.0
+        out, cov = ImgUtils.resize_into_cell(
+            img, (4, 1), coverage=coverage, edge_centers=False
+        )
+        self.assertEqual(float(cov[0, 3]), 0.0)
+        self.assertEqual(float(out[0, 3]), 0.0)
+        self.assertAlmostEqual(float(out[0, 0]), 3.0, places=6)
+
+    def test_hdr_peak_does_not_cost_distant_texels_precision(self):
+        img = np.ones((1024, 1024), np.float32)
+        img[-1, -1] = 65504.0
+        out, _cov = ImgUtils.resize_into_cell(img, (64, 64), edge_centers=True)
+        np.testing.assert_allclose(out[:32, :32], 1.0, rtol=0, atol=1e-6)
+
+    def test_sub_two_texel_cell_is_never_edge_centred(self):
+        # inset_rects_to_texel_centers passes such a rect through unchanged,
+        # so the resample must not centre it either (on EITHER axis).
+        img, _x = self._ramp(64)
+        a, _ = ImgUtils.resize_into_cell(img, (9, 1), edge_centers=True)
+        b, _ = ImgUtils.resize_into_cell(img, (9, 1), edge_centers=False)
+        np.testing.assert_allclose(a, b)
+
+    def test_two_panels_meet_without_a_step_under_a_smooth_field(self):
+        # The production symptom, end to end through the published mapping.
+        n, ss, panel = 18, 14, 3.94
+        u = (np.arange(n * ss) + 0.5) / (n * ss)
+
+        def field(x):
+            return 1.0 + 1.5 * np.exp(-((x - panel - 0.35) ** 2) / (2 * 0.7**2))
+
+        cells = []
+        for x0 in (0.0, panel):
+            src = np.tile(field(x0 + u * panel)[None, :], (4, 1)).astype(np.float32)
+            cells.append(ImgUtils.resize_into_cell(src, (n, 2), edge_centers=True)[0])
+        # Published: source edges on border-texel centres -> u=1 / u=0 read the
+        # border texels themselves.
+        a, b = float(cells[0][0, -1]), float(cells[1][0, 0])
+        self.assertLess(abs(a - b) / ((a + b) / 2), 0.06)
+
+
+class StitchSeamsTest(unittest.TestCase):
+    """ImgUtils.stitch_seams -- two cells that meet at a 3D edge read ONE value there.
+
+    The defect this exists for: every wall panel of a production room is its
+    own atlas cell with its own sampling noise, so two coplanar panels showed a
+    step along every shared edge however well each cell was finished.
+    """
+
+    def _two_cells(self):
+        img = np.zeros((8, 20, 3), np.float32)
+        img[:, 1:9] = 1.0  # cell A, texels 1..8
+        img[:, 11:19] = 1.3  # cell B, texels 11..18
+        # The shared edge: A's right border-texel centre (x=8) meets B's left (x=11).
+        ys = np.linspace(0.0, 7.0, 15)
+        pairs = np.stack([np.full_like(ys, 8.0), ys, np.full_like(ys, 11.0), ys], 1)
+        return img, pairs
+
+    def test_both_sides_read_one_value(self):
+        img, pairs = self._two_cells()
+        out = ImgUtils.stitch_seams(img, pairs)
+        a = out[:, 8].mean(axis=1)
+        b = out[:, 11].mean(axis=1)
+        np.testing.assert_allclose(a, b, atol=2e-3)
+        # Met halfway: neither side is simply copied onto the other.
+        self.assertGreater(float(a.mean()), 1.05)
+        self.assertLess(float(a.mean()), 1.25)
+
+    def test_only_the_tapped_texels_move(self):
+        img, pairs = self._two_cells()
+        out = ImgUtils.stitch_seams(img, pairs)
+        untouched = np.ones(img.shape[:2], bool)
+        untouched[:, [8, 11]] = False
+        np.testing.assert_array_equal(out[untouched], img[untouched])
+
+    def test_a_sample_between_texels_is_matched_as_sampled(self):
+        img, _ = self._two_cells()
+        img[:, 7] = 0.8  # a ramp inside A
+        pairs = np.array([[7.6, 3.0, 11.0, 3.0]])
+        out = ImgUtils.stitch_seams(img, pairs)
+
+        def bilinear(a, x, y):
+            x0, y0 = int(np.floor(x)), int(np.floor(y))
+            fx, fy = x - x0, y - y0
+            return (
+                a[y0, x0] * (1 - fx) * (1 - fy)
+                + a[y0, x0 + 1] * fx * (1 - fy)
+                + a[y0 + 1, x0] * (1 - fx) * fy
+                + a[y0 + 1, x0 + 1] * fx * fy
+            )
+
+        np.testing.assert_allclose(
+            bilinear(out, 7.6, 3.0), bilinear(out, 11.0, 3.0), atol=2e-3
+        )
+
+    def test_no_pairs_is_a_copy(self):
+        img, _ = self._two_cells()
+        out = ImgUtils.stitch_seams(img, np.zeros((0, 4)))
+        np.testing.assert_array_equal(out, img)
+        self.assertIsNot(out, img)
+
+    def test_an_8bit_image_saturates_instead_of_wrapping(self):
+        """Solved in float and cast straight back, a tap pushed past 255
+        WRAPPED: a bright texel beside dark ones, raised to make its read meet
+        the other side's, came back 79 where the solve said 335."""
+        img = np.zeros((4, 8), np.uint8)
+        img[1, 1] = 250
+        img[1, 2] = img[2, 1] = img[2, 2] = 10
+        img[1, 5] = 240
+        pairs = np.array([[1.5, 1.5, 5.0, 1.0]])  # a 4-tap read against one texel
+        out = ImgUtils.stitch_seams(img, pairs)
+        solved = ImgUtils.stitch_seams(img.astype(np.float32), pairs)
+        self.assertEqual(out.dtype, np.uint8)
+        self.assertEqual(int(out[1, 1]), 255)
+        np.testing.assert_array_equal(
+            out, np.clip(np.rint(solved), 0, 255).astype(np.uint8)
+        )
+
+
+class ExtrapolateFillTest(unittest.TestCase):
+    """ImgUtils.extrapolate_fill -- grow a mask by continuing its content's slope.
+
+    The defect this exists for: a lightmap cell's border texels were refilled
+    (and its denoise windows truncated) by averaging the texels inside them,
+    which reads a light ramp from further in than the edge -- every shared
+    panel edge of a production room showed a step.
+    """
+
+    def _ramp(self):
+        y, x = np.mgrid[0:12, 0:16].astype(np.float32)
+        img = np.dstack([1.0 + 0.1 * x + 0.05 * y] * 3)
+        mask = np.zeros((12, 16), bool)
+        mask[3:9, 4:12] = True
+        return img, mask
+
+    def test_a_ramp_continues_exactly(self):
+        img, mask = self._ramp()
+        seed = np.where(mask[..., None], img, 0.0)
+        out, grown = ImgUtils.extrapolate_fill(seed, mask, rings=2)
+        new = grown & ~mask
+        self.assertTrue(new.any())
+        np.testing.assert_allclose(out[new], img[new], rtol=1e-5)
+        np.testing.assert_array_equal(out[mask], seed[mask])
+
+    def test_rings_grow_along_the_axes(self):
+        _img, mask = self._ramp()
+        seed = np.where(mask[..., None], 1.0, 0.0).astype(np.float32)
+        _out, one = ImgUtils.extrapolate_fill(seed, mask, rings=1)
+        # One ring: the four sides, not the diagonal corners.
+        self.assertTrue(one[2, 6] and one[9, 6] and one[5, 3] and one[5, 12])
+        self.assertFalse(one[2, 3])
+        _out, three = ImgUtils.extrapolate_fill(seed, mask, rings=3)
+        self.assertTrue(three[0, 6] and three[5, 1])
+
+    def test_a_steep_drop_is_clamped_positive(self):
+        img = np.zeros((1, 6), np.float32)
+        img[0, 2:] = [0.2, 2.0, 2.0, 2.0]
+        mask = np.zeros((1, 6), bool)
+        mask[0, 2:] = True
+        out, grown = ImgUtils.extrapolate_fill(img, mask, rings=2)
+        self.assertTrue(grown[0, 1] and grown[0, 0])
+        self.assertGreater(float(out[0, 1]), 0.0)
+        self.assertGreaterEqual(float(out[0, 1]), 0.5 * 0.2 - 1e-6)
+        self.assertLessEqual(float(out[0, 1]), 2.0 * 0.2 + 1e-6)
+
+    def test_a_texel_one_deep_is_left_for_the_dilation(self):
+        # A one-texel-wide island has no slope to continue.
+        img = np.zeros((5, 5), np.float32)
+        mask = np.zeros((5, 5), bool)
+        mask[:, 2] = True
+        img[:, 2] = 1.0
+        out, grown = ImgUtils.extrapolate_fill(img, mask, rings=1)
+        np.testing.assert_array_equal(grown, mask)
+        np.testing.assert_array_equal(out, img)
+
+    def test_never_wraps_at_the_frame(self):
+        img = np.zeros((1, 8), np.float32)
+        img[0, :3] = [3.0, 2.0, 1.0]
+        mask = np.zeros((1, 8), bool)
+        mask[0, :3] = True
+        out, grown = ImgUtils.extrapolate_fill(img, mask, rings=1)
+        self.assertTrue(grown[0, 3])
+        self.assertFalse(grown[0, 7], "the far frame edge is not a neighbour")
+        self.assertAlmostEqual(float(out[0, 3]), 0.5, places=6)  # clamp: 0.5 * 1.0
+
+    def test_an_8bit_ramp_saturates_instead_of_wrapping(self):
+        """Extrapolated in float and cast straight back, an 8-bit ramp running
+        past 255 WRAPPED: 60, 130, 200 continued to 270, stored as 14."""
+        img = np.zeros((1, 6), np.uint8)
+        img[0, :3] = [60, 130, 200]
+        mask = np.zeros((1, 6), bool)
+        mask[0, :3] = True
+        out, grown = ImgUtils.extrapolate_fill(img, mask, rings=1)
+        self.assertTrue(grown[0, 3])
+        self.assertEqual(out.dtype, np.uint8)
+        self.assertEqual(out[0].tolist(), [60, 130, 200, 255, 0, 0])
 
 
 class FillEmptyTexelsTest(unittest.TestCase):
@@ -2297,6 +2813,18 @@ class AtlasAssembleTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             ImgUtils.assemble_atlas([np.zeros((2, 2, 3), np.float32)], [], 4)
 
+    def test_an_8bit_atlas_rounds_and_saturates(self):
+        """Resized in float and cast straight back, an 8-bit atlas truncated
+        each averaged texel toward dark (63.75 -> 63) and wrapped a background
+        past the range (256 -> 0)."""
+        img = np.zeros((2, 2, 3), np.uint8)
+        img[0, 0] = 255  # a 2x2 averaged into one texel: 63.75
+        atlas = ImgUtils.assemble_atlas(
+            [img], [(0.5, 0.5, 0.0, 0.0)], 2, background=256.0
+        )
+        self.assertEqual(atlas.dtype, np.uint8)
+        self.assertEqual(atlas[..., 0].tolist(), [[255, 255], [64, 255]])
+
     def test_grayscale_round_trips_2d(self):
         rects = ImgUtils.compute_atlas_layout([1.0])
         img = np.full((2, 2), 0.25, np.float32)
@@ -2337,6 +2865,94 @@ class AtlasAssembleTest(unittest.TestCase):
         )
         self.assertTrue((atlas[:, :8] == 1.0).all())  # the in-bounds item landed
         self.assertTrue((atlas[:, 8:] == 2.0).any())  # so did the overhanging part
+
+
+class RasterizeUvTrianglesTest(unittest.TestCase):
+    """ImgUtils.rasterize_uv_triangles -- the coverage every lightmap refill reads.
+
+    Vectorized 2026-10-02 (a per-triangle Python fill took 13 s of a 96-tile
+    production bake's refill); the rule is unchanged and pinned here.
+    """
+
+    @staticmethod
+    def _assert_matches_the_reference(rng, trials):
+        from pythontk.img_utils._rasterize import _ImgRasterizeInternal as R
+
+        for _ in range(trials):
+            tris = rng.random((int(rng.integers(1, 12)), 3, 2)) * 1.2 - 0.1
+            dim = int(rng.integers(6, 48))
+            pts = np.stack([tris[..., 0] * dim, (1 - tris[..., 1]) * dim], -1)
+            ref = np.zeros((dim, dim), np.uint8)
+            for tri in pts:
+                R._fill_triangle(ref, tri)
+            np.testing.assert_array_equal(R._scanline_fill(pts, dim), ref)
+
+    @staticmethod
+    def _tall_strips(n):
+        """*n* triangles, two to each of side-by-side strips 0.8 of the frame
+        tall: their heights sum to 0.8 n frames (a fluted column's unwrap)."""
+        xs = np.linspace(0.05, 0.95, n // 2 + 1)
+        tris = []
+        for a, b in zip(xs[:-1], xs[1:]):
+            tris += [[(a, 0.1), (b, 0.1), (b, 0.9)], [(a, 0.1), (b, 0.9), (a, 0.9)]]
+        return np.array(tris)
+
+    def test_spans_match_the_per_triangle_centre_rule(self):
+        self._assert_matches_the_reference(np.random.default_rng(11), 60)
+
+    def test_bands_and_chunks_cover_what_one_pass_does(self):
+        """Spans are built a band of rows and a bounded chunk of triangles at a
+        time: bands a row or two tall and chunks of a triangle or two (a
+        triangle taller than a chunk on its own) change no texel."""
+        from unittest import mock
+        from pythontk.img_utils._rasterize import _ImgRasterizeInternal as R
+
+        with mock.patch.object(R, "_SCANLINE_CELLS", 64):
+            with mock.patch.object(R, "_SCANLINE_SPANS", 5):
+                self._assert_matches_the_reference(np.random.default_rng(23), 40)
+
+    def test_scratch_does_not_grow_with_the_triangles_summed_height(self):
+        """Every (triangle, row) span was built at once, so the scratch grew
+        with the triangles' SUMMED height: 2048 tall strips at 2048 x 4
+        supersample took 2.0 GB (now 0.2). Spans are built a bounded chunk at
+        a time -- the budget lowered here, so a small frame needs many."""
+        import tracemalloc
+        from unittest import mock
+        from pythontk.img_utils._rasterize import _ImgRasterizeInternal as R
+
+        def peak(n):
+            tris = self._tall_strips(n)
+            tracing = tracemalloc.is_tracing()
+            if not tracing:
+                tracemalloc.start()
+            tracemalloc.reset_peak()
+            base = tracemalloc.get_traced_memory()[0]
+            try:
+                ImgUtils.rasterize_uv_triangles(tris, size=128, supersample=2)
+                return tracemalloc.get_traced_memory()[1] - base
+            finally:
+                if not tracing:
+                    tracemalloc.stop()
+
+        with mock.patch.object(R, "_SCANLINE_SPANS", 1 << 12):
+            few, many = peak(250), peak(2000)
+        self.assertLess(many, 1.5 * few, f"{few} B for 250 strips, {many} for 2000")
+
+    def test_a_quad_on_texel_lines_is_fully_covered_inside(self):
+        quad = [
+            [(0.25, 0.25), (0.75, 0.25), (0.75, 0.75)],
+            [(0.25, 0.25), (0.75, 0.75), (0.25, 0.75)],
+        ]
+        cov = ImgUtils.rasterize_uv_triangles(quad, size=8, supersample=4)
+        self.assertTrue((cov[2:6, 2:6] == 255).all())
+        self.assertEqual(int(cov[:2].max()), 0)
+        self.assertEqual(int(cov[:, 6:].max()), 0)
+
+    def test_degenerate_and_offframe_triangles_cover_nothing(self):
+        cov = ImgUtils.rasterize_uv_triangles(
+            [[(0.1, 0.1), (0.2, 0.2), (0.3, 0.3)], [(2, 2), (3, 2), (2, 3)]], size=8
+        )
+        self.assertEqual(int(cov.max()), 0)
 
 
 class RasterizeSilhouetteTest(unittest.TestCase):
@@ -3270,7 +3886,9 @@ class ImgUtilsLayoutTest(unittest.TestCase):
         for path in self._modules():
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in tree.body:
-                if isinstance(node, ast.ImportFrom) and "engines" in (node.module or ""):
+                if isinstance(node, ast.ImportFrom) and "engines" in (
+                    node.module or ""
+                ):
                     offenders.append(f"{path.name}: {ast.unparse(node)}")
         self.assertEqual(offenders, [])
 
@@ -3281,6 +3899,44 @@ class ImgUtilsLayoutTest(unittest.TestCase):
             if base.__name__.startswith("_Img"):
                 on_base = {n for n in vars(base) if not n.startswith("_")}
                 self.assertEqual(on_base - set(vars(ImgUtils)), set(), base.__name__)
+
+
+class DetectNormalMapFormatTest(unittest.TestCase):
+    """ImgUtils.detect_normal_map_format -- the handedness read off a map's content.
+
+    It is image analysis, so it lives in img_utils: the UV transfer (geo_utils,
+    which ranks below the texture engines) reads it as well as MapFactory.
+    """
+
+    @staticmethod
+    def _relief(green_down: bool) -> "Image.Image":
+        """A hemisphere's tangent-space normals: OpenGL (G ~ +dH/drow), or DirectX."""
+        n = 256
+        yy, xx = np.mgrid[0:n, 0:n].astype(np.float64)
+        r2 = ((xx - n / 2) ** 2 + (yy - n / 2) ** 2) / (n / 2) ** 2
+        h = np.clip(1.0 - r2, 0.0, 1.0) * 40.0
+        x = -np.gradient(h, axis=1)
+        y = np.gradient(h, axis=0) * (-1.0 if green_down else 1.0)
+        v = np.stack([x, y, np.ones_like(h)], axis=-1)
+        v /= np.linalg.norm(v, axis=-1, keepdims=True)
+        return Image.fromarray(np.round((v * 0.5 + 0.5) * 255).astype(np.uint8), "RGB")
+
+    def test_relief_reads_its_convention_and_a_flat_fill_abstains(self):
+        self.assertEqual(
+            ImgUtils.detect_normal_map_format(self._relief(False)), "OpenGL"
+        )
+        self.assertEqual(
+            ImgUtils.detect_normal_map_format(self._relief(True)), "DirectX"
+        )
+        flat = Image.new("RGB", (64, 64), (128, 128, 255))
+        self.assertIsNone(ImgUtils.detect_normal_map_format(flat))
+
+    def test_the_map_factory_reads_the_same(self):
+        img = self._relief(False)
+        self.assertEqual(
+            TextureMapFactory.detect_normal_map_format(img),
+            ImgUtils.detect_normal_map_format(img),
+        )
 
 
 if __name__ == "__main__":

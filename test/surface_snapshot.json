@@ -30,6 +30,13 @@
   {
     "kind": "function",
     "module": "pythontk.str_utils._str_utils",
+    "name": "apply_name_rule",
+    "qualname": "StrUtils.apply_name_rule",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
     "name": "apply_regex_modifier",
     "qualname": "StrUtils.apply_regex_modifier",
     "tier": "bare"
@@ -197,6 +204,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
+    "name": "common_name",
+    "qualname": "StrUtils.common_name",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.img_utils._img_utils",
     "name": "compose_rect",
     "qualname": "ImgUtils.compose_rect",
@@ -253,6 +267,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "convert_scene_linear",
+    "qualname": "ImgUtils.convert_scene_linear",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.file_utils._file_utils",
     "name": "convert_to_relative_path",
     "qualname": "FileUtils.convert_to_relative_path",
@@ -284,6 +305,13 @@
     "module": "pythontk.img_utils._img_utils",
     "name": "create_mask",
     "qualname": "ImgUtils.create_mask",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "crop_to_uv_bbox",
+    "qualname": "ImgUtils.crop_to_uv_bbox",
     "tier": "bare"
   },
   {
@@ -331,6 +359,13 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "detect_normal_map_format",
+    "qualname": "ImgUtils.detect_normal_map_format",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "dilate_image",
     "qualname": "ImgUtils.dilate_image",
     "tier": "bare"
@@ -368,6 +403,13 @@
     "module": "pythontk.img_utils._img_utils",
     "name": "encode_hdr_for_web",
     "qualname": "ImgUtils.encode_hdr_for_web",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "encode_hdr_radiance",
+    "qualname": "ImgUtils.encode_hdr_radiance",
     "tier": "bare"
   },
   {
@@ -452,6 +494,13 @@
     "module": "pythontk.img_utils._img_utils",
     "name": "extract_channels",
     "qualname": "ImgUtils.extract_channels",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "extrapolate_fill",
+    "qualname": "ImgUtils.extrapolate_fill",
     "tier": "bare"
   },
   {
@@ -711,6 +760,13 @@
     "module": "pythontk.img_utils._img_utils",
     "name": "get_image_info",
     "qualname": "ImgUtils.get_image_info",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "get_image_mode",
+    "qualname": "ImgUtils.get_image_mode",
     "tier": "bare"
   },
   {
@@ -1073,6 +1129,13 @@
   {
     "kind": "function",
     "module": "pythontk.math_utils._math_utils",
+    "name": "metres_per_unit",
+    "qualname": "MathUtils.metres_per_unit",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
     "name": "move_decimal_point",
     "qualname": "MathUtils.move_decimal_point",
     "tier": "bare"
@@ -1220,6 +1283,13 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "quantize_8bit",
+    "qualname": "ImgUtils.quantize_8bit",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "radial_gradient",
     "qualname": "ImgUtils.radial_gradient",
     "tier": "bare"
@@ -1362,6 +1432,13 @@
     "module": "pythontk.img_utils._img_utils",
     "name": "resize_image",
     "qualname": "ImgUtils.resize_image",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "resize_into_cell",
+    "qualname": "ImgUtils.resize_into_cell",
     "tier": "bare"
   },
   {
@@ -1597,6 +1674,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "stitch_seams",
+    "qualname": "ImgUtils.stitch_seams",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.str_utils._str_utils",
     "name": "strip_ansi",
     "qualname": "StrUtils.strip_ansi",
@@ -1635,6 +1719,13 @@
     "module": "pythontk.core_utils._core_utils",
     "name": "teardown_guard",
     "qualname": "CoreUtils.teardown_guard",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "texture_facts",
+    "qualname": "ImgUtils.texture_facts",
     "tier": "bare"
   },
   {
@@ -1691,6 +1782,13 @@
     "module": "pythontk.file_utils._file_utils",
     "name": "unique_path",
     "qualname": "FileUtils.unique_path",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "uv_crop_extent",
+    "qualname": "ImgUtils.uv_crop_extent",
     "tier": "bare"
   },
   {
@@ -1782,6 +1880,20 @@
     "module": "pythontk.geo_utils.articulation.model",
     "name": "ArticulationModel",
     "qualname": "ArticulationModel",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.articulation.record",
+    "name": "ArticulationRecord",
+    "qualname": "ArticulationRecord",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.articulation.record",
+    "name": "ArticulationWeb",
+    "qualname": "ArticulationWeb",
     "tier": "root"
   },
   {
@@ -1961,6 +2073,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.conformance",
+    "name": "Conformance",
+    "qualname": "Conformance",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils._core_utils",
     "name": "CoreUtils",
     "qualname": "CoreUtils",
@@ -2027,6 +2146,13 @@
     "module": "pythontk.core_utils.doc_audit",
     "name": "DocAudit",
     "qualname": "DocAudit",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.effect_recipe",
+    "name": "EffectRecipe",
+    "qualname": "EffectRecipe",
     "tier": "root"
   },
   {
@@ -3221,6 +3347,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.geo_utils.shadow_projection",
+    "name": "ShadowConformance",
+    "qualname": "ShadowConformance",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.geo_utils.shadow_horizon",
     "name": "ShadowHorizon",
     "qualname": "ShadowHorizon",
@@ -3301,6 +3434,13 @@
     "module": "pythontk.core_utils.engines.shots.shot_plan",
     "name": "ShotMove",
     "qualname": "ShotMove",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
+    "name": "ShotPairing",
+    "qualname": "ShotPairing",
     "tier": "root"
   },
   {
@@ -3602,6 +3742,13 @@
     "module": "pythontk.file_utils.workspace",
     "name": "WORKSPACE_MARKER",
     "qualname": null,
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.scene_records",
+    "name": "WebProjection",
+    "qualname": "WebProjection",
     "tier": "root"
   },
   {

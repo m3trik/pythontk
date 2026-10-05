@@ -533,5 +533,52 @@ class TestDeclaredTakes(unittest.TestCase):
         self.assertEqual(GlbPipeline._declared_takes(self._Fbx({})), set())
 
 
+class TestDropSplitTakes(unittest.TestCase):
+    """The converter's shot takes go whenever a whole-timeline stack survives
+    to cut them from. The rebuild's origin is measured from the file the
+    conversion reads (``MeshConvert._stamp_clip_spans``), so a producer that
+    published none no longer leaves the GLB with no shot clip (measured
+    2026-10-04: ``Take 001`` alone)."""
+
+    class _Fbx(TestDeclaredTakes._Fbx):
+        def take_names(self):
+            return ["Take 001", "A", "B"]
+
+    SHOTS = (
+        b'{"version": 1, "shots": [{"clip": "A", "start": 1, "end": 20},'
+        b' {"clip": "B", "start": 21, "end": 40}]}'
+    )
+
+    def _drop(self, props):
+        """Run the strip over a fake FBX carrying *props*; the patched
+        ``FbxMedia.drop_takes`` and the report."""
+        from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        report = {"src": "in.fbx", "scratch": []}
+        outcome = {"takes": ["A", "B"], "objects": {"AnimationStack": 2}}
+        with (
+            unittest.mock.patch.object(FbxFile, "is_fbx", return_value=True),
+            unittest.mock.patch.object(FbxFile, "load", return_value=self._Fbx(props)),
+            unittest.mock.patch.object(
+                FbxMedia, "drop_takes", return_value=outcome
+            ) as drop,
+        ):
+            GlbPipeline._drop_split_takes(
+                "in.fbx",
+                lambda extension: "scratch" + extension,
+                lambda path: None,
+                report,
+                unittest.mock.Mock(),
+                lambda message: None,
+            )
+        return drop, report
+
+    def test_the_split_goes_without_a_published_origin(self):
+        drop, report = self._drop({"shot_metadata": [self.SHOTS]})
+        drop.assert_called_once()
+        self.assertEqual(report["src"], "scratch.fbx")
+
+
 if __name__ == "__main__":
     unittest.main()

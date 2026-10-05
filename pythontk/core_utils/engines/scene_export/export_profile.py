@@ -818,8 +818,10 @@ class ExportProfile:
         "Within 1e-3 (1 mm)": 1e-3,
     }
     #: Baked Reflections -- how strongly a lightmapped material reflects the
-    #: viewer's environment, published in the deliverable's lighting recipe
-    #: (``handoff.rendering``). The values are TOKENS rather than the levels
+    #: viewer's studio environment, published in the deliverable's lighting
+    #: recipe (``handoff.rendering``). A deliverable that carries its own
+    #: reflection probe -- the room its bake lit -- reflects that at full
+    #: strength whatever this says. The values are TOKENS rather than the levels
     #: (:attr:`ExportRun.BAKED_REFLECTION_LEVELS`): the export button drops a
     #: falsy row as "unset", and Off is a real choice here, not the default.
     BAKED_REFLECTIONS_OPTIONS: Dict[str, str] = {
@@ -1045,6 +1047,12 @@ class ExportRun:
     #: in a shot-bearing mode (derived: :meth:`with_tasks`). Whether the scene
     #: declares any takes is the DCC's read, off its carrier.
     splits_takes: bool = False
+    #: The Bake Range row's own value (``auto`` / ``keys`` / ``scene``, the
+    #: ``True`` a pre-combo preset stored, or ``None`` for OFF), unresolved:
+    #: the range is set last, and a DCC that must say where its whole-timeline
+    #: take will start before then -- the clip origin -- reads the row from
+    #: here (derived: :meth:`with_tasks`).
+    bake_range_mode: Any = None
     #: The Output Filename carried a version counter, so the sidecar routes
     #: through the base stem and a series shares one manifest.
     versioned: bool = False
@@ -1237,6 +1245,7 @@ class ExportRun:
             relative_paths=bool(tasks.get("convert_to_relative_paths", False)),
             animation_clips_mode=tasks.get("apply_declared_takes", "both"),
             splits_takes=splits,
+            bake_range_mode=tasks.get("set_bake_animation_range"),
         )
 
     # ------------------------------------------------------------ GLB half

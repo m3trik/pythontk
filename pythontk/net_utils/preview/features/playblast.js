@@ -167,8 +167,15 @@ const OVERLAY_FONT = 'ui-monospace, "DejaVu Sans Mono", Consolas, monospace';
 const OVERLAY_SCALE = 0.032;
 const OVERLAY_MIN_SIZE = 11;
 
+//: The button's label while no recording runs.
+const LABEL = 'Export playblast…';
+
 export default function playblast(viewer) {
-  const button = viewer.addButton('Export Playblast', () => {
+  // In the Export window (`viewer.window`), beside the still's.
+  const exports = viewer.window('Export', { title: 'Save the view as an image, or a clip as a movie' });
+  const section = exports.section();
+  section.setRows([{ text: 'The selected clip as a movie, frame by frame.' }]);
+  const button = section.addButton(LABEL, () => {
     // Nothing to cancel once the frames are all in and ffmpeg has them: the
     // encode is the server's, and "cancelling" it here would only detach the
     // page from a file that is written anyway.
@@ -339,7 +346,9 @@ export default function playblast(viewer) {
       quality: preset.quality,
       // The ratio to put back, set only when this recording raised it.
       restorePixelRatio: null,
+      /** @type {HTMLCanvasElement} */
       pad: null,
+      /** @type {CanvasRenderingContext2D} */
       padContext: null,
       // Snapshotted onto the job rather than read from `options` per frame, so
       // the whole file is annotated the way the prompt that started it was
@@ -565,6 +574,7 @@ export default function playblast(viewer) {
     const { width, height } = job;
     // No ✕: see the button handler -- there is nothing left to cancel.
     button.textContent = 'Encoding…';
+    exports.setBadge('encoding', 'playblast');
     try {
       const report = await post('finish', { token: job.token });
       const seconds = Number(report.duration || 0).toFixed(1);
@@ -763,16 +773,19 @@ export default function playblast(viewer) {
     if (job && job.encoder) job.encoder.close();
     if (job && job.wasPlaying) viewer.setPlaying(true);
     job = null;
-    button.textContent = 'Export Playblast';
+    button.textContent = LABEL;
+    exports.setBadge('', 'playblast');
   }
 
   //: Progress goes on the BUTTON, not the status line: the status line says
   //: what the page is showing, and a per-frame counter there would bury the
   //: version and the load state for the length of the recording. Clicking it
   //: cancels, which is exactly what a progress label wants to be attached to --
-  //: hence the ✕, which is only shown while cancelling is possible.
+  //: hence the ✕, which is only shown while cancelling is possible. The
+  //: Export window's bar button says one runs, for when the window is shut.
   function label(text) {
     button.textContent = `${text}  ✕`;
+    exports.setBadge('recording', 'playblast');
   }
 
   async function post(action, payload) {

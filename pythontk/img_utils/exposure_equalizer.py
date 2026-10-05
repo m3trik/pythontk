@@ -18,6 +18,9 @@ import os
 import shutil
 from typing import List, Optional, Sequence
 
+# Before cv2 loads: OpenCV reads OPENCV_IO_ENABLE_OPENEXR once, at import, so a
+# cv2 imported without it leaves OpenEXR off for the whole process.
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 try:
     import cv2
     import numpy as np

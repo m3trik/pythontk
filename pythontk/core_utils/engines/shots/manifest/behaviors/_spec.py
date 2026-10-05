@@ -49,6 +49,41 @@ class _BehaviorSpecInternal(object):
         return []
 
     @staticmethod
+    def validate_effect(value: Any) -> List[str]:
+        """``effect`` names one of the scene recipe's effects."""
+        from pythontk.core_utils.engines.shots.effect_recipe import EffectRecipe
+
+        if value is None or value in EffectRecipe.EFFECTS:
+            return []
+        return [f"{value!r} is not one of {EffectRecipe.effect_names()}"]
+
+    @staticmethod
+    def validate_place(value: Any) -> List[str]:
+        """``place`` = ``start`` | ``end`` | ``span`` | a fraction 0-1."""
+        from pythontk.core_utils.engines.shots.effect_recipe import EffectRecipe
+
+        if value is None or value in EffectRecipe.PLACES:
+            return []
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return [] if 0.0 <= float(value) <= 1.0 else ["a fraction must be 0-1"]
+        return [f"expected one of {list(EffectRecipe.PLACES)} or a fraction 0-1"]
+
+    @staticmethod
+    def validate_detect(value: Any) -> List[str]:
+        """``detect`` = a list of regexes (matched case-insensitively)."""
+        import re
+
+        if isinstance(value, str) or not isinstance(value, list):
+            return ["expected a list of regular expressions"]
+        errs: List[str] = []
+        for pattern in value:
+            try:
+                re.compile(pattern)
+            except (re.error, TypeError) as exc:
+                errs.append(f"{pattern!r} is not a valid regular expression: {exc}")
+        return errs
+
+    @staticmethod
     def validate_attributes(value: Any) -> List[str]:
         """``attributes`` = {attr: {in?/out?: {offset,duration,values,anchor,tangent}}}."""
         if not isinstance(value, dict):
@@ -84,16 +119,69 @@ class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal):
         example=["scene"],
         default_factory=lambda: ["scene"],
     )
+    effect: str = SchemaSpec.spec_field(
+        help=(
+            "The scene recipe's effect this behavior keys -- `fade_in`, "
+            "`fade_out`, `pulse` or `clip`. The recipe (Render Effects / "
+            "Audio Clips) says HOW it is keyed, the same way a hand-keyed one "
+            "is; the template says only where it goes (`place`). A template "
+            "with an `effect` keys no `attributes` of its own."
+        ),
+        validate=_BehaviorSpecInternal.validate_effect,
+        example="fade_in",
+        default=None,
+    )
+    place: Any = SchemaSpec.spec_field(
+        help=(
+            "Where the `effect` goes in the shot: `start`, `end`, `span` "
+            "(across it) or a fraction 0-1 between the start and end "
+            "placements. An object's several fades are spread in doc order "
+            "whatever their own placement."
+        ),
+        validate=_BehaviorSpecInternal.validate_place,
+        example="start",
+        default=None,
+    )
     duration: Any = SchemaSpec.spec_field(
         help='Length in frames, or "from_source" to size to an audio clip.',
         validate=_BehaviorSpecInternal.validate_duration,
         default=None,
     )
     attributes: Dict[str, Any] = SchemaSpec.spec_field(
-        help="Keyframe blocks per attribute, split into in/out phases.",
+        help=(
+            "Keyframe blocks per attribute, split into in/out phases -- a "
+            "custom template keying its own channels (an `effect` template "
+            "has none)."
+        ),
         validate=_BehaviorSpecInternal.validate_attributes,
-        example={
-            "visibility": {
+        default=None,
+    )
+    verify: Dict[str, Any] = SchemaSpec.spec_field(
+        help="How verification checks the authored keys.",
+        validate=_BehaviorSpecInternal.validate_verify,
+        example={"mode": "values_in_range"},
+        default=None,
+    )
+    detect: List[str] = SchemaSpec.spec_field(
+        help=(
+            "Phrases (regexes, case-insensitive, `^`/`$` per line) that name "
+            "this behavior in a doc's text or behaviors column -- how a sheet's "
+            "prose finds it.  A phrase with a named group `object` also names "
+            "the object the behavior is for, so a step whose asset cells are "
+            "empty can list it (`ColumnMap.object_source`)."
+        ),
+        validate=_BehaviorSpecInternal.validate_detect,
+        example=[r"\bfades?\s+in\b"],
+        default=None,
+    )
+
+    #: A template keying channels of its own, for the reference (the skeleton
+    #: is the recipe-driven form).
+    CUSTOM_EXAMPLE = {
+        "description": "Scale objects up at shot start.",
+        "kind": ["scene"],
+        "attributes": {
+            "scaleY": {
                 "in": {
                     "anchor": "start",
                     "offset": 0,
@@ -103,19 +191,14 @@ class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal):
                 }
             }
         },
-        default=None,
-    )
-    verify: Dict[str, Any] = SchemaSpec.spec_field(
-        help="How verification checks the authored keys.",
-        validate=_BehaviorSpecInternal.validate_verify,
-        example={"mode": "values_in_range"},
-        default=None,
-    )
+        "verify": {"mode": "values_in_range"},
+    }
 
     @classmethod
     def format_markdown(cls) -> str:
         """Generate the full ``BEHAVIOR_FORMAT.md`` reference from the schema SSoT."""
         skeleton = json.dumps(cls.skeleton(), indent=2)
+        custom = json.dumps(cls.CUSTOM_EXAMPLE, indent=2)
         modes = ", ".join(f"`{m}`" for m in KNOWN_VERIFY_MODES)
         return f"""<!-- GENERATED by behaviors/_spec.py:format_markdown() — do not edit by hand. -->
 # Shot Manifest — Behavior Template Format
@@ -136,6 +219,11 @@ the CSV mapping templates).
 
 {cls.to_markdown(title="Top-level keys")}
 
+The built-in fades, highlight and clip name an `effect`: the scene's effect
+recipe -- what Render Effects and Audio Clips edit -- says how it is keyed,
+so a Build keys the same fade or pulse an artist keys by hand. A template that
+keys channels of its own gives `attributes` instead.
+
 Each `attributes.<attr>.<phase>` block holds: `anchor` (`start` | `end` | a
 float 0–1), `offset` (frames), `duration` (frames), `values` (list keyframed
 across the block), and `tangent` (e.g. `linear`, `step`).
@@ -146,5 +234,11 @@ Verification (`verify.mode`) is one of: {modes}.
 
 ```json
 {skeleton}
+```
+
+## A template keying its own channels
+
+```json
+{custom}
 ```
 """

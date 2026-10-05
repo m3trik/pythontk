@@ -96,9 +96,12 @@ jobs:
           # Installing only proves the pins RESOLVE. Import the installed
           # wheel too, from a directory with no pythontk source in it -- run
           # from the checkout, the repo would shadow the install and the
-          # check would pass on source that was never packaged. Four runtime
-          # data files resolve relative to __file__ and two of them degrade
-          # silently when missing, so the import also asserts they shipped.
+          # check would pass on source that was never packaged. Runtime data
+          # files resolve relative to __file__ and most of them degrade
+          # silently when missing -- the WebXR preview is a page over ES
+          # modules (kernel/, features/), and a wheel carrying the page alone
+          # serves a tab that never starts -- so the import also asserts they
+          # shipped.
           cd "$RUNNER_TEMP"
           python -c "
           import pythontk, os
@@ -114,6 +117,8 @@ jobs:
               'core_utils/execution_monitor/task_indicator.gif',
               'geo_utils/shadow_horizon.glsl',
               'net_utils/preview/viewer.html',
+              'net_utils/preview/kernel/main.js',
+              'net_utils/preview/features/shadow_rig/model.js',
           } - shipped
           assert not missing, f'wheel is missing runtime data files: {sorted(missing)}'
           print(f'{len(shipped)} non-.py data file(s) present in the wheel')

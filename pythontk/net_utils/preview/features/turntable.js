@@ -21,14 +21,20 @@ const DEGREES_PER_SECOND = 14;
 export default function turntable(viewer) {
   let spinning = true;
 
-  const button = viewer.addButton('Turntable: on', () => {
-    spinning = !spinning;
-    button.textContent = `Turntable: ${spinning ? 'on' : 'off'}`;
-  });
-  button.title = 'Rotate the model continuously (t)';
+  // A switch in the View window (`viewer.window`), where the page sorts what
+  // changes how the model is shown, rather than a button of its own on the bar.
+  const view = viewer.window('View', { title: 'How the model is shown' });
+  const toggle = view.section().addToggle(
+    'Turntable',
+    { value: spinning, title: 'Rotate the model continuously (t)' },
+    (on) => { spinning = on; },
+  );
 
   viewer.on('key', (event) => {
-    if (event.key === 't') button.click();
+    if (event.key === 't') {
+      spinning = !spinning;
+      toggle.value = spinning;
+    }
   });
 
   // Applied to the pivot, not the model: the pivot is what the viewer owns

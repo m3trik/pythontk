@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 # Eager: the channel keys below are SceneRecords' own, read at class
 # definition.
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
-from pythontk.file_utils.mesh_convert.glb.edit import GlbTarget
+from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +35,10 @@ class _LightmapsMixin:
     LIGHTMAP_METADATA_KEY = SceneRecords.LIGHTMAPS.key
     #: Highest ``lightmap_metadata`` schema this applier knows how to read.
     LIGHTMAP_METADATA_VERSION = SceneRecords.LIGHTMAPS.version
-    #: Extras key the web viewer reads (``preview/viewer.html``): the first
-    #: scene's extras, then the root's (:meth:`_lightmap_web_manifest`).
-    LIGHTMAP_WEB_KEY = "lightmap_web"
+    #: Extras key the web viewer reads: the first scene's extras, then the
+    #: root's (:meth:`_lightmap_web_manifest`) -- the record's declared web
+    #: projection.
+    LIGHTMAP_WEB_KEY = SceneRecords.LIGHTMAPS.web.key
     #: Per-object bake marker, riding the same FBX user-property channel as the
     #: manifest (mayatk/blendertk ``LightmapBaker.LIGHTMAP_INFO_ATTR``). Carries
     #: its own copy of the locate hint, once per lightmapped object.
@@ -720,6 +721,93 @@ class _LightmapsMixin:
         }
 
     @classmethod
+    def _embed_lightmap_probe(
+        cls, edit: GlbEdit, manifest: Dict[str, Any], dirs: Sequence[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Embed the manifest's reflection probe; its ``lightmap_web`` entry, or ``None``.
+
+        The probe is the room the bake lit, captured once as an HDR from one
+        point (a host's ``LightmapBaker``): what a lightmap cannot hold -- the
+        reflections on every baked surface, which are the whole look of a
+        metal, and the light on every unbaked one. Embedded whole, as Radiance
+        bytes in a bufferView of its own (:meth:`ImgUtils.encode_hdr_radiance`):
+        an 8-bit map would clip exactly the lights a reflection shows. The
+        manifest names the view by index, which is also what keeps it through
+        BIN compaction (:meth:`GlbEdit.compact_bin` keeps every view the JSON
+        names). The capture point and the box its reflections project onto
+        arrive in scene units with ``unit_scale`` beside them; the entry
+        carries them in metres, the GLB's own space.
+
+        A probe that cannot be found or read is warned and left out: the file
+        still ships its lightmaps, and a viewer lights it as before.
+        """
+        probe = manifest.get("probe")
+        if not isinstance(probe, dict) or not probe.get("map"):
+            return None
+        basename = os.path.basename(str(probe["map"]))
+        try:
+            unit = float(probe.get("unit_scale", 1.0))
+        except (TypeError, ValueError):
+            unit = 0.0
+        position = probe.get("position")
+        if not (
+            unit > 0.0 and isinstance(position, (list, tuple)) and len(position) == 3
+        ):
+            logger.warning(
+                "Reflection probe %r has no usable position or unit_scale; "
+                "not embedded.",
+                basename,
+            )
+            return None
+        path = next(
+            (
+                os.path.join(d, basename)
+                for d in dirs
+                if os.path.isfile(os.path.join(d, basename))
+            ),
+            None,
+        )
+        if path is None:
+            logger.warning(
+                "Reflection probe %r not found in %s; the file ships without it.",
+                basename,
+                list(dirs),
+            )
+            return None
+        from pythontk.img_utils._img_utils import ImgUtils
+
+        try:
+            raw = ImgUtils.encode_hdr_radiance(path)
+        except (ImportError, ValueError) as error:
+            logger.warning("Reflection probe %r not encoded: %s", basename, error)
+            return None
+        views = cls._append_bin_views(edit, [raw])
+        if not views:
+            logger.warning(
+                "Reflection probe %r not embedded: the GLB's buffer is external.",
+                basename,
+            )
+            return None
+        entry: Dict[str, Any] = {
+            "bufferView": views[0],
+            "mimeType": "image/vnd.radiance",
+            "name": os.path.splitext(basename)[0] + ".hdr",
+            "position": [round(float(c) * unit, 6) for c in position],
+            "box": None,
+        }
+        box = probe.get("box")
+        if (
+            isinstance(box, (list, tuple))
+            and len(box) == 2
+            and all(isinstance(c, (list, tuple)) and len(c) == 3 for c in box)
+        ):
+            entry["box"] = {
+                "min": [round(float(c) * unit, 6) for c in box[0]],
+                "max": [round(float(c) * unit, 6) for c in box[1]],
+            }
+        return entry
+
+    @classmethod
     def apply_glb_lightmaps(
         cls,
         glb: GlbTarget,
@@ -793,6 +881,13 @@ class _LightmapsMixin:
         clones are pure JSON referencing the same accessors/bufferViews: zero geometry
         or texture duplication, and any compliant viewer (three.js, model-viewer,
         Babylon, the production WebXR app) renders the rect with no custom code.
+
+        **The bake's reflection probe rides along.** A manifest ``probe`` (the
+        HDR the host captured of the room it baked, its capture point and the
+        box its reflections project onto, in scene units beside ``unit_scale``)
+        is embedded whole and published as ``lightmap_web.probe``
+        (:meth:`_embed_lightmap_probe`), in metres -- the environment a viewer
+        reflects off baked surfaces and lights unbaked ones with.
 
         Returns:
             One record per (object, material) binding: ``{"material", "object",
@@ -1323,12 +1418,15 @@ class _LightmapsMixin:
             if web_materials:
                 # The exact shape the viewer parses (root extras is its 2nd probe).
                 web_manifest = {
-                    "version": 1,
+                    "version": SceneRecords.LIGHTMAPS.web.version,
                     "carrier": carrier,
                     "uv": 1,
                     "encoding": "srgb",
                     "materials": web_materials,
                 }
+                probe = cls._embed_lightmap_probe(edit, manifest, dirs)
+                if probe:
+                    web_manifest["probe"] = probe
                 edit.gltf.setdefault("extras", {})[cls.LIGHTMAP_WEB_KEY] = web_manifest
                 # The maps are in the file now, so the authoring-path hints that
                 # found them have no reader left -- drop them here, where that is

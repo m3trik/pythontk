@@ -72,6 +72,23 @@ class StrTest(BaseTestCase):
         self.assertEqual(StrUtils.set_case("123abc", "upper"), "123ABC")
         self.assertEqual(StrUtils.set_case("!@#ABC", "lower"), "!@#abc")
 
+    def test_cases_lists_every_case_set_case_applies(self):
+        """``CASES`` is what a case picker offers: each one transforms."""
+        for case in StrUtils.CASES:
+            self.assertNotEqual(StrUtils.set_case("aB c", case), "", case)
+        self.assertEqual(StrUtils.set_case("aB c", "title"), "Ab C")
+
+    def test_apply_name_rule_dispatches_to_each_legalizer(self):
+        text = "Red Door  Lock."
+        self.assertEqual(StrUtils.apply_name_rule(text, "legal"), "Red_Door__Lock_")
+        self.assertEqual(StrUtils.apply_name_rule(text, "sanitized"), "Red_Door_Lock")
+        self.assertEqual(
+            StrUtils.apply_name_rule("Red Door: Lock", "filename"), "Red Door Lock"
+        )
+        self.assertEqual(set(StrUtils.NAME_RULES), {"legal", "sanitized", "filename"})
+        with self.assertRaises(ValueError):
+            StrUtils.apply_name_rule(text, "shout")
+
     def test_set_case_whitespace(self):
         """Test set_case with whitespace strings."""
         self.assertEqual(StrUtils.set_case("   ", "upper"), "   ")
@@ -1993,6 +2010,61 @@ class StrTest(BaseTestCase):
             self.assertEqual(
                 ExportProfile.legal_name(name), StrUtils.to_legal_name(name)
             )
+
+
+class CommonNameTest(unittest.TestCase):
+    """``StrUtils.common_name`` -- a default name for what a set of items is."""
+
+    STRIP = ["_GRP", "_LOC", "_GEO", "_MAT"]
+
+    def _name(self, paths, **kw):
+        return StrUtils.common_name(paths, strip=self.STRIP, **kw)
+
+    def test_one_item_is_its_own_name(self):
+        self.assertEqual(self._name(["|grp|chair_GEO"]), "chair")
+        self.assertEqual(self._name(["ns:chair"]), "chair")
+
+    def test_several_share_their_leading_tokens(self):
+        self.assertEqual(self._name(["|a|chair_leg_GEO", "|b|chair_seat_GEO"]), "chair")
+
+    def test_otherwise_the_group_that_holds_them(self):
+        """The production shape: TABLE + MAT under SOLDERING_TABLE_LOC."""
+        paths = [
+            "|TEMP|SOLDERING_TABLE_ORIG|SOLDERING_TABLE_LOC|TABLE",
+            "|TEMP|SOLDERING_TABLE_ORIG|SOLDERING_TABLE_LOC|MAT",
+        ]
+        self.assertEqual(self._name(paths), "SOLDERING_TABLE")
+
+    def test_otherwise_the_first_item(self):
+        self.assertEqual(self._name(["|a|TABLE", "|b|MAT"]), "TABLE")
+
+    def test_an_affix_alone_is_kept(self):
+        self.assertEqual(self._name(["|MAT"]), "MAT")
+
+    def test_capped_on_a_token_boundary_and_legal(self):
+        name = self._name(["|a_very_long_asset_name_for_the_hero_prop"], max_length=16)
+        self.assertEqual(name, "a_very_long")
+        self.assertEqual(self._name(["|odd name-1"]), "odd_name_1")
+        self.assertEqual(StrUtils.common_name([]), "")
+
+    def test_a_candidate_with_no_legal_character_falls_back(self):
+        """Bug: a candidate written wholly outside the legal set (a group
+        named in another script) legalised to "" and the call answered ""
+        though its items had legal names.
+        Fixed: 2026-10-04
+        """
+        chair = "\u6905\u5b50"  # a group named in Chinese
+        self.assertEqual(
+            self._name([f"|{chair}|seat_GEO", f"|{chair}|leg_GEO"]), "seat"
+        )
+        self.assertEqual(self._name([chair, "chair_GEO"]), "chair")
+        self.assertEqual(self._name([chair]), "", "nothing legal to say")
+
+    def test_numbered_duplicates_share_their_stem(self):
+        """Blender numbers a duplicate ``Cube.001``: the tokens a legal name
+        keeps are what the items share, not ``_``-runs alone."""
+        self.assertEqual(self._name(["Cube.001", "Cube.002"]), "Cube")
+        self.assertEqual(self._name(["|a|door-left", "|b|door-right"]), "door")
 
 
 class StrUtilsLayoutTest(unittest.TestCase):

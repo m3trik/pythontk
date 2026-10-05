@@ -247,6 +247,44 @@ class TestModelSolve(unittest.TestCase):
         self.assertEqual(state, model.clamp(state))
         self.assertTrue(any(state[s] in model.limits(s) for s in range(len(state))))
 
+    def test_a_target_dragged_out_of_reach_moves_the_arm_smoothly(self):
+        """Bug: past the reach the damped least squares overshot and thrashed
+        -- every solve, from rest (Maya's end control) or from the last
+        frame's pose (a runtime's hand grab), landed on another flail: joints
+        jumped 12-29 units on a 0.46 step of the target (this arm), and 15-34
+        on the production magnifier. A step that would leave the held point
+        further from its target is halved until it helps, so the arm settles
+        where it comes nearest and follows a dragged target. (Solved from rest
+        every time, a redundant arm may still switch once between two poses
+        that both land -- a base swivel turning the other way -- so a cold
+        drag is allowed a jump or two, a warm one none.) Fixed: 2026-10-04."""
+        model = ArticulationModel(self.rigs["arm"])
+        joint = len(model.joints) - 1
+        local = [0.5, 0.2, -0.3]
+        reach = model._reach(model.chain(joint), local)
+        start = model.point(model.rest_state(), joint, local)
+        rotation = model.world(model.rest_state())[joint][1]
+        steps = 60  # the old step: 14-32 jumps per drag here
+        for direction in ((1, 0, 0), (-1, 0.4, 0.2)):
+            length = math.sqrt(sum(c * c for c in direction))
+            for warm in (False, True):
+                state, before, jumps = model.rest_state(), None, 0
+                for i in range(steps + 1):
+                    far = 1.5 * reach * i / steps / length
+                    target = [s + c * far for s, c in zip(start, direction)]
+                    seed = state if warm else model.rest_state()
+                    state = model.solve(seed, joint, local, target, rotation)
+                    if before is not None:
+                        moved = zip(model.world(before), model.world(state))
+                        # the target steps 0.77: a joint moving 4 is a jump
+                        jumps += max(math.dist(a, b) for (a, _), (b, _) in moved) > 4.0
+                    before = state
+                self.assertLessEqual(
+                    jumps,
+                    0 if warm else 2,
+                    f"{direction}, {'warm' if warm else 'cold'}",
+                )
+
     def test_a_rig_scaled_by_a_thousand_solves_alike(self):
         base = self.rigs["arm"]
         big = json.loads(json.dumps(base))
@@ -504,6 +542,45 @@ class TestConformance(unittest.TestCase):
             for c in j["channels"]
         }
         self.assertEqual(channels, {"rx", "ry", "rz", "tx", "ty", "tz"})
+
+
+class TestRecordShape(unittest.TestCase):
+    """``ArticulationRecord`` -- the record's payload, declared once. The rigs
+    every port is pinned with are records of that shape, so the declaration is
+    held to real payloads rather than to itself."""
+
+    def test_the_conformance_rigs_are_records_of_the_declared_shape(self):
+        payload = {"version": 1, "rigs": list(ArticulationConformance.rigs().values())}
+        res = ptk.ArticulationRecord.validate(payload)
+        self.assertEqual(res.errors, [])
+        self.assertEqual(res.warnings, [])
+
+    def test_the_shape_is_the_records_declared_one(self):
+        self.assertIs(ptk.SceneRecords.shape("articulation"), ptk.ArticulationRecord)
+        self.assertIs(ptk.SceneRecords.web_shape("articulation"), ptk.ArticulationWeb)
+
+    def test_a_drifted_payload_is_named_where_it_drifted(self):
+        rig = json.loads(json.dumps(ArticulationConformance.rigs()["arm"]))
+        rig["joints"][1]["rotateOrder"] = rig["joints"][1].pop("rotate_order")
+        rig["joints"][2]["channels"][0]["min"] = "-90"
+        res = ptk.ArticulationRecord.validate({"version": 1, "rigs": [rig]})
+        self.assertEqual(
+            res.errors,
+            [
+                "rigs[0].joints[1].missing required key 'rotate_order'",
+                "rigs[0].joints[2].channels[0].min: expected number, got string",
+            ],
+        )
+
+    def test_the_vocabularies_are_the_models(self):
+        from pythontk.geo_utils.articulation.model import CHANNELS, ROTATE_ORDERS
+
+        joint = ptk.ArticulationRecord.json_schema()["$defs"]["ArticulationJoint"]
+        channel = ptk.ArticulationRecord.json_schema()["$defs"]["ArticulationChannel"]
+        self.assertEqual(
+            joint["properties"]["rotate_order"]["enum"], list(ROTATE_ORDERS)
+        )
+        self.assertEqual(channel["properties"]["channel"]["enum"], list(CHANNELS))
 
 
 if __name__ == "__main__":

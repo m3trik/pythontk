@@ -150,7 +150,11 @@ class DeprecationCalendarWindowTest(BaseTestCase):
         self.assertIn("patch", str(caught.exception))
 
     def test_the_roster_holds_a_name_due_by_version_but_not_by_time(self):
-        Deprecation._register(self._record())
+        record = Deprecation._register(self._record())
+        # Out of the process-wide roster after: left in, its "pythontk.x"
+        # record fell due on 2026-10-04 and failed the retirement-debt test
+        # that runs after it.
+        self.addCleanup(Deprecation._records.pop, record.key, None)
         early, late = datetime.date(2026, 9, 19), datetime.date(2026, 10, 4)
         self.assertEqual(
             Deprecation.expired("0.11.0", module="pythontk.x", today=early), ()

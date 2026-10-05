@@ -16,14 +16,13 @@ from collections import Counter
 from math import sqrt
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from pythontk.math_utils._math_utils import MathUtils
+
 Point = Tuple[float, float, float]
-#: Metres per unit for the linear units a source may sample in.
+#: Metres per unit for the linear units a source may sample in -- read off the
+#: one length table (``MathUtils.LENGTH_UNIT_FACTORS``), never a copy of it.
 UNIT_METRES: Dict[str, float] = {
-    "mm": 0.001,
-    "cm": 0.01,
-    "m": 1.0,
-    "in": 0.0254,
-    "ft": 0.3048,
+    unit: MathUtils.metres_per_unit(unit) for unit in MathUtils.LENGTH_UNIT_FACTORS
 }
 #: The default verify tolerance as a PHYSICAL length: one centimetre. A graph
 #: states its own in ``linear_unit`` (section 8); this applies when it says

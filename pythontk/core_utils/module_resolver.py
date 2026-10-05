@@ -313,7 +313,7 @@ class ModuleAttributeResolver:
             if not filename or not os.path.exists(filename):
                 return None
 
-            with open(filename, "r", encoding="utf-8") as f:
+            with open(filename, "r", encoding="utf-8-sig") as f:
                 return ast.parse(f.read(), filename=filename)
         except (ImportError, SyntaxError, OSError):
             return None

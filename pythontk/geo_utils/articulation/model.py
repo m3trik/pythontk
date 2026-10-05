@@ -315,6 +315,11 @@ class ArticulationModel(_ArticulationModelInternal):
     #: The furthest one iteration chases the target, as a fraction of the
     #: reach -- a far target is approached, not leapt at.
     MAX_STEP = 0.25
+    #: Halvings a step may take to bring the held point nearer its target. A
+    #: step that would leave it further is never taken -- past the reach the
+    #: full step overshoots, and a solve that took it thrashed from flail to
+    #: flail -- so the arm settles where it comes nearest.
+    HALVINGS = 6
     #: A length below this is no length (a chain with no reach, a zero axis).
     EPS = 1.0e-9
 
@@ -591,9 +596,10 @@ class ArticulationModel(_ArticulationModelInternal):
         # Position wins: a hand turned further than the ball's limits allow
         # leaves the ball clamped and the point off target, so the whole
         # chain -- ball included -- closes the gap, moving as little as it
-        # can from the wrist's answer (measured on 160 cold-start grabs: 28
-        # missed by over 1% of the reach without this, 4 with it -- the same
-        # 4 a position-only grab misses, pinned against a limit).
+        # can from the wrist's answer (measured on the conformance arm, 160
+        # grabs from rest onto poses inside the limits: 11 missed by over 1%
+        # of the reach without this, 4 with it, each pinned against a limit;
+        # a position-only grab misses 2).
         return self._dls(current, slots, joint, local_point, target, reach)
 
     def _rotations(self, joint: int) -> List[Tuple[int, str]]:
@@ -695,21 +701,21 @@ class ArticulationModel(_ArticulationModelInternal):
         target: Sequence[float],
         reach: float,
     ) -> List[float]:
-        """Move *slots* to bring *local_point* on *joint* to *target*."""
+        """Move *slots* to bring *local_point* on *joint* to *target*: damped
+        least-squares steps, each halved (up to :attr:`HALVINGS` times) until
+        it brings the point nearer -- none does, and the point is as near as
+        the limits and the reach allow."""
         current = list(state)
         if not slots:
             return current
         damping = (self.DAMPING * reach) ** 2
         tolerance = self.TOLERANCE * reach
         step = self.MAX_STEP * reach
+        world, point, distance = self._held(current, joint, local_point, target)
         for _ in range(self.ITERATIONS):
-            world = self.world(current)
-            p, q = world[joint]
-            point = self._add(p, self._qrot(q, local_point))
-            error = self._sub(target, point)
-            distance = self._norm(error)
             if distance <= tolerance:
                 break
+            error = self._sub(target, point)
             if distance > step:
                 error = self._scale(error, step / distance)
             columns = [self._column(world, current, s, point, reach) for s in slots]
@@ -729,7 +735,32 @@ class ArticulationModel(_ArticulationModelInternal):
                     blocked = True
             if blocked:
                 du = self._step(columns, weights, error, damping)
-            for i, slot in enumerate(slots):
-                value = current[slot] + du[i] * self._unit(slot, reach)
-                current[slot] = self._clamp_slot(slot, value)
+            fraction = 1.0
+            for _ in range(self.HALVINGS + 1):
+                trial = list(current)
+                for i, slot in enumerate(slots):
+                    value = current[slot] + fraction * du[i] * self._unit(slot, reach)
+                    trial[slot] = self._clamp_slot(slot, value)
+                held = self._held(trial, joint, local_point, target)
+                if held[2] < distance:
+                    break
+                fraction *= 0.5
+            else:
+                break  # no step brings it nearer
+            current = trial
+            world, point, distance = held
         return current
+
+    def _held(
+        self,
+        state: Sequence[float],
+        joint: int,
+        local_point: Sequence[float],
+        target: Sequence[float],
+    ) -> Tuple[List[Tuple[Vec, Quat]], Vec, float]:
+        """``(world, point, distance)``: the rig-space poses at *state*, where
+        *local_point* on *joint* is, and how far it is from *target*."""
+        world = self.world(state)
+        p, q = world[joint]
+        point = self._add(p, self._qrot(q, local_point))
+        return world, point, self._norm(self._sub(target, point))

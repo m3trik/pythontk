@@ -141,6 +141,28 @@ class MathUtils(
         except (TypeError, ValueError):
             return "Error"
 
+    @classmethod
+    def metres_per_unit(
+        cls, unit: str, default: Optional[float] = None
+    ) -> Optional[float]:
+        """Metres in one *unit* (a :attr:`LENGTH_UNIT_FACTORS` key, any case).
+
+        The scale a record's DCC lengths travel beside (``unit_scale``), so a
+        reader in metres -- glTF, a game engine -- multiplies them back.
+
+        Parameters:
+            unit (str): mm, cm, m, km, in, ft, yd or mi.
+            default (float, optional): What an unknown unit answers.
+
+        Returns:
+            float | None: Metres per *unit*, or *default*.
+
+        Example:
+            MathUtils.metres_per_unit("cm")  -> 0.01
+        """
+        factor = cls.LENGTH_UNIT_FACTORS.get(str(unit).lower())
+        return default if factor is None else factor / 100.0
+
     @staticmethod
     def calculate_uv_padding(
         map_size: int, normalize: bool = False, factor: int = 256

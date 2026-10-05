@@ -36,6 +36,7 @@ from typing import (
 )
 from contextlib import contextmanager
 
+from pythontk.core_utils.engines.shots.effect_recipe import EffectRecipe
 from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
 from pythontk.core_utils.engines.scene_export.export_snapshot import ExportContext
 from pythontk.core_utils.engines.scene_export.scene_records import Record, SceneRecords
@@ -90,10 +91,17 @@ try:
             "scene_discovered": "info",  # found in scene, not in CSV
             "missing_object": "error",  # referenced but missing
             "missing_behavior": "warn",  # expected behaviour keys absent
+            "stale_behavior": "info",  # keyed under an older effect recipe
             "user_animated": "info",  # custom user animation detected
             "additional": "warn",  # unexpected scene objects
             "collision": "error",  # timing overlap
             "missing_shot": "info",  # shot not yet built
+            "not_in_shot": "warn",  # in the scene, not a member of its shot
+            "ambiguous_object": "warn",  # the doc name matches several nodes
+            "behavior_conflict": "error",  # animator keys where a behavior keys
+            "unknown_behavior": "warn",  # no behavior template by that name
+            "not_in_doc": "info",  # a shot no doc step pairs with
+            "no_objects": "info",  # the doc lists no objects for the step
         }
     )
 except ImportError:
@@ -152,20 +160,18 @@ class ShotBlock:
         statuses = self.metadata.get("object_status", {})
         raw_csv = self.metadata.get("csv_objects", [])
         csv_objs = set((e["name"] if isinstance(e, dict) else e) for e in raw_csv)
-        # Metadata is keyed by CSV (short) names while shot.objects hold
-        # long DAG paths after a manifest sync — fall back to leaf-name
-        # comparison so every object doesn't degrade to
-        # "scene_discovered" on the first re-sync.
-        status_by_leaf = {ShotStore.leaf_name(k): v for k, v in statuses.items()}
-        csv_leaves = {ShotStore.leaf_name(n) for n in csv_objs}
+        # Metadata holds the doc's names; shot.objects hold resolved (long,
+        # possibly namespaced) nodes -- compare through the one identity rule.
+        key = ShotStore.member_key
+        status_by_key = {key(k): v for k, v in statuses.items()}
+        csv_keys = {key(n) for n in csv_objs}
         result: Dict[str, str] = {}
         for obj in self.objects:
-            leaf = ShotStore.leaf_name(obj)
             if obj in statuses:
                 result[obj] = statuses[obj]
-            elif leaf in status_by_leaf:
-                result[obj] = status_by_leaf[leaf]
-            elif csv_objs and obj not in csv_objs and leaf not in csv_leaves:
+            elif key(obj) in status_by_key:
+                result[obj] = status_by_key[key(obj)]
+            elif csv_objs and key(obj) not in csv_keys:
                 result[obj] = "scene_discovered"
             else:
                 result[obj] = "valid"
@@ -367,6 +373,11 @@ class ShotStore(_ShotStoreInternal):
         # tracks are persisted with the scene -- a claim that did not survive a
         # reopen would leave its edit behind permanently.
         self.edit_ledger: ShotEditLedger = ShotEditLedger()
+        # How each render effect and audio clip is keyed in this scene -- the
+        # Render Effects / Audio Clips panels edit it, the manifest's Build
+        # keys with it.  A scene setting like ``fit_mode``: saved with the
+        # scene and carried by the hand-off, never seeded from user prefs.
+        self.effect_recipe: EffectRecipe = EffectRecipe()
         self.locked_objects: set = set()  # object names locked in the sequencer
         self.scene_fps: float = self._scene_fps()
         # Source CSV path (when the store was populated from a manifest CSV).
@@ -727,6 +738,31 @@ class ShotStore(_ShotStoreInternal):
 
     # ---- observer --------------------------------------------------------
 
+    def update_effect_recipe(self, **changes: Any) -> bool:
+        """Change fields of the scene's :attr:`effect_recipe`.
+
+        The one way a panel writes the recipe: the store is dirtied (so the
+        change saves with the scene) and :class:`SettingsChanged` fires, so
+        every panel bound to it -- and the manifest, whose Assess compares
+        keys against it -- re-reads it.
+
+        Parameters:
+            **changes: :class:`EffectRecipe` field values.
+
+        Returns:
+            Whether anything changed (an equal value writes nothing).
+
+        Raises:
+            TypeError: A name that is not a recipe field.
+        """
+        recipe = self.effect_recipe.replace(**changes)
+        if recipe == self.effect_recipe:
+            return False
+        self.effect_recipe = recipe
+        self.mark_dirty()
+        self.notify_settings_changed()
+        return True
+
     def notify_settings_changed(self) -> None:
         """Fire a ``"settings_changed"`` event.
 
@@ -914,6 +950,54 @@ class ShotStore(_ShotStoreInternal):
             pass
 
     @classmethod
+    def watch_settings(cls, callback: Callable[[], None]) -> Callable[[], None]:
+        """Call *callback* whenever the active store's settings change -- and
+        when the active store itself is replaced (a scene opened) -- until the
+        returned function is called.
+
+        What a panel showing a store setting (the effect recipe, the fit mode)
+        needs, once: a listener on the active store for :class:`SettingsChanged`
+        and :class:`BatchComplete`, moved to the next store when the scene
+        changes. ``callback`` takes no arguments; it re-reads what it shows.
+
+        Returns:
+            ``unsubscribe()`` -- call it when the panel goes away (the
+            invalidation registry is class-level and holds the callback).
+        """
+        state: Dict[str, Any] = {"store": None}
+
+        def on_event(event: StoreEvent) -> None:
+            if isinstance(event, (SettingsChanged, BatchComplete)):
+                callback()
+
+        def detach() -> None:
+            if state["store"] is not None:
+                state["store"].remove_listener(on_event)
+                state["store"] = None
+
+        def attach() -> None:
+            try:
+                store = cls.active()
+            except Exception:
+                return
+            store.add_listener(on_event)
+            state["store"] = store
+
+        def on_invalidated(_event: StoreInvalidated) -> None:
+            detach()
+            attach()
+            callback()
+
+        attach()
+        cls.add_invalidation_listener(on_invalidated)
+
+        def unsubscribe() -> None:
+            cls.remove_invalidation_listener(on_invalidated)
+            detach()
+
+        return unsubscribe
+
+    @classmethod
     def invalidate(cls) -> None:
         """Drop the active store (the scene changed) and fire the invalidation listeners.
 
@@ -1004,25 +1088,26 @@ class ShotStore(_ShotStoreInternal):
             self.snap_whole_frames = bool(data.get("snap_whole_frames"))
 
     def _save_user_prefs(self) -> None:
-        """Persist detection preferences to the cross-scene prefs file (zero-dep JSON)."""
-        import json
+        """Persist detection preferences to the cross-scene prefs file (zero-dep JSON).
+
+        Called by the panel that changes a preference, never by :meth:`save`.
+        Atomic (``UserConfig.save_file``): the whole file is rewritten, and a
+        plain ``write_text`` cut off mid-write left a truncated file the reader
+        discards -- the preferences with it.
+        """
+        from pythontk.core_utils.user_config import UserConfig
 
         try:
-            path = self._prefs_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(
-                    {
-                        "detection_mode": self.detection_mode,
-                        "select_on_load": self.select_on_load,
-                        "detection_threshold": self.detection_threshold,
-                        "fit_mode": self.fit_mode,
-                        "initial_shot_length": self.initial_shot_length,
-                        "snap_whole_frames": self.snap_whole_frames,
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
+            UserConfig.save_file(
+                self._prefs_path(),
+                {
+                    "detection_mode": self.detection_mode,
+                    "select_on_load": self.select_on_load,
+                    "detection_threshold": self.detection_threshold,
+                    "fit_mode": self.fit_mode,
+                    "initial_shot_length": self.initial_shot_length,
+                    "snap_whole_frames": self.snap_whole_frames,
+                },
             )
         except Exception:
             pass
@@ -1373,10 +1458,19 @@ class ShotStore(_ShotStoreInternal):
         return shot
 
     def remove_shot(self, shot_id: int) -> bool:
-        """Remove a shot by ID.  Returns ``True`` if found."""
+        """Remove a shot by ID.  Returns ``True`` if found.
+
+        Records only: the keys the system wrote for the shot stay in the
+        scene, so their claims stay too, owned by no shot
+        (:meth:`ShotEditLedger.disown_shot`).  Left on the id, they passed to
+        the next shot :meth:`define_shot` gave it -- whose Build then deleted
+        them as behaviors its doc had dropped.  A restore point holds the
+        ledger as it was, so undoing the removal gives them back.
+        """
         for i, s in enumerate(self.shots):
             if s.shot_id == shot_id:
                 self.shots.pop(i)
+                self.edit_ledger.disown_shot(shot_id)
                 self._rekey_gap_locks()
                 self._notify(ShotRemoved(shot_id=shot_id))
                 self.mark_dirty()
@@ -1562,6 +1656,7 @@ class ShotStore(_ShotStoreInternal):
             "auto_publish_export": self.auto_publish_export,
             "clip_name_strategy": self.clip_name_strategy,
             "edit_ledger": self.edit_ledger.to_dict(),
+            "effect_recipe": self.effect_recipe.to_dict(),
         }
 
     def stale_shots(self) -> List[ShotBlock]:
@@ -1598,11 +1693,12 @@ class ShotStore(_ShotStoreInternal):
         object the scene holds, so there is nothing of it to cut and nothing
         moves -- where a Shot Sequencer delete cuts a shot's keys and ripples
         every later shot upstream into the space it leaves, which would retime
-        the shots that ARE live.  The samples each removed shot claimed go
-        with it rather than being disowned: they name keys the scene no longer
-        holds, and a claim left behind is inherited by any key later set on
-        that curve and frame.  The gap locks re-key onto the shots that remain
-        (:meth:`remove_shot`), and listeners hear one batch.
+        the shots that ARE live.  The claims each removed shot held -- its
+        bound samples and its behaviors' keys -- go with it rather than being
+        disowned: they name keys the scene no longer holds, and a claim left
+        behind is inherited by any key later set on that curve and frame.  The
+        gap locks re-key onto the shots that remain (:meth:`remove_shot`), and
+        listeners hear one batch.
         """
         stale = self.stale_shots()
         if not stale:
@@ -1614,6 +1710,9 @@ class ShotStore(_ShotStoreInternal):
                 for time, owner, _edge in ledger.key_records(curve):
                     if owner in ids:
                         ledger.release_key(curve, time)
+            for shot_id in ids:
+                for curve, time in ledger.authored(owner=shot_id):
+                    ledger.release_authored(curve, time)
             for shot in stale:
                 self.remove_shot(shot.shot_id)
             if self.active_shot_id in ids:
@@ -1943,6 +2042,10 @@ class ShotStore(_ShotStoreInternal):
         if strat in CLIP_NAME_STRATEGIES:
             store.clip_name_strategy = str(strat)
         store.edit_ledger = ShotEditLedger.from_dict(data.get("edit_ledger"))
+        # Claims a removed shot left on its id (data saved before removal
+        # disowned them) would pass to the next shot given that id.
+        store.edit_ledger.disown_absent(shot.shot_id for shot in store.shots)
+        store.effect_recipe = EffectRecipe.from_dict(data.get("effect_recipe"))
         return store
 
     # ---- persistence convenience -----------------------------------------
@@ -1951,8 +2054,9 @@ class ShotStore(_ShotStoreInternal):
         """Scale all shot timings from the current ``scene_fps`` to *new_fps*.
 
         Called automatically when the scene framerate changes.  Updates
-        ``scene_fps``, rescales shot boundaries, gap, and markers,
-        then fires a :class:`BatchComplete` so the UI repaints.
+        ``scene_fps``, rescales shot boundaries, gap, markers and the edit
+        ledger's claims (the keys they name moved with the clock), then
+        fires a :class:`BatchComplete` so the UI repaints.
         """
         old_fps = self.scene_fps
         if not old_fps or abs(new_fps - old_fps) < 0.01:
@@ -1968,6 +2072,8 @@ class ShotStore(_ShotStoreInternal):
         for marker in self.markers:
             if "time" in marker:
                 marker["time"] = self.snap(marker["time"] * ratio)
+        # Never snapped: a claim follows its key, wherever the clock put it.
+        self.edit_ledger.retime(ratio)
         self.scene_fps = new_fps
         self.mark_dirty()
         self._notify(BatchComplete())
@@ -1993,10 +2099,15 @@ class ShotStore(_ShotStoreInternal):
     def save(self) -> None:
         """Persist via the configured backend (no-op if none set).
 
-        Also writes detection preferences to the cross-scene prefs file so they
-        survive across scenes, and — since saving shots means the user is authoring
-        them — installs the before-export preparer so any DCC export ships the
-        current export view (see :meth:`enable_auto_export`).
+        Since saving shots means the user is authoring them, also installs the
+        before-export preparer so any DCC export ships the current export view
+        (see :meth:`enable_auto_export`).
+
+        The cross-scene prefs file is NOT written here: a save follows every
+        edit from every caller (a build, a sequencer drag, a headless script, a
+        test), and writing it here copied whatever store saved last over the
+        user's own preferences -- every test run reset them to defaults. The
+        panel that changes a preference saves it (:meth:`_save_user_prefs`).
         """
         if self._persistence is not None:
             self._persistence.save(self.to_dict())
@@ -2010,7 +2121,6 @@ class ShotStore(_ShotStoreInternal):
                 pass
         if self.shots:
             type(self)._register_export_preparer()
-        self._save_user_prefs()
 
     # ---- detection convenience -------------------------------------------
 
@@ -2072,6 +2182,27 @@ class ShotStore(_ShotStoreInternal):
         identically whether names are short (Blender / pure) or long DAG paths (Maya).
         """
         return str(node).split("|")[-1]
+
+    @staticmethod
+    def member_key(node) -> str:
+        """The identity a doc name and a shot member are compared by: the leaf
+        with its namespace dropped (``"|set|AC:door_geo"`` -> ``"door_geo"``).
+
+        The one rule every consumer uses -- the manifest's planner and Assess,
+        the sequencer's classification -- so a doc that writes ``door_geo``
+        matches the member a build stored as a long, referenced path.
+        """
+        return ShotStore.leaf_name(node).rsplit(":", 1)[-1]
+
+    def resolve_member(self, name: str) -> Tuple[str, str]:
+        """Resolve a doc object *name* to a scene node (scene hook).
+
+        Returns ``(node, reason)`` -- *reason* ``"found"`` (*node* is the
+        scene's name for it), ``"missing"`` or ``"ambiguous"`` (*node* is
+        *name* unchanged).  Pure default: every name is found as written; the
+        DCC stores look the name up, namespaces included.
+        """
+        return str(name), "found"
 
     @staticmethod
     def resolve_clip_specs(

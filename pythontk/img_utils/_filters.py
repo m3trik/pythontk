@@ -7,7 +7,7 @@ empty-texel fill (the bodies behind the :class:`ImgUtils` facade).
 from __future__ import annotations
 
 import math
-from typing import Union, Optional
+from typing import Optional, Tuple, Union
 
 try:
     import numpy as np
@@ -377,7 +377,23 @@ class _ImgFilterInternal:
 
         if squeeze:
             out = out[..., 0]
-        return out.astype(arr.dtype, copy=False)
+        return cls._restore_dtype(out, arr.dtype)
+
+    @staticmethod
+    def _restore_dtype(values: "np.ndarray", dtype) -> "np.ndarray":
+        """Float *values* back in an image's own *dtype*; an integer one is
+        rounded to nearest and saturated at its range first.
+
+        A bare ``astype`` truncates toward zero -- every texel biased dark by
+        up to one LSB -- and WRAPS a value past the range: an 8-bit ramp
+        extrapolated to 270 was stored as 14.
+        """
+        dtype = np.dtype(dtype)
+        if np.issubdtype(dtype, np.integer):
+            info = np.iinfo(dtype)
+            values = np.rint(values)
+            np.clip(values, info.min, info.max, out=values)
+        return values.astype(dtype, copy=False)
 
     @staticmethod
     def _cv2():
@@ -498,6 +514,56 @@ class _ImgFilterInternal:
         residual = cls._sample(lap[inner]).astype(np.float64)
         mad = float(np.median(np.abs(residual - np.median(residual))))
         return 1.4826 * mad / math.sqrt(1.25)
+
+    @classmethod
+    def extrapolate_fill(
+        cls,
+        image: "np.ndarray",
+        mask: "np.ndarray",
+        rings: int = 1,
+        clamp: float = 2.0,
+    ) -> "Tuple[np.ndarray, np.ndarray]":
+        """Body of :meth:`ImgUtils.extrapolate_fill`.
+
+        Works on the FRONTIER only (the unmasked texels with a masked
+        four-neighbour), gathered by index: a ring costs its perimeter, not
+        the image -- whole-image shifts made it 8 s of a production refill.
+        """
+        out = np.array(image, copy=True)
+        grown = np.asarray(mask).astype(bool).copy()
+        if grown.shape != out.shape[:2]:
+            raise ValueError(f"mask shape {grown.shape} != image {out.shape[:2]}")
+        h, w = grown.shape
+        lo, hi = 1.0 / float(clamp), float(clamp)
+        steps = ((0, 1), (0, -1), (1, 0), (-1, 0))
+        for _ in range(max(0, int(rings))):
+            near = np.zeros_like(grown)
+            near[:, :-1] |= grown[:, 1:]
+            near[:, 1:] |= grown[:, :-1]
+            near[:-1, :] |= grown[1:, :]
+            near[1:, :] |= grown[:-1, :]
+            ys, xs = np.nonzero(near & ~grown)
+            if not len(ys):
+                break
+            acc = np.zeros((len(ys),) + out.shape[2:], np.float64)
+            count = np.zeros(len(ys), np.int32)
+            for dy, dx in steps:
+                y1, x1, y2, x2 = ys + dy, xs + dx, ys + 2 * dy, xs + 2 * dx
+                ok = (y2 >= 0) & (y2 < h) & (x2 >= 0) & (x2 < w)
+                ok[ok] = grown[y1[ok], x1[ok]] & grown[y2[ok], x2[ok]]
+                if not ok.any():
+                    continue
+                v1 = out[y1[ok], x1[ok]].astype(np.float64)
+                v2 = out[y2[ok], x2[ok]].astype(np.float64)
+                acc[ok] += np.clip(2.0 * v1 - v2, lo * v1, hi * v1)
+                count[ok] += 1
+            new = count > 0
+            if not new.any():
+                break
+            scale = count[new][:, None] if out.ndim == 3 else count[new]
+            out[ys[new], xs[new]] = cls._restore_dtype(acc[new] / scale, out.dtype)
+            grown[ys[new], xs[new]] = True
+        return out, grown
 
     @classmethod
     def fill_empty_texels(

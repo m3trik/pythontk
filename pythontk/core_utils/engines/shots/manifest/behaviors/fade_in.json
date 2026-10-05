@@ -1,23 +1,15 @@
 {
-  "description": "Fade objects in at shot start via visibility.",
+  "description": "Fade objects in at shot start -- the scene's effect recipe (Render Effects) sets the length.",
   "kind": [
     "scene"
   ],
+  "effect": "fade_in",
+  "place": "start",
   "verify": {
     "mode": "values_in_range"
   },
-  "attributes": {
-    "visibility": {
-      "in": {
-        "anchor": "start",
-        "offset": 0,
-        "duration": 15,
-        "values": [
-          0.0,
-          1.0
-        ],
-        "tangent": "linear"
-      }
-    }
-  }
+  "detect": [
+    "\\bfades?\\s+in\\b",
+    "^\\s*(?P<object>.+?)\\s+fades?\\s+in\\b"
+  ]
 }

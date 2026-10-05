@@ -141,14 +141,19 @@ class _ImgHeaderInternal:
             out += char
         return b""
 
+    #: Bound on an EXR attribute value read whole (a channel list is tens of
+    #: bytes per channel); anything larger is a corrupt header.
+    _EXR_MAX_ATTRIBUTE = 1 << 20
+
     @staticmethod
-    def _exr_size(f) -> Optional[Tuple[int, int]]:
-        """``(width, height)`` from an open OpenEXR file's ``dataWindow``.
+    def _exr_attribute(f, wanted: bytes) -> Optional[bytes]:
+        """The raw value of header attribute *wanted* in an open OpenEXR file.
 
         Walks the header's ``name\\0 type\\0 size value`` records from byte 8 and
         seeks past every attribute but the one it wants, so a header carrying a
         large attribute (a preview, render metadata) is not read. A multi-part
-        file's first part answers: its header sits at the same offset.
+        file's first part answers: its header sits at the same offset. ``None``
+        when the header ends without it, or is corrupt.
         """
         f.seek(8)  # magic + version flags
         for _ in range(1024):  # tens of attributes in practice; bound a bad file
@@ -160,16 +165,80 @@ class _ImgHeaderInternal:
             if len(raw) < 4:
                 return None
             (size,) = struct.unpack("<i", raw)
-            if name == b"dataWindow":
-                box = f.read(16)
-                if size != 16 or len(box) < 16:
-                    return None
-                x0, y0, x1, y1 = struct.unpack("<iiii", box)
-                width, height = x1 - x0 + 1, y1 - y0 + 1
-                return (width, height) if width > 0 and height > 0 else None
             if size < 0:
                 return None
+            if name == wanted:
+                if size > _ImgHeaderInternal._EXR_MAX_ATTRIBUTE:
+                    return None
+                value = f.read(size)
+                return value if len(value) == size else None
             f.seek(size, 1)
+        return None
+
+    @staticmethod
+    def _exr_size(f) -> Optional[Tuple[int, int]]:
+        """``(width, height)`` from an open OpenEXR file's ``dataWindow``."""
+        box = _ImgHeaderInternal._exr_attribute(f, b"dataWindow")
+        if box is None or len(box) != 16:
+            return None
+        x0, y0, x1, y1 = struct.unpack("<iiii", box)
+        width, height = x1 - x0 + 1, y1 - y0 + 1
+        return (width, height) if width > 0 and height > 0 else None
+
+    #: An EXR channel's pixel type -> the mode suffix it reads as.
+    _EXR_SAMPLE_SUFFIX = {0: ";32", 1: ";16F", 2: ";32F"}
+
+    @staticmethod
+    def _exr_mode(f) -> Optional[str]:
+        """The channel layout of an open OpenEXR file, from its ``channels``.
+
+        The plain R/G/B/A channels read in that order (``"RGBA"``), a lone
+        luminance ``Y`` as ``"L"`` (``"LA"`` with alpha); anything else -- a
+        layered render's ``diffuse.R`` and friends -- as a channel count
+        (``"6ch"``). The widest sample type present is the suffix: ``;16F``
+        half, ``;32F`` float, ``;32`` uint.
+        """
+        value = _ImgHeaderInternal._exr_attribute(f, b"channels")
+        if not value:
+            return None
+        names, kinds, offset = [], set(), 0
+        while offset < len(value) and value[offset] != 0:
+            end = value.find(b"\0", offset)
+            if end < 0 or end + 17 > len(value):
+                return None
+            names.append(value[offset:end].decode("latin-1"))
+            (kind,) = struct.unpack("<i", value[end + 1 : end + 5])
+            kinds.add(kind)
+            offset = end + 17  # name\0, type i32, pLinear u8, 3 reserved, 2x i32
+        if not names:
+            return None
+        plain = set(names)
+        if plain <= set("RGBA") and plain & set("RGB"):
+            layout = "".join(c for c in "RGBA" if c in plain)
+        elif plain <= {"Y", "A"} and "Y" in plain:
+            layout = "LA" if "A" in plain else "L"
+        else:
+            layout = f"{len(names)}ch"
+        widest = 2 if 2 in kinds else 1 if 1 in kinds else 0
+        return layout + _ImgHeaderInternal._EXR_SAMPLE_SUFFIX.get(widest, "")
+
+    @staticmethod
+    def _image_mode_from_header(image_path: str) -> Optional[str]:
+        """The channel layout of the two float formats PIL does not read.
+
+        OpenEXR from its ``channels`` header (:meth:`_exr_mode`); Radiance HDR
+        is always RGB float (shared-exponent RGBE). ``None`` for any other
+        file -- :meth:`ImgUtils.get_image_mode` asks PIL for those.
+        """
+        try:
+            with open(image_path, "rb") as f:
+                head = f.read(4)
+                if head == b"\x76\x2f\x31\x01":  # OpenEXR magic
+                    return _ImgHeaderInternal._exr_mode(f)
+                if head[:2] == b"#?":  # Radiance: #?RADIANCE / #?RGBE
+                    return "RGB;32F"
+        except Exception:
+            return None
         return None
 
     @staticmethod

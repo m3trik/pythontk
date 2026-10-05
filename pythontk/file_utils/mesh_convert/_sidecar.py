@@ -19,7 +19,18 @@ import hashlib
 import json
 import logging
 import os
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Union
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+)
 
 # Eager: the channel keys below are SceneRecords' own, read at class
 # definition.
@@ -191,14 +202,43 @@ class _SidecarMixin:
             "outputColorSpace": "srgb",
         },
         "environment": {
-            "source": "three.js RoomEnvironment",
+            "source": (
+                "the asset's own reflection probe (extras.lightmap_web.probe) "
+                "when it carries one, else three.js RoomEnvironment"
+            ),
             "prefilter": "PMREM",
             "prefilterBlur": 0.04,
             "intensity": 1.0,
+            "probeIntensity": 0.3183099,
+            "probe": (
+                "The room the bake lit, captured by it as an HDR from one "
+                "point: Radiance bytes (mimeType image/vnd.radiance) in "
+                "bufferView 'bufferView', an equirectangular map in the "
+                "asset's own axes (u = 0.5 + atan2(z, x) / 2pi, v = 0.5 + "
+                "asin(y) / pi, its top row +Y); 'position' is where it was "
+                "captured and 'box' ({min, max}, or null for an open scene) "
+                "the box its reflections project onto, both in the asset's "
+                "metres. PMREM-prefiltered it replaces RoomEnvironment, at "
+                "probeIntensity: it holds radiance, while a lightmap texel is "
+                "a white card's radiance (irradiance / pi) that a glTF reader "
+                "takes as irradiance, so 1/pi keeps the probe in the bake's "
+                "units. Every lookup is made in the asset's axes. A "
+                "reflection is box-projected: followed from the shaded point "
+                "to where it leaves the box, and the probe read toward that "
+                "point from 'position'; diffuse irradiance is read along the "
+                "normal. Lightmapped materials reflect it whole -- "
+                "lightmappedMaterials.envMapIntensity is the studio's level -- "
+                "still under reflectionNormalization; unbaked ones take it "
+                "whole, diffuse and specular."
+            ),
             "note": (
                 "The main light for everything that is not baked, and the "
                 "source of the reflections on everything that is -- scaled "
-                "there by lightmappedMaterials.envMapIntensity."
+                "there by lightmappedMaterials.envMapIntensity while it is the "
+                "studio. The asset's own probe, the room the bake lit, plays "
+                "whole: a baked metal has no diffuse for its lightmap to "
+                "hold, so its reflections are all of it, and every unbaked "
+                "object stands in that room's light rather than the studio's."
             ),
         },
         "keyLight": {
@@ -215,9 +255,29 @@ class _SidecarMixin:
         },
         "lightmappedMaterials": {
             "envMapTerms": "specular",
-            "envMapIntensity": 0.25,
+            "envMapIntensity": 1.0,
+            "reflectionNormalization": (
+                "A baked material's environment specular (radiance and "
+                "clearcoat radiance) is scaled per texel by clamp(luma(E_bake) "
+                "/ luma(E_env), 0, 1), then by envMapIntensity: E_bake the "
+                "texel's lightmap irradiance (map times its intensity), E_env "
+                "the environment's diffuse irradiance about the surface's own "
+                "normal, luma the Rec. 709 weights. Lightmap-normalized "
+                "reflections, the reflection-probe normalization a runtime "
+                "applies to a lightmapped surface: a shadow reflects next to "
+                "nothing, a lit surface up to the full level."
+            ),
             "lightMapIntensity": (
                 "per material, from extras.lightmap_web.materials[<name>].intensity"
+            ),
+            "lightMapEnergy": (
+                "The lightmap's irradiance enters as an image-based light's "
+                "irradiance does in the split-sum model (three.js' "
+                "iblIrradiance): the diffuse it lights is weighted by one minus "
+                "the specular's directional albedo -- the Fresnel the surface "
+                "reflects instead, plus multiscatter -- and the multiscatter "
+                "energy comes from it. Added at full weight beside the "
+                "reflection, a surface is lit twice wherever it reflects most."
             ),
             "normalRelief": (
                 "Where a baked material carries a normal map, its lightmap "
@@ -240,11 +300,16 @@ class _SidecarMixin:
                 "reflection-probe role, and what a native lightmap path such as "
                 "Unity's does with a lightmapped renderer -- at envMapIntensity "
                 "times the environment's own intensity. The environment is a "
-                "studio, brighter than the room the bake lit, so at full "
-                "strength its reflections lift every dark glossy surface "
-                "(measured on a production room: the darkest machine surfaces "
-                "at display level 0.06 baked alone, 0.22 with full reflections, "
-                "0.11 at a quarter). The level is the export's choice. Un-baked "
+                "studio, brighter than the room the bake lit; unscaled, its "
+                "reflections lift every dark glossy surface (measured on a "
+                "production room: the darkest machine surfaces at display level "
+                "0.06 baked alone, 0.22 with full reflections), and one flat "
+                "level low enough to spare them left lit surfaces with no "
+                "visible reflection -- hence reflectionNormalization, under "
+                "which the full level lifts no shadow. The level is the "
+                "export's choice, and the studio's alone: an asset that carries "
+                "its own reflection probe (environment.probe) is reflecting the "
+                "room the bake lit, at full strength. Un-baked "
                 "materials in the same asset take the environment whole, "
                 "diffuse and specular."
             ),
@@ -1338,6 +1403,31 @@ class _SidecarMixin:
         unparsable channel is warned and read as absent -- a half-decoded
         manifest is worse than none.
         """
+        found = cls._data_export_carrier(gltf, key)
+        if found is None:
+            return None
+        node, props = found
+        entry = props[key]
+        # FBX2glTF wraps each property as {"type": ..., "value": ...}.
+        raw = entry.get("value") if isinstance(entry, dict) else entry
+        if isinstance(raw, str) and not raw.strip():
+            # A producer with nothing to publish CLEARS its channel to "" rather
+            # than deleting the attribute, so an empty string is "absent", not
+            # "unparsable".
+            return None
+        try:
+            return json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError) as error:
+            logger.warning("Unparsable %s on node %r: %s", key, node.get("name"), error)
+            return None
+
+    @staticmethod
+    def _data_export_carrier(gltf: dict, key: str) -> Optional[Tuple[dict, dict]]:
+        """``(node, holder)`` for the *key* channel :meth:`data_export_channel`
+        reads -- the carrier node, and the dict in it that holds the channel
+        -- or ``None`` when no node carries one. The one place the reader's
+        precedence lives, so a writer can put a channel back where it was read.
+        """
         for node in gltf.get("nodes", []) or []:
             extras = node.get("extras") or {}
             # The same TWO on-disk shapes :meth:`_reconcile_node_markers` walks,
@@ -1353,27 +1443,21 @@ class _SidecarMixin:
                 (extras.get("fromFBX") or {}).get("userProperties") or {},
                 extras,
             ):
-                entry = props.get(key)
-                if entry is None:
-                    continue
-                # FBX2glTF wraps each property as {"type": ..., "value": ...}.
-                raw = entry.get("value") if isinstance(entry, dict) else entry
-                if isinstance(raw, str) and not raw.strip():
-                    # A producer with nothing to publish CLEARS its channel to
-                    # "" rather than deleting the attribute, so an empty string
-                    # is "absent", not "unparsable".
-                    return None
-                try:
-                    return json.loads(raw) if isinstance(raw, str) else raw
-                except (TypeError, ValueError) as error:
-                    logger.warning(
-                        "Unparsable %s on node %r: %s",
-                        key,
-                        node.get("name"),
-                        error,
-                    )
-                    return None
+                if props.get(key) is not None:
+                    return node, props
         return None
+
+    @staticmethod
+    def _write_data_export(node: dict, key: str, value: Any) -> None:
+        """Write *value* as *node*'s *key* channel, in the shape every producer
+        publishes and the reader decodes: JSON text in the node's top-level
+        extras. A nested copy goes, so the reader cannot meet a stale one
+        first."""
+        extras = node.setdefault("extras", {})
+        props = (extras.get("fromFBX") or {}).get("userProperties")
+        if isinstance(props, dict):
+            props.pop(key, None)
+        extras[key] = value if isinstance(value, str) else json.dumps(value)
 
     #: What a converted ``data_export`` carrier node is called, and what
     #: :meth:`overlay_data_export` names one it has to create.
@@ -1442,10 +1526,7 @@ class _SidecarMixin:
                 index = gltf.get("scene", 0)
                 if isinstance(index, int) and 0 <= index < len(scenes):
                     scenes[index].setdefault("nodes", []).append(len(gltf["nodes"]) - 1)
-            extras = carrier.setdefault("extras", {})
             for key, value in written.items():
-                # JSON text, the shape every producer publishes and the reader
-                # decodes.
-                extras[key] = value if isinstance(value, str) else json.dumps(value)
+                cls._write_data_export(carrier, key, value)
                 changed.add(key)
         return sorted(changed)

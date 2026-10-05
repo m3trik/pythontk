@@ -32,6 +32,7 @@ import pathlib
 import struct
 import subprocess
 import sys
+import threading
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -79,11 +80,28 @@ export default function probe(viewer) {
     }
     return sum / 9;
   };
+  // The same read in colour: [r, g, b] display levels (0-255), for a test
+  // whose question is WHAT a surface reflects rather than how much.
+  window.__sampleRGB = () => {
+    const { renderer, scene, camera } = viewer;
+    const ndc = faceCentre().project(camera);
+    renderer.render(scene, camera);
+    const gl = renderer.getContext();
+    const x = Math.round((ndc.x + 1) / 2 * gl.drawingBufferWidth);
+    const y = Math.round((ndc.y + 1) / 2 * gl.drawingBufferHeight);
+    const pixels = new Uint8Array(4 * 9);
+    gl.readPixels(x - 1, y - 1, 3, 3, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    const rgb = [0, 0, 0];
+    for (let i = 0; i < 9; i += 1) {
+      for (let c = 0; c < 3; c += 1) rgb[c] += pixels[4 * i + c] / 9;
+    }
+    return rgb;
+  };
   // The same face turned to point along `normal` (world) with its +U along
   // `tangent`, then read head-on. The key light stays where the page put it,
   // so this is how a surface facing that way renders under it. The turn rides
   // the pivot, the group every viewer script is handed to spin.
-  window.__sampleFacing = (normal, tangent) => {
+  window.__sampleFacing = (normal, tangent, rgb = false) => {
     const { THREE, camera, pivot } = viewer;
     const n = new THREE.Vector3(...normal).normalize();
     const t = new THREE.Vector3(...tangent).normalize();
@@ -99,7 +117,7 @@ export default function probe(viewer) {
     if (Math.abs(n.y) > 0.99) camera.up.set(0, 0, 1);
     camera.lookAt(centre);
     camera.updateMatrixWorld();
-    return window.__sample();
+    return rgb ? window.__sampleRGB() : window.__sample();
   };
   viewer.on('load', (detail) => {
     try {
@@ -1459,13 +1477,18 @@ class TestPreviewViewerLive(unittest.TestCase):
         before = set(os.listdir(beside))
 
         def drive(server, page):
-            page.click("#controls button:has-text('Export Playblast')")
+            self._press(page, "Export", "Export playblast")
             page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
             page.click("#dialogCancel")
             page.wait_for_selector("#dialog", state="hidden", timeout=30_000)
             return {
                 "button": page.eval_on_selector(
-                    "#controls button:has-text('Export Playblast')",
+                    "#panels .window[data-category='Export'] "
+                    "button:has-text('Export playblast')",
+                    "el => el.textContent",
+                ),
+                "badge": page.eval_on_selector(
+                    "#categories button[data-category='Export']",
                     "el => el.textContent",
                 ),
             }
@@ -1474,13 +1497,87 @@ class TestPreviewViewerLive(unittest.TestCase):
 
         self.assertEqual(found["errors"], [])
         # The button is the recording's own progress readout, so it saying
-        # anything else is this having started one.
-        self.assertEqual(found["button"], "Export Playblast")
+        # anything else is this having started one -- and the bar's Export
+        # button, which carries a running job's badge.
+        self.assertEqual(found["button"], "Export playblast…")
+        self.assertEqual(found["badge"], "Export")
         self.assertEqual(
             [n for n in set(os.listdir(beside)) - before if n.endswith(".mp4")],
             [],
             "a cancelled prompt wrote a movie anyway",
         )
+
+    @unittest.skipUnless(
+        ptk.VidUtils.resolve_ffmpeg(required=False), "needs ffmpeg on PATH"
+    )
+    def test_a_still_saved_during_an_encode_leaves_the_encodes_badge(self):
+        """REGRESSION (2026-10-04): the still and the playblast share the bar's
+        Export button, and each cleared its badge outright -- a still saved
+        while a recording encoded took "encoding" off the bar with the encode
+        still running. Each job now clears its own, and the button shows the
+        newest badge standing. The encode is held at the server (its finish
+        waits) so the still lands inside it, whatever the machine's speed."""
+        badge = "#categories button[data-category='Export']"
+        status = (
+            "(pattern) => new RegExp(pattern).test("
+            "document.getElementById('status').textContent)"
+        )
+        release = threading.Event()
+
+        def drive(server, page):
+            finish = server.finish_playblast
+
+            def held(**kwargs):
+                release.wait(120)
+                return finish(**kwargs)
+
+            server.finish_playblast = held
+            try:
+                page.evaluate("(name) => window.__select(name)", "SHOT_B")
+                self._press(page, "Export", "Export playblast")
+                page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
+                page.select_option(
+                    "#dialogFields label:has-text('Quality') select", "draft"
+                )
+                page.click("#dialogConfirm")
+                page.wait_for_function(
+                    "(sel) => document.querySelector(sel).textContent"
+                    " === 'Export · encoding'",
+                    arg=badge,
+                    timeout=300_000,
+                )
+                self._press(page, "Export", "Export image")
+                page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
+                page.click("#dialogConfirm")
+                page.wait_for_function(
+                    status, arg="image (saved|export failed)", timeout=120_000
+                )
+                still = page.eval_on_selector("#status", "el => el.textContent")
+                during = page.eval_on_selector(badge, "el => el.textContent")
+            finally:
+                release.set()
+            page.wait_for_function(
+                status, arg="playblast (saved|failed)", timeout=300_000
+            )
+            return {
+                "still": still,
+                "during": during,
+                "movie": page.eval_on_selector("#status", "el => el.textContent"),
+                "after": page.eval_on_selector(badge, "el => el.textContent"),
+            }
+
+        found = self._load(
+            self._shots_only_glb(),
+            probe=self._record_probe(),
+            then=drive,
+            scripts=["snapshot"],
+        )
+
+        self.assertEqual(found["errors"], [])
+        self.assertIn("image saved", found["still"])
+        self.assertEqual(found["during"], "Export · encoding", "the still cleared it")
+        self.assertIn("playblast saved", found["movie"])
+        self.assertEqual(found["after"], "Export")
 
     def test_the_prompt_keeps_the_keyboard_off_the_page_behind_it(self):
         """Blocking the page's shortcuts did not take the keyboard whole: Tab
@@ -1500,7 +1597,7 @@ class TestPreviewViewerLive(unittest.TestCase):
 
         def drive(server, page):
             before = page.evaluate(picker)
-            page.click("#controls button:has-text('Export Playblast')")
+            self._press(page, "Export", "Export playblast")
             page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
             escaped = []
             # Backwards, past the prompt's own controls and twice over the bar
@@ -1657,7 +1754,7 @@ class TestPreviewViewerLive(unittest.TestCase):
             # than re-derived from how the page happens to set it, so the
             # restore check holds whatever the runner's display and clamp.
             page_ratio = page.evaluate("() => window.__pixelRatio()")
-            page.click("#controls button:has-text('Export Playblast')")
+            self._press(page, "Export", "Export playblast")
             page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
             if burn_in:
                 page.click("#dialogFields label:has-text('shot name')")
@@ -1774,6 +1871,8 @@ class TestPreviewViewerLive(unittest.TestCase):
         pbr=None,
         environment=None,
         baked_reflections=None,
+        probe=None,
+        probe_intensity=None,
     ):
         """A GLB whose material wears a BAKED map, built by the real applier.
 
@@ -1796,6 +1895,11 @@ class TestPreviewViewerLive(unittest.TestCase):
         path a real GLB uses rather than by poking its materials; and
         *baked_reflections* the level a baked material reflects it at
         (``lightmappedMaterials.envMapIntensity``), the export's choice.
+        *probe* gives the bake a reflection probe, as a host's bake records
+        one: ``{"image": float (h, w, 3) RGB radiance in the probe's
+        equirectangular layout, "position": [x, y, z], "box": [[min], [max]]
+        or None}``, in metres (``unit_scale`` 1); *probe_intensity* publishes
+        the level it plays at (``environment.probeIntensity``).
         """
         import cv2
         import numpy as np
@@ -1805,6 +1909,9 @@ class TestPreviewViewerLive(unittest.TestCase):
         if bake_value is None:
             bake_value = self.BAKE_VALUE
         cv2.imwrite(exr, np.full((8, 8, 3), bake_value, dtype=np.float32))
+        if probe is not None:
+            image = np.asarray(probe["image"], dtype=np.float32)
+            cv2.imwrite(os.path.join(exr_dir, "room_Probe.exr"), image[..., ::-1])
 
         manifest = {
             # Load-bearing: the reader refuses a manifest whose version it does
@@ -1822,6 +1929,13 @@ class TestPreviewViewerLive(unittest.TestCase):
                 }
             ],
         }
+        if probe is not None:
+            manifest["probe"] = {
+                "map": "room_Probe.exr",
+                "position": list(probe["position"]),
+                "box": probe["box"],
+                "unit_scale": 1.0,
+            }
         gltf = {
             "asset": {"version": "2.0"},
             "scenes": [{"nodes": [0, 1]}],
@@ -1868,6 +1982,8 @@ class TestPreviewViewerLive(unittest.TestCase):
         rendering = {}
         if environment is not None:
             rendering["environment"] = {"intensity": environment}
+        if probe_intensity is not None:
+            rendering.setdefault("environment", {})["probeIntensity"] = probe_intensity
         if baked_reflections is not None:
             rendering["lightmappedMaterials"] = {"envMapIntensity": baked_reflections}
         if rendering:
@@ -2069,7 +2185,7 @@ class TestPreviewViewerLive(unittest.TestCase):
         before = set(os.listdir(beside))
 
         def drive(server, page):
-            page.click("#controls button:has-text('Export Image')")
+            self._press(page, "Export", "Export image")
             page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
             page.click("#dialogCancel")
             page.wait_for_selector("#dialog", state="hidden", timeout=30_000)
@@ -2104,7 +2220,7 @@ class TestPreviewViewerLive(unittest.TestCase):
                     # file is the bridge's scratch, and is gone by the time
                     # anyone presses a button.
                     os.remove(glb)
-                    page.click("#controls button:has-text('Export Image')")
+                    self._press(page, "Export", "Export image")
                     page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
                     with page.expect_download(timeout=60_000) as download:
                         page.click("#dialogConfirm")
@@ -2147,7 +2263,7 @@ class TestPreviewViewerLive(unittest.TestCase):
 
         def drive(server, page):
             page_ratio = page.evaluate("() => window.__pixelRatio()")
-            page.click("#controls button:has-text('Export Image')")
+            self._press(page, "Export", "Export image")
             page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
             if preset is not None:
                 page.select_option(
@@ -2193,6 +2309,25 @@ class TestPreviewViewerLive(unittest.TestCase):
         )
 
     # ------------------------------------------------------------------ driver
+    @staticmethod
+    def _press(page, category, label):
+        """Open *category*'s window from the bar if it is shut, as a user
+        does, and press the button in it whose text starts *label*."""
+        window = f"#panels .window[data-category='{category}']"
+        if page.is_hidden(window):
+            page.click(f"#categories button[data-category='{category}']")
+        page.click(f"{window} button:has-text('{label}')")
+
+    @staticmethod
+    def _window_rows(page, category):
+        """The text of every row cell in *category*'s window, in order."""
+        return page.evaluate(
+            "(category) => [...document.querySelectorAll("
+            "`#panels .window[data-category='${category}'] .rows > div`)]"
+            ".map((n) => n.textContent)",
+            category,
+        )
+
     def _load(
         self, glb, then_publish=None, probe=None, then=None, scripts=(), host=None
     ):
@@ -2334,6 +2469,149 @@ class TestPreviewViewerLive(unittest.TestCase):
         found = self._load(self._animated_glb())
 
         self.assertEqual(found["console_errors"], [])
+
+    # ------------------------------------------------------- the page's boot
+    def test_a_script_named_with_the_asset_is_in_before_the_asset_loads(self):
+        """The first manifest names the asset and the scripts together, and
+        the page holds the asset until each script has registered: a small GLB
+        parses in less time than an ES module takes to arrive, and a script
+        that misses the first 'load' -- the only one a single push gives it --
+        leaves that model untouched (the shadow rigs stood still). Driven, not
+        read: the probe's module is held at the network with the asset ready,
+        so the asset must not be asked for until the probe is in, and the
+        probe must then be told of the first model. Mutation-checked
+        (2026-10-04): with kernel/poll.js not awaiting `loadScripts`, the page
+        fetched the asset while the script was still held."""
+        import time
+
+        from playwright.sync_api import sync_playwright
+
+        server = ptk.PreviewServer(viewer=True, title="live-test", port=0).start()
+        server.add_script("probe", self.probe)
+        server.publish(self._animated_glb())
+        held, asked = [], []
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    channel="msedge",
+                    headless=True,
+                    args=["--enable-unsafe-swiftshader"],
+                )
+                page = browser.new_page()
+                page.route("**/scripts/probe.js", lambda route: held.append(route))
+                page.on(
+                    "request",
+                    lambda r: asked.append(r.url) if "/scene.glb" in r.url else None,
+                )
+                page.goto(server.url, wait_until="domcontentloaded", timeout=120_000)
+                deadline = time.monotonic() + 120
+                while not held and time.monotonic() < deadline:
+                    page.wait_for_timeout(100)
+                # A poll and a half with the module held and the asset ready.
+                page.wait_for_timeout(1500)
+                fetched_early = list(asked)
+                if held:
+                    held[0].continue_()
+                page.wait_for_function(
+                    "() => document.getElementById('status').className === 'live'",
+                    timeout=180_000,
+                )
+                found = page.evaluate("() => window.__probe") or {}
+                browser.close()
+        finally:
+            server.stop()
+
+        self.assertTrue(held, "the page never asked for the script")
+        self.assertEqual(
+            fetched_early, [], "the asset was fetched ahead of a script it shipped with"
+        )
+        self.assertEqual(found.get("loads"), 1, "the script missed the first 'load'")
+        self.assertEqual(found.get("errors"), [])
+
+    def test_a_page_that_cannot_start_says_what_stopped_it(self):
+        """REGRESSION (2026-10-04): the boot watchdog blamed the CDN for any
+        kernel that did not start ("three.js failed to load — needs
+        unpkg.com"), since its flag is set only once every module has run: a
+        graphics context that could not be made, a kernel module missing or
+        refused for its type, all read as a blocked unpkg.com. The page now
+        records what stopped it and says that; the CDN is named when its own
+        modules are what failed, or when nothing was recorded at all -- a
+        blocked fetch that never answers raises nothing."""
+        from playwright.sync_api import sync_playwright
+
+        no_webgl = (
+            "const made = HTMLCanvasElement.prototype.getContext;"
+            "HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {"
+            " return /webgl/i.test(kind) ? null : made.call(this, kind, ...rest); };"
+        )
+        cases = {
+            # A device or a policy with no WebGL: three.js throws building the stage.
+            "graphics": {"init": no_webgl},
+            "missing module": {
+                "route": (
+                    "**/kernel/session.js",
+                    lambda route: route.fulfill(status=404, body=""),
+                )
+            },
+            # What a registry that types .js as text/plain did to every module.
+            "refused module": {
+                "route": (
+                    "**/kernel/main.js",
+                    lambda route: route.fulfill(
+                        status=200, content_type="text/plain", body="export {};"
+                    ),
+                )
+            },
+            "blocked CDN": {
+                "route": ("https://unpkg.com/**", lambda route: route.abort())
+            },
+        }
+        server = ptk.PreviewServer(viewer=True, title="live-test", port=0).start()
+        said = {}
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    channel="msedge",
+                    headless=True,
+                    args=["--enable-unsafe-swiftshader"],
+                )
+                pages = {}
+                for name, case in cases.items():
+                    page = browser.new_context().new_page()
+                    if "init" in case:
+                        page.add_init_script(case["init"])
+                    if "route" in case:
+                        page.route(*case["route"])
+                    page.goto(
+                        server.url, wait_until="domcontentloaded", timeout=120_000
+                    )
+                    pages[name] = page
+                # Side by side, so one watchdog's wait covers them all.
+                for name, page in pages.items():
+                    page.wait_for_function(
+                        "() => document.getElementById('status').className === 'error'",
+                        timeout=60_000,
+                    )
+                    said[name] = page.eval_on_selector(
+                        "#status", "el => el.textContent"
+                    )
+                browser.close()
+        finally:
+            server.stop()
+
+        with self.subTest(case="graphics"):
+            self.assertIn("failed to start", said["graphics"])
+            self.assertIn("WebGL context", said["graphics"])
+        for name in ("missing module", "refused module"):
+            with self.subTest(case=name):
+                self.assertIn("kernel failed to load", said[name])
+        for name in ("graphics", "missing module", "refused module"):
+            with self.subTest(case=name, blames="cdn"):
+                self.assertNotIn("unpkg", said[name])
+        with self.subTest(case="blocked CDN"):
+            self.assertEqual(
+                said["blocked CDN"], "three.js failed to load — needs unpkg.com."
+            )
 
     # -------------------------------------------------- the lighting policy
     # glTF has no lightmap slot, so a bake travels DISGUISED as occlusion on
@@ -2621,12 +2899,7 @@ class TestPreviewViewerLive(unittest.TestCase):
                 ".some((p) => !p.hidden && p.textContent.includes('fps'))",
                 timeout=60_000,
             )
-            return {
-                "panel": page.evaluate(
-                    "() => [...document.querySelectorAll('#panels .panel .rows > div')]"
-                    ".map((n) => n.textContent)"
-                )
-            }
+            return {"panel": self._window_rows(page, "Inspect")}
 
         found = self._load(glb, scripts=["inspect"], then=open_inspect)
         self.assertEqual(found["console_errors"], [])
@@ -2644,7 +2917,7 @@ class TestPreviewViewerLive(unittest.TestCase):
         validly opened over a plain-HTTP LAN address (where it says WebXR needs
         HTTPS). There `navigator.clipboard` is undefined: Copy Report threw in
         its click handler and said nothing. It logs the report and says so."""
-        panel = "[...document.querySelectorAll('#panels .panel')][0]"
+        panel = "document.querySelector(\"#panels .window[data-category='Inspect']\")"
 
         def copy_without_a_clipboard(server, page):
             page.evaluate(
@@ -2653,7 +2926,7 @@ class TestPreviewViewerLive(unittest.TestCase):
             )
             page.keyboard.press("i")
             page.wait_for_function(f"() => !{panel}.hidden", timeout=30_000)
-            page.click("#panels .panel footer button")
+            page.click("#panels .window[data-category='Inspect'] footer button")
             page.wait_for_function(
                 f"() => {panel}.querySelector('footer button').textContent"
                 " !== 'Copy report'",
@@ -2820,6 +3093,500 @@ class TestPreviewViewerLive(unittest.TestCase):
             f"level 0 left {found['off']:.0f} against the env-less "
             f"{found['dark']:.0f}: something still reflects",
         )
+
+    def test_a_baked_reflection_follows_the_bake(self):
+        """Lightmap-normalized reflections: a shadow reflects next to nothing.
+
+        The environment is a studio, not the room the bake lit, so one level
+        for every baked texel either lifts the shadows (full) or flattens the
+        lit surfaces (a quarter -- measured on a production table, 2026-10-01:
+        no visible reflection on its lit plastic and metal). Each texel's
+        reflection is scaled by its bake against the studio's own irradiance,
+        so a glossy metal -- which shows nothing BUT its reflections -- reads
+        bright under a lit bake and dark under a shadowed one at one level.
+        """
+        pbr = {"metallicFactor": 1.0, "roughnessFactor": 0.3}
+        shadow = self._lightmapped_glb(bake_value=0.02, pbr=pbr, baked_reflections=1.0)
+
+        def republish(server, page):
+            lit = page.evaluate("() => window.__sample()")
+            server.publish(shadow)
+            page.wait_for_function("() => window.__probe.loads >= 2", timeout=180_000)
+            return {"lit": lit, "shadow": page.evaluate("() => window.__sample()")}
+
+        found = self._load(
+            self._lightmapped_glb(bake_value=1.0, pbr=pbr, baked_reflections=1.0),
+            then=republish,
+        )
+        self.assertEqual(found["console_errors"], [])
+        self.assertGreater(
+            found["lit"] - found["shadow"],
+            self.ENV_REFLECTION_FLOOR,
+            f"a shadowed bake reflects like a lit one "
+            f"({found['shadow']:.0f} vs {found['lit']:.0f})",
+        )
+
+    # ----------------------------------------------------- the reflection probe
+    @staticmethod
+    def _probe_image(directions, base=(0.5, 0.5, 0.5), width=64):
+        """An equirectangular probe (the layout the page reads: u = 0.5 +
+        atan2(z, x) / 2pi, v = 0.5 + asin(y) / pi, its top row +Y): *base*
+        radiance everywhere, and each ``(direction, rgb)`` in *directions*
+        painted over the 40-degree cap around that direction."""
+        import numpy as np
+
+        h, w = width // 2, width
+        v = 1.0 - (np.arange(h) + 0.5) / h
+        u = (np.arange(w) + 0.5) / w
+        phi = (u - 0.5) * 2 * np.pi
+        lat = (v - 0.5) * np.pi
+        y = np.sin(lat)[:, None].repeat(w, 1)
+        x = np.cos(lat)[:, None] * np.cos(phi)[None, :]
+        z = np.cos(lat)[:, None] * np.sin(phi)[None, :]
+        image = np.empty((h, w, 3), dtype=np.float32)
+        image[...] = base
+        for direction, rgb in directions:
+            d = np.asarray(direction, dtype=float)
+            d /= np.linalg.norm(d)
+            cos = x * d[0] + y * d[1] + z * d[2]
+            image[cos > np.cos(np.radians(40))] = rgb
+        return image
+
+    def _probe_face(self, probe, facing=((0, 0, 1), (1, 0, 0)), **kw):
+        """The fixture's baked GLOSSY METAL face, read head-on in colour and
+        luminance -- its reflection is all a metal shows -- with *probe*."""
+        pbr = {"metallicFactor": 1.0, "roughnessFactor": 0.3}
+        glb = self._lightmapped_glb(
+            bake_value=self.BAKE_VALUE, pbr=pbr, probe=probe, **kw
+        )
+        normal, tangent = facing
+
+        def read(server, page):
+            return {
+                "rgb": page.evaluate(
+                    f"() => window.__sampleFacing({list(normal)}, {list(tangent)}, true)"
+                ),
+            }
+
+        found = self._load(glb, then=read)
+        self.assertEqual(found["console_errors"], [])
+        self.assertEqual(found["lightmapped"], 1, "fixture lost its bake")
+        return found
+
+    def test_a_baked_metal_reflects_the_rooms_own_probe_not_the_studio(self):
+        """REGRESSION (2026-10-03): a baked metal showed only the page's studio.
+
+        A lightmap is diffuse irradiance and a metal has no diffuse, so all a
+        baked metal shows is what it reflects -- and it reflected a studio the
+        bake never saw, at a level picked to keep that studio off the bake's
+        shadows: a production table's metal housing rendered at 0.12 of
+        Arnold's render of the same room. The bake now captures the room it
+        lit as a probe, and the page reflects THAT: a room whose walls the
+        face sees are red reflects red off a metal, where the studio is grey.
+        """
+        red_room = {
+            "image": self._probe_image([], base=(1.5, 0.1, 0.1)),
+            "position": [0.0, 0.0, 0.0],
+            "box": None,
+        }
+        found = self._probe_face(red_room)
+        r, g, b = found["rgb"]
+        self.assertGreater(
+            r - b, 40, f"the metal does not reflect the probe: {found['rgb']}"
+        )
+        self.assertTrue(
+            found["specs"]["lightmaps"]["probe"],
+            "the page does not say the probe is up",
+        )
+        self.assertIn("probe", found["statLines"][-1])
+        # At the bake's unit, not at 1: a probe holds radiance where a lightmap
+        # holds a white card's, which the page reads as irradiance.
+        self.assertAlmostEqual(found["environment"]["intensity"], 1 / math.pi, places=4)
+        self.assertTrue(
+            all(m["programKey"].endswith("|probe") for m in found["materials"]),
+            [m["programKey"] for m in found["materials"]],
+        )
+
+        studio = self._probe_face(None)
+        r, g, b = studio["rgb"]
+        self.assertLess(abs(r - b), 12, f"the studio is not grey: {studio['rgb']}")
+        self.assertFalse(studio["specs"]["lightmaps"]["probe"])
+
+    def test_a_probes_reflections_play_whole_whatever_the_studios_level(self):
+        """The export's Baked Reflections level exists because the studio is
+        brighter than the room the bake lit. The probe IS that room: published
+        at 0 or 1, a baked metal reflects it the same."""
+        room = {
+            "image": self._probe_image([], base=(0.9, 0.9, 0.9)),
+            "position": [0.0, 0.0, 0.0],
+            "box": None,
+        }
+        full = self._probe_face(room, baked_reflections=1.0)["rgb"]
+        off = self._probe_face(room, baked_reflections=0.0)["rgb"]
+        self.assertGreater(sum(full) / 3, 60, f"no reflection at all: {full}")
+        self.assertLess(
+            max(abs(a - b) for a, b in zip(full, off)),
+            self.BAKE_PATH_TOLERANCE,
+            f"the studio's level reached the probe's reflections: {full} vs {off}",
+        )
+
+    def test_a_probe_reflection_is_box_projected_onto_the_room(self):
+        """One probe stands for a whole room, so a reflection ray is followed
+        to where it leaves the probe's box and the probe read toward THAT point
+        from where it was captured. Here the face sits at the model's origin
+        reflecting +Z, the probe far off along -X: unprojected it reads the
+        probe's +Z (blue); projected, the ray leaves the box half a metre
+        ahead of the face, which the probe sees almost along +X (red). The
+        projection is a shader edit, silent if its line moves -- hence pixels.
+        """
+        image = self._probe_image(
+            [((1, 0, 0), (2.0, 0.05, 0.05)), ((0, 0, 1), (0.05, 0.05, 2.0))]
+        )
+        boxed = {
+            "image": image,
+            "position": [-3.0, 0.0, 0.0],
+            "box": [[-4.0, -0.5, -0.5], [0.5, 0.5, 0.5]],
+        }
+        r, g, b = self._probe_face(boxed)["rgb"]
+        self.assertGreater(r - b, 40, f"the boxed probe did not project: {[r, g, b]}")
+        distant = dict(boxed, box=None)
+        r, g, b = self._probe_face(distant)["rgb"]
+        self.assertGreater(
+            b - r, 40, f"the distant probe was projected anyway: {[r, g, b]}"
+        )
+
+    def test_a_probe_the_page_cannot_read_is_reported_and_the_studio_stays(self):
+        """Damaged bytes in the probe's view: the load says so, and the model
+        renders under the studio as before rather than going unlit."""
+        glb = self._lightmapped_glb(
+            pbr={"metallicFactor": 1.0, "roughnessFactor": 0.3},
+            probe={"image": self._probe_image([]), "position": [0, 0, 0], "box": None},
+        )
+        with ptk.MeshConvert.open_glb(glb) as edit:
+            view = edit.gltf["bufferViews"][
+                edit.gltf["extras"]["lightmap_web"]["probe"]["bufferView"]
+            ]
+            start, length = int(view.get("byteOffset", 0)), int(view["byteLength"])
+            data = bytearray(edit.bin_data)
+            data[start : start + length] = bytes(length)
+            edit.replace_rest(bytes(data))
+        found = self._load(glb)
+        self.assertEqual(found["console_errors"], [])
+        self.assertFalse(found["specs"]["lightmaps"]["probe"])
+        self.assertIn("reflection probe not loaded", found["issueLine"] or "")
+        self.assertAlmostEqual(found["environment"]["intensity"], 1.0, places=4)
+
+    # -------------------------------------------- the Environment window
+    #: The page's read of what lights the model, after the last change.
+    ENVIRONMENT_LOOK_JS = """() => {
+      const api = window.__api;
+      const keys = [];
+      api.model.traverse((n) => {
+        if (n.isMesh) for (const m of [].concat(n.material)) keys.push(m.customProgramCacheKey());
+      });
+      return {
+        rgb: window.__sampleFacing([0, 0, 1], [1, 0, 0], true),
+        maps: api.environment.maps.map((m) => [m.name, m.active]),
+        keys,
+        hud: [...document.getElementById('stats').children].map((n) => n.textContent),
+        on: api.environment.probe ? api.environment.probe.on : null,
+        specsOn: api.specs.probe ? api.specs.probe.on : null,
+        intensity: api.scene.environmentIntensity,
+      };
+    }"""
+
+    def _flip_probe(self, page):
+        """The Environment window's probe switch, flipped as a user flips it."""
+        window = "#panels .window[data-category='Environment']"
+        if page.is_hidden(window):
+            page.click("#categories button[data-category='Environment']")
+        page.click(f"{window} label.toggle:has-text('Reflection probe')")
+
+    def test_the_environment_window_turns_the_probe_off_and_on(self):
+        """The switch the probe belongs behind -- not Inspect's: off, a baked
+        metal reflects the page's studio and its materials draw on the
+        programs a file without a probe gets, which is a preview the export
+        can produce (the bake's own switch) and what makes a frame timed
+        either way the probe's cost alone. The studio is built for the off
+        state and freed again with the probe back: held beside a probe it
+        lit nothing, at 6.3 MB. Added: 2026-10-04"""
+        red_room = {
+            "image": self._probe_image([], base=(1.5, 0.1, 0.1)),
+            "position": [0.0, 0.0, 0.0],
+            "box": None,
+        }
+        glb = self._lightmapped_glb(
+            bake_value=self.BAKE_VALUE,
+            pbr={"metallicFactor": 1.0, "roughnessFactor": 0.3},
+            probe=red_room,
+        )
+
+        def flip(server, page):
+            looks = {"on": page.evaluate(self.ENVIRONMENT_LOOK_JS)}
+            self._flip_probe(page)
+            looks["off"] = page.evaluate(self.ENVIRONMENT_LOOK_JS)
+            looks["offRows"] = self._window_rows(page, "Environment")
+            self._flip_probe(page)
+            looks["again"] = page.evaluate(self.ENVIRONMENT_LOOK_JS)
+            return looks
+
+        found = self._load(glb, then=flip)
+        self.assertEqual(found["console_errors"], [])
+        on, off, again = found["on"], found["off"], found["again"]
+        for look in (on, again):
+            r, g, b = look["rgb"]
+            self.assertGreater(r - b, 40, f"the probe is not up: {look['rgb']}")
+            self.assertEqual(look["maps"], [["probe", True]], "the studio was kept")
+            self.assertTrue(
+                all(k.endswith("|probe") for k in look["keys"]), look["keys"]
+            )
+            self.assertIn("probe", look["hud"][-1])
+            self.assertAlmostEqual(look["intensity"], 1 / math.pi, places=4)
+            self.assertIs(look["on"], True)
+        r, g, b = off["rgb"]
+        self.assertLess(
+            abs(r - b), 12, f"the studio is not what lights it: {off['rgb']}"
+        )
+        self.assertEqual(sorted(off["maps"]), [["probe", False], ["studio", True]])
+        self.assertFalse(any(k.endswith("|probe") for k in off["keys"]), off["keys"])
+        self.assertIn("probe off", off["hud"][-1])
+        self.assertAlmostEqual(off["intensity"], 1.0, places=4)
+        self.assertEqual((off["on"], off["specsOn"]), (False, False))
+        self.assertIn("the studio (probe off)", found["offRows"])
+
+    def test_the_studio_comes_back_for_a_file_without_a_probe(self):
+        """Freed while a probe lit the model, the studio is built again when
+        the next push carries none -- and the window says so, its switches
+        gone with the probe."""
+        room = {"image": self._probe_image([]), "position": [0, 0, 0], "box": None}
+        pbr = {"metallicFactor": 1.0, "roughnessFactor": 0.3}
+
+        def after(server, page):
+            return {
+                "maps": page.evaluate(
+                    "() => window.__api.environment.maps.map((m) => [m.name, m.active])"
+                ),
+                "rows": self._window_rows(page, "Environment"),
+                "switches": page.evaluate(
+                    "() => [...document.querySelectorAll("
+                    "\"#panels .window[data-category='Environment'] label.toggle\")]"
+                    ".map((n) => !n.hidden)"
+                ),
+            }
+
+        found = self._load(
+            self._lightmapped_glb(pbr=pbr, probe=room),
+            then_publish=self._lightmapped_glb(pbr=pbr),
+            then=after,
+        )
+        self.assertEqual(found["console_errors"], [])
+        self.assertEqual(found["maps"], [["studio", True]])
+        self.assertIn("the studio (three.js RoomEnvironment)", found["rows"])
+        self.assertEqual(found["switches"], [False, False])
+
+    def test_the_environment_window_states_the_level_the_probe_plays_at(self):
+        """REGRESSION (2026-10-04): the window said "1/π: the bake's units"
+        whatever the deliverable published, while the page plays its
+        `environment.probeIntensity` -- a producer's own level was reported as
+        the unit. It now gives the level played, named as the bake's unit
+        only when it is that one."""
+        room = {"image": self._probe_image([]), "position": [0, 0, 0], "box": None}
+        pbr = {"metallicFactor": 1.0, "roughnessFactor": 0.3}
+
+        def read(server, page):
+            return {
+                "rows": self._window_rows(page, "Environment"),
+                "intensity": page.evaluate(
+                    "() => window.__api.scene.environmentIntensity"
+                ),
+            }
+
+        for published, level, played in (
+            (None, "0.32 (1/π: the bake's units)", 1 / math.pi),
+            (0.5, "0.50", 0.5),
+        ):
+            with self.subTest(published=published):
+                glb = self._lightmapped_glb(
+                    pbr=pbr, probe=room, probe_intensity=published
+                )
+                found = self._load(glb, then=read)
+                self.assertEqual(found["console_errors"], [])
+                rows = found["rows"]
+                self.assertEqual(rows[rows.index("level") + 1], level, rows)
+                self.assertAlmostEqual(found["intensity"], played, places=4)
+
+    def test_inspect_counts_the_probe_in_memory_the_file_and_the_load(self):
+        """The probe's cost where Inspect reads cost: its environment map in
+        GPU memory (and the studio's, while the probe is switched off), its
+        bytes in the file, its decode and prefilter inside the load's setup,
+        and whether it is on. Before, the bytes fell into an unshown "other",
+        no environment map was counted, and the load folded it into setup."""
+        room = {
+            "image": self._probe_image([]),
+            "position": [0.0, 0.0, 0.0],
+            "box": [[-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]],
+        }
+        glb = self._lightmapped_glb(
+            pbr={"metallicFactor": 1.0, "roughnessFactor": 0.3}, probe=room
+        )
+
+        def values(rows, key):
+            return [b for a, b in zip(rows, rows[1:]) if a == key]
+
+        def read(server, page):
+            page.keyboard.press("i")
+            page.wait_for_function(
+                "() => !document.querySelector(\"#panels .window[data-category='Inspect']\").hidden",
+                timeout=30_000,
+            )
+            # It repaints at most every 250 ms: wait for the paint that says so.
+            painted = (
+                "(text) => [...document.querySelectorAll("
+                "\"#panels .window[data-category='Inspect'] .rows > div\")]"
+                ".some((n) => n.textContent.includes(text))"
+            )
+            page.wait_for_function(painted, arg="reflection probe on", timeout=30_000)
+            on = self._window_rows(page, "Inspect")
+            self._flip_probe(page)
+            page.wait_for_function(painted, arg="(idle)", timeout=30_000)
+            off = self._window_rows(page, "Inspect")
+            sizes = page.evaluate(
+                "() => window.__api.environment.maps.map((m) =>"
+                " [m.name, m.texture.image.width, m.texture.image.height])"
+            )
+            return {"on": on, "off": off, "sizes": sizes}
+
+        found = self._load(glb, scripts=["inspect"], then=read)
+        self.assertEqual(found["console_errors"], [])
+        on, off = found["on"], found["off"]
+        model, memory = values(on, "environment")
+        self.assertEqual(model, "reflection probe on · 64 × 32")
+        self.assertRegex(memory, r"^\d+(\.\d)? KB · probe \d+(\.\d)? KB$")
+        self.assertRegex(
+            values(on, "reflection probe")[0], r"^\d+(\.\d)? (B|KB|MB) \(\d+%\)$"
+        )
+        self.assertRegex(
+            values(on, "probe")[0],
+            r"^[\d.]+ ms of setup · decode [\d.]+ ms · prefilter [\d.]+ ms$",
+        )
+        model, memory = values(off, "environment")
+        self.assertEqual(model, "reflection probe off (studio) · 64 × 32")
+        self.assertIn("probe ", memory)
+        self.assertIn("(idle)", memory)
+        self.assertIn("studio 6.0 MB", memory)
+        # three.js' PMREM target: 3 x max(cube, 112) by 4 x cube, the studio's
+        # cube 256 and a 64-texel equirect's a quarter of its width.
+        self.assertEqual(
+            sorted(found["sizes"]), [["probe", 336, 64], ["studio", 768, 1024]]
+        )
+
+    def test_the_bar_carries_one_button_per_category(self):
+        """What the page offers, sorted: one bar button per category beside
+        Frame, each opening its window, rather than a button per script --
+        the turntable's switch in View, the still's export in Export, the
+        profiler in Inspect, the probe's switch in Environment. A window
+        shuts from its own header too, and a key a script owns still drives
+        its control."""
+
+        def drive(server, page):
+            bar = page.evaluate(
+                "() => [...document.querySelectorAll('#controls button')]"
+                ".filter((b) => !b.closest('[hidden]')).map((b) => b.textContent.trim())"
+            )
+            view = "#panels .window[data-category='View']"
+            page.click("#categories button[data-category='View']")
+            opened = page.is_visible(view)
+            spinning = page.is_checked(f"{view} label.toggle input")
+            page.keyboard.press("t")
+            after_t = page.is_checked(f"{view} label.toggle input")
+            page.click(f"{view} header .close")
+            closed = page.is_hidden(view)
+            self._press(page, "Export", "Export image")
+            prompt = page.is_visible("#dialog:not([hidden])")
+            page.click("#dialogCancel")
+            return {
+                "bar": bar,
+                "opened": opened,
+                "spinning": spinning,
+                "afterT": after_t,
+                "closed": closed,
+                "prompt": prompt,
+            }
+
+        found = self._load(
+            self._lightmapped_glb(),
+            scripts=["turntable", "inspect", "snapshot"],
+            then=drive,
+        )
+        self.assertEqual(found["console_errors"], [])
+        self.assertEqual(
+            found["bar"], ["Frame", "View", "Environment", "Inspect", "Export"]
+        )
+        self.assertTrue(found["opened"])
+        self.assertEqual((found["spinning"], found["afterT"]), (True, False))
+        self.assertTrue(found["closed"])
+        self.assertTrue(found["prompt"], "Export image did not ask for its size")
+
+    def test_the_probes_capture_point_and_box_are_drawn_on_request(self):
+        """Where the bake put its probe, over the model: the check that it can
+        see the room. Drawn in the model's frame but never part of the model
+        -- Frame and the HUD measure without it -- and an open face, recorded
+        a kilometre out, drawn at the model's reach and named in the rows."""
+        room = {
+            "image": self._probe_image([]),
+            "position": [0.25, 0.5, -0.25],
+            "box": [[-2.0, 0.0, -1.5], [2.0, 1000.0, 1.5]],
+        }
+        glb = self._lightmapped_glb(
+            pbr={"metallicFactor": 1.0, "roughnessFactor": 0.3}, probe=room
+        )
+
+        def show(server, page):
+            window = "#panels .window[data-category='Environment']"
+            page.click("#categories button[data-category='Environment']")
+            page.click(f"{window} label.toggle:has-text('Show capture point')")
+            return {
+                "rows": self._window_rows(page, "Environment"),
+                "helpers": page.evaluate(
+                    """() => {
+                      const api = window.__api;
+                      const { THREE } = api;
+                      const out = [];
+                      api.scene.traverse((n) => {
+                        if (n.name !== 'probeHelper') return;
+                        n.geometry.computeBoundingBox();
+                        let inModel = false;
+                        api.model.traverse((m) => { if (m === n) inModel = true; });
+                        out.push({
+                          kind: n.type,
+                          visible: n.visible,
+                          inModel,
+                          min: n.geometry.boundingBox.min.toArray(),
+                          max: n.geometry.boundingBox.max.toArray(),
+                          centre: n.geometry.boundingBox.getCenter(new THREE.Vector3()).toArray(),
+                        });
+                      });
+                      return out;
+                    }"""
+                ),
+            }
+
+        found = self._load(glb, then=show)
+        self.assertEqual(found["console_errors"], [])
+        kinds = {h["kind"]: h for h in found["helpers"]}
+        self.assertEqual(sorted(kinds), ["LineSegments", "Mesh"])
+        self.assertTrue(
+            all(h["visible"] and not h["inModel"] for h in found["helpers"])
+        )
+        for got, want in zip(kinds["Mesh"]["centre"], room["position"]):
+            self.assertAlmostEqual(got, want, places=4)
+        lines = kinds["LineSegments"]
+        for got, want in zip(lines["min"], [-2.0, 0.0, -1.5]):
+            self.assertAlmostEqual(got, want, places=4)
+        self.assertAlmostEqual(lines["max"][0], 2.0, places=4)
+        self.assertLess(lines["max"][1], 100.0, "the open ceiling drawn a kilometre up")
+        reflections = found["rows"][found["rows"].index("reflections") + 1]
+        self.assertIn("open (read as distant): ceiling", reflections)
 
     def test_a_baked_normal_mapped_material_relieves_the_bake_and_compiles(self):
         """A lightmap is direction-free irradiance that never consults the
@@ -3532,7 +4299,7 @@ export default function probe(viewer) {
         self.assertIs(found["secure"], True)
         self.assertIs(found["xr"], True, "a secure-context guest must get WebXR")
         self.assertEqual(found["meshes"], 1)
-        self.assertNotIn("Export Image", found["buttons"])
+        self.assertNotIn("Export", found["buttons"], "an owner-only script's window")
         self.assertIs(found["saveHidden"], True)
         self.assertEqual((found["guests_open"], found["guests_closed"]), (1, 0))
         self.assertIs(found["owner_viewer"], False)
@@ -4152,6 +4919,57 @@ export default function probe(viewer) {
                 self.assertAlmostEqual(g, w, places=6, msg=key)
         for key in ("fov", "near", "far", "focal"):
             self.assertAlmostEqual(got[key], want[key], places=6, msg=key)
+
+    #: Looks across a floor from standing height and counts the pixels of the
+    #: floor band darker than the band's own median -- the floor is lit evenly,
+    #: so anything well below it is the ground grid drawn over the model.
+    GRID_OVER_FLOOR_JS = """
+() => {
+  const { renderer, scene, camera, controls } = window.__api;
+  camera.position.set(0, 1.6, 3.5);
+  camera.near = 0.02;
+  camera.far = 100;
+  camera.updateProjectionMatrix();
+  if (controls) { controls.target.set(0, 0, -4); controls.update(); }
+  camera.lookAt(0, 0, -4);
+  camera.updateMatrixWorld();
+  renderer.render(scene, camera);
+  const gl = renderer.getContext();
+  const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+  const y0 = Math.round(h * 0.05), y1 = Math.round(h * 0.40);
+  const px = new Uint8Array(4 * w * (y1 - y0));
+  gl.readPixels(0, y0, w, y1 - y0, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  const lum = [];
+  for (let i = 0; i < px.length; i += 4) {
+    lum.push(0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]);
+  }
+  const sorted = [...lum].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  return { median, dark: lum.filter((v) => v < 0.8 * median).length, total: lum.length };
+}
+"""
+
+    def test_the_ground_grid_never_draws_over_the_model(self):
+        """A floor modelled at y = 0 -- where a room's floor sits -- shows no grid.
+
+        The page's ground grid lies in that same plane and drew AFTER the model
+        (it is transparent), so it z-fought through every such floor: a dark
+        0.5 m grid, dashed at a distance, over a production room's floor in the
+        WebXR preview (2026-10-02). It is a reference for where there is no
+        model, so the model always covers it."""
+        glb = self._pack_glb(
+            # Wider than the 20 m grid, so the band read is floor edge to edge.
+            *self._parts_gltf({"floor": _floor(-20, 20, -20, 20, 0.0)}),
+            "floor.glb",
+        )
+        found = self._load(
+            glb,
+            then=lambda server, page: {"grid": page.evaluate(self.GRID_OVER_FLOOR_JS)},
+        )
+        grid = found["grid"]
+        self.assertEqual(found["console_errors"], [])
+        self.assertGreater(grid["median"], 20, f"the floor did not render: {grid}")
+        self.assertEqual(grid["dark"], 0, grid)
 
     def test_a_large_scene_does_not_clip_the_headsets_overlay(self):
         """three.js hands `camera.near` to a session as its depthNear, and the

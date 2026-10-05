@@ -14,6 +14,8 @@ try:
 except ImportError:
     np = None  # type: ignore
 
+from pythontk.img_utils._filters import _ImgFilterInternal
+
 
 class _ImgAtlasInternal:
     """Bodies of :class:`ImgUtils`' atlas-layout methods (an ``ImgUtils`` base).
@@ -233,6 +235,207 @@ class _ImgAtlasInternal:
             out.append((nsx, nsy, x0 / w_px - u0 * nsx, y0 / h_px - v0 * nsy))
         return out
 
+    @staticmethod
+    def uv_crop_extent(
+        bbox: Optional[Tuple[float, float, float, float]],
+        max_coverage: float = 0.85,
+    ) -> Tuple[float, float]:
+        """Body of :meth:`ImgUtils.uv_crop_extent`."""
+        if bbox is None:
+            return (1.0, 1.0)
+        u0, v0, u1, v1 = (min(max(float(v), 0.0), 1.0) for v in bbox)
+        eu, ev = u1 - u0, v1 - v0
+        if eu <= 0.0 or ev <= 0.0 or (eu >= max_coverage and ev >= max_coverage):
+            return (1.0, 1.0)
+        return (eu, ev)
+
+    @classmethod
+    def crop_to_uv_bbox(
+        cls,
+        img: "np.ndarray",
+        bbox: Optional[Tuple[float, float, float, float]],
+        cell: Sequence[float],
+        max_coverage: float = 0.85,
+    ) -> Tuple["np.ndarray", List[float], Tuple[float, float, float, float]]:
+        """Body of :meth:`ImgUtils.crop_to_uv_bbox`."""
+        full = (0.0, 0.0, 1.0, 1.0)
+        cell = [float(v) for v in cell]
+        if cls.uv_crop_extent(bbox, max_coverage) == (1.0, 1.0):
+            return img, cell, full
+        u0, v0, u1, v1 = (min(max(float(v), 0.0), 1.0) for v in bbox)
+        h, w = img.shape[:2]
+        eps = 1e-6  # an edge ON a texel boundary must not claim the next one
+        c0 = max(0, math.floor(u0 * w + eps))
+        c1 = min(w, math.ceil(u1 * w - eps))
+        r0 = max(0, math.floor((1.0 - v1) * h + eps))
+        r1 = min(h, math.ceil((1.0 - v0) * h - eps))
+        if c1 - c0 < 2 or r1 - r0 < 2:
+            return img, cell, full
+        cu0, cu1 = c0 / w, c1 / w
+        cv0, cv1 = 1.0 - r1 / h, 1.0 - r0 / h
+        sx = cell[0] / (cu1 - cu0)
+        sy = cell[1] / (cv1 - cv0)
+        return (
+            img[r0:r1, c0:c1],
+            [sx, sy, cell[2] - cu0 * sx, cell[3] - cv0 * sy],
+            (cu0, cv0, cu1, cv1),
+        )
+
+    @staticmethod
+    def _footprints(n_in: int, n_out: int, edge_centers: bool):
+        """Each output texel's box footprint ``(lo, hi)`` in source-texel units."""
+        i = np.arange(n_out, dtype=np.float64)
+        if edge_centers:
+            # Centres span the source edge to edge; the border boxes are clipped
+            # to the half that lies inside it.
+            step = n_in / (n_out - 1)
+            return (
+                np.clip(i * step - step / 2, 0.0, n_in),
+                np.clip(i * step + step / 2, 0.0, n_in),
+            )
+        step = n_in / n_out
+        return i * step, (i + 1) * step
+
+    @staticmethod
+    def _box_integrate(a: "np.ndarray", lo, hi) -> "np.ndarray":
+        """Integral of 2-D *a* (one constant value per texel) over ``[lo, hi)`` down axis 0.
+
+        Prefix sums in float64, a column block at a time: O(texels) at any
+        ratio, and an HDR peak (65504) cannot swamp the sums of texels far
+        from it, as float32 prefix sums let it. The result is float32 -- the
+        sums are bounded, only their running totals need the precision.
+        """
+        n, m = a.shape
+        out = np.empty((len(lo), m), dtype=np.float32)
+        k_lo = np.minimum(np.floor(lo).astype(np.int64), n - 1)
+        k_hi = np.minimum(np.floor(hi).astype(np.int64), n - 1)
+        f_lo = (lo - k_lo)[:, None]
+        f_hi = (hi - k_hi)[:, None]
+        block = max(1, 4_000_000 // max(n, 1))
+        for c0 in range(0, m, block):
+            c1 = min(m, c0 + block)
+            cs = np.zeros((n + 1, c1 - c0), dtype=np.float64)
+            np.cumsum(a[:, c0:c1], axis=0, dtype=np.float64, out=cs[1:])
+            at_lo = cs[k_lo] + f_lo * (cs[k_lo + 1] - cs[k_lo])
+            at_hi = cs[k_hi] + f_hi * (cs[k_hi + 1] - cs[k_hi])
+            out[:, c0:c1] = at_hi - at_lo
+        return out
+
+    @classmethod
+    def resize_into_cell(
+        cls,
+        image: "np.ndarray",
+        size: Tuple[int, int],
+        coverage: Optional["np.ndarray"] = None,
+        edge_centers: bool = True,
+    ) -> Tuple["np.ndarray", "np.ndarray"]:
+        """Body of :meth:`ImgUtils.resize_into_cell`."""
+        width, height = int(size[0]), int(size[1])
+        src = np.asarray(image)
+        h, w = src.shape[:2]
+        # inset_rects_to_texel_centers passes a rect under two texels on EITHER
+        # axis through unchanged; the content must match it.
+        centred = bool(edge_centers) and width >= 2 and height >= 2
+        ylo, yhi = cls._footprints(h, height, centred)
+        xlo, xhi = cls._footprints(w, width, centred)
+        area = (yhi - ylo)[:, None] * (xhi - xlo)[None, :]
+
+        def integrate(plane):
+            # One channel at a time: no full-tile intermediate is ever held.
+            rows = cls._box_integrate(plane, ylo, yhi)
+            return cls._box_integrate(rows.T, xlo, xhi).T
+
+        weight = None
+        if coverage is not None:
+            weight = np.clip(np.asarray(coverage, dtype=np.float32), 0.0, 1.0)
+        planes = [src] if src.ndim == 2 else [src[..., c] for c in range(src.shape[2])]
+        sums = [
+            integrate(p if weight is None else p.astype(np.float32) * weight)
+            for p in planes
+        ]
+        den = area if weight is None else integrate(weight).astype(np.float64)
+        covered = den > 1e-9 * np.maximum(area, 1e-12)
+        safe = np.where(covered, den, 1.0)
+        out = np.stack([np.where(covered, s / safe, 0.0) for s in sums], axis=-1)
+        if src.ndim == 2:
+            out = out[..., 0]
+        fraction = np.where(covered, den / np.maximum(area, 1e-12), 0.0)
+        dtype = src.dtype if np.issubdtype(src.dtype, np.floating) else np.float32
+        return out.astype(dtype), np.clip(fraction, 0.0, 1.0).astype(np.float32)
+
+    @staticmethod
+    def _bilinear_taps(xs, ys, h: int, w: int):
+        """The four texels and weights a bilinear read at ``(xs, ys)`` takes.
+
+        Pixel-centre convention (texel ``i`` is at ``x == i``); taps past the
+        frame are clamped onto it, as a clamped sampler reads them.
+        """
+        x0 = np.floor(xs).astype(np.int64)
+        y0 = np.floor(ys).astype(np.int64)
+        fx, fy = xs - x0, ys - y0
+        cols = np.stack([x0, x0 + 1, x0, x0 + 1], 1).clip(0, w - 1)
+        rows = np.stack([y0, y0, y0 + 1, y0 + 1], 1).clip(0, h - 1)
+        weights = np.stack(
+            [(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy], 1
+        )
+        return rows * w + cols, weights
+
+    @classmethod
+    def stitch_seams(
+        cls,
+        image: "np.ndarray",
+        pairs: "np.ndarray",
+        iterations: int = 64,
+    ) -> "np.ndarray":
+        """Body of :meth:`ImgUtils.stitch_seams`."""
+        out = np.array(image, copy=True)
+        pairs = np.asarray(pairs, dtype=np.float64).reshape(-1, 4)
+        if not len(pairs):
+            return out
+        h, w = out.shape[:2]
+        flat = out.reshape(h * w, -1)
+        taps = [
+            cls._bilinear_taps(pairs[:, 0], pairs[:, 1], h, w),
+            cls._bilinear_taps(pairs[:, 2], pairs[:, 3], h, w),
+        ]
+        # Least-norm share of a sample's correction per tap (w / sum w^2), and
+        # how many samples touch each texel (their updates are averaged, so a
+        # texel several samples share is not corrected several times over).
+        shares = [
+            wts / np.maximum((wts**2).sum(1, keepdims=True), 1e-12) for _i, wts in taps
+        ]
+        n = h * w
+        touched = np.zeros(n, np.float64)
+        for idx, wts in taps:
+            touched += np.bincount(idx[wts > 0], minlength=n)
+        live = np.nonzero(touched)[0]
+        # The solve runs on the touched texels only, gathered once: bincount
+        # over those indices instead of add.at over the whole atlas.
+        local = np.zeros(n, np.int64)
+        local[live] = np.arange(len(live))
+        # A zero-weight tap (a read ON a texel row) points at a live texel it
+        # leaves untouched, never off the end of the solve's array.
+        taps = [(np.where(wts > 0, local[idx], 0), wts) for idx, wts in taps]
+        values = flat[live].astype(np.float64)
+        weight = touched[live][:, None]
+        settled = 1e-4 * max(float(np.abs(values).mean()), 1e-12)
+        for _ in range(max(1, int(iterations))):
+            reads = [(values[idx] * wts[..., None]).sum(1) for idx, wts in taps]
+            diff = reads[0] - reads[1]  # (N, C): meet halfway
+            if float(np.abs(diff).max()) <= settled:
+                break
+            delta = np.zeros_like(values)
+            for (idx, wts), share, sign in zip(taps, shares, (-0.5, 0.5)):
+                upd = sign * diff[:, None, :] * share[..., None]
+                upd[wts <= 0] = 0.0
+                for ch in range(values.shape[1]):
+                    delta[:, ch] += np.bincount(
+                        idx.ravel(), weights=upd[..., ch].ravel(), minlength=len(live)
+                    )
+            values += delta / weight
+        flat[live] = _ImgFilterInternal._restore_dtype(values, out.dtype)
+        return out
+
     @classmethod
     def assemble_atlas(
         cls,
@@ -303,4 +506,4 @@ class _ImgAtlasInternal:
 
         if squeeze:
             canvas = canvas[..., 0]
-        return canvas.astype(dtype, copy=False)
+        return _ImgFilterInternal._restore_dtype(canvas, dtype)

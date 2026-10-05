@@ -95,6 +95,97 @@ class _MappingSpecInternal(object):
         ]
 
     @staticmethod
+    def field_choices(path: str) -> Optional[Tuple[Any, ...]]:
+        """The allowed values of the schema field at dotted *path*
+        (``"columns.object_case"``), or ``None`` when no field there declares
+        ``choices`` -- what a field-backed choice option offers."""
+        schema: Any = MappingSpec
+        doc = None
+        for part in path.split("."):
+            if schema is None:
+                return None
+            doc = next((d for d in schema.describe() if d.name == part), None)
+            if doc is None:
+                return None
+            schema = doc.nested
+        return tuple(doc.choices) if doc is not None and doc.choices else None
+
+    @staticmethod
+    def validate_match(value: Any) -> List[str]:
+        """``match`` is ``name`` or ``name_then_order``."""
+        if value in ("name", "name_then_order"):
+            return []
+        return [f"{value!r} is not 'name' or 'name_then_order'"]
+
+    @staticmethod
+    def validate_options(value: Any) -> List[str]:
+        """Validate the ``options`` block: ``{key: option}`` where an option is
+        a ``bool`` (``set`` patch when on, ``unset`` when off) or a ``choice``
+        (``choices: {value: {label, tooltip, set}}``, or ``field``: a schema
+        field whose own ``choices`` are the values, ``choices`` then only
+        labelling them).  A patch is a partial mapping, so its keys must be
+        mapping keys (never ``options``)."""
+        from dataclasses import fields
+
+        if not isinstance(value, dict):
+            return ["expected a mapping of {key: option}"]
+        patchable = {f.name for f in fields(MappingSpec)} - {"options"}
+        errs: List[str] = []
+
+        def _patch(where: str, p: Any) -> None:
+            if not isinstance(p, dict):
+                errs.append(f"{where} must be a mapping (a partial template)")
+                return
+            for k in p:
+                if k not in patchable:
+                    errs.append(f"{where} sets {k!r}, not one of {sorted(patchable)}")
+
+        for key, opt in value.items():
+            if not isinstance(opt, dict):
+                errs.append(f"{key!r} must be a mapping")
+                continue
+            kind = opt.get("kind")
+            if kind == "bool":
+                if "default" in opt and not isinstance(opt["default"], bool):
+                    errs.append(f"{key!r}: a bool option's default must be true/false")
+                for k in ("set", "unset"):
+                    if k in opt:
+                        _patch(f"{key!r}.{k}", opt[k])
+            elif kind == "choice" and "field" in opt:
+                values = _MappingSpecInternal.field_choices(str(opt["field"]))
+                if values is None:
+                    errs.append(
+                        f"{key!r}: field {opt['field']!r} is not a schema field "
+                        "with choices"
+                    )
+                    continue
+                if "default" in opt and opt["default"] not in values:
+                    errs.append(f"{key!r}: default {opt['default']!r} is not a choice")
+                for name in opt.get("choices") or {}:
+                    if name not in values:
+                        errs.append(
+                            f"{key!r}: {name!r} is not one of {opt['field']!r}'s "
+                            f"values {list(values)}"
+                        )
+            elif kind == "choice":
+                choices = opt.get("choices")
+                if not isinstance(choices, dict) or not choices:
+                    errs.append(
+                        f"{key!r}: a choice option needs a non-empty 'choices' mapping"
+                    )
+                    continue
+                if "default" in opt and opt["default"] not in choices:
+                    errs.append(f"{key!r}: default {opt['default']!r} is not a choice")
+                for name, choice in choices.items():
+                    if not isinstance(choice, dict):
+                        errs.append(f"{key!r}.{name!r} must be a mapping")
+                    elif "set" in choice:
+                        _patch(f"{key!r}.{name!r}.set", choice["set"])
+            else:
+                errs.append(f"{key!r}: kind {kind!r} is not 'bool' or 'choice'")
+        return errs
+
+    @staticmethod
     def validate_default_behaviors(value: Any) -> List[str]:
         """Validate the ``default_behaviors`` block ({kind: [behavior names]})."""
         if not isinstance(value, dict):
@@ -127,6 +218,42 @@ class MappingSpec(SchemaSpec, _MappingSpecInternal):
         help='Default behaviors per object kind, e.g. {"audio": ["set_clip"]} (optional).',
         validate=_MappingSpecInternal.validate_default_behaviors,
         example={"audio": ["set_clip"], "scene": ["fade_in"]},
+        default=None,
+    )
+    match: str = SchemaSpec.spec_field(
+        help=(
+            "How a step finds its shot: `name` (its stored binding, then its "
+            "name) or `name_then_order` (then the rest in timeline order)."
+        ),
+        validate=_MappingSpecInternal.validate_match,
+        example="name",
+        default="name",
+    )
+    fill_missing_assets: bool = SchemaSpec.spec_field(
+        help=(
+            "Give steps the sheet lists no assets for what their paired shot "
+            "holds: its members and what animates in its range."
+        ),
+        example=True,
+        default=False,
+    )
+    options: Optional[Dict[str, Any]] = SchemaSpec.spec_field(
+        help=(
+            "Settings the template exposes in the UI, each a partial template "
+            "merged over it: `{key: {kind: bool|choice, label, tooltip, "
+            "default, set, unset, choices: {value: {label, tooltip, set}}}}`; "
+            "a choice may name a schema `field` (`columns.object_case`) "
+            "instead, offering that field's allowed values (optional)."
+        ),
+        validate=_MappingSpecInternal.validate_options,
+        example={
+            "fill_missing_assets": {
+                "kind": "bool",
+                "label": "Auto-fill Missing Assets",
+                "default": False,
+                "set": {"fill_missing_assets": True},
+            }
+        },
         default=None,
     )
 

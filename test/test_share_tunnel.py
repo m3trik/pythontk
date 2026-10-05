@@ -79,6 +79,23 @@ TAILSCALE_OK = [
     "Press Ctrl+C to exit.",
 ]
 
+#: Tailscale 1.102.2, a foreground share on a port the machine's name already
+#: serves -- another share's, or a `serve --bg` -- as captured 2026-10-02; the
+#: client then exits 1.
+TAILSCALE_PORT_TAKEN = (
+    "sending serve config: updating config: listener already exists for port 443"
+)
+#: The same version's foreground share on 8443, beside one on 443, as captured
+#: (`serve`; the machine's name replaced): the link carries its port.
+TAILSCALE_ON_8443 = [
+    "Available within your tailnet:",
+    "",
+    "https://studio-pc.tail0000.ts.net:8443/",
+    "|-- proxy http://127.0.0.1:8118",
+    "",
+    "Press Ctrl+C to exit.",
+]
+
 #: The fake CLI: prints the fixture its first argument names, then behaves as
 #: the real client would -- keeps running, or exits.
 FAKE_CLI = f"""
@@ -116,6 +133,16 @@ elif mode == "tailscale-gives-up":
     # A client that names the step and exits rather than wait on it.
     say(FIXTURES["tailscale-disabled"])
     sys.exit(1)
+elif mode == "tailscale-ports":
+    # One listener per HTTPS port of the machine's name: a port named taken
+    # (argv: host, port, https_port, taken) is refused as tailscaled refuses
+    # it, any other is served at a link carrying it.
+    https_port, taken = sys.argv[4], sys.argv[5].split(",")
+    if https_port in taken:
+        print({TAILSCALE_PORT_TAKEN!r}[: -len("443")] + https_port, flush=True)
+        sys.exit(1)
+    port = "" if https_port == "443" else ":" + https_port
+    say([line.replace(".ts.net/", ".ts.net" + port + "/") for line in FIXTURES["tailscale"]])
 elif mode in FIXTURES:
     say(FIXTURES[mode])
 time.sleep(600)
@@ -214,11 +241,23 @@ class ShareTunnelTestCase(unittest.TestCase):
             action = re.compile(spec["action"], re.I)
             prompts = [line for line in TAILSCALE_DISABLED if action.search(line)]
             self.assertEqual(len(prompts), 1, name)
+            # A share beside another: its link carries the port it took, and
+            # the refusal of a taken one is told from every other line.
+            found = [link.search(line) for line in TAILSCALE_ON_8443]
+            found = [match.group(1) for match in found if match]
+            self.assertEqual(found, ["https://studio-pc.tail0000.ts.net:8443"], name)
+            taken = re.compile(spec["port_taken"])
+            self.assertTrue(taken.search(TAILSCALE_PORT_TAKEN), name)
+            others = TAILSCALE_OK + TAILSCALE_DISABLED + TAILSCALE_ON_8443
+            self.assertFalse([line for line in others if taken.search(line)], name)
 
     def test_start_waits_for_the_connection_not_just_the_link(self):
         """cloudflared prints the link before the edge accepts a connection;
         a guest following it that early gets an error page."""
-        tunnel = self._tunnel("no-ready", timeout=1.5)
+        # Time for the fake to start and print its link on a loaded machine:
+        # the link and the connection share one deadline, and a link that
+        # arrives late reads "no link", not the "no connection" under test.
+        tunnel = self._tunnel("no-ready", timeout=5.0)
         with self.assertRaises(TimeoutError) as caught:
             tunnel.start()
         self.assertIn("no connection", str(caught.exception))
@@ -233,6 +272,87 @@ class ShareTunnelTestCase(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 10, "waited out the timeout")
         self.assertIn("exited (code 3)", str(caught.exception))
         self.assertIn("Logged out.", str(caught.exception))
+        # Shaped like Funnel, which has ports to move to: only a refusal that
+        # IS the port moves a share, so this failure was not retried.
+        self.assertEqual(len(self.spawned), 1)
+
+    # -- shares beside each other ----------------------------------------
+    def _ports_tunnel(self, taken, like="tailscale_funnel"):
+        """A Tailscale-shaped share on a machine whose name already serves
+        the HTTPS ports *taken*."""
+        mode = self._provider(
+            "tailscale-ports",
+            like,
+            args=[
+                "-u",
+                self.cli,
+                "tailscale-ports",
+                "{host}",
+                "{port}",
+                "{https_port}",
+                ",".join(str(port) for port in taken) or "-",
+            ],
+        )
+        tunnel = ShareTunnel(8118, provider=mode, timeout=20.0)
+        self.tunnels.append(tunnel)
+        return tunnel
+
+    def test_a_share_on_a_free_machine_keeps_the_bare_name(self):
+        """The first share is where it always was: 443, the link without a
+        port -- what a guest bookmarked stays right."""
+        tunnel = self._ports_tunnel(taken=())
+        self.assertEqual(tunnel.start(), "https://studio-pc.tail0000.ts.net")
+        self.assertEqual(len(self.spawned), 1)
+
+    def test_a_share_beside_another_takes_the_next_https_port(self):
+        """Reported: a second DCC sharing through Funnel failed with "exited
+        (code 1)" -- the name holds one listener per port, and 443 was the
+        first share's. It moves to the next port, its link carrying it."""
+        for like in ("tailscale_funnel", "tailscale_serve"):
+            with self.subTest(like):
+                before = len(self.spawned)  # tearDown reaps every one
+                tunnel = self._ports_tunnel(taken=(443,), like=like)
+                self.assertEqual(
+                    tunnel.start(), "https://studio-pc.tail0000.ts.net:8443"
+                )
+                refused, served = self.spawned[before:]
+                self.assertIsNotNone(refused.poll(), "the refused client")
+                self.assertIsNone(served.poll())
+                self.assertTrue(tunnel.is_running)
+                tunnel.stop()
+
+    def test_every_port_taken_fails_naming_the_limit_and_the_way_past_it(self):
+        tunnel = self._ports_tunnel(taken=(443, 8443, 10000))
+        with self.assertRaises(RuntimeError) as caught:
+            tunnel.start()
+        message = str(caught.exception)
+        self.assertIn("(443, 8443, 10000)", message)
+        self.assertIn(ShareTunnel.PROVIDERS["cloudflared"]["label"], message)
+        self.assertIn("listener already exists for port 10000", message)
+        self.assertEqual(len(self.spawned), 3)
+        self.assertFalse(tunnel.is_running)
+        for process in self.spawned:
+            self.assertIsNotNone(process.poll(), "a client was left running")
+
+    def test_a_stop_between_two_ports_ends_the_start(self):
+        """The walk checks for a stop before each port, not only while it
+        waits on one: a stop landing as a refused client exits must not be
+        answered by spawning the next."""
+        tunnel = self._ports_tunnel(taken=(443,))
+        real_teardown = tunnel._teardown
+
+        def teardown_then_cancel():
+            real_teardown()
+            if self.spawned:  # the refused client's, not the start's own sweep
+                tunnel.cancel()  # as another thread's unshare() does
+
+        with unittest.mock.patch.object(
+            tunnel, "_teardown", side_effect=teardown_then_cancel
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                tunnel.start()
+        self.assertIn("stopped before its link was ready", str(caught.exception))
+        self.assertEqual(len(self.spawned), 1, "the next port was tried")
 
     def test_a_provider_waiting_on_the_user_fails_at_once_naming_the_step(self):
         """Tailscale prints an enable link and polls until someone follows it;
@@ -274,13 +394,16 @@ class ShareTunnelTestCase(unittest.TestCase):
 
         flag = self.temp.path(extension=".step")
         steps = []
-        tunnel = self._step_tunnel(flag, timeout=1.0, on_step=steps.append)
+        # Long enough for the fake to print its prompt on a loaded machine
+        # (at 1.0 it could time out before reporting any step), short enough
+        # that the step below is taken after it has run out.
+        tunnel = self._step_tunnel(flag, timeout=3.0, on_step=steps.append)
 
         def take_the_step():
             deadline = time.monotonic() + 20
             while not steps and time.monotonic() < deadline:
                 time.sleep(0.05)
-            time.sleep(1.5)  # longer than the link's own timeout
+            time.sleep(tunnel.timeout + 0.5)  # past the link's own timeout
             Path(flag).touch()
 
         taker = threading.Thread(target=take_the_step, daemon=True)
@@ -299,7 +422,11 @@ class ShareTunnelTestCase(unittest.TestCase):
     def test_a_step_not_taken_in_time_ends_the_wait_naming_it(self):
         flag = self.temp.path(extension=".step")  # never created
         steps = []
-        tunnel = self._step_tunnel(flag, timeout=1.0, on_step=steps.append)
+        # The link's timeout roomy, the step's short: what ends this start
+        # must be the step's wait. At timeout=1.0 a loaded machine started the
+        # fake CLI too slowly to print its prompt in time, and the start ended
+        # as a plain TimeoutError before any step was seen.
+        tunnel = self._step_tunnel(flag, timeout=20.0, on_step=steps.append)
         with unittest.mock.patch.object(ShareTunnel, "_STEP_WAIT", 1.0):
             with self.assertRaises(ShareTunnel.StepRequired) as caught:
                 tunnel.start()
@@ -329,7 +456,9 @@ class ShareTunnelTestCase(unittest.TestCase):
 
         flag = self.temp.path(extension=".step")
         steps, outcome = [], {}
-        tunnel = self._step_tunnel(flag, timeout=1.0, on_step=steps.append)
+        # Roomy: only the time to the step counts against it, and that is the
+        # fake's start-up.
+        tunnel = self._step_tunnel(flag, timeout=20.0, on_step=steps.append)
 
         def start():
             try:
@@ -357,8 +486,8 @@ class ShareTunnelTestCase(unittest.TestCase):
         tunnel it was handed must end the start, not leave it polling a
         client that stop just took away."""
         flag = self.temp.path(extension=".step")  # never created
-        tunnel = self._step_tunnel(
-            flag, timeout=1.0, on_step=lambda step: tunnel.stop()
+        tunnel = self._step_tunnel(  # roomy: only the fake's start-up counts
+            flag, timeout=20.0, on_step=lambda step: tunnel.stop()
         )
         with self.assertRaises(RuntimeError) as caught:
             tunnel.start()
@@ -639,9 +768,20 @@ class ShareTunnelTestCase(unittest.TestCase):
         for name, spec in ShareTunnel.PROVIDERS.items():
             for key in ("label", "executable", "args", "url", "public", "install"):
                 self.assertIn(key, spec, name)
-            args = [a.format(host="127.0.0.1", port=8118) for a in spec["args"]]
+            ports = spec.get("https_ports") or (None,)
+            args = [
+                a.format(host="127.0.0.1", port=8118, https_port=ports[0])
+                for a in spec["args"]
+            ]
             self.assertIn("http://127.0.0.1:8118", " ".join(args), name)
             self.assertEqual(re.compile(spec["url"]).groups, 1, name)
+            # Ports to move to, and the refusal that moves a share, go
+            # together: either alone is a share that cannot move.
+            self.assertEqual(
+                bool(spec.get("https_ports")), bool(spec.get("port_taken")), name
+            )
+            if spec.get("https_ports"):
+                self.assertIn(f"--https={ports[0]}", args, name)
 
     def test_the_default_is_always_a_public_provider(self):
         """A default has to produce a link anyone can open."""

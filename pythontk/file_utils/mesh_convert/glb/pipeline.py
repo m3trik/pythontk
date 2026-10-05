@@ -421,12 +421,10 @@ class GlbPipeline(LoggingMixin):
         only while a stack those names do not cover survives to cut from; a
         file that declares nothing is read as is. Never the caller's file.
 
-        What this moves: when the rebuild DECLINES (it warns and leaves "clips
-        as exported"), the GLB carries the whole-timeline stack alone instead
-        of the converter's lossy split takes.
+        The rebuild never lacks the origin it cuts against: the conversion
+        measures it from the file it reads (``MeshConvert._stamp_clip_spans``),
+        whatever the producer published.
         """
-        import struct
-
         from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
         from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
 
@@ -434,7 +432,7 @@ class GlbPipeline(LoggingMixin):
             return
         try:
             fbx = FbxFile.load(src, raw_payloads=False)
-        except (OSError, ValueError, struct.error) as error:
+        except (OSError, ValueError) as error:
             log.debug("Split-take strip skipped (unreadable FBX): %s", error)
             return
         declared = cls._declared_takes(fbx)
@@ -472,22 +470,11 @@ class GlbPipeline(LoggingMixin):
         ``fbx_takes`` channel an older FBX carries.  Unioned across carriers:
         a file can hold more than one (an imported reference brings its own).
         """
-        import json
-
         from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
-
-        def decoded(key: str):
-            for value in fbx.user_properties(key):
-                if not isinstance(value, (bytes, bytearray)) or not value.strip():
-                    continue
-                try:
-                    yield json.loads(bytes(value).decode("utf-8"))
-                except (ValueError, UnicodeDecodeError):
-                    continue
 
         names: set = set()
         for key in (SceneRecords.SHOTS.key, SceneRecords.FBX_TAKES.key):
-            for payload in decoded(key):
+            for payload in cls._carrier_payloads(fbx, key):
                 names.update(
                     str(take["name"])
                     for take in SceneRecords.declared_takes({key: payload}.get)
@@ -496,3 +483,17 @@ class GlbPipeline(LoggingMixin):
             if names:
                 break
         return names
+
+    @staticmethod
+    def _carrier_payloads(fbx, key: str) -> Iterator[Any]:
+        """Each carrier's *key* channel in *fbx*, decoded; a blank or
+        malformed one is skipped."""
+        import json
+
+        for value in fbx.user_properties(key):
+            if not isinstance(value, (bytes, bytearray)) or not value.strip():
+                continue
+            try:
+                yield json.loads(bytes(value).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                continue

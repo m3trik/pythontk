@@ -755,6 +755,18 @@ class FileTest(BaseTestCase):
             self.assertEqual(by_dir, ["Widget"])
             self.assertFalse(marker.exists(), "the class-less script was executed")
 
+    def test_a_file_saved_with_a_bom_is_scanned(self):
+        """Python imports a UTF-8 file with a BOM (Windows PowerShell 5.1
+        writes one); the scan must read it too, not die in ``ast.parse`` --
+        one such file in a slots tree took a whole ``Switchboard`` down."""
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "bom_widget.py").write_text(
+                "class BomWidget:\n    pass\n", encoding="utf-8-sig"
+            )
+            self.assertEqual(
+                FileUtils.get_classes_from_path(tmp, "classname"), ["BomWidget"]
+            )
+
     # -------------------------------------------------------------------------
     # Version Management Tests
     # -------------------------------------------------------------------------

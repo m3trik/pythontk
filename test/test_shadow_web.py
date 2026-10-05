@@ -937,11 +937,13 @@ class TestServerAutoActivation(unittest.TestCase):
         self.assertEqual(self.server.scripts, ("turntable", "shadow_rig"))
         self.assertEqual(
             self.server.manifest()["scripts"],
-            ["scripts/turntable.js", "scripts/shadow_rig.js"],
+            ["features/turntable.js", "features/shadow_rig/shadow_rig.js"],
         )
-        self.assertTrue(
-            (Path(self.server.root) / "scripts" / "shadow_rig.js").is_file()
-        )
+        # Served with the model beside it, which its adapter imports.
+        for module in ("shadow_rig.js", "model.js"):
+            self.assertTrue(
+                (Path(self.server.root) / "features" / "shadow_rig" / module).is_file()
+            )
 
     def test_a_plain_deliverable_activates_nothing(self):
         self.server.publish(self._glb(False))
@@ -1184,13 +1186,13 @@ class TestShadowRigLive(unittest.TestCase):
         # the user has open would poll this test server.
         server = ptk.PreviewServer(viewer=True, title="shadow-test", port=0)
         server.start()
-        # The shim BEFORE the probe, and the page up before the publish. The
-        # page imports the manifest's scripts in order and does not await them
-        # before loading the asset, so a 5 KB fixture can be on screen before a
-        # 34 KB module has arrived (measured: every run in this process). With
-        # the probe last, its presence proves the shim is in, and a push then
-        # lands on a page that has it -- the production order too: the server
-        # outlives every push. Auto-activation is pinned by the server tests.
+        # The shim BEFORE the probe, and the page up before the publish -- the
+        # production order: the server outlives every push. The page imports
+        # the manifest's scripts in order, so with the probe last its presence
+        # proves the shim is in, and the push then lands on a page that has it.
+        # (A push naming the asset and the scripts together is held for them
+        # too: test_preview_viewer_live pins that.) Auto-activation is pinned
+        # by the server tests.
         server.add_script("shadow_rig")
         server.add_script("probe", probe)
         console = []
@@ -1767,6 +1769,91 @@ class TestShadowRigLive(unittest.TestCase):
         self.assertGreater(int((expected > 0.5).sum()), 4)
         found = self._load(glb, action=HORIZON_SAMPLES_JS, points=points)
         self._assert_tracks_reference(found, expected, points)
+
+
+#: Every ``shadow_projection`` golden case through the feature's model port,
+#: imported by its own served path (as an app vendoring it would). Each function
+#: is held to its own inputs: the far point to the reference's, the model to
+#: the reference's source point, the placement to the model it computed.
+CONFORMANCE_JS = """
+import { farPoint, placement, shadowModel } from '../features/shadow_rig/model.js';
+
+export default function probe() {
+  const doc = __DOC__;
+  const worst = { source: 0, model: 0, placement: 0 };
+  const flags = [];
+  const gap = (a, b) => Math.max(...a.map((v, i) => Math.abs(v - b[i])));
+  for (const c of doc.cases) {
+    const given = c.input;
+    if (given.direction) {
+      const far = farPoint(given.contact, given.direction, Math.max(given.height, 2 * given.radius));
+      worst.source = Math.max(worst.source, gap(far, c.source));
+    }
+    const m = shadowModel(given.contact, c.source, given.ground, given.radius, given.height, given.max_stretch);
+    const e = c.model;
+    worst.model = Math.max(
+      worst.model,
+      gap(m.anchor, e.anchor),
+      gap(m.bearing, e.bearing),
+      ...[[m.kBase, e.k_base], [m.kTop, e.k_top], [m.reach, e.reach],
+        [m.base, e.base], [m.top, e.top], [m.width, e.width]].map(([a, b]) => Math.abs(a - b)),
+    );
+    if (m.overhead !== e.overhead) flags.push(`${c.name}: overhead ${m.overhead}`);
+    const p = placement(m, given.canvas);
+    worst.placement = Math.max(
+      worst.placement,
+      gap(p.centre, c.placement.centre),
+      Math.abs(p.along - c.placement.along),
+      Math.abs(p.across - c.placement.across),
+    );
+  }
+  window.__probe = { ready: true, worst, flags, count: doc.cases.length };
+}
+"""
+
+
+@unittest.skipUnless(
+    browser_runtime_available(), "needs playwright + an installed Edge channel"
+)
+class TestShadowModelConformance(unittest.TestCase):
+    """The JavaScript port against the reference's golden cases
+    (``ptk.Conformance.cases("shadow_projection")``) -- unitytk's C# port runs
+    the same document."""
+
+    def test_the_js_model_matches_every_conformance_case(self):
+        from playwright.sync_api import sync_playwright
+
+        doc = ptk.Conformance.cases("shadow_projection", seed=2, per_kind=8)
+        temp = ptk.TempArtifacts("shadow_conformance", policy="scoped")
+        probe = temp.path(extension=".js")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write(CONFORMANCE_JS.replace("__DOC__", json.dumps(doc)))
+        server = ptk.PreviewServer(viewer=True, title="shadow-conformance", port=0)
+        server.start()
+        # Active so its folder -- the model beside the adapter -- is served.
+        server.add_script("shadow_rig")
+        server.add_script("probe", probe)
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    channel="msedge",
+                    headless=True,
+                    args=["--enable-unsafe-swiftshader"],
+                )
+                page = browser.new_page()
+                page.goto(server.url, wait_until="domcontentloaded", timeout=120_000)
+                page.wait_for_function("() => window.__probe?.ready", timeout=120_000)
+                found = page.evaluate("() => window.__probe")
+                browser.close()
+        finally:
+            server.stop()
+            temp.cleanup()
+        self.assertEqual(found["count"], len(doc["cases"]))
+        self.assertEqual(found["flags"], [])
+        for quantity, tolerance in doc["tolerance"].items():
+            self.assertLessEqual(
+                found["worst"][quantity], tolerance, (quantity, found["worst"])
+            )
 
 
 if __name__ == "__main__":

@@ -17,8 +17,13 @@ overhead for it. This engine does the remap directly in numpy:
 2. :meth:`UvTransfer.transfer` applies the table to a source image (or one
    image per source material, for a consolidation) and returns the remapped
    image plus its coverage mask. :meth:`UvTransfer.transfer_normals` is the
-   same for tangent-space normal maps, which additionally need their XY
-   re-expressed in the target island's tangent frame.
+   SAME resample for a tangent-space normal map, plus the one step a
+   direction stored in an island's own frame needs: where the target layout
+   rotates or mirrors an island, the stored XY turn with it. The turn is read
+   off the two UV layouts alone -- never positions or normals -- so this is
+   no normal-map bake (re-deriving normals from geometry, a ray-cast baker's
+   job and a separate operation): a target that moved or deforms transfers
+   exactly like one that did not.
 3. :meth:`UvTransfer.pad` fills the gutter from the coverage mask so
    filtering and mips never pull background across an island edge.
 
@@ -51,10 +56,12 @@ filter) and gives anti-aliased island edges; ``1`` is point sampling.
 import math
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from pythontk.core_utils.help_mixin import HelpMixin
+from pythontk.str_utils._str_utils import StrUtils
 
 try:
     import numpy as np
@@ -354,6 +361,7 @@ class UvTransfer(HelpMixin):
         *,
         source_masks=None,
         bilinear: bool = True,
+        value_max: Optional[float] = None,
     ) -> Tuple["np.ndarray", "np.ndarray"]:
         """Remap *sources* through *table*.
 
@@ -371,6 +379,11 @@ class UvTransfer(HelpMixin):
                 sampling, so an island edge never bilinearly pulls in the
                 source's gutter/background.
             bilinear: Bilinear (default) vs nearest sampling.
+            value_max: The sources' full scale (255 for 8-bit data), used as
+                the OPAQUE value for an alpha channel a source lacks when
+                sources of different channel counts share the layout. None
+                guesses it from each source's data, which reads an all-dark
+                8-bit map as 0..1 -- pass it whenever channel counts can mix.
 
         Returns:
             ``(image float32 HxWxC, coverage float32 HxW)`` -- *image* holds the
@@ -380,7 +393,7 @@ class UvTransfer(HelpMixin):
         """
         cls._require_numpy()
         h, w = table.size
-        src_by_id, channels = cls._normalize_sources(sources, table)
+        src_by_id, channels = cls._normalize_sources(sources, table, value_max)
         if source_masks is not None:
             src_by_id = cls._prefill_sources(src_by_id, source_masks)
 
@@ -420,7 +433,10 @@ class UvTransfer(HelpMixin):
         rotated island shading wrong. Per triangle the 2x2 source->target UV
         map is polar-decomposed to its rotation (+ reflection for mirrored
         islands), exactly the change an orthonormalized tangent basis sees;
-        XY are rotated by it, Z is kept, and the vector is renormalized.
+        XY are rotated by it, Z is kept, and the vector is renormalized. Only
+        the two UV layouts enter it -- no positions, no normals -- so it stays
+        a resample: where the target geometry stands, or how it is shaped,
+        changes nothing.
 
         Parameters:
             table: From :meth:`build`.
@@ -445,7 +461,7 @@ class UvTransfer(HelpMixin):
         lo, hi = float(value_range[0]), float(value_range[1])
         span = hi - lo
         h, w = table.size
-        src_by_id, channels = cls._normalize_sources(sources, table)
+        src_by_id, channels = cls._normalize_sources(sources, table, hi)
         if channels < 3:
             raise ValueError("normal maps need 3 channels")
         if source_masks is not None:
@@ -601,6 +617,189 @@ class UvTransfer(HelpMixin):
         return {name: merged}
 
     @classmethod
+    def layout_jobs(
+        cls,
+        parts: Sequence[Dict[str, Any]],
+        sources: Sequence[Dict[str, Any]],
+        *,
+        log: Optional[Callable[[str], None]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """A run's outputs, ``{label: job}``, from what each target contributed.
+
+        The unit of a transfer is a LAYOUT, and no name a host reads off a
+        target says which layout a triangle is in. One UV set name can hold
+        two atlases (two meshes each filling 0-1), and two names can be one: a
+        production table whose parts came in through Maya (``map1``) and an
+        FBX (``UVChannel_1``) was ONE combined layout, which grouping by set
+        name transferred into two materials. So parts are grouped by (target
+        material, target UV set) -- the finest unit that is still one image --
+        and every group competes in ONE :meth:`merge_layouts`: one output when
+        no two overlap, one output per group otherwise.
+
+        Parameters:
+            parts: One per (target, target material) the host read:
+                ``{"material": its name, or None for faces that wear nothing,
+                "uv_set": the target UV set, "src", "dst", "ids"`` (as
+                :meth:`transfer_materials` takes them) ``, "members": [...]}``.
+                ``members`` is the host's own, carried through untouched.
+            sources: The run's source-material registry
+                (:meth:`transfer_materials`'s ``sources``), shared by every job.
+            log: Optional ``callable(str)``, told how the groups came out.
+
+        Returns:
+            ``{label: job}`` -- one job named after the UV set(s) when every
+            group merged; otherwise one per group, named after its material
+            (``<set>_<material>`` for a material two sets share, the set alone
+            for faces that wear nothing). Empty when nothing was contributed.
+        """
+        cls._require_numpy()
+        groups: Dict[Tuple[Optional[str], str], Dict[str, list]] = {}
+        for part in parts:
+            group = groups.setdefault(
+                (part.get("material"), part["uv_set"]),
+                {"src": [], "dst": [], "ids": [], "members": []},
+            )
+            for key in ("src", "dst", "ids"):
+                group[key].append(np.asarray(part[key]))
+            group["members"].extend(part.get("members") or [])
+        if not groups:
+            return {}
+        shared = Counter(material for material, _uv_set in groups)
+        jobs: Dict[str, Dict[str, Any]] = {}
+        for (material, uv_set), group in groups.items():
+            if material is None:
+                label = uv_set
+            else:
+                label = material if shared[material] == 1 else f"{uv_set}_{material}"
+            while label in jobs:  # a material named like a set it shares
+                label = f"{uv_set}_{label}"
+            jobs[label] = {
+                "src": np.concatenate(group["src"]),
+                "dst": np.concatenate(group["dst"]),
+                "ids": np.concatenate(group["ids"]).astype(np.int32),
+                "sources": sources,
+                "members": group["members"],
+            }
+        name = "_".join(dict.fromkeys(uv_set for _material, uv_set in groups))
+        merged = cls.merge_layouts(jobs, name)
+        if log and len(jobs) > 1:
+            log(
+                f"{len(jobs)} target material / UV set group(s) -> "
+                + (
+                    f"one layout ({name})"
+                    if len(merged) == 1
+                    else f"{len(merged)} overlapping layouts, kept apart"
+                )
+            )
+        return merged
+
+    #: Two generic projections of a normalized position into the unit square,
+    #: with independent null directions, so no single pair of distinct surface
+    #: points can collapse onto one key under both. Non-negative weights summing
+    #: below 1 per column keep every key inside ``[0, 1]``.
+    _OVERLAP_KEYS = (
+        ((0.61, 0.13), (0.27, 0.52), (0.11, 0.34)),
+        ((0.19, 0.48), (0.07, 0.29), (0.71, 0.21)),
+    )
+
+    @classmethod
+    def layout_overlaps(cls, uv_tris, points, size: int = 256) -> Tuple[int, int]:
+        """``(overlapping texels, covered texels)`` of a layout -- whether it bakes.
+
+        A lightmap gives every surface point its own texels, so a layout is
+        bakeable only when no texel holds two different points: stacked or
+        mirrored islands that suit a texture each read the other's light. The
+        layout is rasterized with each corner's normalized surface POSITION as
+        its key (:meth:`build`, which counts a texel two triangles claim with
+        different keys): triangles sharing an edge agree along it and never
+        count, distinct points do. Two projections, any overlap either sees.
+
+        Parameters:
+            uv_tris: ``(N, 3, 2)`` the layout's triangles (V up).
+            points: ``(N, 3, 3)`` the same triangles' surface positions, same
+                corner order.
+            size: Probe resolution -- an overlap smaller than a texel here is
+                below what a lightmap of that size can show.
+
+        Returns:
+            ``(overlaps, covered)`` in sample texels; judge one against the other.
+        """
+        cls._require_numpy()
+        uv = np.asarray(uv_tris, dtype=np.float64).reshape(-1, 3, 2)
+        pts = np.asarray(points, dtype=np.float64).reshape(-1, 3, 3)
+        if len(pts) != len(uv):
+            raise ValueError(f"{len(uv)} UV triangles but {len(pts)} point triangles")
+        if not len(uv):
+            return 0, 0
+        flat = pts.reshape(-1, 3)
+        span = float(np.ptp(flat, axis=0).max()) or 1.0
+        unit = (pts - flat.min(axis=0)) / span
+        worst, covered = 0, 0
+        for weights in cls._OVERLAP_KEYS:
+            table = cls.build(unit @ np.asarray(weights), uv, size, supersample=1)
+            worst = max(worst, table.overlaps)
+            covered = int(sum((t >= 0).sum() for t in table.tri))
+        return worst, covered
+
+    @staticmethod
+    def output_labels(
+        labels: Sequence[str],
+        base: str,
+        *,
+        prefix: str = "",
+        suffix: str = "",
+    ) -> Dict[str, str]:
+        """``{label: label to name the output by}`` for a run named *base*.
+
+        A named run with several layouts calls each output ``<base>_<label>``,
+        and a layout's label is its TARGET material's name -- which, on a
+        re-run, is the material the previous run assigned. Taken as it stood,
+        every run stacked another copy of the name (measured on a production
+        table: ``SolderingTable_SolderingTable_SolderingTable_TABLE_ASSETS_MAT``
+        after four runs, the lightmap baker naming its maps after it). Every
+        leading ``<base>_`` comes off, and the *prefix* / *suffix* the result
+        material takes, so the first run and any re-run name the same files and
+        the same material.
+
+        A label that would strip to nothing, or onto a label another layout
+        keeps or strips to, keeps its own spelling: two layouts must never
+        share one stem, or their maps overwrite each other.
+
+        Parameters:
+            labels: The run's layout labels.
+            base: The run's output name (empty = no renaming; labels as given).
+            prefix / suffix: The affix applied to the assigned material.
+
+        Returns:
+            ``{label: output label}``, every label present.
+        """
+
+        def own(label: str) -> str:
+            core = label
+            while True:
+                stripped = StrUtils.strip_known_affix(
+                    core, prefix=f"{base}_", case_sensitive=True
+                )
+                stripped = StrUtils.strip_known_affix(
+                    stripped, prefix=prefix, suffix=suffix
+                ).strip("_")
+                if stripped == core or not stripped:
+                    return core
+                core = stripped
+
+        if not base:
+            return {label: label for label in labels}
+        proposed = {label: own(label) for label in labels}
+        counts = Counter(proposed.values())
+        kept = set(labels)
+        return {
+            label: (
+                out if out == label or (counts[out] == 1 and out not in kept) else label
+            )
+            for label, out in proposed.items()
+        }
+
+    @classmethod
     def transfer_materials(
         cls,
         jobs: Dict[str, Dict[str, Any]],
@@ -613,6 +812,7 @@ class UvTransfer(HelpMixin):
         name_format: str = "{material}_{channel}",
         normal_convention: Optional[str] = None,
         source_mask_from_uvs: bool = True,
+        avoid: Optional[Sequence[str]] = None,
         log=None,
     ) -> Dict[str, Dict[str, str]]:
         """Transfer every channel of every target material and write the maps.
@@ -641,18 +841,32 @@ class UvTransfer(HelpMixin):
                 to raise this is an informed one.
             supersample / padding: See :meth:`build` / :meth:`pad`.
             name_format: Stem with ``{material}`` / ``{channel}``.
-            normal_convention: ``"opengl"`` / ``"directx"`` / ``None`` to
-                sniff the source filename (DirectX tokens) else OpenGL.
+            normal_convention: ``"opengl"`` / ``"directx"`` for every
+                source, or ``None`` (default): each source map's own -- its
+                content, then its filename (:meth:`normal_convention`) -- with
+                a source that disagrees converted to the convention covering
+                most of the layout (:meth:`_unify_normal_conventions`).
             source_mask_from_uvs: Rasterize each source layout into a coverage
                 mask and pre-fill that source's gutter before sampling.
+            avoid: Paths never to write: files something still reads once
+                the run is done (the maps of a source material the host
+                keeps). An output whose name lands on one takes the first
+                free ``<stem>_<k>.png`` instead (:meth:`FileUtils.unique_path`).
+                Two outputs of one run never share a file either way; any
+                other name is the run's to replace, so a re-run rewrites its
+                own maps rather than writing a new set beside them.
             log: Optional ``callable(str)`` for progress lines.
 
         Returns:
             ``{target material: {channel: written path}}``.
         """
+        from pythontk.file_utils._file_utils import FileUtils
+
         cls._require_numpy()
         say = log or (lambda m: None)
         os.makedirs(output_dir, exist_ok=True)
+        taken: set = set()
+        avoid = tuple(avoid or ())
         results: Dict[str, Dict[str, str]] = {}
         for t_mat, job in jobs.items():
             src_tris = np.asarray(job["src"], dtype=float).reshape(-1, 3, 2)
@@ -660,6 +874,10 @@ class UvTransfer(HelpMixin):
             ids = np.asarray(job["ids"], dtype=np.int32).reshape(-1)
             sources = job["sources"]
             used = sorted(set(int(i) for i in np.unique(ids)))
+
+            def say_layout(m: str, _t: str = t_mat) -> None:
+                say(f"{_t}: {m}")
+
             wanted = (
                 list(channels)
                 if channels
@@ -670,7 +888,7 @@ class UvTransfer(HelpMixin):
                 ]
             )
             if not wanted:
-                say(f"{t_mat}: no source material carries a texture map; skipped.")
+                say_layout("no source material carries a texture map; skipped.")
                 results[t_mat] = {}
                 continue
             res = size or cls._auto_size(
@@ -680,18 +898,18 @@ class UvTransfer(HelpMixin):
                 src_tris,
                 dst_tris,
                 ids,
-                say=lambda m, _t=t_mat: say(f"{_t}: {m}"),
+                say=say_layout,
             )
-            say(
-                f"{t_mat}: {len(dst_tris)} triangles from {len(used)} source "
+            say_layout(
+                f"{len(dst_tris)} triangles from {len(used)} source "
                 f"material(s) -> {res}px"
             )
             table = cls.build(
                 src_tris, dst_tris, res, supersample=supersample, source_ids=ids
             )
             if table.overlaps:
-                say(
-                    f"{t_mat}: WARNING {table.overlaps} texel(s) claimed by "
+                say_layout(
+                    f"WARNING {table.overlaps} texel(s) claimed by "
                     "overlapping target islands (last writer wins)."
                 )
             mask_cache: Dict[Tuple[int, int, int], np.ndarray] = {}
@@ -702,15 +920,35 @@ class UvTransfer(HelpMixin):
                 # source across materials would cost gigabytes for the price
                 # of a PNG decode.
                 loaded: Dict[int, Tuple[np.ndarray, float]] = {}
-                conv = None
+                missing: List[str] = []
                 for sid in used:
                     path = sources[sid].get("maps", {}).get(channel)
                     if path and os.path.isfile(path):
                         loaded[sid] = cls.load_map(path)
-                        if channel == "normal" and conv is None:
-                            conv = cls.normal_convention(path, normal_convention)
+                    elif path:
+                        missing.append(os.path.basename(path))
+                if missing:
+                    # A material that names a map the disk does not hold (a
+                    # renamed file) is said, never dropped quietly.
+                    say_layout(
+                        f"WARNING {channel}: {', '.join(missing)} not on disk -- "
+                        + (
+                            "those sources take their material's constant."
+                            if loaded
+                            else "the channel is skipped."
+                        )
+                    )
                 if not loaded:
                     continue
+                if channel == "normal":
+                    conv = cls._unify_normal_conventions(
+                        loaded,
+                        {sid: sources[sid]["maps"]["normal"] for sid in loaded},
+                        ids,
+                        dst_tris,
+                        override=normal_convention,
+                        say=say_layout,
+                    )
                 value_max = max(v for _, v in loaded.values())
                 sources_for: Dict[int, Any] = {}
                 masks_for: Dict[int, Any] = {}
@@ -743,25 +981,484 @@ class UvTransfer(HelpMixin):
                     img, cov = cls.transfer_normals(
                         table,
                         sources_for,
-                        convention=conv or "opengl",
+                        convention=conv,
                         source_masks=masks_for or None,
                         value_range=(0.0, value_max),
                     )
+                    cls._say_invalid_normals(
+                        img,
+                        cov,
+                        value_max,
+                        table,
+                        sources,
+                        say=say_layout,
+                    )
                 else:
                     img, cov = cls.transfer(
-                        table, sources_for, source_masks=masks_for or None
+                        table,
+                        sources_for,
+                        source_masks=masks_for or None,
+                        value_max=value_max,
                     )
                 img = cls.pad(img, cov, padding)
                 stem = name_format.format(
                     material=cls._safe_name(t_mat),
                     channel=cls.CHANNEL_TOKENS.get(channel, channel),
                 )
-                path = os.path.join(output_dir, f"{stem}.png").replace("\\", "/")
+                path = FileUtils.unique_path(
+                    output_dir, stem, ".png", taken, avoid=avoid
+                ).replace("\\", "/")
                 cls.save_map(path, img, value_max)
                 written[channel] = path
                 say(f"  {channel}: {path}")
             results[t_mat] = written
         return results
+
+    # -------------------------------------------------------- correspondence
+    #: World-space drift under which a part counts as standing where its slice
+    #: of the target stands -- what tells two pieces of identical topology
+    #: apart (two copies of one module combined into one mesh).
+    POSITION_TOLERANCE: float = 1e-4
+
+    @classmethod
+    def concatenation_order(
+        cls, target, parts, tolerance: Optional[float] = None
+    ) -> Optional[List[int]]:
+        """Which *parts*, in which order, join end to end into *target*.
+
+        A mesh combined from several others (Maya's Combine, Blender's Join)
+        is their concatenation: each part's faces follow the previous part's,
+        and its vertex indices are offset by the vertices before it. Reading
+        that order back is what lets a texture transfer treat the parts as
+        ONE source of the target's topology -- the same face-for-face
+        correspondence as between two copies of one mesh.
+
+        Parts with identical topology (copies of one module) are told apart
+        by where they stand: a part whose points coincide with the target's
+        slice is preferred. A topology match that stands elsewhere is still
+        accepted when nothing coincides -- the topology is the contract; the
+        host warns about the positions, as it does for one mesh.
+
+        Parameters:
+            target: ``(counts, verts, points)`` -- per-face corner counts,
+                each corner's vertex index (flat, face order), and the
+                ``(V, 3)`` vertex positions in world space.
+            parts: The candidates, each in the same form.
+            tolerance: Largest point drift that counts as coincident;
+                default :attr:`POSITION_TOLERANCE`.
+
+        Returns:
+            Indices into *parts* in concatenation order (a subset when the
+            target is built from only some of them), or ``None`` when no
+            ordering of the parts reproduces the target's topology exactly.
+        """
+        cls._require_numpy()
+        tol = cls.POSITION_TOLERANCE if tolerance is None else float(tolerance)
+
+        def unpack(mesh):
+            counts, verts, points = mesh
+            return (
+                np.asarray(counts, dtype=np.int64).ravel(),
+                np.asarray(verts, dtype=np.int64).ravel(),
+                np.asarray(points, dtype=np.float64).reshape(-1, 3),
+            )
+
+        t_counts, t_verts, t_points = unpack(target)
+        if not len(t_counts):
+            return None
+        cand = [unpack(p) for p in parts]
+        # Each part's first point: one vectorized distance per step finds the
+        # parts standing at the current offset, so a kit of many identical
+        # pieces is not a full topology scan per placement.
+        firsts = np.array(
+            [c[2][0] if len(c[2]) else (np.inf,) * 3 for c in cand], dtype=np.float64
+        ).reshape(-1, 3)
+        used = set()
+
+        def fits(k, face, corner, vert):
+            """None = no topology match here; else whether it coincides."""
+            counts, verts, points = cand[k]
+            n_f, n_c, n_v = len(counts), len(verts), len(points)
+            if not n_f or face + n_f > len(t_counts) or vert + n_v > len(t_points):
+                return None
+            # Scalar pre-check: most candidates fail on their first face.
+            if t_counts[face] != counts[0] or t_verts[corner] != verts[0] + vert:
+                return None
+            if not np.array_equal(t_counts[face : face + n_f], counts):
+                return None
+            if not np.array_equal(t_verts[corner : corner + n_c], verts + vert):
+                return None
+            drift = np.abs(t_points[vert : vert + n_v] - points)
+            return not drift.size or float(drift.max()) <= tol
+
+        def options(face, corner, vert):
+            """Parts that fit at this offset: coincident ones first, then
+            (lazily, only if those dead-end) any topology match.
+
+            Lazy, so ``used`` is read when the frame resumes -- by then it
+            holds exactly the placements above this frame.
+            """
+            given = set()
+            if vert < len(t_points):
+                drift = np.abs(firsts - t_points[vert]).max(axis=1)
+                for k in np.flatnonzero(drift <= tol).tolist():
+                    if k not in used and fits(k, face, corner, vert):
+                        given.add(k)
+                        yield k
+            for k in range(len(cand)):
+                if k in used or k in given:
+                    continue
+                if fits(k, face, corner, vert) is not None:
+                    yield k
+
+        # Depth-first over placements, iteratively: a mesh combined from
+        # hundreds of pieces must not hit the recursion limit. Backtracking
+        # only matters when one part's topology is a prefix of another's.
+        order: List[int] = []
+        offsets = [(0, 0, 0)]
+        stack = [options(0, 0, 0)]
+        while stack:
+            face, corner, vert = offsets[-1]
+            if face == len(t_counts):
+                if vert == len(t_points):
+                    return order
+            else:
+                k = next(stack[-1], None)
+                if k is not None:
+                    counts, verts, points = cand[k]
+                    order.append(k)
+                    used.add(k)
+                    nxt = (face + len(counts), corner + len(verts), vert + len(points))
+                    offsets.append(nxt)
+                    stack.append(options(*nxt))
+                    continue
+            # Dead end (or a complete face run with vertices left over).
+            stack.pop()
+            offsets.pop()
+            if order:
+                used.discard(order.pop())
+        return None
+
+    @classmethod
+    def find_combined(
+        cls,
+        face_counts: Sequence[int],
+        read: Callable[[int], Tuple[Any, Any, Any]],
+        tolerance: Optional[float] = None,
+    ) -> Optional[Tuple[int, List[int]]]:
+        """The one mesh of a selection combined from ALL the others.
+
+        What lets a tool read a selection without being told which mesh is
+        which: a combined mesh holds every face of its parts, so it is the
+        only one whose face count is the rest's total. That test needs only
+        the counts, so a selection with no such mesh -- the usual case --
+        never pays for a full topology read; *read* runs only for a candidate
+        and the meshes it is checked against.
+
+        Parameters:
+            face_counts: Each mesh's face count. At least three meshes: with
+                two, a copy of one mesh is equally "combined" from the other,
+                and which is which is the caller's call.
+            read: ``read(i) -> (counts, verts, points)`` for mesh *i*, as
+                :meth:`concatenation_order` takes them. Each mesh is read
+                at most once.
+            tolerance: As :meth:`concatenation_order`.
+
+        Returns:
+            ``(target index, part indices in concatenation order)``, or
+            ``None`` when no mesh is exactly the others combined.
+        """
+        n = len(face_counts)
+        total = sum(face_counts)
+        # Its faces must be exactly everyone else's.
+        candidates = [i for i, f in enumerate(face_counts) if 2 * f == total]
+        if n < 3 or not candidates:
+            return None
+        topo: Dict[int, Any] = {}
+
+        def get(i):
+            if i not in topo:
+                topo[i] = read(i)
+            return topo[i]
+
+        for i in candidates:
+            others = [j for j in range(n) if j != i]
+            order = cls.concatenation_order(get(i), [get(j) for j in others], tolerance)
+            if order is not None and len(order) == len(others):
+                return i, [others[k] for k in order]
+        return None
+
+    # ------------------------------------------------------------- lightmaps
+    #: Corner drift (UV units) under which two parameterizations are one
+    #: layout. A 64k map's texel is 1.5e-5, so this is below a texel at any
+    #: lightmap size and far above the float32 noise of re-reading a set.
+    LAYOUT_TOLERANCE: float = 1e-5
+
+    @classmethod
+    def layouts_match(
+        cls, src_tris, dst_tris, tolerance: Optional[float] = None
+    ) -> bool:
+        """True when two parameterizations of the same triangles are one layout.
+
+        What decides whether a lightmap has to be resampled at all: a target
+        whose lightmap UVs ARE the source's reads the source's map (and its
+        atlas rect) as it stands, so it is rebound rather than re-encoded --
+        exact, and an atlas stays shared.
+
+        Parameters:
+            src_tris / dst_tris: ``(N, 3, 2)`` triangles, corner for corner.
+            tolerance: Largest corner drift that still counts as the same;
+                default :attr:`LAYOUT_TOLERANCE`.
+        """
+        cls._require_numpy()
+        a = np.asarray(src_tris, dtype=np.float64)
+        b = np.asarray(dst_tris, dtype=np.float64)
+        if a.shape != b.shape:
+            return False
+        tol = cls.LAYOUT_TOLERANCE if tolerance is None else float(tolerance)
+        return not a.size or float(np.abs(a - b).max()) <= tol
+
+    @classmethod
+    def remap_lightmap(
+        cls,
+        image,
+        src_tris,
+        dst_tris,
+        *,
+        scale_offset: Optional[Sequence[float]] = None,
+        size: Optional[int] = None,
+        supersample: int = 2,
+        padding: int = -1,
+    ) -> "np.ndarray":
+        """Resample one object's lightmap into another lightmap layout.
+
+        A lightmap is not a material map: it is one object's lighting, laid out
+        in that object's own lightmap UVs and often sharing one map with other
+        objects through a per-object rect. So the source is read through that
+        rect, and only the object's own island counts as source -- a
+        neighbour's texels across the cell edge are never sampled. Values are
+        HDR and are never clipped; the host reads and writes the file (EXR in
+        both hosts, through different libraries).
+
+        Parameters:
+            image: The source map, ``HxW`` or ``HxWxC`` float, stored top-down
+                (row 0 = V 1), as the host read it.
+            src_tris: ``(N, 3, 2)`` the object's 0-1 lightmap UVs.
+            dst_tris: ``(N, 3, 2)`` the target's lightmap UVs, same triangles
+                and corner order.
+            scale_offset: The object's rect in *image* -- ``[scaleX, scaleY,
+                offsetX, offsetY]``, mapping its UVs into the map as
+                ``uv * scale + offset`` with V up (Unity's
+                ``lightmapScaleOffset``). ``None`` = a map of its own.
+            size: Output resolution (square). Default: the texels the object
+                owned in the source -- the map's width times the rect's larger
+                scale, rounded UP to a power of two so no density is lost, and
+                never larger than the map itself.
+            supersample / padding: See :meth:`build` / :meth:`pad`.
+
+        Returns:
+            ``(size, size, C)`` float32, top-down, gutter padded.
+        """
+        cls._require_numpy()
+        img = np.asarray(image, dtype=np.float32)
+        if img.ndim == 2:
+            img = img[..., None]
+        if img.ndim != 3:
+            raise ValueError(f"lightmap image must be HxW or HxWxC, got {img.shape}")
+        sx, sy, ox, oy = (float(v) for v in (scale_offset or (1.0, 1.0, 0.0, 0.0)))
+        src = np.asarray(src_tris, dtype=np.float64).reshape(-1, 3, 2) * (
+            sx,
+            sy,
+        ) + (ox, oy)
+        dst = np.asarray(dst_tris, dtype=np.float64).reshape(-1, 3, 2)
+        width = int(img.shape[1])
+        if size:
+            res = int(size)
+        else:
+            owned = max(1.0, width * max(sx, sy))
+            res = min(width, max(16, 2 ** math.ceil(math.log2(owned))))
+        # The object's own island, at the map's resolution: everything else
+        # in the map is gutter or another object's lighting, and is filled
+        # from this island before sampling so a bilinear tap at the island
+        # edge never reaches it.
+        mask = None
+        if img.shape[0] == img.shape[1]:
+            from pythontk.img_utils._img_utils import ImgUtils
+
+            mask = ImgUtils.rasterize_uv_triangles(src, size=width, supersample=1) > 0
+            if not mask.any():
+                mask = None
+        # Only the island's texels (and a bilinear margin) are ever read, so
+        # the fill works on them alone: on an atlas shared by dozens of
+        # objects, filling the whole map once per object costs the whole map
+        # every time.
+        img, src, mask = cls._crop_to_uvs(img, src, mask)
+        table = cls.build(src, dst, res, supersample=supersample)
+        out, coverage = cls.transfer(table, img, source_masks=mask)
+        return cls.pad(out, coverage, padding).astype(np.float32, copy=False)
+
+    @staticmethod
+    def _crop_to_uvs(image, tris, mask=None, margin: int = 2):
+        """``(image, tris, mask)`` cropped to *tris*' texel bounds plus *margin*.
+
+        *tris* (V up, in *image*'s UV space) come back re-expressed in the
+        crop's own 0-1 space, so sampling the crop reads the very texels the
+        whole image would have. Returned unchanged when the crop is the image.
+        """
+        h, w = image.shape[:2]
+        uv = tris.reshape(-1, 2)
+        if not len(uv):
+            return image, tris, mask
+        x0 = max(0, math.floor(float(uv[:, 0].min()) * w) - margin)
+        x1 = min(w, math.ceil(float(uv[:, 0].max()) * w) + margin)
+        y0 = max(0, math.floor((1.0 - float(uv[:, 1].max())) * h) - margin)
+        y1 = min(h, math.ceil((1.0 - float(uv[:, 1].min())) * h) + margin)
+        if x1 <= x0 or y1 <= y0 or (x0, y0, x1, y1) == (0, 0, w, h):
+            return image, tris, mask
+        local = np.empty_like(tris)
+        local[..., 0] = (tris[..., 0] * w - x0) / (x1 - x0)
+        local[..., 1] = 1.0 - ((1.0 - tris[..., 1]) * h - y0) / (y1 - y0)
+        return (
+            image[y0:y1, x0:x1],
+            local,
+            None if mask is None else mask[y0:y1, x0:x1],
+        )
+
+    @classmethod
+    def resample_lightmaps(
+        cls,
+        jobs: Sequence[Dict[str, Any]],
+        *,
+        output_dir: str,
+        read,
+        write,
+        output_name: Optional[str] = None,
+        claims=None,
+        size: Optional[int] = None,
+        supersample: int = 2,
+        padding: int = -1,
+        log=None,
+    ) -> Dict[str, str]:
+        """Write each job's lightmap resampled into its target's lightmap layout.
+
+        The DCC-agnostic half of a host's ``LightmapRecords.transfer_lightmaps``,
+        as :meth:`transfer_materials` is of ``transfer``: one naming rule and one
+        remap for both hosts, which supply only their EXR reader and writer. A
+        job whose two layouts match (:meth:`layouts_match`) needs no new map --
+        its target reads the source's map through the source's rect -- so it
+        is skipped, and the host binds it to that map.
+
+        Parameters:
+            jobs: One per (target, source) pair: ``{"owner": the target, as
+                *claims* names readers, "name": its name in the file name,
+                "path": the source's map, "scale_offset": the source's rect,
+                "src" / "dst": (N, 3, 2) the source's and the target's lightmap
+                UVs, triangle for triangle}``. Other keys are ignored.
+            output_dir: Folder the maps are written into.
+            read: ``callable(path) -> HxWxC float``, top-down -- the host's
+                reader. Called once per map, however many jobs share it.
+            write: ``callable(path, image)`` -- the host's writer.
+            output_name: Names the maps ``<output_name>_Lightmap`` (one map) or
+                ``<output_name>_<name>_Lightmap`` (several); without it,
+                ``<name>_Lightmap``.
+            claims: ``{file name: readers}``. A name another object reads is
+                never written over (:meth:`FileUtils.unique_path`; a job's own
+                target may replace its own map), and neither is any job's
+                source map.
+            size / supersample / padding: See :meth:`remap_lightmap`.
+            log: Optional ``callable(str)`` for one line per map.
+
+        Returns:
+            ``{owner: written path}`` for each job resampled.
+        """
+        from pythontk.file_utils._file_utils import FileUtils
+
+        say = log or (lambda m: None)
+        todo = [j for j in jobs if not cls.layouts_match(j["src"], j["dst"])]
+        base = StrUtils.sanitize(output_name, preserve_case=True) if output_name else ""
+        taken: set = set()
+        avoid = {j["path"] for j in jobs}
+        # Every name first, in the jobs' order: what a job's map is called
+        # never depends on the order the source maps are read in.
+        outputs: List[str] = []
+        for job in todo:
+            parts = [base] if base else []
+            if not base or len(todo) > 1:
+                parts.append(StrUtils.sanitize(str(job["name"]), preserve_case=True))
+            outputs.append(
+                FileUtils.unique_path(
+                    output_dir,
+                    "_".join(parts + ["Lightmap"]),
+                    ".exr",
+                    taken,
+                    claims,
+                    owners=[job["owner"]],
+                    avoid=avoid,
+                ).replace("\\", "/")
+            )
+        # Then a source map at a time, read once for every job on it and
+        # dropped before the next is read: a 4k float map is ~200 MB, and the
+        # host's job order interleaves the maps freely.
+        by_map: Dict[str, List[int]] = {}
+        for i, job in enumerate(todo):
+            by_map.setdefault(job["path"], []).append(i)
+        for source, members in by_map.items():
+            image = read(source)
+            for i in members:
+                job = todo[i]
+                write(
+                    outputs[i],
+                    cls.remap_lightmap(
+                        image,
+                        job["src"],
+                        job["dst"],
+                        scale_offset=job.get("scale_offset"),
+                        size=size,
+                        supersample=supersample,
+                        padding=padding,
+                    ),
+                )
+                say(
+                    f"{job['name']}: lightmap resampled into its own layout "
+                    f"-> {outputs[i]}"
+                )
+            del image
+        return {job["owner"]: path for job, path in zip(todo, outputs)}
+
+    @staticmethod
+    def _uv_areas(tris) -> "np.ndarray":
+        """Unsigned UV area per triangle of an ``(N, 3, 2)`` array."""
+        tris = np.asarray(tris, dtype=float).reshape(-1, 3, 2)
+        a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
+        return 0.5 * np.abs(
+            (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1])
+            - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1])
+        )
+
+    @classmethod
+    def dominant_source(cls, job: Dict[str, Any]) -> Optional[int]:
+        """Index of the source covering the most of *job*'s target layout.
+
+        Weighted by TARGET-UV area, not triangle count, so a dense trim strip
+        cannot outvote the panel that fills the layout. The host adapters
+        model a layout's assigned material on that source's.
+
+        Parameters:
+            job: A :meth:`transfer_materials` job -- ``dst``, ``ids`` and
+                ``sources``.
+
+        Returns:
+            int | None: Index into ``job["sources"]``; None when it names none.
+        """
+        cls._require_numpy()
+        sources = job.get("sources") or []
+        if not sources:
+            return None
+        ids = np.asarray(job["ids"], dtype=np.int64).reshape(-1)
+        weight = np.bincount(
+            ids, weights=cls._uv_areas(job["dst"]), minlength=len(sources)
+        )
+        return int(weight.argmax())
 
     @staticmethod
     def _safe_name(name: str) -> str:
@@ -840,16 +1537,8 @@ class UvTransfer(HelpMixin):
         if src_tris is None or dst_tris is None or ids is None:
             return floor
 
-        def _area(tris) -> "np.ndarray":
-            """Unsigned UV area per triangle."""
-            a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
-            return 0.5 * np.abs(
-                (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1])
-                - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1])
-            )
-
-        src_area = _area(np.asarray(src_tris, dtype=float).reshape(-1, 3, 2))
-        dst_area = _area(np.asarray(dst_tris, dtype=float).reshape(-1, 3, 2))
+        src_area = cls._uv_areas(src_tris)
+        dst_area = cls._uv_areas(dst_tris)
         ids = np.asarray(ids, dtype=np.int32).reshape(-1)
 
         squeezed: List[Tuple[str, int, float]] = []
@@ -879,6 +1568,133 @@ class UvTransfer(HelpMixin):
 
     @classmethod
     def normal_convention(cls, path: str, override: Optional[str] = None) -> str:
+        """The tangent-space convention of the normal map at *path*.
+
+        Read off the map's CONTENT first, its filename second, OpenGL last.
+
+        The content (:meth:`pythontk.ImgUtils.detect_normal_map_format`:
+        whether the X and Y channels integrate as one height field) is first
+        because what a transfer needs is exactly what it measures -- the
+        RELATIVE handedness of X and Y, which decides which way an island's
+        rotation turns them (:meth:`transfer_normals`). A filename only claims
+        it, and an untagged ``_Normal`` claims nothing. The statistic's blind
+        spot (an inverted X reads as an inverted Y) is no blind spot here:
+        either inversion reverses a rotation's sense identically. The map
+        factory, which must name a map's ABSOLUTE convention for an engine,
+        rightly ranks the two the other way round.
+
+        The filename decides when the content cannot -- a flat map, shallow
+        relief, a file that is not there (where a rotation changes the least):
+        :meth:`_filename_normal_convention`.
+
+        Parameters:
+            path: The normal map's file path.
+            override: Returned verbatim (lowercased) instead of classifying --
+                an explicit convention from the caller always wins.
+
+        Returns:
+            str: ``"directx"`` or ``"opengl"``.
+        """
+        if override:
+            return str(override).lower()
+        if os.path.isfile(str(path)):
+            from pythontk.img_utils._img_utils import ImgUtils
+
+            found = ImgUtils.detect_normal_map_format(str(path))
+            if found:
+                return found.lower()
+        return cls._filename_normal_convention(path)
+
+    @classmethod
+    def _unify_normal_conventions(
+        cls,
+        loaded: Dict[int, Tuple["np.ndarray", float]],
+        paths: Dict[int, str],
+        ids: "np.ndarray",
+        dst_tris: "np.ndarray",
+        *,
+        override: Optional[str] = None,
+        say: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """The convention a consolidated normal map is written in.
+
+        Each source map's own (:meth:`normal_convention`). Where they differ,
+        the convention covering the most of the target layout wins, and every
+        map in the other is converted to it in *loaded* (green flipped) before
+        the remap: the output is ONE map, and a part left in the other
+        convention would be lit upside down.
+
+        Parameters:
+            loaded: ``{source id: (image, value max)}`` -- updated in place.
+            paths: ``{source id: normal map path}`` for every entry of *loaded*.
+            ids / dst_tris: The job's source id and target UV triangle per
+                triangle, which weigh each source's share of the layout.
+            override: An explicit convention for every source.
+            say: Optional ``callable(str)``, told about a conversion.
+
+        Returns:
+            str: ``"opengl"`` or ``"directx"``.
+        """
+        conv = {sid: cls.normal_convention(paths[sid], override) for sid in loaded}
+        if len(set(conv.values())) <= 1:
+            return next(iter(conv.values()), "opengl")
+        areas = cls._uv_areas(dst_tris)
+        share: Counter = Counter()
+        for sid, c in conv.items():
+            share[c] += float(areas[ids == sid].sum())
+        out = max(share, key=share.get)
+        flipped = []
+        for sid, c in conv.items():
+            if c != out:
+                arr, vmax = loaded[sid]
+                arr = arr.copy()
+                arr[..., 1] = vmax - arr[..., 1]
+                loaded[sid] = (arr, vmax)
+                flipped.append(os.path.basename(paths[sid]))
+        if say:
+            say(
+                f"normal maps mix conventions: {', '.join(flipped)} converted "
+                f"to {out}, the convention of most of the layout"
+            )
+        return out
+
+    @staticmethod
+    def _say_invalid_normals(
+        image: "np.ndarray",
+        coverage: "np.ndarray",
+        value_max: float,
+        table: TransferTable,
+        sources: Sequence[Dict[str, Any]],
+        say: Callable[[str], None],
+    ) -> None:
+        """Say which source maps put texels that are no tangent-space normal --
+        Z below zero, pointing into the surface: a black, unpainted background
+        -- into the remapped *image*.
+
+        They transfer as they are: the transfer is a resample, and the source
+        is what the artist shipped. Turned with their island they read as a
+        transfer artefact (black turned 180 degrees is yellow), so the map is
+        named instead.
+        """
+        bad = (image[..., 2] < 0.5 * value_max) & (coverage > 0)
+        if not bad.any():
+            return
+        tri = table.tri[0][bad]
+        sids = sorted({int(s) for s in table.source_ids[tri[tri >= 0]]})
+        names = [
+            os.path.basename(sources[s].get("maps", {}).get("normal") or "")
+            or str(sources[s].get("name") or s)
+            for s in sids
+        ]
+        share = float(bad.sum()) / max(int((coverage > 0).sum()), 1)
+        say(
+            f"WARNING normal: {share:.1%} of the map reads texels that are no "
+            f"tangent-space normal (Z below zero: black or unpainted) in "
+            f"{', '.join(names)}; transferred as they are."
+        )
+
+    @staticmethod
+    def _filename_normal_convention(path: str) -> str:
         """The tangent-space convention *path*'s filename declares.
 
         Classification goes through the shared map registry
@@ -907,14 +1723,10 @@ class UvTransfer(HelpMixin):
 
         Parameters:
             path: The map's file path (only its filename is read).
-            override: Returned verbatim (lowercased) instead of classifying --
-                an explicit convention from the caller always wins.
 
         Returns:
             str: ``"directx"`` or ``"opengl"``.
         """
-        if override:
-            return str(override).lower()
         from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 
         map_type = MapRegistry().resolve_type_from_path(str(path))
@@ -1000,11 +1812,17 @@ class UvTransfer(HelpMixin):
         return h, w
 
     @classmethod
-    def _normalize_sources(cls, sources, table: TransferTable):
+    def _normalize_sources(
+        cls, sources, table: TransferTable, value_max: Optional[float] = None
+    ):
         """``({id: float32 array | constant array}, channels)``.
 
         Arrays are promoted to ``HxWxC`` float32; constants to ``(C,)``; every
-        entry is widened to the common channel count (grey -> repeated).
+        entry is widened to the common channel count by meaning, not position:
+        grey (or grey+alpha) fills the COLOUR channels, and an alpha the source
+        does not have is OPAQUE -- *value_max*, else guessed from the data.
+        Repeating grey into all four channels wrote a metal-0 map's region of a
+        packed RGBA layout at alpha 0.
         """
         if isinstance(sources, dict):
             raw = {int(k): v for k, v in sources.items()}
@@ -1024,26 +1842,31 @@ class UvTransfer(HelpMixin):
                 c = np.asarray(arr, dtype=np.float32).reshape(-1)
                 norm[k] = c
                 channels = max(channels, len(c))
+        # Colour / alpha split of each layout: L, LA, RGB, RGBA.
+        colour_of = {1: 1, 2: 1, 3: 3, 4: 3}
         for k, v in list(norm.items()):
             have = v.shape[2] if v.ndim == 3 else len(v)
             if have >= channels:
                 continue
-            if have == 1:  # grey -> repeated
-                norm[k] = (
-                    np.repeat(v, channels, axis=2)
-                    if v.ndim == 3
-                    else np.repeat(v, channels)
-                )
-                continue
-            # e.g. RGB into an RGBA slot: pad with opaque at the data's scale.
-            one = np.float32(255.0 if float(np.max(v)) > 1.0 else 1.0)
-            if v.ndim == 3:
-                pad = np.full(
-                    (v.shape[0], v.shape[1], channels - have), one, np.float32
-                )
-                norm[k] = np.concatenate([v, pad], axis=2)
-            else:
-                norm[k] = np.concatenate([v, np.full(channels - have, one, np.float32)])
+            flat = v.reshape(-1, have)
+            colour = flat[:, : colour_of[have]]
+            want = colour_of[channels]
+            if colour.shape[1] < want:  # grey -> every colour channel
+                colour = np.repeat(colour, want, axis=1)
+            parts = [colour]
+            if channels in (2, 4):
+                if have in (2, 4):
+                    alpha = flat[:, -1:]
+                else:
+                    one = (
+                        float(value_max)
+                        if value_max is not None
+                        else (255.0 if float(np.max(v, initial=0.0)) > 1.0 else 1.0)
+                    )
+                    alpha = np.full((flat.shape[0], 1), one, np.float32)
+                parts.append(alpha)
+            widened = np.concatenate(parts, axis=1).astype(np.float32, copy=False)
+            norm[k] = widened.reshape(v.shape[:-1] + (channels,))
         return norm, channels
 
     @staticmethod

@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.12.1"
+__version__ = "0.13.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -87,13 +87,21 @@ DEFAULT_INCLUDE = {
     "geo_utils.pointcloud": "PointCloud",
     "geo_utils.rail_surface": "RailSurface",
     "geo_utils.plate_emitter": "PlateEmitter",
-    "geo_utils.shadow_projection": ["ShadowProjection", "ShadowModel", "ShadowRaster"],
+    "geo_utils.shadow_projection": [
+        "ShadowProjection",
+        "ShadowModel",
+        "ShadowRaster",
+        "ShadowConformance",
+    ],
     "geo_utils.shadow_horizon": ["ShadowHorizon", "HeightFieldMap", "HorizonMap"],
     # Articulated rigs: the joint model + grab solver every runtime ports, and
     # the geometry rules that propose a rig from the parts alone.
     "geo_utils.articulation.model": "ArticulationModel",
     "geo_utils.articulation.analysis": "ArticulationAnalysis",
     "geo_utils.articulation.conformance": "ArticulationConformance",
+    # The ``articulation`` record's payload and its ``articulation_web``
+    # manifest, declared once (SceneRecords.ARTICULATION names them).
+    "geo_utils.articulation.record": ["ArticulationRecord", "ArticulationWeb"],
     "img_utils.shadow_atlas": "ShadowAtlas",
     "geo_utils.uv.pack": ["UvPack", "PackIslandsResult"],
     "geo_utils.uv.budget": [
@@ -128,6 +136,7 @@ DEFAULT_INCLUDE = {
         "Record",
         "SceneRecords",
         "Merge",
+        "WebProjection",
     ],
     "core_utils.engines.scene_export.scene_store": ["SceneStoreBase"],
     "core_utils.engines.scene_export.export_snapshot": [
@@ -168,6 +177,11 @@ DEFAULT_INCLUDE = {
     # 1:1 in either direction.
     "core_utils.engines.shots.shot_transfer": [
         "ShotTransfer",
+    ],
+    # How each render effect and audio clip is keyed, once per scene: the
+    # panels edit it, the manifest's Build keys with it (a ShotStore field).
+    "core_utils.engines.shots.effect_recipe": [
+        "EffectRecipe",
     ],
     # Key stash engine — clips of keys parked outside the working animation,
     # inert until retrieved; the DCC adapters (mayatk / blendertk ``KeyStash``)
@@ -232,6 +246,7 @@ DEFAULT_INCLUDE = {
         "PlannedShot",
         "ObjectStatus",
         "StepStatus",
+        "ShotPairing",
     ],
     "core_utils.engines.shots.manifest.manifest_engine": [
         "ShotManifest",
@@ -313,6 +328,9 @@ DEFAULT_INCLUDE = {
     "core_utils.qc_log": ["QcLog", "QcGate", "GateError"],
     "core_utils.status_badge": ["StatusBadge"],
     "core_utils.test_sandbox": ["TestSandbox"],
+    # Golden-case documents for every model ported to another language, by
+    # name -- what each port's test is held to.
+    "core_utils.conformance": ["Conformance"],
     # Exit a DCC-hosted interpreter without running DLL_PROCESS_DETACH, whose
     # static destructors fault in Maya's own teardown and file a crash report
     # on every ordinary exit. os._exit does NOT skip it on Windows, so every

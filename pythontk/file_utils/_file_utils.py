@@ -1515,13 +1515,17 @@ class FileUtils(HelpMixin):
     def _move_into_place(src: str, dst: str) -> None:
         """Move *src* to *dst*, never deleting or truncating *dst* on the way.
 
-        Staged beside *dst*, then swapped in by one :meth:`replace_file`, so a
-        failure anywhere leaves *dst* as it was, or absent. Deleting first and
+        On one volume a move is a rename, atomic already -- onto a free *dst*,
+        or over an existing one by one :meth:`replace_file` -- and a refusal
+        leaves *src* where it was and *dst* as it was, so the caller can retry
+        under another name (a destination held open by a DCC's texture cache
+        is the usual cause). Across volumes a move is a
+        copy, so it is staged beside *dst* and swapped in by one
+        :meth:`replace_file`: a failure anywhere leaves *dst* as it was, or
+        absent, and a swap that fails puts *src* back. Deleting first and
         moving second lost both when the move failed (a full disk, a folder the
         user cannot write), and a cross-volume move straight onto *dst* left it
-        truncated. A swap that fails puts *src* back, so the caller can retry it
-        under another name (a destination held open by a DCC's texture cache is
-        the usual cause).
+        truncated.
 
         The stage is a hidden sibling no :class:`TempArtifacts` sweep matches.
         A moved file keeps its source's mtime, so a week-old source staged as an
@@ -1531,12 +1535,10 @@ class FileUtils(HelpMixin):
         textures it moved). A process killed mid-move leaves the stage whole
         where the log line names it, never swept.
 
-        A free *dst* on the same volume is a plain rename, atomic already, so it
-        skips the staging.
-
         Raises:
             OSError: The move or the swap failed; *dst* is untouched.
         """
+        import errno
         import logging
         import shutil
         import uuid
@@ -1546,9 +1548,23 @@ class FileUtils(HelpMixin):
             if os.stat(src).st_dev == os.stat(parent).st_dev:
                 shutil.move(src, dst)  # a rename here; one patch point for tests
                 return
+        else:
+            # Not staged on one volume: the stage's fixed-length name is
+            # LONGER than a short dst's own, so beside a dst near a path's 260
+            # characters (Maya is not long-path aware) it could not exist, and
+            # the overwrite failed where the rename alone succeeds.
+            try:
+                FileUtils.replace_file(src, dst)
+                return
+            except OSError as error:
+                if error.errno != errno.EXDEV:
+                    raise
+        # A fixed-length name, as atomic_write_text's: one built on dst's name
+        # (+23 characters) could not exist beside a dst near a limit -- a
+        # name's 255 characters, a path's 260 in a process that is not
+        # long-path aware -- and every overwrite into it failed.
         staged = os.path.join(
-            os.path.dirname(os.path.abspath(dst)),
-            f".{os.path.basename(dst)}.{os.getpid()}.{uuid.uuid4().hex[:8]}.moving",
+            os.path.dirname(os.path.abspath(dst)), f".{uuid.uuid4().hex[:12]}.moving"
         )
         log = logging.getLogger(__name__)
         try:
@@ -2201,7 +2217,7 @@ class FileUtils(HelpMixin):
         for filename in filenames:
             filepath = os.path.join(path, filename)
 
-            with open(filepath, "r", encoding="utf-8") as file:
+            with open(filepath, "r", encoding="utf-8-sig") as file:
                 module_ast = ast.parse(file.read())
                 if top_level_only:
                     classes = [

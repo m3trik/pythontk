@@ -13,4 +13,11 @@ importing this package loads none of its modules.
 - :mod:`~pythontk.geo_utils.articulation.analysis` --
   :class:`ArticulationAnalysis`: which parts move together, where they pivot
   and how, proposed from the parts' geometry alone.
+- :mod:`~pythontk.geo_utils.articulation.record` -- :class:`ArticulationRecord`
+  and :class:`ArticulationWeb`: the ``articulation`` record's payload and the
+  glTF manifest bound from it, declared once (the ports' types are generated
+  from them).
+- :mod:`~pythontk.geo_utils.articulation.conformance` --
+  :class:`ArticulationConformance`: the golden cases every port of the model
+  is held to (``Conformance.cases("articulation")``).
 """

@@ -1064,6 +1064,107 @@ class ImgUtils(
                 pass
         return None
 
+    @staticmethod
+    def get_image_mode(image_path: str) -> Optional[str]:
+        """The image's channel layout, read as cheaply as possible.
+
+        PIL's mode name (``"RGBA"``, ``"RGB"``, ``"L"``, ``"I;16"``, ``"P"``)
+        from a lazy ``Image.open`` -- the header only, no pixels decoded. The
+        float formats PIL does not read answer from their own headers: OpenEXR
+        from its channel list (``"RGBA;16F"`` half, ``";32F"`` float, ``"L"``
+        for luminance, ``"6ch"`` for a layered render), Radiance HDR as
+        ``"RGB;32F"``. :meth:`format_bit_depth` spells a PIL mode's depth.
+        ``None`` when the file is missing or unreadable.
+
+        The :meth:`get_image_size` twin, with its cost: it reads the file, so
+        gate on :meth:`FileUtils.is_cloud_placeholder` before probing many
+        files a user merely browses.
+        """
+        mode = ImgUtils._image_mode_from_header(image_path)
+        if mode:
+            return mode
+        if Image is not None:
+            try:
+                with Image.open(image_path) as im:
+                    return str(im.mode)
+            except Exception:
+                pass
+        return None
+
+    #: The fields :meth:`texture_facts` can read.
+    TEXTURE_FACTS = ("bytes", "dimensions", "mode")
+
+    #: ``{(normalized file, field): ((mtime_ns, byte size), value)}`` behind
+    #: :meth:`texture_facts` -- a table refreshes often; a header is read once
+    #: per file version.
+    _facts_cache: Dict[tuple, tuple] = {}
+
+    @classmethod
+    def texture_facts(
+        cls, path: str, fields: Sequence[str] = TEXTURE_FACTS
+    ) -> Dict[str, Any]:
+        """What a texture listing shows beside a path, each read only if asked.
+
+        *path* may be a tile / frame token pattern (``rock.<UDIM>.png``):
+        ``"bytes"`` sums every file of the set, ``"dimensions"`` and
+        ``"mode"`` read the first one's header (:meth:`get_image_size`,
+        :meth:`get_image_mode` -- never the pixels). A field not in *fields* is
+        never read, so a column that is hidden costs nothing. An online-only
+        cloud placeholder answers ``"bytes"`` (a stat downloads nothing) but
+        not the header fields, which would download it. Cached per file
+        version.
+
+        Parameters:
+            path: An absolute file or token pattern.
+            fields: Any of :attr:`TEXTURE_FACTS`.
+
+        Returns:
+            ``{"tiles": n, "online_only": bool, <field>: value}`` -- ``bytes``
+            an int, ``dimensions`` ``(w, h)``, ``mode`` a mode string, either
+            of the last two ``None`` when unreadable. ``{}`` when nothing is on
+            disk.
+        """
+        from pythontk.file_utils.tiled_path import TiledPath
+
+        files = TiledPath.tiles(path)
+        if not files:
+            return {}
+        first = files[0]
+        online_only = FileUtils.is_cloud_placeholder(first)
+        facts: Dict[str, Any] = {"tiles": len(files), "online_only": online_only}
+
+        def cached(file, field, read):
+            try:
+                stat = os.stat(file)
+            except OSError:
+                return None
+            version = (stat.st_mtime_ns, stat.st_size)
+            key = (os.path.normcase(os.path.abspath(file)), field)
+            hit = cls._facts_cache.get(key)
+            if hit and hit[0] == version:
+                return hit[1]
+            value = read(file)
+            cls._facts_cache[key] = (version, value)
+            return value
+
+        if "bytes" in fields:
+            total = 0
+            for file in files:
+                try:
+                    total += os.path.getsize(file)
+                except OSError:
+                    pass
+            facts["bytes"] = total
+        if "dimensions" in fields:
+            facts["dimensions"] = (
+                None if online_only else cached(first, "size", cls.get_image_size)
+            )
+        if "mode" in fields:
+            facts["mode"] = (
+                None if online_only else cached(first, "mode", cls.get_image_mode)
+            )
+        return facts
+
     #: Width:height of an equirectangular (latlong) environment map.
     LATLONG_ASPECT = 2.0
 
@@ -1670,7 +1771,8 @@ class ImgUtils(
                 a texel must stand to be clamped as a spike; ``0`` disables it.
 
         Returns:
-            The denoised image, same shape and dtype; texels outside *mask*
+            The denoised image, same shape and dtype (an integer one rounded
+            to nearest and saturated at its range); texels outside *mask*
             unchanged.
         """
         return super().denoise_image(image, mask, radius, strength, noise, outliers)
@@ -1710,6 +1812,45 @@ class ImgUtils(
             Image with every empty texel filled; same shape/dtype as input.
         """
         return super().fill_empty_texels(image, mask)
+
+    @classmethod
+    def extrapolate_fill(
+        cls,
+        image: "np.ndarray",
+        mask: "np.ndarray",
+        rings: int = 1,
+        clamp: float = 2.0,
+    ) -> Tuple["np.ndarray", "np.ndarray"]:
+        """Grow *mask* by *rings* texels, continuing its content's slope.
+
+        Each new texel is the LINEAR extrapolation of the two mask texels
+        inward of it along an axis (``2 * v1 - v2``), averaged over the axes
+        that have them -- so a ramp continues exactly, where
+        :meth:`dilate_image`'s averaging holds the value from further in. That
+        difference is a step on every edge two lightmap cells share: an
+        averaged refill (or a filter window truncated at the edge) reads the
+        light from inside the cell, not at its edge. Use it for the first few
+        texels past real content; :meth:`dilate_image` /
+        :meth:`fill_empty_texels` remain the tools for the far field.
+
+        Each ring grows along the four axes only (a corner fills on the next
+        ring), from texels at least two deep: a one-texel sliver has no slope
+        and is left alone. Each extrapolated value is clamped to
+        ``[v1 / clamp, v1 * clamp]`` so a shadow edge at the border cannot run
+        to zero or blow up; it stays positive for positive content.
+
+        Parameters:
+            image: HxW or HxWxC array. Not modified -- a copy is returned.
+            mask: HxW truthy -- the texels that are content.
+            rings: How many texels to grow.
+            clamp: The per-ring bound on the extrapolated value, as a factor of
+                the texel it continues from.
+
+        Returns:
+            ``(image, mask)``: the filled copy (same dtype; an integer one's
+            new texels rounded and saturated at its range) and the grown mask.
+        """
+        return super().extrapolate_fill(image, mask, rings, clamp)
 
     @staticmethod
     def compute_atlas_layout(
@@ -1936,6 +2077,146 @@ class ImgUtils(
         """
         return _ImgAtlasInternal.inset_rects_to_texel_centers(rects, size, bboxes)
 
+    @staticmethod
+    def uv_crop_extent(
+        bbox: Optional[Tuple[float, float, float, float]],
+        max_coverage: float = 0.85,
+    ) -> Tuple[float, float]:
+        """The ``(u, v)`` fraction of a map :meth:`crop_to_uv_bbox` keeps.
+
+        ``(1.0, 1.0)`` when it would take no crop: ``bbox`` ``None`` or
+        degenerate, or both axes already at or above *max_coverage* (an
+        auto-unwrap's few percent of margin gains nothing from a crop). A
+        baker divides a tile's planned size by this so the CROPPED island,
+        not the whole map, lands at the cell's density.
+
+        Parameters:
+            bbox: The island bounds ``(u0, v0, u1, v1)``; clamped to [0, 1].
+            max_coverage: The per-axis coverage at or above which no crop is
+                taken (on both axes).
+
+        Returns:
+            ``(u_fraction, v_fraction)``.
+        """
+        return _ImgAtlasInternal.uv_crop_extent(bbox, max_coverage)
+
+    @staticmethod
+    def crop_to_uv_bbox(
+        img: "np.ndarray",
+        bbox: Optional[Tuple[float, float, float, float]],
+        cell: Sequence[float],
+        max_coverage: float = 0.85,
+    ) -> Tuple["np.ndarray", List[float], Tuple[float, float, float, float]]:
+        """Crop a baked map to its UV island's bounds and fold the crop into its atlas rect.
+
+        A lightmap whose islands cover only part of the unwrap (an artist's
+        layout: production walls at u 0..1/3) wastes its atlas cell on dead
+        space. Cropped, the island fills the cell at full density, and the
+        returned rect maps ``uv`` so the engine's ``uv * scale + offset``
+        still lands exactly where the texels went.
+
+        The crop keeps exactly the texels the island TOUCHES -- no pad. A pad
+        admits edge-EXTENSION texels, which are not this object's lighting: a
+        point just past a wall panel's edge is coplanar with its neighbour,
+        so it renders dark (a padded crop measured a 4.23% mean per-side edge
+        error against 1.64%). Touched rather than fully covered texels,
+        because the bounds must CONTAIN the island: cropping inside it leaves
+        a sub-texel overhang that samples past the cell.
+
+        Parameters:
+            img: The map, ``(H, W[, C])``, row 0 at the TOP (v = 1).
+            bbox: The island bounds ``(u0, v0, u1, v1)``, or ``None``.
+            cell: The atlas cell ``(scaleX, scaleY, offsetX, offsetY)`` the
+                map is placed in.
+            max_coverage: See :meth:`uv_crop_extent`.
+
+        Returns:
+            ``(image, rect, bounds)``: the (possibly) cropped image, the rect
+            to publish, and the uv range that maps onto the FULL cell --
+            ``(0, 0, 1, 1)`` when no crop was taken. Publish through
+            :meth:`inset_rects_to_texel_centers` with ``bboxes=[bounds]``, so
+            the cell's edges, not the island's, land on border-texel centers.
+        """
+        return _ImgAtlasInternal.crop_to_uv_bbox(img, bbox, cell, max_coverage)
+
+    @classmethod
+    def resize_into_cell(
+        cls,
+        image: "np.ndarray",
+        size: Tuple[int, int],
+        coverage: Optional["np.ndarray"] = None,
+        edge_centers: bool = True,
+    ) -> Tuple["np.ndarray", "np.ndarray"]:
+        """Resample a tile into the atlas cell it is published in.
+
+        An exact area (box-filter) resample, with two properties a plain
+        resize lacks:
+
+        * **edge_centers** -- the source's edges land on the cell's border-
+          texel CENTERS, the mapping :meth:`inset_rects_to_texel_centers`
+          publishes. Resized edge to edge instead, every sample along the
+          content's edge reads it from half a texel inside, so two coplanar
+          tiles meeting at a 3D edge each show their lighting from further
+          in than the edge. Each border texel averages the half of its box
+          that lies inside the source. Ignored when the cell is under two
+          texels on either axis (the inset leaves such a rect unchanged).
+        * **coverage** -- a per-texel weight (an island's coverage): only
+          covered texels are averaged, so a cell texel the island only
+          partly covers holds the island's own value rather than one mixed
+          with the gutter -- and needs no refill from the texel inside it.
+
+        Numpy only (no cv2 -- Blender's Python ships none); float64 prefix
+        sums, O(texels) at any ratio.
+
+        Parameters:
+            image: ``(H, W)`` or ``(H, W, C)`` source tile.
+            size: Cell ``(width, height)`` in texels (cv2's order).
+            coverage: Optional ``(H, W)`` weights in ``[0, 1]``; ``None`` is
+                full coverage.
+            edge_centers: Land the source edges on border-texel centers
+                (default) rather than on the cell's outer boundary.
+
+        Returns:
+            ``(image, coverage)``: the resampled tile (float, the source's
+            float dtype or float32) and each cell texel's covered fraction;
+            a texel with no coverage is 0 in both.
+        """
+        return _ImgAtlasInternal.resize_into_cell(image, size, coverage, edge_centers)
+
+    @classmethod
+    def stitch_seams(
+        cls,
+        image: "np.ndarray",
+        pairs: "np.ndarray",
+        iterations: int = 64,
+    ) -> "np.ndarray":
+        """Make each pair of atlas positions read one value: a seam between two cells.
+
+        Two atlas cells whose content meets at a 3D edge (two coplanar wall
+        panels, two instances of one tile) are sampled from either side of that
+        edge, each through its own rect, and each holds its own sampling noise
+        -- so however well each cell is finished, they disagree along the edge
+        and the edge reads as a step. Given the pixel positions where each side
+        samples the same 3D points, this nudges ONLY the texels those bilinear
+        taps read until both reads agree, meeting halfway (Jacobi iterations of
+        the least-norm correction; a texel several samples share takes the mean
+        of their updates). Everything else is untouched. The correspondence --
+        which positions are one 3D point -- is the caller's: the image knows
+        nothing about geometry.
+
+        Parameters:
+            image: ``(H, W)`` or ``(H, W, C)`` atlas.
+            pairs: ``(N, 4)`` -- ``(xa, ya, xb, yb)`` pixel positions, texel
+                ``i`` centred at ``i`` (``x = u * W - 0.5``,
+                ``y = (1 - v) * H - 0.5``), that must read the same value.
+            iterations: Solver iterations.
+
+        Returns:
+            The stitched copy (same dtype; an integer one rounded and
+            saturated at its range).
+        """
+        return _ImgAtlasInternal.stitch_seams(image, pairs, iterations)
+
     @classmethod
     def assemble_atlas(
         cls,
@@ -1955,8 +2236,9 @@ class ImgUtils(
         (row 0 == top == v 1): an item later bound with the *same* scaleOffset
         samples exactly the pixels written here.
 
-        HDR-safe (works in float32, returns the input dtype). Requires cv2 for the
-        resize -- guard call sites / tests with ``cv2`` availability.
+        HDR-safe (works in float32, returns the input dtype -- an integer one
+        rounded and saturated at its range). Requires cv2 for the resize --
+        guard call sites / tests with ``cv2`` availability.
 
         Parameters:
             images: One HxW or HxWxC array per item; all must share channel count.
@@ -2030,7 +2312,8 @@ class ImgUtils(
         geometry" and can be thresholded on as such (what a lightmap bake
         needs to tell an island's own texels from the ones it merely
         overlaps). ``supersample`` sets that rate: 4 resolves coverage to
-        1/16 and costs ``(size * 4)²`` bytes of scratch.
+        1/16 and costs ``(size * 4)²`` bytes of scratch, plus up to ~0.2 GB of
+        working buffers whatever the triangles' summed height.
 
         Parameters:
             triangles: (N, 3, 2) array-like of UV coordinates (V up, usually
@@ -2501,6 +2784,67 @@ class ImgUtils(
         """
         return super().linear_to_srgb(data)
 
+    @classmethod
+    def convert_scene_linear(
+        cls, image, src, dst="scene-linear Rec.709-sRGB", bgr=False
+    ):
+        """Re-express linear light from one colour space's primaries in another's.
+
+        For renders made in a wide-gamut working space -- Maya renders in ACEScg
+        by default, and so does what ``arnoldRenderToTexture`` writes -- whose
+        consumers read linear Rec.709 (game engines, glTF viewers): left as is,
+        an ACEScg pure red reads as (0.61, 0.07, 0.02) and every tint as less
+        saturated than it is. White stays white in every space here.
+
+        The spaces are Maya's default OCIO config's scene-linear ones, by their
+        matrices to ACES2065-1 there: ``ACEScg``, ``ACES2065-1``,
+        ``scene-linear Rec.709-sRGB``, ``scene-linear DCI-P3 D65``,
+        ``scene-linear Rec.2020`` -- also under the names the ACES / OCIO v2
+        configs give the same spaces (``ACES - ACEScg``, ``Utility - Linear -
+        sRGB``, ``Linear Rec.709 (sRGB)``, ...) and every name and alias
+        Blender 5.1's config does (``Linear Rec.709``, ``Linear DCI-P3 D65``,
+        ``lin_rec709_srgb``, ``Linear ACEScg``, ...), case-insensitive. Nothing
+        is clipped: a colour outside *dst*'s gamut comes back with a negative
+        component (ACEScg's pure red is (1.71, -0.13, -0.02) in Rec.709).
+
+        Parameters:
+            image: ``(..., C)`` array, ``C >= 3``; channels past the third
+                (alpha) ride through untouched.
+            src: The colour space *image* is in.
+            dst: The one to return it in. Default linear Rec.709 / sRGB primaries.
+            bgr: The first three channels are B, G, R (OpenCV's order).
+
+        Returns:
+            A float copy in *dst* -- or *image* itself when the two spaces are
+            the same one.
+
+        Raises:
+            KeyError: *src* or *dst* is not a known scene-linear space (a log or
+                display encoding is not a matrix away from linear light).
+        """
+        return super().convert_scene_linear(image, src, dst, bgr)
+
+    @classmethod
+    def quantize_8bit(cls, unit):
+        """Quantize values in 0..1 to uint8 by stochastic rounding.
+
+        ``floor(v * 255 + r)`` with one uniform ``r`` per texel, shared by its
+        channels and drawn from a fixed seed: unbiased, so a smooth gradient
+        keeps its mean instead of terracing into contour bands; a value already
+        on a code stays exactly on it; the grain left is at most half a code
+        and has no colour; and the same input always gives the same bytes.
+        Measured on a production room's lightmaps at 2K, rounding to nearest
+        terraced the walls' gradients into contour bands 0.5-1% apart.
+
+        Parameters:
+            unit: ``(..., C)`` values in 0..1, channels last (an ``(H, W, C)``
+                image or a flat ``(N, C)`` pixel buffer).
+
+        Returns:
+            uint8 array of the same shape.
+        """
+        return super().quantize_8bit(unit)
+
     #: Percentile used to normalize an HDR image for 8-bit web encoding. High enough
     #: that only genuine light sources clip, low enough that one hot texel cannot
     #: crush the whole map. Shared contract with blendertk's ``encode_for_web``
@@ -2522,6 +2866,11 @@ class ImgUtils(
         range this normalization exists to keep. The divide happens BEFORE
         :meth:`linear_to_srgb`, which clips.
 
+        The 8-bit step is stochastic rounding (a fixed seed, one draw per texel
+        for all its channels): unbiased, so a smooth wall keeps its gradient
+        instead of terracing into contour bands, with at most half a code of
+        colourless grain; a value already on a code encodes exactly.
+
         Parameters:
             path: An EXR/HDR file (any float image cv2 can read works).
             percentile: Normalization percentile. Default :attr:`HDR_WEB_PERCENTILE`.
@@ -2535,6 +2884,31 @@ class ImgUtils(
             ValueError: the file could not be read as an image.
         """
         return super().encode_hdr_for_web(path, percentile)
+
+    @classmethod
+    def encode_hdr_radiance(cls, path) -> bytes:
+        """Encode a linear-float HDR image (EXR/HDR) as Radiance ``.hdr`` bytes.
+
+        The lossless-in-range sibling of :meth:`encode_hdr_for_web`, for an
+        image whose whole range is the point -- an environment map, where a
+        light is fifty times its walls and an 8-bit encode would clip exactly
+        what a reflection shows. RGBE: three 8-bit mantissas over a shared
+        exponent, run-length encoded, which three.js' ``RGBELoader`` and every
+        HDR tool read. Values stay as stored (linear; whatever colour space
+        and unit the file is in); alpha is dropped, as are non-finite values
+        and negatives, which RGBE cannot express.
+
+        Parameters:
+            path: An EXR/HDR file (any float image cv2 can read works).
+
+        Returns:
+            The Radiance file's bytes.
+
+        Raises:
+            ImportError: cv2 unavailable (it is the only float-image reader here).
+            ValueError: the file could not be read or encoded.
+        """
+        return super().encode_hdr_radiance(path)
 
     @classmethod
     def generate_mipmaps(cls, image: Union[str, Image.Image]) -> List[Image.Image]:
@@ -2706,6 +3080,70 @@ class ImgUtils(
         return super().extract_channels(
             image_path, channel_config, output_dir, base_name, save, **kwargs
         )
+
+    @classmethod
+    def detect_normal_map_format(
+        cls,
+        image: Union[str, "Image.Image"],
+        threshold: float = 0.25,
+        min_gradient_std: float = 1.0,
+    ) -> Optional[str]:
+        """Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.
+
+        Theory:
+        If a normal map represents a continuous height field H over image
+        coordinates (x = column, y = row, row increasing DOWNWARD):
+        Red channel   R ~ -dH/dx              (both formats)
+        Green channel G ~ +dH/dy (OpenGL)     (image top = V max, so the
+                      Y-up green component equals the row-down derivative)
+                      G ~ -dH/dy (DirectX)
+
+        Cross derivatives of a real height field are equal
+        (d²H/dxdy = d²H/dydx), therefore:
+        corr(dR/dy, dG/dx) < 0  -> OpenGL
+        corr(dR/dy, dG/dx) > 0  -> DirectX
+        (Verified against a labeled real-world OpenGL map: r = -0.19.)
+
+        Measured behavior (synthetic height fields x {clean, JPEG q40-70,
+        quarter-res}, 42 cases): 40 correct, 2 indeterminate, 0 wrong-sign.
+        Non-normal inputs (photographs, random noise, flat fills, OBJECT-space
+        normals) all fall below the threshold and return None rather than
+        guessing.
+
+        How strong the evidence is varies far more by map than "|r| ~ 0.64-0.95"
+        once suggested here: measured across four real production OpenGL bakes,
+        |r| ranges 0.19 to 0.77. Deep, high-contrast relief lands near the top
+        (a turret bake: 0.77); shallow relief over a large neutral field lands
+        near the bottom (a 4096 hook/pin bake: 0.19) and legitimately abstains
+        at the default threshold. The SIGN was correct in all four, which is
+        what the statistic is really good for -- it is much better at "not
+        backwards" than at "confident".
+
+        Known blind spot: the statistic measures the RELATIVE handedness of the
+        two channels, so it cannot tell "G is inverted" from "R is inverted". A
+        map whose RED channel was flipped (an X- bake, or a mirrored-UV export)
+        reports the opposite convention with full confidence. So a caller that
+        must name a map's ABSOLUTE convention ranks filename evidence first
+        (:meth:`MapFactory.detect_normal_map_format`'s normal handler), while
+        one that needs only the relative handedness -- the UV transfer, which
+        turns X and Y with each island -- ranks this first
+        (:meth:`UvTransfer.normal_convention`).
+
+        Parameters:
+            image (str | PIL.Image.Image): Input normal map.
+            threshold (float): Correlation magnitude required to call a format.
+                0.25 is empirically conservative — small biases on near-flat
+                inputs (e.g. baked maps with large neutral backgrounds) can
+                still produce |r| around 0.1, so anything looser is noise.
+            min_gradient_std (float): Per-channel gradient std-dev floor
+                (8-bit units). When both dR/dy and dG/dx are below this floor
+                the image is effectively flat and correlation is meaningless;
+                returns None rather than emitting a confident-looking guess.
+
+        Returns:
+            str | None: "OpenGL", "DirectX", or None if indeterminate.
+        """
+        return super().detect_normal_map_format(image, threshold, min_gradient_std)
 
 
 # --------------------------------------------------------------------------------------------

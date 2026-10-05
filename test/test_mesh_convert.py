@@ -565,6 +565,49 @@ class TestFbxToGlb(unittest.TestCase):
             MeshConvert.fbx_to_glb(self.src, dst, auto_install=False, timeout=42)
         self.assertEqual(captured["kwargs"].get("timeout"), 42)
 
+    def test_the_input_is_parsed_once_for_the_budget_and_the_clip_spans(self):
+        """The budget's census and the measured clip spans each parsed the
+        input for the same curves -- 8 s apiece on a 133 MB Maya assembly
+        (2026-10-04 review). One parse serves both, with the same answers."""
+        from test_export_verify import build_take_fbx
+
+        src = build_take_fbx(
+            os.path.join(self.tmp, "takes.fbx"),
+            {"Take 001": {("lift", "d|Y"): (1, 100)}},
+        )
+        measured = FbxFile.load(src, span_arrays=("KeyTime",)).take_spans()
+        budget = MeshConvert.conversion_timeout(src)
+        captured, loads, stamped = {}, [], []
+
+        def _run(cmd, **kw):
+            captured.update(kw)
+            _write_glb_file(
+                cmd[cmd.index("-o") + 1] + ".glb", {"asset": {"version": "2.0"}}
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+        real_load = FbxFile.load
+
+        def counted(*args, **kwargs):
+            loads.append(args[0])
+            return real_load(*args, **kwargs)
+
+        def stamp(gltf, spans):
+            stamped.append(spans)
+            return {}
+
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value=self.fake_bin),
+            patch("subprocess.run", side_effect=_run),
+            patch.object(FbxFile, "load", side_effect=counted),
+            patch.object(MeshConvert, "_stamp_clip_spans", side_effect=stamp),
+        ):
+            MeshConvert.fbx_to_glb(src, auto_install=False)
+
+        self.assertEqual(len(loads), 1, loads)
+        self.assertEqual(stamped, [measured])
+        self.assertEqual(captured["timeout"], budget)
+
 
 class TestCheckGlbMaterials(unittest.TestCase):
     """Verify the post-conversion material sanity check."""
@@ -2075,7 +2118,9 @@ class TestGlbEditSession(unittest.TestCase):
         """
         from test_fbx_media import build_fbx
 
-        ticks = MeshConvert._FBX_TICKS_PER_SECOND
+        from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
+
+        ticks = FbxFile.TICKS_PER_SECOND
         # 2000 nodes over a 100 s take at 24 fps = 4.8M node-frames.
         animated = build_fbx(
             os.path.join(self.tmp, "animated.fbx"),
@@ -2102,6 +2147,40 @@ class TestGlbEditSession(unittest.TestCase):
         with open(junk, "wb") as fh:
             fh.write(b"not an fbx" * 10)
         self.assertEqual(MeshConvert.bake_node_frames(junk), 0)
+
+    def test_the_bake_is_each_take_s_key_extent_not_its_declared_span(self):
+        """FBX2glTF bakes a take over the key extent of every curve in it and
+        ignores the span the take declares (measured 2026-10-04 on 0.13.1: a
+        take declaring 1-120 baked 3-200). A budget read from the declared
+        span undercounts every take whose keys outrun it -- the case that
+        discards a finished conversion."""
+        from test_export_verify import TICK, build_take_fbx
+
+        from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
+
+        path = build_take_fbx(
+            os.path.join(self.tmp, "outrun.fbx"),
+            {"Take 001": {("lift", "d|Y"): (1, 3000), ("door", "d|Y"): (1, 10)}},
+        )
+        seconds = 2999 * TICK / FbxFile.TICKS_PER_SECOND
+        self.assertEqual(
+            MeshConvert.bake_node_frames(path),
+            int(2 * seconds * MeshConvert.CONVERSION_BAKE_FPS),
+        )
+
+    def test_a_truncated_fbx_degrades_the_budget_rather_than_raising(self):
+        """Cut inside a zlib-encoded key array, the budget's census raised
+        ``zlib.error`` out of ``fbx_to_glb`` -- past its documented
+        exceptions and every task manager's catch -- before the conversion
+        was attempted (2026-10-04 review). A budget is never the reason a
+        conversion is not attempted."""
+        from test_export_verify import build_truncated_fbx
+
+        cut = build_truncated_fbx(os.path.join(self.tmp, "cut.fbx"))
+        self.assertEqual(MeshConvert.bake_node_frames(cut), 0)
+        self.assertEqual(
+            MeshConvert.conversion_timeout(cut), MeshConvert.DEFAULT_TIMEOUT
+        )
 
     def test_describe_texture_pass_owns_up_to_the_power_of_two_snap(self):
         """``max_size=0`` means "never CLAMP", not "never resample".
@@ -4849,6 +4928,37 @@ class TestGlbLightmaps(unittest.TestCase):
         self.assertEqual(int(arr.max()), 255)
         self.assertEqual(int(arr.min()), 255)  # constant in, constant out
 
+    def test_encode_is_unbiased_between_codes(self):
+        """A level between two 8-bit codes averages to itself, not to the nearer code.
+
+        Rounding every texel of a smooth wall to its nearest code terraced its
+        gradients into contour bands 0.5-1% apart (a production room at 2K,
+        2026-10-02); stochastic rounding keeps the mean, so the bands go and a
+        fraction of a code of fine grain stays.
+        """
+        import cv2
+        import numpy as np
+
+        from pythontk import ImgUtils
+
+        # Encoded against a bright texel, the field sits at sRGB code 127.3.
+        target = 127.3 / 255.0
+        level = ((target + 0.055) / 1.055) ** 2.4
+        img = np.full((64, 64, 3), level, dtype=np.float32)
+        img[0, 0] = 1.0
+        path = os.path.join(self.tmp, "between.exr")
+        cv2.imwrite(path, img)
+        png, scalar = ImgUtils.encode_hdr_for_web(path, percentile=100.0)
+        self.assertAlmostEqual(scalar, 1.0, places=4)
+        arr = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+        field = arr[1:, 1:].astype(np.float64)
+        self.assertAlmostEqual(float(field.mean()), 127.3, delta=0.05)
+        self.assertLessEqual(int(field.max()) - int(field.min()), 1)
+        # Grey stays grey: the channels share one dither.
+        self.assertTrue((field[..., 0] == field[..., 1]).all())
+        # Deterministic: the same map encodes to the same bytes.
+        self.assertEqual(png, ImgUtils.encode_hdr_for_web(path, percentile=100.0)[0])
+
     def test_encode_percentile_ignores_zero_texels(self):
         """Unbaked (zero) texels must not drag the divisor toward black."""
         import cv2
@@ -4862,6 +4972,30 @@ class TestGlbLightmaps(unittest.TestCase):
         cv2.imwrite(path, img)
         _png, scalar = ImgUtils.encode_hdr_for_web(path)
         self.assertAlmostEqual(scalar, 2.0, places=4)
+
+    def test_radiance_encode_keeps_the_range_and_drops_what_rgbe_cannot_hold(self):
+        """encode_hdr_radiance: a light fifty times its wall survives (RGBE's
+        shared exponent), and alpha, inf, NaN and negatives -- which RGBE has
+        no bits for -- come back as 0, never as garbage exponents."""
+        import cv2
+        import numpy as np
+
+        from pythontk import ImgUtils
+
+        img = np.full((4, 8, 4), 0.5, dtype=np.float32)
+        img[0, 0, :3] = 25.0
+        img[1, 0, :3] = np.inf
+        img[1, 1, :3] = np.nan
+        img[1, 2, :3] = -3.0
+        path = os.path.join(self.tmp, "probe.exr")
+        cv2.imwrite(path, img)
+        raw = ImgUtils.encode_hdr_radiance(path)
+        self.assertTrue(raw.startswith(b"#?"), "a Radiance file")
+        out = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_UNCHANGED)
+        self.assertEqual(out.shape, (4, 8, 3))
+        self.assertAlmostEqual(float(out[0, 0, 0]), 25.0, delta=0.25)
+        self.assertAlmostEqual(float(out[3, 7, 1]), 0.5, delta=0.005)
+        self.assertEqual(out[1, :3].tolist(), [[0.0, 0.0, 0.0]] * 3)
 
     # ------------------------------------------------------------------ applier
     def test_the_manifests_own_folder_beats_a_same_named_map_in_search_dirs(self):
@@ -4973,6 +5107,88 @@ class TestGlbLightmaps(unittest.TestCase):
         self.assertAlmostEqual(
             web["materials"]["roomMat"]["intensity"], self.GOLDEN_CONSTANT, places=5
         )
+
+    # ------------------------------------------------------------ the probe
+    def _probe_exr(self, name="room_Probe.exr"):
+        """An HDR probe: a 'light' of 35 on its top rows, 0.5 elsewhere, with alpha."""
+        import cv2
+        import numpy as np
+
+        img = np.full((16, 32, 4), 0.5, dtype=np.float32)
+        img[:4, :, :3] = 35.0
+        img[..., 3] = 1.0
+        path = os.path.join(self.tmp, name)
+        cv2.imwrite(path, img)
+        return path
+
+    def _probe_manifest(self, probe_map, **probe):
+        manifest = self._manifest(
+            [{"name": "room", "map": os.path.basename(self._exr())}]
+        )
+        manifest["probe"] = {
+            "map": probe_map,
+            "position": [100.0, 200.0, -300.0],
+            "box": [[-400.0, 0.0, -400.0], [400.0, 394.0, 400.0]],
+            "unit_scale": 0.01,
+            **probe,
+        }
+        return manifest
+
+    @staticmethod
+    def _probe_pixels(edit, view_index):
+        """The embedded probe, decoded (float BGR)."""
+        import cv2
+        import numpy as np
+
+        view = edit.gltf["bufferViews"][view_index]
+        start = int(view.get("byteOffset", 0))
+        raw = bytes(edit.bin_data[start : start + int(view["byteLength"])])
+        return cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_UNCHANGED)
+
+    def test_a_manifest_probe_ships_as_radiance_hdr_in_metres(self):
+        """The bake's probe rides the GLB whole: its light at 35, not clipped at
+        1 as an 8-bit map would hold it, and its point and box in metres."""
+        manifest = self._probe_manifest(os.path.basename(self._probe_exr()))
+        glb = self._glb(self._scene(manifest))
+        self.assertEqual(len(MeshConvert.apply_glb_lightmaps(glb)), 1)
+        with MeshConvert.open_glb(glb) as edit:
+            probe = edit.gltf["extras"]["lightmap_web"]["probe"]
+            self.assertEqual(probe["mimeType"], "image/vnd.radiance")
+            self.assertEqual(probe["position"], [1.0, 2.0, -3.0])
+            self.assertEqual(
+                probe["box"], {"min": [-4.0, 0.0, -4.0], "max": [4.0, 3.94, 4.0]}
+            )
+            pixels = self._probe_pixels(edit, probe["bufferView"])
+        self.assertEqual(pixels.shape, (16, 32, 3), "alpha is dropped")
+        # RGBE: 8-bit mantissas over a shared exponent -- within 1%.
+        self.assertAlmostEqual(float(pixels[0, 0, 0]), 35.0, delta=0.35)
+        self.assertAlmostEqual(float(pixels[-1, -1, 1]), 0.5, delta=0.005)
+
+    def test_the_probe_survives_bin_compaction(self):
+        """The view is named from extras alone; compaction keeps what JSON names."""
+        manifest = self._probe_manifest(os.path.basename(self._probe_exr()))
+        glb = self._glb(self._scene(manifest))
+        MeshConvert.apply_glb_lightmaps(glb)
+        with MeshConvert.open_glb(glb) as edit:
+            MeshConvert._compact_bin(edit)
+            edit.dirty = True
+        with MeshConvert.open_glb(glb) as edit:
+            probe = edit.gltf["extras"]["lightmap_web"]["probe"]
+            pixels = self._probe_pixels(edit, probe["bufferView"])
+        self.assertAlmostEqual(float(pixels[0, 0, 2]), 35.0, delta=0.35)
+
+    def test_a_probe_it_cannot_find_is_warned_and_the_lightmaps_still_ship(self):
+        manifest = self._probe_manifest("gone_Probe.exr")
+        glb = self._glb(self._scene(manifest))
+        with self.assertLogs(
+            "pythontk.file_utils.mesh_convert._lightmaps", "WARNING"
+        ) as logs:
+            self.assertEqual(len(MeshConvert.apply_glb_lightmaps(glb)), 1)
+        self.assertTrue(any("gone_Probe.exr" in line for line in logs.output))
+        with MeshConvert.open_glb(glb) as edit:
+            web = edit.gltf["extras"]["lightmap_web"]
+        self.assertNotIn("probe", web)
+        self.assertIn("roomMat", web["materials"])
 
     def test_superseded_carriers_agree_with_the_authoritative_one(self):
         """Every surviving copy of the lightmap metadata must say the same thing.
@@ -8397,6 +8613,20 @@ class TestApplyGlbVisibility(unittest.TestCase):
         # key expects it to say something.
         self.assertNotIn("clip_span", built)
 
+    def test_an_origin_alone_is_published_for_a_scene_with_no_tracks(self):
+        """A shot scene with nothing keyed on visibility still needs the
+        whole-timeline origin: ``apply_glb_clips`` cannot cut a shot without
+        it. It rides this channel alone, and the channel was dropped with no
+        tracks -- so the GLB shipped ``Take 001`` and no shot clip (measured
+        2026-10-04, two shots on one keyed cube)."""
+        built = MeshConvert.build_visibility_tracks(
+            [], fps=24.0, clip_spans={"*": [1.0000001, 40.0]}
+        )
+        self.assertEqual(built["tracks"], [])
+        self.assertEqual(built["clip_span"], {"*": [1.0, 40.0]})
+        self.assertEqual(built["fps"], 24.0)
+        self.assertIsNone(MeshConvert.build_visibility_tracks([], clip_spans={}))
+
     def test_the_envelope_rounds_float_noise(self):
         """float32 attributes read back as doubles publish their noise
         (``0.49952034551044694``); six places keep every frame and colour a
@@ -10251,6 +10481,118 @@ class TestApplyGlbClips(unittest.TestCase):
 
     def test_nothing_declared_is_a_no_op(self):
         self.assertIsNone(MeshConvert.apply_glb_clips(self._glb([])))
+
+    # -- the measured origin ---------------------------------------------------
+    #
+    # FBX2glTF sizes every take by the key extent of ALL its curves and rebases
+    # it onto the first key (measured 2026-10-04 on 0.13.1, FbxFile.take_spans).
+    # A producer's published span is a prediction of that; the converter reads
+    # the FBX itself, so it stamps what the file holds before any pass reads it.
+
+    def _channel(self, path):
+        with MeshConvert.open_glb(path) as edit:
+            return MeshConvert.data_export_channel(
+                edit.gltf, MeshConvert.VISIBILITY_TRACKS_KEY
+            )
+
+    def _stamp(self, path, measured):
+        with MeshConvert.open_glb(path) as edit:
+            stamped = MeshConvert._stamp_clip_spans(edit.gltf, measured)
+            edit.dirty = bool(stamped)
+        return stamped
+
+    def test_a_measured_origin_replaces_a_stale_published_one(self):
+        """A hand-off published the range the LAST export left in the FBX
+        plugin as its origin, and every shot was cut that many frames early
+        (measured 2026-10-04: 23). The file's own first key wins, and the
+        disagreement is said out loud."""
+        path = self._glb(self._shots(), spans=("*", [33, 133]))
+        with self.assertLogs("pythontk", level="WARNING") as caught:
+            stamped = self._stamp(path, {"Take 001": (0.0, 100 / self.FPS)})
+
+        self.assertEqual(stamped, {"*": [0.0, 100.0]})
+        self.assertTrue(any("33" in line for line in caught.output), caught.output)
+        MeshConvert.apply_glb_clips(path)
+        _times, values, _ = self._sampler(path, "SHOT_A")
+        self.assertAlmostEqual(values[0][0], 10.0, places=3)  # frame 10, not 43
+
+    def test_a_declared_take_s_measured_span_replaces_its_published_one(self):
+        """Blender's split bakes each take over its whole window, while its
+        producer published the first AUTHORED key inside it: a gate placed
+        against that zero lost a shot's visible run (measured 2026-10-04:
+        hidden for all of ShotB instead of from frame 30). Each take's own
+        span is stamped, and the tracks ride through untouched."""
+        path = self._glb(
+            [{"name": "SHOT_B", "start": 21, "end": 40}],
+            source="SHOT_B",
+            spans=("SHOT_B", [30, 40]),
+        )
+        self._stamp(path, {"SHOT_B": (21 / self.FPS, 40 / self.FPS)})
+        channel = self._channel(path)
+        self.assertEqual(channel["clip_span"]["SHOT_B"], [21.0, 40.0])
+        self.assertEqual(channel["tracks"], [])
+
+    def test_a_file_publishing_no_channel_gets_the_measured_origin_alone(self):
+        path = self._glb(self._shots(), spans=None)
+        self._stamp(path, {"Take 001": (0.0, 100 / self.FPS)})
+        channel = self._channel(path)
+        self.assertEqual(channel["clip_span"], {"*": [0.0, 100.0]})
+        self.assertEqual((channel["tracks"], channel["fps"]), ([], self.FPS))
+
+    def test_a_measurement_agreeing_with_the_published_span_is_quiet(self):
+        path = self._glb(self._shots(), spans=("*", [0, 100]))
+        with self.assertNoLogs("pythontk", level="WARNING"):
+            self._stamp(path, {"Take 001": (0.0, 100 / self.FPS)})
+
+    def test_two_undeclared_stacks_measure_no_origin(self):
+        """``*`` names THE whole-timeline stack; with two, which one the
+        rebuild cuts from is not this stamp's to guess."""
+        path = self._glb(self._shots(), spans=("*", [0, 100]))
+        stamped = self._stamp(path, {"Take 001": (0.0, 1.0), "Take 002": (0.5, 2.0)})
+        self.assertFalse(stamped)
+        self.assertEqual(self._channel(path)["clip_span"], {"*": [0, 100]})
+
+    def test_the_stamp_leaves_every_other_carrier_s_channel_alone(self):
+        """A referenced module brings its own carrier. The stamp wrote back
+        through ``overlay_data_export``, which clears the channel from EVERY
+        carrier, so on every conversion the module's visibility tracks left
+        the GLB (2026-10-04 review). Written back where it was read, only."""
+        key = MeshConvert.VISIBILITY_TRACKS_KEY
+
+        def carrier(name, channels):
+            props = {
+                k: {"type": "eFbxString", "value": json.dumps(v)}
+                for k, v in channels.items()
+            }
+            return {"name": name, "extras": {"fromFBX": {"userProperties": props}}}
+
+        module = {
+            "version": 1,
+            "fps": self.FPS,
+            "tracks": [{"node": "B", "visibility": [[1, 0], [50, 1]]}],
+        }
+        gltf = {
+            "nodes": [
+                carrier(
+                    "data_export",
+                    {
+                        "fbx_takes": self._shots(),
+                        "shot_metadata": {"version": 1, "fps": self.FPS},
+                        key: {**module, "tracks": [], "clip_span": {"*": [0, 100]}},
+                    },
+                ),
+                carrier("modB:data_export", {key: module}),
+            ]
+        }
+
+        stamped = MeshConvert._stamp_clip_spans(gltf, {"Take 001": (0.0, 2.0)})
+
+        self.assertEqual(stamped, {"*": [0.0, 60.0]})
+        self.assertEqual(
+            MeshConvert.data_export_channel(gltf, key)["clip_span"], {"*": [0.0, 60.0]}
+        )
+        props = gltf["nodes"][1]["extras"]["fromFBX"]["userProperties"]
+        self.assertEqual(json.loads(props[key]["value"]), module)
 
 
 class TestOptimizeGlbWebpSemantics(unittest.TestCase):

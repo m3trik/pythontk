@@ -54,6 +54,11 @@ PLAYBLAST_ACTIONS = ("begin", "frame", "finish", "cancel")
 #: a still is a single frame, so it needs none of a recording's token dance.
 SNAPSHOT_PATH = "snapshot"
 
+#: Path the published scene is described at, as data
+#: (:meth:`PreviewServer.describe_scene`): how the asset is built and lit, for
+#: a reader that cannot run the page. Read-only, and a guest's as well.
+SCENE_PATH = "scene.json"
+
 #: What a page's id may look like -- the ``?id=`` on its manifest polls and its
 #: close beacon. Anything else is ignored rather than stored: a share counts its
 #: guests by id, and the id is the one value a guest chooses.
@@ -117,6 +122,21 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
 
     server_version = "pythontk-preview"
 
+    #: The page's own types, named rather than guessed -- ``guess_type`` reads
+    #: this before ``mimetypes``, the same on either listener. ``mimetypes``
+    #: reads the Windows registry (``HKCR\.js\Content Type``), which an
+    #: installer can leave at ``text/plain``; a browser refuses to run a module
+    #: script typed as anything but JavaScript, and the kernel is ES modules,
+    #: so on such a machine the page stayed blank.
+    extensions_map = {
+        **SimpleHTTPRequestHandler.extensions_map,
+        ".js": "text/javascript",
+        ".mjs": "text/javascript",
+        ".json": "application/json",
+        ".wasm": "application/wasm",
+        ".glb": "model/gltf-binary",
+    }
+
     #: Keep-alive, which needs an accurate ``Content-Length`` on every response
     #: -- every path here sends one, and the 204s have no body by definition.
     #:
@@ -163,6 +183,9 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
             if self._owner is not None:
                 self._owner._touch_viewer(self._viewer_id())
             self._send_json(self._owner.manifest() if self._owner else {})
+            return
+        if route == SCENE_PATH and self._owner is not None:
+            self._send_scene()
             return
         super().do_GET()
 
@@ -220,6 +243,11 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         if route == "manifest.json":
             owner._touch_guest(self._viewer_id())
             self._send_json(owner.manifest(guest=True))
+            return
+        if route == SCENE_PATH:
+            # The JSON of the asset a guest may already download, read for
+            # them; it counts as no tab, as an asset GET does not.
+            self._send_scene()
             return
         if self._guest_may_read(self._route()):
             super().do_GET()
@@ -562,6 +590,28 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
             self.send_error(500, f"Image write failed: {error}")
         else:
             self._send_json(result)
+
+    def _send_scene(self) -> None:
+        """``GET /scene.json[?section=<key>&start=<n>]``: the overview, or one
+        page of one section (:meth:`PreviewServer.describe_scene`)."""
+        query = parse_qs(urlparse(self.path).query)
+        section = (query.get("section") or [None])[0]
+        try:
+            start = int((query.get("start") or ["0"])[0])
+        except ValueError:
+            start = -1
+        if start < 0:
+            self.send_error(400, "start is a whole number from 0")
+            return
+        try:
+            payload = self._owner.describe_scene(section, start)
+        except KeyError:
+            self.send_error(404, f"The asset has no section {section!r}")
+            return
+        except (OSError, ValueError) as error:
+            self.send_error(500, f"The asset could not be read: {error}")
+            return
+        self._send_json(payload)
 
     def _send_json(self, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload).encode("utf-8")

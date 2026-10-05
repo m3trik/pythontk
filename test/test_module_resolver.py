@@ -73,6 +73,20 @@ class _TempPackageCase(BaseTestCase):
 
 
 class ModuleResolverBootstrapTests(_TempPackageCase):
+    def test_a_module_saved_with_a_bom_is_parsed(self) -> None:
+        """A BOM-prefixed module imports fine; its AST read must not come back
+        ``None`` (a swallowed ``SyntaxError``) and hide its classes."""
+        from pythontk.core_utils.module_resolver import ModuleAttributeResolver
+
+        self._make_package("resolver_pkg_bom", init_body="", modules={})
+        (self._tmp_path / "resolver_pkg_bom" / "bom.py").write_text(
+            "class Bom:\n    pass\n", encoding="utf-8-sig"
+        )
+        importlib.invalidate_caches()
+        tree = ModuleAttributeResolver._read_module_ast("resolver_pkg_bom.bom")
+        self.assertIsNotNone(tree)
+        self.assertEqual([n.name for n in tree.body], ["Bom"])
+
     def test_bootstrap_exposes_classes_and_methods(self) -> None:
         pkg = self._make_package(
             "resolver_pkg_a",

@@ -19,7 +19,9 @@ would drag a dependency into pythontk.
 
 from __future__ import annotations
 
+import os
 import re
+import sys
 from http.client import HTTPException
 from typing import Dict, Optional
 from urllib.error import HTTPError, URLError
@@ -74,6 +76,12 @@ class _RemoteFileInternal(object):
         if gid is not None:
             query["gid"] = gid
         return urlunsplit((parts.scheme, parts.netloc, path, urlencode(query), ""))
+
+    @staticmethod
+    def _is_socket_refused(reason) -> bool:
+        """True when *reason* is the OS refusing the socket itself (Windows
+        ``WSAEACCES`` 10013: an outbound firewall rule), not a network fault."""
+        return getattr(reason, "winerror", None) == 10013
 
     @classmethod
     def _sharing_hint(cls, url: str) -> str:
@@ -182,10 +190,19 @@ class RemoteFile(_RemoteFileInternal):
         try:
             return urlopen(request, timeout=cls.TIMEOUT if timeout is None else timeout)
         except HTTPError as exc:
-            raise cls.Error(
-                f"Can't fetch {target}: HTTP {exc.code} {exc.reason}."
-            ) from exc
+            msg = f"Can't fetch {target}: HTTP {exc.code} {exc.reason}."
+            if exc.code in (401, 403):
+                msg += " " + cls._sharing_hint(target)
+            raise cls.Error(msg) from exc
         except URLError as exc:
+            if cls._is_socket_refused(exc.reason):
+                raise cls.Error(
+                    f"Can't fetch {target}: {exc.reason}. The operating system "
+                    f"refused this program a network socket -- usually a "
+                    f"firewall blocking outbound traffic for "
+                    f"{os.path.basename(sys.executable)} ({sys.executable}). "
+                    f"Allow it outbound, then reload."
+                ) from exc
             raise cls.Error(
                 f"Can't fetch {target}: {exc.reason}. Check the connection and "
                 f"that the link is correct, then reload."

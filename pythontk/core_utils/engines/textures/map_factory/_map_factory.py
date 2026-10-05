@@ -1254,61 +1254,26 @@ class MapFactory(
         threshold: float = 0.25,
         min_gradient_std: float = 1.0,
     ) -> Optional[str]:
-        """Detects if a normal map is OpenGL (Y+) or DirectX (Y-) based on surface integrability.
+        """Whether a normal map is OpenGL (Y+) or DirectX (Y-), read off its content.
 
-        Theory:
-        If a normal map represents a continuous height field H over image
-        coordinates (x = column, y = row, row increasing DOWNWARD):
-        Red channel   R ~ -dH/dx              (both formats)
-        Green channel G ~ +dH/dy (OpenGL)     (image top = V max, so the
-                      Y-up green component equals the row-down derivative)
-                      G ~ -dH/dy (DirectX)
-
-        Cross derivatives of a real height field are equal
-        (d²H/dxdy = d²H/dydx), therefore:
-        corr(dR/dy, dG/dx) < 0  -> OpenGL
-        corr(dR/dy, dG/dx) > 0  -> DirectX
-        (Verified against a labeled real-world OpenGL map: r = -0.19.)
-
-        Measured behavior (synthetic height fields x {clean, JPEG q40-70,
-        quarter-res}, 42 cases): 40 correct, 2 indeterminate, 0 wrong-sign.
-        Non-normal inputs (photographs, random noise, flat fills, OBJECT-space
-        normals) all fall below the threshold and return None rather than
-        guessing.
-
-        How strong the evidence is varies far more by map than "|r| ~ 0.64-0.95"
-        once suggested here: measured across four real production OpenGL bakes,
-        |r| ranges 0.19 to 0.77. Deep, high-contrast relief lands near the top
-        (a turret bake: 0.77); shallow relief over a large neutral field lands
-        near the bottom (a 4096 hook/pin bake: 0.19) and legitimately abstains
-        at the default threshold. The SIGN was correct in all four, which is
-        what the statistic is really good for -- it is much better at "not
-        backwards" than at "confident".
-
-        Known blind spot: the statistic measures the RELATIVE handedness of the
-        two channels, so it cannot tell "G is inverted" from "R is inverted". A
-        map whose RED channel was flipped (an X- bake, or a mirrored-UV export)
-        reports the opposite convention with full confidence. Filename evidence
-        outranks this function wherever both exist -- which is why the caller
-        only consults it for a map classified as the ambiguous generic
-        ``Normal`` (see NormalMapHandler), never to override a ``Normal_OpenGL``
-        or ``Normal_DirectX`` tag.
+        :meth:`ImgUtils.detect_normal_map_format` -- the integrability
+        statistic, its measured reliability and its blind spot are documented
+        there. It is image analysis, so it lives in ``img_utils``, where code
+        below the engines (the UV transfer) reads it too. Here filename
+        evidence outranks it: the normal handler asks it only for a map
+        classified as the generic ``Normal`` (see NormalMapHandler), never to
+        override a ``Normal_OpenGL`` or ``Normal_DirectX`` tag.
 
         Parameters:
             image (str | PIL.Image.Image): Input normal map.
             threshold (float): Correlation magnitude required to call a format.
-                0.25 is empirically conservative — small biases on near-flat
-                inputs (e.g. baked maps with large neutral backgrounds) can
-                still produce |r| around 0.1, so anything looser is noise.
             min_gradient_std (float): Per-channel gradient std-dev floor
-                (8-bit units). When both dR/dy and dG/dx are below this floor
-                the image is effectively flat and correlation is meaningless;
-                returns None rather than emitting a confident-looking guess.
+                (8-bit units) under which the map reads as flat.
 
         Returns:
             str | None: "OpenGL", "DirectX", or None if indeterminate.
         """
-        return super().detect_normal_map_format(image, threshold, min_gradient_std)
+        return ImgUtils.detect_normal_map_format(image, threshold, min_gradient_std)
 
     @classmethod
     def convert_normal_map_format(

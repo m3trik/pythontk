@@ -1,23 +1,15 @@
 {
-  "description": "Fade objects out at shot end via visibility.",
+  "description": "Fade objects out at shot end -- the scene's effect recipe (Render Effects) sets the length.",
   "kind": [
     "scene"
   ],
+  "effect": "fade_out",
+  "place": "end",
   "verify": {
     "mode": "values_in_range"
   },
-  "attributes": {
-    "visibility": {
-      "out": {
-        "anchor": "end",
-        "offset": 0,
-        "duration": 15,
-        "values": [
-          1.0,
-          0.0
-        ],
-        "tangent": "linear"
-      }
-    }
-  }
+  "detect": [
+    "\\bfades?\\s+(?:out|away)\\b",
+    "^\\s*(?P<object>.+?)\\s+fades?\\s+(?:out|away)\\b"
+  ]
 }

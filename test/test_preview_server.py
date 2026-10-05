@@ -11,6 +11,7 @@ asset.
 
 import base64
 import json
+import mimetypes
 import os
 import re
 import struct
@@ -35,11 +36,25 @@ from pythontk.file_utils.temp_artifacts import TempArtifacts
 from pythontk.net_utils.preview.bridge import PreviewBridge
 from pythontk.net_utils.preview.deliverer import PreviewDeliverer
 from pythontk.net_utils.preview.server import (
+    SCENE_PATH,
     SETTINGS_PATH,
     SNAPSHOT_PATH,
     VIEWER_CLOSED_PATH,
     PreviewServer,
 )
+
+
+def _served_page(root) -> str:
+    """The page as a serve root holds it: the markup (``index.html``) and every
+    kernel module it imports -- the viewer itself, since the page's script
+    became ``kernel/`` -- for the tests that read the page as a text contract."""
+    root = Path(root)
+    parts = [(root / "index.html").read_text(encoding="utf-8")]
+    parts += [
+        module.read_text(encoding="utf-8")
+        for module in sorted((root / "kernel").glob("*.js"))
+    ]
+    return "\n".join(parts)
 
 
 class PreviewServerTestCase(unittest.TestCase):
@@ -181,7 +196,7 @@ class PreviewServerTestCase(unittest.TestCase):
             page = Path(server.root) / "index.html"
             page.write_text("STALE VIEWER", encoding="utf-8")
             server.publish(self._asset())
-            self.assertIn("navigator.xr", page.read_text(encoding="utf-8"))
+            self.assertIn("kernel/main.js", page.read_text(encoding="utf-8"))
         finally:
             server.stop()
 
@@ -197,6 +212,23 @@ class PreviewServerTestCase(unittest.TestCase):
     def test_viewer_can_be_disabled(self):
         self._serve(viewer=False)
         self.assertFalse((self.root / "index.html").exists())
+
+    def test_a_page_installed_without_its_kernel_says_so(self):
+        """The page is markup; the viewer is the ``kernel/`` it imports. An
+        install that carried the page without its modules served a tab that
+        never started, and nothing on this side said why -- where it is a
+        packaging fact, and the one place it can be read."""
+        package = Path(self.temp.dir_path())
+        (package / "viewer.html").write_bytes(
+            (PreviewServer.SCRIPTS_DIR / "viewer.html").read_bytes()
+        )
+        with (
+            unittest.mock.patch.object(PreviewServer, "SCRIPTS_DIR", package),
+            self.assertLogs(PreviewServer.logger, level="WARNING") as caught,
+        ):
+            self._serve()
+        self.assertTrue((self.root / "index.html").is_file(), "the page itself ships")
+        self.assertTrue(any("kernel" in line for line in caught.output), caught.output)
 
     # -- manifest -------------------------------------------------------
 
@@ -372,7 +404,7 @@ class PreviewServerTestCase(unittest.TestCase):
     def test_viewer_page_beacons_the_path_the_handler_listens_on(self):
         """The page and the handler agree on one path, or the beacon is a 404."""
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         # With the tab's id: a share's guest listener retires THAT tab by it.
         self.assertIn(f"sendBeacon(`{VIEWER_CLOSED_PATH}?id=", page)
 
@@ -385,7 +417,7 @@ class PreviewServerTestCase(unittest.TestCase):
         console nobody in a headset can open. Static check, as above.
         """
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         # Both events: the synchronous throw and the rejected promise.
         self.assertIn("addEventListener('error'", page)
         self.assertIn("addEventListener('unhandledrejection'", page)
@@ -402,7 +434,7 @@ class PreviewServerTestCase(unittest.TestCase):
         runtime, as with the beacon path above.
         """
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         self.assertIn("isSessionSupported('immersive-vr')", page)
         self.assertIn("addEventListener('devicechange'", page)
 
@@ -424,7 +456,7 @@ class PreviewServerTestCase(unittest.TestCase):
         with the device-arrival case above.
         """
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         self.assertIn("'webglcontextlost'", page)
         self.assertIn("'webglcontextrestored'", page)
         # Through `setStatus`, so the indicator dot goes red with it: a message
@@ -448,7 +480,7 @@ class PreviewServerTestCase(unittest.TestCase):
         """
         self._serve()
         self.assertIsInstance(self.server.manifest()["xrRuntime"], bool)
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         self.assertIn("manifest.xrRuntime", page)
         # The distinction is the whole point: a runtime present but nothing
         # presenting has to read differently from no runtime at all.
@@ -481,15 +513,20 @@ class PreviewServerTestCase(unittest.TestCase):
         express, which only ever isolated that diffuse.
         """
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         self.assertIn(
             "const IBL_DIFFUSE_GLSL = "
             "'iblIrradiance += getIBLIrradiance( geometryNormal );'",
             page,
         )
         self.assertIn("patchBakedShader(material)", page)
-        # One environment level for the whole model, spent from the policy.
-        self.assertIn("scene.environmentIntensity = policy.environmentIntensity", page)
+        # One environment level for the whole model, spent from the policy:
+        # the probe's when the file carries one, the studio's otherwise.
+        self.assertIn(
+            "scene.environmentIntensity = probe ? policy.probeIntensity : "
+            "policy.environmentIntensity;",
+            page,
+        )
         self.assertNotIn("material.envMapIntensity", page)
         self.assertNotIn("material.envMap = scene.environment", page)
         self.assertNotIn("lightToggle", page)
@@ -512,11 +549,18 @@ class PreviewServerTestCase(unittest.TestCase):
         never see it. The live suite measures the pixels.
         """
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
-        self.assertIn("radiance *= bakedEnvIntensity;", page)
-        self.assertIn("clearcoatRadiance *= bakedEnvIntensity;", page)
+        page = _served_page(self.root)
+        # The level, times each texel's bake against the studio's irradiance
+        # (``reflectionNormalization``, 2026-10-01).
+        self.assertIn("float bakedReflection = bakedEnvIntensity;", page)
+        self.assertIn("radiance *= bakedReflection;", page)
+        self.assertIn("clearcoatRadiance *= bakedReflection;", page)
         self.assertIn("shader.uniforms.bakedEnvIntensity = bakedEnvUniform;", page)
-        self.assertIn("bakedEnvUniform.value = policy.bakedEnvIntensity;", page)
+        # The STUDIO's level: a deliverable's own probe is the room the bake
+        # lit, and its reflections play whole (2026-10-03).
+        self.assertIn(
+            "bakedEnvUniform.value = probe ? 1 : policy.bakedEnvIntensity;", page
+        )
         # Appended to the patched chunk for EVERY baked material -- the relief
         # patch is the conditional one, the level is not.
         self.assertIn(r"`${chunk}\n${BAKED_ENV_GLSL}`", page)
@@ -539,7 +583,7 @@ class PreviewServerTestCase(unittest.TestCase):
         from pythontk import MeshConvert
 
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         policy = MeshConvert.RENDERING_POLICY
 
         for const, published in (
@@ -553,6 +597,7 @@ class PreviewServerTestCase(unittest.TestCase):
                 "DEFAULT_BAKED_ENV_INTENSITY",
                 policy["lightmappedMaterials"]["envMapIntensity"],
             ),
+            ("DEFAULT_PROBE_INTENSITY", policy["environment"]["probeIntensity"]),
         ):
             match = re.search(rf"const {const} = ([0-9.]+)", page)
             self.assertIsNotNone(match, f"the viewer no longer declares {const}")
@@ -610,6 +655,13 @@ class PreviewServerTestCase(unittest.TestCase):
             policy["lightmappedMaterials"].get("normalRelief", "").strip(),
             "the viewer relieves baked normal maps and the recipe does not say so",
         )
+        # Likewise the reflection normalization: a recipient that plays the
+        # level flat either lifts every shadow or flattens every lit surface.
+        self.assertIn("bakedReflection *= clamp( baked / max( studio", page)
+        self.assertTrue(
+            policy["lightmappedMaterials"].get("reflectionNormalization", "").strip(),
+            "the viewer normalizes baked reflections and the recipe does not say so",
+        )
         # The key light's POSITION as well as its level: its direction orients
         # that relief even while a baked model holds its intensity at 0, and
         # nothing else pins the page's placement to the published one.
@@ -626,9 +678,9 @@ class PreviewServerTestCase(unittest.TestCase):
         self.assertEqual(policy["renderer"]["toneMapping"], "ACESFilmic")
         self.assertIn("new RoomEnvironment()", page)
         self.assertIn("RoomEnvironment", policy["environment"]["source"])
-        blur = re.search(
-            r"pmrem\.fromScene\(new RoomEnvironment\(\), ([0-9.]+)\)", page
-        )
+        # The studio is prefiltered by a generator made for the job and freed
+        # after it (scene.js `prefilter`), from a RoomEnvironment it disposes.
+        blur = re.search(r"pmrem\.fromScene\(\w+, ([0-9.]+)\)", page)
         self.assertIsNotNone(blur, "the viewer no longer prefilters the environment")
         # Compared as a NUMBER. Substring-matching this against the prose form
         # ("PMREM, blur 0.04", as this first did) silently accepts a viewer that
@@ -638,7 +690,37 @@ class PreviewServerTestCase(unittest.TestCase):
         )
         # Assigned FROM the policy, with the constant as the fallback the
         # constant-vs-published check above already covers.
-        self.assertIn("scene.environmentIntensity = policy.environmentIntensity", page)
+        self.assertIn(
+            "scene.environmentIntensity = probe ? policy.probeIntensity : "
+            "policy.environmentIntensity;",
+            page,
+        )
+        # The asset's own reflection probe (probe.js): read, played at the
+        # published unit, and its rule stated -- a recipient that reads it as
+        # a plain environment at 1 lights every reflection and every unbaked
+        # object pi too bright beside the bake, and one that skips the box
+        # projection reflects the room's walls as if infinitely far.
+        self.assertIn("published?.environment?.probeIntensity", page)
+        self.assertIn("RoomEnvironment", policy["environment"]["source"])
+        self.assertIn("lightmap_web.probe", policy["environment"]["source"])
+        probe_rule = policy["environment"].get("probe", "")
+        for term in (
+            "bufferView",
+            "box-projected",
+            "probeIntensity",
+            "irradiance / pi",
+        ):
+            self.assertIn(term, probe_rule, f"the probe rule no longer states {term!r}")
+        # The bake's energy path (patchBakedShader): the lightmap enters as an
+        # image-based light's irradiance, not at full weight beside the
+        # reflection -- and the recipe says so.
+        self.assertIn(
+            "const LIGHTMAP_AS_IBL_GLSL = 'iblIrradiance += lightMapIrradiance;'", page
+        )
+        self.assertTrue(
+            policy["lightmappedMaterials"].get("lightMapEnergy", "").strip(),
+            "the viewer weights the bake's diffuse by its Fresnel and the recipe does not say so",
+        )
 
     def test_the_viewer_reads_the_policy_out_of_the_deliverable(self):
         """The direction of truth: the file states the rig, the page spends it.
@@ -650,7 +732,7 @@ class PreviewServerTestCase(unittest.TestCase):
         applier writes, and the ``handoff.rendering`` section inside it.
         """
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         self.assertIn("function readRenderingPolicy(gltf)", page)
         self.assertIn("readExtras(gltf, 'scene_sidecar')", page)
         self.assertIn("?.handoff?.rendering", page)
@@ -661,9 +743,11 @@ class PreviewServerTestCase(unittest.TestCase):
         # silently inert on a deliverable the others handle.
         self.assertEqual(page.count("for (const holder of"), 1)
         # Read BEFORE the lights are set, or the first frame of a new model is
-        # lit by the previous one's policy.
+        # lit by the previous one's policy. In the load path itself: the
+        # Environment window re-applies the lighting too, after its switch.
+        load = (self.root / "kernel" / "load.js").read_text(encoding="utf-8")
         self.assertLess(
-            page.index("readRenderingPolicy(gltf)"), page.index("applyLighting();")
+            load.index("readRenderingPolicy(gltf)"), load.index("applyLighting();")
         )
         # Only finite NUMBERS are taken. The published policy is documentation
         # as much as data -- `lightMapIntensity` is deliberately a sentence --
@@ -688,6 +772,7 @@ class PreviewServerTestCase(unittest.TestCase):
             ("environment", "intensity"),
             ("renderer", "toneMappingExposure"),
             ("lightmappedMaterials", "envMapIntensity"),
+            ("environment", "probeIntensity"),
         ):
             with self.subTest(field=".".join(path)):
                 section, field = path
@@ -715,7 +800,7 @@ class PreviewServerTestCase(unittest.TestCase):
         maps and specular survive without it.
         """
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         self.assertIn(
             "keyLight.intensity = lightmapped ? 0 : policy.keyIntensity", page
         )
@@ -852,12 +937,14 @@ class PreviewServerTestCase(unittest.TestCase):
         the console is not visible either.
         """
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         self.assertIn("new THREE.AnimationMixer(gltf.scene)", page)
         # Driven from the frame loop, and BEFORE the script hook, so a module
         # subscribing to 'frame' sees this frame's pose rather than the last.
         loop = page[page.index("renderer.setAnimationLoop") :]
-        self.assertLess(loop.index("mixer.update(delta)"), loop.index("emit('frame'"))
+        self.assertLess(loop.index("advance(delta)"), loop.index("emit('frame'"))
+        advance = page[page.index("export function advance(delta)") :]
+        self.assertIn("mixer.update(delta)", advance[: advance.index("\n}\n")])
         # Set up per model swap, or the second push plays the first's clips.
         self.assertIn("setupAnimation(gltf);", page)
 
@@ -871,8 +958,9 @@ class PreviewServerTestCase(unittest.TestCase):
         page has to be reading it rather than picking an index.
         """
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
-        self.assertIn(f"readExtras(gltf, '{MeshConvert.ANIMATION_WEB_KEY}')", page)
+        page = _served_page(self.root)
+        self.assertIn("readExtras(gltf, SHOTS.webKey)", page)
+        self.assertIn(f"webKey: '{MeshConvert.ANIMATION_WEB_KEY}'", page)
         # Regex, not a literal: the page reads the field through whichever
         # optional-chaining spelling the surrounding guard makes correct, and
         # WHICH FIELD it opens on is the behaviour worth pinning.
@@ -937,8 +1025,8 @@ class PreviewScriptsTestCase(unittest.TestCase):
         server = self._serve()
         server.add_script("turntable")
         server.publish(self._glb())
-        self.assertEqual(self._manifest()["scripts"], ["scripts/turntable.js"])
-        status, body = self._get("scripts/turntable.js")
+        self.assertEqual(self._manifest()["scripts"], ["features/turntable.js"])
+        status, body = self._get("features/turntable.js")
         self.assertEqual(status, 200)
         self.assertIn(b"export default", body)
 
@@ -960,8 +1048,10 @@ class PreviewScriptsTestCase(unittest.TestCase):
 
         `SCRIPTS_DIR` resolves beside this module, so from a source tree every
         script is found and every assertion passes -- while an installed wheel
-        that does not carry `*.js` has no `preview/scripts/` at all, and each
-        one 404s for real users only. The viewer page has the same exposure and
+        that does not carry `*.js` has no `preview/kernel/` or
+        `preview/features/` at all, and each module 404s for real users only
+        (the release workflow's installed-wheel check names one of each). The
+        viewer page has the same exposure and
         was in fact missing from `MANIFEST.in` (it survived on `package-data`
         alone, so an sdist-based install shipped no page either).
         """
@@ -1037,7 +1127,7 @@ class PreviewScriptsTestCase(unittest.TestCase):
         server = self._serve()
         server.add_script("inspect").add_script("mine", path=source)
         self.assertEqual(
-            self._manifest()["scripts"], ["scripts/inspect.js", "scripts/mine.js"]
+            self._manifest()["scripts"], ["features/inspect.js", "scripts/mine.js"]
         )
 
     def test_set_scripts_replaces_the_whole_active_set(self):
@@ -1045,7 +1135,7 @@ class PreviewScriptsTestCase(unittest.TestCase):
         server.add_script("turntable")
         server.set_scripts(["inspect"])
         self.assertEqual(server.scripts, ("inspect",))
-        self.assertEqual(self._manifest()["scripts"], ["scripts/inspect.js"])
+        self.assertEqual(self._manifest()["scripts"], ["features/inspect.js"])
 
     def test_set_scripts_leaves_the_active_set_intact_when_a_name_is_bad(self):
         """A half-applied swap would strand a page mid-session.
@@ -1076,19 +1166,26 @@ class PreviewScriptsTestCase(unittest.TestCase):
     def test_a_deactivated_script_leaves_a_managed_root(self):
         """The served surface must not outlive the manifest that names it."""
         server = self._serve(managed=True)
-        server.add_script("turntable")
+        server.add_script("turntable").add_script("shadow_rig")
         server.publish(self._glb())
-        served = Path(server.root) / "scripts" / "turntable.js"
-        self.assertTrue(served.is_file())
+        root = Path(server.root)
+        served = [
+            root / "features" / "turntable.js",
+            root / "features" / "shadow_rig" / "shadow_rig.js",
+            root / "features" / "shadow_rig" / "model.js",
+        ]
+        self.assertTrue(all(path.is_file() for path in served))
         server.set_scripts([])
         server.publish(self._glb())
-        self.assertFalse(served.exists())
+        self.assertFalse(any(path.exists() for path in served))
+        # The folder a feature's modules came in goes with them.
+        self.assertFalse((root / "features" / "shadow_rig").exists())
         self.assertEqual(self._manifest()["scripts"], [])
 
     def test_a_caller_supplied_script_is_never_clobbered_or_swept(self):
         """A caller's root is a working directory -- edits there survive."""
         server = self._serve()
-        directory = self.root / "scripts"
+        directory = self.root / "features"
         directory.mkdir()
         mine = directory / "turntable.js"
         mine.write_text("// mine", encoding="utf-8")
@@ -1114,7 +1211,7 @@ class PreviewScriptsTestCase(unittest.TestCase):
         where the model lands.
         """
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         self.assertNotIn(
             "pivot.position",
             page,
@@ -1132,7 +1229,7 @@ class PreviewScriptsTestCase(unittest.TestCase):
         agreement is checked as the text contract it is.
         """
         self._serve()  # materializes the page before it can be read
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         emitted = set(re.findall(r"emit\('(\w+)'", page))
         self.assertTrue(emitted, "the page emits no hooks at all")
 
@@ -1187,7 +1284,7 @@ class PreviewScriptsTestCase(unittest.TestCase):
         binds nothing.
         """
         self._serve()
-        sources = {"page": (self.root / "index.html").read_text(encoding="utf-8")}
+        sources = {"page": _served_page(self.root)}
         for name, filename in PreviewServer.SCRIPTS.items():
             sources[name] = (PreviewServer.SCRIPTS_DIR / filename).read_text(
                 encoding="utf-8"
@@ -1284,9 +1381,11 @@ class PreviewScriptsTestCase(unittest.TestCase):
                 self.assertEqual(self._shortcuts(source), (1, expected))
 
     def test_the_viewer_imports_what_the_manifest_names(self):
-        """The page half of the contract, pinned to the field name it reads."""
+        """The page half of the contract, pinned to the field name it reads.
+        That the first load waits for the scripts is driven, not read, in
+        ``test_preview_viewer_live``."""
         self._serve()
-        page = (self.root / "index.html").read_text(encoding="utf-8")
+        page = _served_page(self.root)
         self.assertIn("loadScripts(manifest.scripts)", page)
         self.assertIn("await import(", page)
         # Loaded BEFORE the version early-return, or a script named on a server
@@ -3686,7 +3785,7 @@ class PreviewSnapshotTestCase(unittest.TestCase):
         """A script is handed the page's API object; reaching past it is what
         the seam exists to prevent. Read out of the page, so a rename of an
         API member fails the script that used it."""
-        page = (PreviewServer.SCRIPTS_DIR.parent / "viewer.html").read_text(
+        page = (PreviewServer.SCRIPTS_DIR / "kernel" / "api.js").read_text(
             encoding="utf-8"
         )
         block = page.split("const viewer = {", 1)[1].split("\n};", 1)[0]
@@ -3702,10 +3801,12 @@ class PreviewSnapshotTestCase(unittest.TestCase):
         entry = re.compile(r"key: '(\w+)',\s*label: '([^']+)',\s*maxEdge: (\d+)")
 
         def presets(name):
-            text = (PreviewServer.SCRIPTS_DIR / name).read_text(encoding="utf-8")
+            text = (PreviewServer.SCRIPTS_DIR / PreviewServer.SCRIPTS[name]).read_text(
+                encoding="utf-8"
+            )
             return {key: (label, int(edge)) for key, label, edge in entry.findall(text)}
 
-        still, recording = presets("snapshot.js"), presets("playblast.js")
+        still, recording = presets("snapshot"), presets("playblast")
         self.assertTrue(still, "no sized entries parsed out of snapshot.js")
         self.assertEqual(
             {key: recording.get(key) for key in still}, still, "the tables drifted"
@@ -3713,7 +3814,8 @@ class PreviewSnapshotTestCase(unittest.TestCase):
 
     @staticmethod
     def _script():
-        return (PreviewServer.SCRIPTS_DIR / "snapshot.js").read_text(encoding="utf-8")
+        source = PreviewServer.SCRIPTS_DIR / PreviewServer.SCRIPTS["snapshot"]
+        return source.read_text(encoding="utf-8")
 
 
 def _raw(port, method, path, host=None, body=None, headers=None):
@@ -3785,17 +3887,46 @@ class PreviewGuestTestCase(unittest.TestCase):
         # A fact about the OWNER's machine; on a guest's it would only mislead.
         self.assertNotIn("xrRuntime", manifest)
         # A still writes through a route the guest listener refuses.
-        self.assertEqual(manifest["scripts"], ["scripts/turntable.js"])
+        self.assertEqual(manifest["scripts"], ["features/turntable.js"])
 
         status, asset, _ = self._guest("GET", f"/{manifest['asset']}?v=1")
         self.assertEqual((status, asset), (200, b"glTF-guest-stub"))
-        self.assertEqual(self._guest("GET", "/scripts/turntable.js")[0], 200)
+        self.assertEqual(self._guest("GET", "/features/turntable.js")[0], 200)
+        # The viewer IS its kernel: a guest's page imports every module of it.
+        for module in sorted((PreviewServer.SCRIPTS_DIR / "kernel").glob("*.js")):
+            self.assertEqual(self._guest("GET", f"/kernel/{module.name}")[0], 200)
+
+    def test_the_kernel_is_typed_as_javascript_whatever_the_registry_says(self):
+        """REGRESSION (2026-10-04): a browser refuses to run a module script
+        typed as anything but JavaScript, and the kernel is ES modules. The
+        stdlib typed a file through ``mimetypes``, which on Windows reads
+        ``HKCR\\.js\\Content Type`` -- ``text/plain`` on a machine an installer
+        touched -- so there the whole viewer stayed blank. The handler names
+        the page's own types instead, on both listeners."""
+        mimetypes.guess_type("main.js")  # initialised, so the patch is the live table
+        with unittest.mock.patch.dict(
+            mimetypes.types_map, {".js": "text/plain", ".mjs": "text/plain"}
+        ):
+            self.assertEqual(mimetypes.guess_type("main.js")[0], "text/plain")
+            for listener in (self._owner, self._guest):
+                with self.subTest(listener=listener.__name__):
+                    status, _, headers = listener("GET", "/kernel/main.js")
+                    self.assertEqual(status, 200)
+                    types = {k.lower(): v for k, v in headers.items()}
+                    self.assertEqual(types["content-type"], "text/javascript")
 
     def test_a_guest_reads_nothing_else_in_the_serve_root(self):
         """A scene push's stills and recordings land in the serve root, and a
         publish passes through a .part file: none of it is the share."""
         (self.root / "view_001.png").write_bytes(b"\x89PNG\r\n\x1a\nowner-only")
-        for path in ("/view_001.png", "/scripts/", "/scripts/snapshot.js", "/scripts"):
+        for path in (
+            "/view_001.png",
+            "/scripts/",
+            "/scripts",
+            "/features/",
+            "/features/snapshot.js",
+            "/kernel/",
+        ):
             self.assertEqual(self._guest("GET", path)[0], 404, path)
             self.assertEqual(self._guest("HEAD", path)[0], 404, path)
         self.assertEqual(self._guest("HEAD", "/scene.glb")[0], 200)
@@ -4060,6 +4191,49 @@ class PreviewShareTestCase(unittest.TestCase):
         self.assertIsNone(self.server.guest_port)
         self.assertIsNone(self.server.share_info())
 
+    def test_the_share_serves_the_scene_as_data_at_its_scene_url(self):
+        """The link for someone's agent: on the tunnel, read-only, answered
+        under the tunnel's name like the rest of the share."""
+        info = self._share()
+        self.assertEqual(info["scene_url"], f"{self.LINK}/{SCENE_PATH}")
+        status, body, _ = _raw(
+            self.server.guest_port,
+            "GET",
+            f"/{SCENE_PATH}",
+            host="guest-share.example.test",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["note"], "Nothing is published yet.")
+
+    def test_a_share_on_a_port_of_its_own_is_answered_under_that_spelling(self):
+        """A Tailscale share beside another takes :8443, and Tailscale
+        forwards the Host a guest sent -- port included (measured 2026-10-02,
+        1.102.2). The admitted name is the link's, so that spelling is the
+        one answered."""
+        link = "https://guest-share.example.test:8443"
+        fake = {
+            **self.fake,
+            "args": [
+                "-u",
+                "-c",
+                f"import time; print('{link}', flush=True); time.sleep(600)",
+            ],
+            "url": r"(https://guest-share\.example\.test(?::\d+)?)",
+        }
+        from pythontk.net_utils.share_tunnel import ShareTunnel
+
+        with unittest.mock.patch.dict(ShareTunnel.PROVIDERS, {"fake-8443": fake}):
+            info = self._share(provider="fake-8443")
+            self.assertEqual(info["scene_url"], f"{link}/{SCENE_PATH}")
+            for host, expected in (
+                ("guest-share.example.test:8443", 200),
+                ("guest-share.example.test", 403),
+            ):
+                status = _raw(
+                    self.server.guest_port, "GET", "/manifest.json?id=t", host=host
+                )[0]
+                self.assertEqual(status, expected, host)
+
     def test_a_share_that_drops_as_it_begins_raises_and_cleans_up(self):
         """share() returns share_info(), which is None once the client has
         exited -- handed on, the bridge failed on info["url"] with a TypeError."""
@@ -4274,6 +4448,247 @@ class PreviewShareTestCase(unittest.TestCase):
         ) as share:
             bridge.share(provider="fake", on_step=hook)
         self.assertIs(share.call_args.kwargs["on_step"], hook)
+
+
+class PreviewSceneDescriptionTestCase(unittest.TestCase):
+    """``GET /scene.json``: the published scene as data, for a reader that
+    cannot run the page -- sized for one with a context window."""
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_preview_scene", policy="scoped")
+        self.root = Path(self.temp.dir_path())
+        self.assets = Path(self.temp.dir_path())
+        self.server = PreviewServer(root=self.root, port=0).start()
+
+    def tearDown(self):
+        self.server.stop()
+        self.temp.cleanup()
+
+    def _publish(self, gltf, name="room.glb"):
+        path = self.assets / name
+        path.write_bytes(PreviewDelivererTestCase._glb_bytes(gltf))
+        self.server.publish(path)
+        return gltf
+
+    def _get(self, path, port=None):
+        status, body, _ = _raw(port or self.server.port, "GET", path)
+        return status, (json.loads(body) if status == 200 else body)
+
+    @staticmethod
+    def _room(nodes=40):
+        """A small scene whose node list outweighs everything else in it."""
+        return {
+            "asset": {"version": "2.0", "generator": "test"},
+            "scene": 0,
+            "scenes": [{"nodes": list(range(nodes))}],
+            "nodes": [
+                {"name": f"node_{i:03d}", "translation": [i, 0.5, -i], "mesh": 0}
+                for i in range(nodes)
+            ],
+            "meshes": [
+                {"primitives": [{"attributes": {"POSITION": 0}, "material": 0}]}
+            ],
+            "materials": [
+                {"name": "floor", "pbrMetallicRoughness": {"roughnessFactor": 0.8}}
+            ],
+            "extensionsUsed": ["KHR_texture_transform"],
+        }
+
+    def test_the_overview_inlines_what_fits_and_indexes_every_section(self):
+        gltf = self._publish(self._room())
+        nodes_bytes = len(json.dumps(gltf["nodes"]))
+        self.server.SCENE_INLINE_BYTES = nodes_bytes - 1  # everything but nodes
+
+        status, scene = self._get(f"/{SCENE_PATH}")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(scene["schema"], PreviewServer.SCENE_SCHEMA)
+        self.assertEqual((scene["asset"], scene["version"]), ("scene.glb", 1))
+        self.assertIn("'sections'", scene["about"])
+        self.assertEqual(set(scene["sections"]), set(gltf))
+        self.assertNotIn("nodes", scene["gltf"])
+        self.assertEqual(scene["gltf"]["materials"], gltf["materials"], "verbatim")
+        nodes = scene["sections"]["nodes"]
+        self.assertEqual(
+            nodes,
+            {
+                "items": 40,
+                "bytes": nodes_bytes,
+                "inline": False,
+                "url": f"{SCENE_PATH}?section=nodes",
+            },
+        )
+        self.assertIsNone(scene["sections"]["asset"]["items"], "not a list")
+
+    def test_the_overview_of_a_production_sized_scene_stays_in_budget(self):
+        """Measured: a production GLB's JSON is 3.5 MB, the overview of it
+        71 KB -- what the sections cost is indexed, not sent."""
+        gltf = self._publish(self._room(nodes=6000))
+        self.assertGreater(len(json.dumps(gltf)), 3 * PreviewServer.SCENE_INLINE_BYTES)
+        status, scene = self._get(f"/{SCENE_PATH}")
+        self.assertEqual(status, 200)
+        inlined = len(json.dumps(scene["gltf"]))
+        self.assertLessEqual(inlined, PreviewServer.SCENE_INLINE_BYTES)
+        self.assertIn("materials", scene["gltf"])
+
+    def test_a_section_is_read_a_page_at_a_time_to_its_end(self):
+        gltf = self._publish(self._room(nodes=50))
+        budget = 3 * len(json.dumps(gltf["nodes"][0]))
+        self.server.SCENE_INLINE_BYTES = budget
+
+        items, page, pages = [], f"/{SCENE_PATH}?section=nodes", 0
+        while page:
+            status, chunk = self._get(page if page.startswith("/") else f"/{page}")
+            self.assertEqual(status, 200)
+            self.assertEqual((chunk["section"], chunk["total"]), ("nodes", 50))
+            self.assertEqual(chunk["start"], len(items))
+            sizes = [len(json.dumps(item)) for item in chunk["items"]]
+            self.assertTrue(len(sizes) == 1 or sum(sizes) <= budget, sizes)
+            items += chunk["items"]
+            page, pages = chunk["next"], pages + 1
+        self.assertEqual(items, gltf["nodes"])
+        self.assertGreater(pages, 10)
+
+    def test_one_item_past_the_budget_still_comes_back(self):
+        """A page that held nothing would leave ``next`` pointing at itself."""
+        self._publish(self._room())
+        self.server.SCENE_INLINE_BYTES = 1
+        status, chunk = self._get(f"/{SCENE_PATH}?section=nodes&start=5")
+        self.assertEqual(status, 200)
+        self.assertEqual([node["name"] for node in chunk["items"]], ["node_005"])
+        self.assertEqual(chunk["next"], f"{SCENE_PATH}?section=nodes&start=6")
+
+    def test_an_embedded_payload_is_cut_to_its_size(self):
+        """A data: URI is bytes, not structure -- one embedded texture is
+        megabytes in a single item, the one thing a page cannot split."""
+        gltf = self._room()
+        blob = "A" * 300_000
+        gltf["images"] = [
+            {"name": "albedo", "uri": f"data:image/png;base64,{blob}"},
+            {"name": "packed", "bufferView": 3, "mimeType": "image/ktx2"},
+        ]
+        gltf["buffers"] = [
+            {"byteLength": 12, "uri": "data:application/gltf-buffer;base64,AAAA"}
+        ]
+        self._publish(gltf)
+        status, chunk = self._get(f"/{SCENE_PATH}?section=images")
+        self.assertEqual(status, 200)
+        albedo, packed = chunk["items"]
+        self.assertEqual(
+            albedo["uri"],
+            "data:image/png;base64,<300000 base64 characters, not shown: "
+            "read the asset itself>",
+        )
+        self.assertEqual(packed, gltf["images"][1], "a bufferView image is untouched")
+        _status, scene = self._get(f"/{SCENE_PATH}")
+        self.assertIn("images", scene["gltf"], "small enough to inline once cut")
+        self.assertTrue(scene["gltf"]["buffers"][0]["uri"].endswith("itself>"))
+
+    def test_a_section_that_is_not_a_list_comes_back_whole(self):
+        gltf = self._publish(self._room())
+        status, chunk = self._get(f"/{SCENE_PATH}?section=asset")
+        self.assertEqual((status, chunk["value"]), (200, gltf["asset"]))
+
+    def test_the_rendering_is_the_one_the_asset_publishes(self):
+        """Wherever the viewer's readExtras finds it: the root's extras, or
+        the first scene's -- a JSON string there, as some producers write."""
+        recipe = {"renderer": {"toneMapping": "Neutral", "toneMappingExposure": 1.4}}
+        sidecar = {"handoff": {"rendering": recipe}}
+        for placed in ("root", "scene"):
+            with self.subTest(placed):
+                gltf = self._room()
+                if placed == "root":
+                    gltf["extras"] = {"scene_sidecar": sidecar}
+                else:
+                    gltf["scenes"][0]["extras"] = {"scene_sidecar": json.dumps(sidecar)}
+                self._publish(gltf)
+                _status, scene = self._get(f"/{SCENE_PATH}")
+                self.assertEqual(scene["rendering"], recipe)
+                self.assertEqual(scene["renderingSource"], "asset")
+
+    def test_an_asset_with_no_recipe_gets_the_one_the_viewer_falls_back_to(self):
+        self._publish(self._room())
+        _status, scene = self._get(f"/{SCENE_PATH}")
+        self.assertEqual(scene["rendering"], MeshConvert.rendering_policy())
+        self.assertEqual(scene["renderingSource"], "viewer default")
+
+    def test_the_viewer_names_the_three_release_the_page_imports(self):
+        self._publish(self._room())
+        page = _served_page(self.root)
+        release = re.search(r"three@([\d.]+)/build/three\.module\.js", page).group(1)
+        _status, scene = self._get(f"/{SCENE_PATH}")
+        self.assertEqual(scene["viewer"], {"page": "index.html", "three": release})
+
+        bare = PreviewServer(root=self.temp.dir_path(), port=0, viewer=False)
+        self.addCleanup(bare.stop)
+        bare.start()
+        source = self.assets / "bare.glb"
+        source.write_bytes(PreviewDelivererTestCase._glb_bytes(self._room()))
+        bare.publish(source)
+        self.assertIsNone(bare.describe_scene()["viewer"])
+
+    def test_before_a_publish_and_for_an_asset_that_is_not_a_glb_a_note_says_why(self):
+        status, scene = self._get(f"/{SCENE_PATH}")
+        self.assertEqual((status, scene["asset"]), (200, None))
+        self.assertEqual(scene["note"], "Nothing is published yet.")
+        self.assertEqual(self._get(f"/{SCENE_PATH}?section=nodes")[0], 404)
+
+        source = self.assets / "model.usdz"
+        source.write_bytes(b"PK-not-a-glb")
+        self.server.publish(source)
+        status, scene = self._get(f"/{SCENE_PATH}")
+        self.assertEqual((status, scene["asset"]), (200, "scene.usdz"))
+        self.assertIn("not a GLB", scene["note"])
+
+    def test_a_bad_query_is_refused_by_what_is_wrong_with_it(self):
+        self._publish(self._room())
+        for query, expected in (
+            ("section=lights", 404),
+            ("section=nodes&start=-1", 400),
+            ("section=nodes&start=two", 400),
+        ):
+            self.assertEqual(self._get(f"/{SCENE_PATH}?{query}")[0], expected, query)
+
+    def test_a_torn_asset_is_a_server_error_not_a_dropped_connection(self):
+        self._publish(self._room())
+        (self.root / "scene.glb").write_bytes(b"glTF\x02\x00")
+        self.assertEqual(self._get(f"/{SCENE_PATH}")[0], 500)
+
+    def test_a_guest_reads_it_and_a_page_read_tells_no_tab(self):
+        """The JSON of the asset a guest may already download, read for them;
+        reading it is not a tab watching."""
+        self._publish(self._room())
+        port = self.server.start_guest()
+        status, scene = self._get(f"/{SCENE_PATH}", port=port)
+        self.assertEqual(status, 200)
+        self.assertEqual(scene["asset"], "scene.glb")
+        status, chunk = self._get(f"/{SCENE_PATH}?section=nodes", port=port)
+        self.assertEqual((status, chunk["total"]), (200, 40))
+        self.assertEqual(self.server.guest_count(), 0)
+        self.assertFalse(self.server.has_viewer())
+
+    def test_the_page_points_a_reader_at_it_and_never_fetches_it(self):
+        """A reader handed only the page's link finds it in the head; the
+        page itself has no use for it, so nothing in it names the route."""
+        source = (PreviewServer.SCRIPTS_DIR / "viewer.html").read_text("utf-8")
+        kernel = "\n".join(
+            module.read_text("utf-8")
+            for module in sorted((PreviewServer.SCRIPTS_DIR / "kernel").glob("*.js"))
+        )
+        code = re.sub(r"<!--.*?-->", "", source, flags=re.S) + kernel
+        self.assertEqual(
+            re.findall(r'<link rel="alternate"[^>]*>', code),
+            [
+                '<link rel="alternate" type="application/json" href="scene.json" '
+                'title="This scene as data">'
+            ],
+        )
+        self.assertEqual(code.count(SCENE_PATH), 1)
+
+    def test_scene_url_is_this_machines_own(self):
+        self.assertEqual(self.server.scene_url, f"{self.server.url}{SCENE_PATH}")
+        idle = PreviewServer(root=self.temp.dir_path(), port=0)
+        self.assertIsNone(idle.scene_url, "before start")
 
 
 if __name__ == "__main__":

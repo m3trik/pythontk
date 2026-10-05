@@ -1,8 +1,10 @@
 {
-  "description": "Place audio clip spanning the shot; stop-key silences at shot end.",
+  "description": "Place the audio clip at shot start; its off key lands at the clip's natural end.",
   "kind": [
     "audio"
   ],
+  "effect": "clip",
+  "place": "start",
   "duration": "from_source",
   "verify": {
     "mode": "audio_clip"

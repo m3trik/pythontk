@@ -25,10 +25,14 @@ A registry of plain values (:attr:`ShareTunnel.PROVIDERS`), one entry per CLI:
 
 * ``cloudflared`` -- a Cloudflare *quick tunnel*: no account, and a random
   ``https://<words>.trycloudflare.com`` link per start. TLS ends at
-  Cloudflare's edge, which therefore sees the traffic.
+  Cloudflare's edge, which therefore sees the traffic. Any number at once:
+  each start is its own tunnel.
 * ``tailscale_funnel`` -- Tailscale Funnel: a STABLE public link
   (``https://<machine>.<tailnet>.ts.net``, bookmarkable) with TLS ending on
   this machine. Funnel must be enabled for the tailnet; relayed, so slower.
+  The machine's one name holds one share per HTTPS port, and Funnel opens
+  three (443, 8443, 10000): a second share at once gets ``...ts.net:8443``,
+  a third ``:10000``, and a fourth is refused naming the limit.
 * ``tailscale_serve`` -- the same name, reachable only inside the tailnet.
 
 An entry is data -- the arguments, the pattern the link is printed in, what
@@ -86,6 +90,16 @@ AliasTarget = Union[str, "os.PathLike[str]", Callable[[Optional[str]], Any]]
 _CLOUDFLARED_RELEASES = (
     "https://github.com/cloudflare/cloudflared/releases/latest/download"
 )
+
+#: The HTTPS ports a Tailscale share takes, first free first: the three Funnel
+#: accepts. Serve (tailnet only) would accept any port, but takes these too:
+#: the two draw on the one name's listeners, and three shares is the need.
+_TAILSCALE_HTTPS_PORTS = (443, 8443, 10000)
+
+#: What tailscaled answers a share on a port the machine's name already serves
+#: -- another share's, or a ``tailscale serve --bg`` of the user's own; the
+#: client then exits 1. Measured 2026-10-02 on 1.102.2, for both.
+_TAILSCALE_PORT_TAKEN = r"listener already exists for port"
 
 
 class _ShareTunnelInternal:
@@ -164,6 +178,76 @@ class _ShareTunnelInternal:
             self._failed(f"{spec['label']} {what}: open {url} , then share again."),
             url=url,
             label=spec["label"],
+        )
+
+    def _start_client(self, executable: str, spec: Dict[str, Any], stops: int) -> str:
+        """Run the client until guests can reach its link; the link.
+
+        On the first of the provider's ``https_ports`` the machine has free,
+        for a provider that serves on its own name: that name holds one
+        listener per port, so a share started beside another one -- a second
+        DCC sharing, or a serve of the user's own -- is refused its port at
+        once, and is moved to the next rather than failed. Only a refusal
+        that IS the port moves it (``port_taken`` in what the client printed
+        as it exited); any other failure fails the start as it stands.
+        """
+        taken = re.compile(spec["port_taken"]) if spec.get("port_taken") else None
+        for https_port in spec.get("https_ports") or (None,):
+            self._check_stopped(stops)  # a stop between two ports
+            args = [
+                str(a).format(host=self.host, port=self.port, https_port=https_port)
+                for a in spec["args"]
+            ]
+            self._stream = OutputStream(history=self._HISTORY)
+            self._process = AppLauncher.spawn(executable, args)
+            self._reader = ProcessReader(
+                self._process.stdout, self._stream, self.provider
+            )
+            self._reader.start()
+            try:
+                url = self._await_link(spec, stops)
+                if spec.get("propagates"):
+                    self._await_dns(url, stops)
+                self._check_stopped(stops)  # one that landed as the link did
+                return url
+            except RuntimeError:
+                refused = taken is not None and any(
+                    taken.search(line) for line in self.output(self._HISTORY)
+                )
+                self._teardown()
+                if not refused:
+                    raise
+                self.logger.info(
+                    "%s: port %s is taken on this machine; trying the next.",
+                    spec["label"],
+                    https_port,
+                )
+            except BaseException:
+                self._teardown()
+                raise
+        raise self._ports_exhausted(spec)
+
+    def _ports_exhausted(self, spec: Dict[str, Any]) -> RuntimeError:
+        """The failure of a start that found every one of ``https_ports``
+        held: the limit, and the way past it -- a provider with no such limit,
+        when one is preferred on this machine."""
+        ports = ", ".join(str(port) for port in spec["https_ports"])
+        unlimited = [
+            self._spec(name)["label"]
+            for name in self.PREFERENCE
+            if not self._spec(name).get("https_ports")
+        ]
+        way_past = (
+            f", or share through {unlimited[0]}, which has no such limit"
+            if unlimited
+            else ""
+        )
+        return RuntimeError(
+            self._failed(
+                f"{spec['label']} is already sharing on every HTTPS port it can "
+                f"use on this machine ({ports}) -- one share per port. Stop one "
+                f"of those shares{way_past}."
+            )
         )
 
     def _await_link(self, spec: Dict[str, Any], stops: int) -> str:
@@ -456,8 +540,12 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
     #:
     #: ``label`` names it to a person; ``executable`` is the command, found on
     #: PATH, then at ``paths`` (``%VAR%`` expanded), then in
-    #: :class:`AppInstaller`'s catalog; ``args`` are formatted with ``{host}``
-    #: and ``{port}``; ``url`` is the pattern the link is printed in (group 1
+    #: :class:`AppInstaller`'s catalog; ``args`` are formatted with ``{host}``,
+    #: ``{port}`` and ``{https_port}``; ``https_ports``, optional, are the
+    #: ports of the machine's own name a share may serve on, tried in order --
+    #: a client that exits printing ``port_taken`` found its port held by
+    #: another share, and the next is tried (see :meth:`start`);
+    #: ``url`` is the pattern the link is printed in (group 1
     #: when it has one); ``ready`` is the line that says guests can connect, or
     #: None when the link itself says so; ``action``, optional, is the link a
     #: provider prints when it stops to wait on the user (handed to
@@ -514,7 +602,12 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
             # Foreground (no --bg): the funnel lives exactly as long as this
             # client, and tailscaled removes it when the client goes -- killed
             # included -- so nothing outlives the share in the tailnet's config.
-            "args": ["funnel", "http://{host}:{port}"],
+            # On a port of its own: the name holds one listener per port, so
+            # a share at once beside another one takes the next of
+            # https_ports, and its link carries that port.
+            "args": ["funnel", "--https={https_port}", "http://{host}:{port}"],
+            "https_ports": _TAILSCALE_HTTPS_PORTS,
+            "port_taken": _TAILSCALE_PORT_TAKEN,
             "url": r"^\s*(https://[a-z0-9.-]+\.ts\.net(?::\d+)?)/?\s*$",
             "ready": None,
             # Printed, then waited on, when the tailnet has not enabled the
@@ -531,7 +624,9 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
                 r"%ProgramFiles%\Tailscale\tailscale.exe",
                 "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
             ),
-            "args": ["serve", "http://{host}:{port}"],
+            "args": ["serve", "--https={https_port}", "http://{host}:{port}"],
+            "https_ports": _TAILSCALE_HTTPS_PORTS,
+            "port_taken": _TAILSCALE_PORT_TAKEN,
             "url": r"^\s*(https://[a-z0-9.-]+\.ts\.net(?::\d+)?)/?\s*$",
             "ready": None,
             "action": r"https://login\.tailscale\.com/f/\S+",
@@ -791,7 +886,9 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
                 ``RuntimeError``, so a caller catching those still does.
             RuntimeError: The client exited before it was ready; the message
                 carries its last lines, which is where a provider says why
-                (not logged in, a blocked network). Also when :meth:`stop` or
+                (not logged in, a blocked network). Also when every one of
+                the provider's ``https_ports`` is held by another share --
+                the message names the limit -- and when :meth:`stop` or
                 :meth:`cancel` ran while it waited.
             TimeoutError: No link within :attr:`timeout`; the client is stopped.
         """
@@ -808,21 +905,7 @@ class ShareTunnel(LoggingMixin, _ShareTunnelInternal):
                 )
             self._executable = executable
             spec = self._spec(self.provider)
-            args = [str(a).format(host=self.host, port=self.port) for a in spec["args"]]
-            self._stream = OutputStream(history=self._HISTORY)
-            self._process = AppLauncher.spawn(executable, args)
-            self._reader = ProcessReader(
-                self._process.stdout, self._stream, self.provider
-            )
-            self._reader.start()
-            try:
-                url = self._await_link(spec, stops)
-                if spec.get("propagates"):
-                    self._await_dns(url, stops)
-                self._check_stopped(stops)  # one that landed as the link did
-            except BaseException:
-                self._teardown()
-                raise
+            url = self._start_client(executable, spec, stops)
             self._url = url
             # Announced under the lock, so a stop() from another thread lands
             # wholly before this or wholly after it -- never between, where
