@@ -1499,6 +1499,44 @@ class TestImgUtilsMemory(unittest.TestCase):
         self.assertEqual(smooth.getpixel((0, 0)), 150)
 
 
+class OpenExrFlagTest(unittest.TestCase):
+    """OpenCV reads ``OPENCV_IO_ENABLE_OPENEXR`` once, when cv2 loads: a module
+    that imports cv2 at its top without setting it first leaves OpenEXR off
+    for the whole process (measured, opencv-python 4.13), and every later EXR
+    read or write in the session fails -- a DCC that loaded a photogrammetry
+    panel before a lightmap bake could no longer encode its maps.
+    Fixed: 2026-10-04."""
+
+    @staticmethod
+    def _module_statements(tree):
+        """Module-level statements, a top-level ``try``'s body included."""
+        for node in tree.body:
+            if isinstance(node, ast.Try):
+                yield from node.body
+            else:
+                yield node
+
+    def test_every_top_level_cv2_import_sets_the_exr_flag_first(self):
+        import pythontk
+
+        root = Path(pythontk.__file__).parent
+        offenders = []
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+            flag = cv2_line = None
+            for node in self._module_statements(tree):
+                if cv2_line is None and isinstance(node, ast.Import):
+                    if any(alias.name == "cv2" for alias in node.names):
+                        cv2_line = node.lineno
+                if flag is None and "OPENCV_IO_ENABLE_OPENEXR" in ast.unparse(node):
+                    flag = node.lineno
+            if cv2_line is not None and (flag is None or flag > cv2_line):
+                offenders.append(f"{path.relative_to(root).as_posix()}:{cv2_line}")
+        self.assertEqual(
+            offenders, [], "cv2 imported before OPENCV_IO_ENABLE_OPENEXR is set"
+        )
+
+
 class DilateImageTest(unittest.TestCase):
     """ImgUtils.dilate_image -- texture edge-padding / gutter fill."""
 
