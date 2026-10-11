@@ -651,8 +651,6 @@ class ExportProfile:
         # smart_bake bakes visibility, which is half of what this reads.
         "check_hidden_geometry": OBJECT_SET_TASKS + ("smart_bake",),
         "check_overlapping_duplicate_mesh": OBJECT_SET_TASKS,
-        # Reads the export meshes' UV sets, which no task adds or removes.
-        "check_uv_snapshots": OBJECT_SET_TASKS,
         # The floor tolerance is in SCENE UNITS and the bbox is world-space:
         # set_linear_unit rescales both sides, smart_bake can move the object.
         "check_objects_below_floor": ("set_linear_unit",)
@@ -1064,8 +1062,9 @@ class ExportRun:
     #: removed by ``FbxMedia.drop_apparatus``). FBX only: a USD layer is
     #: written as the scene samples.
     drop_rig_apparatus: bool = False
-    #: The written FBX carries its own texture copies (embedded media, or a
-    #: path mode that copies them beside it), so staged textures are temp.
+    #: Retired 2026-10-05 (removed in 0.15.0; setting it warns): every FBX
+    #: deliverable embeds its media -- the exporters pin Embed Media over any
+    #: preset -- so nothing reads it.
     fbx_media_selfcontained: bool = False
     #: Secondary Map Size: a lower pixel ceiling for a GLB's packed data maps
     #: (:attr:`ExportProfile.SECONDARY_MAX_SIZE_OPTIONS`); None is "the same
@@ -1130,6 +1129,17 @@ class ExportRun:
         "glb_key_tolerance",
         "baked_reflections",
     )
+
+    def __post_init__(self) -> None:
+        if self.fbx_media_selfcontained:
+            Deprecation.warn(
+                "ExportRun(fbx_media_selfcontained=...)",
+                "nothing: every FBX deliverable embeds its media",
+                remove_in="0.15.0",
+                kind="parameter",
+                since="2026-10-05",
+                stacklevel=3,
+            )
 
     @staticmethod
     def _dial(value: Any, cast: type) -> Any:

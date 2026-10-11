@@ -14,6 +14,8 @@ actually sound for inter-process payloads:
 * ``"session"`` — a detached consumer reads the file during this process's lifetime
   (a launched DCC): removed at interpreter exit via ``atexit``, and at
   :meth:`ProcessExit.hard_exit <pythontk.ProcessExit.hard_exit>`, which skips it.
+  Its tags name the owner (``<prefix>_<tag>-<pid>``), so what outlives the owner --
+  killed, or still held when it exited -- goes at the next same-prefix allocation.
 * ``"detached"`` — no deterministic delete exists (the consumer may outlive us and
   there is no completion signal). Allocation instead garbage-collects *stale* files
   of the same prefix (:meth:`sweep_stale`) — amortized cleanup with no risk to a
@@ -32,6 +34,7 @@ from __future__ import annotations
 import atexit
 import hashlib
 import os
+import re
 import shutil
 import stat
 import sys
@@ -87,6 +90,8 @@ class TempArtifacts(LoggingMixin):
     # path. The lock makes the read-modify-write atomic for concurrent producers.
     _tag_lock = threading.Lock()
     _last_tag_ns = 0
+    #: A session tag after the prefix: the allocation clock, then its owner's pid.
+    _OWNED_TAG = re.compile(r"[0-9a-f]{12,}-([0-9]{1,10})(?:\.|$)")
 
     def __init__(
         self,
@@ -120,18 +125,26 @@ class TempArtifacts(LoggingMixin):
         """Return a tracked ``<prefix>_<tag><extension>`` path in :attr:`dir`.
 
         *name* fixes the tag (deterministic, self-overwriting — the rizom-style
-        fixed-name pattern); otherwise a unique time-based tag is used. GC is
-        amortized here: the first allocation sweeps stale same-prefix files
-        (once per instance — a directory scan per allocation would be wasted;
-        and never fresh files, since a recent payload may still be read by a
-        launched app). Detached needs this because nothing else ever deletes;
-        scoped/session need it because their keep-on-failure / hard-crash
-        leftovers would otherwise accumulate forever.
+        fixed-name pattern); otherwise a unique time-based tag is used, which a
+        ``session`` store ends in this process's id. GC is amortized here: the
+        first allocation sweeps stale same-prefix files (once per instance — a
+        directory scan per allocation would be wasted; and never fresh files,
+        since a recent payload may still be read by a launched app — unless a
+        session tag names an owner that has exited). Detached needs this because
+        nothing else ever deletes; scoped/session need it because their
+        keep-on-failure / hard-crash leftovers would otherwise accumulate forever.
         """
         if not self._swept:
             self._swept = True
             self.sweep_stale()
-        tag = name if name is not None else f"{self._next_tag_ns():x}"
+        if name is not None:
+            tag = name
+        elif self.policy == "session":
+            # Owner-named: once this process has exited, what it left is no
+            # one's, and the next same-prefix sweep reclaims it at any age.
+            tag = f"{self._next_tag_ns():x}-{os.getpid()}"
+        else:
+            tag = f"{self._next_tag_ns():x}"
         return self.register(os.path.join(self.dir, f"{self.prefix}_{tag}{extension}"))
 
     def dir_path(self, name: Optional[str] = None, create: bool = True) -> str:
@@ -270,6 +283,12 @@ class TempArtifacts(LoggingMixin):
         rewritten in place (how Maya saves a ``.ma``) never touches the parent's
         mtime, so a scratch dir someone keeps saving into would otherwise read as
         abandoned and be reclaimed with their work in it.
+
+        One exception to the age gate: a ``session`` tag names its owner, and an
+        entry whose owner has exited is used by nobody, so it goes at any age. A
+        live owner, or an id another process has taken since, leaves it to the
+        age gate (the sweep assumes :attr:`dir` is on this machine, as the
+        system temp dir is).
         """
         cutoff = time.time() - self.max_age_days * 86400
         removed = []
@@ -282,7 +301,9 @@ class TempArtifacts(LoggingMixin):
                 if not entry.name.startswith(f"{self.prefix}_"):
                     continue
                 try:
-                    if self._newest_mtime(entry) >= cutoff:
+                    if not self._owner_exited(entry.name) and (
+                        self._newest_mtime(entry) >= cutoff
+                    ):
                         continue
                 except OSError:
                     continue
@@ -290,6 +311,18 @@ class TempArtifacts(LoggingMixin):
                 if not self._remove(entry.path):
                     removed.append(entry.path)
         return removed
+
+    def _owner_exited(self, name: str) -> bool:
+        """True when *name* is a session tag whose owning process has exited."""
+        match = self._OWNED_TAG.match(name[len(self.prefix) + 1 :])
+        if not match:
+            return False
+        from pythontk.core_utils.execution_monitor._sidecar import process_alive
+
+        try:
+            return not process_alive(int(match.group(1)))
+        except Exception:  # noqa: BLE001 - an id no process could have
+            return False
 
     @staticmethod
     def _remove(path: str) -> List[str]:

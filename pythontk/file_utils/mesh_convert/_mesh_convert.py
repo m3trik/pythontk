@@ -17,6 +17,8 @@ this one as a private mixin, and the facade is composed from them:
 - ``_materials``   -- material checks and the per-channel writers
 - ``_textures``    -- the web-delivery texture pass and its policy
 - ``_images``      -- image embedding, de-duplication and pruning
+- ``_gltf2fbx``    -- the reverse direction with no DCC: glTF -> FBX and its
+  manifest (:meth:`~MeshConvert.gltf_to_fbx`)
 
 A mixin reaches the others through ``cls``, which is what keeps a subclass, a
 class-level override and ``mock.patch.object(MeshConvert, ...)`` reaching every
@@ -33,6 +35,7 @@ from pythontk.file_utils.mesh_convert._fbx2gltf import (  # noqa: F401
     FBX2GLTF_VERSION,  # drop once its pythontk floor passes this release
     _Fbx2GltfMixin,
 )
+from pythontk.file_utils.mesh_convert._gltf2fbx import _Gltf2FbxMixin
 from pythontk.file_utils.mesh_convert._images import _ImagesMixin
 from pythontk.file_utils.mesh_convert._lightmaps import _LightmapsMixin
 from pythontk.file_utils.mesh_convert._materials import _MaterialsMixin
@@ -45,6 +48,7 @@ from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 
 class MeshConvert(
     _Fbx2GltfMixin,
+    _Gltf2FbxMixin,
     _SidecarMixin,
     _LightmapsMixin,
     _ShadowRigsMixin,
@@ -58,7 +62,8 @@ class MeshConvert(
 ):
     """3D mesh format conversion via the godotengine/FBX2glTF CLI.
 
-    Currently supports static-mesh FBX -> GLB (binary glTF 2.0).
+    Currently supports static-mesh FBX -> GLB (binary glTF 2.0), and the
+    reverse -- glTF -> FBX -- in pure Python (:meth:`gltf_to_fbx`).
     The FBX2glTF binary is fetched on first use into the pythontk-managed
     tools directory under ``~/.pythontk/tools/`` (overridable via
     ``PYTHONTK_TOOLS_DIR``).

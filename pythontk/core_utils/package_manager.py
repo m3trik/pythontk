@@ -720,8 +720,9 @@ class PackageManager(
         pip's arguments travel in the environment
         (:meth:`pythontk.AppLauncher.python_args_via_env`), never on the command
         line. mayapy.exe decodes its ANSI command line as UTF-8: measured on Maya
-        2025, "José" arrived as "Jos\\udce9" and "Жук" as "???", while the
-        environment and the working directory arrived intact. So a ``--target`` or
+        2025, an accented letter arrived as a lone surrogate ("é" as "\\udce9")
+        and each letter outside the code page as "?", while the environment and
+        the working directory arrived intact. So a ``--target`` or
         ``--report`` path through a user folder with a non-ASCII letter sent pip to
         a different directory, and an install then imported nothing. A plain
         python.exe reads either route.

@@ -20,6 +20,7 @@ from pythontk.core_utils.app_launcher._desktop import _DesktopMixin
 from pythontk.core_utils.app_launcher._discovery import _DiscoveryMixin
 from pythontk.core_utils.app_launcher._environment import _EnvironmentMixin
 from pythontk.core_utils.app_launcher._processes import _ProcessesMixin
+from pythontk.core_utils.app_launcher._shortcuts import _ShortcutsMixin
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,7 @@ class AppLauncher(
     _EnvironmentMixin,
     _DesktopMixin,
     _ProcessesMixin,
+    _ShortcutsMixin,
 ):
     """
     A utility class for launching applications on Windows and Linux.
@@ -147,6 +149,8 @@ class AppLauncher(
         :param args: A list of arguments to pass to the application.
         :param cwd: The working directory for the application.
         :param detached: If True, launches as a separate process (application keeps running if script ends).
+                    Launched from inside a :class:`TestSandbox`, it gets the host's environment, not the
+                    sandbox's: the run's temp root goes when the run does (:meth:`TestSandbox.host_environ`).
         :param env: Optional mapping of environment variables for the child process.
                     If None, the child inherits the current process's environment.
         :return: The subprocess.Popen object or None if launch failed.
@@ -164,6 +168,14 @@ class AppLauncher(
             logger.debug(f"Launching: {cmd} (Detached: {detached})")
 
             kwargs = {"cwd": cwd, "shell": False}
+
+            if detached:
+                # An app that keeps running after this process must not keep a
+                # test sandbox's temp root: the next run's sweep reclaims a root
+                # whose owner has exited, files the app is still using included.
+                from pythontk.core_utils.test_sandbox import TestSandbox
+
+                env = TestSandbox.host_environ(env) or env
 
             if env is not None:
                 kwargs["env"] = env

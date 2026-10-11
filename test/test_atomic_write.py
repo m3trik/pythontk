@@ -37,7 +37,7 @@ class AtomicWriteText(unittest.TestCase):
             self.assertEqual(f.read(), "replaced")
 
     def test_unicode_round_trip(self):
-        text = "héllo — 世界"
+        text = "café — naïve ★ 🚀"
         FileUtils.atomic_write_text(self.path, text)
         with open(self.path, encoding="utf-8") as f:
             self.assertEqual(f.read(), text)

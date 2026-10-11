@@ -317,12 +317,13 @@ class TestNonAsciiScriptDir(unittest.TestCase):
     """The temp script lives under %TEMP%, which holds the user's name.
 
     mayapy.exe decodes its command line in the ANSI code page: measured on Maya
-    2025, "José" arrived as "Jos\\udce9" and "Жук" as "???", so ``mayapy <script>``
-    for a user so named failed with "can't open file" and the run produced nothing.
-    The script's path must reach the interpreter some other way.
+    2025, an accented letter arrived as a lone surrogate ("é" as "\\udce9") and
+    each letter outside the code page as "?", so ``mayapy <script>`` for a user so
+    named failed with "can't open file" and the run produced nothing. The
+    script's path must reach the interpreter some other way.
     """
 
-    WORD = "José Жук"
+    WORD = "Zoë ★"  # a letter cp1252 holds, and a symbol it cannot
     PROBE = (
         "import json, os, sys\n"
         "with open(OUT, 'w', encoding='utf-8') as fh:\n"
@@ -387,7 +388,7 @@ class TestNonAsciiScriptDir(unittest.TestCase):
     @unittest.skipUnless(find_mayapy(), "mayapy.exe not installed")
     def test_maya_saves_a_scene_under_a_temp_its_code_page_cannot_hold(self):
         """Maya itself opens and saves through the ANSI code page. With TEMP under
-        "José Жук" (cp1252 cannot hold "Жук") it read TEMP as "???", put its own
+        a Cyrillic name (cp1252 cannot hold it) it read TEMP as "???", put its own
         temp files in the CURRENT directory, and ``cmds.file`` save said "An
         invalid path was specified". The child gets its TEMP, and the template the
         path it saves to, in 8.3 form."""
@@ -471,6 +472,50 @@ class TestProgressRelay(unittest.TestCase):
         relay = ProgressRelay()
         self.assertTrue(relay.report(0, 1, 2))
         self.assertTrue(relay.tick())
+
+
+class TestFailureSummary(ScriptRunBase):
+    """A failed run names its cause in ONE line (``summary``) beside the full
+    tail its message keeps for the log.
+
+    REGRESSION (2026-10-09): a KTX2 .glb pulled into Maya put the whole 1 200
+    character output tail -- traceback, temp paths, the importer's refusal three
+    times over -- into the panel's message box.
+    """
+
+    BLENDER_OUTPUT = (
+        "::progress:: 0/5 Opening the scene\n"
+        "Error: Extension KHR_texture_basisu is not available on this addon version\n"
+        "Blender 5.1.2\n"
+        "Traceback (most recent call last):\n"
+        '  File "x.py", line 3, in <module>\n'
+        "RuntimeError: Extension KHR_texture_basisu is not available on this addon version\n"
+        "Blender quit\n"
+    )
+
+    def test_the_traceback_line_is_the_summary(self):
+        self.assertEqual(
+            ScriptRunner.failure_summary(self.BLENDER_OUTPUT),
+            "Extension KHR_texture_basisu is not available on this addon version",
+        )
+
+    def test_an_app_report_line_stands_in_without_a_traceback(self):
+        self.assertEqual(
+            ScriptRunner.failure_summary("# Error: no such node\nmayapy exit\n"),
+            "no such node",
+        )
+        self.assertIsNone(ScriptRunner.failure_summary("nothing went wrong\n"))
+
+    def test_a_long_line_is_clipped_for_a_message_box(self):
+        summary = ScriptRunner.failure_summary("ValueError: " + "x" * 2000)
+        self.assertLessEqual(len(summary), 300)
+        self.assertTrue(summary.endswith("..."))
+
+    def test_a_failed_run_carries_it(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            self.run_script("print('noise'); raise ValueError('summary-17')\n")
+        self.assertEqual(ctx.exception.summary, "summary-17")
+        self.assertIn("noise", str(ctx.exception))  # the log keeps the tail
 
 
 class TestRootExport(unittest.TestCase):

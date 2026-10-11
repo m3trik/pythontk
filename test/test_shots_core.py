@@ -22,6 +22,7 @@ import sys
 import shutil
 import tempfile
 import unittest
+from contextlib import contextmanager
 
 # Make ``import pythontk`` resolvable when run directly (pytest / unittest) from
 # any cwd: the dir two levels up contains the ``pythontk`` package.
@@ -794,7 +795,56 @@ class TestMemberIdentity(_ShotTest):
         self.assertEqual(result["|set|cam"], "scene_discovered")
 
     def test_pure_resolver_finds_every_name(self):
+        self.assertEqual(ShotStore().member_nodes("door"), ["door"])
         self.assertEqual(ShotStore().resolve_member("door"), ("door", "found"))
+
+    def test_resolve_member_reads_the_nodes_a_name_answers_to(self):
+        class _Scene(ShotStore):
+            NODES = {"lid": ["|a|lid", "|b|lid"], "door": ["|AC:door"]}
+
+            def member_nodes(self, name):
+                return list(self.NODES.get(name, []))
+
+        store = _Scene()
+        self.assertEqual(store.resolve_member("door"), ("|AC:door", "found"))
+        self.assertEqual(store.resolve_member("lid"), ("lid", "ambiguous"))
+        self.assertEqual(store.resolve_member("hinge"), ("hinge", "missing"))
+
+    def test_rename_members_merges_two_names_for_one_node(self):
+        """A build stores a doc name it cannot resolve as written, and the
+        scene scan later adds the node's long path beside it: one node, two
+        members (SOL_REPLACE_ASSEMBLY's A01_1 held ``KEYS`` and
+        ``|INTERACTIVE|KEYS_GRP|KEYS`` and shipped ``KEYS`` twice).  Re-pointing
+        the doc name leaves one member, and the sets follow it."""
+        store = _store([])
+        shot = store.define_shot("A", 0, 10, objects=["KEYS", "|g|KEYS", "|g|lid"])
+        store.set_object_pinned("KEYS")
+        store.set_object_hidden("KEYS")
+        store.locked_objects = {"KEYS"}
+
+        self.assertTrue(store.rename_members({"KEYS": "|g|KEYS"}))
+
+        self.assertEqual(shot.objects, ["|g|KEYS", "|g|lid"])
+        self.assertEqual(store.pinned_objects, {"|g|KEYS"})
+        self.assertEqual(store.hidden_objects, {"|g|KEYS"})
+        self.assertEqual(store.locked_objects, {"|g|KEYS"})
+        self.assertEqual(
+            store.to_export_view()["shot_metadata"]["shots"][0]["objects"],
+            ["KEYS", "lid"],
+        )
+
+    def test_rename_members_is_a_no_op_without_a_held_name(self):
+        store = _store([])
+        shot = store.define_shot("A", 0, 10, objects=["|g|lid"])
+        self.assertFalse(store.rename_members({"KEYS": "|g|KEYS", "x": "x"}))
+        self.assertEqual(shot.objects, ["|g|lid"])
+
+    def test_held_names_are_members_and_object_sets(self):
+        store = _store([])
+        store.define_shot("A", 0, 10, objects=["|g|lid"])
+        store.set_object_pinned("TYPO")
+        store.locked_objects = {"|g|cam"}
+        self.assertEqual(store.held_names(), {"|g|lid", "TYPO", "|g|cam"})
 
     def test_new_statuses_have_colors(self):
         from pythontk.core_utils.engines.shots.shot_model import SHOT_PALETTE
@@ -1123,12 +1173,39 @@ class TestShotStoreSerialisation(_ShotTest):
         s.detection_threshold = 8.0
         s.lock_gap(0, 1)
         s.source_csv = "x.csv"
+        s.manifest_edits = {"x.csv": {"version": 1, "steps": {"A": {"name": "A1"}}}}
+        s.manifest_tags = {"x.csv": {"A": "tag3"}, "": {"B": "tag1"}}
         s.clip_name_strategy = "sequence"
 
         data = s.to_dict()
         restored = ShotStore.from_dict(data)
         # A restored store must serialise back to the identical dict.
         self.assertEqual(restored.to_dict(), data)
+
+    def test_manifest_edits_read_tolerantly(self):
+        """A scene saved before the field, or holding a malformed layer,
+        loads with what is readable."""
+        data = _store([]).to_dict()
+        del data["manifest_edits"]
+        self.assertEqual(ShotStore.from_dict(data).manifest_edits, {})
+        data["manifest_edits"] = {"ok.csv": {"steps": {}}, "bad.csv": "garbage"}
+        self.assertEqual(
+            ShotStore.from_dict(data).manifest_edits, {"ok.csv": {"steps": {}}}
+        )
+
+    def test_manifest_tags_read_tolerantly(self):
+        """A scene saved before the field loads with no tags; a malformed
+        layer or tag is dropped, the readable rest kept."""
+        data = _store([]).to_dict()
+        del data["manifest_tags"]
+        self.assertEqual(ShotStore.from_dict(data).manifest_tags, {})
+        data["manifest_tags"] = {
+            "ok.csv": {"A": "tag2", "B": 7, "C": ""},
+            "bad.csv": "garbage",
+        }
+        self.assertEqual(
+            ShotStore.from_dict(data).manifest_tags, {"ok.csv": {"A": "tag2"}}
+        )
 
     def test_to_export_view_shape(self):
         """One record, one join key: each clip carries its own range, so
@@ -1418,6 +1495,281 @@ class TestStoreHooks(_ShotTest):
             Deferred._persistence, Deferred._active = None, None
 
 
+class TestReleaseReplaced(_ShotTest):
+    """``ShotStore.release_replaced`` -- the claims of a key a DCC key edit
+    (Align / Invert Keys) REPLACED go with it.
+
+    Left on the frame, every claim passed to the key that landed there: a
+    behavior's authored claim made the next Build delete that animator key as
+    a dropped behavior (BACKLOG 2026-10-04, Align / Invert Keys).
+    """
+
+    class _Backend:
+        saves = 0
+
+        def load(self):
+            return None
+
+        def save(self, data):
+            self.saves += 1
+
+    def test_a_replaced_key_takes_every_claim_on_its_frame_and_only_there(self):
+        store = ShotStore()
+        led = store.edit_ledger
+        led.record_step("crv", 20.0, "auto", "auto")
+        led.record_key("crv", 20.0, 0, "end")
+        led.record_authored("crv", 20.0, 0, "fade_in", "door")
+        led.record_authored("crv", 30.0, 0, "fade_in", "door")
+        led.record_authored("other", 20.0, 0, "fade_in", "lamp")
+
+        released = store.release_replaced()("crv", [20.0])
+
+        self.assertEqual(released, 3)
+        self.assertFalse(led.owns_any("crv", 20.0))
+        self.assertFalse(led.owns_step("crv", 20.0))
+        self.assertTrue(led.owns_authored("crv", 30.0))
+        self.assertTrue(led.owns_authored("other", 20.0))
+
+    def test_frames_given_as_a_generator_reach_every_owner(self):
+        """A curve claimed under two keys (two owners of one shared curve):
+        a generator of frames was used up by the first key, so the second
+        owner's claim stayed."""
+
+        class TwoOwners(ShotStore):
+            def _curve_ledger_keys(self, objects=None):
+                return lambda curve: [f"a|{curve}", f"b|{curve}"]
+
+        store = TwoOwners()
+        for owner in "ab":
+            store.edit_ledger.record_authored(f"{owner}|x", 20.0, 0, "fade_in", owner)
+
+        released = store.release_replaced()("x", (t for t in [20.0]))
+
+        self.assertEqual(released, 2)
+        self.assertFalse(store.edit_ledger.authored())
+
+    def test_a_deleted_curve_takes_every_claim_on_it(self):
+        """``frames=None``: the CURVE is gone (a static curve the optimizer
+        dropped, a corrupted one Repair deleted, one whose keys could not even
+        be read) -- every claim on it goes, whatever its frame."""
+        store = ShotStore()
+        led = store.edit_ledger
+        led.record_step("crv", 20.0, "auto", "auto")
+        led.record_key("crv", 5.0, 0, "start")
+        led.record_authored("crv", 30.0, 0, "fade_in", "door")
+        led.record_authored("other", 20.0, 0, "fade_in", "lamp")
+
+        released = store.release_replaced()("crv", None)
+
+        self.assertEqual(released, 3)
+        self.assertFalse(led.owns_any("crv", 5.0))
+        self.assertFalse(led.owns_any("crv", 20.0))
+        self.assertFalse(led.owns_any("crv", 30.0))
+        self.assertTrue(led.owns_authored("other", 20.0))
+
+    def test_a_release_is_saved_and_a_no_op_writes_nothing(self):
+        backend = self._Backend()
+        ShotStore.set_persistence(backend)
+        store = ShotStore()
+        store.edit_ledger.record_authored("crv", 20.0, 0, "fade_in", "door")
+        on_replace = store.release_replaced()
+
+        self.assertEqual(on_replace("crv", [10.0]), 0)
+        self.assertEqual(backend.saves, 0, "a frame with no claim saved the store")
+        on_replace("crv", [20.0])
+        self.assertEqual(backend.saves, 1, "the released claim was never saved")
+
+    def test_a_dcc_hook_names_the_keys_a_curve_is_claimed_under(self):
+        """A DCC whose curves carry no name (Blender) keys a claim by owner and
+        channel; the hook maps the curve the edit hands over to those keys."""
+
+        class OwnerKeyed(ShotStore):
+            def _curve_ledger_keys(self, objects=None):
+                return lambda curve: [f"{obj}|{curve}" for obj in objects]
+
+        store = OwnerKeyed()
+        led = store.edit_ledger
+        for key in ("a|x", "b|x", "a|y"):
+            led.record_authored(key, 20.0, 0, "fade_in", key[0])
+
+        self.assertEqual(store.release_replaced(["a", "b"])("x", [20.0]), 2)
+        self.assertEqual(led.authored(), [("a|y", 20.0)])
+
+    def test_it_releases_on_the_ledger_a_restore_put_back(self):
+        """An undo restore replaces ``edit_ledger`` with a new object: a
+        callback built before it must release on the store's ledger as it is
+        when the edit runs, not on the one it saw when it was made."""
+        store = ShotStore()
+        on_replace = store.release_replaced()
+        store.push_boundary_snapshot()
+        store.edit_ledger.record_authored("crv", 20.0, 0, "fade_in", "door")
+        store.restore_boundary_snapshot()
+        store.redo_boundary_snapshot()
+        self.assertTrue(store.edit_ledger.owns_authored("crv", 20.0))
+
+        self.assertEqual(on_replace("crv", [20.0]), 1)
+        self.assertFalse(store.edit_ledger.owns_authored("crv", 20.0))
+
+
+class TestRemapMoved(_ShotTest):
+    """``ShotStore.remap_moved`` -- a claimed key a DCC key edit (Align /
+    Invert Keys) MOVES carries its claims to its new frame, as the shot
+    sequencer's own key moves do.
+
+    Left on the old frame, a claim passed to whatever key arrived there, and
+    the key that moved read as the animator's: the next Build deleted the one
+    and keyed the behavior again beside the other.
+    """
+
+    class _Backend:
+        saves = 0
+
+        def load(self):
+            return None
+
+        def save(self, data):
+            self.saves += 1
+
+    def test_a_moved_key_carries_every_claim_to_its_new_frame(self):
+        store = ShotStore()
+        led = store.edit_ledger
+        led.record_authored("crv", 15.0, 0, "fade_in", "door")
+        led.record_step("crv", 15.0, "auto", "auto")
+        led.record_authored("crv", 30.0, 0, "fade_out", "door")
+
+        # The in-place Invert of {10, 15, 25, 30}: 15 and 25 trade frames.
+        moved = store.remap_moved()(
+            "crv", [(10.0, 30.0), (15.0, 25.0), (25.0, 15.0), (30.0, 10.0)]
+        )
+
+        self.assertEqual(moved, 3)
+        self.assertEqual(led.authored(), [("crv", 10.0), ("crv", 25.0)])
+        self.assertEqual(led.step_times("crv"), [25.0])
+
+    def test_two_claimed_keys_that_trade_frames_trade_claims(self):
+        """Every pair is matched against the claims as they stood: applied one
+        after the other, the second move took the first one's claim back."""
+        store = ShotStore()
+        led = store.edit_ledger
+        led.record_authored("crv", 15.0, 0, "fade_in", "door")
+        led.record_authored("crv", 25.0, 1, "fade_out", "lamp")
+
+        store.remap_moved()("crv", [(15.0, 25.0), (25.0, 15.0)])
+
+        self.assertEqual(led.authored(obj="door"), [("crv", 25.0)])
+        self.assertEqual(led.authored(obj="lamp"), [("crv", 15.0)])
+
+    def test_a_move_is_saved_and_a_no_op_writes_nothing(self):
+        backend = self._Backend()
+        ShotStore.set_persistence(backend)
+        store = ShotStore()
+        store.edit_ledger.record_authored("crv", 15.0, 0, "fade_in", "door")
+        on_move = store.remap_moved()
+
+        self.assertEqual(on_move("crv", [(40.0, 50.0)]), 0)
+        self.assertEqual(backend.saves, 0, "a move of nothing claimed saved the store")
+        on_move("crv", [(15.0, 25.0)])
+        self.assertEqual(backend.saves, 1, "the moved claim was never saved")
+
+    def test_a_dcc_hook_names_the_keys_a_curve_is_claimed_under(self):
+        class OwnerKeyed(ShotStore):
+            def _curve_ledger_keys(self, objects=None):
+                return lambda curve: [f"{obj}|{curve}" for obj in objects]
+
+        store = OwnerKeyed()
+        store.edit_ledger.record_authored("a|x", 15.0, 0, "fade_in", "a")
+        store.edit_ledger.record_authored("b|x", 15.0, 0, "fade_in", "b")
+
+        self.assertEqual(store.remap_moved(["a", "b"])("x", [(15.0, 25.0)]), 2)
+        self.assertEqual(store.edit_ledger.authored(), [("a|x", 25.0), ("b|x", 25.0)])
+
+
+class TestKeyEdit(_ShotTest):
+    """``ShotStore.key_edit`` -- what a panel runs a key edit inside: it hands
+    out the edit's ``on_replace`` / ``on_move`` and makes the edit a
+    ``scene_edit`` (one undo step with a restore point, so an undo puts the
+    claims back with the keys) -- but only when the store claims anything, so
+    a scene with no shots gets no restore point."""
+
+    class _Recording(ShotStore):
+        def __init__(self, shots=None):
+            super().__init__(shots)
+            self.edits = []
+
+        @contextmanager
+        def scene_edit(self, label="edit", snapshot=True):
+            self.edits.append(label)
+            with super().scene_edit(label, snapshot):
+                yield None
+
+    def test_a_store_with_claims_runs_the_edit_as_a_scene_edit(self):
+        store = self._Recording()
+        store.edit_ledger.record_authored("crv", 20.0, 0, "fade_in", "door")
+
+        with store.key_edit("Align Keys") as (on_replace, on_move):
+            on_replace("crv", [20.0])
+
+        self.assertEqual(store.edits, ["Align Keys"])
+        self.assertTrue(store.has_boundary_snapshot())
+        self.assertFalse(store.edit_ledger.owns_authored("crv", 20.0))
+
+    def test_a_store_with_no_claims_pushes_no_restore_point(self):
+        store = self._Recording()
+
+        with store.key_edit("Align Keys") as (on_replace, on_move):
+            self.assertEqual(on_replace("crv", [20.0]), 0)
+            self.assertEqual(on_move("crv", [(10.0, 20.0)]), 0)
+
+        self.assertEqual(store.edits, [], "a scene with no shots entered a scene edit")
+        self.assertFalse(store.has_boundary_snapshot())
+
+    def test_undoing_the_edit_puts_back_the_claim_it_released(self):
+        """The restore point is taken BEFORE the edit, so the restore the
+        DCC's undo triggers brings the released claim back."""
+        store = ShotStore()
+        store.edit_ledger.record_authored("crv", 20.0, 0, "fade_in", "door")
+
+        with store.key_edit("Align Keys") as (on_replace, _on_move):
+            on_replace("crv", [20.0])
+        self.assertFalse(store.edit_ledger.owns_authored("crv", 20.0))
+
+        self.assertTrue(store.restore_boundary_snapshot())
+        self.assertTrue(store.edit_ledger.owns_authored("crv", 20.0))
+
+    def test_both_hooks_share_one_key_resolution(self):
+        """``claim_hooks`` / ``key_edit`` resolve a curve's ledger keys ONCE for
+        both hooks: a DCC that resolves owners by scanning the scene
+        (blendertk) paid that scan once per hook, per edit."""
+
+        class Counting(ShotStore):
+            resolutions = 0
+
+            def _curve_ledger_keys(self, objects=None):
+                Counting.resolutions += 1
+                return super()._curve_ledger_keys(objects)
+
+        store = Counting()
+        store.edit_ledger.record_authored("crv", 20.0, 0, "fade_in", "door")
+
+        on_replace, on_move = store.claim_hooks(["door"])
+        self.assertEqual(Counting.resolutions, 1)
+        self.assertEqual(on_move("crv", [(20.0, 30.0)]), 1)
+        self.assertEqual(on_replace("crv", [30.0]), 1)
+
+        with store.key_edit("Align Keys", ["door"]):
+            pass
+        self.assertEqual(Counting.resolutions, 2, "key_edit resolved per hook")
+
+    def test_the_pure_scene_edit_records_a_restore_point_only_when_asked(self):
+        store = ShotStore()
+        with store.scene_edit("Probe", snapshot=False):
+            pass
+        self.assertFalse(store.has_boundary_snapshot())
+        with store.scene_edit("Probe"):
+            pass
+        self.assertTrue(store.has_boundary_snapshot())
+
+
 class _RecordingStore(ShotStore):
     """Stand-in for a DCC subclass: records what the publish hook was handed.
 
@@ -1564,16 +1916,33 @@ class TestExportViewRefresh(_ShotTest):
 
 class _SceneStore(ShotStore):
     """A DCC stand-in whose scene holds :attr:`held` objects and keys the
-    frames in :attr:`keys` -- the two facts ``stale_shots`` asks a DCC for."""
+    frames in :attr:`keys` -- the two facts ``stale_shots`` asks a DCC for --
+    and keys each held object on :attr:`member_keys` ``{name: frames}``."""
 
     held: frozenset = frozenset()
     keys: tuple = ()
+    member_keys: dict = {}
+    audio: tuple = ()  # (start, stop) spans; stop None plays on
 
     def _existing_objects(self, names):
         return {n for n in names if n in self.held}
 
     def _keyed_windows(self, windows):
         return [any(a <= t <= b for t in self.keys) for a, b in windows]
+
+    def _audio_windows(self, windows):
+        return self._spans_overlap(self.audio, list(windows))
+
+    def _members_keyed_windows(self, entries):
+        out = []
+        for names, (a, b) in entries:
+            live = [n for n in names if n in self.held]
+            out.append(
+                None
+                if not live
+                else any(a <= t <= b for n in live for t in self.member_keys.get(n, ()))
+            )
+        return out
 
 
 class TestStaleShots(_ShotTest):
@@ -1723,6 +2092,132 @@ class TestStaleShots(_ShotTest):
         )
         ShotStore.set_active(store)
         self.assertEqual(ShotStore.declared_range(), (20, 30))
+
+
+class TestScopedShotDeletes(_ShotTest):
+    """One delete, three scopes: stale, empty, all (2026-10-07: "consolidate
+    to one global delete shots button ... delete stale, delete all, delete
+    empty").  Every scope removes records only -- no key, no other shot."""
+
+    def _store(self, shots, held=(), keys=(), member_keys=None):
+        store = _SceneStore(list(shots))
+        store.snap_whole_frames = False
+        store.held, store.keys = frozenset(held), tuple(keys)
+        store.member_keys = dict(member_keys or {})
+        return store
+
+    def test_an_empty_shot_names_nothing_and_keys_nothing(self):
+        store = self._store(
+            [
+                ShotBlock(0, "Live", 0, 10, ["x"]),
+                ShotBlock(1, "Empty", 20, 30),
+                ShotBlock(2, "Unnamed but keyed", 40, 50),
+            ],
+            held={"x"},
+            keys=(45,),
+            member_keys={"x": (5,)},
+        )
+        self.assertEqual([s.name for s in store.empty_shots()], ["Empty"])
+
+    def test_a_shot_whose_members_key_nothing_in_it_is_empty(self):
+        """2026-10-10: "delete empty is leaving behind empty shots" -- a shot
+        that names objects (a new shot adopts the ones keyed on its start; a
+        shot whose keys were deleted keeps its members) and holds nothing.
+        Keys elsewhere in the scene do not fill it."""
+        store = self._store(
+            [ShotBlock(0, "Named", 20, 30, ["x"])],
+            held={"x"},
+            keys=(25,),  # another object's key: not this shot's
+            member_keys={"x": (0, 50)},
+        )
+        self.assertEqual([s.name for s in store.empty_shots()], ["Named"])
+
+    def test_a_member_key_inside_keeps_a_named_shot(self):
+        store = self._store(
+            [ShotBlock(0, "Named", 20, 30, ["x"])],
+            held={"x"},
+            member_keys={"x": (25,)},
+        )
+        self.assertEqual(store.empty_shots(), [])
+
+    def test_a_key_on_a_bound_is_the_neighbours(self):
+        """At a zero gap the frame a new shot starts on is the last frame of
+        the shot before it, keys and all -- whether the new shot names the
+        objects keyed there or not."""
+        for objects in ([], ["x"]):
+            store = self._store(
+                [ShotBlock(0, "A", 0, 10, ["x"]), ShotBlock(1, "New", 10, 20, objects)],
+                held={"x"},
+                keys=(0, 10),
+                member_keys={"x": (0, 10)},
+            )
+            self.assertEqual([s.name for s in store.empty_shots()], ["New"], objects)
+
+    def test_a_key_on_an_unshared_bound_is_the_shots_own(self):
+        """Across a gap nothing else owns the frame: a pose keyed on the
+        shot's own start is its content."""
+        store = self._store(
+            [ShotBlock(0, "A", 0, 10, ["x"]), ShotBlock(1, "Posed", 20, 30, ["x"])],
+            held={"x"},
+            member_keys={"x": (5, 20)},
+        )
+        self.assertEqual(store.empty_shots(), [])
+
+    def test_a_stale_shot_is_empty_too(self):
+        """Its objects are gone and nothing is keyed in it: it holds nothing.
+        Stale stays the narrower scope."""
+        store = self._store([ShotBlock(0, "Stale", 0, 10, ["lost"])])
+        self.assertEqual([s.name for s in store.empty_shots()], ["Stale"])
+        self.assertEqual([s.name for s in store.shots_in_scope("stale")], ["Stale"])
+
+    def test_audio_playing_through_a_shot_fills_it(self):
+        """Its on and off keys outside the shot, a clip still plays in it: the
+        Sequencer draws it as the shot's content.  An open clip (no stop)
+        plays on from its start."""
+        store = self._store(
+            [
+                ShotBlock(0, "Narrated", 20, 30, ["x"]),
+                ShotBlock(1, "Before", 40, 50, ["x"]),
+                ShotBlock(2, "Open", 60, 70, ["x"]),
+            ],
+            held={"x"},
+        )
+        store.audio = ((10.0, 35.0), (55.0, None))
+        self.assertEqual([s.name for s in store.empty_shots()], ["Before"])
+
+    def test_renamed_members_with_keys_in_the_shot_are_not_empty(self):
+        """No name resolves, but the scene keys the window: the shot's content
+        lives on under another name (the stale rule's half, asked here too)."""
+        store = self._store([ShotBlock(0, "Renamed", 0, 10, ["old"])], keys=(5,))
+        self.assertEqual(store.empty_shots(), [])
+
+    def test_each_scope_removes_its_own_and_moves_nothing(self):
+        def fresh():
+            return self._store(
+                [
+                    ShotBlock(0, "Live", 0, 10, ["x"]),
+                    ShotBlock(1, "Empty", 20, 30),
+                    ShotBlock(2, "Stale", 40, 50, ["lost"]),
+                ],
+                held={"x"},
+                member_keys={"x": (5,)},
+            )
+
+        for scope, gone in (
+            ("stale", ["Stale"]),
+            ("empty", ["Empty", "Stale"]),
+            ("all", ["Live", "Empty", "Stale"]),
+        ):
+            store = fresh()
+            removed = store.remove_shots_in_scope(scope)
+            self.assertEqual([s.name for s in removed], gone, scope)
+            for shot in store.sorted_shots():
+                original = fresh().shot_by_name(shot.name)
+                self.assertEqual((shot.start, shot.end), (original.start, original.end))
+
+    def test_an_unknown_scope_is_refused(self):
+        with self.assertRaises(ValueError):
+            self._store([]).shots_in_scope("selected")
 
 
 # ===========================================================================
@@ -2266,6 +2761,56 @@ class TestEditLedgerRelease(unittest.TestCase):
         self.assertFalse(led.owns_key("c", 50.0))
 
 
+class TestEditLedgerStepIdentity(unittest.TestCase):
+    """A step claim knows the key it was made on (2026-10-10).
+
+    A Graph Editor paste over the frame a gap hold claims replaces the key,
+    and the claim stayed: the next shot edit that moved the seam "restored"
+    the old interpolation onto the animator's pasted -- stepped -- key.
+    """
+
+    def _ledger(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_step("c", 40.0, "auto", "auto", 6.0)
+        return led
+
+    def test_the_claim_reads_without_being_released(self):
+        led = self._ledger()
+        self.assertEqual(led.claimed_step("c", 40.0), ("auto", "auto", 6.0))
+        self.assertTrue(led.owns_step("c", 40.0), "reading must not release")
+        self.assertIsNone(led.claimed_step("c", 41.0))
+
+    def test_a_key_pasted_over_the_claim_is_not_the_stepped_key(self):
+        """A Maya paste lands a FIXED in side, and the copied value."""
+        led = self._ledger()
+        claim = led.claimed_step("c", 40.0)
+        self.assertFalse(led.is_same_key(claim, "fixed", 9.0))
+
+    def test_a_re_posed_or_re_derived_key_is_still_the_stepped_key(self):
+        led = self._ledger()
+        claim = led.claimed_step("c", 40.0)
+        self.assertTrue(led.is_same_key(claim, "auto", 7.5), "re-posed: same in side")
+        self.assertTrue(led.is_same_key(claim, "fixed", 6.0), "neighbour insert")
+
+    def test_a_claim_without_a_value_is_always_the_same_key(self):
+        """A scene saved before values were kept behaves as it always did."""
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger.from_dict({"steps": {"c": [[40.0, "auto", "auto"]]}})
+        claim = led.claimed_step("c", 40.0)
+        self.assertEqual(claim, ("auto", "auto", None))
+        self.assertTrue(led.is_same_key(claim, "fixed", 9.0))
+
+    def test_the_value_survives_a_save(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger.from_dict(self._ledger().to_dict())
+        self.assertEqual(led.claimed_step("c", 40.0), ("auto", "auto", 6.0))
+        self.assertEqual(led.release_step("c", 40.0), ("auto", "auto"))
+
+
 class TestBoundaryLedger(unittest.TestCase):
     """The store-scoped boundary-snapshot ledger.
 
@@ -2424,6 +2969,92 @@ class TestBoundaryLedger(unittest.TestCase):
         store.update_shot(0, objects=["cubeA", "cubeB"])
         store.restore_boundary_snapshot()
         self.assertEqual(store.shot_by_id(0).objects, ["cubeA"])
+
+    def test_undo_and_redo_carry_the_active_shot(self):
+        """Undoing a new shot returns to the shot that was active before it,
+        and redo makes the new one active again.  Reported 2026-10-07: an
+        undone new shot left the store's active id naming a removed shot."""
+        store = self._store()
+        store.set_active_shot(1)
+        store.push_boundary_snapshot()
+        new = store.define_shot("C", 110, 150)
+        store.set_active_shot(new.shot_id)
+        store.restore_boundary_snapshot()
+        self.assertEqual(store.active_shot_id, 1)
+        store.redo_boundary_snapshot()
+        self.assertEqual(store.active_shot_id, new.shot_id)
+
+    def test_changed_since_snapshot(self):
+        """What a DCC's scene_edit asks to know an edit changed the records."""
+        store = self._store()
+        self.assertFalse(store.changed_since_snapshot(), "no restore point yet")
+        store.push_boundary_snapshot()
+        self.assertFalse(store.changed_since_snapshot())
+        store.update_shot(0, end=40)
+        self.assertTrue(store.changed_since_snapshot())
+
+    def test_removing_the_active_shot_clears_it(self):
+        """An active id naming no shot is a dangling reference every reader
+        has to guard; the removal drops it, and says so."""
+        store = self._store()
+        store.set_active_shot(1)
+        seen = []
+        store.add_listener(seen.append)
+        store.remove_shot(1)
+        self.assertIsNone(store.active_shot_id)
+        self.assertIn("ActiveShotChanged", [type(e).__name__ for e in seen])
+        store.set_active_shot(0)
+        store.remove_shot(1)  # not the active one: left alone
+        self.assertEqual(store.active_shot_id, 0)
+
+
+class TestShotsEdited(unittest.TestCase):
+    """``scene_edit`` says when an edit changed the shot records -- the one
+    event a panel follows for every edit made anywhere, including the many
+    that change bounds by hand and announce nothing else (2026-10-07: "the
+    manifest doesn't refresh properly on many actions")."""
+
+    def setUp(self):
+        self.store = ShotStore()
+        self.events = []
+        self.store.add_listener(self.events.append)
+        self.shot = self.store.define_shot("S0", 0, 50)
+        self.events.clear()
+
+    def _edited(self):
+        return [e for e in self.events if isinstance(e, shot_model.ShotsEdited)]
+
+    def test_an_edit_that_changed_the_records_is_announced(self):
+        with self.store.scene_edit("trim"):
+            self.shot.end = 40.0  # as the engine's bound edits write it
+            self.store.mark_dirty()
+        (event,) = self._edited()
+        self.assertEqual(event.label, "trim")
+
+    def test_an_edit_that_changed_nothing_is_not(self):
+        with self.store.scene_edit("noop"):
+            pass
+        self.assertEqual(self._edited(), [])
+
+    def test_an_active_shot_change_names_the_one_it_replaced(self):
+        other = self.store.define_shot("S1", 60, 90)
+        self.store.set_active_shot(self.shot.shot_id)
+        self.store.set_active_shot(other.shot_id)
+        changes = [
+            (e.shot_id, e.previous)
+            for e in self.events
+            if isinstance(e, shot_model.ActiveShotChanged)
+        ]
+        self.assertEqual(
+            changes, [(self.shot.shot_id, None), (other.shot_id, self.shot.shot_id)]
+        )
+
+    def test_a_failed_edit_is_not(self):
+        with self.assertRaises(RuntimeError):
+            with self.store.scene_edit("boom"):
+                self.shot.end = 40.0
+                raise RuntimeError("refused")
+        self.assertEqual(self._edited(), [])
 
 
 class TestBoundaryLedgerTags(unittest.TestCase):

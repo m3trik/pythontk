@@ -211,11 +211,12 @@ class MainThreadMarshaller(_MainThreadMarshallerInternal):
     That is what lets the identical code path run under a plain test runner.
     """
 
-    def __init__(self, disable_env, timeout=60.0):
+    def __init__(self, disable_env=None, timeout=60.0):
         #: Env var that forces the direct-call path even when Qt looks live.
         #: Tests importing the plugin alongside other Qt users have no pumped
         #: event loop, so marshalling would deadlock; a named opt-out keeps that
-        #: bypass explicit and small. Production hosts never set it.
+        #: bypass explicit and small. Production hosts never set it. ``None``:
+        #: no opt-out.
         self.disable_env = disable_env
         self.timeout = timeout
         #: Lazily built relay + the ``QCoreApplication`` it was bound to, so a
@@ -250,7 +251,7 @@ class MainThreadMarshaller(_MainThreadMarshallerInternal):
         place"). One predicate for both, so the diagnostic cannot claim a mode the
         dispatcher won't take.
         """
-        if os.environ.get(self.disable_env) == "1":
+        if self._opted_out():
             return False
         qtcore = self._qtcore()
         if qtcore is None:
@@ -259,6 +260,30 @@ class MainThreadMarshaller(_MainThreadMarshallerInternal):
         if app is None:
             return False
         return qtcore.QThread.currentThread() != app.thread()
+
+    def _opted_out(self):
+        return bool(self.disable_env) and os.environ.get(self.disable_env) == "1"
+
+    def post(self, fn, *args, **kwargs):
+        """Queue *fn* for the main thread and return at once -- never blocks.
+
+        For a caller that must not wait on the main thread: a host callback on
+        one of the host's own worker threads (Maya's Evaluation Manager fires
+        ``MDagMessage`` matrix callbacks there) would deadlock in :meth:`run`
+        while the main thread waits on that evaluation. Queued even from the
+        main thread, so *fn* always runs on a later event-loop pass, outside
+        the caller's stack. With no Qt, no ``QCoreApplication`` or the opt-out
+        set, *fn* runs in place. Its result is discarded, and an exception it
+        raises reaches Qt's event loop, so *fn* catches what must not surface.
+        Hold the marshaller until the call lands: its relay delivers it, and a
+        collected relay drops it.
+        """
+        qtcore = self._qtcore()
+        app = qtcore.QCoreApplication.instance() if qtcore is not None else None
+        if app is None or self._opted_out():
+            fn(*args, **kwargs)
+            return
+        self._main_thread_relay(qtcore, app).post(lambda: fn(*args, **kwargs))
 
     def run(self, fn, *args, timeout=None, **kwargs):
         """Call *fn*, on the main thread when one is reachable.

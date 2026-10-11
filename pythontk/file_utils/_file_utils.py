@@ -1255,6 +1255,11 @@ class FileUtils(HelpMixin):
     _MOMENTARY_LOCK_ERRORS = (5, 32)
     #: Waits between attempts: about a second in all (pip's budget, same cause).
     _REPLACE_RETRY_DELAYS = (0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.25, 0.25)
+    #: The wait a LARGE file earns past that second: seconds per MiB of the
+    #: file, in steps of :attr:`_REPLACE_RETRY_STEP`, up to the cap.
+    _REPLACE_WAIT_PER_MB = 0.1
+    _REPLACE_WAIT_MAX = 60.0
+    _REPLACE_RETRY_STEP = 0.5
 
     @staticmethod
     def replace_file(src: str, dst: str) -> None:
@@ -1263,8 +1268,14 @@ class FileUtils(HelpMixin):
         A sync client, a virus scanner or the search indexer opens a file just
         after it changes, and for that moment Windows refuses to rename onto or
         away from it (``WinError 5`` / ``32``) -- on a synced drive, routinely
-        the second quick rewrite of the same small file. Retried for about a
-        second, then raised; any other error raises at once, as before.
+        the second quick rewrite of the same small file. Retried, then raised;
+        any other error raises at once, as before.
+
+        The moment lasts as long as that reader takes to read the file
+        through, so the wait grows with it: about a second for a small file,
+        plus a tenth of a second per MiB of *src*, capped at a minute. A flat
+        second lost two in-place passes on a freshly written 218 MB FBX in a
+        synced export folder (production, 2026-10-07).
 
         Parameters:
             src: The finished file.
@@ -1276,7 +1287,20 @@ class FileUtils(HelpMixin):
         """
         import time
 
-        for delay in FileUtils._REPLACE_RETRY_DELAYS:
+        try:
+            megabytes = os.path.getsize(src) / 1048576.0
+        except OSError:
+            megabytes = 0.0
+        wait = min(
+            FileUtils._REPLACE_WAIT_MAX,
+            1.0 + FileUtils._REPLACE_WAIT_PER_MB * megabytes,
+        )
+        # A schedule, not a deadline: the sleeps ARE the wait, so it holds
+        # under a patched clock as well as a real one.
+        delays = list(FileUtils._REPLACE_RETRY_DELAYS)
+        while sum(delays) < wait:
+            delays.append(FileUtils._REPLACE_RETRY_STEP)
+        for delay in delays:
             try:
                 os.replace(src, dst)
                 return
@@ -1409,6 +1433,53 @@ class FileUtils(HelpMixin):
             scratch.cleanup()
             raise
         return target if promote else part
+
+    @classmethod
+    def deliver_file(cls, staged: str, destination: str) -> Tuple[str, Optional[str]]:
+        """Put the finished *staged* file at *destination*, or park it beside.
+
+        Copied into a ``.part`` beside the destination and promoted
+        (:meth:`atomic_write`): the stage is usually another volume, where a
+        rename cannot reach, and a half-copied file never takes the
+        destination's name. A destination held open (a viewer, a sync client
+        uploading it) refuses the promotion; the finished file is then moved
+        beside it as ``<stem>_unplaced_vNNN<ext>`` (:meth:`next_version_path`),
+        so a run's output is never lost with its stage. Built for exporters that
+        finish a file locally and deliver it once into a synced folder
+        (mayatk / blendertk Scene Exporter, 2026-10-08).
+
+        Parameters:
+            staged: The finished file.
+            destination: Where it ships.
+
+        Returns:
+            ``(path, None)`` when it landed at *destination*; ``(path, reason)``
+            when it did not -- *path* the parked copy, or *staged* itself when
+            the destination's folder takes no file at all.
+        """
+        import shutil
+
+        try:
+            cls.atomic_write(destination, lambda part: shutil.copyfile(staged, part))
+            return destination, None
+        except OSError as e:
+            reason = cls.describe_lock(destination) or str(e)
+        parked = cls.next_version_path(
+            destination, format="{stem}_unplaced_v{n:03d}{ext}"
+        )
+        try:
+            shutil.move(staged, parked)
+        except OSError:
+            # Across volumes a move is a copy first, and one cut short (the
+            # disk the delivery just filled) leaves a truncated file under a
+            # name that reads as the finished output. The stage still holds it.
+            if os.path.exists(staged):
+                try:
+                    os.remove(parked)
+                except OSError:
+                    pass
+            parked = staged
+        return parked, reason
 
     @staticmethod
     def copy_file(

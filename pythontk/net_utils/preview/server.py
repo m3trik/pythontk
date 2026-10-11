@@ -30,12 +30,13 @@ Example (publish a GLB and open it):
     ...     server.publish("C:/tmp/scene.glb")
     ...     server.open_in_browser()
     ...     server.publish("C:/tmp/scene_v2.glb")   # the open page swaps to it
+    ...     server.publish_parts(["C:/tmp/room.glb", "C:/tmp/props.glb"])
 
 Served surface:
     ``GET /``                -> the viewer page (materialized into the serve root)
-    ``GET /manifest.json``   -> ``{"version", "viewer", "asset", "updated",
-                                "title", "userPos", "locomotion", "scripts",
-                                "xrRuntime"}``;
+    ``GET /manifest.json``   -> ``{"version", "viewer", "asset", "parts",
+                                "updated", "title", "userPos", "locomotion",
+                                "scripts", "xrRuntime"}``;
                                 also the heartbeat behind :meth:`PreviewServer.has_viewer`
     ``GET /kernel/<module>.js`` -> the viewer itself: the modules the page imports
     ``GET /features/...``    -> an active packaged viewer script, and the modules
@@ -224,6 +225,11 @@ class PreviewServer(
         #: The file the current asset was published FROM, so a setting the page
         #: writes can reach the caller's own deliverable and not only the copy.
         self._source: Optional[Path] = None
+        #: Every part of the current publish, ``{"url", "name"}`` in order --
+        #: the served file and the name the page offers it under -- the first
+        #: being :attr:`_asset`; and the file each was published from.
+        self._parts: List[Dict[str, str]] = []
+        self._sources: List[Path] = []
         #: Delivery dials the page has set, re-applied to each later publish.
         self._settings: Dict[str, Any] = {}
         self._updated: Optional[float] = None
@@ -257,6 +263,9 @@ class PreviewServer(
         #: public address of its alias, when there is one.
         self._tunnel = None
         self._alias_url: Optional[str] = None
+        #: A private share's secret path segment, or ``None``: the guest
+        #: listener then answers only under ``/<token>/`` (see :meth:`share`).
+        self._share_token: Optional[str] = None
         #: A share's tunnel while it still waits on its provider, so an
         #: unshare can end that wait (:meth:`ShareTunnel.cancel`).
         self._starting = None
@@ -365,6 +374,8 @@ class PreviewServer(
                 # Page fingerprint; the viewer reloads when it changes.
                 "viewer": self._viewer_stamp,
                 "asset": self._asset,
+                # Every part, the asset first: the page loads them together.
+                "parts": [dict(part) for part in self._parts],
                 "updated": self._updated,
                 "title": self.title,
                 # For guests too: where a view starts, and whether it can go
@@ -465,6 +476,7 @@ class PreviewServer(
         src: Union[str, Path],
         name: Optional[str] = None,
         move: bool = False,
+        label: Optional[str] = None,
     ) -> int:
         """Place an asset in the serve root and bump the manifest version.
 
@@ -473,13 +485,93 @@ class PreviewServer(
             name: Served filename. Defaults to ``scene<ext>`` so republishing
                 reuses one URL rather than growing the directory.
             move: Move instead of copy -- for a temp export with no other reader.
+            label: The name the page offers the file under (Export ▸ GLB
+                saves it so). ``None`` keeps the served name: a scratch
+                export's own is a random tag, never a name to hand out.
 
         Returns:
             The new version number.
         """
         src = Path(src)
-        if not src.is_file():
-            raise FileNotFoundError(f"PreviewServer.publish: no such file: {src}")
+        name = name or f"scene{src.suffix}"
+        return self._publish([(src, name, label or name)], move)
+
+    def publish_parts(
+        self,
+        srcs: Sequence[Union[str, Path]],
+        labels: Optional[Sequence[str]] = None,
+        move: bool = False,
+    ) -> int:
+        """Publish the PARTS of one scene together, as one version.
+
+        Several files the page shows at once, each at its authored place --
+        a room, the props in it, a character, each exported on its own -- so
+        they line up the way they do in the scene they came from, and each
+        can be hidden on the page (View) and saved (Export). The first is the
+        primary: :meth:`describe_scene`, a still's and a recording's name,
+        and a script reading the deliverable's extras by node index all read
+        it. A single file is :meth:`publish`.
+
+        Served as ``scene<ext>``, ``scene_1<ext>`` ... in order. A part a
+        previous publish had beyond this one's count is removed once the
+        version naming this set is up.
+
+        Parameters:
+            srcs: The files, primary first.
+            labels: The name the page offers each under, in order; ``None``
+                takes each file's own name. A repeated name is numbered
+                (``model (2).glb``): the page tells parts apart by name.
+            move: Move instead of copy -- for temp exports with no other reader.
+
+        Returns:
+            The new version number.
+
+        Raises:
+            ValueError: No file, or *labels* not one per file.
+        """
+        sources = [Path(src) for src in srcs]
+        if not sources:
+            raise ValueError("PreviewServer.publish_parts: no file to publish")
+        if labels is None:
+            labels = [source.name for source in sources]
+        if len(labels) != len(sources):
+            raise ValueError(
+                f"PreviewServer.publish_parts: {len(labels)} labels for "
+                f"{len(sources)} files"
+            )
+        labels = self._distinct(labels)
+        entries = [
+            (source, f"scene{'_' + str(index) if index else ''}{source.suffix}", label)
+            for index, (source, label) in enumerate(zip(sources, labels))
+        ]
+        return self._publish(entries, move)
+
+    @staticmethod
+    def _distinct(labels: Sequence[str]) -> List[str]:
+        """*labels* with each repeat numbered -- ``model.glb``, ``model
+        (2).glb`` -- since the page names a part by its label: two parts
+        called alike would be one switch in View, one remembered hidden name
+        and one file name in a download."""
+        seen: Dict[str, int] = {}
+        distinct: List[str] = []
+        for label in labels:
+            stem, dot, suffix = str(label).rpartition(".")
+            if not dot:
+                stem, suffix = str(label), ""
+            name, count = str(label), 1
+            while name.lower() in seen:
+                count += 1
+                name = f"{stem} ({count}){dot}{suffix}"
+            seen[name.lower()] = count
+            distinct.append(name)
+        return distinct
+
+    def _publish(self, entries: List[Tuple[Path, str, str]], move: bool) -> int:
+        """Write each ``(src, served name, label)`` and advertise them as one
+        version; the version."""
+        for src, _name, _label in entries:
+            if not src.is_file():
+                raise FileNotFoundError(f"PreviewServer.publish: no such file: {src}")
         # Re-sync the managed viewer here, not only in `start`: the server
         # outlives every individual push, so this is the only hook an edited
         # page has to reach a session that is already running.
@@ -488,44 +580,63 @@ class PreviewServer(
         # bridge can name one for a single delivery), so it has to be
         # materialized here, not only at start.
         self._ensure_scripts()
-        name = name or f"scene{src.suffix}"
-        # Before the copy, which may MOVE the source away.
-        self._activate_auto_scripts(src)
-        self._write_asset(src, self.root / name, move)
         with self._lock:
             settings = dict(self._settings)
-        if settings:
-            # A dial set in the page is a property of the DELIVERY, not of the
-            # file that happened to be open when it was set, so a re-push
-            # carries it instead of silently resetting to the file's defaults.
-            # The SERVED copy only: re-stamping the source would edit a file
-            # the caller just handed us and may still be writing.
-            #
-            # BEFORE the version bump, which is the page's signal to fetch:
-            # advertising a version while the asset is still being rewritten
-            # hands a poller a torn GLB.
-            #
-            # A failure here is logged, not raised: the push itself succeeded
-            # and the model must still reach the page. Raising would leave the
-            # asset written but never advertised, and report the PUSH as the
-            # failure to whoever called -- a dial that could not be re-applied
-            # is the lesser fact, and the page shows the file's own value.
-            try:
-                self._stamp(settings, [self.root / name])
-            except (OSError, ValueError) as error:
-                self.logger.warning(
-                    "Published %s without re-applying %s: %s",
-                    name,
-                    ", ".join(settings),
-                    error,
-                )
+        for src, name, _label in entries:
+            # Before the copy, which may MOVE the source away.
+            self._activate_auto_scripts(src)
+            self._write_asset(src, self.root / name, move)
+            if settings:
+                # A dial set in the page is a property of the DELIVERY, not of
+                # the file that happened to be open when it was set, so a
+                # re-push carries it instead of silently resetting to the
+                # file's defaults. The SERVED copy only: re-stamping the source
+                # would edit a file the caller just handed us and may still be
+                # writing.
+                #
+                # BEFORE the version bump, which is the page's signal to fetch:
+                # advertising a version while the asset is still being
+                # rewritten hands a poller a torn GLB.
+                #
+                # A failure here is logged, not raised: the push itself
+                # succeeded and the model must still reach the page. Raising
+                # would leave the asset written but never advertised, and
+                # report the PUSH as the failure to whoever called -- a dial
+                # that could not be re-applied is the lesser fact, and the page
+                # shows the file's own value.
+                try:
+                    self._stamp(settings, [self.root / name])
+                except (OSError, ValueError) as error:
+                    self.logger.warning(
+                        "Published %s without re-applying %s: %s",
+                        name,
+                        ", ".join(settings),
+                        error,
+                    )
         with self._lock:
+            dropped = [
+                part["url"]
+                for part in self._parts[1:]
+                if part["url"] not in {name for _src, name, _label in entries}
+            ]
             self._version += 1
-            self._asset = name
-            self._source = src
+            self._asset = entries[0][1]
+            self._source = entries[0][0]
+            self._parts = [
+                {"url": name, "name": label} for _src, name, label in entries
+            ]
+            self._sources = [src for src, _name, _label in entries]
             self._updated = time.time()
             version = self._version
-        self.logger.info("Published %s as %r (v%s)", src.name, name, version)
+        # After the version that stops naming them: a page polls the new set
+        # before it asks for any of its files.
+        for name in dropped:
+            try:
+                (self.root / name).unlink()
+            except OSError:
+                pass  # held open by a reader that finishes with it; harmless
+        for src, name, _label in entries:
+            self.logger.info("Published %s as %r (v%s)", src.name, name, version)
         return version
 
     def _activate_auto_scripts(self, src: Path) -> List[str]:
@@ -623,14 +734,15 @@ class PreviewServer(
         return {"applied": resolved, "materials": counts}
 
     def _setting_targets(self) -> List[Path]:
-        """Files a setting write lands in: the served copy, then its source."""
+        """Files a setting write lands in: each part's served copy, then the
+        file it was published from."""
         targets: List[Path] = []
-        served = (self.root / self._asset) if self._asset else None
-        if served is not None and served.is_file():
-            targets.append(served)
-        source = self._source
-        if source is not None and source.is_file() and source != served:
-            targets.append(source)
+        for part, source in zip(self._parts, self._sources):
+            served = self.root / part["url"]
+            if served.is_file():
+                targets.append(served)
+            if source is not None and source.is_file() and source != served:
+                targets.append(source)
         return targets
 
     def _stamp(self, settings: Dict[str, Any], paths: Sequence[Path]) -> Dict[str, int]:

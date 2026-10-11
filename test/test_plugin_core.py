@@ -150,6 +150,18 @@ class TestMainThreadMarshaller(_EnvGuard):
             _make_plugin().marshaller.disable_env, "TEST_RPC_DISABLE_MAIN_THREAD"
         )
 
+    def test_post_runs_in_place_on_the_opt_out(self):
+        os.environ["TEST_RPC_DISABLE_MAIN_THREAD"] = "1"
+        ran = []
+        MainThreadMarshaller("TEST_RPC_DISABLE_MAIN_THREAD").post(ran.append, "x")
+        self.assertEqual(ran, ["x"])
+
+    def test_the_opt_out_env_is_optional(self):
+        """A caller outside the RPC plugin has no opt-out to name."""
+        m = MainThreadMarshaller()
+        self.assertIsNone(m.disable_env)
+        self.assertEqual(m.run(lambda: "ran"), "ran")
+
 
 @unittest.skipIf(_QTCORE is None, "no Qt binding available")
 class TestMainThreadMarshallerWithQt(_EnvGuard):
@@ -246,6 +258,42 @@ class TestMainThreadMarshallerWithQt(_EnvGuard):
         thread.join(timeout=10)  # main thread deliberately does NOT pump
         self.assertEqual(outcome[0][0], "err")
         self.assertIsInstance(outcome[0][1], TimeoutError)
+
+    def test_post_from_a_worker_returns_at_once_and_lands_on_the_main_thread(self):
+        """A host worker thread must never wait on the main thread.
+
+        Repro (mayatk Channels, Maya 2025): Maya's Evaluation Manager fires
+        ``MDagMessage`` matrix callbacks on its worker threads; the panel's
+        ``QTimer.singleShot(0, ...)`` from there never fired, so its live
+        refresh stuck "pending" for good.  ``run`` would block the worker while
+        the main thread waits on the evaluation -- a deadlock.
+        """
+        marshaller = MainThreadMarshaller()
+        ran_on, returned = [], []
+
+        def worker():
+            marshaller.post(lambda: ran_on.append(_QTCORE.QThread.currentThread()))
+            returned.append(True)  # reached without the main thread pumping
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=5)  # main thread does NOT pump while it runs
+        self.assertEqual(returned, [True], "post blocked its caller")
+        self.assertEqual(ran_on, [], "ran before the main loop turned")
+        elapsed = _QTCORE.QElapsedTimer()
+        elapsed.start()
+        while not ran_on and elapsed.elapsed() < 5000:
+            self.app.processEvents(_QTCORE.QEventLoop.AllEvents, 20)
+        self.assertEqual(ran_on, [self.main_thread])
+
+    def test_post_on_the_main_thread_runs_on_a_later_loop_pass(self):
+        """Queued even when no hop is needed, so it runs outside the caller."""
+        ran = []
+        marshaller = MainThreadMarshaller()  # held: its relay delivers the call
+        marshaller.post(ran.append, "later")
+        self.assertEqual(ran, [])
+        self.app.processEvents()
+        self.assertEqual(ran, ["later"])
 
 
 class TestImportOps(unittest.TestCase):

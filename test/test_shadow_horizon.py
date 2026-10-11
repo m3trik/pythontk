@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pythontk.geo_utils.shadow_horizon import (  # noqa: E402
     DIST_FAR,
+    INTERIOR_MARKER,
     HeightFieldMap,
     HorizonMap,
     ShadowHorizon,
@@ -209,12 +210,44 @@ class TestEncoding(HorizonCase):
             up=hmap.up,
             height_scale=hmap.height_scale,
         )
-        for name in ("lo", "hi", "dist", "near_lo", "near_hi"):
+        for name in ("lo", "hi", "dist", "near_lo", "near_hi", "interior"):
             a, b = getattr(hmap, name), getattr(back, name)
             np.testing.assert_array_equal(np.isnan(a), np.isnan(b), name)
             np.testing.assert_allclose(
                 np.nan_to_num(a), np.nan_to_num(b), rtol=0, atol=1e-6, err_msg=name
             )
+
+    def test_the_interior_field_rides_the_pyramid_tiles_free_half_under_a_marker(self):
+        """The field the inner penumbra reads: every solid pixel's distance
+        to the nearest empty one, in the pyramid tile's right half with the
+        marker texel, so the layout, the encoding and the record stay as
+        they were and a map baked before it still reads (as ``None``)."""
+        hmap = ShadowHorizon.bake(self.box(), up=1, size=32)
+        S, K = hmap.size, hmap.spans
+        solid = ~np.isnan(hmap.hull()[1])
+        self.assertTrue((hmap.interior[~solid] == 0.0).all())
+        self.assertTrue((hmap.interior[solid] >= 1.0).all())
+        # the box's centre is half its width from the nearest empty pixel
+        a0, a1, _, _ = hmap.bounds
+        half = 1.0 / ((a1 - a0) / S)
+        self.assertAlmostEqual(float(hmap.interior.max()), half, delta=1.0)
+        img = hmap.to_rgba()
+        pyr = img[:, (K + 1) * S : (K + 2) * S]
+        self.assertEqual(tuple(int(v) for v in pyr[S // 2, S // 2]), INTERIOR_MARKER)
+        # the pyramid's own levels never reach the right half
+        self.assertEqual(int(pyr[S // 2 + 1 :, S // 2 :].sum()), 0)
+        old = hmap._replace(interior=None).to_rgba()
+        self.assertEqual(int(old[:, (K + 1) * S + S // 2 :].sum()), 0)
+        back = HeightFieldMap.from_rgba(
+            old,
+            size=S,
+            spans=K,
+            bounds=hmap.bounds,
+            ground=hmap.ground,
+            up=hmap.up,
+            height_scale=hmap.height_scale,
+        )
+        self.assertIsNone(back.interior)
 
     def test_the_size_rounds_up_to_a_power_of_two(self):
         hmap = ShadowHorizon.bake(self.box(), up=1, size=100)
@@ -369,7 +402,10 @@ class TestReference(HorizonCase):
         self.assertGreater(float(far.mean()), 0.02)
         self.assertLess(float(np.abs(far - directional).mean()), 0.01)
 
-    def test_source_size_softens_the_edges_without_moving_the_umbra(self):
+    def test_a_source_size_straddles_the_hard_edge(self):
+        """A round source's penumbra is centred on the hard shadow's edge:
+        half the disc hidden there, the umbra eaten from inside as much as
+        the shadow grows outside, and nothing under the box changes."""
         hmap = ShadowHorizon.bake(self.box(), up=1, size=64)
         light = np.array([6.0, 4.0, 0.5])
         # the light through the box's far top edge (-1, 2) lands at x = -8
@@ -381,12 +417,98 @@ class TestReference(HorizonCase):
         self.assertEqual(float(hard[np.argmin(np.abs(xs + 7.5))]), 1.0)
         self.assertEqual(float(hard[np.argmin(np.abs(xs + 8.5))]), 0.0)
         between = (soft > 0.05) & (soft < 0.95)
-        self.assertGreater(int(between.sum()), 5, "a penumbra")
-        np.testing.assert_array_equal(soft[hard == 1.0], 1.0, "the umbra is untouched")
-        self.assertTrue((soft >= hard).all())
-        # the penumbra lies beyond the umbra's far end, never under the box
-        self.assertGreater(int(between[xs < -7.0].sum()), 5)
-        self.assertEqual(int(between[xs > -3.0].sum()), 0)
+        edge = xs[np.argmax(hard > 0.5)]  # the hard shadow's far end
+        self.assertAlmostEqual(float(np.interp(edge, xs, soft)), 0.5, delta=0.1)
+        self.assertGreater(int((between & (xs < edge)).sum()), 5, "outside")
+        self.assertGreater(int((between & (xs > edge)).sum()), 5, "inside")
+        self.assertTrue((soft[hard == 0.0] < 0.5).all())
+        self.assertTrue((soft[hard == 1.0] >= 0.5 - 1e-6).all())
+        # deep inside the umbra and under the box, nothing moves
+        np.testing.assert_array_equal(soft[xs > -3.0], hard[xs > -3.0])
+
+    def _disc_integral(self, hmap, points, toward, angle, n=96):
+        """The physical answer: the share of a disc source of angular
+        diameter *angle* hidden, as the mean of *n* hard rays spread evenly
+        over the disc (a Fibonacci spiral) -- the same map, so the
+        representation cancels and only the penumbra model is measured."""
+        c = np.asarray(toward, float) / np.linalg.norm(toward)
+        u = np.cross(c, [0.0, 0.0, 1.0] if abs(c[2]) < 0.9 else [1.0, 0.0, 0.0])
+        u /= np.linalg.norm(u)
+        v = np.cross(c, u)
+        golden = math.pi * (3.0 - math.sqrt(5.0))
+        total = np.zeros(len(points))
+        for i in range(n):
+            r = 0.5 * angle * math.sqrt((i + 0.5) / n)
+            d = c + math.tan(r) * (math.cos(i * golden) * u + math.sin(i * golden) * v)
+            total += hmap.alpha(points, direction=-d / np.linalg.norm(d))
+        return total / n
+
+    def test_the_penumbra_matches_the_area_light_integral(self):
+        """Low sun and high sun: the penumbra the reference draws against
+        the disc-integrated hard shadow on the same map. The model it
+        replaced -- clearance over the horizontal distance, a linear ramp
+        outward from the hard edge -- scored 0.18-0.31 mean error over the
+        band on this box and the chair and drew it 2-8x too narrow, worst
+        under the high source; this one scores 0.05-0.09 (measured
+        2026-10-10). A high sun is where 1 / cos^2 of the elevation bites."""
+        hmap = ShadowHorizon.bake(self.box(), up=1, size=64)
+        angle = math.radians(6.0)
+        for elev in (30.0, 65.0):
+            el = math.radians(elev)
+            toward = np.array([math.cos(el), math.sin(el), 0.25])
+            reach = 2.0 / math.tan(el)
+            xs = np.linspace(-reach - 2.5, -0.5, 240)
+            zs = np.linspace(-2.2, 2.2, 240)
+            pts = np.concatenate(
+                [
+                    np.column_stack([xs, np.zeros_like(xs), np.zeros_like(xs)]),
+                    np.column_stack([np.full_like(zs, -1.5), np.zeros_like(zs), zs]),
+                ]
+            )
+            truth = self._disc_integral(hmap, pts, toward, angle)
+            got = hmap.alpha(pts, direction=-toward, source_angle=angle)
+            band = (truth > 0.02) & (truth < 0.98)
+            self.assertGreater(int(band.sum()), 10, f"a penumbra at {elev}")
+            err = np.abs(got - truth)[band]
+            self.assertLess(float(err.mean()), 0.12, f"band error at {elev}")
+            # as wide as the truth's, within a third
+            mine = int(((got > 0.02) & (got < 0.98)).sum())
+            self.assertLess(abs(mine - int(band.sum())), 0.34 * band.sum(), elev)
+
+    def test_a_member_thinner_than_its_penumbra_greys_out(self):
+        """A 5 cm pole under a broad source: solid black at its foot, a grey
+        smear with no umbra where its shadow is wider than the pole -- what
+        a real one does, and what an outward-only ramp could not."""
+        hmap = ShadowHorizon.bake(self.pole(), up=1, size=128)
+        light = np.array([-3.0, 4.0, 0.7])
+        xs = np.linspace(0.75, 4.4, 300)
+        zs = np.linspace(0.3, 1.1, 161)
+        X, Z = np.meshgrid(xs, zs, indexing="ij")
+        pts = np.column_stack([X.ravel(), np.zeros(X.size), Z.ravel()])
+        soft = hmap.alpha(pts, light, source_size=0.6).reshape(X.shape)
+        across = soft.max(axis=1)  # darkest across the shadow, per x
+        self.assertGreaterEqual(
+            float(across[xs < 0.9].max()), 0.95, "black at the foot"
+        )
+        far = xs > 3.0
+        self.assertLess(float(across[far].max()), 0.9, "no umbra far out")
+        self.assertGreater(float(across[far].min()), 0.05, "still a shadow")
+
+    def test_a_map_baked_before_the_interior_field_still_marches(self):
+        """No field (a map from an earlier bake): the inner penumbra comes
+        from heights alone -- the far edge still straddles, the umbra deep
+        inside stays black, and the lit side is unchanged."""
+        hmap = ShadowHorizon.bake(self.box(), up=1, size=64)
+        old = hmap._replace(interior=None)
+        light = np.array([6.0, 4.0, 0.5])
+        xs = np.linspace(-12.0, 0.0, 600)
+        pts = np.column_stack([xs, np.zeros_like(xs), np.zeros_like(xs)])
+        a = old.alpha(pts, light, source_size=1.2)
+        b = hmap.alpha(pts, light, source_size=1.2)
+        self.assertTrue(((a >= 0.0) & (a <= 1.0)).all())
+        np.testing.assert_array_equal(a[xs > -3.0], 1.0)
+        lit = b < 0.5
+        np.testing.assert_allclose(a[lit], b[lit], atol=1e-6)
 
     def test_blender_z_up_matches_maya_y_up(self):
         """The same prop baked in a Z-up frame (Blender) evaluates the same

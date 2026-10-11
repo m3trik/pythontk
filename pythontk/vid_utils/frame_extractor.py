@@ -23,6 +23,9 @@ except ImportError:
     cv2 = None
     CV2_AVAILABLE = False
 
+# From this package:
+from pythontk.img_utils._img_utils import ImgUtils
+
 logger = logging.getLogger(__name__)
 
 
@@ -106,7 +109,7 @@ class FrameExtractor:
                 if count % step == 0:
                     frame_filename = f"{prefix}_{count:06d}.jpg"
                     frame_path = os.path.join(output_folder, frame_filename)
-                    if cv2.imwrite(
+                    if ImgUtils.cv2_write(
                         frame_path, frame, [cv2.IMWRITE_JPEG_QUALITY, quality]
                     ):
                         saved_frames.append(frame_path)
@@ -199,7 +202,7 @@ class FrameExtractor:
                         out = os.path.join(
                             output_folder, f"{prefix}_{best_index:06d}.jpg"
                         )
-                        if cv2.imwrite(
+                        if ImgUtils.cv2_write(
                             out, best_frame, [cv2.IMWRITE_JPEG_QUALITY, quality]
                         ):
                             saved.append(out)
@@ -215,7 +218,9 @@ class FrameExtractor:
                 and (not max_frames or len(saved) < max_frames)
             ):
                 out = os.path.join(output_folder, f"{prefix}_{best_index:06d}.jpg")
-                if cv2.imwrite(out, best_frame, [cv2.IMWRITE_JPEG_QUALITY, quality]):
+                if ImgUtils.cv2_write(
+                    out, best_frame, [cv2.IMWRITE_JPEG_QUALITY, quality]
+                ):
                     saved.append(out)
         finally:
             cap.release()

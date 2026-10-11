@@ -66,6 +66,15 @@ MAX16 = 65535.0
 DIST_SCALE = 64.0
 #: The distance an empty map reports everywhere (the field's largest value).
 DIST_FAR = MAX16 / DIST_SCALE
+#: Fixed-point scale of the interior distance field: 1/4 of a pixel, 8-bit.
+INTERIOR_SCALE = 4.0
+#: The deepest interior distance the field holds (pixels); deeper is all one
+#: to the penumbra -- a ray buried that far sees none of any source.
+INTERIOR_FAR = 255.0 / INTERIOR_SCALE
+#: The marker texel (pyramid tile, ``(S/2, S/2)``) that says a map carries the
+#: interior field: "SH", version 1, 0xA5. A map baked before it has zeros
+#: there, and the shader then takes the inner penumbra from heights alone.
+INTERIOR_MARKER = (83, 72, 1, 165)
 
 
 class HeightFieldMap(NamedTuple):
@@ -88,6 +97,11 @@ class HeightFieldMap(NamedTuple):
     dist: np.ndarray  #: ``(S, S)`` distance to the nearest column, in the smaller pitch
     near_lo: np.ndarray  #: ``(S, S)`` that column's hull bottom (its own on a solid)
     near_hi: np.ndarray  #: ``(S, S)`` that column's hull top
+    #: ``(S, S)`` the distance from a solid pixel to the nearest empty one, in
+    #: the smaller pitch (0 on an empty pixel), quantised to 1/4 pixel; how far
+    #: a blocked ray must turn sideways to clear the column. ``None`` on a map
+    #: baked before it (the inner penumbra then comes from heights alone).
+    interior: Optional[np.ndarray] = None
 
     # -- layout ------------------------------------------------------------
     @property
@@ -200,8 +214,13 @@ class HeightFieldMap(NamedTuple):
         ``S - (S >> (l - 1))`` and as many columns, ``R`` the bottom and
         ``G`` the top of the cell's hull (:meth:`pyramid`; 8-bit, floor and
         ceil, ``G == 0`` = the cell holds no column), ``B, A`` the cell's
-        least distance. Row ``0`` of every tile is ``ib = 0``, the frame's
-        ``b0`` edge -- data, never flipped.
+        least distance. The pyramid's levels fill the tile's left half; its
+        right half carries the :attr:`interior` field, 8-bit in 1/4 pixel:
+        texel ``(S/2 + x/2, y/2)`` holds the four pixels it covers as ``R``
+        (even ``x``, even ``y``), ``G`` (odd, even), ``B`` (even, odd), ``A``
+        (odd, odd), and texel ``(S/2, S/2)`` holds :data:`INTERIOR_MARKER`.
+        Row ``0`` of every tile is ``ib = 0``, the frame's ``b0`` edge --
+        data, never flipped.
         """
         S, K, hs = self.size, self.spans, self.height_scale
         img = np.zeros((S, S * self.tiles, 4), np.uint8)
@@ -237,6 +256,17 @@ class HeightFieldMap(NamedTuple):
                 empty, 0, np.clip(np.ceil(np.nan_to_num(hi) / hs * 255.0), 1, 255)
             ).astype(np.uint8)
             cell[..., 2], cell[..., 3] = split16(dist * DIST_SCALE)
+        if self.interior is not None:
+            q = np.clip(np.round(self.interior * INTERIOR_SCALE), 0, 255).astype(
+                np.uint8
+            )
+            h = S // 2
+            block = pyr[:h, h:]
+            block[..., 0] = q[0::2, 0::2]
+            block[..., 1] = q[0::2, 1::2]
+            block[..., 2] = q[1::2, 0::2]
+            block[..., 3] = q[1::2, 1::2]
+            pyr[h, h] = INTERIOR_MARKER
         return img
 
     @classmethod
@@ -286,6 +316,16 @@ class HeightFieldMap(NamedTuple):
         dist = (join16(aux[..., 0], aux[..., 1]) / DIST_SCALE).astype(np.float32)
         near_hi = (aux[..., 2] / 255.0 * hs).astype(np.float32)
         near_lo = (aux[..., 3] / 255.0 * hs).astype(np.float32)
+        pyr = img[:S, (K + 1) * S : (K + 2) * S]
+        h = S // 2
+        interior = None
+        if tuple(int(v) for v in pyr[h, h]) == INTERIOR_MARKER:
+            block = pyr[:h, h:].astype(np.float32) / INTERIOR_SCALE
+            interior = np.zeros((S, S), np.float32)
+            interior[0::2, 0::2] = block[..., 0]
+            interior[0::2, 1::2] = block[..., 1]
+            interior[1::2, 0::2] = block[..., 2]
+            interior[1::2, 1::2] = block[..., 3]
         return cls(
             S,
             K,
@@ -298,6 +338,7 @@ class HeightFieldMap(NamedTuple):
             dist,
             near_lo,
             near_hi,
+            interior,
         )
 
     # -- the reference -------------------------------------------------------
@@ -330,10 +371,10 @@ class HeightFieldMap(NamedTuple):
             intensity: Multiplier on the result.
 
         Returns:
-            ``(N,)`` float32 in ``[0, 1]``: 1 where the ray toward the source
-            crosses a span, a penumbra fading with the ray's angular
-            clearance from the nearest column against the source's angular
-            radius, 0 where the source is below the ground.
+            ``(N,)`` float32 in ``[0, 1]``: the share of the source's disc the
+            prop hides -- 1 buried, 1/2 on the hard shadow's edge, 0 clear;
+            for a sizeless source 1 where the ray toward it crosses a span
+            and 0 elsewhere; 0 where the source is below the ground.
         """
         pts = np.asarray(points, dtype=float).reshape(-1, 3)
         a, b = ShadowProjection.horizontal_axes(self.up)
@@ -372,30 +413,44 @@ class HeightFieldMap(NamedTuple):
         horiz_safe = np.where(live, horiz, 1.0)
         direction2 = np.column_stack([L[:, a], L[:, b]]) / horiz_safe[:, None]
         slope = np.where(live, L[:, self.up] / horiz_safe, 0.0)
-        alpha = self._march(origin, direction2, slope, rho)
+        alpha = self._march(origin, direction2, slope, rho, horiz_safe)
         out[:] = np.where(live, np.clip(alpha * float(intensity), 0.0, 1.0), 0.0)
         return out
 
-    def _march(self, origin, direction, slope, rho) -> np.ndarray:
+    def _march(self, origin, direction, slope, rho, cos_el=None) -> np.ndarray:
         """The exact walk: ``(N,)`` alpha for rays from the frame-horizontal
         *origin* ``(N, 2)`` along the horizontal unit *direction* ``(N, 2)``,
         rising *slope* per unit of horizontal travel, against a source of
-        angular radius *rho* ``(N,)``.
+        angular radius *rho* ``(N,)``; *cos_el* ``(N,)`` is the cosine of
+        each ray's elevation (1 when omitted).
 
         Every level-0 pixel the ray crosses is visited (Amanatides-Woo, all
-        rays at once). A pixel with spans blocks where the ray's height range
-        across it overlaps a span; otherwise it contributes its gap -- the
-        vertical distance to the nearest span on a solid pixel, on an empty
-        pixel the lateral distance to the nearest column combined with the
-        vertical distance to that column's hull -- divided by the distance
-        along the ray, an angular clearance. The penumbra is
-        ``1 - min clearance / rho``.
+        rays at once). Angles are true angles at the ray's origin: the ray
+        runs ``t / cos_el`` to a point ``t`` out, so a gap ``h`` above or
+        below it subtends ``h cos_el^2 / t`` and a gap ``l`` beside it
+        ``l cos_el / t``. A pixel the ray passes contributes its clearance --
+        on a solid pixel the vertical gap to its spans, on an empty one the
+        lateral distance to the nearest column combined with the vertical
+        distance to that column's hull. A blocked ray's depth is the least
+        turn that frees it: up, over every span above it anywhere along the
+        walk (tilting up only moves where a ray meets a thin seat, so its
+        thickness is no escape), or sideways, out of the deepest column it
+        crosses by the :attr:`interior` distance -- which also finds a
+        slab's nearest edge. The alpha is :meth:`disc` of the least
+        clearance, or of minus the depth, over ``rho``: the share of the
+        source's disc hidden, so the penumbra straddles the hard edge and a
+        member thinner than it greys out instead of staying black. A blocked
+        ray stops once it is buried ``rho`` deep every way.
         """
         S, K = self.size, self.spans
         a0, a1, b0, b1 = self.bounds
         pw, ph = self.pixel
         px = min(pw, ph)
+        aspect = self.aspect
         n = origin.shape[0]
+        c = np.ones(n) if cos_el is None else np.asarray(cos_el, dtype=float)
+        c2 = c * c
+        rho = np.broadcast_to(np.asarray(rho, dtype=float), (n,))
         ox = (origin[:, 0] - a0) / pw
         oy = (origin[:, 1] - b0) / ph
         dx = direction[:, 0] / pw  # pixels per unit t
@@ -427,8 +482,10 @@ class HeightFieldMap(NamedTuple):
         tmy = np.where(zy, np.inf, (np.where(dy > 0, cy + 1, cy) - oy) / dy_s)
         hit = np.zeros(n, bool)
         clear = np.full(n, np.inf)
+        rise = np.zeros(n)
+        side = np.zeros(n)
         for _ in range(2 * S + 4):
-            act = active & ~hit
+            act = active.copy()
             if not act.any():
                 break
             te = np.minimum(np.minimum(tmx, tmy), t_exit)
@@ -438,21 +495,25 @@ class HeightFieldMap(NamedTuple):
             gap = np.full(n, np.inf)
             solid = np.zeros(n, bool)
             blocked = np.zeros(n, bool)
+            up = np.full(n, -1.0)
             for k in range(K):
                 lo_k, hi_k = self.lo[k, cyc, cxc], self.hi[k, cyc, cxc]
                 has = inb & ~np.isnan(lo_k)
                 overlap = has & (h1 >= lo_k) & (h0 <= hi_k)
                 blocked |= overlap
                 solid |= has
+                up = np.where(has & (hi_k >= h0), np.maximum(up, hi_k - h0), up)
                 g = np.where(h0 > hi_k, h0 - hi_k, lo_k - h1)
                 gap = np.where(has & ~overlap, np.minimum(gap, g), gap)
             empty = inb & ~solid
             tmid = np.maximum(0.5 * (t + te), 1e-9)
-            # The distance field and the nearest column's hull, read
+            rise = np.where(act & (up >= 0.0), np.maximum(rise, up * c2 / tmid), rise)
+            # The distance fields and the nearest column's hull, read
             # BILINEARLY at the ray's midpoint through the pixel: per-pixel
             # values would make the penumbra jump a quarter of its width
             # when a boundary-hugging ray lands one pixel over on a GPU's
             # float32 (measured: 0.21 against 0.07 at one viewer sample).
+            # Inside and out alike, so the two meet at zero on the edge.
             mx_ = ox + dx * tmid - 0.5
             my_ = oy + dy * tmid - 0.5
             fx_, fy_ = np.floor(mx_), np.floor(my_)
@@ -470,11 +531,19 @@ class HeightFieldMap(NamedTuple):
 
             # the half pixel from a pixel's centre to its edge, in the
             # smaller pitch: the larger pitch is ``aspect`` of them
-            lateral = np.maximum(bilerp(self.dist) - 0.5 * self.aspect, 0.0) * px
+            lateral = np.maximum(bilerp(self.dist) - 0.5 * aspect, 0.0) * px * c
             nlo, nhi = bilerp(self.near_lo), bilerp(self.near_hi)
             vertical = np.where(h0 > nhi, h0 - nhi, np.where(h1 < nlo, nlo - h1, 0.0))
-            gap = np.where(empty, np.hypot(lateral, vertical), gap)
-            clear = np.where(act & ~blocked, np.minimum(clear, gap / tmid), clear)
+            gap = np.where(empty, np.hypot(lateral, vertical * c2), gap * c2)
+            clear = np.where(
+                act & ~hit & ~blocked, np.minimum(clear, gap / tmid), clear
+            )
+            if self.interior is not None:
+                inner = bilerp(self.interior)
+                turn = np.maximum(inner - 0.5 * aspect, 0.0) * px * c / tmid
+            else:
+                turn = np.full(n, np.inf)
+            side = np.where(act & blocked, np.maximum(side, turn), side)
             hit |= act & blocked
             mx = tmx <= tmy
             my = tmy <= tmx
@@ -483,10 +552,21 @@ class HeightFieldMap(NamedTuple):
             tmx = np.where(act & mx, tmx + tdx, tmx)
             cy = np.where(act & my, cy + stepy, cy)
             tmy = np.where(act & my, tmy + tdy, tmy)
-            active &= t < t_exit - 1e-12
-        rho = np.asarray(rho, dtype=float)
-        soft = np.clip(1.0 - clear / np.maximum(rho, 1e-12), 0.0, 1.0)
-        return np.where(hit, 1.0, np.where(rho > 1e-12, soft, 0.0)).astype(np.float32)
+            depth = np.minimum(rise, side)
+            active &= (t < t_exit - 1e-12) & ~(hit & (depth >= rho))
+        rho_s = np.maximum(rho, 1e-12)
+        depth = np.minimum(rise, side)
+        soft = self.disc(np.where(hit, -depth / rho_s, clear / rho_s))
+        return np.where(rho > 1e-12, soft, np.where(hit, 1.0, 0.0)).astype(np.float32)
+
+    @staticmethod
+    def disc(s) -> np.ndarray:
+        """The share of a disc source a straight edge hides when the disc's
+        centre lies *s* radii past it: 0 at ``s >= 1`` (clear), 1/2 at
+        ``s = 0`` (the hard shadow's edge), 1 at ``s <= -1`` (buried) -- the
+        circular segment's area, the S-shaped falloff of a round source."""
+        s = np.clip(np.asarray(s, dtype=float), -1.0, 1.0)
+        return (np.arccos(s) - s * np.sqrt(1.0 - s * s)) / math.pi
 
 
 #: The former map type's name, for one release: the height-field map took
@@ -504,10 +584,13 @@ class ShadowHorizon:
     #: Solid spans per column: two hold a seat over a stretcher, a shelf over
     #: a drawer; a column with more merges its smallest gaps first.
     DEFAULT_SPANS = 2
-    #: Margin around the geometry as a fraction of its larger extent, on
-    #: every side. The march runs only inside the footprint, so this is also
-    #: how far a penumbra can reach sideways past the prop's outline: a ray
-    #: that never enters the footprint is lit outright.
+    #: Margin around the geometry on every side, as a fraction of the larger
+    #: of its horizontal extent and its height. The march runs only inside
+    #: the footprint, so this is also how far a penumbra can reach sideways
+    #: past the prop's outline -- a ray that never enters the footprint is lit
+    #: outright -- and a penumbra's reach grows with the HEIGHT the shadow
+    #: falls from: padded by its width alone, a 5 cm pole's penumbra was cut
+    #: at 5 mm and drew a quarter of its shadow too light.
     DEFAULT_PADDING = 0.1
     ENCODING = 2
     MAPPING = "heightfield"
@@ -639,7 +722,9 @@ class ShadowHorizon:
                 :attr:`HeightFieldMap.aspect` (a square footprint had cost
                 a shelf and an arch half their short-axis texels, measured
                 as 2 to 4 % disagreement instead of 2 to 3).
-            padding: Margin around the geometry as a fraction of its extent.
+            padding: Margin around the geometry, every side, as a fraction
+                of the larger of its horizontal extent and its height
+                (:attr:`DEFAULT_PADDING`).
 
         Returns:
             The :class:`HeightFieldMap`.
@@ -658,13 +743,20 @@ class ShadowHorizon:
             raise ValueError("ShadowHorizon.bake: no geometry provided.")
         size = 1 << max(3, int(math.ceil(math.log2(max(int(size), 1)))))
         spans = max(int(spans), 1)
+        if bounds is None:
+            corners = np.concatenate([p[t].reshape(-1, 3) for p, t in meshes])
+            a, b = ShadowProjection.horizontal_axes(up)
+            lo_a, hi_a = float(corners[:, a].min()), float(corners[:, a].max())
+            lo_b, hi_b = float(corners[:, b].min()), float(corners[:, b].max())
+            tall = float(corners[:, up].max()) - float(ground)
+            pad = float(padding) * max(hi_a - lo_a, hi_b - lo_b, tall, 1e-3) + 1e-6
+            bounds = (lo_a - pad, hi_a + pad, lo_b - pad, hi_b + pad)
         lo, hi, bounds = ImgUtils.rasterize_height_spans(
             meshes,
             up=up,
             size=size,
             ground=ground,
             bounds=bounds,
-            padding=padding,
             spans=spans,
         )
         with warnings.catch_warnings():
@@ -693,6 +785,18 @@ class ShadowHorizon:
             solid, hull_lo, hull_hi, weights=(pw / pitch, ph / pitch)
         )
         dist = np.minimum(np.round(dist * DIST_SCALE) / DIST_SCALE, DIST_FAR)
+        # and from every solid pixel to the nearest EMPTY one: the sideways
+        # turn that frees a blocked ray (the inner penumbra)
+        interior = cls._distance_field(
+            ~solid, hull_lo, hull_hi, weights=(pw / pitch, ph / pitch)
+        )[0]
+        interior = np.where(
+            solid,
+            np.minimum(
+                np.round(interior * INTERIOR_SCALE) / INTERIOR_SCALE, INTERIOR_FAR
+            ),
+            0.0,
+        )
         near_lo = np.floor(near_lo / height_scale * 255.0) / 255.0 * height_scale
         near_hi = np.ceil(near_hi / height_scale * 255.0) / 255.0 * height_scale
         return HeightFieldMap(
@@ -707,6 +811,7 @@ class ShadowHorizon:
             dist.astype(np.float32),
             near_lo.astype(np.float32),
             near_hi.astype(np.float32),
+            interior.astype(np.float32),
         )
 
     @staticmethod

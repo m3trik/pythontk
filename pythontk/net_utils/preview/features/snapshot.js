@@ -17,8 +17,8 @@
   downloads it, because that is the only copy that outlives the session.
 
   Opt-in, like `turntable`: a Viewer Scripts row on the WebXR Preview panel.
-  Its button is in the Export window (`viewer.window('Export')`), beside the
-  playblast's.
+  Its item is in the Export menu (`viewer.menu('Export')`), beside the
+  playblast's and the GLB's.
 */
 
 //: What the prompt offers. `maxEdge` is the still's long edge; null keeps the
@@ -51,8 +51,8 @@ const DEFAULT_PRESET = 'high';
 //: and the one route this posts to takes nothing else.
 const IMAGE_TYPE = 'image/png';
 
-//: The button's label while nothing is being saved.
-const LABEL = 'Export image…';
+//: The item's label while nothing is being saved. The `…` says it asks first.
+const LABEL = 'Image…';
 
 function presetFor(key) {
   return SIZE_PRESETS.find((preset) => preset.key === key)
@@ -66,13 +66,16 @@ export default function snapshot(viewer) {
   let chosen = DEFAULT_PRESET;
   let busy = false;
 
-  const exports = viewer.window('Export', { title: 'Save the view as an image, or a clip as a movie' });
-  const section = exports.section();
-  section.setRows([{ text: 'The view as a PNG, rendered at the size you pick.' }]);
-  const button = section.addButton(LABEL, () => {
-    if (!busy) openOptions();
+  const exports = viewer.menu('Export');
+  const item = exports.add('action', {
+    label: LABEL,
+    title: 'Save the current view as a PNG, rendered at the size you pick — asks for the size first',
+    group: 'view',
+    order: 0,
+    // One still at a time: the item says what it is doing meanwhile.
+    enabled: () => !busy,
+    run: () => openOptions(),
   });
-  button.title = 'Save the current view as a PNG — asks for the size first';
 
   async function openOptions() {
     // Refused before the prompt: asking what size to save a view that cannot
@@ -165,7 +168,7 @@ export default function snapshot(viewer) {
 
   async function save(preset) {
     busy = true;
-    button.textContent = 'Saving…';
+    item.label = 'Saving image…';
     exports.setBadge('saving', 'snapshot');
     try {
       const pad = capture(preset);
@@ -190,7 +193,7 @@ export default function snapshot(viewer) {
       console.warn('image export failed:', error);
     } finally {
       busy = false;
-      button.textContent = LABEL;
+      item.label = LABEL;
       exports.setBadge('', 'snapshot');
     }
   }

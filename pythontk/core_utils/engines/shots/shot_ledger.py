@@ -81,8 +81,9 @@ class ShotEditLedger(_ShotEditLedgerInternal):
     Two registers, both keyed by curve name and both holding time-first
     records:
 
-    * ``steps`` - ``[time, in_type, out_type]``, the two types being what the
-      key carried BEFORE the system stepped it.
+    * ``steps`` - ``[time, in_type, out_type(, value)]``, the two types being
+      what the key carried BEFORE the system stepped it, and its value then
+      (absent from claims recorded before values were kept).
     * ``keys`` - ``[time, owner_shot_id, edge]``, the owner naming the shot
       bound (``"start"`` / ``"end"``) the sample was created for.
     * ``authored`` - ``[time, owner_shot_id, behavior, obj, stamp]``, a key
@@ -129,7 +130,14 @@ class ShotEditLedger(_ShotEditLedgerInternal):
 
     # ---- stepped tangents -------------------------------------------------
 
-    def record_step(self, curve: str, time: float, in_type: str, out_type: str) -> bool:
+    def record_step(
+        self,
+        curve: str,
+        time: float,
+        in_type: str,
+        out_type: str,
+        value: Optional[float] = None,
+    ) -> bool:
         """Claim the step the system is about to write at ``(curve, time)``.
 
         Parameters:
@@ -137,6 +145,8 @@ class ShotEditLedger(_ShotEditLedgerInternal):
             time: Frame the step is written on.
             in_type: The key's in-tangent type BEFORE the step.
             out_type: The key's out-tangent type BEFORE the step.
+            value: The key's value -- with *in_type*, what tells this key
+                from one written over it later (:meth:`is_same_key`).
 
         Returns:
             ``False`` when the pair is already claimed - the caller stepped it
@@ -147,9 +157,63 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         recs = self._steps.setdefault(curve, [])
         if self._index_of(recs, time, self.eps) is not None:
             return False
-        recs.append([float(time), str(in_type), str(out_type)])
+        rec = [float(time), str(in_type), str(out_type)]
+        if value is not None:
+            rec.append(float(value))
+        recs.append(rec)
         self._steps[curve] = self._sorted(recs)
         return True
+
+    def claimed_step(
+        self, curve: str, time: float
+    ) -> Optional[Tuple[str, str, Optional[float]]]:
+        """The claim at ``(curve, time)``, left in place: ``(in, out, value)``.
+
+        The types are what the key carried before the system stepped it --
+        what a copy of the key should carry, since the step is the system's
+        and not the animator's.  *value* is ``None`` for a claim recorded
+        without one.  ``None`` when nothing is claimed there.
+        """
+        recs = self._steps.get(curve)
+        if not recs:
+            return None
+        i = self._index_of(recs, time, self.eps)
+        if i is None:
+            return None
+        rec = recs[i]
+        return (rec[1], rec[2], rec[3] if len(rec) > 3 else None)
+
+    @staticmethod
+    def is_same_key(
+        claim: Tuple[str, str, Optional[float]],
+        in_type: str,
+        value: float,
+        tol: float = 1e-6,
+    ) -> bool:
+        """Whether the key now on a claim's frame is the one the system stepped.
+
+        The hold writes a key's OUT side only, so the key it stepped keeps its
+        in side, and its value unless the animator re-poses it.  A key written
+        over it since keeps neither: a Maya paste lands every key with a
+        ``fixed`` in side (measured 2026-10-10) and the value it was copied
+        with.  Releasing such a claim "restored" the old interpolation onto the
+        animator's pasted key -- a stepped key copied in the Graph Editor lost
+        its step on the next shot edit that moved its seam.  Either surviving
+        is enough: a re-pose keeps the in side, and a key inserted beside it
+        re-derives the in side but keeps the value.  A claim recorded without
+        a value is always the same key (the behavior before values were kept).
+
+        Parameters:
+            claim: :meth:`claimed_step`'s ``(in, out, value)``.
+            in_type: The in side the key on the claim's frame carries now.
+            value: That key's value now.
+            tol: Relative tolerance for the value comparison.
+        """
+        rec_in, _rec_out, rec_value = claim
+        if rec_value is None or in_type == rec_in:
+            return True
+        value = float(value)
+        return abs(value - rec_value) <= tol * max(1.0, abs(value), abs(rec_value))
 
     def owns_step(self, curve: str, time: float) -> bool:
         """True when the system wrote the step at ``(curve, time)``."""
@@ -391,6 +455,10 @@ class ShotEditLedger(_ShotEditLedgerInternal):
             and (behavior is None or rec[2] == behavior)
         ]
 
+    def authored_curves(self) -> List[str]:
+        """Curve names carrying at least one behavior claim."""
+        return sorted(self._authored)
+
     def authored_stamps(self, owner: int, obj: str, behavior: str) -> set:
         """The recipe stamps of the keys *behavior* wrote on shot *owner*'s
         *obj* -- one when they were all keyed in one pass, ``""`` for a key
@@ -574,9 +642,10 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         for crv, recs in ((data or {}).get("steps") or {}).items():
             for rec in recs:
                 try:
-                    led._steps.setdefault(crv, []).append(
-                        [float(rec[0]), str(rec[1]), str(rec[2])]
-                    )
+                    step = [float(rec[0]), str(rec[1]), str(rec[2])]
+                    if len(rec) > 3 and rec[3] is not None:
+                        step.append(float(rec[3]))
+                    led._steps.setdefault(crv, []).append(step)
                 except (IndexError, TypeError, ValueError):
                     continue
         for crv, recs in ((data or {}).get("keys") or {}).items():

@@ -609,6 +609,15 @@ class _Fbx2GltfMixin:
         # sidecar, and neither ever costs the successful conversion.
         try:
             with cls.open_glb(dst_abs) as edit:
+                # FIRST, on the converter's own output: FBX2glTF merges
+                # identical vertices across meshes and hands a later skinned
+                # mesh an earlier one's weights, which only the FBX it read
+                # still holds right. Self-gating: the FBX is read only when a
+                # skinned mesh shares a vertex position with another mesh.
+                try:
+                    cls.restore_glb_skin_weights(edit, src_abs)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB skin weight restore skipped: %s", exc)
                 try:
                     fixes = cls.fix_glb_phantom_opaque_alpha(edit)
                 except Exception as exc:  # noqa: BLE001
@@ -745,11 +754,9 @@ class _Fbx2GltfMixin:
                 # does. Unconditional and self-feeding like the lightmap
                 # pass: no channel, no-op.
                 try:
-                    fbx_dir = os.path.dirname(src_abs)
-                    shadow_search = list(shadow_dirs) + [
-                        fbx_dir,
-                        os.path.join(fbx_dir, "sourceimages"),
-                        os.path.join(os.path.dirname(fbx_dir), "sourceimages"),
+                    shadow_search = [
+                        *shadow_dirs,
+                        *cls.fbx_media_dirs(src_abs),
                         *lightmap_dirs,
                     ]
                     shadows = cls.apply_glb_shadows(edit, search_dirs=shadow_search)
@@ -1180,6 +1187,28 @@ class _Fbx2GltfMixin:
                 )
             return repaired
 
+    @staticmethod
+    def fbx_media_dirs(fbx_path: str) -> List[str]:
+        """Where a file an FBX names loosely is looked for beside it.
+
+        The FBX's own directory, a ``sourceimages`` folder inside it, and one
+        beside it (the Maya project layout). A host that converts a STAGED
+        copy passes the deliverable's own set as ``shadow_dirs``, so the
+        search still reaches the folder the file ships to.
+
+        Parameters:
+            fbx_path: The FBX (or the path it will be delivered to).
+
+        Returns:
+            The three directories, nearest first.
+        """
+        folder = os.path.dirname(os.path.abspath(fbx_path))
+        return [
+            folder,
+            os.path.join(folder, "sourceimages"),
+            os.path.join(os.path.dirname(folder), "sourceimages"),
+        ]
+
     @classmethod
     def fix_glb_tangents(cls, glb: GlbTarget) -> Dict[str, int]:
         """Point every shipped TANGENT the way its UVs run, and give a
@@ -1202,3 +1231,26 @@ class _Fbx2GltfMixin:
         from pythontk.file_utils.mesh_convert.glb.tangents import GlbTangents
 
         return GlbTangents.repair(glb)
+
+    @classmethod
+    def restore_glb_skin_weights(cls, glb: GlbTarget, fbx: str) -> Dict[str, int]:
+        """Give every skinned mesh the weights its FBX clusters hold.
+
+        FBX2glTF merges identical vertices across the whole file and compares
+        everything but the skin weights, so a duplicated rigged mesh whose
+        chain runs another way ships the first mesh's weights read against its
+        own joints -- see
+        :class:`~pythontk.file_utils.mesh_convert.glb.skin_weights.GlbSkinWeights`.
+
+        Parameters:
+            glb: Path to a ``.glb``, modified in place, or an open session.
+            fbx: The FBX the GLB was converted from.
+
+        Returns:
+            ``{"meshes": n, "vertices": n, "ambiguous": n}`` -- meshes and
+            vertices rewritten, and vertices left as shipped because their
+            control point could not be told apart.
+        """
+        from pythontk.file_utils.mesh_convert.glb.skin_weights import GlbSkinWeights
+
+        return GlbSkinWeights.restore(glb, fbx)

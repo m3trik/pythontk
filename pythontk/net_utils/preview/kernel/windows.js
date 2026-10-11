@@ -1,34 +1,24 @@
-// The page's chrome for what it offers beyond the model: PANELS of rows,
-// toggles, sliders and buttons, and the WINDOWS they are sorted into.
+// The page's PANELS -- rows, toggles, sliders and buttons in its chrome --
+// and the WINDOWS they are sorted into.
 //
-// The page sorts its controls into a few CATEGORIES -- View, Environment,
-// Inspect, Export, Rig -- rather than a bar button per feature. The bar
-// carries one button per category that has something in it (beside Frame,
-// the one action that stays on the bar), and each opens its window, where
-// every part of the page that files options under that category -- the
-// kernel's own and any script's -- has a SECTION of its own. So the bar stays
-// the same few buttons however many scripts a push activates, a phone-sized
-// viewport keeps every control in reach, and a script's options land beside
-// the page's own for the same thing instead of in a panel nobody can find.
+// A window is a persistent panel of one CATEGORY (View, Environment, Inspect,
+// Export, Rig, or a script's own): where every part of the page that files a
+// report or a set of controls under that category has a SECTION of its own.
+// It opens from an item in its category's menu (menus.js), checked while it is
+// open, so the bar stays one button per category however many scripts a push
+// activates, and a script's controls land beside the page's own for the same
+// thing instead of in a panel nobody can find. A one-shot command or a single
+// switch is a menu item of its own; a window is for what has to stay up -- a
+// report to read, sliders to drag.
 //
 // Everything is written as TEXT, never markup: a row's value, a toggle's
 // label, a section's title can all come out of the deliverable.
 
-import { el } from './dom.js';
-
-// The categories the page's own parts file under, in bar order. One a script
-// names that is not here follows them, in the order it is first named.
-export const CATEGORIES = Object.freeze(['View', 'Environment', 'Inspect', 'Export', 'Rig']);
+import { el, node } from './dom.js';
+import { insertInOrder, menuFor } from './menus.js';
 
 //: category -> its window, made on first ask.
 const windows = new Map();
-
-function node(tag, className, text) {
-  const made = document.createElement(tag);
-  if (className) made.className = className;
-  if (text !== undefined) made.textContent = text;
-  return made;
-}
 
 /**
  * One row of a panel or section (`setRows`): a `[label, value, level]` pair,
@@ -153,13 +143,6 @@ export function addPanel(title) {
   };
 }
 
-// Where a new category's window and bar button go: after every category
-// that comes before it -- CATEGORIES' order, then the order first named.
-function placeOf(category) {
-  const known = CATEGORIES.indexOf(category);
-  return known >= 0 ? known : CATEGORIES.length + windows.size;
-}
-
 // The open windows share the column's height, and only the TALLEST gives way
 // and scrolls: shrunk alike, a three-row window opened beside Inspect lost
 // its first row and its second switch to its own scroll.
@@ -172,35 +155,34 @@ function settleHeights() {
   for (const win of open) win.element.style.flexShrink = win === tallest ? '1' : '0';
 }
 
-// A child with no rank -- a free panel, a script's own bar button -- comes
-// after every window and category button.
-function insertInOrder(parent, element, rank) {
-  const rankOf = (child) => (child.dataset.rank === undefined ? Infinity : Number(child.dataset.rank));
-  const after = [...parent.children].find((child) => rankOf(child) > rank);
-  parent.insertBefore(element, after || null);
-}
+//: Where a window's item sits in its menu: after the category's actions and
+//: switches, in a group of its own -- the one item that opens something.
+const WINDOW_GROUP = 'window';
+const WINDOW_ORDER = 1000;
 
 /**
  * The window of *category* -- see the module comment. The first ask makes it
- * (hidden) and its bar button (shown once a section is added); every later
- * ask with the same name returns the same window, so several scripts file
- * into one. `title` is the bar button's tooltip.
+ * (hidden) and files its item in the category's menu (offered once a section
+ * is added); every later ask with the same name returns the same window, so
+ * several scripts file into one. `title` is the item's tooltip (and a
+ * script's own category's); `label` names the item (`'<category> panel'` by
+ * default) and `key` is its shortcut -- all kept from the first ask.
  *
- * Returns `{category, element, button, shown, show(on), toggle(),
- * onShow(fn), setBadge(text, owner), section(title)}`: `onShow(fn)` calls
+ * Returns `{category, element, button, item, shown, show(on), toggle(),
+ * onShow(fn), setBadge(text, owner), section(title)}`: `button` is the
+ * category's bar button and `item` the window's menu item; `onShow(fn)` calls
  * `fn(shown)` whenever it opens or closes; `setBadge(text, owner)` marks the
- * bar button (a job running with the window shut), `''` clears *owner*'s --
- * each owner holds its own, and the button shows the newest one; `section`
- * adds a block the caller owns -- `{element, shown, show(on), remove(),
- * setRows, addButton, addSlider, addToggle}`, its `title` a heading over it.
+ * bar button (a job running with the window shut) as the menu's own does;
+ * `section` adds a block the caller owns -- `{element, shown, show(on),
+ * remove(), setRows, addButton, addSlider, addToggle}`, its `title` a
+ * heading over it.
  */
-export function windowFor(category, { title = '' } = {}) {
+export function windowFor(category, { title = '', label = '', key = '' } = {}) {
+  const menu = menuFor(category, { title });
   const existing = windows.get(category);
-  if (existing) {
-    if (title && !existing.button.title) existing.button.title = title;
-    return existing;
-  }
-  const rank = placeOf(category);
+  if (existing) return existing;
+  // In the menu's place, so the windows stack in bar order.
+  const { rank } = menu;
   const frame = node('section', 'panel window');
   frame.hidden = true;
   frame.dataset.category = category;
@@ -217,25 +199,11 @@ export function windowFor(category, { title = '' } = {}) {
   frame.append(header, sections);
   insertInOrder(el.panels, frame, rank);
 
-  const button = node('button', 'ui category', category);
-  button.type = 'button';
-  button.hidden = true;
-  button.dataset.category = category;
-  button.dataset.rank = String(rank);
-  if (title) button.title = title;
-  insertInOrder(el.categories, button, rank);
-
   const listeners = [];
-  //: Each job's badge, by owner, in the order set: the button wears the
-  //: latest. One window runs several jobs -- a still saved while a playblast
-  //: encodes -- and each clears only its own.
-  const badges = new Map();
   const show = (on = true) => {
     const shown = Boolean(on);
     if (frame.hidden === !shown) return;
     frame.hidden = !shown;
-    button.classList.toggle('open', shown);
-    button.setAttribute('aria-pressed', String(shown));
     for (const fn of listeners) {
       try {
         fn(shown);
@@ -245,31 +213,27 @@ export function windowFor(category, { title = '' } = {}) {
     }
     // After the listeners, which may fill it (Inspect paints as it opens).
     settleHeights();
+    // The item's check follows, in a dropdown that is open as it changes.
+    menu.refresh();
   };
-  button.addEventListener('click', () => show(frame.hidden));
   close.addEventListener('click', () => show(false));
 
   const win = {
     category,
     element: frame,
-    button,
+    get button() { return menu.button; },
+    item: null,
     get shown() { return !frame.hidden; },
     show,
     toggle() { show(frame.hidden); },
     onShow(fn) { listeners.push(fn); },
-    setBadge(text, owner = '') {
-      badges.delete(owner); // set again, it is the latest
-      if (text) badges.set(owner, String(text));
-      const shown = [...badges.values()].pop();
-      button.textContent = shown ? `${category} · ${shown}` : category;
-      button.classList.toggle('busy', Boolean(shown));
-    },
+    setBadge(text, owner = '') { menu.setBadge(text, owner); },
     section(heading = '') {
       const block = node('div', 'section');
       if (heading) block.append(node('div', 'heading', heading));
       const parts = body(block, settleHeights);
       sections.append(block);
-      button.hidden = false;
+      menu.refresh();
       return {
         element: block,
         get shown() { return !frame.hidden && !block.hidden; },
@@ -277,20 +241,27 @@ export function windowFor(category, { title = '' } = {}) {
           block.hidden = !on;
           settleHeights();
         },
-        // Its window empties with it: an empty window has no business on
-        // the bar.
+        // Its window empties with it: an empty window has no business in a
+        // menu, nor -- with nothing else filed there -- on the bar.
         remove() {
           block.remove();
-          if (!sections.children.length) {
-            show(false);
-            button.hidden = true;
-          }
+          if (!sections.children.length) show(false);
           settleHeights();
+          menu.refresh();
         },
         ...parts,
       };
     },
   };
+  win.item = menu.add('window', {
+    label: label || `${category} panel`,
+    title,
+    key,
+    group: WINDOW_GROUP,
+    order: WINDOW_ORDER,
+    when: () => sections.children.length > 0,
+    window: win,
+  });
   windows.set(category, win);
   return win;
 }

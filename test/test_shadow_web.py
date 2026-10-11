@@ -1067,9 +1067,11 @@ export default function probe(viewer) {
 
 #: Renders the horizon plane alone into a 4 x 4 target from straight above each
 #: sample point (an orthographic camera 4 mm wide) and reads the centre texel's
-#: alpha -- the shader's own answer, cleared to alpha 0 first, on a private
-#: layer so the grid and the rest of the scene do not blend in.
-HORIZON_SAMPLES_JS = """
+#: alpha, cleared to alpha 0 first, on a private layer so the grid and the rest
+#: of the scene do not blend in. As it stands it reads what the plane DRAWS --
+#: its cache, by default; HORIZON_SAMPLES_JS turns the cache off first, so the
+#: pins read the shader's own per-pixel answer.
+_HORIZON_READBACK_JS = """
       {
         const renderer = viewer.renderer;
         const scene = viewer.scene;
@@ -1104,6 +1106,30 @@ HORIZON_SAMPLES_JS = """
         target.dispose();
       }
 """
+
+#: The shader's own answer per pixel: the cache (on by default) would hand back
+#: a bilinear blend of its texels instead.
+HORIZON_SAMPLES_JS = (
+    """
+      session.cache = false;
+      await nextFrames(2);
+"""
+    + _HORIZON_READBACK_JS
+)
+
+#: What a viewer sees: the plane drawing its cache, and the cache's state.
+HORIZON_CACHED_SAMPLES_JS = (
+    """
+      await nextFrames(2);
+      report.cache = session.planes.filter((p) => p.cache).map((p) => ({
+        size: p.cache.size,
+        atlas: [session.atlas.target.width, session.atlas.target.height],
+        valid: p.cache.valid,
+        cached: p.material.uniforms.uCached.value,
+      }));
+"""
+    + _HORIZON_READBACK_JS
+)
 
 
 @unittest.skipUnless(
@@ -1415,8 +1441,17 @@ class TestShadowRigLive(unittest.TestCase):
         for name, plane in by_name.items():
             for got, want in zip(plane["uRect"], ImgUtils.flip_rect_v(rects[name])):
                 self.assertAlmostEqual(got, want, places=6, msg=name)
-            self.assertAlmostEqual(plane["uIntensity"], 0.9, places=6)
             self._assert_placed(plane, self._expected(), places=4)
+        # The authored intensity lands ONCE. The DCC multiplies shadowIntensity
+        # into the opacity it bakes (Maya's expression, Blender's driver), so
+        # the faded plane's ramp already carries it and the shader must not
+        # apply it again -- it did, which squared it (0.81 for 0.9). The
+        # static planes' file carries no opacity at all (no track for a
+        # constant ramp; the material alpha arrives at 1), so the record's
+        # number is the one statement of it there.
+        for name in ("A_shadow", "B_shadow"):
+            self.assertAlmostEqual(by_name[name]["uIntensity"], 0.9, places=6)
+        self.assertAlmostEqual(faded["uIntensity"], 1.0, places=6, msg=faded)
         # The fade: the page drives the ORIGINAL material (the clip auto-plays,
         # so the first snapshot already sits somewhere down the ramp); the shim
         # follows it, and the seek to 1 s lands it on 0.5 exactly. The batched
@@ -1425,13 +1460,47 @@ class TestShadowRigLive(unittest.TestCase):
         self.assertLess(faded["uOpacity"], 1.0, faded)
         after = {p["name"]: p for p in found["after"]}
         self.assertAlmostEqual(after["C_shadow"]["originalOpacity"], 0.5, places=3)
+        # What the shader multiplies the texel by IS the ramp's value.
         self.assertAlmostEqual(
-            after["C_shadow"]["uOpacity"],
+            after["C_shadow"]["uOpacity"] * after["C_shadow"]["uIntensity"],
             after["C_shadow"]["originalOpacity"],
             places=6,
         )
         for name in ("A_shadow", "B_shadow"):
             self.assertEqual(after[name]["uOpacity"], 1.0, after[name])
+            self.assertAlmostEqual(after[name]["uIntensity"], 0.9, places=6)
+
+    def test_a_static_alpha_the_file_states_is_not_dimmed_again(self):
+        """Without a fade track the record's intensity stands in for the
+        opacity ONLY where the file states none (material alpha 1, which is
+        what a real export delivers today). A material whose static alpha is
+        below 1 already states the plane's opacity -- which the DCC computes
+        as intensity times its fades, so never above the intensity -- and the
+        intensity must not dim it a second time."""
+        records = [
+            _record(name, intensity=0.9) for name in ("Plain_shadow", "Stated_shadow")
+        ]
+        glb = self._glb(
+            None,
+            nodes=[
+                {"name": "Plain_shadow", "mesh": 0},
+                {"name": "Stated_shadow", "mesh": 1},
+                {"name": "shadow_source", "translation": self.SOURCE},
+                {"name": "Box_contact_loc", "translation": self.CONTACT},
+                _data_export_node(_payload(records)),
+            ],
+            materials=[
+                _plane_material("Plain_MAT"),
+                _plane_material("Stated_MAT", alpha=0.45),
+            ],
+        )
+        found = self._load(glb)
+        by_name = {p["name"]: p for p in found["before"]}
+        plain, stated = by_name["Plain_shadow"], by_name["Stated_shadow"]
+        self.assertAlmostEqual(plain["uOpacity"], 1.0, places=6, msg=plain)
+        self.assertAlmostEqual(plain["uIntensity"], 0.9, places=6, msg=plain)
+        self.assertAlmostEqual(stated["uOpacity"], 0.45, places=6, msg=stated)
+        self.assertAlmostEqual(stated["uIntensity"], 1.0, places=6, msg=stated)
 
     def test_the_real_export_shape_batches_three_planes_onto_one_atlas(self):
         """The production case, reproduced from the measured export: three
@@ -1669,6 +1738,110 @@ class TestShadowRigLive(unittest.TestCase):
         points = self._scatter_points(evaluate)
         expected = evaluate(points)
         found = self._load(glb, action=HORIZON_SAMPLES_JS, points=points)
+        self._assert_tracks_reference(found, expected, points)
+
+    def test_the_cache_tracks_the_reference_across_a_scatter_of_ground_points(self):
+        """The real-time path: the plane samples its shadow marched once into
+        its slot of one atlas over its own UVs (three map pixels a texel), so the pin's
+        48 points are a bilinear blend of cached texels -- close to the
+        reference everywhere and never a different shadow. Measured
+        2026-10-10: mean 0.026, worst 0.23, the worst on the 5 cm pole's
+        needle-sharp core at its foot, where this fixture's long plane hits
+        the slot's 254-texel cap (a softened edge, which the per-pixel path's
+        0.05 pin above does not allow)."""
+        azimuth, _, _, _ = _pole_geometry_frame()
+        source = [2.0 * math.cos(azimuth), 3.0, 2.0 * math.sin(azimuth)]
+        hmap, glb = self._pole_fixture(
+            {"name": "shadow_source", "translation": source},
+            source_size=POLE_SOURCE_SIZE,
+        )
+
+        def evaluate(pts):
+            return hmap.alpha(
+                [[x, 0.0, z] for x, z in pts],
+                light=source,
+                source_size=POLE_SOURCE_SIZE,
+            )
+
+        points = self._scatter_points(evaluate)
+        expected = np.asarray(evaluate(points))
+        found = self._load(glb, action=HORIZON_CACHED_SAMPLES_JS, points=points)
+        (cache,) = found["cache"]
+        self.assertTrue(cache["valid"], found)
+        self.assertEqual(cache["cached"], 1, "the plane draws its cache")
+        self.assertTrue(16 <= min(cache["size"]) and max(cache["size"]) <= 254, cache)
+        got = np.asarray(found["samples"])
+        self.assertEqual(len(got), len(points), found)
+        err = np.abs(got - expected)
+        detail = f"cache {cache['size']}, mean {err.mean():.4f}, worst {err.max():.4f}"
+        self.assertLess(float(err.mean()), 0.04, detail)
+        self.assertLess(float(err.max()), 0.3, detail)
+
+    def test_the_cache_re_marches_only_when_the_light_moves_in_the_contacts_frame(
+        self,
+    ):
+        """The cost model: a still light costs one fetch a pixel, frame after
+        frame; the page's turntable spins the model, its light and its plane
+        together, which changes nothing in the contact's frame and re-marches
+        nothing; a moved source re-marches its plane once."""
+        azimuth, _, _, _ = _pole_geometry_frame()
+        source = [2.0 * math.cos(azimuth), 3.0, 2.0 * math.sin(azimuth)]
+        _, glb = self._pole_fixture(
+            {"name": "shadow_source", "translation": source},
+            source_size=POLE_SOURCE_SIZE,
+        )
+        action = """
+      await nextFrames(3);
+      const bakes = [session.cacheStats.bakes];
+      await nextFrames(5);
+      bakes.push(session.cacheStats.bakes);
+      viewer.pivot.rotation.y += 0.7;
+      viewer.pivot.updateMatrixWorld(true);
+      await nextFrames(4);
+      bakes.push(session.cacheStats.bakes);
+      session.planes[0].source.position.x += 0.3;
+      await nextFrames(4);
+      bakes.push(session.cacheStats.bakes);
+      report.bakes = bakes;
+"""
+        found = self._load(glb, action=action)
+        self.assertFalse(found.get("errors"), found.get("errors"))
+        still, held, spun, moved = found["bakes"]
+        self.assertGreaterEqual(still, 1, "the first frame marched the cache")
+        self.assertEqual(held, still, "a still light re-marched")
+        self.assertEqual(spun, held, "a turntable spin re-marched")
+        self.assertEqual(moved, spun + 1, "a moved source re-marches once")
+
+    def test_a_raised_model_keeps_its_horizon_shadow(self):
+        """The horizon's ground is a MODEL-space height, like the placement's.
+
+        The page stands a model on its lowest point, which need not be the
+        ground (anything below it -- a pit, a plinth's footing -- lifts the
+        whole model), and a viewer script may move the model on top of that.
+        The shader works in world space, so the ground has to come through the
+        model's world matrix; read as world Y it sat 0.75 m below the raised
+        model's ground and every ray started that far low, lengthening every
+        shadow. The samples are taken at the same model-space points, so the
+        reference is unchanged.
+        """
+        azimuth, _, _, _ = _pole_geometry_frame()
+        source = [2.0 * math.cos(azimuth), 3.0, 2.0 * math.sin(azimuth)]
+        hmap, glb = self._pole_fixture(
+            {"name": "shadow_source", "translation": source},
+            source_size=POLE_SOURCE_SIZE,
+        )
+
+        def evaluate(pts):
+            return hmap.alpha(
+                [[x, 0.0, z] for x, z in pts],
+                light=source,
+                source_size=POLE_SOURCE_SIZE,
+            )
+
+        points = self._scatter_points(evaluate)
+        expected = evaluate(points)
+        raise_model = "model.position.y += 0.75; model.updateMatrixWorld(true);"
+        found = self._load(glb, action=raise_model + HORIZON_SAMPLES_JS, points=points)
         self._assert_tracks_reference(found, expected, points)
 
     def test_a_directional_source_shadows_along_the_way_it_shines(self):

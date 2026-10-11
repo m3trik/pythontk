@@ -13,7 +13,8 @@ Only depends on the standard library (``colorsys``).
 """
 
 import colorsys
-from typing import Dict, Iterator, Optional, Tuple, Union, Sequence
+import math
+from typing import Dict, Iterator, List, Optional, Tuple, Union, Sequence
 
 
 class Color:
@@ -556,6 +557,45 @@ class Palette(dict):
             out[k] = v
         return out
 
+    @staticmethod
+    def contrast_order(keys: Sequence[str]) -> List[str]:
+        """*keys* reordered so each one is far from the one before it.
+
+        Taken in turn, a palette in hue order (:meth:`tags`) gives neighbours
+        that look alike -- red, orange, yellow -- so a run of groups coloured
+        one after another reads as a gradient and the boundaries between them
+        vanish.  This walks the keys by the stride nearest ``0.382 * len(keys)``
+        (``1 - 1/phi``) that is coprime with their count: every key is used
+        once before any repeats, and consecutive picks sit about 137 degrees
+        apart round the hue circle::
+
+            Palette.contrast_order(list(Palette.tags()))
+            # ['tag1', 'tag4', 'tag7', 'tag2', 'tag5', 'tag8', 'tag3', 'tag6']
+
+        A count no such stride serves (six: only 1 and 5 are coprime) takes
+        the two halves in turn instead; fewer than five keys come back as given.
+
+        Parameters:
+            keys: The keys to reorder, in their colours' hue order.
+
+        Returns:
+            Every key once, in the contrasting order.
+        """
+        keys = list(keys)
+        n = len(keys)
+        if n < 5:
+            return keys
+        ideal = n * 0.381966
+        stride = min(
+            (s for s in range(2, n - 1) if math.gcd(s, n) == 1),
+            key=lambda s: (abs(s - ideal), s),
+            default=None,
+        )
+        if stride is None:
+            half = (n + 1) // 2
+            return [keys[i // 2 + (half if i % 2 else 0)] for i in range(n)]
+        return [keys[(i * stride) % n] for i in range(n)]
+
     # ---- Built-in palettes ------------------------------------------------
 
     @classmethod
@@ -684,5 +724,34 @@ class Palette(dict):
                 "added": ColorPair.auto("#8E8555"),
                 "changed": ColorPair.auto("#6B8C9E"),
                 "moved": ColorPair.auto("#A87EC8"),
+            }
+        )
+
+    @classmethod
+    def tags(cls) -> "Palette":
+        """Eight categorical colours for user colour tags, in hue order.
+
+        Mid-saturation, so a slim swatch or strip reads on a dark and a light
+        theme alike::
+
+            p = Palette.tags()
+            list(p)             # ["tag1", ..., "tag8"]
+            p["tag1"].hex       # red; tag2 orange ... tag8 pink
+
+        The keys are neutral *slot* names, never hue names: saved data stores
+        the slot, so a user who recolours one recolours everything holding it
+        (Blender's collection colour tags work the same way), and the names
+        must stay stable for as long as that data lives.
+        """
+        return cls(
+            {
+                "tag1": "#E06666",  # red
+                "tag2": "#E69A4C",  # orange
+                "tag3": "#E3C65A",  # yellow
+                "tag4": "#7DBA6A",  # green
+                "tag5": "#4FB5A8",  # teal
+                "tag6": "#5E9FDB",  # blue
+                "tag7": "#9D83D9",  # violet
+                "tag8": "#D97AB0",  # pink
             }
         )

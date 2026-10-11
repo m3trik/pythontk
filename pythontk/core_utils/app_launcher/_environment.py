@@ -160,8 +160,9 @@ class _EnvironmentMixin:
         ``python <argv>`` with nothing of *argv* on its command line.
 
         mayapy.exe (and maya.exe) decode their command line in the ANSI code
-        page: measured on Maya 2025, "José" arrived as "Jos\\udce9" and "Жук" as
-        "???", while the environment and the working directory arrived intact.
+        page: measured on Maya 2025, an accented letter arrived as a lone
+        surrogate ("é" as "\\udce9") and each letter outside the code page as
+        "?", while the environment and the working directory arrived intact.
         So ``mayapy <script>`` for a user whose %TEMP% holds such a letter ran a
         file that does not exist. Here the command line is only ``-c`` and a
         fixed ASCII shim; *argv* travels in :attr:`PYTHON_ARGV_VAR`. Any Python
@@ -190,7 +191,8 @@ class _EnvironmentMixin:
         child_env = dict(AppLauncher.process_environ() if env is None else env)
         child_env[AppLauncher.PYTHON_ARGV_VAR] = json.dumps(argv)
         # The child's temp root in a form it can open too (see ansi_safe_path): with
-        # TEMP under "Жук", Maya fell back to its CURRENT DIRECTORY for temp files.
+        # TEMP under a Cyrillic folder name, Maya fell back to its CURRENT DIRECTORY
+        # for temp files.
         # TMPDIR too: a Python child's tempfile reads it first (TestSandbox sets it).
         for key, value in child_env.items():
             if key.upper() in ("TEMP", "TMP", "TMPDIR") and value:
@@ -269,10 +271,11 @@ class _EnvironmentMixin:
         """*path* spelled so a program that reads paths in the ANSI code page can open it.
 
         Maya opens and saves files through the ANSI code page. Measured on Maya
-        2025 (cp1252 here), with folders under "José Жук": ``cmds.file`` save gave
-        "An invalid path was specified", open gave "File not found", and a TEMP
-        there read as "???" so Maya put its own temp files in the current
-        directory. The 8.3 short form of the same folders worked for all three.
+        2025 (cp1252 here), with folders under a name mixing an "é" and Cyrillic
+        letters: ``cmds.file`` save gave "An invalid path was specified", open
+        gave "File not found", and a TEMP there read as "???" so Maya put its own
+        temp files in the current directory. The 8.3 short form of the same
+        folders worked for all three.
         So every component the code page cannot hold is swapped for its short name
         (``GetShortPathNameW``); every other component is kept as written, so a
         template that reads a payload's own name still sees it. A component not
@@ -288,8 +291,8 @@ class _EnvironmentMixin:
         decodes as ANSI whatever the code page could hold: RizomUV 2020.1 reads the
         UTF-8 bytes of a Lua script's paths that way, so an "é" (inside cp1252)
         breaks there as surely as a Cyrillic letter -- measured, ``ZomLoad`` /
-        ``ZomSave`` under a "José Ångström" folder timed out and the 8.3 form
-        passed. Every non-ASCII component is then swapped.
+        ``ZomSave`` under a folder named with an "é" and an "Å" timed out and the
+        8.3 form passed. Every non-ASCII component is then swapped.
 
         Parameters:
             path: A file or folder path (``str`` or path-like), or ``None``.

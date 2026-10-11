@@ -282,7 +282,7 @@ class _ImgColorSpaceInternal:
             ) from e
 
         percentile = cls.HDR_WEB_PERCENTILE if percentile is None else float(percentile)
-        img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
+        img = cls.cv2_read(path, cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
         if img is None:
             raise ValueError(f"Unreadable image: {path}")
         arr = np.asarray(img, dtype=np.float32)
@@ -318,7 +318,7 @@ class _ImgColorSpaceInternal:
         except ImportError as e:
             raise ImportError("OpenCV (cv2) is required to encode HDR images.") from e
 
-        img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
+        img = cls.cv2_read(path, cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
         if img is None:
             raise ValueError(f"Unreadable image: {path}")
         arr = np.asarray(img, dtype=np.float32)
@@ -329,7 +329,9 @@ class _ImgColorSpaceInternal:
         # undefined exponent, and RGBE has no sign, so negatives clamp to 0.
         bgr = np.nan_to_num(bgr, nan=0.0, posinf=0.0, neginf=0.0)
         np.maximum(bgr, 0.0, out=bgr)
-        ok, buf = cv2.imencode(".hdr", bgr)
+        # The Radiance codec stages through the temp folder: see cv2_temp.
+        with cls.cv2_temp():
+            ok, buf = cv2.imencode(".hdr", bgr)
         if not ok:
             raise ValueError(f"Radiance HDR encode failed for {path}")
         return buf.tobytes()

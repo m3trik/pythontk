@@ -72,6 +72,20 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "atlas_extent",
+    "qualname": "ImgUtils.atlas_extent",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "atlas_layout_extent",
+    "qualname": "ImgUtils.atlas_layout_extent",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "atlas_pixel_rects",
     "qualname": "ImgUtils.atlas_pixel_rects",
     "tier": "bare"
@@ -95,6 +109,13 @@
     "module": "pythontk.str_utils._str_utils",
     "name": "attach_modifier",
     "qualname": "StrUtils.attach_modifier",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "best_rotate_order",
+    "qualname": "MathUtils.best_rotate_order",
     "tier": "bare"
   },
   {
@@ -323,6 +344,27 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "cv2_read",
+    "qualname": "ImgUtils.cv2_read",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "cv2_temp",
+    "qualname": "ImgUtils.cv2_temp",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "cv2_write",
+    "qualname": "ImgUtils.cv2_write",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.core_utils._core_utils",
     "name": "cycle",
     "qualname": "CoreUtils.cycle",
@@ -333,6 +375,13 @@
     "module": "pythontk.str_utils._str_utils",
     "name": "delimit_affix",
     "qualname": "StrUtils.delimit_affix",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "deliver_file",
+    "qualname": "FileUtils.deliver_file",
     "tier": "bare"
   },
   {
@@ -1241,6 +1290,13 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "pack_atlas_rects",
+    "qualname": "ImgUtils.pack_atlas_rects",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "pack_channel_into_alpha",
     "qualname": "ImgUtils.pack_channel_into_alpha",
     "tier": "bare"
@@ -1787,6 +1843,13 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "uv_axis_scale",
+    "qualname": "ImgUtils.uv_axis_scale",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "uv_crop_extent",
     "qualname": "ImgUtils.uv_crop_extent",
     "tier": "bare"
@@ -1835,7 +1898,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.naming_convention",
+    "module": "pythontk.core_utils.naming_convention._naming_convention",
     "name": "AffixRule",
     "qualname": "AffixRule",
     "tier": "root"
@@ -2556,6 +2619,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_edits",
+    "name": "ManifestEdits",
+    "qualname": "ManifestEdits",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_export",
+    "name": "ManifestExport",
+    "qualname": "ManifestExport",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
     "name": "ManifestModel",
     "qualname": "ManifestModel",
@@ -2566,6 +2643,13 @@
     "module": "pythontk.core_utils.handoff.manifest_plan",
     "name": "ManifestPlan",
     "qualname": "ManifestPlan",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_tags",
+    "name": "ManifestTags",
+    "qualname": "ManifestTags",
     "tier": "root"
   },
   {
@@ -2682,7 +2766,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.naming_convention",
+    "module": "pythontk.core_utils.naming_convention._naming_convention",
     "name": "NamingConvention",
     "qualname": "NamingConvention",
     "tier": "root"
@@ -2993,6 +3077,20 @@
     "module": "pythontk.core_utils.engines.scene_export.record_transfer",
     "name": "RecordTransfer",
     "qualname": "RecordTransfer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.img_utils.rect_packer",
+    "name": "RectPackResult",
+    "qualname": "RectPackResult",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.img_utils.rect_packer",
+    "name": "RectPacker",
+    "qualname": "RectPacker",
     "tier": "root"
   },
   {
@@ -3490,6 +3588,13 @@
     "module": "pythontk.core_utils.engines.shots.shot_model",
     "name": "ShotUpdated",
     "qualname": "ShotUpdated",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "ShotsEdited",
+    "qualname": "ShotsEdited",
     "tier": "root"
   },
   {

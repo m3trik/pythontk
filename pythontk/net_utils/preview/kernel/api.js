@@ -3,12 +3,15 @@ import {
   clipInfo, clips, mixer, playing, seek, selectClip, shotDescription, shotLabel, togglePlay,
 } from './animation.js';
 import { showDialog } from './dialog.js';
+import { download } from './dom.js';
 import { environment } from './environment.js';
 import { formatBytes } from './format.js';
 import { grab } from './grab.js';
 import { addHeadsetCard } from './headset.js';
 import { locomotion } from './locomotion.js';
+import { menuFor } from './menus.js';
 import { current, materialsOf, modelBounds } from './model.js';
+import { parts } from './parts.js';
 import { rig } from './rig.js';
 import { camera, controls, pivot, policy, renderer, scene } from './scene.js';
 import { headset } from './session.js';
@@ -41,10 +44,14 @@ const scriptHooks = { load: [], frame: [], rendered: [], key: [] };
 // Set from the manifest: a view-only share (the server's guest listener) says
 // so, and the page then offers nothing that writes. That listener refuses every
 // write, so each such control would be one that fails.
-let isGuest = false;
+let guestView = false;
 
 export function setGuest(guest) {
-  isGuest = guest;
+  guestView = guest;
+}
+
+export function isGuest() {
+  return guestView;
 }
 
 // glTF node index -> Object3D, through the loader's association table rather
@@ -123,8 +130,17 @@ export const viewer = {
    * production assembly repeats.
    */
   nodeResolver,
-  /** The model currently on screen, or null between loads. */
+  /**
+   * The model currently on screen, or null between loads -- with several
+   * parts, the root they all hang under.
+   */
   get model() { return current; },
+  /**
+   * The published files on screen, `[{name, model, gltf}]` in published
+   * order: one, or the parts of one scene, each at its authored place under
+   * `model`. The first is the primary, whose glTF the 'load' event names.
+   */
+  get parts() { return parts.map((part) => ({ name: part.name, model: part.root, gltf: part.gltf })); },
   /** `{size, center}` of the current model, in metres (glTF's unit). */
   get bounds() { return modelBounds; },
   /**
@@ -151,7 +167,7 @@ export const viewer = {
   /** The live rendering policy, as read from the deliverable. */
   get policy() { return policy; },
   /**
-   * What lights the model (the Environment window): `probe` -- the bake's
+   * What lights the model (the Environment menu): `probe` -- the bake's
    * reflection probe on screen, or null -- `{on, width, height, bytes,
    * bufferView, position, box, decodeMs, prefilterMs}`, `position` and `box`
    * (`{min, max}`, null when read as distant) in metres; `setProbe(on)` turns
@@ -165,7 +181,7 @@ export const viewer = {
    * True on a view-only share (the server's guest listener), which refuses
    * every write -- so a script that posts to the server should offer nothing.
    */
-  get guest() { return isGuest; },
+  get guest() { return guestView; },
   /** The AnimationMixer driving the current model's clips, or null. */
   get mixer() { return mixer; },
   /**
@@ -230,8 +246,9 @@ export const viewer = {
   },
   /**
    * Subscribe to a page event.
-   *  'load'     ({model, gltf, lightmapped, materialCount, clips, specs}) after
-   *             each model swap -- `specs` as `viewer.specs`; `lightmapped` and
+   *  'load'     ({model, gltf, parts, lightmapped, materialCount, clips, specs})
+   *             after each model swap -- `gltf` the primary part's, `parts` as
+   *             `viewer.parts`, `specs` as `viewer.specs`; `lightmapped` and
    *             `materialCount` count three.js material INSTANCES (the lighting
    *             policy's gate, and its old denominator), not the file's
    *  'frame'    ({delta, time}) once per frame, before it is drawn
@@ -245,8 +262,8 @@ export const viewer = {
    * Add a button to the control bar, styled like the page's own. Scripts get
    * this rather than reaching for document.createElement so a module cannot
    * drift from the page's look. A script's controls belong in a category's
-   * window (`viewer.window`), which keeps the bar to one button per category;
-   * a bar button of its own is for the rare action that cannot wait a click.
+   * menu (`viewer.menu`), which keeps the bar to one button per category; a
+   * bar button of its own is for the rare action that cannot wait a click.
    */
   addButton(label, onClick) {
     const button = document.createElement('button');
@@ -269,25 +286,49 @@ export const viewer = {
    */
   addPanel,
   /**
-   * The window of a CATEGORY -- `'View'`, `'Environment'`, `'Inspect'`,
+   * The menu of a CATEGORY -- `'View'`, `'Environment'`, `'Inspect'`,
    * `'Export'`, `'Rig'`, or one of the script's own. The page sorts what it
    * offers into these rather than a bar button per feature: the bar carries
-   * one button per category that has something in it, and each opens its
-   * window, where every part of the page filing under that category has a
-   * section. The first ask makes the window; every later one with the same
-   * name returns it. `{title}` is its bar button's tooltip.
+   * one button per category with something in it that applies, and each
+   * opens a dropdown of its items. The first ask makes the menu; every later
+   * one with the same name returns it. `{title}` is the bar button's tooltip
+   * of a script's own category (the page's own carry theirs).
    *
-   * Returns `{category, element, button, shown, show(on), toggle(),
-   * onShow(fn), setBadge(text, owner), section(title)}`. `section` adds a
+   * Returns `{category, button, element, shown, open(), close(), toggle(),
+   * add(kind, spec), setBadge(text, owner), refresh()}`. `add` files an item:
+   * `'action'` (`run()`; a label ending in `…` asks first) or `'toggle'`
+   * (`{value, onChange(on)}`; the dropdown stays open on one) -- each with
+   * `{label, title, key, group, order, when(), enabled()}`: `key` a single-key
+   * shortcut (one owner per key, shown beside the label), `group` the items
+   * a separator sets apart, `order` its place, `when` whether it applies to
+   * what is on screen (asked as the menu opens, and after each load), and
+   * `enabled` whether it can act now. Returns `{element, kind, label, value,
+   * hidden, disabled, remove()}` -- `label` and `value` settable (`value`
+   * without calling `onChange`). `setBadge(text, owner)` marks the bar button
+   * while a job runs with the menu shut, `''` clears it -- per *owner* (the
+   * script's name), since scripts share a menu: the button shows the newest
+   * one standing. `refresh()` re-asks `when` after something it reads changed
+   * that a load did not.
+   */
+  menu: menuFor,
+  /**
+   * The window of a CATEGORY: a persistent panel, opened from an item in the
+   * category's menu (checked while open), for what has to stay up -- a report
+   * to read, sliders to drag. A one-shot command or a single switch is a menu
+   * item instead (`viewer.menu`). The first ask makes the window; every
+   * later one with the same name returns it. `{title, label, key}`: the
+   * window item's tooltip, label (`'<category> panel'`) and shortcut, kept
+   * from the first ask.
+   *
+   * Returns `{category, element, button, item, shown, show(on), toggle(),
+   * onShow(fn), setBadge(text, owner), section(title)}` -- `button` the
+   * category's bar button, `item` the window's menu item. `section` adds a
    * block the caller owns -- `{element, shown, show(on), remove(),
    * setRows(rows), addButton(label, onClick), addSlider(label, opts,
    * onInput), addToggle(label, {value, title}, onChange)}` -- `addToggle`
    * returns `{element, value, hidden, disabled}`, its `value` settable
    * without calling `onChange`. `onShow(fn)` calls `fn(shown)` as the window
-   * opens and closes; `setBadge(text, owner)` marks the bar button while a
-   * job runs with the window shut, `''` clears it -- per *owner* (the
-   * script's name), since scripts share a window: the button shows the
-   * newest one standing.
+   * opens and closes; `setBadge` is the menu's.
    */
   window: windowFor,
   /**
@@ -391,14 +432,10 @@ export const viewer = {
    * is as validly open at localhost as at 127.0.0.1: pass a path relative to
    * the page, or a route that answers with `Content-Disposition: attachment`
    * (a recording's does), or a tab opened by the other spelling navigates.
+   * *name* is the file's name on the viewer's disk; '' keeps the served one.
    */
-  download(url) {
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = '';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
+  download(url, name = '') {
+    download(url, name);
   },
 };
 

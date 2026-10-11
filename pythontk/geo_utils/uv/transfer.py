@@ -535,7 +535,11 @@ class UvTransfer(HelpMixin):
     #: would be noise on every ordinary transfer.
     _SQUEEZE_REPORT_THRESHOLD: float = 1.05
 
-    #: Logical PBR channel -> token used in output filenames.
+    #: Logical PBR channel -> token used in output filenames. The OpenPBR lobe
+    #: channels (``MapRegistry.LOBE_TYPE_CHANNELS``) take their map type's
+    #: canonical name, so a transferred lobe classifies as itself: a DCC that
+    #: declares the lobes (mayatk's ``ShaderAttributeMap``) clears them on the
+    #: copy it assigns, so a lobe left out of this table was simply LOST.
     CHANNEL_TOKENS: Dict[str, str] = {
         "baseColor": "BaseColor",
         "emission": "Emissive",
@@ -545,9 +549,28 @@ class UvTransfer(HelpMixin):
         "opacity": "Opacity",
         "normal": "Normal",
         "ambientOcclusion": "AO",
+        "diffuseRoughness": "Diffuse_Roughness",
+        "specularWeight": "Specular_Level",
+        "anisotropy": "Anisotropy",
+        "transmission": "Transmission",
+        "transmissionColor": "Transmission_Color",
+        "subsurface": "Subsurface_Scattering",
+        "subsurfaceColor": "Subsurface_Color",
+        "subsurfaceRadius": "Subsurface_Radius",
+        "coat": "Clearcoat",
+        "coatColor": "Clearcoat_Color",
+        "coatRoughness": "Clearcoat_Roughness",
+        "coatNormal": "Clearcoat_Normal",
+        "sheen": "Sheen",
+        "sheenColor": "Sheen_Color",
+        "sheenRoughness": "Sheen_Roughness",
+        "thinFilm": "Thin_Film",
+        "thinFilmThickness": "Thin_Film_Thickness",
     }
 
-    #: Neutral fill (0..1) for a source that has neither a map nor a constant.
+    #: Neutral fill (0..1) for a source that has neither a map nor a constant,
+    #: in TEXTURE terms: a lobe weight is off, a lobe tint white, and the
+    #: specular level 0.5 (its authored neutral, not the weight's 1.0).
     NEUTRAL: Dict[str, Tuple[float, ...]] = {
         "baseColor": (0.5, 0.5, 0.5),
         "emission": (0.0, 0.0, 0.0),
@@ -557,7 +580,29 @@ class UvTransfer(HelpMixin):
         "opacity": (1.0,),
         "normal": (0.5, 0.5, 1.0),
         "ambientOcclusion": (1.0,),
+        "diffuseRoughness": (0.0,),
+        "specularWeight": (0.5,),
+        "anisotropy": (0.0,),
+        "transmission": (0.0,),
+        "transmissionColor": (1.0, 1.0, 1.0),
+        "subsurface": (0.0,),
+        "subsurfaceColor": (1.0, 1.0, 1.0),
+        "subsurfaceRadius": (1.0,),
+        "coat": (0.0,),
+        "coatColor": (1.0, 1.0, 1.0),
+        "coatRoughness": (0.0,),
+        "coatNormal": (0.5, 0.5, 1.0),
+        "sheen": (0.0,),
+        "sheenColor": (1.0, 1.0, 1.0),
+        "sheenRoughness": (0.5,),
+        "thinFilm": (0.0,),
+        "thinFilmThickness": (0.5,),
     }
+
+    #: Channels holding tangent-space normal VECTORS -- remapped by
+    #: :meth:`transfer_normals` (turned with their island), never resampled
+    #: as colour: the base normal and the coat's own.
+    NORMAL_CHANNELS: Tuple[str, ...] = ("normal", "coatNormal")
 
     @classmethod
     def merge_layouts(
@@ -828,7 +873,11 @@ class UvTransfer(HelpMixin):
                 ``src`` ``(N,3,2)``, ``dst`` ``(N,3,2)``, ``ids`` ``(N,)``
                 source-material index per triangle, and ``sources``: a list
                 indexed by those ids of ``{"maps": {channel: path},
-                "constants": {channel: tuple 0..1}}``.
+                "constants": {channel: tuple 0..1}}``, plus an optional
+                ``"scales": {channel: factor}`` -- multiplied into that
+                source's texels as they load, for a map stored on a different
+                scale from the one this channel's output is read on (a
+                host-side gain the output's wiring will not reapply).
             output_dir: Folder the PNGs are written into (created).
             channels: Channels to transfer; default = every channel any
                 contributing source has a MAP for (constants alone do not
@@ -925,6 +974,10 @@ class UvTransfer(HelpMixin):
                     path = sources[sid].get("maps", {}).get(channel)
                     if path and os.path.isfile(path):
                         loaded[sid] = cls.load_map(path)
+                        scale = sources[sid].get("scales", {}).get(channel)
+                        if scale is not None and scale != 1.0:
+                            arr, vmax = loaded[sid]
+                            loaded[sid] = (np.clip(arr * scale, 0.0, vmax), vmax)
                     elif path:
                         missing.append(os.path.basename(path))
                 if missing:
@@ -940,10 +993,10 @@ class UvTransfer(HelpMixin):
                     )
                 if not loaded:
                     continue
-                if channel == "normal":
+                if channel in cls.NORMAL_CHANNELS:
                     conv = cls._unify_normal_conventions(
                         loaded,
-                        {sid: sources[sid]["maps"]["normal"] for sid in loaded},
+                        {sid: sources[sid]["maps"][channel] for sid in loaded},
                         ids,
                         dst_tris,
                         override=normal_convention,
@@ -977,7 +1030,7 @@ class UvTransfer(HelpMixin):
                     if const is None:
                         const = cls.NEUTRAL[channel]
                     sources_for[sid] = tuple(float(c) * value_max for c in const)
-                if channel == "normal":
+                if channel in cls.NORMAL_CHANNELS:
                     img, cov = cls.transfer_normals(
                         table,
                         sources_for,
@@ -992,6 +1045,7 @@ class UvTransfer(HelpMixin):
                         table,
                         sources,
                         say=say_layout,
+                        channel=channel,
                     )
                 else:
                     img, cov = cls.transfer(
@@ -1666,6 +1720,7 @@ class UvTransfer(HelpMixin):
         table: TransferTable,
         sources: Sequence[Dict[str, Any]],
         say: Callable[[str], None],
+        channel: str = "normal",
     ) -> None:
         """Say which source maps put texels that are no tangent-space normal --
         Z below zero, pointing into the surface: a black, unpainted background
@@ -1682,13 +1737,13 @@ class UvTransfer(HelpMixin):
         tri = table.tri[0][bad]
         sids = sorted({int(s) for s in table.source_ids[tri[tri >= 0]]})
         names = [
-            os.path.basename(sources[s].get("maps", {}).get("normal") or "")
+            os.path.basename(sources[s].get("maps", {}).get(channel) or "")
             or str(sources[s].get("name") or s)
             for s in sids
         ]
         share = float(bad.sum()) / max(int((coverage > 0).sum()), 1)
         say(
-            f"WARNING normal: {share:.1%} of the map reads texels that are no "
+            f"WARNING {channel}: {share:.1%} of the map reads texels that are no "
             f"tangent-space normal (Z below zero: black or unpainted) in "
             f"{', '.join(names)}; transferred as they are."
         )

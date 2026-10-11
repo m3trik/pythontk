@@ -15,6 +15,7 @@ import contextlib
 import os
 import shutil
 import struct
+import subprocess
 import unittest
 from unittest import mock
 
@@ -669,6 +670,74 @@ class Ktx2EncoderIntegrationTest(_TempDirTestCase):
         )
         with open(out, "rb") as fh:
             self.assertEqual(fh.read(12), Ktx2Encoder.KTX2_MAGIC)
+
+
+class Ktx2DecodeTest(_TempDirTestCase):
+    """KTX2 -> PNG through KTX-Software's ``ktx`` -- the way back for a host
+    that cannot read KTX2 (Maya, Blender's glTF importer, Pillow)."""
+
+    def test_ktx_is_found_beside_toktx(self):
+        exe = "ktx.exe" if os.name == "nt" else "ktx"
+        open(os.path.join(self.out_dir, exe), "wb").close()
+        toktx = os.path.join(self.out_dir, "toktx")
+        with (
+            mock.patch("shutil.which", return_value=None),
+            mock.patch.object(Ktx2Encoder, "resolve_toktx", return_value=toktx),
+        ):
+            self.assertEqual(Ktx2Encoder.resolve_ktx(), os.path.join(self.out_dir, exe))
+
+    def test_no_tool_is_a_named_error(self):
+        with mock.patch.object(Ktx2Encoder, "resolve_ktx", return_value=None):
+            with self.assertRaises(FileNotFoundError) as ctx:
+                Ktx2Encoder.decode("in.ktx2", "out.png")
+        self.assertIn("KTX-Software", str(ctx.exception))
+
+    def test_a_batch_reports_each_image_in_order(self):
+        """One bad image costs its own slot, never the batch."""
+
+        def decode(source, output, ktx=None, timeout=None):
+            if "bad" in source:
+                raise RuntimeError("ktx could not decode")
+            return output
+
+        with mock.patch.object(Ktx2Encoder, "decode", side_effect=decode):
+            results = Ktx2Encoder.decode_all(
+                [("a.ktx2", "a.png"), ("bad.ktx2", "b.png"), ("c.ktx2", "c.png")],
+                ktx="ktx",
+            )
+        self.assertEqual(results[0], "a.png")
+        self.assertIsInstance(results[1], RuntimeError)
+        self.assertEqual(results[2], "c.png")
+        self.assertEqual(Ktx2Encoder.decode_all([]), [])
+
+    def test_a_batch_without_the_tool_names_the_fix_per_image(self):
+        with mock.patch.object(Ktx2Encoder, "resolve_ktx", return_value=None):
+            results = Ktx2Encoder.decode_all([("a.ktx2", "a.png"), ("b.ktx2", "b.png")])
+        self.assertTrue(all(isinstance(r, FileNotFoundError) for r in results))
+
+    def test_a_timeout_is_a_decode_failure(self):
+        """A hung ``ktx`` costs its image: RuntimeError, which a caller already
+        reports per image -- TimeoutExpired would have aborted a whole glTF."""
+        with mock.patch(
+            "pythontk.core_utils.app_launcher.AppLauncher.run",
+            side_effect=subprocess.TimeoutExpired("ktx", 1),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "timed out"):
+                Ktx2Encoder.decode("in.ktx2", "out.png", ktx="ktx", timeout=1)
+
+    @unittest.skipUnless(
+        Ktx2Encoder.available() and Ktx2Encoder.resolve_ktx(), "KTX-Software absent"
+    )
+    def test_real_round_trip_returns_the_pixels(self):
+        ktx2 = os.path.join(self.out_dir, "c.ktx2")
+        Ktx2Encoder().encode(
+            Image.new("RGB", (16, 16), (128, 64, 32)), ktx2, codec="UASTC"
+        )
+        png = Ktx2Encoder.decode(ktx2, os.path.join(self.out_dir, "c.png"))
+        with Image.open(png) as im:
+            self.assertEqual(im.size, (16, 16))
+            r, g, b = im.convert("RGB").getpixel((8, 8))
+        self.assertLess(abs(r - 128) + abs(g - 64) + abs(b - 32), 12)
 
 
 if __name__ == "__main__":

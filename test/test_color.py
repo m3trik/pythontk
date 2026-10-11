@@ -415,6 +415,27 @@ class TestPalette(unittest.TestCase):
         for key in ("bg", "text", "accent", "text_dim", "border"):
             self.assertIn(key, p)
 
+    def test_tags_palette_is_eight_distinct_neutral_slots(self):
+        """Saved data stores the slot names, so they are part of the
+        contract: neutral (never a hue a user may recolour away), ordered,
+        and each a distinct colour."""
+        p = self._cls().tags()
+        self.assertEqual(list(p), [f"tag{i}" for i in range(1, 9)])
+        self.assertEqual(len({c.hex for c in p.values()}), 8)
+
+    def test_contrast_order_uses_every_key_once_far_from_its_neighbour(self):
+        Palette = self._cls()
+        self.assertEqual(
+            Palette.contrast_order(list(Palette.tags())),
+            ["tag1", "tag4", "tag7", "tag2", "tag5", "tag8", "tag3", "tag6"],
+        )
+        for n in range(5, 13):
+            order = Palette.contrast_order(range(n))
+            self.assertEqual(sorted(order), list(range(n)), f"{n} keys")
+            gaps = [min((a - b) % n, (b - a) % n) for a, b in zip(order, order[1:])]
+            self.assertGreater(min(gaps), 1, f"{n} keys: {order}")
+        self.assertEqual(Palette.contrast_order(["a", "b", "c"]), ["a", "b", "c"])
+
 
 class TestPaletteWritePaths(unittest.TestCase):
     """``Palette`` wrapped on ``__init__``/``__setitem__`` only.

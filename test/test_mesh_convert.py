@@ -3783,22 +3783,38 @@ class TestFbxHandoff(unittest.TestCase):
             "the block does not describe itself",
         )
 
-    def test_states_that_the_lightmaps_are_not_embedded(self):
+    def test_states_that_the_named_files_are_embedded(self):
         """The load-bearing sentence, and the whole reason this exists.
 
-        An FBX embeds what its MATERIALS reference; a lighting-only bake
+        An FBX embeds what its MATERIALS reference, and a lighting-only bake
         deliberately leaves its map unwired so the authored material survives.
-        So the maps the manifest names are the one part of the deliverable that
-        does not travel with it — measured on a delivered room, 23.0 MB of a
-        23.5 MB file was embedded material textures and none of it the
-        lightmap. Unstated, that is a surprise the recipient has to be told
-        about out of band, which is exactly what a handoff block is for.
+        So the maps the manifest names were the one part of the deliverable
+        that did not travel with it -- measured on a delivered room, 23.0 MB
+        of a 23.5 MB file was material textures and none of it the lightmap --
+        and the block said they were "supplied separately". Since 2026-10-05
+        every deliverable embeds each file a record names by file name
+        (``FbxMedia.embed_dependencies``; the GLB always did), so the block
+        must say the name joins to the copy INSIDE the file.
         """
         text = MeshConvert.FBX_HANDOFF_INSTRUCTIONS
-        self.assertIn("NOT", text)
-        self.assertIn("embedded", text)
+        self.assertIn("embeds", text)
+        self.assertIn("FILE NAME", text)
+        self.assertIn("join token", text)
+        self.assertIn("probe", text)
+        # Stamped on EVERY carrier-bearing write (File > Export and the Game
+        # Exporter too), while only the delivering writers embed: the claim
+        # holds for a delivered file and says what a name joins to otherwise.
+        self.assertIn("A delivered file embeds", text)
+        self.assertIn("where the file holds no copy", text)
+        self.assertNotIn("supplied separately", text)
+        self.assertNotIn("NOT embedded", text)
         self.assertIn("lightmapInfo", text)
         self.assertIn("scaleOffset", text)
+        # The bake commits a non-1.0 intensity INTO the texels (both readers,
+        # Unity and the GLB, apply the map as stored): a reader told it is a
+        # multiplier "restoring the bake's range" would apply it twice.
+        self.assertIn("already carry", text)
+        self.assertNotIn("restoring the bake's range", text)
         # No asset key is carried, so the text must not lean on one.
         self.assertNotIn("named by 'asset'", text)
         block = MeshConvert.build_fbx_handoff(["lightmap_metadata"])
@@ -6678,6 +6694,7 @@ class _FakeKtx2Encoder:
                 "srgb": srgb,
                 "quality": quality,
                 "size": getattr(source, "size", None),
+                "image": source,
                 "rdo": uastc_rdo,
                 "rdo_dictionary": uastc_rdo_dictionary,
             }
@@ -7178,7 +7195,50 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         MeshConvert.optimize_glb_textures(path, max_size=0, image_format="KTX2")
         self.assertEqual(self.fake.calls[0]["size"], (64, 32))
 
-    def _ktx2_lightmap_glb(self):
+    def test_a_normal_map_is_resampled_as_one(self):
+        """The pass resamples a normal-slot image in float and renormalises it
+        (``ImgUtils.resize_image(normal_map=True)``), in every container: a
+        plain 8-bit Lanczos clips its overshoot at a crease and bends those
+        normals (measured on a production 4K atlas halved: 0.07% of texels
+        off by more than 3 degrees, the worst 56)."""
+        import base64
+
+        from conftest import hard_edge_normal_map, unit_length_error
+
+        buffer = io.BytesIO()
+        hard_edge_normal_map((64, 64)).save(buffer, format="PNG")
+        uri = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode(
+            "ascii"
+        )
+
+        def glb(name):
+            return self._glb(
+                {
+                    "asset": {"version": "2.0"},
+                    "images": [{"name": "normal", "uri": uri}],
+                    "textures": [{"source": 0}],
+                    "materials": [{"normalTexture": {"index": 0}}],
+                },
+                name=name,
+            )
+
+        MeshConvert.optimize_glb_textures(
+            glb("k.glb"), max_size=32, image_format="KTX2"
+        )
+        (call,) = self.fake.calls
+        self.assertEqual(call["size"], (32, 32))
+        self.assertLess(unit_length_error(call["image"]), 0.01)
+
+        from PIL import Image
+
+        path = glb("w.glb")
+        MeshConvert.optimize_glb_textures(path, max_size=27, image_format="WEBP")
+        edit = MeshConvert._read_glb(path)
+        with Image.open(io.BytesIO(self._payload(edit, edit.gltf["images"][0]))) as im:
+            self.assertEqual(im.size, (27, 27))
+            self.assertLess(unit_length_error(im), 0.01)
+
+    def _ktx2_lightmap_glb(self, lightmap_size=(128, 128)):
         """A KTX2-mode scene with one ordinary map and one exempt lightmap."""
         return self._glb(
             {
@@ -7188,7 +7248,10 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
                 },
                 "images": [
                     {"name": "source.png", "uri": self._png_uri(color=(10, 200, 30))},
-                    {"name": "room_Lightmap.png", "uri": self._png_uri()},
+                    {
+                        "name": "room_Lightmap.png",
+                        "uri": self._png_uri(size=lightmap_size),
+                    },
                 ],
                 "textures": [{"source": 0}, {"source": 1}],
                 "materials": [
@@ -7197,52 +7260,75 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
             }
         )
 
-    def test_lightmap_stays_core_readable_when_fallbacks_are_on(self):
-        """The bake never takes a Basis codec, so it needs a container of its own
-        -- and in the "opens in any reader" mode that container must be one glTF
-        core can read.
+    def _lightmap_call(self, size):
+        """The one encode the fake saw at *size* -- the lightmap's own edge."""
+        calls = [call for call in self.fake.calls if call["size"] == size]
+        self.assertEqual(len(calls), 1, self.fake.calls)
+        return calls[0]
 
-        This previously shipped the lightmap as WebP and bound it through
-        EXT_texture_webp with the plain ``source`` pointing at the SAME image,
-        calling that a fallback. glTF 2.0 core permits image/jpeg and image/png
-        only, so with the extension merely *used* the file advertised itself as
-        readable by anyone while a core reader resolved the texture to WebP.
-        Measured on a delivered room: both lightmap textures shipped that way.
+    def test_a_pot_lightmap_takes_uastc_srgb_at_its_own_size(self):
+        """KTX2 mode is the GPU-memory mode, and a lightmap atlas is one of the
+        larger resident images: a 2048 atlas is 22.4 MB as RGBA8 + mips, 5.6 MB
+        as UASTC. So it takes the Basis codec too -- UASTC, never ETC1S, and
+        never RDO (measured on production atlases: ETC1S 2-5x the error of the
+        lossless container, RDO 1.0 doubled the dark-quartile error), and still
+        exempt from the size ceiling the bake chose its resolution against.
+        """
+        path = self._ktx2_lightmap_glb()
+        MeshConvert.optimize_glb_textures(
+            path, max_size=64, image_format="KTX2", uastc_rdo=1.0
+        )
 
-        Carrying a real PNG twin alongside the WebP would cost MORE than the
-        PNG alone (103 KB + 209 KB vs 209 KB), so ``ktx2_fallback=True`` keeps
-        the lightmap on the core path and declares no extension for it at all.
+        edit = MeshConvert._read_glb(path)
+        gltf = edit.gltf
+        lightmap = gltf["images"][1]
+        self.assertEqual(lightmap["mimeType"], "image/ktx2")
+        self.assertEqual(
+            self._payload(edit, lightmap)[: len(self.fake.MAGIC)], self.fake.MAGIC
+        )
+        self.assertEqual(
+            gltf["textures"][1]["extensions"]["KHR_texture_basisu"]["source"], 1
+        )
+        self.assertNotIn("source", gltf["textures"][1])
+        self.assertNotIn("EXT_texture_webp", gltf.get("extensionsUsed", []))
+        self.assertIn("KHR_texture_basisu", gltf["extensionsRequired"])
+        call = self._lightmap_call((128, 128))
+        self.assertEqual(call["codec"], "UASTC")
+        self.assertTrue(call["srgb"])
+        self.assertIsNone(call["rdo"], "a lightmap never takes RDO")
+        self.assertIsNone(call["quality"])
+
+    def test_a_pot_lightmap_keeps_a_core_readable_twin_when_fallbacks_are_on(self):
+        """The "opens in any reader" mode gives the lightmap the same PNG twin
+        every other UASTC image gets, bound as the plain ``source``, so a stock
+        importer still reads it and basisu stays merely *used*.
         """
         path = self._ktx2_lightmap_glb()
         MeshConvert.optimize_glb_textures(
             path, max_size=64, image_format="KTX2", ktx2_fallback=True
         )
 
-        gltf = MeshConvert._read_glb(path).gltf
-        self.assertEqual(gltf["images"][0]["mimeType"], "image/ktx2")
-        self.assertNotEqual(
-            gltf["images"][1].get("mimeType"),
-            "image/webp",
-            "a fallback-mode lightmap must stay core-readable",
-        )
-        self.assertNotIn("extensions", gltf["textures"][1])
-        self.assertIsNotNone(gltf["textures"][1].get("source"))
-        self.assertNotIn("EXT_texture_webp", gltf.get("extensionsUsed", []))
-        self.assertNotIn("EXT_texture_webp", gltf.get("extensionsRequired", []))
-        # The whole point of the fallback mode: a stock importer opens it.
+        edit = MeshConvert._read_glb(path)
+        gltf = edit.gltf
+        self.assertEqual(gltf["images"][1]["mimeType"], "image/ktx2")
+        texture = gltf["textures"][1]
+        self.assertEqual(texture["extensions"]["KHR_texture_basisu"]["source"], 1)
+        twin = gltf["images"][texture["source"]]
+        self.assertEqual(twin["mimeType"], "image/png")
+        self.assertEqual(self._payload(edit, twin)[:4], b"\x89PNG")
         self.assertNotIn("KHR_texture_basisu", gltf.get("extensionsRequired", []))
-        # The encoder saw only the source image — never the lightmap.
-        self.assertEqual(len(self.fake.calls), 1)
+        self.assertNotIn("EXT_texture_webp", gltf.get("extensionsUsed", []))
 
-    def test_lightmap_takes_lossless_webp_in_pure_delivery_mode(self):
-        """With no fallbacks the wire is the whole budget, so the lightmap takes
-        the smallest lossless container -- and the file SAYS it needs it.
+    def test_a_non_pot_lightmap_takes_lossless_webp_in_pure_delivery_mode(self):
+        """A lightmap is never resampled, and KHR_texture_basisu wants POT
+        edges, so an off-size atlas keeps the smallest lossless container --
+        and the file SAYS it needs it.
 
         Lossy WebP is YUV 4:2:0, which blotches near-black lightmap texels, so
-        the encode stays lossless either way; what changes is that nothing here
-        is core-readable any more, which ``extensionsRequired`` must declare.
+        the encode stays lossless; nothing here is core-readable any more,
+        which ``extensionsRequired`` must declare.
         """
-        path = self._ktx2_lightmap_glb()
+        path = self._ktx2_lightmap_glb(lightmap_size=(96, 48))
         MeshConvert.optimize_glb_textures(
             path, max_size=64, image_format="KTX2", ktx2_fallback=False
         )
@@ -7263,7 +7349,60 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         for ext in ("EXT_texture_webp", "KHR_texture_basisu"):
             self.assertIn(ext, gltf["extensionsUsed"])
             self.assertIn(ext, gltf["extensionsRequired"])
-        # The encoder saw only the source image — never the lightmap.
+        # The encoder saw only the source image -- never the lightmap.
+        self.assertEqual(len(self.fake.calls), 1)
+
+    def test_a_non_pot_lightmap_stays_core_readable_when_fallbacks_are_on(self):
+        """An off-size lightmap needs a container of its own -- and in the
+        "opens in any reader" mode that container must be one glTF core can
+        read.
+
+        This previously shipped the lightmap as WebP and bound it through
+        EXT_texture_webp with the plain ``source`` pointing at the SAME image,
+        calling that a fallback. glTF 2.0 core permits image/jpeg and image/png
+        only, so with the extension merely *used* the file advertised itself as
+        readable by anyone while a core reader resolved the texture to WebP.
+        Measured on a delivered room: both lightmap textures shipped that way.
+
+        Carrying a real PNG twin alongside the WebP would cost MORE than the
+        PNG alone (103 KB + 209 KB vs 209 KB), so ``ktx2_fallback=True`` keeps
+        the lightmap on the core path and declares no extension for it at all.
+        """
+        path = self._ktx2_lightmap_glb(lightmap_size=(96, 48))
+        MeshConvert.optimize_glb_textures(
+            path, max_size=64, image_format="KTX2", ktx2_fallback=True
+        )
+
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertEqual(gltf["images"][0]["mimeType"], "image/ktx2")
+        self.assertNotEqual(
+            gltf["images"][1].get("mimeType"),
+            "image/webp",
+            "a fallback-mode lightmap must stay core-readable",
+        )
+        self.assertNotIn("extensions", gltf["textures"][1])
+        self.assertIsNotNone(gltf["textures"][1].get("source"))
+        self.assertNotIn("EXT_texture_webp", gltf.get("extensionsUsed", []))
+        self.assertNotIn("EXT_texture_webp", gltf.get("extensionsRequired", []))
+        # The whole point of the fallback mode: a stock importer opens it.
+        self.assertNotIn("KHR_texture_basisu", gltf.get("extensionsRequired", []))
+        # The encoder saw only the source image -- never the lightmap.
+        self.assertEqual(len(self.fake.calls), 1)
+
+    def test_lightmap_basis_none_keeps_every_lightmap_lossless(self):
+        """``LIGHTMAP_BASIS = None`` is the policy's off switch: a POT lightmap
+        then ships exactly as an off-size one does, and the encoder never sees
+        it."""
+        path = self._ktx2_lightmap_glb()
+        with patch.object(MeshConvert, "LIGHTMAP_BASIS", None):
+            MeshConvert.optimize_glb_textures(
+                path, max_size=64, image_format="KTX2", ktx2_fallback=False
+            )
+
+        edit = MeshConvert._read_glb(path)
+        lightmap = edit.gltf["images"][1]
+        self.assertEqual(lightmap["mimeType"], "image/webp")
+        self.assertEqual(self._payload(edit, lightmap)[:4], b"RIFF")
         self.assertEqual(len(self.fake.calls), 1)
 
     def test_webp_then_ktx2_rerun_cleans_the_webp_declaration(self):
@@ -9272,6 +9411,26 @@ class TestApplyGlbFades(unittest.TestCase):
         self.assertEqual(self._pointer_channels(path, "Shot_5"), [])
         self.assertEqual(len(self._pointer_channels(path, "Shot_1")), 1)
 
+    def test_a_partial_alpha_held_through_a_clip_is_written(self):
+        """A clip that HOLDS an alpha other than 0 or 1 still renders it: a
+        shadow plane over a still prop bakes intensity x falloff as a constant
+        opacity, which unitytk plays -- dropped here, the web drew the plane at
+        the record's intensity alone. Held at 1 the material is as authored,
+        and held at 0 the gate hides the node, so only those two write nothing.
+        """
+        path = self._glb(ramp=[[8, 0.4], [1015, 0.4]])
+        MeshConvert.apply_glb_fades(path)
+        for clip in ("Shot_1", "Shot_5"):
+            channels = self._pointer_channels(path, clip)
+            self.assertEqual(len(channels), 1, clip)
+            _pointer, _times, values = channels[0]
+            self.assertTrue(all(abs(v[3] - 0.4) < 1e-6 for v in values), values)
+        with MeshConvert.open_glb(path) as edit:
+            blended = [
+                m for m in edit.gltf["materials"] if m.get("alphaMode") == "BLEND"
+            ]
+            self.assertTrue(blended, "the faded copy blends")
+
     def test_a_second_fade_pass_is_a_no_op(self):
         """The file's own channels are the statement; a re-run must not clone
         the clones and stack a second channel on every material."""
@@ -9448,6 +9607,28 @@ class TestDataExportOverlay(unittest.TestCase):
         self.assertNotIn(
             "visibility_tracks",
             gltf["nodes"][0]["extras"]["fromFBX"]["userProperties"],
+        )
+
+    def test_the_scenes_own_carrier_wins_over_a_referenced_modules(self):
+        """An assembly export carries one ``NS:data_export`` per referenced
+        module beside the scene's own carrier, in whatever order the writer
+        put them. Every reader -- this one and unitytk's importers -- takes
+        the scene's own (no namespace) first, so the two deliverables of one
+        export read the same record; a module's is read only where the
+        scene's carries no such channel."""
+        module = self._carrier(lightmap_metadata={"from": "module"})
+        module["name"] = "LAMP:data_export"
+        module_only = self._carrier(shot_metadata={"from": "module"})
+        module_only["name"] = "LAMP:data_export"
+        scene = self._carrier(lightmap_metadata={"from": "scene"})
+        gltf = {"nodes": [module, module_only, scene]}
+        self.assertEqual(
+            MeshConvert.data_export_channel(gltf, "lightmap_metadata"),
+            {"from": "scene"},
+        )
+        self.assertEqual(
+            MeshConvert.data_export_channel(gltf, "shot_metadata"),
+            {"from": "module"},
         )
 
     def test_none_clears_a_channel_and_leaves_the_rest(self):
@@ -9708,9 +9889,15 @@ class TestApplyGlbHighlight(unittest.TestCase):
         animations=None,
         takes=None,
         hl_dim=None,
+        pulse=None,
+        name="highlight.glb",
     ):
         """FADER (fades) and HL (highlights), each on its own material."""
-        hl = {"node": "HL", "highlight": self.PULSE, "highlight_color": self.BLUE}
+        hl = {
+            "node": "HL",
+            "highlight": self.PULSE if pulse is None else pulse,
+            "highlight_color": self.BLUE,
+        }
         if hl_dim is not None:
             hl["highlight_color_dim"] = hl_dim
         if hl_visibility:
@@ -9748,6 +9935,7 @@ class TestApplyGlbHighlight(unittest.TestCase):
                 {"primitives": [{"attributes": {}, "material": 0}]},
                 {"primitives": [{"attributes": {}, "material": 1}]},
             ],
+            name=name,
             animations=animations,
             takes=takes,
         )
@@ -9763,6 +9951,26 @@ class TestApplyGlbHighlight(unittest.TestCase):
         return alpha, emissive
 
     # ------------------------------------------------------------------ tests
+    def test_a_glow_held_through_a_clip_is_written(self):
+        """A highlight held at a non-zero intensity glows in unitytk all clip
+        long; the web dropped it as "not moving" and drew no glow at all."""
+        path = self._two_objects(pulse=[[8, 0.5], [23, 0.5]])
+        MeshConvert.apply_glb_fades(path)
+        _alpha, emissive = self._by_kind(self._pointer_channels(path))
+        self.assertEqual(len(emissive), 1)
+
+    def test_a_held_zero_glows_only_over_a_coloured_low_stop(self):
+        """At intensity 0 the highlight adds its LOW stop: nothing over black,
+        so nothing is written -- but a coloured LOW glows (unitytk adds it at
+        rest), so the held zero is written like any other value."""
+        rest = [[8, 0.0], [23, 0.0]]
+        path = self._two_objects(pulse=rest, name="black.glb")
+        MeshConvert.apply_glb_fades(path)
+        self.assertEqual(self._by_kind(self._pointer_channels(path))[1], [])
+        path = self._two_objects(pulse=rest, hl_dim=[0.1, 0.0, 0.0], name="red.glb")
+        MeshConvert.apply_glb_fades(path)
+        self.assertEqual(len(self._by_kind(self._pointer_channels(path))[1]), 1)
+
     def test_a_file_with_no_animations_gets_a_clip_for_its_channels(self):
         """The WebXR preview exports with animation OFF, so FBX2glTF writes no
         clip at all -- and a highlight-only prop then had nothing to ride on
@@ -11954,6 +12162,89 @@ class TestFacadeLayout(unittest.TestCase):
             channels = glb_fades.CHANNELS
         self.assertIs(channels, ptk.GlbFades.CHANNELS)
         self.assertIn("highlight", channels)
+
+
+class TestDecodeGlbTextures(unittest.TestCase):
+    """A copy of a GLB with its KTX2 images decoded to PNG.
+
+    REGRESSION (2026-10-09): Blender 5.1's glTF importer refuses a file that
+    REQUIRES ``KHR_texture_basisu`` ("Extension KHR_texture_basisu is not
+    available on this addon version") -- every KTX2 deliverable -- so tentacle's
+    Import glTF failed in Blender, and the Maya pull through headless Blender
+    with it. The decoded copy is what both now hand to Blender.
+    """
+
+    def setUp(self):
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+        from test_gltf2fbx import scene_builder
+
+        self.temp = TempArtifacts("test_decode_glb_textures", policy="scoped")
+        self.addCleanup(self.temp.cleanup)
+        self.builder = scene_builder(animated=False)
+        self.src = self.temp.path(extension=".glb")
+        self.dst = self.temp.path(extension=".glb")
+
+    def _ktx2_only(self):
+        """Texture 0 reaches its image through the extension alone."""
+        from PIL import Image
+
+        ktx2 = self.temp.path(extension=".ktx2")
+        Ktx2Encoder().encode(
+            Image.new("RGB", (8, 8), (200, 10, 10)), ktx2, codec="ETC1S"
+        )
+        with open(ktx2, "rb") as fh:
+            index = self.builder.image(fh.read(), "albedo.ktx2")
+        self.builder.gltf["images"][index]["mimeType"] = "image/ktx2"
+        self.builder.gltf["textures"][0] = {
+            "extensions": {"KHR_texture_basisu": {"source": index}}
+        }
+        self.builder.gltf["extensionsUsed"] = ["KHR_texture_basisu"]
+        self.builder.gltf["extensionsRequired"] = ["KHR_texture_basisu"]
+        return self.builder.write_glb(self.src)
+
+    def test_a_file_every_importer_reads_needs_no_copy(self):
+        self.builder.write_glb(self.src)
+        self.assertIsNone(MeshConvert.decode_glb_textures(self.src, self.dst))
+        self.assertFalse(os.path.exists(self.dst))
+
+    def test_a_core_fallback_beside_the_extension_needs_no_copy(self):
+        self.builder.gltf["textures"][0]["extensions"] = {
+            "KHR_texture_basisu": {"source": 1}
+        }
+        self.builder.write_glb(self.src)
+        self.assertIsNone(MeshConvert.decode_glb_textures(self.src, self.dst))
+
+    @unittest.skipUnless(
+        Ktx2Encoder.available() and Ktx2Encoder.resolve_ktx(), "KTX-Software absent"
+    )
+    def test_ktx2_only_textures_are_decoded_in_place(self):
+        from pythontk.file_utils.mesh_convert.glb.reader import GlbReader
+
+        src = self._ktx2_only()
+        before = open(src, "rb").read()
+        out = MeshConvert.decode_glb_textures(src, self.dst)
+        self.assertEqual(out, self.dst)
+        reader = GlbReader.load(out)
+        self.assertEqual(reader.extensions(), ([], []))
+        texture = reader.gltf["textures"][0]
+        self.assertNotIn("extensions", texture)
+        image = reader.gltf["images"][texture["source"]]
+        self.assertEqual(image["mimeType"], "image/png")
+        data = MeshConvert.GlbEdit.read(out).image_bytes(image)
+        self.assertEqual(bytes(data[:8]), b"\x89PNG\r\n\x1a\n")
+        # Geometry untouched; the source never is.
+        self.assertEqual(reader.counts()["accessors"], len(self.builder.accessors))
+        self.assertEqual(open(src, "rb").read(), before)
+
+    def test_without_the_tool_nothing_is_left_behind(self):
+        self.builder.gltf["textures"][0] = {
+            "extensions": {"KHR_texture_basisu": {"source": 0}}
+        }
+        self.builder.write_glb(self.src)
+        with patch.object(Ktx2Encoder, "resolve_ktx", return_value=None):
+            with self.assertRaises(FileNotFoundError):
+                MeshConvert.decode_glb_textures(self.src, self.dst)
+        self.assertFalse(os.path.exists(self.dst))
 
 
 if __name__ == "__main__":

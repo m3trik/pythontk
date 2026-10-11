@@ -2,15 +2,17 @@
 # coding=utf-8
 """The per-format write/read backends ``save_image`` / ``load_image`` dispatch to:
 block-compressed DDS, KTX2, 16-bit PNG, OpenCV float formats (EXR, HDR), and
-the lossy-encoder settings.
+the lossy-encoder settings -- plus OpenCV file IO that opens any path
+(``cv2_read`` / ``cv2_write`` / ``cv2_temp``).
 """
 
 from __future__ import annotations
 
 import os
 import struct
-from contextlib import contextmanager
-from typing import Optional
+import threading
+from contextlib import contextmanager, suppress
+from typing import Optional, Sequence
 
 try:
     import numpy as np
@@ -25,10 +27,10 @@ except ImportError:
 class _ImgCodecInternal:
     """Per-format encoders and decoders behind :class:`ImgUtils`' IO.
 
-    Reached through :meth:`ImgUtils.save_image` and :meth:`ImgUtils.load_image`
-    (an ``ImgUtils`` base, so the helpers resolve as ``ImgUtils._<name>`` and
-    read the format table and encoder registry off ``cls``); nothing here is
-    called directly.
+    Reached through :meth:`ImgUtils.save_image`, :meth:`ImgUtils.load_image`
+    and the ``ImgUtils.cv2_*`` file IO (an ``ImgUtils`` base, so the helpers
+    resolve as ``ImgUtils._<name>`` and read the format table and encoder
+    registry off ``cls``); nothing here is called directly.
     """
 
     @classmethod
@@ -205,8 +207,11 @@ class _ImgCodecInternal:
 
         Grayscale uses Pillow's ``I;16``; a colour PNG is written by
         :meth:`_write_png16` (standard library), a colour TIFF through OpenCV
-        ``uint16``. 8-bit sources are promoted (value*257); existing 16-bit
-        data is preserved.
+        ``uint16`` (:meth:`cv2_write`). 8-bit sources are promoted (value*257);
+        existing 16-bit data is preserved.
+
+        Raises:
+            OSError: the OpenCV TIFF write failed.
         """
         if bit_depth != 16:  # only 16 is supported here; 32-bit float = EXR/HDR.
             print(
@@ -240,7 +245,10 @@ class _ImgCodecInternal:
         except ImportError:
             return False
         code = cv2.COLOR_RGBA2BGRA if rgb.mode == "RGBA" else cv2.COLOR_RGB2BGR
-        cv2.imwrite(name, cv2.cvtColor(arr, code))
+        # cv2 reports a failed write by RETURNING False: unchecked, a TIFF that
+        # was never written read as saved.
+        if not cls.cv2_write(name, cv2.cvtColor(arr, code)):
+            raise OSError(f"Failed to write image: {name}")
         return True
 
     @staticmethod
@@ -271,13 +279,14 @@ class _ImgCodecInternal:
             fh.write(chunk(b"IDAT", zlib.compress(raw.tobytes(), 6)))
             fh.write(chunk(b"IEND", b""))
 
-    @staticmethod
-    def _save_via_cv2(im: "Image.Image", name: str) -> None:
+    @classmethod
+    def _save_via_cv2(cls, im: "Image.Image", name: str) -> None:
         """Write a PIL image to a float format (EXR, HDR) via OpenCV.
 
         Pillow cannot encode these. The source PIL image is 8-bit, so values
         are normalized to 0-1 float32 (the inverse of :meth:`_load_via_cv2`).
-        OpenEXR is enabled at module import (``OPENCV_IO_ENABLE_OPENEXR``).
+        OpenEXR is enabled at module import (``OPENCV_IO_ENABLE_OPENEXR``);
+        written with :meth:`cv2_write`, so any path will do.
 
         Raises:
             ImportError: cv2 unavailable (it is the only writer for these).
@@ -310,16 +319,16 @@ class _ImgCodecInternal:
             if os.path.splitext(name)[1].lower() == ".exr"
             else []
         )
-        if not cv2.imwrite(name, img_np, params):
+        if not cls.cv2_write(name, img_np, params):
             raise OSError(f"Failed to write image: {name}")
 
-    @staticmethod
-    def _load_via_cv2(filepath: str) -> "Image.Image":
+    @classmethod
+    def _load_via_cv2(cls, filepath: str) -> "Image.Image":
         """Read a float format (EXR, HDR) via OpenCV and return an 8-bit PIL image.
 
         Values are clipped to 0-1 and scaled to 8-bit, so the result is
         preview-grade — lossy for true HDR data. Consumers needing float
-        precision (e.g. lightmap baking) should read via cv2 directly.
+        precision (e.g. lightmap baking) should read with :meth:`cv2_read`.
         OpenEXR is enabled at module import (``OPENCV_IO_ENABLE_OPENEXR``).
         """
         try:
@@ -329,7 +338,7 @@ class _ImgCodecInternal:
                 f"OpenCV (cv2) is required to read '{os.path.splitext(filepath)[1]}' files."
             ) from e
 
-        img = cv2.imread(filepath, cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
+        img = cls.cv2_read(filepath, cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
         if img is None:
             raise OSError(f"OpenCV could not read image: {filepath}")
 
@@ -342,3 +351,111 @@ class _ImgCodecInternal:
         if img.shape[2] == 4:
             return Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA), mode="RGBA")
         return Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), mode="RGB")
+
+    # ------------------------------------------------------------------
+    # OpenCV file IO by any path. On Windows cv2 opens files -- and the
+    # scratch file its EXR/HDR codecs stage through the temp folder -- by a
+    # narrow (ANSI) path, so a path with any character outside ASCII fails.
+    # ------------------------------------------------------------------
+
+    #: :meth:`cv2_temp`'s one swap of TMP/TEMP, shared by every block open
+    #: at once (nested, or on an encode thread pool) and undone when the last
+    #: ends. Written through ``_ImgCodecInternal`` by name: through ``cls`` it
+    #: would shadow onto ``ImgUtils`` and leave a second, unguarded count.
+    _cv2_temp_lock = threading.Lock()
+    _cv2_temp_blocks = 0
+    _cv2_temp_saved: Optional[dict] = None
+
+    @staticmethod
+    def _cv2_temp_short() -> str:
+        """The temp folder OpenCV stages through, spelled short (8.3) in ASCII.
+
+        ``""`` when there is nothing to do: not Windows, a folder already
+        ASCII, or a volume that keeps no short names. Asks what OpenCV asks
+        (``GetTempPath``: ``TMP``, then ``TEMP``), not Python's
+        ``tempfile``, whose cached answer can name another folder.
+        """
+        if os.name != "nt":
+            return ""
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        buffer = ctypes.create_unicode_buffer(32768)
+        if not kernel32.GetTempPathW(len(buffer), buffer):
+            return ""
+        temp = buffer.value
+        if temp.isascii() or not kernel32.GetShortPathNameW(temp, buffer, len(buffer)):
+            return ""
+        return buffer.value if buffer.value.isascii() else ""
+
+    @staticmethod
+    @contextmanager
+    def cv2_temp():
+        """Body of :meth:`ImgUtils.cv2_temp`."""
+        shared = _ImgCodecInternal
+        with shared._cv2_temp_lock:
+            if not shared._cv2_temp_blocks:
+                short = shared._cv2_temp_short()
+                if short:
+                    shared._cv2_temp_saved = {
+                        key: os.environ.get(key) for key in ("TEMP", "TMP")
+                    }
+                    os.environ["TEMP"] = os.environ["TMP"] = short
+            shared._cv2_temp_blocks += 1
+        try:
+            yield
+        finally:
+            with shared._cv2_temp_lock:
+                shared._cv2_temp_blocks -= 1
+                saved = shared._cv2_temp_saved
+                if not shared._cv2_temp_blocks and saved is not None:
+                    shared._cv2_temp_saved = None
+                    for key, value in saved.items():
+                        if value is None:
+                            os.environ.pop(key, None)
+                        else:
+                            os.environ[key] = value
+
+    @classmethod
+    def cv2_read(cls, path, flags: Optional[int] = None):
+        """Body of :meth:`ImgUtils.cv2_read`."""
+        import cv2
+        import numpy as np
+
+        try:
+            data = np.fromfile(os.fspath(path), dtype=np.uint8)
+        except (OSError, ValueError):
+            return None
+        if not data.size:
+            return None
+        with cls.cv2_temp():
+            try:
+                return cv2.imdecode(data, cv2.IMREAD_COLOR if flags is None else flags)
+            except cv2.error:
+                return None
+
+    @classmethod
+    def cv2_write(cls, path, image, params: Optional[Sequence[int]] = None) -> bool:
+        """Body of :meth:`ImgUtils.cv2_write`."""
+        import cv2
+
+        path = os.fspath(path)
+        with cls.cv2_temp():
+            ok, data = cv2.imencode(
+                os.path.splitext(path)[1], image, [] if params is None else params
+            )
+        if not ok:
+            return False
+        try:
+            fh = open(path, "wb")
+        except OSError:
+            return False
+        try:
+            with fh:
+                fh.write(data.tobytes())
+        except OSError:
+            # A part-written file is no image: remove it, as cv2.imwrite does.
+            with suppress(OSError):
+                os.remove(path)
+            return False
+        return True

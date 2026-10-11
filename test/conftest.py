@@ -269,3 +269,33 @@ print(json.dumps({"error": None, "foreign": foreign}))
         result = json.loads(proc.stdout.strip().splitlines()[-1])
         self.assertIsNone(result["error"], f"{path} does not load standalone")
         self.assertEqual(result["foreign"], [], f"{path} imports beyond the stdlib")
+
+
+def hard_edge_normal_map(size=(64, 64), mode="RGB"):
+    """A tangent-space normal map with one hard vertical crease, as a PIL image.
+
+    Left half leans -X, right half +X, both unit length: a resample across the
+    crease is where a plain 8-bit Lanczos overshoots past 0/255 and clips,
+    bending the blended normals off unit length.
+    """
+    import numpy as np
+    from PIL import Image
+
+    w, h = size
+    lean = np.array([0.95, 0.0, (1 - 0.95**2) ** 0.5])
+    texels = np.empty((h, w, 3))
+    texels[:, : w // 2] = lean * [-1, 1, 1]
+    texels[:, w // 2 :] = lean
+    rgb = np.rint((texels + 1) * 127.5).astype(np.uint8)
+    image = Image.fromarray(rgb)
+    if mode == "RGBA":
+        image.putalpha(Image.new("L", size, 200))
+    return image
+
+
+def unit_length_error(image):
+    """Worst ``| |n| - 1 |`` over *image*'s texels decoded as normals."""
+    import numpy as np
+
+    rgb = np.asarray(image.convert("RGB"), dtype=np.float64) / 255.0 * 2 - 1
+    return float(np.abs(np.linalg.norm(rgb, axis=-1) - 1).max())

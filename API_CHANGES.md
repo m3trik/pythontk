@@ -1,156 +1,242 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ 96c11f8)._
+_Diff vs the last release (origin/main @ 9bb1a40)._
 
-## Added (117)
+## Added (167)
 
-- `core_utils/conformance.py::Conformance(class)`
-- `core_utils/conformance.py::Conformance.cases(cls, name: str, seed: int = 0, **options: Any) -> Dict[str, Any]`
-- `core_utils/conformance.py::Conformance.names(cls) -> List[str]`
-- `core_utils/conformance.py::Conformance.provider(cls, name: str) -> Any`
-- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.check_failure_html(self, check: str, messages: List[str], remaining: List[str]) -> str`
-- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.check_label(self, check: str) -> str`
-- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.decide_check_failure(self, check: str, messages: List[str], remaining: List[str]) -> str`
-- `core_utils/engines/scene_export/scene_records.py::SceneRecords.shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]`
-- `core_utils/engines/scene_export/scene_records.py::SceneRecords.web_projected(cls) -> List[RecordSpec]`
-- `core_utils/engines/scene_export/scene_records.py::SceneRecords.web_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]`
-- `core_utils/engines/scene_export/scene_records.py::WebProjection(class)`
-- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.owner(cls, key: str) -> Optional[Any]`
-- `core_utils/engines/shots/effect_recipe.py::EffectRecipe(class)`
-- `core_utils/engines/shots/effect_recipe.py::EffectRecipe.colors(self) -> Tuple[RGB, RGB]`
-- `core_utils/engines/shots/effect_recipe.py::EffectRecipe.effect_names(cls) -> List[str]`
-- `core_utils/engines/shots/effect_recipe.py::EffectRecipe.envelope(self, effect: str, place: Place = 'start', fps: Optional[float] = None) -> Dict[str, Dict[str, Dict[str, Any]]]`
-- `core_utils/engines/shots/effect_recipe.py::EffectRecipe.fingerprint(self, effect: str) -> str`
-- `core_utils/engines/shots/effect_recipe.py::EffectRecipe.from_dict(cls, data: Optional[Dict[str, Any]]) -> 'EffectRecipe'`
-- `core_utils/engines/shots/effect_recipe.py::EffectRecipe.plan(self, effect: str, start: float, end: float, fps: float, whole_frames: bool = True) -> List[Tuple[float, float]]`
-- `core_utils/engines/shots/effect_recipe.py::EffectRecipe.pulse_cadence(self, fps: float) -> Dict[str, float]`
-- `core_utils/engines/shots/effect_recipe.py::EffectRecipe.pulse_cycles(self, length: float) -> float`
-- `core_utils/engines/shots/effect_recipe.py::EffectRecipe.replace(self, **changes: Any) -> 'EffectRecipe'`
-- `core_utils/engines/shots/effect_recipe.py::EffectRecipe.to_dict(self) -> Dict[str, Any]`
-- `core_utils/engines/shots/effect_recipe.py::EffectRecipe.window(self, effect: str, start: float, end: float, place: Place = 'start', anchor: Optional[float] = None) -> Tuple[float, float]`
-- `core_utils/engines/shots/effect_recipe.py::RGB(constant)`
-- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::Behaviors.anchor_overrides(behaviors: List[str]) -> List[Optional[float]]`
-- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::Behaviors.apply_to_shots(shots: list, apply_fn: Callable, exists_fn: Optional[Callable] = None, has_keys_fn: Optional[Callable] = None, store: Any = None, resolve_fn: Optional[Callable[[str], str]] = None, conflict_fn: Optional[Callable] = None, release_fn: Optional[Callable] = None) -> Dict[str, list]`
-- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::Behaviors.detect(text: str, table: Optional[Dict[str, List[Any]]] = None) -> List[str]`
-- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::Behaviors.effect_of(behavior: Any) -> Optional[str]`
-- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::Behaviors.from_cell(cell: str, table: Optional[Dict[str, List[Any]]] = None) -> List[str]`
-- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::Behaviors.keyed(behavior: Any, recipe: Optional[EffectRecipe] = None, fps: Optional[float] = None) -> Dict[str, Any]`
-- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::Behaviors.phrase_table() -> Dict[str, List[Any]]`
-- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::Behaviors.place_of(tmpl: Dict[str, Any]) -> Any`
-- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::Behaviors.subjects(text: str, table: Optional[Dict[str, List[Any]]] = None) -> List[Tuple[str, str]]`
-- `core_utils/engines/shots/manifest/behaviors/_spec.py::BehaviorSpec.validate_detect(value: Any) -> List[str]`
-- `core_utils/engines/shots/manifest/behaviors/_spec.py::BehaviorSpec.validate_effect(value: Any) -> List[str]`
-- `core_utils/engines/shots/manifest/behaviors/_spec.py::BehaviorSpec.validate_place(value: Any) -> List[str]`
-- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.adopt_placed_clips(self) -> int`
-- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.fill_missing_assets(self, steps: List[BuilderStep]) -> Dict[str, List[str]]`
-- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.is_stale(self, shot_id: int, obj: str, behavior: str) -> bool`
-- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.pair(self, steps: List[BuilderStep]) -> ShotPairing`
-- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.reapply_object(self, shot, obj: BuilderObject) -> bool`
-- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.recipe(self)`
-- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.release_authored(self, shot_id: int, obj: str, behavior: str) -> int`
-- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.release_dropped(self, steps: List[BuilderStep]) -> int`
-- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.unowned_keys(self, obj: str, behavior: str, start: float, end: float) -> List[Tuple[str, float]]`
-- `core_utils/engines/shots/manifest/manifest_model.py::BuilderStep.from_shots(cls, shots: List[Any]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]`
-- `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column(source: str, fills: Dict[str, List[str]], columns: Optional['ColumnMap'] = None) -> List[str]`
-- `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard(cells: List[str]) -> Tuple[str, str]`
-- `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.prose_name(subject: str, case: str, rule: str) -> str`
-- `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.validate_patterns(value: Any) -> List[str]`
-- `core_utils/engines/shots/manifest/manifest_model.py::ShotPairing(class)`
-- `core_utils/engines/shots/manifest/manifest_model.py::StepStatus.needs_build(self) -> bool`
-- `core_utils/engines/shots/manifest/mapping/_mapping.py::Mapping.apply_options(mapping: Optional[Dict[str, Any]], values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]`
-- `core_utils/engines/shots/manifest/mapping/_mapping.py::Mapping.choice_values(opt: Dict[str, Any]) -> Tuple[Any, ...]`
-- `core_utils/engines/shots/manifest/mapping/_mapping.py::Mapping.option_specs(mapping: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]`
-- `core_utils/engines/shots/manifest/mapping/_mapping.py::Mapping.retired(name: str) -> Optional[Tuple[str, Dict[str, Any]]]`
-- `core_utils/engines/shots/manifest/mapping/_spec.py::MappingSpec.field_choices(path: str) -> Optional[Tuple[Any, ...]]`
-- `core_utils/engines/shots/manifest/mapping/_spec.py::MappingSpec.validate_match(value: Any) -> List[str]`
-- `core_utils/engines/shots/manifest/mapping/_spec.py::MappingSpec.validate_options(value: Any) -> List[str]`
-- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.authored(self, owner: Optional[int] = None, obj: Optional[str] = None, behavior: Optional[str] = None) -> List[Tuple[str, float]]`
-- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.authored_pairs(self, owner: int) -> set`
-- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.authored_stamps(self, owner: int, obj: str, behavior: str) -> set`
-- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.disown_absent(self, shot_ids: Iterable[int]) -> int`
-- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.owns_any(self, curve: str, time: float) -> bool`
-- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.owns_authored(self, curve: str, time: float) -> bool`
-- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.record_authored(self, curve: str, time: float, owner: int, behavior: str, obj: str, stamp: str = '') -> bool`
-- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.release_authored(self, curve: str, time: float) -> bool`
-- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.rename_curve(self, old: str, new: str) -> bool`
-- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.retime(self, ratio: float, offset: float = 0.0) -> int`
-- `core_utils/engines/shots/shot_model.py::ShotStore.member_key(node) -> str`
-- `core_utils/engines/shots/shot_model.py::ShotStore.resolve_member(self, name: str) -> Tuple[str, str]`
-- `core_utils/engines/shots/shot_model.py::ShotStore.update_effect_recipe(self, **changes: Any) -> bool`
-- `core_utils/engines/shots/shot_model.py::ShotStore.watch_settings(cls, callback: Callable[[], None]) -> Callable[[], None]`
-- `core_utils/schema_spec.py::SchemaSpec.json_schema(cls) -> Dict[str, Any]`
-- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_fbx_take_channels(self) -> List[Finding]`
-- `file_utils/mesh_convert/fbx_file.py::FbxFile.take_curves(self) -> Dict[str, Dict[Tuple[str, str, str], Tuple[Any, ...]]]`
-- `file_utils/mesh_convert/fbx_file.py::FbxFile.take_spans(self) -> Dict[str, Tuple[float, float]]`
-- `file_utils/tiled_path.py::TiledPath.rename(cls, path: str, new_name: str, dry_run: bool = False) -> List[Tuple[str, str]]`
-- `geo_utils/articulation/record.py::ArticulationChannel(class)`
-- `geo_utils/articulation/record.py::ArticulationGrab(class)`
-- `geo_utils/articulation/record.py::ArticulationJoint(class)`
-- `geo_utils/articulation/record.py::ArticulationRecord(class)`
-- `geo_utils/articulation/record.py::ArticulationRig(class)`
-- `geo_utils/articulation/record.py::ArticulationWeb(class)`
-- `geo_utils/articulation/record.py::ArticulationWebGrab(class)`
-- `geo_utils/articulation/record.py::ArticulationWebJoint(class)`
-- `geo_utils/articulation/record.py::ArticulationWebRig(class)`
-- `geo_utils/shadow_projection.py::ShadowConformance(class)`
-- `geo_utils/shadow_projection.py::ShadowConformance.case(cls, contact: Sequence[float], light: Optional[Sequence[float]] = None, *, direction: Optional[Sequence[float]] = None, ground: float = 0.0, radius: float = 0.5, height: float = 1.0, max_stretch: float = ShadowProjection.DEFAULT_MAX_STRETCH, canvas: Sequence[float] = CANVAS, name: str = '') -> Dict[str, Any]`
-- `geo_utils/shadow_projection.py::ShadowConformance.cases(cls, seed: int = 0, per_kind: int = 8) -> Dict[str, Any]`
-- `geo_utils/uv/transfer.py::UvTransfer.concatenation_order(cls, target, parts, tolerance: Optional[float] = None) -> Optional[List[int]]`
-- `geo_utils/uv/transfer.py::UvTransfer.dominant_source(cls, job: Dict[str, Any]) -> Optional[int]`
-- `geo_utils/uv/transfer.py::UvTransfer.find_combined(cls, face_counts: Sequence[int], read: Callable[[int], Tuple[Any, Any, Any]], tolerance: Optional[float] = None) -> Optional[Tuple[int, List[int]]]`
-- `geo_utils/uv/transfer.py::UvTransfer.layout_jobs(cls, parts: Sequence[Dict[str, Any]], sources: Sequence[Dict[str, Any]], *, log: Optional[Callable[[str], None]] = None) -> Dict[str, Dict[str, Any]]`
-- `geo_utils/uv/transfer.py::UvTransfer.layout_overlaps(cls, uv_tris, points, size: int = 256) -> Tuple[int, int]`
-- `geo_utils/uv/transfer.py::UvTransfer.layouts_match(cls, src_tris, dst_tris, tolerance: Optional[float] = None) -> bool`
-- `geo_utils/uv/transfer.py::UvTransfer.output_labels(labels: Sequence[str], base: str, *, prefix: str = '', suffix: str = '') -> Dict[str, str]`
-- `geo_utils/uv/transfer.py::UvTransfer.remap_lightmap(cls, image, src_tris, dst_tris, *, scale_offset: Optional[Sequence[float]] = None, size: Optional[int] = None, supersample: int = 2, padding: int = -1) -> 'np.ndarray'`
-- `geo_utils/uv/transfer.py::UvTransfer.resample_lightmaps(cls, jobs: Sequence[Dict[str, Any]], *, output_dir: str, read, write, output_name: Optional[str] = None, claims=None, size: Optional[int] = None, supersample: int = 2, padding: int = -1, log=None) -> Dict[str, str]`
-- `img_utils/_img_utils.py::ImgUtils.convert_scene_linear(cls, image, src, dst='scene-linear Rec.709-sRGB', bgr=False)`
-- `img_utils/_img_utils.py::ImgUtils.crop_to_uv_bbox(img: 'np.ndarray', bbox: Optional[Tuple[float, float, float, float]], cell: Sequence[float], max_coverage: float = 0.85) -> Tuple['np.ndarray', List[float], Tuple[float, float, float, float]]`
-- `img_utils/_img_utils.py::ImgUtils.detect_normal_map_format(cls, image: Union[str, 'Image.Image'], threshold: float = 0.25, min_gradient_std: float = 1.0) -> Optional[str]`
-- `img_utils/_img_utils.py::ImgUtils.encode_hdr_radiance(cls, path) -> bytes`
-- `img_utils/_img_utils.py::ImgUtils.extrapolate_fill(cls, image: 'np.ndarray', mask: 'np.ndarray', rings: int = 1, clamp: float = 2.0) -> Tuple['np.ndarray', 'np.ndarray']`
-- `img_utils/_img_utils.py::ImgUtils.get_image_mode(image_path: str) -> Optional[str]`
-- `img_utils/_img_utils.py::ImgUtils.quantize_8bit(cls, unit)`
-- `img_utils/_img_utils.py::ImgUtils.resize_into_cell(cls, image: 'np.ndarray', size: Tuple[int, int], coverage: Optional['np.ndarray'] = None, edge_centers: bool = True) -> Tuple['np.ndarray', 'np.ndarray']`
-- `img_utils/_img_utils.py::ImgUtils.stitch_seams(cls, image: 'np.ndarray', pairs: 'np.ndarray', iterations: int = 64) -> 'np.ndarray'`
-- `img_utils/_img_utils.py::ImgUtils.texture_facts(cls, path: str, fields: Sequence[str] = TEXTURE_FACTS) -> Dict[str, Any]`
-- `img_utils/_img_utils.py::ImgUtils.uv_crop_extent(bbox: Optional[Tuple[float, float, float, float]], max_coverage: float = 0.85) -> Tuple[float, float]`
-- `math_utils/_math_utils.py::MathUtils.metres_per_unit(cls, unit: str, default: Optional[float] = None) -> Optional[float]`
-- `net_utils/preview/routes.py::SCENE_PATH(constant)`
-- `net_utils/preview/server.py::PreviewServer.describe_scene(self, section: Optional[str] = None, start: int = 0) -> Dict[str, Any]`
-- `net_utils/preview/server.py::PreviewServer.scene_url(self) -> Optional[str]`
-- `str_utils/_str_utils.py::StrUtils.apply_name_rule(cls, name: str, rule: str) -> str`
-- `str_utils/_str_utils.py::StrUtils.common_name(paths, *, sep: str = '|', strip=(), max_length: int = 32) -> str`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.create_shortcut(name: str, target: str, args: Optional[Sequence[str]] = None, location: str = 'desktop', icon: Optional[str] = None, working_dir: Optional[str] = None, comment: Optional[str] = None, app_id: Optional[str] = None) -> str`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.windowless_python(executable: Optional[str] = None) -> Optional[str]`
+- `core_utils/color.py::Palette.contrast_order(keys: Sequence[str]) -> List[str]`
+- `core_utils/color.py::Palette.tags(cls) -> 'Palette'`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportSnapshot.restore_scene_wide(self, store) -> Optional['ExportSnapshot']`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.store_dir(cls, export_path: str) -> str`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits(class)`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.add_step(self, after: str, taken: Iterable[str] = (), step_id: Optional[str] = None) -> str`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.anchor(step: BuilderStep, obj: BuilderObject) -> Tuple[str, str]`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.apply(self, steps: List[BuilderStep]) -> List[BuilderStep]`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.clear(self) -> None`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.count(self) -> int`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.from_dict(cls, data: Optional[Dict[str, Any]]) -> 'ManifestEdits'`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.has_edits(self) -> bool`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.hidden_objects(self, step_id: str) -> List[Tuple[str, str]]`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.hidden_steps(self) -> List[str]`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.is_added(self, step_id: str) -> bool`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.name_taken(steps: Iterable[BuilderStep], name: str, step_id: Optional[str] = None) -> Optional[str]`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.object_record(self, home: str, sheet_name: str) -> Dict[str, Any]`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.remove_step(self, step_id: str) -> bool`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.rename_all(self, steps: Iterable[BuilderStep], name: str, new: str) -> int`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.revert_object(self, home: str, sheet_name: str, field: Optional[str] = None) -> bool`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.revert_step(self, step_id: str, field: Optional[str] = None) -> bool`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.set_object(self, home: str, sheet_name: str, field: str, value: Any, sheet: Any = _UNSET) -> None`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.set_step(self, step_id: str, field: str, value: Any, sheet: Any = _UNSET) -> None`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.stale(self, steps: Iterable[BuilderStep]) -> List[str]`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.step_record(self, step_id: str) -> Dict[str, Any]`
+- `core_utils/engines/shots/manifest/manifest_edits.py::ManifestEdits.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.bind(self, shot, step_id: Optional[str]) -> None`
+- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.edited_by_hand(self, shot) -> bool`
+- `core_utils/engines/shots/manifest/manifest_export.py::ManifestExport(class)`
+- `core_utils/engines/shots/manifest/manifest_export.py::ManifestExport.clipboard(table: Sequence[Sequence[str]]) -> Tuple[str, str]`
+- `core_utils/engines/shots/manifest/manifest_export.py::ManifestExport.columns(cls, keys: Optional[Iterable[str]] = None) -> List[str]`
+- `core_utils/engines/shots/manifest/manifest_export.py::ManifestExport.format_of(cls, path: str) -> Optional[str]`
+- `core_utils/engines/shots/manifest/manifest_export.py::ManifestExport.markdown(table: Sequence[Sequence[str]]) -> str`
+- `core_utils/engines/shots/manifest/manifest_export.py::ManifestExport.records(cls, rows: Iterable[Tuple[Optional[Any], Optional[Any]]], ranges: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None, statuses: Optional[Dict[str, str]] = None, object_name: Optional[Callable[[str], str]] = None) -> List[Dict[str, Any]]`
+- `core_utils/engines/shots/manifest/manifest_export.py::ManifestExport.render(cls, records: List[Dict[str, Any]], fmt: str = 'csv', columns: Optional[Iterable[str]] = None, objects: str = 'rows') -> str`
+- `core_utils/engines/shots/manifest/manifest_export.py::ManifestExport.table(cls, records: List[Dict[str, Any]], columns: Optional[Iterable[str]] = None, objects: str = 'rows') -> List[List[str]]`
+- `core_utils/engines/shots/manifest/manifest_export.py::ManifestExport.write(cls, path: str, records: List[Dict[str, Any]], columns: Optional[Iterable[str]] = None, objects: str = 'rows') -> str`
+- `core_utils/engines/shots/manifest/manifest_model.py::BuilderStep.shot_name(self) -> str`
+- `core_utils/engines/shots/manifest/manifest_model.py::ShotPairing.rows(self, steps: List['BuilderStep'], hide_missing: bool = False, orphans: bool = True, keep: Iterable[str] = ()) -> List[Tuple[Optional['BuilderStep'], Optional[Any]]]`
+- `core_utils/engines/shots/manifest/manifest_tags.py::ManifestTags(class)`
+- `core_utils/engines/shots/manifest/manifest_tags.py::ManifestTags.assign(store: Any, source: str, step_ids: Iterable[str], slot: Optional[str]) -> bool`
+- `core_utils/engines/shots/manifest/manifest_tags.py::ManifestTags.auto(cls, steps: Iterable[Any], rule: str, slots: Sequence[str]) -> Dict[str, str]`
+- `core_utils/engines/shots/manifest/manifest_tags.py::ManifestTags.read(store: Any, source: str) -> Dict[str, str]`
+- `core_utils/engines/shots/manifest/range_resolver.py::RangeResolver.incremental_ranges(steps: List[BuilderStep], shot_ranges: Dict[str, Tuple[float, float]], last_resolved: List[Tuple[str, float, Optional[float], bool]] = (), user_ranges: Optional[Dict[str, Tuple[float, Optional[float]]]] = None) -> Dict[str, Tuple[float, float]]`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.authored_curves(self) -> List[str]`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.claimed_step(self, curve: str, time: float) -> Optional[Tuple[str, str, Optional[float]]]`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.is_same_key(claim: Tuple[str, str, Optional[float]], in_type: str, value: float, tol: float = 1e-06) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.changed_since_snapshot(self) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.claim_hooks(self, objects: Optional[Iterable[Any]] = None) -> Tuple[Callable, Callable]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.empty_shots(self) -> List[ShotBlock]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.held_names(self) -> set`
+- `core_utils/engines/shots/shot_model.py::ShotStore.key_edit(self, label: str = 'edit', objects: Optional[Iterable[Any]] = None)`
+- `core_utils/engines/shots/shot_model.py::ShotStore.member_nodes(self, name: str) -> List[str]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.release_replaced(self, objects: Optional[Iterable[Any]] = None) -> Callable[[Any, Optional[Iterable[float]]], int]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.remap_moved(self, objects: Optional[Iterable[Any]] = None) -> Callable[[Any, Iterable[Tuple[float, float]]], int]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.remove_shots_in_scope(self, scope: str) -> List[ShotBlock]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.rename_members(self, renames: Dict[str, str]) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.scene_edit(self, label: str = 'edit', snapshot: bool = True)`
+- `core_utils/engines/shots/shot_model.py::ShotStore.shots_in_scope(self, scope: str) -> List[ShotBlock]`
+- `core_utils/engines/shots/shot_model.py::ShotsEdited(class)`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.copy_attribute_keys(self, obj: str, attr: Optional[str], delta: float, times: Optional[List[float]] = None, window: Optional[tuple] = None) -> int`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.copy_sequences_to_shot(self, sequences: List[Dict[str, Any]], dest_shot_id: int) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.describe_key_selection(rows: Iterable[Tuple[Any, Optional[str], Optional[Iterable[float]]]]) -> str`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.move_stepped_keys(self, obj: str, old_time: float, new_time: float, attr_name: Optional[str] = None, eps: float = 0.001) -> None`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.new_shot(self, after_shot_id: Optional[int] = None, at_position: Optional[int] = None) -> ShotBlock`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.set_shot_edge(self, shot_id: int, new_start: Optional[float] = None, new_end: Optional[float] = None, scale: bool = False, push: bool = False) -> bool`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.classify_textures(cls, paths: Iterable[str], prefix: str = '', suffix: str = '') -> Dict[str, Tuple[Optional[str], str]]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.lightmap_for_base(cls, map_name: str, old_base: str, new_base: str) -> Optional[str]`
+- `core_utils/engines/textures/map_factory/_map_factory.py::MapFactory.resolve_map_types(cls, paths: Iterable[str]) -> Dict[str, Optional[str]]`
+- `core_utils/handoff/script_run.py::ScriptRunner.failure_summary(output: str) -> Optional[str]`
+- `core_utils/naming_convention/_naming_convention.py::AFFIX_MODES(constant)`
+- `core_utils/naming_convention/_naming_convention.py::AffixRule(class)`
+- `core_utils/naming_convention/_naming_convention.py::AffixRule.apply(self, name: str, *, default: str = 'suffix') -> str`
+- `core_utils/naming_convention/_naming_convention.py::AffixRule.as_dict(self) -> Dict[str, str]`
+- `core_utils/naming_convention/_naming_convention.py::AffixRule.matches(self, name: str, *, case_sensitive: bool = False, default: str = 'suffix') -> bool`
+- `core_utils/naming_convention/_naming_convention.py::AffixRule.parts(self, *, default: str = 'suffix') -> Tuple[str, str]`
+- `core_utils/naming_convention/_naming_convention.py::BUILTIN_PRESETS_DIR(constant)`
+- `core_utils/naming_convention/_naming_convention.py::CONFIG_ENV_VAR(constant)`
+- `core_utils/naming_convention/_naming_convention.py::CONFIG_NAME(constant)`
+- `core_utils/naming_convention/_naming_convention.py::CONFIG_PACKAGE(constant)`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention(class)`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.affix(cls, key: str) -> str`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.affix_parts(cls, key: str, *, default: str = 'suffix') -> Tuple[str, str]`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.all_affixes(cls) -> List[str]`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.apply(cls, name: str, key: str, *, default: str = 'suffix') -> str`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.as_dict(cls) -> Dict[str, Dict[str, str]]`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.bind(cls, bindings: Iterable[Tuple[str, str, str]], overrides: Optional[Dict[str, str]] = None, modes: Optional[Dict[str, str]] = None) -> Dict[str, AffixRule]`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.config_path(cls)`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.get(cls, key: str, fallback: Optional[AffixRule] = None) -> AffixRule`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.items(cls) -> List[Tuple[str, AffixRule]]`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.keys(cls) -> List[str]`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.label(cls, key: str) -> str`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.matches(cls, name: str, key: str, *, case_sensitive: bool = False, default: str = 'suffix') -> bool`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.mode(cls, key: str) -> str`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.preset_store() -> PresetStore`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.reload(cls) -> Dict[str, AffixRule]`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.reset(cls, key: Optional[str] = None) -> Dict[str, AffixRule]`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.resolve(cls, *, refresh: bool = False) -> Dict[str, AffixRule]`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.set(cls, key: str, text: str, mode: str = 'auto', label: str = '') -> AffixRule`
+- `core_utils/naming_convention/_naming_convention.py::NamingConvention.update(cls, mapping: Dict[str, object]) -> Dict[str, AffixRule]`
+- `core_utils/test_sandbox.py::TestSandbox.activated(cls) -> Iterator[str]`
+- `core_utils/test_sandbox.py::TestSandbox.host_environ(cls, env: Optional[Dict[str, str]] = None) -> Optional[Dict[str, str]]`
+- `core_utils/test_sandbox.py::TestSandbox.rearm(cls) -> None`
+- `core_utils/x11.py::X11.delete_property(cls, window: int, name: str) -> Optional[bool]`
+- `core_utils/x11.py::X11.has_property(cls, name: str, window: Optional[int] = None) -> Optional[bool]`
+- `core_utils/x11.py::X11.set_cardinal_property(cls, window: int, name: str, values: Iterable[int]) -> Optional[bool]`
+- `file_utils/_file_utils.py::FileUtils.deliver_file(cls, staged: str, destination: str) -> Tuple[str, Optional[str]]`
+- `file_utils/mesh_convert/_fbx_writer.py::FBX_TICKS_PER_SECOND(constant)`
+- `file_utils/mesh_convert/_fbx_writer.py::FBX_VERSION(constant)`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxNode(class)`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxNode.add(self, name: str, *props: Any) -> 'FbxNode'`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxNode.p(self, name: str, kind: str, label: str, flags: str, *values: Any) -> None`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxWriter(class)`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxWriter.array(code: str, values: Sequence[Any]) -> _Typed`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxWriter.encode(cls, records: Sequence[FbxNode]) -> bytes`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxWriter.f32(value: float) -> _Typed`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxWriter.header_records(cls, creator: str) -> List[FbxNode]`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxWriter.i16(value: int) -> _Typed`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxWriter.i32(value: int) -> _Typed`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxWriter.i64(value: int) -> _Typed`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxWriter.raw(value: bytes) -> _Typed`
+- `file_utils/mesh_convert/_fbx_writer.py::FbxWriter.write(cls, path: str, records: Sequence[FbxNode]) -> str`
+- `file_utils/mesh_convert/_gltf2fbx.py::GLTF_EXTENSIONS(constant)`
+- `file_utils/mesh_convert/_gltf2fbx.py::GLTF_UNDECODABLE_EXTENSIONS(constant)`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.decode_glb_textures(cls, glb: str, dst: str, *, overwrite: bool = False) -> Optional[str]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fbx_media_dirs(fbx_path: str) -> List[str]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.gltf_to_fbx(cls, src: str, dst: Optional[str] = None, *, texture_dir: Optional[str] = None, include_animation: bool = True, fps: Optional[float] = None, manifest: bool = True, overwrite: bool = False, report: Optional[Dict[str, Any]] = None) -> str`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.restore_glb_skin_weights(cls, glb: GlbTarget, fbx: str) -> Dict[str, int]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_fbx_dependencies(self) -> List[Finding]`
+- `file_utils/mesh_convert/export_verify.py::ExportVerifier.check_glb_skin_weights(self) -> List[Finding]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.dependencies(cls, path: str) -> List[str]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.embed(cls, src: str, dst: Optional[str] = None, *, files: Iterable[Any]) -> Dict[str, Any]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.embed_dependencies(cls, src: str, dst: Optional[str] = None, *, search_dirs: Sequence[str] = (), files: Iterable[Any] = (), logger: Any = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.extract_dependencies(cls, src: str, dst_dir: str) -> Dict[str, str]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.named_files(cls, payloads: Mapping[str, Iterable[Any]]) -> List[str]`
+- `file_utils/mesh_convert/glb/skin_weights.py::GlbSkinWeights(class)`
+- `file_utils/mesh_convert/glb/skin_weights.py::GlbSkinWeights.audit(cls, glb: GlbTarget, fbx: str) -> Dict[str, Any]`
+- `file_utils/mesh_convert/glb/skin_weights.py::GlbSkinWeights.restore(cls, glb: GlbTarget, fbx: str) -> Dict[str, int]`
+- `file_utils/tiled_path.py::TiledPath.stem(cls, file_name: Optional[str]) -> str`
+- `file_utils/tiled_path.py::TiledPath.with_name(stored: Optional[str], new_name: str) -> str`
+- `geo_utils/shadow_horizon.py::HeightFieldMap.disc(s) -> np.ndarray`
+- `geo_utils/shadow_horizon.py::INTERIOR_FAR(constant)`
+- `geo_utils/shadow_horizon.py::INTERIOR_MARKER(constant)`
+- `geo_utils/shadow_horizon.py::INTERIOR_SCALE(constant)`
+- `img_utils/_img_utils.py::ImgUtils.atlas_extent(area: float, uv_area: Optional[float] = None, extent: Tuple[float, float] = (1.0, 1.0), fill: float = 0.75, stretch: float = 1.0) -> Tuple[float, float]`
+- `img_utils/_img_utils.py::ImgUtils.atlas_layout_extent(area: float, uvs: Optional['np.ndarray'] = None, stretch: float = 1.0, max_coverage: float = 0.85, fill: float = 0.75) -> Tuple[float, float]`
+- `img_utils/_img_utils.py::ImgUtils.cv2_read(cls, path: Union[str, os.PathLike], flags: Optional[int] = None) -> Optional['np.ndarray']`
+- `img_utils/_img_utils.py::ImgUtils.cv2_temp(cls)`
+- `img_utils/_img_utils.py::ImgUtils.cv2_write(cls, path: Union[str, os.PathLike], image: 'np.ndarray', params: Optional[Sequence[int]] = None) -> bool`
+- `img_utils/_img_utils.py::ImgUtils.pack_atlas_rects(extents: Sequence[Tuple[float, float]], size: Union[int, Tuple[int, int]], gutter: int = 2, min_texels: int = 4, align: int = 4) -> Optional[List[Tuple[float, float, float, float]]]`
+- `img_utils/_img_utils.py::ImgUtils.uv_axis_scale(points: 'np.ndarray', uvs: 'np.ndarray') -> Optional[Tuple[float, float]]`
+- `img_utils/ktx2_encoder.py::Ktx2Encoder.decode(cls, source: str, output: str, ktx: Optional[str] = None, timeout: Optional[float] = DEFAULT_TIMEOUT) -> str`
+- `img_utils/ktx2_encoder.py::Ktx2Encoder.decode_all(cls, jobs: Sequence[Tuple[str, str]], ktx: Optional[str] = None, timeout: Optional[float] = DEFAULT_TIMEOUT, workers: Optional[int] = None) -> List[Union[str, Exception]]`
+- `img_utils/ktx2_encoder.py::Ktx2Encoder.resolve_ktx(cls) -> Optional[str]`
+- `img_utils/rect_packer.py::RectPackResult(class)`
+- `img_utils/rect_packer.py::RectPackResult.fill(self) -> float`
+- `img_utils/rect_packer.py::RectPackResult.pixel_rects(self) -> List[Tuple[int, int, int, int]]`
+- `img_utils/rect_packer.py::RectPacker(class)`
+- `img_utils/rect_packer.py::RectPacker.fit(cls, extents: Sequence[Tuple[float, float]], bin_size: Tuple[int, int], padding: int = 0, align: int = 1, min_size: int = 1, rotate: bool = False, tolerance: float = 0.002, fold: bool = False) -> Optional[RectPackResult]`
+- `img_utils/rect_packer.py::RectPacker.pack(cls, sizes: Sequence[Tuple[int, int]], bin_size: Tuple[int, int], padding: int = 0, align: int = 1, rotate: bool = False) -> Optional[RectPackResult]`
+- `math_utils/_math_utils.py::MathUtils.best_rotate_order(solutions: Dict[str, Sequence[Sequence[float]]], current: Optional[str] = None, gimbal_margin: float = 10.0) -> Optional[str]`
+- `net_utils/preview/bridge.py::PreviewBridge.ping_share(self, **options: Any) -> Dict[str, Any]`
+- `net_utils/preview/server.py::PreviewServer.ping_share(self, timeout: float = 10.0, attempts: int = 3, wait: float = 2.0) -> Dict[str, Any]`
+- `net_utils/preview/server.py::PreviewServer.publish_parts(self, srcs: Sequence[Union[str, Path]], labels: Optional[Sequence[str]] = None, move: bool = False) -> int`
+- `net_utils/rpc/plugin_core.py::MainThreadMarshaller.post(self, fn, *args, **kwargs)`
 
-## Deprecations (1)
+## Deprecations (3)
 
 _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived its window: delete the alias and its tests rather than moving the date. A **HELD** row is due by version, but its notice has not yet had its calendar window._
 
+- `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column` — remove in 0.14.0, not before 2026-11-09
+- `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard` — remove in 0.14.0, not before 2026-11-09
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.confirm_check_override` — remove in 0.14.0, not before 2026-11-03
+
+## Moved (29)
+
+_Still resolvable at the same call site -- hoisted to a base class or re-exported from another module. NOT a removal: no alias or minor bump is owed._
+
+- `core_utils/naming_convention.py::AFFIX_MODES`
+- `core_utils/naming_convention.py::AffixRule`
+- `core_utils/naming_convention.py::AffixRule.apply`
+- `core_utils/naming_convention.py::AffixRule.as_dict`
+- `core_utils/naming_convention.py::AffixRule.matches`
+- `core_utils/naming_convention.py::AffixRule.parts`
+- `core_utils/naming_convention.py::CONFIG_ENV_VAR`
+- `core_utils/naming_convention.py::CONFIG_NAME`
+- `core_utils/naming_convention.py::CONFIG_PACKAGE`
+- `core_utils/naming_convention.py::NamingConvention`
+- `core_utils/naming_convention.py::NamingConvention.affix`
+- `core_utils/naming_convention.py::NamingConvention.affix_parts`
+- `core_utils/naming_convention.py::NamingConvention.all_affixes`
+- `core_utils/naming_convention.py::NamingConvention.apply`
+- `core_utils/naming_convention.py::NamingConvention.as_dict`
+- `core_utils/naming_convention.py::NamingConvention.bind`
+- `core_utils/naming_convention.py::NamingConvention.config_path`
+- `core_utils/naming_convention.py::NamingConvention.get`
+- `core_utils/naming_convention.py::NamingConvention.items`
+- `core_utils/naming_convention.py::NamingConvention.keys`
+- `core_utils/naming_convention.py::NamingConvention.label`
+- `core_utils/naming_convention.py::NamingConvention.matches`
+- `core_utils/naming_convention.py::NamingConvention.mode`
+- `core_utils/naming_convention.py::NamingConvention.preset_store`
+- `core_utils/naming_convention.py::NamingConvention.reload`
+- `core_utils/naming_convention.py::NamingConvention.reset`
+- `core_utils/naming_convention.py::NamingConvention.resolve`
+- `core_utils/naming_convention.py::NamingConvention.set`
+- `core_utils/naming_convention.py::NamingConvention.update`
 
 ## Signature changed (8)
 
-- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::Behaviors.compute_duration`
-  - was: `(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None) -> float`
-  - now: `(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None, recipe: Optional[EffectRecipe] = None) -> float`
-- `core_utils/engines/shots/manifest/manifest_engine.py::ShotManifest.resolve_duration`
-  - was: `(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None) -> Tuple[float, float, float]`
-  - now: `(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None, recipe=None) -> Tuple[float, float, float]`
-- `core_utils/engines/shots/manifest/mapping/_mapping.py::Mapping.resolve`
-  - was: `(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None) -> List[BuilderStep]`
-  - now: `(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None, options: Optional[Dict[str, Any]] = None) -> List[BuilderStep]`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.bake_node_frames`
-  - was: `(cls, src: str) -> int`
-  - now: `(cls, src: str, fbx: Optional['FbxFile'] = None) -> int`
-- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.conversion_timeout`
-  - was: `(cls, src: str) -> float`
-  - now: `(cls, src: str, fbx: Optional['FbxFile'] = None) -> float`
-- `file_utils/mesh_convert/fbx_file.py::FbxFile.load`
-  - was: `(cls, path: str, decode_arrays: bool = False, raw_payloads: bool = True) -> 'FbxFile'`
-  - now: `(cls, path: str, decode_arrays: Union[bool, Collection[str]] = False, raw_payloads: bool = True, span_arrays: Collection[str] = ()) -> 'FbxFile'`
-- `geo_utils/uv/transfer.py::UvTransfer.transfer`
-  - was: `(cls, table: TransferTable, sources, *, source_masks=None, bilinear: bool = True) -> Tuple['np.ndarray', 'np.ndarray']`
-  - now: `(cls, table: TransferTable, sources, *, source_masks=None, bilinear: bool = True, value_max: Optional[float] = None) -> Tuple['np.ndarray', 'np.ndarray']`
-- `geo_utils/uv/transfer.py::UvTransfer.transfer_materials`
-  - was: `(cls, jobs: Dict[str, Dict[str, Any]], *, output_dir: str, channels: Optional[Sequence[str]] = None, size: Optional[int] = None, supersample: int = 2, padding: int = -1, name_format: str = '{material}_{channel}', normal_convention: Optional[str] = None, source_mask_from_uvs: bool = True, log=None) -> Dict[str, Dict[str, str]]`
-  - now: `(cls, jobs: Dict[str, Dict[str, Any]], *, output_dir: str, channels: Optional[Sequence[str]] = None, size: Optional[int] = None, supersample: int = 2, padding: int = -1, name_format: str = '{material}_{channel}', normal_convention: Optional[str] = None, source_mask_from_uvs: bool = True, avoid: Optional[Sequence[str]] = None, log=None) -> Dict[str, Dict[str, str]]`
+- `core_utils/engines/shots/manifest/behaviors/_behaviors.py::Behaviors.apply_to_shots`
+  - was: `(shots: list, apply_fn: Callable, exists_fn: Optional[Callable] = None, has_keys_fn: Optional[Callable] = None, store: Any = None, resolve_fn: Optional[Callable[[str], str]] = None, conflict_fn: Optional[Callable] = None, release_fn: Optional[Callable] = None) -> Dict[str, list]`
+  - now: `(shots: list, apply_fn: Callable, exists_fn: Optional[Callable] = None, has_keys_fn: Optional[Callable] = None, store: Any = None, resolve_fn: Optional[Callable[[str], str]] = None, conflict_fn: Optional[Callable] = None, release_fn: Optional[Callable] = None, skip_behaviors: Collection[str] = ()) -> Dict[str, list]`
+- `core_utils/engines/shots/shot_ledger.py::ShotEditLedger.record_step`
+  - was: `(self, curve: str, time: float, in_type: str, out_type: str) -> bool`
+  - now: `(self, curve: str, time: float, in_type: str, out_type: str, value: Optional[float] = None) -> bool`
+- `file_utils/mesh_convert/glb/pipeline.py::GlbPipeline.build`
+  - was: `(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]`
+  - now: `(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]`
+- `img_utils/_img_utils.py::ImgUtils.resize_image`
+  - was: `(cls, image, x, y)`
+  - now: `(cls, image, x, y, normal_map: bool = False)`
+- `net_utils/preview/bridge.py::PreviewBridge.share`
+  - was: `(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, on_step: Optional[Callable[[Any], Any]] = None) -> Dict[str, Any]`
+  - now: `(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, on_step: Optional[Callable[[Any], Any]] = None, private: bool = False) -> Dict[str, Any]`
+- `net_utils/preview/deliverer.py::PreviewDeliverer.publish`
+  - was: `(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]`
+  - now: `(self, glb: Union[str, Path, Sequence[Union[str, Path]]], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, labels: Optional[Sequence[Optional[str]]] = None) -> Dict[str, Any]`
+- `net_utils/preview/server.py::PreviewServer.publish`
+  - was: `(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int`
+  - now: `(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False, label: Optional[str] = None) -> int`
+- `net_utils/preview/server.py::PreviewServer.share`
+  - was: `(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, timeout: Optional[float] = None, on_step: Optional[Callable[[Any], Any]] = None) -> Dict[str, Any]`
+  - now: `(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, timeout: Optional[float] = None, on_step: Optional[Callable[[Any], Any]] = None, private: bool = False) -> Dict[str, Any]`

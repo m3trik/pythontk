@@ -25,13 +25,15 @@
   WORKER THREADS while the main thread gets on with rendering the next frame.
   See `createEncoder`.
 
-  Pressing the button opens an options prompt rather than recording at once:
-  the burn-in is drawn into the file and cannot be taken out of it again, so it
-  is asked at the moment the file is written rather than armed by a toggle
-  sitting beside the button, where it is left on and found in the movie later.
+  Its item (Export ▸ Playblast…) opens an options prompt rather than recording
+  at once: the burn-in is drawn into the file and cannot be taken out of it
+  again, so it is asked at the moment the file is written rather than armed by
+  a toggle sitting beside the item, where it is left on and found in the movie
+  later.
 
   Activated by the deliverable (`PreviewServer.AUTO_SCRIPTS`) whenever it ships
-  an animation manifest — the button appears exactly when the clip picker does.
+  an animation manifest, and offered while the model on screen has a clip --
+  the item applies exactly when the clip picker shows.
 */
 
 //: What the export prompt offers, lowest to highest. `maxEdge` is the recorded
@@ -167,28 +169,33 @@ const OVERLAY_FONT = 'ui-monospace, "DejaVu Sans Mono", Consolas, monospace';
 const OVERLAY_SCALE = 0.032;
 const OVERLAY_MIN_SIZE = 11;
 
-//: The button's label while no recording runs.
-const LABEL = 'Export playblast…';
+//: The item's label while no recording runs. The `…` says it asks first.
+const LABEL = 'Playblast…';
 
 export default function playblast(viewer) {
-  // In the Export window (`viewer.window`), beside the still's.
-  const exports = viewer.window('Export', { title: 'Save the view as an image, or a clip as a movie' });
-  const section = exports.section();
-  section.setRows([{ text: 'The selected clip as a movie, frame by frame.' }]);
-  const button = section.addButton(LABEL, () => {
-    // Nothing to cancel once the frames are all in and ffmpeg has them: the
-    // encode is the server's, and "cancelling" it here would only detach the
-    // page from a file that is written anyway.
-    if (job) {
-      if (!job.done) abort();
-    } else {
-      openOptions();
-    }
-  });
-  button.title = 'Record the selected clip to a movie file — asks for export '
-    + 'options first';
-
   let job = null;
+
+  // In the Export menu (`viewer.menu`), beside the still's. While a recording
+  // runs the item is its progress, and pressing it cancels.
+  const exports = viewer.menu('Export');
+  const item = exports.add('action', {
+    label: LABEL,
+    title: 'Record the selected clip to a movie file, frame by frame — asks for '
+      + 'export options first',
+    group: 'view',
+    order: 1,
+    when: () => job !== null || viewer.clip !== null,
+    run: () => {
+      // Nothing to cancel once the frames are all in and ffmpeg has them: the
+      // encode is the server's, and "cancelling" it here would only detach
+      // the page from a file that is written anyway.
+      if (job) {
+        if (!job.done) abort();
+      } else {
+        openOptions();
+      }
+    },
+  });
 
   //: What the last prompt was answered with, so a second recording re-offers
   //: the choices rather than the defaults -- a reviewer annotating one shot is
@@ -201,10 +208,10 @@ export default function playblast(viewer) {
   //: recording is what the reviewer saw.
   let options = { stamp: false, describe: false, preset: DEFAULT_PRESET };
 
-  //: Asked BEFORE the recording rather than armed by a toggle beside the
-  //: button. A burn-in is a property of the file about to be written, so the
+  //: Asked BEFORE the recording rather than armed by a switch beside the
+  //: item. A burn-in is a property of the file about to be written, so the
   //: moment to decide it is the moment it is written -- and a mode carried on
-  //: a button is exactly the kind of state that gets left on and discovered in
+  //: a switch is exactly the kind of state that gets left on and discovered in
   //: the movie afterwards.
   async function openOptions() {
     // Refused before the prompt, never after: these are the reasons a
@@ -572,8 +579,8 @@ export default function playblast(viewer) {
     releaseResolution();
     // Read before the await: a push landing during the encode resets the job.
     const { width, height } = job;
-    // No ✕: see the button handler -- there is nothing left to cancel.
-    button.textContent = 'Encoding…';
+    // No ✕: see the item's run -- there is nothing left to cancel.
+    item.label = 'Encoding…';
     exports.setBadge('encoding', 'playblast');
     try {
       const report = await post('finish', { token: job.token });
@@ -773,18 +780,18 @@ export default function playblast(viewer) {
     if (job && job.encoder) job.encoder.close();
     if (job && job.wasPlaying) viewer.setPlaying(true);
     job = null;
-    button.textContent = LABEL;
+    item.label = LABEL;
     exports.setBadge('', 'playblast');
   }
 
-  //: Progress goes on the BUTTON, not the status line: the status line says
+  //: Progress goes on the ITEM, not the status line: the status line says
   //: what the page is showing, and a per-frame counter there would bury the
-  //: version and the load state for the length of the recording. Clicking it
+  //: version and the load state for the length of the recording. Pressing it
   //: cancels, which is exactly what a progress label wants to be attached to --
   //: hence the ✕, which is only shown while cancelling is possible. The
-  //: Export window's bar button says one runs, for when the window is shut.
+  //: Export menu's bar button says one runs, for when the menu is shut.
   function label(text) {
-    button.textContent = `${text}  ✕`;
+    item.label = `${text}  ✕`;
     exports.setBadge('recording', 'playblast');
   }
 

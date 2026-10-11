@@ -296,7 +296,7 @@ class FileTest(BaseTestCase):
 
     def test_write_and_read_unicode(self):
         """Test write and read with unicode content."""
-        unicode_content = "日本語テスト αβγδ ñoño"
+        unicode_content = "Café ★ 🚀 naïve résumé"
         FileUtils.write_to_file(str(self.file1_path), unicode_content)
         content = FileUtils.get_file_contents(str(self.file1_path), as_list=True)
         self.assertEqual(content, [unicode_content])
@@ -1872,7 +1872,7 @@ class AtomicJsonWriterAdoptionTest(unittest.TestCase):
         open(target, "w").close()
         # The sidecar writer directly: Metadata.set's default path needs
         # win32com.propsys, which is not the code this migration touched.
-        MetadataInternal._save_sidecar(target, {"note": "café ☕", "who": "Ana Lucía"})
+        MetadataInternal._save_sidecar(target, {"note": "café ☕", "who": "Zoë"})
         self.assertEqual(MetadataInternal._load_sidecar(target)["note"], "café ☕")
 
     def test_no_module_writes_json_by_truncating_first(self):
@@ -1983,6 +1983,66 @@ class AtomicWriteTest(unittest.TestCase):
         self.assertEqual(len(calls), 3)
 
 
+class DeliverFileTest(unittest.TestCase):
+    """``FileUtils.deliver_file``: a finished file lands once, or is parked
+    beside its destination -- never lost with the stage it was finished in."""
+
+    _read = staticmethod(AtomicWriteTest._read)
+    _writer = staticmethod(AtomicWriteTest._writer)
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="ptk_deliver_test_")
+        self.stage = tempfile.mkdtemp(prefix="ptk_deliver_stage_")
+        for folder in (self.dir, self.stage):
+            self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        self.target = os.path.join(self.dir, "deliverable.glb")
+        self._writer(b"previous")(self.target)
+        self.staged = os.path.join(self.stage, "deliverable.glb")
+        self._writer(b"finished")(self.staged)
+
+    def test_it_lands_whole_with_nothing_beside_it(self):
+        placed, reason = FileUtils.deliver_file(self.staged, self.target)
+        self.assertEqual((placed, reason), (self.target, None))
+        self.assertEqual(self._read(self.target), b"finished")
+        self.assertEqual(os.listdir(self.dir), ["deliverable.glb"])
+
+    def test_a_held_destination_parks_it_beside_and_keeps_the_old_one(self):
+        """The sync client held the destination (production, 2026-10-08)."""
+        held = PermissionError(13, "Access is denied")
+        from unittest.mock import patch
+
+        with patch.object(FileUtils, "replace_file", side_effect=held):
+            placed, reason = FileUtils.deliver_file(self.staged, self.target)
+        self.assertEqual(os.path.basename(placed), "deliverable_unplaced_v001.glb")
+        self.assertTrue(reason)
+        self.assertEqual(self._read(placed), b"finished")
+        self.assertEqual(self._read(self.target), b"previous")
+        self.assertFalse([n for n in os.listdir(self.dir) if n.endswith(".part")])
+
+    def test_a_park_cut_short_leaves_no_truncated_copy(self):
+        """A full disk refuses the delivery, then the park: across volumes a
+        move copies first, and the copy it gave up on must not stay beside the
+        deliverable under a name that reads as the finished output.
+        Added: 2026-10-10
+        """
+        from unittest.mock import patch
+
+        def disk_full(src, dst):
+            self._writer(b"fin")(dst)  # what a cross-volume copy had written
+            raise OSError(28, "No space left on device")
+
+        held = PermissionError(13, "Access is denied")
+        with (
+            patch.object(FileUtils, "replace_file", side_effect=held),
+            patch("shutil.move", side_effect=disk_full),
+        ):
+            placed, reason = FileUtils.deliver_file(self.staged, self.target)
+        self.assertEqual(placed, self.staged)
+        self.assertTrue(reason)
+        self.assertEqual(self._read(self.staged), b"finished")
+        self.assertEqual(os.listdir(self.dir), ["deliverable.glb"])
+
+
 @unittest.skipUnless(os.name == "nt", "Windows lock codes")
 class ReplaceFileTest(unittest.TestCase):
     """``FileUtils.replace_file``: ``os.replace`` that waits out a momentary lock.
@@ -2040,6 +2100,27 @@ class ReplaceFileTest(unittest.TestCase):
         self.assertGreater(len(calls), 1)
         with open(self.dst) as fh:
             self.assertEqual(fh.read(), "old")
+
+    def test_a_large_file_earns_a_longer_wait(self):
+        """A reader that opens a file just after it changes reads it THROUGH,
+        so the hold grows with the file: a sync client still held a freshly
+        written 218 MB FBX past the flat second, and two in-place passes were
+        lost (production, 2026-10-07). The same refusals that outlast a small
+        file's wait are waited out for a large one.
+        Added: 2026-10-07
+        """
+        from unittest import mock
+
+        attempts = len(FileUtils._REPLACE_RETRY_DELAYS) + 6
+        replace, _calls = self.held(attempts)
+        with self.assertRaises(PermissionError):
+            self._replace(replace)  # a few bytes: the second it always had
+        replace, calls = self.held(attempts)
+        with mock.patch("os.path.getsize", return_value=200 * 1024 * 1024):
+            self._replace(replace)
+        self.assertEqual(len(calls), attempts + 1)
+        with open(self.dst) as fh:
+            self.assertEqual(fh.read(), "new")
 
     def test_any_other_refusal_raises_at_once(self):
         replace, calls = self.held(10**6, winerror=None)

@@ -632,6 +632,91 @@ class TestTransferMaterialsNormals(unittest.TestCase):
         self.assertLess(np.abs(got - _encode(tilt)).max(), 1.5)
 
 
+class TestOpenPBRLobeChannels(unittest.TestCase):
+    """The OpenPBR lobes transfer like the core channels.
+
+    The DCC side (mayatk ``ShaderAttributeMap``) declares the lobes as
+    channels, so the copy a transfer assigns has them cleared for re-wiring;
+    a lobe this table did not know was never baked, and the coat map was lost.
+    """
+
+    def setUp(self):
+        artifacts = ptk.TempArtifacts("uv_transfer_lobes", policy="scoped")
+        self.addCleanup(artifacts.cleanup)
+        self.tmp = artifacts.dir_path()
+
+    def test_every_lobe_channel_writes_a_map_that_classifies_as_its_type(self):
+        for map_type, channel in ptk.MapRegistry.LOBE_TYPE_CHANNELS.items():
+            if channel == "specular":  # the core channel, shared by the tint
+                continue
+            with self.subTest(channel=channel):
+                token = ptk.UvTransfer.CHANNEL_TOKENS[channel]
+                self.assertEqual(
+                    ptk.MapFactory.resolve_map_type(f"mat_{token}.png"), map_type
+                )
+                self.assertIn(channel, ptk.UvTransfer.NEUTRAL)
+
+    def test_a_coat_normal_turns_with_its_island(self):
+        """A coat normal is tangent-space vectors like the base normal:
+        resampled as colour, a rotated island's coat lights from the wrong
+        side."""
+        relief = _relief_normals(64, "opengl")
+        path = ptk.UvTransfer.save_map(
+            os.path.join(self.tmp, "rock_Coat_Normal.png"), relief
+        )
+        out = ptk.UvTransfer.transfer_materials(
+            {
+                "rock": {
+                    "src": QUAD,
+                    "dst": _rot90(QUAD),
+                    "ids": np.zeros(2, np.int32),
+                    "sources": [{"maps": {"coatNormal": path}, "constants": {}}],
+                }
+            },
+            output_dir=os.path.join(self.tmp, "out"),
+            channels=["coatNormal"],
+            size=64,
+            supersample=1,
+            padding=0,
+        )
+        written = out["rock"]["coatNormal"]
+        self.assertEqual(ptk.MapFactory.resolve_map_type(written), "Clearcoat_Normal")
+        got = ptk.UvTransfer.load_map(written)[0]
+        table = ptk.UvTransfer.build(QUAD, _rot90(QUAD), 64, supersample=1)
+        turned, _ = ptk.UvTransfer.transfer_normals(table, relief, convention="opengl")
+        resampled, _ = ptk.UvTransfer.transfer(table, relief)
+        self.assertLess(np.abs(got - turned).max(), 1.5)
+        self.assertGreater(np.abs(got - resampled).max(), 50.0)
+
+    def test_a_source_scale_reaches_its_texels(self):
+        """``scales`` converts a source stored on another scale (a weight-unit
+        specular map written out as a level) as it loads."""
+        flat = np.full((8, 8, 1), 200.0, np.float32)
+        path = ptk.UvTransfer.save_map(os.path.join(self.tmp, "m_spec.png"), flat)
+        out = ptk.UvTransfer.transfer_materials(
+            {
+                "m": {
+                    "src": QUAD,
+                    "dst": QUAD,
+                    "ids": np.zeros(2, np.int32),
+                    "sources": [
+                        {
+                            "maps": {"specularWeight": path},
+                            "constants": {},
+                            "scales": {"specularWeight": 0.5},
+                        }
+                    ],
+                }
+            },
+            output_dir=os.path.join(self.tmp, "out_scale"),
+            size=8,
+            supersample=1,
+            padding=0,
+        )
+        got = ptk.UvTransfer.load_map(out["m"]["specularWeight"])[0]
+        self.assertLess(np.abs(got - 100.0).max(), 1.5)
+
+
 class TestMissingSourceMaps(unittest.TestCase):
     """A source map the material names but the disk does not hold is SAID.
 

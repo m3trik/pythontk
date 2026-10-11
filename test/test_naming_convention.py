@@ -262,6 +262,36 @@ class ConventionSnapshotTest(_SandboxedConventionTest):
             Path(store.user_dir), NamingConvention.config_path().with_suffix("")
         )
 
+    def test_a_default_preset_ships_read_only(self):
+        """The preset combo always offers the way back to the shipped table."""
+        store = NamingConvention.preset_store()
+        self.assertIn("default", store.list("builtin"))
+        self.assertEqual(store.source("default"), "builtin")
+        self.assertTrue(store.is_read_only("default"))
+        self.assertTrue(store.description("default"))
+
+    def test_the_default_preset_is_the_shipped_defaults(self):
+        """Drift guard: ``default.json`` is a copy of ``DEFAULTS``, and must
+        move with it -- an entry added to one and not the other would make
+        "load default" leave that entry wherever the user last put it."""
+        payload = NamingConvention.preset_store().load("default")
+        entries = {k: v for k, v in payload.items() if not k.startswith("_")}
+        self.assertEqual(
+            entries,
+            {k: rule.as_dict() for k, rule in NamingConvention.DEFAULTS.items()},
+        )
+
+    def test_loading_the_default_preset_restores_every_entry(self):
+        NamingConvention.update(
+            {"mesh": {"text": "GEO_", "mode": "prefix"}, "lightmap": "_LM"}
+        )
+        NamingConvention.update(NamingConvention.preset_store().load("default"))
+        for key, rule in NamingConvention.DEFAULTS.items():
+            with self.subTest(key=key):
+                got = NamingConvention.get(key)
+                self.assertEqual((got.text, got.mode), (rule.text, rule.mode))
+        self.assertEqual(self._overrides(), {}, "nothing left to persist")
+
 
 class ConventionBindTest(_SandboxedConventionTest):
     """``bind`` — the join every type-driven rename runs.

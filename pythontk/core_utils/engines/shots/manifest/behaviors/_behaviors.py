@@ -27,7 +27,7 @@ import inspect
 import json
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Collection, Dict, List, Optional, Tuple
 
 from pythontk import Codec, TemplateSet
 
@@ -632,6 +632,7 @@ class Behaviors(_BehaviorsInternal):
         resolve_fn: Optional[Callable[[str], str]] = None,
         conflict_fn: Optional[Callable] = None,
         release_fn: Optional[Callable] = None,
+        skip_behaviors: Collection[str] = (),
     ) -> Dict[str, list]:
         """Apply declared behaviors from shot metadata through *apply_fn*.
 
@@ -679,6 +680,10 @@ class Behaviors(_BehaviorsInternal):
             release_fn: ``(shot, doc_name, behavior)`` run before a behavior is
                 applied: takes out the keys it wrote last time. A behavior
                 whose release raises is recorded failed and not applied.
+            skip_behaviors: Behavior names turned off: neither released nor
+                keyed, so the keys they have stay.  The others land where they
+                would with every behavior on (anchors are spread over the
+                whole list).
 
         Returns:
             ``{"applied", "skipped", "failed"}`` lists of ``{object, behavior,
@@ -791,6 +796,8 @@ class Behaviors(_BehaviorsInternal):
                 behavior = entry.get("behavior", "")
                 if not behavior or not obj_name or not _is_audio(entry):
                     continue
+                if behavior in skip_behaviors:
+                    continue
                 if not _call_exists(obj_name, entry):
                     continue
                 rec = {
@@ -834,9 +841,11 @@ class Behaviors(_BehaviorsInternal):
             # applied keys the object, and a check made after it would read
             # those fresh keys as the animator's and skip the object's other
             # behaviors (a "fade_in, fade_out" object only ever got its fade_in).
+            # Turned-off behaviors still took their place in the anchors.
+            keyed = [e for e in non_audio if e["behavior"] not in skip_behaviors]
             nodes: Dict[str, str] = {}
             blocked: Dict[tuple, bool] = {}
-            for entry in non_audio:
+            for entry in keyed:
                 name, behavior = entry["name"], entry["behavior"]
                 node = nodes.setdefault(name, resolve_fn(name))
                 if conflict_fn is not None:
@@ -855,7 +864,7 @@ class Behaviors(_BehaviorsInternal):
             # before any is re-keyed.  One whose release failed is not keyed
             # again (as in pass 1): its old keys are still there.
             unreleased: set = set()
-            for entry in non_audio:
+            for entry in keyed:
                 name, behavior = entry["name"], entry["behavior"]
                 if not blocked.get(_guard(name, behavior)) and _call_exists(
                     nodes[name], entry
@@ -865,8 +874,10 @@ class Behaviors(_BehaviorsInternal):
 
             for entry in non_audio:
                 obj_name, behavior = entry["name"], entry["behavior"]
-                node = nodes[obj_name]
                 anchor = next(anchors[obj_name])
+                if behavior in skip_behaviors:
+                    continue
+                node = nodes[obj_name]
                 if not _call_exists(node, entry):
                     continue  # missing object -- surfaced by assess, not here
                 rec = {

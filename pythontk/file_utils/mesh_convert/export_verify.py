@@ -5,7 +5,7 @@
 The permanent form of a verification harness that caught a production GLB
 shipping a wire-loom 7.5 cm away from the plug it was constrained to — a
 defect no exporter log mentioned. Point it at a deliverable (either file or
-both), optionally beside its ``.{stem}.scene_data.json`` sidecar and a
+both), optionally with its ``.{stem}.scene_data.json`` record and a
 previous known-good GLB, and it runs every registered ``check_*`` gate and
 reports PASS / WARN / FAIL / SKIP per gate.
 
@@ -90,22 +90,32 @@ class _ExportVerifierInternal:
 
     @classmethod
     def _sidecar_beside(cls, path: Optional[str]) -> Optional[str]:
-        """The exporter's ``.{stem}.scene_data.json`` beside *path*, if any.
+        """The exporter's ``.{stem}.scene_data.json`` record of *path*, if any.
 
-        The deliverable's own first; failing that, a versioned deliverable's
-        SERIES manifest -- the exporters key that one to the stem without its
-        trailing ``_v<N>``, so every version diffs against one baseline, and a
-        lookup by the file's own stem found nothing for any of them.
+        Looked up in the per-user store of *path*'s folder, where the
+        exporters keep it (``SceneDataSidecarBase.store_dir``), then beside
+        *path*, where an earlier version left one.  In each, the deliverable's
+        own first; failing that, a versioned deliverable's SERIES manifest --
+        the exporters key that one to the stem without its trailing ``_v<N>``,
+        so every version diffs against one baseline, and a lookup by the
+        file's own stem found nothing for any of them.
         """
         if not path:
             return None
-        folder = os.path.dirname(os.path.abspath(path))
+        from pythontk.core_utils.engines.scene_export.scene_data_sidecar import (
+            SceneDataSidecarBase,
+        )
+
         stem = os.path.splitext(os.path.basename(path))[0]
         series = ExportProfile.VERSION_SUFFIX_RE.sub("", stem)
-        for candidate in dict.fromkeys((stem, series)):
-            sidecar = os.path.join(folder, f".{candidate}.scene_data.json")
-            if os.path.isfile(sidecar):
-                return sidecar
+        for folder in (
+            SceneDataSidecarBase.store_dir(path),
+            os.path.dirname(os.path.abspath(path)),
+        ):
+            for candidate in dict.fromkeys((stem, series)):
+                sidecar = os.path.join(folder, f".{candidate}.scene_data.json")
+                if os.path.isfile(sidecar):
+                    return sidecar
         return None
 
     @staticmethod
@@ -188,8 +198,9 @@ class ExportVerifier(_ExportVerifierInternal):
     Parameters:
         glb: Path to the ``.glb`` deliverable (optional).
         fbx: Path to the ``.fbx`` deliverable (optional).
-        sidecar: ``"auto"`` (default) finds ``.{stem}.scene_data.json``
-            beside either input; a path uses that file; ``None`` disables
+        sidecar: ``"auto"`` (default) finds either input's
+            ``.{stem}.scene_data.json`` record (the exporters' per-user store,
+            then beside it); a path uses that file; ``None`` disables
             sidecar-dependent gates (they SKIP).
         baseline_glb: A previous known-good GLB to diff structure against
             (counts, image mimes, clip names). ``None`` -> that gate SKIPs.
@@ -453,6 +464,71 @@ class ExportVerifier(_ExportVerifierInternal):
         detail = f"{len(sized)} image(s), {total}; largest: {listing(sized)}"
         return [Finding(PASS, "glb_image_bytes", detail)]
 
+    def check_glb_skin_weights(self) -> List[Finding]:
+        """Every skinned mesh carries the weights its FBX clusters hold.
+
+        FBX2glTF merges identical vertices across meshes and hands a later
+        skinned mesh an earlier one's weights -- a duplicated rigged prop whose
+        chain runs the other way binds to the wrong end of it
+        (:class:`~pythontk.file_utils.mesh_convert.glb.skin_weights.GlbSkinWeights`,
+        which the conversion runs). Read back off the shipped pair; the FBX's
+        geometry is read only when a skinned mesh shares a vertex position with
+        another mesh, the one way the merge can happen.
+        """
+        from pythontk.file_utils.mesh_convert.glb.skin_weights import GlbSkinWeights
+
+        name = "glb_skin_weights"
+        if self.reader is None:
+            return [Finding(SKIP, name, "no readable GLB")]
+        if not (self.fbx_path and os.path.isfile(self.fbx_path)):
+            return [Finding(SKIP, name, "no FBX to compare against")]
+        try:
+            audit = GlbSkinWeights.audit(self.glb_path, self.fbx_path)
+        except (OSError, ValueError) as e:
+            return [Finding(SKIP, name, f"not compared: {e}")]
+        rows: List[Finding] = []
+        if audit["refused"]:
+            rows.append(
+                Finding(
+                    WARN,
+                    name,
+                    f"{len(audit['refused'])} skinned mesh(es) share vertex "
+                    "positions with another mesh but could not be held against "
+                    "the FBX (possibly carrying another mesh's weights): "
+                    + ", ".join(audit["refused"][:5]),
+                )
+            )
+        if not audit["compared"]:
+            if not rows:
+                rows.append(
+                    Finding(
+                        PASS,
+                        name,
+                        "no skinned mesh shares a vertex position with another "
+                        "mesh (nothing the converter could merge)",
+                    )
+                )
+            return rows
+        note = (
+            f"; {audit['ambiguous']} vertex(es) share a position with a "
+            "differently weighted point and were not compared"
+            if audit["ambiguous"]
+            else ""
+        )
+        mismatched = audit["mismatched"]
+        if mismatched:
+            meshes = ", ".join(f"{m} ({n})" for m, n in sorted(mismatched.items())[:5])
+            detail = (
+                f"{sum(mismatched.values())} vertex(es) on {len(mismatched)} "
+                f"skinned mesh(es) disagree with the FBX's clusters: {meshes}{note}"
+            )
+            return rows + [Finding(FAIL, name, detail)]
+        detail = (
+            f"{len(audit['compared'])} skinned mesh(es) sharing vertex positions "
+            f"match the FBX's clusters{note}"
+        )
+        return rows + [Finding(PASS, name, detail)]
+
     def check_glb_skins(self) -> List[Finding]:
         """Referenced skins need inverseBindMatrices and a real skeleton root.
 
@@ -715,6 +791,19 @@ class ExportVerifier(_ExportVerifierInternal):
             rows.append(
                 Finding(WARN, "clips_vs_takes", f"undeclared clips: {unmatched}")
             )
+        # A declared Shots + Full Sequence file ships the whole timeline beside
+        # the shots. One whose every clip is a declared shot lost it -- the
+        # Blender split replaced it until 2026-10-05 -- and nothing above can
+        # see that: every clip matches its take.
+        if not unmatched and self._published_clip_mode(self.sidecar) == "both":
+            rows.append(
+                Finding(
+                    FAIL,
+                    "clips_vs_takes",
+                    "Shots + Full Sequence declared, but every clip is a declared "
+                    "shot: the whole-timeline clip is missing",
+                )
+            )
         missing = sorted(set(by_name) - set(spans))
         # A declared Full Sequence Only file keeps the shots as metadata; its
         # whole-timeline clip is still judged against their range above.
@@ -836,6 +925,61 @@ class ExportVerifier(_ExportVerifierInternal):
             )
         ]
 
+    def check_fbx_dependencies(self) -> List[Finding]:
+        """Every file the FBX's records name by file name is inside it.
+
+        ``lightmap_metadata``'s maps and reflection probe, ``shadow_metadata``'s
+        silhouette, atlas and horizon maps: the exporters embed each one
+        (``FbxMedia.embed_dependencies``) and ship nothing beside the file, so
+        a consumer resolves them from the FBX alone. One the file lacks is a
+        Unity import without its lightmap, and a GLB built from the file
+        without its lighting. Read off the parsed file: no media is held.
+        """
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        name = "fbx_dependencies"
+        if self.fbx is None:
+            return [Finding(SKIP, name, "no readable FBX")]
+        payloads = {}
+        for key in FbxMedia.DEPENDENCY_FIELDS:
+            payloads[key] = []
+            for value in self.fbx.user_properties(key):
+                try:
+                    payloads[key].append(json.loads(bytes(value).decode("utf-8")))
+                except (TypeError, ValueError, UnicodeDecodeError):
+                    continue
+        named = FbxMedia.named_files(payloads)
+        if not named:
+            return [Finding(SKIP, name, "the records name no file")]
+        inside = {media.casefold() for media in self._embedded_names(self.fbx)}
+        missing = [n for n in named if n.casefold() not in inside]
+        if missing:
+            detail = (
+                f"{len(missing)} of {len(named)} named file(s) not in the FBX: "
+                + ", ".join(missing)
+            )
+            return [Finding(FAIL, name, detail)]
+        return [Finding(PASS, name, f"{len(named)} named file(s) embedded")]
+
+    @staticmethod
+    def _embedded_names(fbx: FbxFile) -> List[str]:
+        """The file names of the media *fbx* embeds: every ``Video`` whose
+        ``Content`` is not empty, named by its ``Filename``'s basename."""
+        names: List[str] = []
+        for record in fbx.iter_objects():
+            if record["name"] != "Video":
+                continue
+            fields = {child["name"]: child["props"] for child in record["children"]}
+            content = (fields.get("Content") or [b""])[0]
+            if isinstance(content, tuple):  # ("RAW", length): payloads not read
+                content = b"\0" * bool(content[-1])
+            if not content:
+                continue
+            raw = (fields.get("Filename") or fields.get("RelativeFilename") or [b""])[0]
+            text = bytes(raw).decode("utf-8", "replace").replace("\\", "/")
+            names.append(os.path.basename(text))
+        return names
+
     def check_fbx_takes(self) -> List[Finding]:
         """Declared sidecar takes all exist as AnimationStacks."""
         if self.fbx is None:
@@ -856,6 +1000,15 @@ class ExportVerifier(_ExportVerifierInternal):
         missing = sorted(takes - stacks)
         if missing:
             return [Finding(FAIL, "fbx_takes", f"declared but absent: {missing}")]
+        if self._published_clip_mode(self.sidecar) == "both" and not stacks - takes:
+            return [
+                Finding(
+                    FAIL,
+                    "fbx_takes",
+                    "Shots + Full Sequence declared, but every take is a declared "
+                    "shot: the whole-timeline take is missing",
+                )
+            ]
         return [Finding(PASS, "fbx_takes", f"{len(takes)} declared take(s) present")]
 
     #: Channels a failing take names before the rest are counted.

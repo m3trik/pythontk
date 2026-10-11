@@ -524,6 +524,32 @@ class MathTest(BaseTestCase):
         self.assertAlmostEqual(result[1], 0.0, places=5)
         self.assertAlmostEqual(result[2], 0.0, places=5)
 
+    def test_best_rotate_order_keeps_the_turn_on_one_channel(self):
+        """SOCKET_WRENCH (SOL_REPLACE_ASSEMBLY): lifted 98 on X, then turned
+        60 about its own Y. Re-solved per order (the DCC's job), the turn is
+        one channel in yzx and three in xyz."""
+        solutions = {
+            "xyz": [(0, 0, 0), (98.3, -6.4, -0.15), (101.0, 40.2, 46.9)],
+            "yzx": [(0, 0, 0), (98.35, 0.78, 6.32), (98.35, 60.78, 6.32)],
+            "zyx": [(0, 0, 0), (98.27, 0.77, 6.32), (120.1, 41.5, 30.8)],
+        }
+        self.assertEqual(MathUtils.best_rotate_order(solutions, "xyz"), "yzx")
+
+    def test_best_rotate_order_avoids_gimbal_lock(self):
+        """An order whose middle channel reaches 90 loses to any that doesn't,
+        even a busier one."""
+        solutions = {
+            "zxy": [(0, 0, 0), (89.5, 0, 30)],  # middle X at 89.5
+            "xyz": [(0, 0, 0), (60, 10, 20)],
+        }
+        self.assertEqual(MathUtils.best_rotate_order(solutions, "zxy"), "xyz")
+
+    def test_best_rotate_order_keeps_the_current_order_on_a_tie(self):
+        """A single-axis hinge is one channel in every order: leave it alone."""
+        solutions = {o: [(0, 0, 0), (0, 70, 0)] for o in ("xyz", "yzx", "zyx")}
+        self.assertEqual(MathUtils.best_rotate_order(solutions, "zyx"), "zyx")
+        self.assertIsNone(MathUtils.best_rotate_order({}, "xyz"))
+
     # -------------------------------------------------------------------------
     # Lerp Tests
     # -------------------------------------------------------------------------

@@ -28,10 +28,10 @@
     Issues   what the load found wrong with the deliverable.
 
   The probe's per-pixel cost is the frame time with it on against off: the
-  Environment window's switch puts the model on the programs a file without a
+  Environment menu's switch puts the model on the programs a file without a
   probe draws with, so the difference is the probe's alone.
 
-  It is the Inspect window (`viewer.window`): its bar button or `i`. In a
+  It is the Inspect menu's Performance window (`viewer.window`), or `i`. In a
   headset -- where the page's own chrome is not drawn at all -- it rides
   beside the view as a card, toggled with B or Y. Copy Report puts all of it
   on the clipboard as JSON for a bug report, and every load logs a summary
@@ -53,7 +53,9 @@ const RATES = [60, 72, 75, 80, 90, 100, 120, 144, 165, 240];
 export default function inspect(viewer) {
   const { THREE, renderer } = viewer;
   const win = viewer.window('Inspect', {
-    title: 'Frame time, draw calls, GPU memory and load cost, measured here (i)',
+    title: 'Frame time, draw calls, GPU memory and load cost, measured here',
+    label: 'Performance',
+    key: 'i',
   });
   const panel = win.section();
   const frames = frameWindow(WINDOW_MS);
@@ -73,15 +75,15 @@ export default function inspect(viewer) {
   function paint() {
     painted = performance.now();
     const frame = stats();
-    // Read at paint, not at load: the Environment window's switch frees one
+    // Read at paint, not at load: the Environment menu's switch frees one
     // map and builds the other.
     const environment = environmentMemory(viewer);
     panel.setRows(panelRows(viewer, frame, memory, environment, file, gpu));
     if (renderer.xr.isPresenting) card.draw(cardLines(viewer, frame, memory, environment));
   }
 
-  // Opened and shut by its bar button, `i`, B or Y alike -- all through the
-  // window, which says so here.
+  // Opened and shut by its menu item, `i` (the item's key), B or Y alike --
+  // all through the window, which says so here.
   const toggle = () => win.toggle();
   win.onShow((shown) => {
     open = shown;
@@ -127,10 +129,6 @@ export default function inspect(viewer) {
       file,
     };
   }
-
-  viewer.on('key', (event) => {
-    if (event.key === 'i') toggle();
-  });
 
   // Once per load, and logged whether or not the panel is open, so a push that
   // quietly doubles the cost says so without anyone having to think to ask.

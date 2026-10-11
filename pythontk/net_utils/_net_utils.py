@@ -22,9 +22,9 @@ class NetUtils:
         started?" -- a port answering a connect may belong to anyone.
 
         Windows parses ``netstat -ano``, keyed on the foreign address ``:0``
-        (the state word is localized, e.g. German "ABHÖREN"). Linux reads
-        ``/proc/net/tcp{,6}`` and maps each socket's inode to the process
-        holding it in ``/proc/<pid>/fd``.
+        (the state word is localized: a German Windows does not print
+        "LISTENING"). Linux reads ``/proc/net/tcp{,6}`` and maps each socket's
+        inode to the process holding it in ``/proc/<pid>/fd``.
 
         Raises:
             OSError: This platform's source is unavailable (or the platform is
@@ -37,9 +37,10 @@ class NetUtils:
 
         if sys.platform == "win32":
             # netstat writes the console's OEM codepage, not the ANSI one a
-            # bare text mode decodes with: a localized header (French "État" is
-            # cp850 0x90, undefined in cp1252) raised UnicodeDecodeError before
-            # a row was read. The rows keyed on below are ASCII either way.
+            # bare text mode decodes with: a localized header (a French Windows
+            # writes an "É", cp850 0x90, undefined in cp1252) raised
+            # UnicodeDecodeError before a row was read. The rows keyed on below
+            # are ASCII either way.
             output = subprocess.check_output(
                 ["netstat", "-ano"], encoding="oem", errors="replace"
             )

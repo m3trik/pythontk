@@ -301,6 +301,21 @@ class TestApplyGlbArticulation(unittest.TestCase):
             self.assertIsNone(MeshConvert.apply_glb_articulation(path))
         self.assertIn("ambiguous", "\n".join(logs.output))
 
+    def test_a_rig_whose_roots_hang_under_different_nodes_is_refused(self):
+        """A rig is solved in ONE space, its root joints' parent. The page
+        refuses a rig whose roots hang under different nodes, and so do this
+        applier and unitytk's controller -- the manifest never publishes a
+        rig no runtime will pose, and the two deliverables agree."""
+        record = _rig_record()
+        record["joints"][1]["parent"] = None  # the elbow: a second root
+        nodes = _arm_nodes(record)
+        nodes[0]["children"].remove(2)  # off the rig group...
+        nodes.append({"name": "other_RIG", "children": [2]})  # ...onto another
+        path = self._glb(nodes)
+        with self.assertLogs(MESH_CONVERT_LOGGER, level="WARNING") as logs:
+            self.assertIsNone(MeshConvert.apply_glb_articulation(path))
+        self.assertIn("different nodes", "\n".join(logs.output))
+
     def test_a_rig_not_in_the_export_is_out_of_scope(self):
         record = _rig_record()
         other = _rig_record("other")

@@ -30,15 +30,18 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/engines/scene_export/export_snapshot.py`](#core_utils--engines--scene_export--export_snapshot) — Export assembly: compute every record once, then commit once.
 - [`core_utils/engines/scene_export/hierarchy_baseline.py`](#core_utils--engines--scene_export--hierarchy_baseline) — The change-detection baseline an exporter diffs a scene's hierarchy against.
 - [`core_utils/engines/scene_export/record_transfer.py`](#core_utils--engines--scene_export--record_transfer) — Records crossing between scenes, by declaration (:class:`RecordTransfer`).
-- [`core_utils/engines/scene_export/scene_data_sidecar.py`](#core_utils--engines--scene_export--scene_data_sidecar) — The scene-data sidecar -- what an export shipped, beside the deliverable.
+- [`core_utils/engines/scene_export/scene_data_sidecar.py`](#core_utils--engines--scene_export--scene_data_sidecar) — The scene-data record -- what an export shipped, kept off the deliverable.
 - [`core_utils/engines/scene_export/scene_exporter.py`](#core_utils--engines--scene_export--scene_exporter) — The Scene Exporter's orchestration shell, written once for both DCCs.
 - [`core_utils/engines/scene_export/scene_records.py`](#core_utils--engines--scene_export--scene_records) — Scene records -- every piece of tool-authored scene metadata, declared once.
 - [`core_utils/engines/scene_export/scene_store.py`](#core_utils--engines--scene_export--scene_store) — The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
 - [`core_utils/engines/shots/effect_recipe.py`](#core_utils--engines--shots--effect_recipe) — Effect recipe -- how each render effect and audio clip is keyed, once per scene.
 - [`core_utils/engines/shots/manifest/behaviors/_behaviors.py`](#core_utils--engines--shots--manifest--behaviors--_behaviors) — Behaviors — load JSON keying recipes and resolve them to keyframe math.
 - [`core_utils/engines/shots/manifest/behaviors/_spec.py`](#core_utils--engines--shots--manifest--behaviors--_spec) — Schema for a *behavior* template file, defined as a dataclass.
+- [`core_utils/engines/shots/manifest/manifest_edits.py`](#core_utils--engines--shots--manifest--manifest_edits) — The Shot Manifest's edit layer: a user's changes to a build sheet, kept
 - [`core_utils/engines/shots/manifest/manifest_engine.py`](#core_utils--engines--shots--manifest--manifest_engine) — Shot Manifest engine — pure planning/orchestration core with scene hooks.
+- [`core_utils/engines/shots/manifest/manifest_export.py`](#core_utils--engines--shots--manifest--manifest_export) — The Shot Manifest as a table to hand on: a spreadsheet for the sheet's
 - [`core_utils/engines/shots/manifest/manifest_model.py`](#core_utils--engines--shots--manifest--manifest_model) — Pure Shot Manifest data model + CSV parser.
+- [`core_utils/engines/shots/manifest/manifest_tags.py`](#core_utils--engines--shots--manifest--manifest_tags) — The Shot Manifest's colour tags: a colour per step, the user's and the automatic.
 - [`core_utils/engines/shots/manifest/mapping/_mapping.py`](#core_utils--engines--shots--manifest--mapping--_mapping) — CSV mapping resolver — interprets JSON mapping files.
 - [`core_utils/engines/shots/manifest/mapping/_spec.py`](#core_utils--engines--shots--manifest--mapping--_spec) — Schema for a CSV *mapping* file, defined as a dataclass.
 - [`core_utils/engines/shots/manifest/range_resolver.py`](#core_utils--engines--shots--manifest--range_resolver) — Range resolution algorithm for the Shot Manifest.
@@ -82,7 +85,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/module_resolver.py`](#core_utils--module_resolver) — Reusable module attribute resolver for package-style imports.
 - [`core_utils/namedtuple_container.py`](#core_utils--namedtuple_container)
 - [`core_utils/namespace_handler.py`](#core_utils--namespace_handler)
-- [`core_utils/naming_convention.py`](#core_utils--naming_convention) — Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
+- [`core_utils/naming_convention/_naming_convention.py`](#core_utils--naming_convention--_naming_convention) — Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 - [`core_utils/package_manager.py`](#core_utils--package_manager)
 - [`core_utils/presets/library.py`](#core_utils--presets--library) — Whole-root view over the ecosystem's preset stores.
 - [`core_utils/presets/store.py`](#core_utils--presets--store) — Qt-free, zero-dependency named-preset *store* for the ecosystem.
@@ -99,11 +102,13 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/test_sandbox.py`](#core_utils--test_sandbox) — Process-level test isolation -- keep a test run off the developer's machine.
 - [`core_utils/upstream_patch.py`](#core_utils--upstream_patch) — UpstreamPatch - correcting a defect in code we do not own, with a way out.
 - [`core_utils/user_config.py`](#core_utils--user_config) — Qt-free, zero-dependency user-config resolution for the ecosystem.
-- [`core_utils/x11.py`](#core_utils--x11) — A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys.
+- [`core_utils/x11.py`](#core_utils--x11) — A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys,
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
 - [`file_utils/file_dependencies.py`](#file_utils--file_dependencies) — File dependencies -- files a record names by *name*, found where they are NOW.
 - [`file_utils/file_naming.py`](#file_utils--file_naming) — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - [`file_utils/mesh_convert/_fbx2gltf.py`](#file_utils--mesh_convert--_fbx2gltf) — The FBX2glTF CLI driver behind :meth:`MeshConvert.fbx_to_glb`, and the
+- [`file_utils/mesh_convert/_fbx_writer.py`](#file_utils--mesh_convert--_fbx_writer) — Zero-dependency binary-FBX writer: the encoding half of :class:`FbxFile`.
+- [`file_utils/mesh_convert/_gltf2fbx.py`](#file_utils--mesh_convert--_gltf2fbx) — glTF -> FBX with no DCC in the loop: :meth:`MeshConvert.gltf_to_fbx`.
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert) — FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
 - [`file_utils/mesh_convert/export_verify.py`](#file_utils--mesh_convert--export_verify) — Deliverable verification for exported FBX / GLB pairs.
 - [`file_utils/mesh_convert/fbx_file.py`](#file_utils--mesh_convert--fbx_file) — Zero-dependency binary-FBX reader: header, node records, objects, takes.
@@ -114,6 +119,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`file_utils/mesh_convert/glb/key_reduction.py`](#file_utils--mesh_convert--glb--key_reduction) — Reduce a GLB's animation keys to what its interpolation needs.
 - [`file_utils/mesh_convert/glb/pipeline.py`](#file_utils--mesh_convert--glb--pipeline) — FBX -> GLB: the one build every GLB deliverable goes through.
 - [`file_utils/mesh_convert/glb/reader.py`](#file_utils--mesh_convert--glb--reader) — Read-only structured access to a GLB: accessors, animation sampling, worlds.
+- [`file_utils/mesh_convert/glb/skin_weights.py`](#file_utils--mesh_convert--glb--skin_weights) — Restore the skin weights FBX2glTF hands one mesh from another.
 - [`file_utils/mesh_convert/glb/tangents.py`](#file_utils--mesh_convert--glb--tangents) — Repair a GLB's shipped tangents against the UVs they describe.
 - [`file_utils/mesh_ops.py`](#file_utils--mesh_ops) — File-level mesh processing via PyMeshLab (optional dependency).
 - [`file_utils/metadata.py`](#file_utils--metadata)
@@ -141,6 +147,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`img_utils/image_curator.py`](#img_utils--image_curator) — Perceptual-hash + sharpness curation for large image sets.
 - [`img_utils/ktx2_encoder.py`](#img_utils--ktx2_encoder) — KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
 - [`img_utils/mask_generator.py`](#img_utils--mask_generator) — Background mask generation via rembg (optional dependency).
+- [`img_utils/rect_packer.py`](#img_utils--rect_packer) — Rectangle packing into one fixed bin: integer texels, gutters, block alignment.
 - [`img_utils/shadow_atlas.py`](#img_utils--shadow_atlas) — One atlas per shadow-rig type: equal cells, a tile rewritten in place.
 - [`iter_utils/_iter_utils.py`](#iter_utils--_iter_utils)
 - [`math_utils/_math_utils.py`](#math_utils--_math_utils)
@@ -225,7 +232,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 
 The :class:`AppLauncher` facade: the three launch shapes, over its job mixins.
 
-- **[`class AppLauncher(_AppLauncherInternal, _DiscoveryMixin, _EnvironmentMixin, _DesktopMixin, _ProcessesMixin)`](pythontk/pythontk/core_utils/app_launcher/_app_launcher.py#L130)** — A utility class for launching applications on Windows and Linux.
+- **[`class AppLauncher(_AppLauncherInternal, _DiscoveryMixin, _EnvironmentMixin, _DesktopMixin, _ProcessesMixin, _ShortcutsMixin)`](pythontk/pythontk/core_utils/app_launcher/_app_launcher.py#L131)** — A utility class for launching applications on Windows and Linux.
   - `AppLauncher.launch(app_identifier, args=None, cwd=None, detached=True, env=None)` *(static)* — Launches an application.
   - `AppLauncher.run(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None, hide_window=False, on_output=None, poll_interval=0.1)` *(static)* — Execute an application synchronously and return its result.
   - `AppLauncher.spawn(app_identifier, args=None, cwd=None, env=None, hide_window=True, bind_lifetime=True)` *(static)* — Start a helper process that runs beside this one and dies with it.
@@ -235,6 +242,7 @@ The :class:`AppLauncher` facade: the three launch shapes, over its job mixins.
   - `AppLauncher.resolve_app_path(*, env_vars=(), location_env_vars=(), app_names=(), scan_globs=())` *(static)* — Resolve a target application executable;
   - `AppLauncher.looks_like_python(path: str) -> bool` *(static)* — Whether *path* names a Python interpreter rather than a host app.
   - `AppLauncher.companion_python(executable: Optional[str] = None) -> Optional[str]` *(static)* — The Python interpreter that pairs with *executable* (default: this process).
+  - `AppLauncher.windowless_python(executable: Optional[str] = None) -> Optional[str]` *(static)* — The interpreter to run a GUI program with, opening no console window.
   - `AppLauncher.find_app(app_identifier)` *(static)* — Attempts to locate the executable for the given application identifier.
   - `AppLauncher.process_environ()` *(static)* — The LIVE process environment -- what a child would actually inherit.
   - `AppLauncher.python_args_via_env(argv, env=None)` *(static)* — The arguments and environment that make a Python interpreter run
@@ -253,6 +261,7 @@ The :class:`AppLauncher` facade: the three launch shapes, over its job mixins.
   - `AppLauncher.get_running_processes(process_name)` *(static)* — Returns a list of PIDs of running processes matching the given name.
   - `AppLauncher.close_process(pid, force=False)` *(static)* — Terminates the process with the given PID.
   - `AppLauncher.process_tree(pid)` *(static)* — *pid* and every live descendant: ``{pid, ...}``.
+  - `AppLauncher.create_shortcut(name: str, target: str, args: Optional[Sequence[str]] = None, location: str = 'desktop', icon: Optional[str] = None, working_dir: Optional[str] = None, comment: Optional[str] = None, app_id: Optional[str] = None) -> str` *(static)* — Write a shortcut that runs *target* with *args*.
 
 <a id="core_utils--cancel_scope"></a>
 ### `core_utils/cancel_scope.py`
@@ -309,7 +318,7 @@ Cooperative cancellation — one scope shared by every cancel affordance.
 
 Lightweight, DCC-agnostic color primitives.
 
-- **[`class Color`](pythontk/pythontk/core_utils/color.py#L19)** — Immutable RGBA color stored as 0–255 integers.
+- **[`class Color`](pythontk/pythontk/core_utils/color.py#L20)** — Immutable RGBA color stored as 0–255 integers.
   - `Color.from_hex(cls, hex_str: str) -> 'Color'` *(class)* — Parse ``#RGB``, ``#RRGGBB``, or ``#RRGGBBAA``.
   - `Color.from_rgbf(cls, r: float, g: float, b: float, a: float = 1.0) -> 'Color'` *(class)* — Create from 0.0–1.0 float components (Maya API convention).
   - `Color.from_hsvf(cls, h: float, s: float, v: float, a: float = 1.0) -> 'Color'` *(class)* — Create from 0.0–1.0 HSV floats (hue wraps;
@@ -327,23 +336,25 @@ Lightweight, DCC-agnostic color primitives.
   - `Color.with_alpha(self, a: Union[int, float]) -> 'Color'` — Return a copy with a new alpha (int 0–255 or float 0.0–1.0).
   - `Color.blend(self, other: 'Color', t: float = 0.5) -> 'Color'` — Linear interpolation towards *other* by *t* (0.0 = self, 1.0 = other).
   - `Color.subtle_bg(self, value: float = 0.24, sat_factor: float = 1.0) -> 'Color'` — Derive a tinted dark-theme background from this colour.
-- **[`class ColorPair`](pythontk/pythontk/core_utils/color.py#L243)** — Foreground / background pair for themed UIs.
+- **[`class ColorPair`](pythontk/pythontk/core_utils/color.py#L244)** — Foreground / background pair for themed UIs.
   - `ColorPair.auto(cls, fg: Union[str, 'Color'], value: float = 0.24, sat_factor: float = 1.0) -> 'ColorPair'` *(class)* — Derive background automatically from foreground for dark themes.
-- **[`class ColorStops`](pythontk/pythontk/core_utils/color.py#L320)** — The endpoints of the ramp a 0–1 channel drives, and their defaults.
+- **[`class ColorStops`](pythontk/pythontk/core_utils/color.py#L321)** — The endpoints of the ramp a 0–1 channel drives, and their defaults.
   - `ColorStops.keys(self) -> Tuple[str, ...]` *(property)* — The stop names that exist, high first.
   - `ColorStops.defaults(self) -> Tuple[Tuple[float, float, float], ...]` *(property)* — Each stop's own fallback, in :attr:`keys` order.
   - `ColorStops.resolve(self, value: object = None) -> Tuple[Tuple[float, float, float], ...]` — Read a published colour into one rgb triple per stop.
-- **[`class Palette(dict)`](pythontk/pythontk/core_utils/color.py#L450)** — Named color collection with auto-wrapping and alias support.
+- **[`class Palette(dict)`](pythontk/pythontk/core_utils/color.py#L451)** — Named color collection with auto-wrapping and alias support.
   - `Palette.update(self, mapping=None, **kwargs: object) -> None` — Wrap on update, as ``__setitem__`` does.
   - `Palette.setdefault(self, key: str, default: object = None) -> object` — Wrap the inserted default, and return the WRAPPED value -- callers
   - `Palette.copy(self) -> 'Palette'` — A Palette, not a plain dict: ``dict.copy`` drops the subclass, and
   - `Palette.alias(self, mapping: Dict[str, str]) -> 'Palette'` — Return a new Palette with additional keys pointing to existing values.
   - `Palette.override(self, **kwargs: object) -> 'Palette'` — Return a new Palette with selected entries replaced.
+  - `Palette.contrast_order(keys: Sequence[str]) -> List[str]` *(static)* — *keys* reordered so each one is far from the one before it.
   - `Palette.status(cls) -> 'Palette'` *(class)* — Standard severity palette for dark-theme UIs.
   - `Palette.axes(cls) -> 'Palette'` *(class)* — Standard XYZ / RGB axis colours (Maya / 3D convention).
   - `Palette.channels(cls) -> 'Palette'` *(class)* — Standard transform-attribute colours for animation editors.
   - `Palette.ui(cls) -> 'Palette'` *(class)* — Common UI element colours for dark themes.
   - `Palette.diff(cls) -> 'Palette'` *(class)* — Comparison / diff palette for dark-theme tree views.
+  - `Palette.tags(cls) -> 'Palette'` *(class)* — Eight categorical colours for user colour tags, in hue order.
 
 <a id="core_utils--conformance"></a>
 ### `core_utils/conformance.py`
@@ -605,7 +616,7 @@ The Scene Exporter panels' shared contract, written once.
   - `ExportProfile.glb_options(cls) -> Dict[str, Dict[str, Any]]` *(class)* — ``{row key: {label: value}}`` for :attr:`GLB_ROWS`, as a producer
   - `ExportProfile.glb_defaults(cls) -> Dict[str, Any]` *(class)* — ``{row key: value}`` -- where each :attr:`GLB_ROWS` row starts in
   - `ExportProfile.frame_rate_options(cls) -> Dict[str, Optional[str]]` *(class)* — Frame Rate check -- every ``VidUtils.FRAME_RATES`` entry labelled
-- **[`class ExportRun`](pythontk/pythontk/core_utils/engines/scene_export/export_profile.py#L985)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
+- **[`class ExportRun`](pythontk/pythontk/core_utils/engines/scene_export/export_profile.py#L983)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
   - `ExportRun.glb_only(self) -> bool` *(property)* — The GLB is the deliverable;
   - `ExportRun.create_glb(self) -> bool` *(property)* — A ``.glb`` is written this run (alone, or beside the FBX).
   - `ExportRun.usd(self) -> bool` *(property)* — The deliverable is a USD layer.
@@ -624,12 +635,13 @@ The Scene Exporter panels' shared contract, written once.
 
 Export assembly: compute every record once, then commit once.
 
-- **[`class ExportContext`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L44)** — What an export DECIDES, handed to every producer as input.
+- **[`class ExportContext`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L45)** — What an export DECIDES, handed to every producer as input.
   - `ExportContext.note(self, text: str) -> None` — Record one sentence for the report.
   - `ExportContext.record(self, spec: Union[RecordSpec, str], store=None, default: Any = None) -> Any` — The payload of *spec* as produced in THIS assembly, else -- when a
   - `ExportContext.refreshes(self, spec: RecordSpec) -> bool` — Whether this context's mode refreshes *spec*.
-- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L130)** — The records one export ships, assembled once and committed once.
+- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L136)** — The records one export ships, assembled once and committed once.
   - `ExportSnapshot.assemble(cls, producers: Mapping[Union[RecordSpec, str], Producer], ctx: Optional[ExportContext] = None, only: Optional[Iterable[Union[RecordSpec, str]]] = None) -> 'ExportSnapshot'` *(class)* — Run *producers* in dependency order and collect their records.
+  - `ExportSnapshot.restore_scene_wide(self, store) -> Optional['ExportSnapshot']` — Put the scene's own copy of every record the scope narrowed back on
   - `ExportSnapshot.publish(cls, store, records: Mapping[Union[RecordSpec, str], Any], ctx: Optional[ExportContext] = None) -> 'ExportSnapshot'` *(class)* — Commit *records* that are already in hand -- the AUTHORING-time
   - `ExportSnapshot.commit(self, store) -> Dict[str, Optional[str]]` — Write every produced record to *store* in one pass, then stamp the
   - `ExportSnapshot.records(self) -> Dict[str, Record]` *(property)* — The produced records by key (no ``None`` entries).
@@ -691,9 +703,10 @@ Records crossing between scenes, by declaration (:class:`RecordTransfer`).
 <a id="core_utils--engines--scene_export--scene_data_sidecar"></a>
 ### `core_utils/engines/scene_export/scene_data_sidecar.py`
 
-The scene-data sidecar -- what an export shipped, beside the deliverable.
+The scene-data record -- what an export shipped, kept off the deliverable.
 
-- **[`class SceneDataSidecarBase`](pythontk/pythontk/core_utils/engines/scene_export/scene_data_sidecar.py#L77)** — The scene-data sidecar stored alongside export files, host-agnostic.
+- **[`class SceneDataSidecarBase`](pythontk/pythontk/core_utils/engines/scene_export/scene_data_sidecar.py#L82)** — The scene-data record of each export, host-agnostic.
+  - `SceneDataSidecarBase.store_dir(cls, export_path: str) -> str` *(class)* — The per-user folder holding the records of *export_path*'s folder.
   - `SceneDataSidecarBase.base_stem(cls, export_path: str) -> str` *(class)* — Return the export stem with any trailing ``_vNN`` suffix stripped.
   - `SceneDataSidecarBase.manifest_path_for(cls, export_path: str, *, base_stem: bool = False) -> str` *(class)* — Return the sidecar manifest path for an export file.
   - `SceneDataSidecarBase.diff_report_path_for(cls, export_path: str, *, base_stem: bool = False) -> str` *(class)* — Return the v2-era on-disk diff report path for an export file.
@@ -720,7 +733,7 @@ The scene-data sidecar -- what an export shipped, beside the deliverable.
 
 The Scene Exporter's orchestration shell, written once for both DCCs.
 
-- **[`class SceneExporterBase(LoggingMixin)`](pythontk/pythontk/core_utils/engines/scene_export/scene_exporter.py#L42)** — The DCC-free half of a Scene Exporter: progress, consent, run config.
+- **[`class SceneExporterBase(LoggingMixin)`](pythontk/pythontk/core_utils/engines/scene_export/scene_exporter.py#L46)** — The DCC-free half of a Scene Exporter: progress, consent, run config.
   - `SceneExporterBase.confirm(self, question: str) -> bool` — Yes/no consent for an export-time side effect (a tool download).
   - `SceneExporterBase.decide_check_failure(self, check: str, messages: List[str], remaining: List[str]) -> str` — Seam: what to do about *check*, which just failed mid-run.
   - `SceneExporterBase.check_label(self, check: str) -> str` — *check*'s name as the panel spells it -- its row's label.
@@ -729,7 +742,7 @@ The Scene Exporter's orchestration shell, written once for both DCCs.
   - `SceneExporterBase.run_config_from_values(self, values: Dict[str, Any], override_checks: bool = False, ignore_groups_case_sensitive: bool = False) -> Dict[str, Any]` — Widget values -> the inputs :meth:`perform_export` takes.
   - `SceneExporterBase.generate_log_file_path(self, export_path: str) -> str` — Generate the log file path based on the export path.
   - `SceneExporterBase.setup_file_logging(self, log_file_path: str)` — Setup file logging to log actions during export.
-  - `SceneExporterBase.close_file_handlers(self)` — Close and remove file handlers after logging is complete.
+  - `SceneExporterBase.close_file_handlers(self)` — Close and remove the handler :meth:`setup_file_logging` added;
 
 <a id="core_utils--engines--scene_export--scene_records"></a>
 ### `core_utils/engines/scene_export/scene_records.py`
@@ -756,7 +769,7 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `RecordSpec.save(self, store, payload: Any) -> Optional[str]` — Publish *payload* (the publish / clear idiom in one call).
   - `RecordSpec.clear(self, store) -> Optional[str]` — Clear the record;
   - `RecordSpec.is_present(self, store) -> bool` — Whether *store* holds a non-empty value for this record.
-- **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L376)** — The registry: every record, declared once, and what derives from it.
+- **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L383)** — The registry: every record, declared once, and what derives from it.
   - `SceneRecords.resolve_class(module: str, name: str) -> Any` *(static)* — The class a ``(module, name)`` row names -- :attr:`CODECS`',
   - `SceneRecords.codec(cls, spec: RecordSpec) -> Optional[Any]` *(class)* — The codec class of a :attr:`Merge.CODEC` record, else ``None``.
   - `SceneRecords.shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]` *(class)* — The :class:`~pythontk.SchemaSpec` declaring *item*'s payload
@@ -852,7 +865,7 @@ Behaviors — load JSON keying recipes and resolve them to keyframe math.
   - `Behaviors.phase_durations(tmpl: Dict[str, Any]) -> Tuple[float, float]` *(static)* — Sum a template's ``in`` / ``out`` phase durations across all attributes.
   - `Behaviors.anchor_overrides(behaviors: List[str]) -> List[Optional[float]]` *(static)* — The ``anchor_override`` each of one object's *behaviors* is keyed at.
   - `Behaviors.compute_duration(behavior_entries: List[Dict[str, str]], fallback: float = 30, fps: Optional[float] = None, audio_duration_fn: Optional[Callable[[str], Optional[float]]] = None, resolve_source_fn: Optional[Callable[[str, str], Optional[str]]] = None, recipe: Optional[EffectRecipe] = None) -> float` *(static)* — Derive duration from the behavior templates referenced in *behavior_entries*.
-  - `Behaviors.apply_to_shots(shots: list, apply_fn: Callable, exists_fn: Optional[Callable] = None, has_keys_fn: Optional[Callable] = None, store: Any = None, resolve_fn: Optional[Callable[[str], str]] = None, conflict_fn: Optional[Callable] = None, release_fn: Optional[Callable] = None) -> Dict[str, list]` *(static)* — Apply declared behaviors from shot metadata through *apply_fn*.
+  - `Behaviors.apply_to_shots(shots: list, apply_fn: Callable, exists_fn: Optional[Callable] = None, has_keys_fn: Optional[Callable] = None, store: Any = None, resolve_fn: Optional[Callable[[str], str]] = None, conflict_fn: Optional[Callable] = None, release_fn: Optional[Callable] = None, skip_behaviors: Collection[str] = ()) -> Dict[str, list]` *(static)* — Apply declared behaviors from shot metadata through *apply_fn*.
 
 <a id="core_utils--engines--shots--manifest--behaviors--_spec"></a>
 ### `core_utils/engines/shots/manifest/behaviors/_spec.py`
@@ -869,6 +882,34 @@ Schema for a *behavior* template file, defined as a dataclass.
   - `BehaviorSpec.validate_detect(value: Any) -> List[str]` *(static)* — ``detect`` = a list of regexes (matched case-insensitively).
   - `BehaviorSpec.validate_attributes(value: Any) -> List[str]` *(static)* — ``attributes`` = {attr: {in?/out?: {offset,duration,values,anchor,tangent}}}.
 
+<a id="core_utils--engines--shots--manifest--manifest_edits"></a>
+### `core_utils/engines/shots/manifest/manifest_edits.py`
+
+The Shot Manifest's edit layer: a user's changes to a build sheet, kept
+
+- **[`class ManifestEdits(_ManifestEditsInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_edits.py#L84)** — A build sheet's edits: renamed, re-described, hidden and added steps;
+  - `ManifestEdits.to_dict(self) -> Dict[str, Any]` — The edits as plain JSON-able data (:meth:`from_dict` reads it).
+  - `ManifestEdits.from_dict(cls, data: Optional[Dict[str, Any]]) -> 'ManifestEdits'` *(class)* — Read :meth:`to_dict` data;
+  - `ManifestEdits.has_edits(self) -> bool` *(property)* — Whether there is anything to apply (or to reset).
+  - `ManifestEdits.count(self) -> int` — How many edits there are: one per edited field, one per added step.
+  - `ManifestEdits.step_record(self, step_id: str) -> Dict[str, Any]` — *step_id*'s edited fields (a copy;
+  - `ManifestEdits.object_record(self, home: str, sheet_name: str) -> Dict[str, Any]` — The edited fields of the object the sheet lists as *sheet_name*
+  - `ManifestEdits.is_added(self, step_id: str) -> bool` — Whether *step_id* is a step this layer added (not the sheet's).
+  - `ManifestEdits.hidden_steps(self) -> List[str]` — The IDs of the hidden steps, in the order they were hidden.
+  - `ManifestEdits.hidden_objects(self, step_id: str) -> List[Tuple[str, str]]` — ``[(home, sheet_name)]`` of the hidden objects that sit in
+  - `ManifestEdits.anchor(step: BuilderStep, obj: BuilderObject) -> Tuple[str, str]` *(static)* — ``(home, sheet_name)`` -- the key an edit to *obj*, shown in
+  - `ManifestEdits.name_taken(steps: Iterable[BuilderStep], name: str, step_id: Optional[str] = None) -> Optional[str]` *(static)* — The ID of the step other than *step_id* whose shot is already
+  - `ManifestEdits.stale(self, steps: Iterable[BuilderStep]) -> List[str]` — Each edit the sheet's *steps* no longer give a place to, described.
+  - `ManifestEdits.set_step(self, step_id: str, field: str, value: Any, sheet: Any = _UNSET) -> None` — Edit *field* of step *step_id*;
+  - `ManifestEdits.set_object(self, home: str, sheet_name: str, field: str, value: Any, sheet: Any = _UNSET) -> None` — Edit *field* of the object the sheet lists as *sheet_name* under
+  - `ManifestEdits.revert_step(self, step_id: str, field: Optional[str] = None) -> bool` — Drop *step_id*'s edit of *field* (every field when ``None``).
+  - `ManifestEdits.revert_object(self, home: str, sheet_name: str, field: Optional[str] = None) -> bool` — Drop the object's edit of *field* (every field when ``None``).
+  - `ManifestEdits.add_step(self, after: str, taken: Iterable[str] = (), step_id: Optional[str] = None) -> str` — Add a step right after step *after* (``""``: at the top) and
+  - `ManifestEdits.remove_step(self, step_id: str) -> bool` — Remove an added step -- its edits, and the moves into it, which
+  - `ManifestEdits.rename_all(self, steps: Iterable[BuilderStep], name: str, new: str) -> int` — Rename every object named *name* in *steps* (from :meth:`apply`)
+  - `ManifestEdits.clear(self) -> None` — Drop every edit: the sheet as-is.
+  - `ManifestEdits.apply(self, steps: List[BuilderStep]) -> List[BuilderStep]` — The sheet's *steps* with every edit applied, as new steps.
+
 <a id="core_utils--engines--shots--manifest--manifest_engine"></a>
 ### `core_utils/engines/shots/manifest/manifest_engine.py`
 
@@ -881,50 +922,79 @@ Shot Manifest engine — pure planning/orchestration core with scene hooks.
   - `ShotManifest.sync(self, steps: List[BuilderStep], apply_behaviors: bool = True, ranges: Optional[Dict[str, Tuple[float, float]]] = None, remove_missing: bool = True, zero_duration_fallback: bool = False, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH, skip_scene_discovery: bool = False) -> Tuple[Dict[str, str], Dict[str, list], List[StepStatus]]` — Full build pipeline: plan -> commit -> apply behaviors -> assess.
   - `ShotManifest.update(self, steps: List[BuilderStep], ranges: Optional[Dict[str, Tuple[float, float]]] = None, remove_missing: bool = True, zero_duration_fallback: bool = False, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH) -> Dict[str, str]` — Sync parsed steps to the ShotStore (data only, no behaviors).
   - `ShotManifest.pair(self, steps: List[BuilderStep]) -> ShotPairing` — Which shot each step is -- the one place a step finds its shot.
+  - `ShotManifest.bind(self, shot, step_id: Optional[str]) -> None` — Make *shot* step *step_id*'s shot -- the binding :meth:`pair`
   - `ShotManifest.unowned_keys(self, obj: str, behavior: str, start: float, end: float) -> List[Tuple[str, float]]` — Keys on *behavior*'s channels of *obj* in ``[start, end]`` that the
   - `ShotManifest.release_authored(self, shot_id: int, obj: str, behavior: str) -> int` — Delete the keys *behavior* wrote on *obj* for shot *shot_id* and drop
   - `ShotManifest.release_dropped(self, steps: List[BuilderStep]) -> int` — Delete the keys of behaviors a step's doc no longer lists.
   - `ShotManifest.adopt_placed_clips(self) -> int` — Claim the audio keys a build placed before it claimed them.
   - `ShotManifest.is_stale(self, shot_id: int, obj: str, behavior: str) -> bool` — Whether *behavior*'s keys on shot *shot_id*'s *obj* were made under
   - `ShotManifest.reapply_object(self, shot, obj: BuilderObject) -> bool` — Re-key every behavior of one doc object over *shot*'s range.
+  - `ShotManifest.edited_by_hand(self, shot) -> bool` — Whether *shot* was edited since a build last left it: renamed,
   - `ShotManifest.fill_missing_assets(self, steps: List[BuilderStep]) -> Dict[str, List[str]]` — Give every step that lists no scene objects what its paired shot holds.
   - `ShotManifest.assess(self, steps: List[BuilderStep], exists_fn: Optional[Callable[[str], bool]] = None, verify_fn: Optional[Callable] = None, keyframe_range_fn: Optional[Callable[[str], Optional[Tuple[float, float]]]] = None, audio_exists_fn: Optional[Callable[[str], bool]] = None, skip_scene_discovery: bool = False) -> List[StepStatus]` — Compare parsed steps against the current store state.
   - `ShotManifest.from_csv(cls, filepath: str, store: Optional[ShotStore] = None, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> Tuple['ShotManifest', List[BuilderStep]]` *(class)* — Convenience: parse a CSV and return a ready-to-build engine.
   - `ShotManifest.resolve_duration(step: BuilderStep, initial_shot_length: float, fit_mode: FitMode, fps: float, measure_audio: Optional[Callable[[BuilderObject], Optional[float]]] = None, recipe=None) -> Tuple[float, float, float]` *(static)* — Compute final shot duration for *step* under the given fit policy.
+
+<a id="core_utils--engines--shots--manifest--manifest_export"></a>
+### `core_utils/engines/shots/manifest/manifest_export.py`
+
+The Shot Manifest as a table to hand on: a spreadsheet for the sheet's
+
+- **[`class ManifestExport(_ManifestExportInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_export.py#L65)** — The Shot Manifest's rows as a table: CSV, JSON or Markdown.
+  - `ManifestExport.records(cls, rows: Iterable[Tuple[Optional[Any], Optional[Any]]], ranges: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None, statuses: Optional[Dict[str, str]] = None, object_name: Optional[Callable[[str], str]] = None) -> List[Dict[str, Any]]` *(class)* — One record per manifest row.
+  - `ManifestExport.columns(cls, keys: Optional[Iterable[str]] = None) -> List[str]` *(class)* — *keys* in table order, unknown ones left out;
+  - `ManifestExport.table(cls, records: List[Dict[str, Any]], columns: Optional[Iterable[str]] = None, objects: str = 'rows') -> List[List[str]]` *(class)* — *records* as text cells, the header row first.
+  - `ManifestExport.render(cls, records: List[Dict[str, Any]], fmt: str = 'csv', columns: Optional[Iterable[str]] = None, objects: str = 'rows') -> str` *(class)* — *records* as the text of *fmt* (:attr:`FORMATS`).
+  - `ManifestExport.markdown(table: Sequence[Sequence[str]]) -> str` *(static)* — *table* (header row first) as a Markdown pipe table: a ``|`` in a
+  - `ManifestExport.clipboard(table: Sequence[Sequence[str]]) -> Tuple[str, str]` *(static)* — ``(tsv, html)`` clipboard forms of *table* for a spreadsheet paste.
+  - `ManifestExport.format_of(cls, path: str) -> Optional[str]` *(class)* — The format *path*'s extension names (:attr:`FORMATS`), or ``None``.
+  - `ManifestExport.write(cls, path: str, records: List[Dict[str, Any]], columns: Optional[Iterable[str]] = None, objects: str = 'rows') -> str` *(class)* — Write *records* to *path*, in the format its extension names, and
 
 <a id="core_utils--engines--shots--manifest--manifest_model"></a>
 ### `core_utils/engines/shots/manifest/manifest_model.py`
 
 Pure Shot Manifest data model + CSV parser.
 
-- [`DEFAULT_INITIAL_SHOT_LENGTH`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L761) — constant
-- [`DEFAULT_FIT_MODE`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L762) — constant
-- [`AUDIO_PLACEHOLDER_DURATION`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L768) — constant
-- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L409)** — The shot manifest's data model and CSV parser.
+- [`DEFAULT_INITIAL_SHOT_LENGTH`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L791) — constant
+- [`DEFAULT_FIT_MODE`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L792) — constant
+- [`AUDIO_PLACEHOLDER_DURATION`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L798) — constant
+- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L410)** — The shot manifest's data model and CSV parser.
   - `ManifestModel.describe_read_failure(cls, path: str, exc: OSError) -> str` *(class)* — Explain a CSV that exists but cannot be read, without over-committing.
   - `ManifestModel.detect_behaviors(text: str) -> List[str]` *(static)* — Return behavior names inferred from descriptive *text*.
-  - `ManifestModel.asset_column(source: str, fills: Dict[str, List[str]], columns: Optional['ColumnMap'] = None) -> List[str]` *(static)* — The source sheet's asset column, row for row, with *fills* written
-  - `ManifestModel.column_clipboard(cells: List[str]) -> Tuple[str, str]` *(static)* — ``(tsv, html)`` clipboard forms of one column of *cells*.
+  - `ManifestModel.asset_column(source: str, fills: Dict[str, List[str]], columns: Optional['ColumnMap'] = None) -> List[str]` *(static)* **DEPRECATED (remove in 0.14.0)** — The source sheet's asset column, row for row, with *fills* written
+  - `ManifestModel.column_clipboard(cells: List[str]) -> Tuple[str, str]` *(static)* **DEPRECATED (remove in 0.14.0)** — ``(tsv, html)`` clipboard forms of one column of *cells*
   - `ManifestModel.parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]` *(static)* — Parse a structured CSV into a list of :class:`BuilderStep`.
   - `ManifestModel.prose_name(subject: str, case: str, rule: str) -> str` *(static)* — The object name a doc's prose *subject* stands for: *case*
   - `ManifestModel.validate_patterns(value: Any) -> List[str]` *(static)* — Validate a row-grammar field: a list of regexes that compile.
-- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L582)** — One asset within a step.
-- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L596)** — One step (= one future sequencer shot).
+- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L586)** — One asset within a step.
+- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L605)** — One step (= one future sequencer shot).
+  - `BuilderStep.shot_name(self) -> str` *(property)* — The name this step's shot carries: :attr:`name`, else the step ID.
   - `BuilderStep.display_text(self) -> str` *(property)* — Text shown in the tree Description column.
   - `BuilderStep.from_detection(cls, candidates: List[Dict]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert detection candidates to BuilderSteps + pre-filled ranges.
   - `BuilderStep.from_shots(cls, shots: List[Any]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert existing store shots back into BuilderSteps + their ranges.
-- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L738)** — Immutable build instruction computed before any store mutation.
-- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L777)** — Assessment result for one object within a step.
-- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L799)** — Assessment result for one step.
+- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L768)** — Immutable build instruction computed before any store mutation.
+- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L807)** — Assessment result for one object within a step.
+- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L829)** — Assessment result for one step.
   - `StepStatus.status(self) -> str` *(property)* — Worst-of-children rollup.
   - `StepStatus.needs_build(self) -> bool` *(property)* — Whether a Build would change this step: its shot is not built, an
   - `StepStatus.missing_count(self) -> int` *(property)*
   - `StepStatus.total_count(self) -> int` *(property)*
   - `StepStatus.find_object(results: List['StepStatus'], name: str, step_id: Optional[str] = None) -> Optional[ObjectStatus]` *(static)* — The first assessed :class:`ObjectStatus` named *name* in *results*.
-- **[`class ShotPairing`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L903)** — Which shot each step is -- :meth:`ShotManifest.pair`'s answer.
-- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L923)** — Maps logical fields to CSV header names (case-insensitive), plus the
+- **[`class ShotPairing`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L943)** — Which shot each step is -- :meth:`ShotManifest.pair`'s answer.
+  - `ShotPairing.rows(self, steps: List['BuilderStep'], hide_missing: bool = False, orphans: bool = True, keep: Iterable[str] = ()) -> List[Tuple[Optional['BuilderStep'], Optional[Any]]]` — The manifest's rows: ``(step, shot)`` per step in doc order --
+- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L1027)** — Maps logical fields to CSV header names (case-insensitive), plus the
   - `ColumnMap.to_dict(self) -> Dict[str, Any]` — Serialise to a JSON-safe dict (tuples → lists).
   - `ColumnMap.from_dict(cls, data: Dict[str, Any]) -> 'ColumnMap'` *(class)* — Reconstruct from a dict produced by :meth:`to_dict`.
+
+<a id="core_utils--engines--shots--manifest--manifest_tags"></a>
+### `core_utils/engines/shots/manifest/manifest_tags.py`
+
+The Shot Manifest's colour tags: a colour per step, the user's and the automatic.
+
+- **[`class ManifestTags(_ManifestTagsInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_tags.py#L39)** — Colour tags on the Shot Manifest's steps (see the module docstring).
+  - `ManifestTags.auto(cls, steps: Iterable[Any], rule: str, slots: Sequence[str]) -> Dict[str, str]` *(class)* — ``{step_id: slot}``: the automatic colours *rule* gives *steps*.
+  - `ManifestTags.read(store: Any, source: str) -> Dict[str, str]` *(static)* — *source*'s user tags on *store*, ``{step_id: slot}`` (a copy).
+  - `ManifestTags.assign(store: Any, source: str, step_ids: Iterable[str], slot: Optional[str]) -> bool` *(static)* — Tag *step_ids* of *source* with *slot*, or clear their tags (``None``).
 
 <a id="core_utils--engines--shots--manifest--mapping--_mapping"></a>
 ### `core_utils/engines/shots/manifest/mapping/_mapping.py`
@@ -948,9 +1018,9 @@ CSV mapping resolver — interprets JSON mapping files.
 
 Schema for a CSV *mapping* file, defined as a dataclass.
 
-- [`AUDIO_METHODS`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L41) — constant
-- **[`class AudioMethod`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L29)** — Descriptor for one ``audio_resolve`` strategy (drives validate/docs).
-- **[`class MappingSpec(SchemaSpec, _MappingSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L203)** — Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``).
+- [`AUDIO_METHODS`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L42) — constant
+- **[`class AudioMethod`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L30)** — Descriptor for one ``audio_resolve`` strategy (drives validate/docs).
+- **[`class MappingSpec(SchemaSpec, _MappingSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L204)** — Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``).
   - `MappingSpec.format_markdown(cls) -> str` *(class)* — Generate the full ``MAPPING_FORMAT.md`` reference from the schema SSoT.
   - `MappingSpec.validate_audio_resolve(value: Any) -> List[str]` *(static)* — Validate the polymorphic ``audio_resolve`` block.
   - `MappingSpec.field_choices(path: str) -> Optional[Tuple[Any, ...]]` *(static)* — The allowed values of the schema field at dotted *path*
@@ -969,6 +1039,7 @@ Range resolution algorithm for the Shot Manifest.
   - `RangeResolver.step_index(steps: List[BuilderStep], step_id: str) -> int` *(static)* — The index of *step_id* in *steps*, or ``-1`` when absent.
   - `RangeResolver.all_ranges_complete(steps: List[BuilderStep], user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]]) -> bool` *(static)* — True when every step has a user-supplied ``(start, end)`` pair.
   - `RangeResolver.cascade_from(steps: List[BuilderStep], user_ranges: Dict[str, Tuple[Optional[float], Optional[float]]], step_idx: int) -> List[str]` *(static)* — Drop the user ranges of every step after *step_idx*, in place.
+  - `RangeResolver.incremental_ranges(steps: List[BuilderStep], shot_ranges: Dict[str, Tuple[float, float]], last_resolved: List[Tuple[str, float, Optional[float], bool]] = (), user_ranges: Optional[Dict[str, Tuple[float, Optional[float]]]] = None) -> Dict[str, Tuple[float, float]]` *(static)* — ``{step_id: (start, end)}`` for a Build once some steps have shots.
   - `RangeResolver.parse_range_edit(start_text: str, end_text: str) -> Optional[Tuple[float, Optional[float]]]` *(static)* — A user's Start/End cell text as a ``(start, end_or_None)`` range.
   - `RangeResolver.previous_end(steps: List[BuilderStep], last_resolved: List[Tuple[str, float, Optional[float], bool]], step_idx: int) -> Optional[float]` *(static)* — The resolved end of the nearest step before *step_idx* that has one.
   - `RangeResolver.find_collisions(resolved: List[Tuple[str, float, Optional[float], bool]]) -> List[Tuple[str, str]]` *(static)* — Adjacent resolved ranges that overlap, as ``(step_id, next_step_id)``.
@@ -1004,7 +1075,9 @@ Ledger of the edits the shot system authors on a scene's animation.
   - `ShotEditLedger.step_count(self) -> int` *(property)* — Number of stepped tangents the system currently claims.
   - `ShotEditLedger.key_count(self) -> int` *(property)* — Number of samples the system currently claims.
   - `ShotEditLedger.curves(self) -> set` *(property)* — Every curve name any register mentions.
-  - `ShotEditLedger.record_step(self, curve: str, time: float, in_type: str, out_type: str) -> bool` — Claim the step the system is about to write at ``(curve, time)``.
+  - `ShotEditLedger.record_step(self, curve: str, time: float, in_type: str, out_type: str, value: Optional[float] = None) -> bool` — Claim the step the system is about to write at ``(curve, time)``.
+  - `ShotEditLedger.claimed_step(self, curve: str, time: float) -> Optional[Tuple[str, str, Optional[float]]]` — The claim at ``(curve, time)``, left in place: ``(in, out, value)``.
+  - `ShotEditLedger.is_same_key(claim: Tuple[str, str, Optional[float]], in_type: str, value: float, tol: float = 1e-06) -> bool` *(static)* — Whether the key now on a claim's frame is the one the system stepped.
   - `ShotEditLedger.owns_step(self, curve: str, time: float) -> bool` — True when the system wrote the step at ``(curve, time)``.
   - `ShotEditLedger.release_step(self, curve: str, time: float) -> Optional[Tuple[str, str]]` — Drop the claim at ``(curve, time)``, returning ``(in, out)`` types.
   - `ShotEditLedger.step_times(self, curve: str) -> List[float]` — Every time the system stepped on *curve*, ascending.
@@ -1023,6 +1096,7 @@ Ledger of the edits the shot system authors on a scene's animation.
   - `ShotEditLedger.owns_any(self, curve: str, time: float) -> bool` — True when the system wrote the KEY at ``(curve, time)`` -- a bound
   - `ShotEditLedger.release_authored(self, curve: str, time: float) -> bool` — Drop the behavior claim at ``(curve, time)``.
   - `ShotEditLedger.authored(self, owner: Optional[int] = None, obj: Optional[str] = None, behavior: Optional[str] = None) -> List[Tuple[str, float]]` — ``(curve, time)`` of every behavior key matching the given filters,
+  - `ShotEditLedger.authored_curves(self) -> List[str]` — Curve names carrying at least one behavior claim.
   - `ShotEditLedger.authored_stamps(self, owner: int, obj: str, behavior: str) -> set` — The recipe stamps of the keys *behavior* wrote on shot *owner*'s
   - `ShotEditLedger.authored_pairs(self, owner: int) -> set` — ``{(obj, behavior)}`` every behavior key shot *owner* holds names --
   - `ShotEditLedger.shift(self, curve: str, lo: float, hi: float, delta: float) -> int` — Add *delta* to every claim on *curve* inside ``[lo, hi]``.
@@ -1038,27 +1112,29 @@ Ledger of the edits the shot system authors on a scene's animation.
 
 DCC-agnostic shot data model and persistent store.
 
-- [`CLIP_NAME_STRATEGIES`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L185) — constant
-- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L73)** — Interface for saving / loading ShotStore data.
+- [`CLIP_NAME_STRATEGIES`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L193) — constant
+- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L80)** — Interface for saving / loading ShotStore data.
   - `ScenePersistence.save(self, data: Dict[str, Any]) -> None`
   - `ScenePersistence.load(self) -> Optional[Dict[str, Any]]`
-- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L117)** — Represents a single shot (contiguous animation range).
+- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L125)** — Represents a single shot (contiguous animation range).
   - `ShotBlock.duration(self) -> float` *(property)*
   - `ShotBlock.classify_objects(self) -> Dict[str, str]` — Return ``{obj_name: status_key}`` using stored metadata.
-- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L197)** — Base class for typed :class:`ShotStore` events.
-- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L209)** — A new shot was created and added to the store.
-- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L217)** — An existing shot's fields were modified.
-- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L225)** — A shot was removed from the store.
-- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L233)** — The active (selected) shot changed.
-- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L241)** — Detection-relevant settings were modified.
-- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L248)** — A :meth:`ShotStore.batch_update` context has exited.
-- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L255)** — The active store was discarded (scene change / new scene).
-- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L309)** — Central store for shot data with pluggable persistence.
+- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L205)** — Base class for typed :class:`ShotStore` events.
+- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L217)** — A new shot was created and added to the store.
+- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L225)** — An existing shot's fields were modified.
+- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L233)** — A shot was removed from the store.
+- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L241)** — The active (selected) shot changed.
+- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L256)** — Detection-relevant settings were modified.
+- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L263)** — A :meth:`ShotStore.batch_update` context has exited.
+- **[`class ShotsEdited(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L270)** — A :meth:`ShotStore.scene_edit` -- one step of the scene's undo --
+- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L285)** — The active store was discarded (scene change / new scene).
+- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L395)** — Central store for shot data with pluggable persistence.
   - `ShotStore.snapshot_bounds(self) -> list` — Return the current shot state for the boundary ledger.
   - `ShotStore.push_boundary_snapshot(self, tag: Any = None) -> None` — Record the current bounds as an undo restore point.
   - `ShotStore.tag_boundary_snapshot(self, tag: Any) -> bool` — Attach *tag* to the newest restore point.
   - `ShotStore.peek_boundary_tag(self, redo: bool = False) -> Any` — Return the tag of the restore point the next apply would consume.
   - `ShotStore.has_boundary_snapshot(self, redo: bool = False) -> bool` — True when a restore point is available in that direction.
+  - `ShotStore.changed_since_snapshot(self) -> bool` — Whether the store differs from its newest restore point: the shot
   - `ShotStore.discard_boundary_snapshot(self) -> None` — Drop the most recent restore point without applying it.
   - `ShotStore.restore_boundary_snapshot(self) -> bool` — Apply the most recent restore point (the undo direction).
   - `ShotStore.redo_boundary_snapshot(self) -> bool` — Re-apply the state a restore stepped back from (the redo direction).
@@ -1067,6 +1143,11 @@ DCC-agnostic shot data model and persistent store.
   - `ShotStore.detect_regions(self) -> List[Dict[str, Any]]` — Detect shot-region candidates from the scene (overridable hook).
   - `ShotStore.assess(self) -> Dict[int, str]` — Assess whether each shot's objects exist in the scene (hook).
   - `ShotStore.publish_export_view(self, strategy: Optional[str] = None) -> Optional[str]` — Project the export view onto a DCC carrier (overridable hook).
+  - `ShotStore.scene_edit(self, label: str = 'edit', snapshot: bool = True)` — Run a shot edit as one step of the scene's undo (overridable hook).
+  - `ShotStore.release_replaced(self, objects: Optional[Iterable[Any]] = None) -> Callable[[Any, Optional[Iterable[float]]], int]` — An ``on_replace(curve, frames)`` for the DCC key edits that land a
+  - `ShotStore.remap_moved(self, objects: Optional[Iterable[Any]] = None) -> Callable[[Any, Iterable[Tuple[float, float]]], int]` — An ``on_move(curve, pairs)`` for the DCC key edits that move keys
+  - `ShotStore.claim_hooks(self, objects: Optional[Iterable[Any]] = None) -> Tuple[Callable, Callable]` — ``(on_replace, on_move)`` over *objects*: :meth:`release_replaced`
+  - `ShotStore.key_edit(self, label: str = 'edit', objects: Optional[Iterable[Any]] = None)` — Run a DCC key edit that may replace or move claimed keys.
   - `ShotStore.active_shot_id(self) -> Optional[int]` *(property)* — The currently selected shot, or ``None``.
   - `ShotStore.set_active_shot(self, shot_id: Optional[int]) -> None` — Set the active shot and notify listeners.
   - `ShotStore.is_empty(self) -> bool` — ``True`` when the store declares no shots.
@@ -1108,9 +1189,14 @@ DCC-agnostic shot data model and persistent store.
   - `ShotStore.is_object_pinned(self, obj_name: str) -> bool` — Return True if *obj_name* is pinned (kept even when missing).
   - `ShotStore.set_object_pinned(self, obj_name: str, pinned: bool = True) -> None` — Pin or unpin *obj_name*.
   - `ShotStore.remove_object_from_shots(self, obj_name: str) -> None` — Remove *obj_name* from every shot's object list.
+  - `ShotStore.held_names(self) -> set` — Every name the store holds an object by -- shot members and the
+  - `ShotStore.rename_members(self, renames: Dict[str, str]) -> bool` — Re-point every name the store holds an object by: ``{old: new}``.
   - `ShotStore.to_dict(self) -> Dict[str, Any]` — Serialise shots and settings to a plain dict.
   - `ShotStore.stale_shots(self) -> List[ShotBlock]` — The shots that no longer describe anything in the scene, in order.
   - `ShotStore.remove_stale_shots(self) -> List[ShotBlock]` — Remove every stale shot (:meth:`stale_shots`);
+  - `ShotStore.empty_shots(self) -> List[ShotBlock]` — The shots that hold nothing, in order: nothing they name is keyed
+  - `ShotStore.shots_in_scope(self, scope: str) -> List[ShotBlock]` — The shots a delete of *scope* takes, in order.
+  - `ShotStore.remove_shots_in_scope(self, scope: str) -> List[ShotBlock]` — Remove the shots of *scope* (:meth:`shots_in_scope`);
   - `ShotStore.to_export_view(self, strategy: str = 'name') -> Dict[str, Any]` — Build the FBX/Unity export view from the current shots.
   - `ShotStore.export_records(self, ctx: Optional[ExportContext] = None, strategy: Optional[str] = None) -> Optional[List[Record]]` — This store's shot records, ready to store -- ``None`` when empty.
   - `ShotStore.produce_export_records(cls, ctx: Optional[ExportContext] = None) -> Optional[List[Record]]` *(class)* — The Shots PRODUCER: the active store's records, or ``None``.
@@ -1125,7 +1211,8 @@ DCC-agnostic shot data model and persistent store.
   - `ShotStore.detect_and_define(self, overwrite: bool = False) -> List[ShotBlock]` — Detect shot regions and define them in the store.
   - `ShotStore.leaf_name(node) -> str` *(static)* — Leaf name with namespace preserved: ``"|grp|ns:obj"`` -> ``"ns:obj"``.
   - `ShotStore.member_key(node) -> str` *(static)* — The identity a doc name and a shot member are compared by: the leaf
-  - `ShotStore.resolve_member(self, name: str) -> Tuple[str, str]` — Resolve a doc object *name* to a scene node (scene hook).
+  - `ShotStore.member_nodes(self, name: str) -> List[str]` — Every scene node answering to a doc object *name* (scene hook).
+  - `ShotStore.resolve_member(self, name: str) -> Tuple[str, str]` — Resolve a doc object *name* to one scene node.
   - `ShotStore.resolve_clip_specs(shots: List['ShotBlock'], strategy: str = 'name') -> List[Tuple[str, int, int]]` *(static)* — Resolve ``[(clip_name, start, end), …]`` — the single source of truth for
   - `ShotStore.declared_range(cls, strategy: str = 'name') -> Optional[Tuple[int, int]]` *(class)* — The ``(start, end)`` frames the active store's shots span, or None.
 
@@ -1174,13 +1261,14 @@ What a shots panel says about the store: pure, one-line summaries.
 
 Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
 
-- **[`class ShotSequencer(_ShotSequencerHooks)`](pythontk/pythontk/core_utils/engines/shots/shot_sequencer.py#L215)** — Manages a :class:`ShotStore` and provides ripple editing on top of it.
+- **[`class ShotSequencer(_ShotSequencerHooks)`](pythontk/pythontk/core_utils/engines/shots/shot_sequencer.py#L287)** — Manages a :class:`ShotStore` and provides ripple editing on top of it.
   - `ShotSequencer.shots(self) -> List[ShotBlock]` *(property)*
   - `ShotSequencer.hidden_objects(self) -> set` *(property)*
   - `ShotSequencer.markers(self) -> List[Dict[str, Any]]` *(property)*
   - `ShotSequencer.is_object_hidden(self, obj_name: str) -> bool`
   - `ShotSequencer.set_object_hidden(self, obj_name: str, hidden: bool = True) -> None`
   - `ShotSequencer.sorted_shots(self) -> List[ShotBlock]`
+  - `ShotSequencer.describe_key_selection(rows: Iterable[Tuple[Any, Optional[str], Optional[Iterable[float]]]]) -> str` *(static)* — The footer line for a key selection: how many keys, on which
   - `ShotSequencer.shot_by_id(self, shot_id: int) -> Optional[ShotBlock]`
   - `ShotSequencer.shot_by_name(self, name: str) -> Optional[ShotBlock]`
   - `ShotSequencer.ledger(self)` *(property)* — The store's :class:`~pythontk.ShotEditLedger` (system-write claims).
@@ -1189,10 +1277,12 @@ Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
   - `ShotSequencer.collect_shot_sequences(self, shot_id: int, include_audio: bool = True) -> List[Dict[str, Any]]` — Return all sequences (anim + audio) inside a shot's range.
   - `ShotSequencer.sequence_separation(self) -> float` — Room to leave between a moved sequence and what it lands after.
   - `ShotSequencer.move_sequences_to_shot(self, sequences: List[Dict[str, Any]], dest_shot_id: int) -> None` — Move *sequences* (anim and/or audio) into *dest_shot_id*.
+  - `ShotSequencer.copy_sequences_to_shot(self, sequences: List[Dict[str, Any]], dest_shot_id: int) -> None` — Copy *sequences* into *dest_shot_id*, the originals left in place.
   - `ShotSequencer.fit_shot_to_content(self, shot_id: int, mode: str = 'fit', edge: str = 'both', reach: Optional[float] = None) -> Tuple[float, float]` — Resize a shot's boundaries to its sequence content, rippling neighbors.
   - `ShotSequencer.trim_shot_to_content(self, shot_id: int, edge: str = 'both') -> Tuple[float, float]` — Shrink shot boundaries inward so they exactly enclose content.
   - `ShotSequencer.extend_shot_to_fit(self, shot_id: int, edge: str = 'both', reach: Optional[float] = None) -> Tuple[float, float]` — Expand shot boundaries outward to enclose all of its sequences.
   - `ShotSequencer.move_object_keys(self, obj: str, old_start: float, old_end: float, new_start: float) -> None` — Offset all keyframes of *obj* that fall within [old_start, old_end]
+  - `ShotSequencer.move_stepped_keys(self, obj: str, old_time: float, new_time: float, attr_name: Optional[str] = None, eps: float = 0.001) -> None` — Move a point (stepped) clip: the key(s) at *old_time* it stands for.
   - `ShotSequencer.move_object_in_shot(self, shot_id: int, obj: str, old_start: float, old_end: float, new_start: float) -> None` — Move one object's keys within a shot, expanding the shot and
   - `ShotSequencer.move_shot(self, shot_id: int, new_start: float) -> None` — Move an entire shot (all object keys) to *new_start*, rippling downstream.
   - `ShotSequencer.slide_shot(self, shot_id: int, new_start: float, direction: str = 'downstream', _enforce: bool = True) -> None` — Slide a shot intact to *new_start*, rippling only in *direction*.
@@ -1204,8 +1294,10 @@ Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
   - `ShotSequencer.set_shot_duration(self, shot_id: int, new_duration: float) -> None` — Change a shot's duration and ripple-shift all downstream shots.
   - `ShotSequencer.resize_shot(self, shot_id: int, new_start: float, new_end: float, _enforce: bool = True) -> None` — Resize a shot to [new_start, new_end], scaling all keys and rippling.
   - `ShotSequencer.resize_shot_bounds(self, shot_id: int, new_start: float, new_end: float, _enforce: bool = True, clamp: bool = True) -> None` — Move a shot's boundaries to ``[new_start, new_end]`` WITHOUT
+  - `ShotSequencer.set_shot_edge(self, shot_id: int, new_start: Optional[float] = None, new_end: Optional[float] = None, scale: bool = False, push: bool = False) -> bool` — Move a shot's edge(s) with NOTHING rippling: the bound-only edit.
   - `ShotSequencer.set_shot_start(self, shot_id: int, new_start: float, ripple: bool = True) -> None` — Move a shot to a new start time.
   - `ShotSequencer.move_shot_to_position(self, shot_id: int, target_pos: int) -> None` — Move a shot to a new 1-based position in the timeline order.
+  - `ShotSequencer.new_shot(self, after_shot_id: Optional[int] = None, at_position: Optional[int] = None) -> ShotBlock` — Make a new, empty shot -- what every panel's New Shot button makes.
   - `ShotSequencer.insert_shot(self, name: str, duration: float, after_shot_id: Optional[int] = None, at_position: Optional[int] = None, gap: Optional[float] = None, objects: Optional[List[str]] = None, description: str = '') -> ShotBlock` — Create a shot BETWEEN existing shots, pushing later ones downstream.
   - `ShotSequencer.delete_shot(self, shot_id: int, delete_contents: bool = True, close_gap: bool = True) -> Dict[str, Any]` — Remove a shot — by default with its keys, and closing up behind it.
   - `ShotSequencer.merge_shots(self, shot_ids: List[int], name: Optional[str] = None) -> ShotBlock` — Fuse two or more shots into one spanning all of them.
@@ -1217,6 +1309,7 @@ Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
   - `ShotSequencer.from_dict(cls, data: Dict[str, Any]) -> 'ShotSequencer'` *(class)* — Restore from serialised data (a store of :attr:`STORE_CLASS`).
   - `ShotSequencer.collect_object_segments(self, shot_id: int, **kwargs) -> List[Dict[str, Any]]` — Per-object animation segments inside a shot (none without a scene).
   - `ShotSequencer.move_attribute_keys(self, obj: str, attr: Optional[str], delta: float, times: Optional[List[float]] = None, window: Optional[tuple] = None) -> int` — Move *obj*'s keys (one attribute's, or all) by *delta*;
+  - `ShotSequencer.copy_attribute_keys(self, obj: str, attr: Optional[str], delta: float, times: Optional[List[float]] = None, window: Optional[tuple] = None) -> int` — Copy *obj*'s keys (one attribute's, or all) *delta* frames on, the
   - `ShotSequencer.scale_shot_keys(self, old_start: float, old_end: float, new_start: float, new_end: float) -> None` — Retime every content key inside ``[old_start, old_end]`` into the new span.
   - `ShotSequencer.scale_object_keys(self, obj: str, old_start: float, old_end: float, new_start: float, new_end: float) -> None` — Retime *obj*'s keys inside ``[old_start, old_end]`` into the new span.
   - `ShotSequencer.detect_shots(self, **kwargs) -> List[Dict[str, Any]]` — Shot-region candidates detected in the scene (none without one).
@@ -1267,11 +1360,14 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapFactory.resolve_color_space(cls, file: str, default: str = 'Linear') -> str` *(class)* — Resolve the working color space ("sRGB" or "Linear") for a texture by filename.
   - `MapFactory.resolve_texture_filename(cls, texture_path: str, map_type: str, prefix: str = None, suffix: str = None, ext: str = None) -> str` *(class)* — Generates a correctly formatted filename while preserving the original suffix and file extension.
   - `MapFactory.get_base_texture_name(cls, filepath_or_filename: str, prefix: str = '', suffix: str = '') -> str` *(class)* — Extracts the base texture name from a filename or path,
+  - `MapFactory.classify_textures(cls, paths: Iterable[str], prefix: str = '', suffix: str = '') -> Dict[str, Tuple[Optional[str], str]]` *(class)* — ``{path: (map_type, base_name)}`` for every path, each read against the others.
+  - `MapFactory.resolve_map_types(cls, paths: Iterable[str]) -> Dict[str, Optional[str]]` *(class)* — ``{path: map_type}`` for a batch, each path read against the others.
   - `MapFactory.get_tile_token(cls, filepath_or_filename: str) -> str` *(class)* — The UDIM / UV-tile token on a texture filename, or ``""``.
   - `MapFactory.get_tile_paths(cls, filepath: str) -> List[str]` *(class)* — Every tile on disk of the tile set a texture path names, sorted.
   - `MapFactory.group_textures_by_set(cls, image_paths: List[str], prefix: str = '', suffix: str = '') -> Dict[str, List[str]]` *(class)* — Groups texture maps into sets based on matching base names.
   - `MapFactory.collapse_tile_sets(cls, texture_sets: Dict[str, List[str]]) -> Dict[str, List[str]]` *(class)* — One set per MATERIAL from per-tile sets: each map once, as its lowest tile.
   - `MapFactory.dominant_texture_set(cls, paths: Iterable[str]) -> Optional[Tuple[str, str]]` *(class)* — ``(base, folder)`` of the texture set most of *paths* belong to, or ``None``.
+  - `MapFactory.lightmap_for_base(cls, map_name: str, old_base: str, new_base: str) -> Optional[str]` *(class)* — *map_name* spelled for *new_base* when it is *old_base*'s lightmap, else ``None``.
   - `MapFactory.filter_images_by_type(cls, files, types='')` *(class)* — Parameters:
   - `MapFactory.sort_images_by_type(cls, files: Union[List[Union[str, Tuple[str, Any]]], Dict[str, Any]]) -> Dict[str, List[Union[str, Tuple[str, Any]]]]` *(class)* — Sort image files by map type based on the input format.
   - `MapFactory.contains_map_types(cls, files, map_types)` *(class)* — Check if the given images contain the given map types.
@@ -1700,12 +1796,13 @@ Ordered, gated replay of the steps a hand-off manifest asks for.
 
 Run a script in an external app, block until it exits, and collect an artifact.
 
-- [`CREATED`](pythontk/pythontk/core_utils/handoff/script_run.py#L39) — constant
-- [`REWRITTEN`](pythontk/pythontk/core_utils/handoff/script_run.py#L40) — constant
-- **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/handoff/script_run.py#L60)** — Run a script in an external app, block, and collect its artifact.
+- [`CREATED`](pythontk/pythontk/core_utils/handoff/script_run.py#L47) — constant
+- [`REWRITTEN`](pythontk/pythontk/core_utils/handoff/script_run.py#L48) — constant
+- **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/handoff/script_run.py#L68)** — Run a script in an external app, block, and collect its artifact.
+  - `ScriptRunner.failure_summary(output: str) -> Optional[str]` *(static)* — The child's own last word on why it failed, as one line -- or ``None``.
   - `ScriptRunner.run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None, expect: str = CREATED, on_output: Optional[Callable[[Optional[str]], Optional[bool]]] = None) -> ScriptRunResult` *(static)* — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
-- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/handoff/script_run.py#L227)** — What a successful :func:`run_script_to_artifact` returns.
-- **[`class ProgressRelay`](pythontk/pythontk/core_utils/handoff/script_run.py#L242)** — One progress callback fed by staged work: child-script markers and in-process steps.
+- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/handoff/script_run.py#L275)** — What a successful :func:`run_script_to_artifact` returns.
+- **[`class ProgressRelay`](pythontk/pythontk/core_utils/handoff/script_run.py#L290)** — One progress callback fed by staged work: child-script markers and in-process steps.
   - `ProgressRelay.line(cls, step: int, steps: int, text: str = '') -> str` *(class)* — The marker line a child prints for *step* of *steps*.
   - `ProgressRelay.parse(cls, line: Optional[str]) -> Optional[Tuple[int, int, str]]` *(class)* — ``(step, steps, text)`` from a marker anywhere in *line*, else ``None``.
   - `ProgressRelay.value(self) -> int` *(property)* — The bar position last reported.
@@ -1868,10 +1965,10 @@ Monospace text layout: display widths, wrapping, box and table geometry.
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin/logger_ext.py#L1248)** — A generic logging handler that writes logs to any widget supporting
+- **[`class DefaultTextLogHandler(logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin/logger_ext.py#L1255)** — A generic logging handler that writes logs to any widget supporting
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class RingBufferHandler(logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin/logger_ext.py#L1309)** — In-memory capped ring buffer of log records.
+- **[`class RingBufferHandler(logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin/logger_ext.py#L1316)** — In-memory capped ring buffer of log records.
   - `RingBufferHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `RingBufferHandler.clear(self) -> None`
   - `RingBufferHandler.format_records(self, formatter: internal_logging.Formatter = None) -> str` — Render buffered records to a single plain-text string.
@@ -1959,21 +2056,22 @@ Reusable module attribute resolver for package-style imports.
   - `NamespaceHandler.resolve(self, key: str, default: Any = None, resolve_placeholders: bool = True) -> Any`
   - `NamespaceHandler.is_resolving(self, key: str) -> bool` — Returns True if this key is currently being resolved (to prevent recursion).
 
-<a id="core_utils--naming_convention"></a>
-### `core_utils/naming_convention.py`
+<a id="core_utils--naming_convention--_naming_convention"></a>
+### `core_utils/naming_convention/_naming_convention.py`
 
 Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 
-- [`CONFIG_NAME`](pythontk/pythontk/core_utils/naming_convention.py#L52) — constant
-- [`CONFIG_PACKAGE`](pythontk/pythontk/core_utils/naming_convention.py#L53) — constant
-- [`CONFIG_ENV_VAR`](pythontk/pythontk/core_utils/naming_convention.py#L57) — constant
-- [`AFFIX_MODES`](pythontk/pythontk/core_utils/naming_convention.py#L60) — constant
-- **[`class AffixRule`](pythontk/pythontk/core_utils/naming_convention.py#L64)** — One convention entry: a spelling plus where it lands on a base name.
+- [`CONFIG_NAME`](pythontk/pythontk/core_utils/naming_convention/_naming_convention.py#L53) — constant
+- [`CONFIG_PACKAGE`](pythontk/pythontk/core_utils/naming_convention/_naming_convention.py#L54) — constant
+- [`CONFIG_ENV_VAR`](pythontk/pythontk/core_utils/naming_convention/_naming_convention.py#L58) — constant
+- [`BUILTIN_PRESETS_DIR`](pythontk/pythontk/core_utils/naming_convention/_naming_convention.py#L61) — constant
+- [`AFFIX_MODES`](pythontk/pythontk/core_utils/naming_convention/_naming_convention.py#L64) — constant
+- **[`class AffixRule`](pythontk/pythontk/core_utils/naming_convention/_naming_convention.py#L68)** — One convention entry: a spelling plus where it lands on a base name.
   - `AffixRule.parts(self, *, default: str = 'suffix') -> Tuple[str, str]` — ``(prefix, suffix)`` for this rule — at most one is non-empty.
   - `AffixRule.apply(self, name: str, *, default: str = 'suffix') -> str` — Idempotently put this rule's affix on *name* (no-op for empty text).
   - `AffixRule.matches(self, name: str, *, case_sensitive: bool = False, default: str = 'suffix') -> bool` — True when *name* carries this rule's affix -- :meth:`apply`, read back.
   - `AffixRule.as_dict(self) -> Dict[str, str]` — JSON-shaped form (``label`` omitted — it ships with the defaults).
-- **[`class NamingConvention(_NamingConventionInternal)`](pythontk/pythontk/core_utils/naming_convention.py#L183)** — The ecosystem's single source of truth for type-based name affixes.
+- **[`class NamingConvention(_NamingConventionInternal)`](pythontk/pythontk/core_utils/naming_convention/_naming_convention.py#L187)** — The ecosystem's single source of truth for type-based name affixes.
   - `NamingConvention.resolve(cls, *, refresh: bool = False) -> Dict[str, AffixRule]` *(class)* — The full table: three layers, each overlaying the one before it.
   - `NamingConvention.reload(cls) -> Dict[str, AffixRule]` *(class)* — Drop the cache and re-read the config doc.
   - `NamingConvention.keys(cls) -> List[str]` *(class)* — Every type key, in the shipped order (user-added keys appended).
@@ -2286,12 +2384,15 @@ A discoverable, user-extensible collection of schema-validated template files.
 
 Process-level test isolation -- keep a test run off the developer's machine.
 
-- **[`class TestSandbox(_TestSandboxInternal)`](pythontk/pythontk/core_utils/test_sandbox.py#L122)** — Keep this process's side effects off the developer's machine.
+- **[`class TestSandbox(_TestSandboxInternal)`](pythontk/pythontk/core_utils/test_sandbox.py#L223)** — Keep this process's side effects off the developer's machine.
   - `TestSandbox.browser(cls) -> None` *(class)* — Refuse every ``webbrowser`` launch for the rest of the process.
   - `TestSandbox.temp(cls) -> str` *(class)* — Route the process's temp dir into one throwaway root;
   - `TestSandbox.trash(cls) -> None` *(class)* — Keep :meth:`FileUtils.move_to_trash` off the machine's trash for the
+  - `TestSandbox.rearm(cls) -> None` *(class)* — Carry the standing guards over a reload of pythontk.
   - `TestSandbox.real_trash(cls) -> Iterator[None]` *(class)* — The machine's own trash for the block -- for a test of
   - `TestSandbox.activate(cls) -> str` *(class)* — Every guard -- the browser, the trash, the temp root;
+  - `TestSandbox.activated(cls) -> Iterator[str]` *(class)* — Every guard for the ``with`` block only;
+  - `TestSandbox.host_environ(cls, env: Optional[Dict[str, str]] = None) -> Optional[Dict[str, str]]` *(class)* — *env* (default: the live process environment) as the host had it,
   - `TestSandbox.is_active(cls) -> bool` *(class)* — True while both guards are in place.
   - `TestSandbox.user_config(cls) -> Iterator[str]` *(class)* — Point the ecosystem user-config root at a throwaway dir for the block.
 
@@ -2327,14 +2428,17 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
 <a id="core_utils--x11"></a>
 ### `core_utils/x11.py`
 
-A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys.
+A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys,
 
-- **[`class X11(_X11Internal)`](pythontk/pythontk/core_utils/x11.py#L252)** — What an X server can say about windows, the pointer, focus and keys.
+- **[`class X11(_X11Internal)`](pythontk/pythontk/core_utils/x11.py#L258)** — What an X server can say about windows, the pointer, focus and keys --
   - `X11.available(cls) -> bool` *(class)* — True when an X server answers.
   - `X11.window_titles(cls, pids: Iterable[int]) -> Optional[List[str]]` *(class)* — Titles of the visible top-level windows owned by any of *pids*
   - `X11.active_window_pid(cls) -> Optional[int]` *(class)* — PID owning the focused window (EWMH ``_NET_ACTIVE_WINDOW``), or None
   - `X11.pointer(cls) -> Optional[Tuple[int, int]]` *(class)* — The pointer's root-window (screen) position, or None.
   - `X11.has_compositor(cls) -> Optional[bool]` *(class)* — True when a compositing manager owns ``_NET_WM_CM_S<screen>`` --
+  - `X11.set_cardinal_property(cls, window: int, name: str, values: Iterable[int]) -> Optional[bool]` *(class)* — Set *window*'s property *name* to *values* as format-32 CARDINALs.
+  - `X11.delete_property(cls, window: int, name: str) -> Optional[bool]` *(class)* — Remove *window*'s property *name* (absent is fine).
+  - `X11.has_property(cls, name: str, window: Optional[int] = None) -> Optional[bool]` *(class)* — Whether *window* -- the root window when None -- carries the
   - `X11.key_down(cls, keysym: int) -> Optional[bool]` *(class)* — Whether the key with *keysym* (``0xFF1B`` = Escape) is held right
 
 <a id="file_utils--_file_utils"></a>
@@ -2373,6 +2477,7 @@ A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys.
   - `FileUtils.replace_file(src: str, dst: str) -> None` *(static)* — ``os.replace(src, dst)`` that waits out a momentary Windows lock.
   - `FileUtils.atomic_write_text(filepath: str, content: str, encoding: str = 'utf-8') -> None` *(static)* — Write text to a file atomically.
   - `FileUtils.atomic_write(target: str, write: Callable[[str], Any], promote: bool = True) -> str` *(static)* — Produce *target* through *write*, so no reader meets a partial file.
+  - `FileUtils.deliver_file(cls, staged: str, destination: str) -> Tuple[str, Optional[str]]` *(class)* — Put the finished *staged* file at *destination*, or park it beside.
   - `FileUtils.copy_file(file_path: str, destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True) -> str` *(static)* — Copies a file to a specified folder, ensuring the folder exists.
   - `FileUtils.move_file(cls, file_path: Union[str, List[Union[str, Tuple[str, str]]]], destination: str, new_name: Optional[str] = None, overwrite: bool = True, create_dir: bool = True, verbose: bool = False) -> Union[str, List[str]]` *(class)* — Moves one or more files to a specified folder.
   - `FileUtils.move_to_trash(path: str) -> Optional[str]` *(static)* — Move the file *path* to the platform's trash, where it can be restored.
@@ -2428,12 +2533,41 @@ The FBX2glTF CLI driver behind :meth:`MeshConvert.fbx_to_glb`, and the
 - [`FBX2GLTF_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L45) — constant
 - [`FBX2GLTF_PLATFORMS`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L46) — constant
 
+<a id="file_utils--mesh_convert--_fbx_writer"></a>
+### `file_utils/mesh_convert/_fbx_writer.py`
+
+Zero-dependency binary-FBX writer: the encoding half of :class:`FbxFile`.
+
+- [`FBX_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_fbx_writer.py#L31) — constant
+- [`FBX_TICKS_PER_SECOND`](pythontk/pythontk/file_utils/mesh_convert/_fbx_writer.py#L34) — constant
+- **[`class FbxNode(object)`](pythontk/pythontk/file_utils/mesh_convert/_fbx_writer.py#L63)** — One record: ``name``, its properties, and its child records.
+  - `FbxNode.add(self, name: str, *props: Any) -> 'FbxNode'` — Append a child record and return it.
+  - `FbxNode.p(self, name: str, kind: str, label: str, flags: str, *values: Any) -> None` — Append one ``P`` entry -- the shape of every ``Properties70`` row.
+- **[`class FbxWriter(object)`](pythontk/pythontk/file_utils/mesh_convert/_fbx_writer.py#L89)** — Serialize :class:`FbxNode` trees as binary FBX 7.4.
+  - `FbxWriter.i64(value: int) -> _Typed` *(static)* — *value* as ``L`` -- object ids, ``KTime``.
+  - `FbxWriter.i32(value: int) -> _Typed` *(static)* — *value* as ``I``.
+  - `FbxWriter.i16(value: int) -> _Typed` *(static)* — *value* as ``Y``.
+  - `FbxWriter.f32(value: float) -> _Typed` *(static)* — *value* as ``F``.
+  - `FbxWriter.raw(value: bytes) -> _Typed` *(static)* — *value* as ``R`` (raw bytes).
+  - `FbxWriter.array(code: str, values: Sequence[Any]) -> _Typed` *(static)* — *values* as an FBX array of type *code* (``f d l i b``).
+  - `FbxWriter.header_records(cls, creator: str) -> List[FbxNode]` *(class)* — The records every FBX file opens with, ahead of ``GlobalSettings``.
+  - `FbxWriter.encode(cls, records: Sequence[FbxNode]) -> bytes` *(class)* — The complete file for top-level *records*.
+  - `FbxWriter.write(cls, path: str, records: Sequence[FbxNode]) -> str` *(class)* — Encode *records* to *path* atomically.
+
+<a id="file_utils--mesh_convert--_gltf2fbx"></a>
+### `file_utils/mesh_convert/_gltf2fbx.py`
+
+glTF -> FBX with no DCC in the loop: :meth:`MeshConvert.gltf_to_fbx`.
+
+- [`GLTF_EXTENSIONS`](pythontk/pythontk/file_utils/mesh_convert/_gltf2fbx.py#L60) — constant
+- [`GLTF_UNDECODABLE_EXTENSIONS`](pythontk/pythontk/file_utils/mesh_convert/_gltf2fbx.py#L64) — constant
+
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
 
 FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
 
-- **[`class MeshConvert(_Fbx2GltfMixin, _SidecarMixin, _LightmapsMixin, _ShadowRigsMixin, _ArticulationMixin, _AnimationMixin, _VisibilityMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L46)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+- **[`class MeshConvert(_Fbx2GltfMixin, _Gltf2FbxMixin, _SidecarMixin, _LightmapsMixin, _ShadowRigsMixin, _ArticulationMixin, _AnimationMixin, _VisibilityMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L49)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
   - `MeshConvert.conversion_timeout(cls, src: str, fbx: Optional['FbxFile'] = None) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
   - `MeshConvert.bake_node_frames(cls, src: str, fbx: Optional['FbxFile'] = None) -> int` *(class)* — Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
@@ -2442,7 +2576,10 @@ FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
   - `MeshConvert.strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]` *(class)* — Remove every curve-proxy node (and its channels) from a GLB.
   - `MeshConvert.prune_glb_unused_skins(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Drop the skinning data no node binds.
   - `MeshConvert.fix_glb_skin_skeletons(cls, glb: GlbTarget) -> List[str]` *(class)* — Point every ``skin.skeleton`` at a common root of the skin's joints.
+  - `MeshConvert.fbx_media_dirs(fbx_path: str) -> List[str]` *(static)* — Where a file an FBX names loosely is looked for beside it.
   - `MeshConvert.fix_glb_tangents(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Point every shipped TANGENT the way its UVs run, and give a
+  - `MeshConvert.restore_glb_skin_weights(cls, glb: GlbTarget, fbx: str) -> Dict[str, int]` *(class)* — Give every skinned mesh the weights its FBX clusters hold.
+  - `MeshConvert.gltf_to_fbx(cls, src: str, dst: Optional[str] = None, *, texture_dir: Optional[str] = None, include_animation: bool = True, fps: Optional[float] = None, manifest: bool = True, overwrite: bool = False, report: Optional[Dict[str, Any]] = None) -> str` *(class)* — Convert a ``.glb`` / ``.gltf`` to a binary FBX -- no DCC involved.
   - `MeshConvert.rendering_policy(cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* — :attr:`RENDERING_POLICY` with a deliverable's own choices laid over it.
   - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
   - `MeshConvert.strip_fbx_handoff(cls, gltf: dict) -> int` *(class)* — Drop the FBX's handoff block from a converted glTF's node extras.
@@ -2485,6 +2622,7 @@ FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
   - `MeshConvert.describe_texture_pass(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0, secondary_max_size: int = 0, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> str` *(class)* — Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.
   - `MeshConvert.web_delivery_texture_params(cls, image_format: Optional[str] = None, max_size: Optional[int] = None, ktx2_fallback: Optional[bool] = None, secondary_max_size: Optional[int] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> Dict[str, Any]` *(class)* — :meth:`optimize_glb_textures` kwargs for a WEB deliverable.
   - `MeshConvert.optimize_glb_textures(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = WEB_DELIVERY_KTX2_FALLBACK, secondary_max_size: int = WEB_DELIVERY_SECONDARY_MAX_SIZE, uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO, uastc_rdo_dictionary: Optional[int] = WEB_DELIVERY_UASTC_RDO_DICTIONARY) -> Dict[str, Any]` *(class)* — Downsize and re-encode a GLB's embedded images for web delivery.
+  - `MeshConvert.decode_glb_textures(cls, glb: str, dst: str, *, overwrite: bool = False) -> Optional[str]` *(class)* — Write a copy of *glb* whose KTX2 images are PNG;
   - `MeshConvert.dedupe_glb_images(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Collapse byte-identical embedded images onto one copy.
   - `MeshConvert.prune_glb_unreferenced_textures(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Drop textures no material samples, and the images/bufferViews only they used.
 
@@ -2499,7 +2637,7 @@ Deliverable verification for exported FBX / GLB pairs.
   - `VerificationReport.counts(self) -> Dict[str, int]`
   - `VerificationReport.summary(self) -> str` — Human-readable table plus a one-line verdict.
   - `VerificationReport.to_json(self) -> str`
-- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L185)** — Run file-level gates over an exported GLB and/or FBX.
+- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L195)** — Run file-level gates over an exported GLB and/or FBX.
   - `ExportVerifier.reader(self) -> Optional[GlbReader]` *(property)*
   - `ExportVerifier.fbx(self) -> Optional[FbxFile]` *(property)* — The FBX, parsed once: no gate reads its embedded media, and the take
   - `ExportVerifier.gate_names(self) -> List[str]` — Every registered gate, in run order.
@@ -2508,12 +2646,14 @@ Deliverable verification for exported FBX / GLB pairs.
   - `ExportVerifier.check_glb_extensions(self) -> List[Finding]` — ``extensionsRequired`` must be a subset of ``extensionsUsed``.
   - `ExportVerifier.check_glb_images(self) -> List[Finding]` — Texture sources resolve;
   - `ExportVerifier.check_glb_image_bytes(self) -> List[Finding]` — What each embedded image costs, largest first;
+  - `ExportVerifier.check_glb_skin_weights(self) -> List[Finding]` — Every skinned mesh carries the weights its FBX clusters hold.
   - `ExportVerifier.check_glb_skins(self) -> List[Finding]` — Referenced skins need inverseBindMatrices and a real skeleton root.
   - `ExportVerifier.check_glb_animation_integrity(self) -> List[Finding]` — Channels resolve to real nodes/samplers;
   - `ExportVerifier.check_glb_envelope(self) -> List[Finding]` — Delegate to :meth:`MeshConvert.verify_glb` when an envelope rides.
   - `ExportVerifier.check_clips_vs_takes(self) -> List[Finding]` — Each GLB clip's length matches its declared take (±1 frame).
   - `ExportVerifier.check_clip_origin(self) -> List[Finding]` — The stack is as long as the span its clips were cut against.
   - `ExportVerifier.check_fbx_container(self) -> List[Finding]` — The FBX parses;
+  - `ExportVerifier.check_fbx_dependencies(self) -> List[Finding]` — Every file the FBX's records name by file name is inside it.
   - `ExportVerifier.check_fbx_takes(self) -> List[Finding]` — Declared sidecar takes all exist as AnimationStacks.
   - `ExportVerifier.check_fbx_take_channels(self) -> List[Finding]` — Every declared take is an exact slice of the animation: it animates
   - `ExportVerifier.check_cross_clips(self) -> List[Finding]` — GLB clip names exist as FBX stacks (the conversion kept them).
@@ -2543,10 +2683,15 @@ Zero-dependency binary-FBX reader: header, node records, objects, takes.
 
 Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 
-- **[`class FbxMedia(_FbxMediaInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_media.py#L365)** — Read and rewrite the media a binary FBX embeds.
+- **[`class FbxMedia(_FbxMediaInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_media.py#L655)** — Read and rewrite the media a binary FBX embeds.
   - `FbxMedia.embedded(cls, path: str) -> List[Dict[str, Any]]` *(class)* — Every embedded image: ``{"name", "format", "size", "bytes"}``.
   - `FbxMedia.downsize(cls, src: str, dst: Optional[str] = None, *, max_size: int, exempt: Iterable[str] = (), png_compress_level: int = 1, jpeg_quality: int = 90, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Resize every embedded PNG/JPEG whose longest edge exceeds *max_size*.
   - `FbxMedia.expand_grayscale(cls, src: str, dst: Optional[str] = None, *, png_compress_level: int = 1, jpeg_quality: int = 95, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Re-encode every embedded grayscale PNG/JPEG with colour channels.
+  - `FbxMedia.named_files(cls, payloads: Mapping[str, Iterable[Any]]) -> List[str]` *(class)* — The file names decoded scene records name (:attr:`DEPENDENCY_FIELDS`).
+  - `FbxMedia.dependencies(cls, path: str) -> List[str]` *(class)* — The file names the FBX's scene records name (:attr:`DEPENDENCY_FIELDS`).
+  - `FbxMedia.embed(cls, src: str, dst: Optional[str] = None, *, files: Iterable[Any]) -> Dict[str, Any]` *(class)* — Embed each of *files* in the FBX as media no material uses.
+  - `FbxMedia.embed_dependencies(cls, src: str, dst: Optional[str] = None, *, search_dirs: Sequence[str] = (), files: Iterable[Any] = (), logger: Any = None) -> Dict[str, Any]` *(class)* — Embed every file the FBX's scene records name, so nothing ships beside it.
+  - `FbxMedia.extract_dependencies(cls, src: str, dst_dir: str) -> Dict[str, str]` *(class)* — Write each file the FBX's records name AND embeds into *dst_dir*.
   - `FbxMedia.drop_takes(cls, src: str, dst: Optional[str] = None, *, names: Iterable[str]) -> Dict[str, Any]` *(class)* — Remove the named animation takes, and everything only they own.
   - `FbxMedia.drop_apparatus(cls, src: str, dst: Optional[str] = None, *, section: Mapping[str, str], separator: str = '|') -> Dict[str, Any]` *(class)* — Remove the rig apparatus *section* names, and everything only it owns.
   - `FbxMedia.rewrite(cls, src: str, dst: str) -> None` *(class)* — Re-serialise *src* to *dst* unchanged -- the writer's own round trip.
@@ -2600,14 +2745,14 @@ Write authored per-object material ramps into a GLB as ``KHR_animation_pointer``
 
 - [`EXTENSION`](pythontk/pythontk/file_utils/mesh_convert/glb/fades.py#L56) — constant
 - [`POINTER`](pythontk/pythontk/file_utils/mesh_convert/glb/fades.py#L61) — constant
-- [`CHANNELS`](pythontk/pythontk/file_utils/mesh_convert/glb/fades.py#L187) — constant
-- [`DEFAULT_COLOR`](pythontk/pythontk/file_utils/mesh_convert/glb/fades.py#L212) — constant
-- **[`class PointerChannel`](pythontk/pythontk/file_utils/mesh_convert/glb/fades.py#L126)** — One animatable material property and how a published ramp reaches it.
+- [`CHANNELS`](pythontk/pythontk/file_utils/mesh_convert/glb/fades.py#L204) — constant
+- [`DEFAULT_COLOR`](pythontk/pythontk/file_utils/mesh_convert/glb/fades.py#L231) — constant
+- **[`class PointerChannel`](pythontk/pythontk/file_utils/mesh_convert/glb/fades.py#L139)** — One animatable material property and how a published ramp reaches it.
   - `PointerChannel.color_key(self) -> Optional[str]` *(property)* — The HIGH stop's track key.
   - `PointerChannel.components(self) -> int` *(property)*
   - `PointerChannel.accessor_type(self) -> str` *(property)*
   - `PointerChannel.base(self, gltf: Dict[str, Any], index: int) -> List[float]` — The material's own value for this property, defaulted per spec.
-- **[`class GlbFades(_GlbFadesInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb/fades.py#L402)** — Publish authored material ramps as animated material channels.
+- **[`class GlbFades(_GlbFadesInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb/fades.py#L431)** — Publish authored material ramps as animated material channels.
   - `GlbFades.apply(cls, edit: Any, fades: Dict[str, Sequence[Sequence[float]]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]` *(class)* — Write one alpha channel per faded node per clip.
   - `GlbFades.apply_channels(cls, edit: Any, ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]], colors: Dict[str, Dict[str, Any]], windows: Dict[str, Tuple[float, float]], zeros: Dict[str, float], fps: float) -> Optional[Dict[str, Any]]` *(class)* — Write every channel of every node, per clip, in one pass.
 
@@ -2629,7 +2774,7 @@ FBX -> GLB: the one build every GLB deliverable goes through.
 
 - **[`class GlbPipeline(LoggingMixin)`](pythontk/pythontk/file_utils/mesh_convert/glb/pipeline.py#L65)** — FBX -> GLB, with every deliverable's passes, for every deliverable.
   - `GlbPipeline.envelope(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Dict[str, Dict[str, Any]]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — The scene-sidecar envelope a build applies, from a host's reader.
-  - `GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — Build the GLB for *src* and report what each stage did.
+  - `GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — Build the GLB for *src* and report what each stage did.
 
 <a id="file_utils--mesh_convert--glb--reader"></a>
 ### `file_utils/mesh_convert/glb/reader.py`
@@ -2656,6 +2801,15 @@ Read-only structured access to a GLB: accessors, animation sampling, worlds.
   - `GlbReader.world_matrix(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[List[List[float]]]` — World matrix of *node* (name or index), or ``None`` when absent.
   - `GlbReader.world_position(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[Tuple[float, float, float]]` — World-space translation of *node*, or ``None`` when absent.
   - `GlbReader.walk(self) -> Iterator[Tuple[int, Optional[str]]]` — Yield ``(index, name)`` for every node, in file order.
+
+<a id="file_utils--mesh_convert--glb--skin_weights"></a>
+### `file_utils/mesh_convert/glb/skin_weights.py`
+
+Restore the skin weights FBX2glTF hands one mesh from another.
+
+- **[`class GlbSkinWeights(_GlbSkinWeightsInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb/skin_weights.py#L579)** — Give every skinned mesh the weights its FBX clusters hold.
+  - `GlbSkinWeights.audit(cls, glb: GlbTarget, fbx: str) -> Dict[str, Any]` *(class)* — What :meth:`restore` would rewrite, read-only.
+  - `GlbSkinWeights.restore(cls, glb: GlbTarget, fbx: str) -> Dict[str, int]` *(class)* — Rewrite the skin weights FBX2glTF took from another mesh.
 
 <a id="file_utils--mesh_convert--glb--tangents"></a>
 ### `file_utils/mesh_convert/glb/tangents.py`
@@ -2700,17 +2854,17 @@ File-level mesh processing via PyMeshLab (optional dependency).
 
 Prefix-scoped temp artifacts with an explicit lifetime policy.
 
-- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L47)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files/dirs in one directory.
+- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L50)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files/dirs in one directory.
   - `TempArtifacts.path(self, extension: str = '.tmp', name: Optional[str] = None) -> str` — Return a tracked ``<prefix>_<tag><extension>`` path in :attr:`dir`.
   - `TempArtifacts.dir_path(self, name: Optional[str] = None, create: bool = True) -> str` — Return a tracked ``<prefix>_<tag>/`` DIRECTORY path in :attr:`dir`.
   - `TempArtifacts.register(self, path: str) -> str` — Adopt *path* (e.g.
   - `TempArtifacts.release(self, path: str) -> bool` — Delete ONE tracked *path* now, whatever the policy;
   - `TempArtifacts.cleanup(self, force: bool = False) -> List[str]` — Remove tracked files per the policy;
   - `TempArtifacts.sweep_stale(self) -> List[str]` — Best-effort delete of ``<prefix>_*`` files in :attr:`dir` older than
-- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L376)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
+- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L409)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
   - `CachedArtifact.key(*parts: Any, files: Sequence[str] = (), length: int = 16) -> str` *(static)* — A deterministic tag over *parts* and the identity of each path in *files*.
   - `CachedArtifact.get(self, key: str, produce: Callable[[str], Any], *, sidecars: Sequence[str] = (), use_cache: bool = True) -> 'CachedArtifact.Result'` — The artifact for *key*, produced by ``produce(out_path)`` on a miss.
-- **[`class ScratchTwins(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L518)** — Per-source scratch twins of foreign files, discarded only while untouched.
+- **[`class ScratchTwins(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L551)** — Per-source scratch twins of foreign files, discarded only while untouched.
   - `ScratchTwins.path_for(self, source: str) -> str` — The deterministic twin path for *source* (nothing is created).
   - `ScratchTwins.create(self, source: str, payload: str) -> str` — Copy *payload* to *source*'s twin path, stamp it, and return the path.
   - `ScratchTwins.is_twin(self, path: str) -> bool` — True if *path* is a twin this store created and still tracks.
@@ -2722,7 +2876,7 @@ Prefix-scoped temp artifacts with an explicit lifetime policy.
 
 Tile / frame tokens in a file path -- the one vocabulary every host reads.
 
-- **[`class TiledPath`](pythontk/pythontk/file_utils/tiled_path.py#L28)** — The tile / frame token vocabulary of a file path, as one table.
+- **[`class TiledPath`](pythontk/pythontk/file_utils/tiled_path.py#L30)** — The tile / frame token vocabulary of a file path, as one table.
   - `TiledPath.has_token(cls, path: Optional[str]) -> bool` *(class)* — Does *path* carry a tile / frame token -- does it name a SET?
   - `TiledPath.is_frame_sequence(cls, path: Optional[str]) -> bool` *(class)* — Does *path*'s token count FRAMES (``<f>`` / ``<frame>``), not tiles?
   - `TiledPath.scheme(cls, spelling: Optional[str]) -> Optional[str]` *(class)* — The numbering a tile spelling uses: ``"udim"``, ``"uvtile"`` or ``"frame"``.
@@ -2731,6 +2885,8 @@ Tile / frame tokens in a file path -- the one vocabulary every host reads.
   - `TiledPath.spell(cls, path: Optional[str], tile: int = 1001) -> str` *(class)* — *path* with each TILE token spelled for UDIM tile number *tile*.
   - `TiledPath.tiles(cls, path: Optional[str]) -> List[str]` *(class)* — Every file on disk *path*'s token denotes, sorted (the SET).
   - `TiledPath.rename(cls, path: str, new_name: str, dry_run: bool = False) -> List[Tuple[str, str]]` *(class)* — Rename every file *path* denotes to *new_name*, in its own folder.
+  - `TiledPath.with_name(stored: Optional[str], new_name: str) -> str` *(static)* — *stored* naming *new_name* instead, its folder spelled as it was.
+  - `TiledPath.stem(cls, file_name: Optional[str]) -> str` *(class)* — *file_name* with no extension and no tile / frame token, nor the
   - `TiledPath.representative(cls, path: Optional[str]) -> Optional[str]` *(class)* — The one concrete file *path*'s token denotes (collapse to one).
 
 <a id="file_utils--usd"></a>
@@ -2929,7 +3085,10 @@ Height-field shadow maps: a ground shadow that follows the light at runtime.
 - [`MAX16`](pythontk/pythontk/geo_utils/shadow_horizon.py#L64) — constant
 - [`DIST_SCALE`](pythontk/pythontk/geo_utils/shadow_horizon.py#L66) — constant
 - [`DIST_FAR`](pythontk/pythontk/geo_utils/shadow_horizon.py#L68) — constant
-- **[`class HeightFieldMap(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_horizon.py#L71)** — A baked height-field shadow map and the frame it was baked in.
+- [`INTERIOR_SCALE`](pythontk/pythontk/geo_utils/shadow_horizon.py#L70) — constant
+- [`INTERIOR_FAR`](pythontk/pythontk/geo_utils/shadow_horizon.py#L73) — constant
+- [`INTERIOR_MARKER`](pythontk/pythontk/geo_utils/shadow_horizon.py#L77) — constant
+- **[`class HeightFieldMap(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_horizon.py#L80)** — A baked height-field shadow map and the frame it was baked in.
   - `HeightFieldMap.levels(self) -> int` *(property)* — Pyramid levels above level 0: ``log2(S)`` (the top is one cell).
   - `HeightFieldMap.tiles(self) -> int` *(property)* — Tiles across the image: ``K`` spans, the aux tile, the pyramid.
   - `HeightFieldMap.pixel(self) -> Tuple[float, float]` *(property)* — A footprint pixel's extent along the two horizontal axes.
@@ -2939,7 +3098,8 @@ Height-field shadow maps: a ground shadow that follows the light at runtime.
   - `HeightFieldMap.to_rgba(self) -> np.ndarray` — The map as one ``uint8`` RGBA image ``(S, S x (K + 2), 4)``.
   - `HeightFieldMap.from_rgba(cls, rgba: np.ndarray, *, size: int, spans: int, bounds: Sequence[float], ground: float, up: int, height_scale: float) -> 'HeightFieldMap'` *(class)* — A map decoded from the image :meth:`to_rgba` wrote (or a copy of
   - `HeightFieldMap.alpha(self, points, light=None, *, direction=None, source_size: float = 0.0, source_angle: float = 0.0, intensity: float = 1.0) -> np.ndarray` — Shadow alpha ``(N,)`` at frame *points* for one source -- the
-- **[`class ShadowHorizon`](pythontk/pythontk/geo_utils/shadow_horizon.py#L498)** — Bake, measure and lay out height-field shadow maps (module doc).
+  - `HeightFieldMap.disc(s) -> np.ndarray` *(static)* — The share of a disc source a straight edge hides when the disc's
+- **[`class ShadowHorizon`](pythontk/pythontk/geo_utils/shadow_horizon.py#L578)** — Bake, measure and lay out height-field shadow maps (module doc).
   - `ShadowHorizon.shader_source(cls, language: str = 'glsl') -> str` *(class)* — The shared shadow evaluation, spelled for *language*.
   - `ShadowHorizon.record(cls, *, texture: str, size: int, spans: int, levels: int, bounds: Sequence[float], height_scale: float, frame_a: Sequence[float], frame_b: Sequence[float], rect: Sequence[float]) -> Dict[str, object]` *(class)* — The ``horizon`` block of a ``shadow_metadata`` v2 plane record.
   - `ShadowHorizon.bake(cls, meshes, *, ground: float = 0.0, up: int = 1, size: int = DEFAULT_SIZE, spans: int = DEFAULT_SPANS, bounds=None, padding: float = DEFAULT_PADDING) -> HeightFieldMap` *(class)* — Bake the map of *meshes* in the map's frame.
@@ -3081,6 +3241,9 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.ensure_ktx2_encoder(cls, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Guarantee a KTX2 encoder, offering the managed install when none is found.
   - `ImgUtils.save_image(cls, image: Union[str, Image.Image], name: str, mode: str = None, bit_depth: int = None, compression: str = None, quality: int = None, colorspace: str = None, uastc_rdo: float = None, uastc_rdo_dictionary: int = None, **kwargs)` *(class)* — Save an image to ``name``, dispatching on the file extension.
   - `ImgUtils.load_image(cls, filepath)` *(class)* — Load an image and return a PIL copy, dispatching on the file extension.
+  - `ImgUtils.cv2_read(cls, path: Union[str, os.PathLike], flags: Optional[int] = None) -> Optional['np.ndarray']` *(class)* — ``cv2.imread`` that opens any path: the image at *path*, or ``None``.
+  - `ImgUtils.cv2_write(cls, path: Union[str, os.PathLike], image: 'np.ndarray', params: Optional[Sequence[int]] = None) -> bool` *(class)* — ``cv2.imwrite`` that writes any path: ``True`` once *image* is at *path*.
+  - `ImgUtils.cv2_temp(cls)` *(class)* — Spell the temp folder in ASCII for OpenCV, for the block.
   - `ImgUtils.list_image_files(cls, directory, exts=None, full_paths=False)` *(class)* — Sorted image file names in a directory (non-recursive).
   - `ImgUtils.unique_dir_stems(dirs)` *(static)* — Unique, order-preserving output stems for a set of directories.
   - `ImgUtils.get_images(cls, directory, inc=None, exc='')` *(class)* — Get bitmap images from a given directory as PIL images.
@@ -3091,7 +3254,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.is_environment_map(cls, image_path: str, *, latlong_only: bool = True, skip_lightmaps: bool = True) -> bool` *(class)* — True if *image_path* can light a scene as a dome / world environment.
   - `ImgUtils.get_image_info(cls, file_paths: Union[str, List[str]]) -> List[Dict[str, Any]]` *(class)* — Get information about image files.
   - `ImgUtils.are_identical(cls, imageA, imageB)` *(class)* — Check if two images are the same.
-  - `ImgUtils.resize_image(cls, image, x, y)` *(class)* — Returns a resized copy of an image.
+  - `ImgUtils.resize_image(cls, image, x, y, normal_map: bool = False)` *(class)* — Returns a resized copy of an image.
   - `ImgUtils.ensure_pot(cls, image: Union[str, Image.Image]) -> Image.Image` *(class)* — Resizes an image to the nearest Power of Two dimensions.
   - `ImgUtils.format_bit_depth(cls, mode_or_image) -> str` *(class)* — Format bit depth as e.g.
   - `ImgUtils.set_bit_depth(cls, image, map_type: str, allow_palette: bool = False) -> object` *(class)* — Sets the bit depth and image mode of an image according to the map type.
@@ -3110,6 +3273,10 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
   - `ImgUtils.fill_empty_texels(cls, image: 'np.ndarray', mask: Optional['np.ndarray'] = None) -> 'np.ndarray'` *(class)* — Fill EVERY empty texel with its nearest valid texel's color.
   - `ImgUtils.extrapolate_fill(cls, image: 'np.ndarray', mask: 'np.ndarray', rings: int = 1, clamp: float = 2.0) -> Tuple['np.ndarray', 'np.ndarray']` *(class)* — Grow *mask* by *rings* texels, continuing its content's slope.
   - `ImgUtils.compute_atlas_layout(weights: Sequence[float], *, rows: Optional[int] = None) -> List[Tuple[float, float, float, float]]` *(static)* — Lay out N weighted items as non-overlapping rects tiling the unit square.
+  - `ImgUtils.pack_atlas_rects(extents: Sequence[Tuple[float, float]], size: Union[int, Tuple[int, int]], gutter: int = 2, min_texels: int = 4, align: int = 4) -> Optional[List[Tuple[float, float, float, float]]]` *(static)* — Pack items of natural *extents* into one atlas at a uniform texel density.
+  - `ImgUtils.atlas_extent(area: float, uv_area: Optional[float] = None, extent: Tuple[float, float] = (1.0, 1.0), fill: float = 0.75, stretch: float = 1.0) -> Tuple[float, float]` *(static)* — An item's natural atlas extent: what keeps its texel density equal to the rest.
+  - `ImgUtils.atlas_layout_extent(area: float, uvs: Optional['np.ndarray'] = None, stretch: float = 1.0, max_coverage: float = 0.85, fill: float = 0.75) -> Tuple[float, float]` *(static)* — :meth:`atlas_extent` read off a layout's triangles -- the lightmap bakers' one reading.
+  - `ImgUtils.uv_axis_scale(points: 'np.ndarray', uvs: 'np.ndarray') -> Optional[Tuple[float, float]]` *(static)* — The surface one unit of u and one unit of v span across a layout.
   - `ImgUtils.atlas_pixel_rects(rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]]) -> List[Tuple[int, int, int, int]]` *(static)* — Convert normalized ``scaleOffset`` rects to integer pixel rects.
   - `ImgUtils.flip_rect_v(rect: Sequence[float]) -> List[float]` *(static)* — A ``[sx, sy, ox, oy]`` atlas rect, V-flipped between UV conventions.
   - `ImgUtils.compose_rect(outer: Optional[Sequence[float]], inner: Sequence[float]) -> List[float]` *(static)* — The one ``[sx, sy, ox, oy]`` rect that applies *inner*, then *outer*.
@@ -3183,6 +3350,9 @@ KTX2 / Basis Universal encoding via KTX-Software's ``toktx`` (external binary).
   - `Ktx2Encoder.not_installed_error(cls, detail: str = '') -> FileNotFoundError` *(class)* — The fix-shaped error every "no toktx" outcome raises: install
   - `Ktx2Encoder.resolve_toktx(cls, required: bool = False, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the ``toktx`` executable: PATH, conventional install
   - `Ktx2Encoder.available(cls) -> bool` *(class)* — True when a ``toktx`` binary is discoverable.
+  - `Ktx2Encoder.resolve_ktx(cls) -> Optional[str]` *(class)* — KTX-Software's unified ``ktx`` tool -- the decoder -- or None.
+  - `Ktx2Encoder.decode(cls, source: str, output: str, ktx: Optional[str] = None, timeout: Optional[float] = DEFAULT_TIMEOUT) -> str` *(class)* — Decode the base level of KTX2 *source* to an 8-bit PNG at *output*.
+  - `Ktx2Encoder.decode_all(cls, jobs: Sequence[Tuple[str, str]], ktx: Optional[str] = None, timeout: Optional[float] = DEFAULT_TIMEOUT, workers: Optional[int] = None) -> List[Union[str, Exception]]` *(class)* — :meth:`decode` every ``(source, output)`` in *jobs*, side by side.
   - `Ktx2Encoder.read_header(cls, path: str) -> Dict[str, int]` *(class)* — Read the fixed-layout KTX 2.0 header of *path* — no transcoder needed.
   - `Ktx2Encoder.rdo_for(cls, uastc_rdo: Optional[float], normal_map: bool = False) -> Optional[float]` *(class)* — The RDO lambda one UASTC encode takes: *uastc_rdo*, capped at
   - `Ktx2Encoder.rdo_kwargs(uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> Dict[str, Union[float, int]]` *(static)* — The RDO keywords one :meth:`encode` call should carry -- only those
@@ -3198,6 +3368,18 @@ Background mask generation via rembg (optional dependency).
 - **[`class MaskGenerator`](pythontk/pythontk/img_utils/mask_generator.py#L43)** — Run rembg over a directory of images and write binary masks.
   - `MaskGenerator.is_available(self) -> bool`
   - `MaskGenerator.generate_masks(self, input_dir: str, output_dir: str, suffix: str = '_mask', out_ext: str = '.png', skip_existing: bool = True, progress: Optional[callable] = None) -> List[str]` — Generate alpha-channel masks for every image in ``input_dir``.
+
+<a id="img_utils--rect_packer"></a>
+### `img_utils/rect_packer.py`
+
+Rectangle packing into one fixed bin: integer texels, gutters, block alignment.
+
+- **[`class RectPackResult`](pythontk/pythontk/img_utils/rect_packer.py#L65)** — One packing: where each rectangle's CONTENT landed, in input order.
+  - `RectPackResult.fill(self) -> float` *(property)* — Fraction of the bin's texels the rectangles' content covers.
+  - `RectPackResult.pixel_rects(self) -> List[Tuple[int, int, int, int]]` — ``(row0, row1, col0, col1)`` per rectangle, half-open, top-down.
+- **[`class RectPacker(HelpMixin)`](pythontk/pythontk/img_utils/rect_packer.py#L189)** — Pack rectangles into one bin -- integer texels, padding, block alignment.
+  - `RectPacker.pack(cls, sizes: Sequence[Tuple[int, int]], bin_size: Tuple[int, int], padding: int = 0, align: int = 1, rotate: bool = False) -> Optional[RectPackResult]` *(class)* — Place rectangles of given texel sizes in a ``bin_size`` bin.
+  - `RectPacker.fit(cls, extents: Sequence[Tuple[float, float]], bin_size: Tuple[int, int], padding: int = 0, align: int = 1, min_size: int = 1, rotate: bool = False, tolerance: float = 0.002, fold: bool = False) -> Optional[RectPackResult]` *(class)* — The largest uniform scale at which rectangles of natural *extents* fit, packed.
 
 <a id="img_utils--shadow_atlas"></a>
 ### `img_utils/shadow_atlas.py`
@@ -3235,7 +3417,7 @@ One atlas per shadow-rig type: equal cells, a tile rewritten in place.
 <a id="math_utils--_math_utils"></a>
 ### `math_utils/_math_utils.py`
 
-- **[`class MathUtils(_MathClusteringInternal, _MathCurveFitInternal, HelpMixin)`](pythontk/pythontk/math_utils/_math_utils.py#L21)**
+- **[`class MathUtils(_MathClusteringInternal, _MathCurveFitInternal, HelpMixin)`](pythontk/pythontk/math_utils/_math_utils.py#L31)**
   - `MathUtils.eval_expression(expression: str) -> str` *(static)* — Evaluate a math expression string (calculator engine).
   - `MathUtils.convert_length_unit(cls, value: float, from_unit: str, to_unit: str) -> str` *(class)* — Convert a length ``value`` between units (mm, cm, m, km, in, ft, yd, mi).
   - `MathUtils.metres_per_unit(cls, unit: str, default: Optional[float] = None) -> Optional[float]` *(class)* — Metres in one *unit* (a :attr:`LENGTH_UNIT_FACTORS` key, any case).
@@ -3285,6 +3467,7 @@ One atlas per shadow-rig type: equal cells, a tile rewritten in place.
   - `MathUtils.round_value(value: float, mode: str = 'none', max_distance: float = 1.5) -> Union[int, float]` *(static)* — General-purpose rounding function with multiple modes.
   - `MathUtils.round_to_preferred(value: float, max_distance: float = 1.5) -> int` *(static)* — Round to aesthetically pleasing 'round' numbers (conservative approach).
   - `MathUtils.round_to_aggressive_preferred(cls, value: float) -> int` *(class)* — Round to aesthetically pleasing 'round' numbers (aggressive approach).
+  - `MathUtils.best_rotate_order(solutions: Dict[str, Sequence[Sequence[float]]], current: Optional[str] = None, gimbal_margin: float = 10.0) -> Optional[str]` *(static)* — The Euler rotate order that keeps a keyed rotation on the fewest channels.
   - `MathUtils.calculate_rotation_distance(r1_vals: Tuple[float, float, float], r2_vals: Tuple[float, float, float], bbox_points: Optional[List[Any]] = None, om_module: Optional[Any] = None) -> float` *(static)* — Calculate the effective rotation distance between two Euler rotations.
   - `MathUtils.fit_hermite_slopes(times: Sequence[float], values: Sequence[float], keep_indices: Sequence[int], flat_tolerance: float = 0.0) -> Tuple[List[float], List[float]]` *(static)* — Fit cubic-Hermite tangent slopes at a subset of samples so the
   - `MathUtils.evaluate_hermite(times: Sequence[float], values: Sequence[float], keep_indices: Sequence[int], in_slopes: Sequence[float], out_slopes: Sequence[float], at: Optional[Sequence[float]] = None) -> 'np.ndarray'` *(static)* — Evaluate the sparse cubic-Hermite curve a reduction produces.
@@ -3361,7 +3544,7 @@ Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 
 The hand-off bridge whose target is a live preview page.
 
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L32)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L33)** — Hand-off bridge whose target is a live preview page rather than an application.
   - `PreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Extra directories the lightmap pass resolves the manifest's EXRs against.
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
@@ -3371,11 +3554,12 @@ The hand-off bridge whose target is a live preview page.
   - `PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line describing what the scene sidecar did.
   - `PreviewBridge.lightmap_summary(cls, result: Optional[Dict[str, Any]]) -> str` *(class)* — One plain-text line on the lightmaps: bound, or how many came back unlit.
   - `PreviewBridge.timing_summary(cls, result: Optional[Dict[str, Any]]) -> str` *(class)* — One plain-text line on where a push's time went.
-  - `PreviewBridge.share(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, on_step: Optional[Callable[[Any], Any]] = None) -> Dict[str, Any]` — Give the live preview a link anyone can open -- view-only, and every
+  - `PreviewBridge.share(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, on_step: Optional[Callable[[Any], Any]] = None, private: bool = False) -> Dict[str, Any]` — Give the live preview a link anyone can open -- view-only, and every
   - `PreviewBridge.unshare(self) -> None` — Stop sharing;
   - `PreviewBridge.share_url(self) -> Optional[str]` *(property)* — The link to send while the preview is shared, else ``None``.
+  - `PreviewBridge.ping_share(self, **options: Any) -> Dict[str, Any]` — Whether a guest can reach the share now: see
   - `PreviewBridge.stop(self) -> None` — Stop serving and release the port, ending any share.
-- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L589)** — Preview bridge whose source is a file on disk rather than a host selection.
+- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L604)** — Preview bridge whose source is a file on disk rather than a host selection.
   - `FilePreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Where to look for the EXRs a lightmap manifest names.
 
 <a id="net_utils--preview--deliverer"></a>
@@ -3383,9 +3567,9 @@ The hand-off bridge whose target is a live preview page.
 
 FBX -> GLB -> publish: the hand-off strategy behind every live preview.
 
-- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview/deliverer.py#L30)** — Hand-off strategy: build the GLB and publish it to the preview page.
+- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview/deliverer.py#L35)** — Hand-off strategy: build the GLB and publish it to the preview page.
   - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
-  - `PreviewDeliverer.publish(self, glb: Union[str, Path], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Put *glb* on the server and report what the viewer now sees.
+  - `PreviewDeliverer.publish(self, glb: Union[str, Path, Sequence[Union[str, Path]]], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, labels: Optional[Sequence[Optional[str]]] = None) -> Dict[str, Any]` — Put *glb* on the server and report what the viewer now sees.
   - `PreviewDeliverer.preflight(self, bridge, request: HandoffRequest) -> bool` — Resolve this push's GLB rows BEFORE the export is paid for.
   - `PreviewDeliverer.deliver(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
 
@@ -3420,7 +3604,7 @@ The preview server's served surface: its URL vocabulary and the HTTP handler.
 
 Localhost static-file server for live browser / WebXR previews.
 
-- **[`class PreviewServer(LoggingMixin, _ServeRootMixin, _SharingMixin, _PageOutputsMixin, _SceneDescriptionMixin)`](pythontk/pythontk/net_utils/preview/server.py#L133)** — Serve a directory of preview assets on loopback, with a live manifest.
+- **[`class PreviewServer(LoggingMixin, _ServeRootMixin, _SharingMixin, _PageOutputsMixin, _SceneDescriptionMixin)`](pythontk/pythontk/net_utils/preview/server.py#L134)** — Serve a directory of preview assets on loopback, with a live manifest.
   - `PreviewServer.port(self) -> Optional[int]` *(property)* — The bound port, or ``None`` before :meth:`start`.
   - `PreviewServer.url(self) -> Optional[str]` *(property)* — The viewer URL, or ``None`` before :meth:`start`.
   - `PreviewServer.version(self) -> int` *(property)* — Number of published revisions;
@@ -3429,7 +3613,8 @@ Localhost static-file server for live browser / WebXR previews.
   - `PreviewServer.manifest(self, guest: bool = False) -> Dict[str, Any]` — The payload served at ``/manifest.json``.
   - `PreviewServer.start(self) -> 'PreviewServer'` — Bind the port and serve on a daemon thread.
   - `PreviewServer.stop(self) -> None` — Stop serving and release the port, ending any share.
-  - `PreviewServer.publish(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False) -> int` — Place an asset in the serve root and bump the manifest version.
+  - `PreviewServer.publish(self, src: Union[str, Path], name: Optional[str] = None, move: bool = False, label: Optional[str] = None) -> int` — Place an asset in the serve root and bump the manifest version.
+  - `PreviewServer.publish_parts(self, srcs: Sequence[Union[str, Path]], labels: Optional[Sequence[str]] = None, move: bool = False) -> int` — Publish the PARTS of one scene together, as one version.
   - `PreviewServer.apply_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]` — Write delivery dials into the published GLB, and remember them.
   - `PreviewServer.webxr_browser(cls) -> Optional[str]` *(class)* — Which browser to open so an immersive session is POSSIBLE.
   - `PreviewServer.open_in_browser(self) -> bool` — Open the viewer.
@@ -3438,14 +3623,15 @@ Localhost static-file server for live browser / WebXR previews.
   - `PreviewServer.remove_script(self, name: str) -> 'PreviewServer'` — Deactivate a viewer script (unknown names are ignored), and sweep it.
   - `PreviewServer.set_scripts(self, scripts: Optional[Union[Dict[str, Any], List[str], tuple]]) -> 'PreviewServer'` — Replace the whole active set (``None`` or empty clears it).
   - `PreviewServer.guest_port(self) -> Optional[int]` *(property)* — The guest listener's port, or ``None`` while it is closed.
-  - `PreviewServer.guest_url(self) -> Optional[str]` *(property)* — The guest listener on loopback: what a guest sees, from this machine.
+  - `PreviewServer.guest_url(self) -> Optional[str]` *(property)* — The guest listener on loopback: what a guest sees, from this machine
   - `PreviewServer.start_guest(self, port: int = 0) -> int` — Open the read-only listener a share points at; its port.
   - `PreviewServer.stop_guest(self) -> None` — Close the read-only listener, forgetting its admitted names and its
   - `PreviewServer.admit_host(self, netloc: str) -> None` — Let the guest listener answer requests addressed to *netloc*.
   - `PreviewServer.guest_count(self) -> int` — How many guest tabs are watching: polled within :attr:`VIEWER_TIMEOUT`.
-  - `PreviewServer.share(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, timeout: Optional[float] = None, on_step: Optional[Callable[[Any], Any]] = None) -> Dict[str, Any]` — Give this preview a link anyone can open: view-only, and live.
+  - `PreviewServer.share(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, timeout: Optional[float] = None, on_step: Optional[Callable[[Any], Any]] = None, private: bool = False) -> Dict[str, Any]` — Give this preview a link anyone can open: view-only, and live.
   - `PreviewServer.unshare(self) -> None` — Stop sharing: the tunnel stops (an alias then says the share ended)
   - `PreviewServer.share_info(self) -> Optional[Dict[str, Any]]` — What is being shared, or ``None`` -- also once the provider exited
+  - `PreviewServer.ping_share(self, timeout: float = 10.0, attempts: int = 3, wait: float = 2.0) -> Dict[str, Any]` — Ask the share's link for its manifest, from this machine, the way
   - `PreviewServer.share_url(self) -> Optional[str]` *(property)* — The link to hand out while sharing, else ``None``.
   - `PreviewServer.playblast(self) -> 'PreviewPlayblast'` *(property)* — The page's recorder, created on first use.
   - `PreviewServer.begin_playblast(self, **kwargs: Any) -> Dict[str, Any]` — Open a recording (see :meth:`PreviewPlayblast.begin`).
@@ -3514,8 +3700,9 @@ The in-application half of the RPC pair: registry + marshaller + server.
   - `OpRegistry.describe(self, name=None)` — Describe one op (``None`` for all) as ``{name, doc, params}``.
 - **[`class MainThreadMarshaller(_MainThreadMarshallerInternal)`](pythontk/pythontk/net_utils/rpc/plugin_core.py#L200)** — Run a callable on the host's Qt main thread and block for its result.
   - `MainThreadMarshaller.is_active(self)` — True when :meth:`run` will marshal rather than call direct.
+  - `MainThreadMarshaller.post(self, fn, *args, **kwargs)` — Queue *fn* for the main thread and return at once -- never blocks.
   - `MainThreadMarshaller.run(self, fn, *args, timeout=None, **kwargs)` — Call *fn*, on the main thread when one is reachable.
-- **[`class RpcPlugin(object)`](pythontk/pythontk/net_utils/rpc/plugin_core.py#L426)** — One host plugin: a registry, a marshaller, and the server that joins them.
+- **[`class RpcPlugin(object)`](pythontk/pythontk/net_utils/rpc/plugin_core.py#L451)** — One host plugin: a registry, a marshaller, and the server that joins them.
   - `RpcPlugin.import_ops(package)` *(static)* — Import *package* (dotted name), forcing its ``@register`` side effects.
   - `RpcPlugin.port(self)` *(property)* — Configured port: ``<PREFIX>_PORT`` if set and numeric, else the default.
   - `RpcPlugin.is_hosted(self)` — True only inside the real host application.
@@ -3684,7 +3871,7 @@ Rich-text tooltip DSL -- :class:`TooltipFormat`.
 
 Extract still frames from a video file via OpenCV.
 
-- **[`class FrameExtractor`](pythontk/pythontk/vid_utils/frame_extractor.py#L29)** — Extract frames from a video file at a configurable step interval.
+- **[`class FrameExtractor`](pythontk/pythontk/vid_utils/frame_extractor.py#L32)** — Extract frames from a video file at a configurable step interval.
   - `FrameExtractor.score_sharpness(frame) -> float` *(static)* — Variance-of-Laplacian sharpness score.
   - `FrameExtractor.extract_frames(self, video_path: str, output_folder: str, step: int = 5, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None) -> List[str]` — Save every ``step``-th frame from ``video_path`` to ``output_folder``.
   - `FrameExtractor.extract_frames_sharpest(self, video_path: str, output_folder: str, window_sec: float = 1.0, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None, min_sharpness: float = 0.0) -> List[str]` — Bucket frames by time window;

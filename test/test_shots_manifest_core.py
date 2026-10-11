@@ -27,6 +27,7 @@ from pythontk.core_utils.engines.shots.manifest.manifest_model import (
     BuilderObject,
     StepStatus,
     ObjectStatus,
+    ShotPairing,
     _ManifestModelInternal,
 )
 from pythontk.net_utils.remote_file import RemoteFile
@@ -582,6 +583,29 @@ class TestMappingSpec(unittest.TestCase):
                         res.ok, f"{name} {spec['key']}={value!r}: {res.errors}"
                     )
 
+    def test_color_by_offers_exactly_the_tag_rules(self):
+        """The field's choices ARE ``ManifestTags.RULES``, so the template
+        option (a ``field`` choice) can never offer a rule the panel lacks;
+        a value outside them is a schema error."""
+        from pythontk.core_utils.engines.shots.manifest.manifest_tags import (
+            ManifestTags,
+        )
+
+        Mapping = mapping_mod.Mapping
+        self.assertEqual(
+            mapping_mod.MappingSpec.field_choices("color_by"),
+            tuple(ManifestTags.RULES),
+        )
+        self.assertFalse(mapping_mod.MappingSpec.validate({"color_by": "hue"}).ok)
+        default = Mapping.load_mapping("default")
+        spec = {o["key"]: o for o in Mapping.option_specs(default)}["color_by"]
+        self.assertEqual(spec["default"], "none")
+        self.assertEqual(
+            [v for _label, v, _tip in spec["choices"]], list(ManifestTags.RULES)
+        )
+        effective = Mapping.apply_options(default, {"color_by": "section"})
+        self.assertEqual(effective["color_by"], "section")
+
     def test_unknown_audio_method_is_error(self):
         res = mapping_mod.MappingSpec.validate({"audio_resolve": {"method": "bogus"}})
         self.assertFalse(res.ok)
@@ -896,11 +920,14 @@ class TestAutoFillAssets(unittest.TestCase):
         self.assertEqual(filled, {})
 
     def test_the_asset_column_lines_up_with_the_sheet_and_keeps_its_values(self):
-        column = ManifestModel.asset_column(
-            self.path,
-            {"IN_01": ["walls", "floor"], "A01": ["ignored"], "A02": ["door_geo"]},
-            columns=ColumnMap(**self.COLUMNS),
-        )
+        """Retired with the panel's Copy Asset Names (``ManifestExport``):
+        it warns, and works until 0.14.0."""
+        with self.assertWarns(DeprecationWarning):
+            column = ManifestModel.asset_column(
+                self.path,
+                {"IN_01": ["walls", "floor"], "A01": ["ignored"], "A02": ["door_geo"]},
+                columns=ColumnMap(**self.COLUMNS),
+            )
         self.assertEqual(
             column,
             [
@@ -917,7 +944,10 @@ class TestAutoFillAssets(unittest.TestCase):
         )
 
     def test_clipboard_formats_quote_multi_line_cells(self):
-        tsv, html = ManifestModel.column_clipboard(["a", "b\nc", 'd"e'])
+        """Retired for ``ManifestExport.clipboard``: it warns, and gives that
+        one-column table's forms until 0.14.0."""
+        with self.assertWarns(DeprecationWarning):
+            tsv, html = ManifestModel.column_clipboard(["a", "b\nc", 'd"e'])
         self.assertEqual(tsv, 'a\n"b\nc"\n"d""e"')
         self.assertIn("<td>b<br>c</td>", html)
         self.assertIn("d&quot;e", html)
@@ -1140,6 +1170,43 @@ class TestRangeResolver(unittest.TestCase):
             for i in range(1, n + 1)
         ]
 
+    def test_incremental_ranges_keep_the_built_and_place_the_new(self):
+        """A Build once some steps have shots: the built keep their shots'
+        bounds -- a range typed before the build never puts the old ones
+        back -- a new step lands at its predecessor's end, zero-length, and
+        the first at the first placed step's start."""
+        steps = self._steps(4)  # A01 .. A04
+        ranges = rr.RangeResolver.incremental_ranges(
+            steps,
+            shot_ranges={"A02": (100.0, 150.0)},
+            last_resolved=[("A03", 160.0, 200.0, False), ("A02", 1.0, 2.0, False)],
+            user_ranges={"A02": (5.0, 9.0)},
+        )
+        self.assertEqual(
+            ranges,
+            {
+                "A01": (100.0, 100.0),
+                "A02": (100.0, 150.0),
+                "A03": (160.0, 200.0),
+                "A04": (200.0, 200.0),
+            },
+        )
+
+    def test_incremental_ranges_take_a_typed_range_and_a_typed_start(self):
+        steps = self._steps(3)
+        ranges = rr.RangeResolver.incremental_ranges(
+            steps,
+            shot_ranges={"A01": (0.0, 50.0)},
+            user_ranges={"A02": (60.0, 80.0), "A03": (300.0, None)},
+        )
+        self.assertEqual(ranges["A02"], (60.0, 80.0))
+        self.assertEqual(ranges["A03"], (300.0, 300.0), "a start alone: there")
+        self.assertEqual(
+            rr.RangeResolver.incremental_ranges(steps, {}),
+            {s.step_id: (1.0, 1.0) for s in steps},
+            "nothing placed: frame 1",
+        )
+
     def test_prune_to_top_boundaries(self):
         # starts 0,1,2,100,101 -> largest gap before 100; keep 2 -> [0,100]
         self.assertEqual(
@@ -1239,6 +1306,17 @@ class TestStatusRollup(unittest.TestCase):
     def test_unbuilt(self):
         st = StepStatus(step_id="A01", built=False)
         self.assertEqual(st.status, "missing_shot")
+
+    def test_edited_is_named_after_locked(self):
+        st = StepStatus(
+            step_id="A01",
+            built=True,
+            edited=True,
+            objects=[ObjectStatus("a", False, "missing_object")],
+        )
+        self.assertEqual(st.status, "edited")
+        self.assertFalse(st.needs_build)
+        self.assertIn("edited", StepStatus.HELP)
 
 
 class TestManifestEngine(unittest.TestCase):
@@ -1507,6 +1585,86 @@ class TestShotPairing(_EngineCase):
         )
         self.assertEqual(pairing.orphans, [])
 
+    def test_a_renamed_step_pairs_with_the_shot_of_its_new_name(self):
+        self.store.define_shot("Intro", 1, 10)
+        step = self._step("IN_01")
+        step.name = "Intro"
+        pairing = ShotManifest(self.store).pair([step])
+        self.assertEqual(pairing.shots["IN_01"].name, "Intro")
+        self.assertEqual(pairing.how["IN_01"], "name")
+
+    def _split_scene(self):
+        """A sheet built, then edited in the Shot Sequencer: A01 split (its
+        second half unbound), a lead-in before everything and a tail shot."""
+        self.store.define_shot("Lead", -20, -10)
+        self.store.define_shot("A01_1", 0, 10, metadata={"step": "A01"})
+        self.store.define_shot("A01_2", 12, 20)
+        self.store.define_shot("A02", 30, 40, metadata={"step": "A02"})
+        self.store.define_shot("Tail", 50, 60)
+        steps = [self._step(s) for s in ("IN_01", "A01", "A01b", "A02", "A03")]
+        return steps, ShotManifest(self.store).pair(steps)
+
+    @staticmethod
+    def _names(rows):
+        return [step.step_id if step else f"[{shot.name}]" for step, shot in rows]
+
+    def test_unpaired_shots_sit_where_the_timeline_has_them(self):
+        """Bug: a shot no step pairs with (split off or added in the Shot
+        Sequencer) was listed after the last step, away from the shots it
+        sits between ("added shots are appended to the end of the manifest
+        instead of shown in shot order").  Each now follows the row of the
+        shot before it on the timeline -- one with none before it leads the
+        row of the shot after it.
+        Fixed: 2026-10-10"""
+        steps, pairing = self._split_scene()
+        self.assertEqual(
+            self._names(pairing.rows(steps)),
+            ["IN_01", "[Lead]", "A01", "[A01_2]", "A01b", "A02", "[Tail]", "A03"],
+        )
+        step, shot = pairing.rows(steps)[2]
+        self.assertEqual((step.step_id, shot.name), ("A01", "A01_1"))
+
+    def test_hiding_missing_shots_keeps_every_shot(self):
+        steps, pairing = self._split_scene()
+        self.assertEqual(
+            self._names(pairing.rows(steps, hide_missing=True)),
+            ["[Lead]", "A01", "[A01_2]", "A02", "[Tail]"],
+        )
+        shown = pairing.rows(steps, hide_missing=True, keep={"A03"})
+        self.assertIn("A03", self._names(shown), "a kept step shows unbuilt")
+
+    def test_a_pairing_without_a_timeline_still_lists_its_orphans(self):
+        """Bug: a ``ShotPairing`` made by hand (orphans, no ``timeline``)
+        dropped every orphan from its rows -- there was no timeline to place
+        them by.  They close the list instead.
+        Fixed: 2026-10-10"""
+        steps, pairing = self._split_scene()
+        bare = ShotPairing(shots=pairing.shots, orphans=pairing.orphans)
+        self.assertEqual(
+            self._names(bare.rows(steps)),
+            ["IN_01", "A01", "A01b", "A02", "A03", "[Lead]", "[A01_2]", "[Tail]"],
+        )
+
+    def test_rows_without_orphans_are_the_steps(self):
+        steps, pairing = self._split_scene()
+        self.assertEqual(
+            self._names(pairing.rows(steps, orphans=False)),
+            ["IN_01", "A01", "A01b", "A02", "A03"],
+        )
+
+    def test_bind_makes_a_shot_its_steps_and_takes_the_binding_from_another(self):
+        steps, _ = self._split_scene()
+        mani = ShotManifest(self.store)
+        mani.bind(self.store.shot_by_name("A01_2"), "A01b")
+        pairing = mani.pair(steps)
+        self.assertEqual(pairing.shots["A01b"].name, "A01_2")
+        self.assertEqual(pairing.how["A01b"], "binding")
+        mani.bind(self.store.shot_by_name("Tail"), "A01b")
+        self.assertNotIn("step", self.store.shot_by_name("A01_2").metadata)
+        self.assertEqual(mani.pair(steps).shots["A01b"].name, "Tail")
+        mani.bind(self.store.shot_by_name("Tail"), None)
+        self.assertNotIn("A01b", mani.pair(steps).shots)
+
     def test_build_writes_the_binding_so_order_no_longer_matters(self):
         self.store.define_shot("Step_1", 1, 10)
         mani = ShotManifest(self.store, match="name_then_order")
@@ -1515,6 +1673,79 @@ class TestShotPairing(_EngineCase):
         # Name-only matching now finds it through the binding.
         pairing = ShotManifest(self.store).pair([self._step("IN_01")])
         self.assertEqual(pairing.how["IN_01"], "binding")
+
+
+class TestStepRename(_EngineCase):
+    """A step's ``name`` renames its shot; its ID stays the shot's binding,
+    so a rebuild patches the same shot instead of creating a second one."""
+
+    def test_a_new_step_builds_under_its_name_bound_to_its_id(self):
+        step = self._step("A01", "door")
+        step.name = "Door_Open"
+        actions = ShotManifest(self.store).update([step], initial_shot_length=50)
+        self.assertEqual(actions, {"A01": "created"})
+        shot = self.store.shot_by_name("Door_Open")
+        self.assertEqual(shot.metadata["step"], "A01")
+        self.assertIsNone(self.store.shot_by_name("A01"))
+
+    def test_renaming_a_built_step_renames_its_shot_in_place(self):
+        """Bug: the step ID was both the binding and the shot name, and a
+        patch never wrote the name -- a renamed built step built a second
+        shot and left the first as "not in doc".
+        Fixed: 2026-10-06"""
+        mani = ShotManifest(self.store)
+        mani.update([self._step("A01", "door")], initial_shot_length=50)
+        shot_id = self.store.shot_by_name("A01").shot_id
+        step = self._step("A01", "door")
+        step.name = "Door_Open"
+        actions = mani.update([step], remove_missing=False)
+        self.assertEqual(actions, {"A01": "patched"})
+        self.assertEqual([s.name for s in self.store.shots], ["Door_Open"])
+        self.assertEqual(self.store.shot_by_name("Door_Open").shot_id, shot_id)
+        # The sheet's step again (the edit dropped): the build named the
+        # shot, so it names it back, still paired through the binding.
+        actions = mani.update([self._step("A01", "door")], remove_missing=False)
+        self.assertEqual(actions["A01"], "patched")
+        self.assertEqual([s.name for s in self.store.shots], ["A01"])
+        self.assertEqual(self.store.shot_by_name("A01").shot_id, shot_id)
+
+    def test_a_step_without_a_name_keeps_a_sequencer_rename(self):
+        mani = ShotManifest(self.store)
+        mani.update([self._step("A01", "door")], initial_shot_length=50)
+        shot = self.store.shot_by_name("A01")
+        self.store.update_shot(shot.shot_id, name="Hand_Named")
+        actions = mani.update([self._step("A01", "door")], remove_missing=False)
+        # A hand rename is an edit: the whole shot is kept (TestEditedShotsAreKept).
+        self.assertEqual(actions["A01"], "kept")
+        self.assertEqual([s.name for s in self.store.shots], ["Hand_Named"])
+
+    def test_a_hand_rename_after_an_edit_rename_is_kept_once_the_edit_goes(self):
+        mani = ShotManifest(self.store)
+        step = self._step("A01", "door")
+        step.name = "Door_Open"
+        mani.update([step], initial_shot_length=50)
+        shot = self.store.shot_by_name("Door_Open")
+        self.assertEqual(shot.metadata[ShotManifest.BUILD_NAME], "Door_Open")
+        self.store.update_shot(shot.shot_id, name="Hand_Named")
+        mani.update([self._step("A01", "door")], remove_missing=False)
+        self.assertEqual([s.name for s in self.store.shots], ["Hand_Named"])
+
+    def test_a_name_another_shot_holds_is_refused_and_logged(self):
+        mani = ShotManifest(self.store)
+        mani.update([self._step("A01", "door")], initial_shot_length=50)
+        self.store.define_shot("Taken", 500, 600)
+        step = self._step("A01", "door")
+        step.name = "taken"  # the store compares names ignoring case
+        with self.assertLogs(level="WARNING") as logs:
+            mani.update([step], remove_missing=False)
+        self.assertIn("not renamed", "\n".join(logs.output))
+        self.assertIsNotNone(self.store.shot_by_name("A01"))
+
+    def test_from_shots_carries_a_renamed_shots_name(self):
+        self.store.define_shot("Door_Open", 1, 10, metadata={"step": "A01"})
+        (step,), _ = BuilderStep.from_shots(self.store.sorted_shots())
+        self.assertEqual((step.step_id, step.name), ("A01", "Door_Open"))
+        self.assertEqual(step.shot_name, "Door_Open")
 
 
 class TestReconcileMembership(_EngineCase):
@@ -1543,6 +1774,9 @@ class TestReconcileMembership(_EngineCase):
         self.store.update_shot(shot.shot_id, objects=[])
         (status,) = mani.assess([self._step("A01", "door")])
         self.assertEqual(status.objects[0].status, "not_in_shot")
+        # A hand's edit, so only a build asked to rebuild edited shots puts
+        # it back (by default the shot is kept: TestEditedShotsAreKept).
+        mani = ShotManifest(self.store, rebuild_edited=True)
         actions = mani.update([self._step("A01", "door")], remove_missing=False)
         self.assertEqual(actions["A01"], "patched")
         self.assertEqual(self.store.shot_by_name("A01").objects, ["|set|AC:door"])
@@ -1589,6 +1823,31 @@ class TestReconcileMembership(_EngineCase):
 
         mani.update(parse(""), remove_missing=False)
         self.assertNotIn("hint", self.store.shot_by_name("A01").metadata)
+
+    def test_a_shot_the_manifest_never_built_keeps_its_members(self):
+        """Bug: a shot with no ``csv_objects`` (made in the Shot Sequencer, or
+        split off there) read its members as the doc objects of a previous
+        build, so a build pairing a step with it -- by name, by a binding the
+        panel wrote, or as a step adopted from it -- dropped every member the
+        step did not list, animated or not: they now count as what they are,
+        members the scene found (kept while they animate, as any).
+        Fixed: 2026-10-10"""
+        members = ["|set|AC:keys", "|set|AC:lock"]
+        self.store.define_shot("A01", 1, 50, objects=list(members))
+        self.store.define_shot("A01_2", 60, 90, objects=list(members))
+        mani = ShotManifest(self.store)
+        mani._filter_to_animated = lambda names, s, e: list(names)  # all move
+        mani.update(
+            [self._step("A01", "door"), self._step("A01_2")], remove_missing=False
+        )
+        self.assertEqual(
+            sorted(self.store.shot_by_name("A01").objects),
+            ["|set|AC:door", *members],
+        )
+        self.assertEqual(sorted(self.store.shot_by_name("A01_2").objects), members)
+        # Built now: a doc object dropped later still leaves, the rest stay.
+        mani.update([self._step("A01")], remove_missing=False)
+        self.assertEqual(sorted(self.store.shot_by_name("A01").objects), members)
 
     def test_an_orphan_shot_is_kept_unless_removal_is_asked_for(self):
         mani = ShotManifest(self.store)
@@ -1702,6 +1961,183 @@ class TestBehaviorOwnership(_EngineCase):
         self.assertEqual(mani.release_authored(7, "door", "fade_in"), 1)
         self.assertEqual(deleted, [("door_opacity", [1.0])])
         self.assertEqual(led.authored(owner=7), [("door_opacity", 90.0)])
+
+
+class TestEditedShotsAreKept(_EngineCase):
+    """A rebuild leaves a shot edited by hand since its last build as it is,
+    unless Rebuild Edited Shots is on (2026-10-07: "make sure that the
+    manifest does not override edited shots on re-build by default.  this
+    can be a separate global option").  A build records each shot as it left
+    it; a shot that no longer matches that record was edited."""
+
+    def _built(self, *objs, desc="the doc's text"):
+        step = self._step("A01", *objs)
+        step.description = desc
+        ShotManifest(self.store).update([step], initial_shot_length=50)
+        return step, self.store.shot_by_name("A01")
+
+    def _rebuild(self, step, **kwargs):
+        return ShotManifest(self.store, **kwargs).update([step], remove_missing=False)
+
+    def test_a_build_records_the_shot_as_it_left_it(self):
+        _step, shot = self._built("door")
+        self.assertFalse(ShotManifest(self.store).edited_by_hand(shot))
+        self.assertIn(ShotManifest.BUILT, shot.metadata)
+
+    def test_an_edited_description_survives_a_rebuild(self):
+        step, shot = self._built("door")
+        self.store.update_shot(shot.shot_id, description="the artist's note")
+        self.assertEqual(self._rebuild(step), {"A01": "kept"})
+        self.assertEqual(
+            self.store.shot_by_name("A01").description, "the artist's note"
+        )
+
+    def test_a_member_removed_by_hand_stays_removed(self):
+        step, shot = self._built("door", "window")
+        door = [n for n in shot.objects if n.endswith("door")]
+        self.store.update_shot(shot.shot_id, objects=door)
+        self.assertEqual(self._rebuild(step), {"A01": "kept"})
+        self.assertEqual(self.store.shot_by_name("A01").objects, door)
+
+    def test_a_retimed_shot_keeps_its_length_and_misses_doc_changes(self):
+        step, shot = self._built("door")
+        self.store.update_shot(shot.shot_id, end=shot.end + 20)
+        length = self.store.shot_by_name("A01").duration
+        step.objects.append(BuilderObject("lamp"))
+        self.assertEqual(self._rebuild(step), {"A01": "kept"})
+        shot = self.store.shot_by_name("A01")
+        self.assertEqual(shot.duration, length)
+        self.assertFalse([n for n in shot.objects if n.endswith("lamp")])
+
+    def test_a_shot_a_ripple_moved_is_not_edited(self):
+        step, shot = self._built("door")
+        self.store.update_shot(shot.shot_id, start=shot.start + 30, end=shot.end + 30)
+        self.assertEqual(self._rebuild(step), {"A01": "skipped"})
+
+    def test_a_hand_rename_is_an_edit(self):
+        step, shot = self._built("door")
+        self.store.update_shot(shot.shot_id, name="Hand_Named")
+        step.name = "From_The_Doc"
+        self.assertEqual(self._rebuild(step), {"A01": "kept"})
+        self.assertEqual([s.name for s in self.store.shots], ["Hand_Named"])
+
+    def test_an_unedited_shot_still_takes_the_docs_changes(self):
+        step, _shot = self._built("door")
+        step.objects.append(BuilderObject("lamp"))
+        self.assertEqual(self._rebuild(step), {"A01": "patched"})
+
+    def test_rebuild_edited_shots_overrides_and_records_again(self):
+        step, shot = self._built("door", "window")
+        self.store.update_shot(shot.shot_id, description="the artist's note")
+        self.assertEqual(self._rebuild(step, rebuild_edited=True)["A01"], "skipped")
+        shot = self.store.shot_by_name("A01")
+        self.assertEqual(shot.description, "the doc's text")
+        self.assertFalse(ShotManifest(self.store).edited_by_hand(shot))
+
+    def test_rebuild_edited_shots_names_a_hand_renamed_shot_back(self):
+        """Bug: Rebuild Edited Shots rebuilt a hand-renamed shot's content but
+        kept the hand's name, so it read as edited again the moment the
+        option went off -- and was kept by every later build.
+        Fixed: 2026-10-10"""
+        step, shot = self._built("door")
+        self.store.update_shot(shot.shot_id, name="Hand_Named")
+        self.assertEqual(self._rebuild(step, rebuild_edited=True)["A01"], "patched")
+        self.assertEqual([s.name for s in self.store.shots], ["A01"])
+        shot = self.store.shot_by_name("A01")
+        self.assertFalse(ShotManifest(self.store).edited_by_hand(shot))
+
+    def test_a_bound_shot_keeps_its_own_name_under_rebuild_edited(self):
+        # "Pair with Step": the shot is the step's under the name it has --
+        # no build named it, so there is no hand rename to undo.
+        self.store.define_shot("Tail", 1, 50)
+        mani = ShotManifest(self.store, rebuild_edited=True)
+        mani.bind(self.store.shot_by_name("Tail"), "A01")
+        mani.update([self._step("A01", "door")], remove_missing=False)
+        self.assertEqual([s.name for s in self.store.shots], ["Tail"])
+
+    def test_a_shot_built_before_the_record_existed_is_not_edited(self):
+        self.store.define_shot("A01", 1, 50, metadata={"step": "A01"})
+        shot = self.store.shot_by_name("A01")
+        self.assertFalse(ShotManifest(self.store).edited_by_hand(shot))
+
+    def test_assess_marks_an_edited_shot_and_build_leaves_it(self):
+        step, shot = self._built("door")
+        self.store.update_shot(shot.shot_id, description="the artist's note")
+        step.objects.append(BuilderObject("lamp"))
+        (status,) = ShotManifest(self.store).assess([step])
+        self.assertTrue(status.edited)
+        self.assertEqual(status.status, "edited")
+        self.assertFalse(status.needs_build, "a build would not touch it")
+        (status,) = ShotManifest(self.store, rebuild_edited=True).assess([step])
+        self.assertFalse(status.edited)
+        self.assertTrue(status.needs_build)
+
+    def test_a_kept_shot_gets_no_behavior_pass(self):
+        step, shot = self._built("door")
+        self.store.define_shot("B01", 200, 250, metadata={"step": "B01"})
+        self.store.update_shot(shot.shot_id, description="the artist's note")
+        names = [s.name for s in ShotManifest(self.store)._behavior_shots()]
+        self.assertEqual(names, ["B01"])
+        self.store.edit_ledger.record_authored(
+            "door_op", 2.0, shot.shot_id, "fade_in", "door"
+        )
+        self.assertEqual(ShotManifest(self.store)._dropped_pairs([step]), [])
+
+
+class TestDisabledBehaviors(_EngineCase):
+    """A behavior type turned off is neither keyed by Build nor reported
+    missing by Assess; the keys it already has stay (2026-10-07: "ability to
+    disable/enable certain behaviors")."""
+
+    def _built_step(self):
+        step = self._step("A01", "door", behaviors={"door": ["fade_in", "fade_out"]})
+        ShotManifest(self.store).update([step], initial_shot_length=50)
+        return step, self.store.shot_by_name("A01")
+
+    def test_assess_does_not_report_a_disabled_behavior(self):
+        step, _shot = self._built_step()
+
+        def verify(node, behavior, start, end, anchor_override=None):
+            return behavior != "fade_in"
+
+        (status,) = ShotManifest(self.store).assess([step], verify_fn=verify)
+        self.assertEqual(status.objects[0].status, "missing_behavior")
+        mani = ShotManifest(self.store, disabled_behaviors={"fade_in"})
+        (status,) = mani.assess([step], verify_fn=verify)
+        self.assertEqual(status.objects[0].status, "valid")
+        self.assertEqual(status.objects[0].behaviors, ["fade_in", "fade_out"])
+
+    def test_the_build_loop_skips_it_and_keeps_the_others_anchors(self):
+        _step, shot = self._built_step()
+
+        def run(skip):
+            calls = []
+
+            def apply_fn(
+                node, behavior, start, end, source_path="", anchor_override=None
+            ):
+                calls.append((behavior, anchor_override))
+                return []
+
+            beh.Behaviors.apply_to_shots([shot], apply_fn, skip_behaviors=skip)
+            return calls
+
+        both = run(())
+        self.assertEqual([b for b, _a in both], ["fade_in", "fade_out"])
+        self.assertEqual(run({"fade_in"}), [both[1]], "fade_out lands where it did")
+
+    def test_reapply_leaves_a_disabled_behavior_and_its_keys(self):
+        step, shot = self._built_step()
+        led = self.store.edit_ledger
+        led.record_authored("door_op", 2.0, shot.shot_id, "fade_in", "door")
+        mani = ShotManifest(self.store, disabled_behaviors={"fade_in"})
+        released, applied = [], []
+        mani._delete_keys = lambda curve, times: released.append(curve)
+        mani._apply_one = lambda node, b, s, e, **kw: applied.append(b) or []
+        self.assertTrue(mani.reapply_object(shot, step.objects[0]))
+        self.assertEqual(applied, ["fade_out"])
+        self.assertEqual(released, [], "fade_in's keys stay")
+        self.assertEqual(led.authored(owner=shot.shot_id), [("door_op", 2.0)])
 
 
 class TestFillFromPairs(_EngineCase):

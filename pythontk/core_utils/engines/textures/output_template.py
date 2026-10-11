@@ -221,7 +221,7 @@ class OutputTemplates:
     # The registry owns the taxonomy; a local copy would silently miss a normal
     # type added there (a new one would keep the default container instead of
     # the profile's).
-    _NORMAL_TYPES = MapRegistry.NORMAL_TYPES
+    _NORMAL_TYPES = MapRegistry.TANGENT_NORMAL_TYPES
 
     # Advisory ceilings by delivery class, not by engine — the same numbers recur
     # across profiles, and naming the *reason* keeps the catalogue below readable.

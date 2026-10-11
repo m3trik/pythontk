@@ -139,6 +139,7 @@ class GlbPipeline(LoggingMixin):
         sidecar: Optional[Dict[str, Any]] = None,
         data_export: Optional[Dict[str, Any]] = None,
         lightmap_dirs: Sequence[str] = (),
+        shadow_dirs: Sequence[str] = (),
         texture_params: Optional[Dict[str, Any]] = None,
         clip_mode: str = "both",
         key_tolerance: Optional[float] = None,
@@ -170,7 +171,14 @@ class GlbPipeline(LoggingMixin):
                 rotation). ``None`` keeps the converter's per-frame keys. The
                 summary lands in the report's ``"animation"``.
             lightmap_dirs: Where the host keeps its maps NOW, forwarded to the
-                lightmap and shadow appliers as their search directories.
+                lightmap and shadow appliers as their search directories --
+                after the folder holding the files the FBX itself embeds for
+                its records (a delivered FBX ships nothing beside it).
+            shadow_dirs: Searched first for a shadow rig's loose maps,
+                forwarded to :meth:`MeshConvert.fbx_to_glb` -- a host building
+                from a STAGED copy passes the deliverable's own folders
+                (:meth:`MeshConvert.fbx_media_dirs`), which "beside the FBX"
+                no longer reaches.
             texture_params: ``optimize_glb_textures`` kwargs (``image_format``,
                 ``max_size``, ``ktx2_fallback`` ...); ``None`` takes
                 :meth:`MeshConvert.web_delivery_texture_params`. Its ``max_size``
@@ -191,8 +199,9 @@ class GlbPipeline(LoggingMixin):
 
         Returns:
             ``{"glb", "src", "scratch", "takes", "downsized", "sidecar",
-            "lightmaps", "animation", "textures", "data_export", "timings"}``
-            -- the GLB written, the FBX the converter actually read, the
+            "lightmaps", "animation", "textures", "data_export",
+            "dependencies", "timings"}`` -- the GLB written, the FBX the
+            converter actually read, the
             scratch files minted, the split-take strip's
             :meth:`FbxMedia.drop_takes` report (``None`` when the strip did
             not run), the downsize report (or ``None``), the sidecar's
@@ -200,7 +209,9 @@ class GlbPipeline(LoggingMixin):
             (:meth:`MeshConvert.lightmap_report`), the key-reduction summary
             (``None`` without a tolerance), the texture-pass summary, the
             in-band channel keys a *data_export* overlay replaced (``[]`` when
-            none landed), and the seconds each stage took, in the order they
+            none landed), the files the FBX embeds for its records that the
+            appliers read from it (``[]`` when none), and the seconds each
+            stage took, in the order they
             ran and never overlapping: ``"takes"``, ``"downsize"``,
             ``"fbx2gltf"`` and ``"passes"`` (the conversion's two halves --
             ``"convert"`` whole when the converter reports no split),
@@ -231,6 +242,10 @@ class GlbPipeline(LoggingMixin):
             # previewing something the scene does not carry reads this to know
             # whether what it published shows it.
             "data_export": [],
+            # The files the FBX's records name that it embeds itself, read
+            # out for the appliers (``FbxMedia.extract_dependencies``): a
+            # delivered FBX ships nothing beside it.
+            "dependencies": [],
             # Seconds per stage, as they ran. Recorded rather than left to a
             # profiler: the push's cost table in docs/webxr_preview.md was
             # measured by wrapping these methods by hand, and a question that
@@ -281,10 +296,17 @@ class GlbPipeline(LoggingMixin):
             if scratch_path is not None
             else TempArtifacts("glb_pipeline", policy="scoped")
         )
+        media = TempArtifacts("glb_pipeline_media", policy="scoped")
         try:
             allocate = scratch_path or (
                 lambda extension: own_scratch.path(extension=extension)
             )
+            # The FBX's own copies of the files its records name first, as a
+            # manifest's own folders are; the host's folders after them.
+            lightmap_dirs = [
+                *cls._embedded_dependencies(src, media, report, log),
+                *lightmap_dirs,
+            ]
 
             def supersede(path: str) -> None:
                 """A payload stage replaced *path* as the converter's input."""
@@ -322,6 +344,7 @@ class GlbPipeline(LoggingMixin):
                 sidecar=sidecar,
                 data_export=data_export,
                 lightmap_dirs=lightmap_dirs,
+                shadow_dirs=shadow_dirs,
                 clip_mode=clip_mode,
                 report=conversion,
             )
@@ -366,8 +389,43 @@ class GlbPipeline(LoggingMixin):
         finally:
             if own_scratch is not None:
                 own_scratch.cleanup(force=True)
+            media.cleanup(force=True)
         timings["total"] = round(time.perf_counter() - started, 3)
         return report
+
+    @classmethod
+    def _embedded_dependencies(cls, src, media, report, log) -> list:
+        """``[folder]`` holding what *src* embeds for its records, else ``[]``.
+
+        A delivered FBX carries every file its records name and nothing
+        beside it (``FbxMedia.embed_dependencies``), while the lightmap and
+        shadow appliers join the names against folders -- so a GLB built from
+        it elsewhere (a preview of a delivered file) came out unlit with the
+        bake inside its own source. The files go to *media* (a scratch store
+        swept when the build returns). An unreadable FBX is the conversion's
+        to report: here it simply adds nothing.
+        """
+        from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        if not FbxFile.is_fbx(src):
+            return []
+        folder = media.dir_path()
+        try:
+            written = FbxMedia.extract_dependencies(src, folder)
+        except (OSError, ValueError) as error:
+            log.warning("The FBX's embedded dependencies were not read: %s", error)
+            return []
+        report["dependencies"] = list(written)
+        if not written:
+            return []
+        log.info(
+            "Converter input: %d file(s) the records name, read from the FBX "
+            "itself: %s.",
+            len(written),
+            ", ".join(written),
+        )
+        return [folder]
 
     @classmethod
     def _downsize(cls, src, params, allocate, release_source, report, log, say) -> None:

@@ -157,6 +157,56 @@ class TestX11Client(unittest.TestCase):
         self.assertIs(installed[0], X11._error_handler)
         self.assertIs(installed[1], previous)
 
+    def test_setting_a_property_sends_typed_format_32_items_and_flushes(self):
+        """The connection is never pumped, so a write must be flushed; and the
+        items travel as C longs whatever the wire size."""
+        x11 = _RecordingX11()
+        sent = []
+
+        def change(display, window, atom, ptype, fmt, mode, data, n):
+            items = ctypes.cast(data, ctypes.POINTER(ctypes.c_long))
+            sent.append((window, ptype, fmt, mode, [items[k] for k in range(n)]))
+
+        x11._funcs["XChangeProperty"] = _XFunc("XChangeProperty", x11.calls, 1, change)
+        with _fresh_x11(lambda name: x11):
+            self.assertTrue(X11.set_cardinal_property(0x4A00003, "_PROBE", [1, 2]))
+            self.assertTrue(X11.set_cardinal_property(0x4A00003, "_PROBE", []))
+            self.assertTrue(X11.delete_property(0x4A00003, "_PROBE"))
+        self.assertEqual(
+            sent,
+            [
+                (0x4A00003, X11._XA_CARDINAL, 32, 0, [1, 2]),
+                (0x4A00003, X11._XA_CARDINAL, 32, 0, []),
+            ],
+        )
+        self.assertEqual(len(x11.calls_to("XDeleteProperty")), 1)
+        self.assertEqual(len(x11.calls_to("XFlush")), 3)
+        for name in ("XChangeProperty", "XDeleteProperty", "XFlush"):
+            for _, argtypes, _ in x11.calls_to(name):
+                self.assertIsNotNone(argtypes, f"{name} called untyped")
+
+    def test_has_property_lists_the_roots_properties(self):
+        x11 = _RecordingX11()
+        atoms = (ctypes.c_ulong * 2)(5, 77)
+
+        def listing(display, window, count):
+            count._obj.value = 2
+
+        x11._funcs["XInternAtom"] = _XFunc("XInternAtom", x11.calls, 77)
+        x11._funcs["XListProperties"] = _XFunc(
+            "XListProperties", x11.calls, atoms, listing
+        )
+        with _fresh_x11(lambda name: x11):
+            self.assertTrue(X11.has_property("_KDE_NET_WM_BLUR_BEHIND_REGION"))
+        self.assertEqual(len(x11.calls_to("XFree")), 1)
+
+    def test_property_writes_answer_none_without_a_server(self):
+        x11 = _RecordingX11(display=None)
+        with _fresh_x11(lambda name: x11):
+            self.assertIsNone(X11.set_cardinal_property(1, "_PROBE", [0]))
+            self.assertIsNone(X11.delete_property(1, "_PROBE"))
+            self.assertIsNone(X11.has_property("_PROBE"))
+
 
 def _x_server_open():
     """True on Linux when libX11 loads and the DISPLAY server answers."""
@@ -223,6 +273,42 @@ class TestX11Server(unittest.TestCase):
                 time.sleep(0.1)
             self.assertIn(title, titles)
             self.assertNotIn(title, X11.window_titles([os.getpid()]))
+        finally:
+            child.stdin.close()
+            child.wait(10)
+
+    def test_a_property_round_trips_on_a_real_window(self):
+        """Set, read back (also through the root-less ``has_property``), and
+        delete a CARDINAL property on another client's window."""
+        child = subprocess.Popen(
+            [sys.executable, "-c", X11Window.script("ptk-x11-prop")],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            env=self._child_env(),
+        )
+        try:
+            self.assertEqual(child.stdout.readline().strip(), "up")
+            deadline = time.monotonic() + 10
+            window = None
+            while window is None and time.monotonic() < deadline:
+                with X11._session() as (lib, display):
+                    for w in X11._top_level_windows(lib, display):
+                        if X11._window_pid(lib, display, w) == child.pid:
+                            window = w
+                time.sleep(0.05)
+            self.assertIsNotNone(window)
+            name = f"_PTK_PROBE_{os.getpid()}"
+            self.assertTrue(X11.set_cardinal_property(window, name, [3, 4, 5, 6]))
+            with X11._session() as (lib, display):
+                read = X11._property(lib, display, window, name, X11._XA_CARDINAL)
+            self.assertEqual(read, [3, 4, 5, 6])
+            self.assertTrue(X11.has_property(name, window))
+            self.assertFalse(X11.has_property(name))  # not on the root
+            self.assertTrue(X11.set_cardinal_property(window, name, []))
+            self.assertTrue(X11.has_property(name, window))  # empty, not absent
+            X11.delete_property(window, name)
+            self.assertFalse(X11.has_property(name, window))
         finally:
             child.stdin.close()
             child.wait(10)

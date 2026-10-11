@@ -3,6 +3,7 @@ import {
   headsetLayer, headsetSpace, overlay, pinching, readHeadsetInput, setHeadsetSpace,
 } from './headset.js';
 import { locomotion } from './locomotion.js';
+import { closeMenus, refreshMenus } from './menus.js';
 import { rig } from './rig.js';
 import { beginHeadsetView, endHeadsetView, renderer } from './scene.js';
 import {
@@ -89,6 +90,11 @@ renderer.xr.addEventListener('sessionstart', () => {
   headset.begin();
   headsetLayer.visible = true;
   surfaces.warm();
+  // A dropdown is page chrome the headset does not draw; one left open would
+  // be waiting over the desktop view when the session ends. What applies
+  // can depend on presenting (`renderer.xr.isPresenting`), so it is re-asked.
+  closeMenus();
+  refreshMenus();
 });
 renderer.xr.addEventListener('sessionend', () => {
   setHeadsetSpace(null);
@@ -96,4 +102,5 @@ renderer.xr.addEventListener('sessionend', () => {
   headset.end();
   headsetLayer.visible = false;
   endHeadsetView();
+  refreshMenus();
 });

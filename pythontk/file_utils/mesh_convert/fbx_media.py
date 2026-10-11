@@ -8,10 +8,12 @@ the edits a hand-off pipeline needs on its scratch copy: replacing the
 ``FBXExportEmbeddedTextures`` copies into the file at full authoring
 resolution (:meth:`FbxMedia.downsize`), and the grayscale ones FBX2glTF would
 pack as white (:meth:`FbxMedia.expand_grayscale`) -- dropping animation
-takes the converter would bake for nothing (:meth:`FbxMedia.drop_takes`), and
-dropping the apparatus of a baked rig (:meth:`FbxMedia.drop_apparatus`).
-Everything else is copied byte for byte. Only the record headers are
-re-serialised, because binary FBX stores
+takes the converter would bake for nothing (:meth:`FbxMedia.drop_takes`),
+dropping the apparatus of a baked rig (:meth:`FbxMedia.drop_apparatus`), and
+embedding the files the scene records name by file name -- the lightmaps, the
+reflection probe, the shadow maps -- so a deliverable needs nothing beside it
+(:meth:`FbxMedia.embed_dependencies`). Everything else is copied byte for
+byte. Only the record headers are re-serialised, because binary FBX stores
 every record's end as an *absolute* offset, so one payload that changes size
 moves every header after it.
 
@@ -37,15 +39,29 @@ Example:
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import logging
 import mmap
 import os
 import struct
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.mesh_convert.fbx_file import FBX_MAGIC
 
@@ -99,9 +115,16 @@ class _FbxMediaInternal:
 
     @classmethod
     def _parse(cls, buf, pos: int, wide: bool) -> Tuple[Optional[_Record], int]:
-        """Parse the record at *pos*; ``(None, end)`` for a NULL record."""
+        """Parse the record at *pos*; ``(None, end)`` for a NULL record.
+
+        Raises:
+            ValueError: A record that ends before it starts, past the buffer
+                or past its parent -- a truncated or corrupt file.
+        """
         fmt, hlen = cls._header_fmt(wide)
         end, count, plen = struct.unpack_from(fmt, buf, pos)
+        if end and not pos < end <= len(buf):
+            raise ValueError("truncated or corrupt FBX record")
         name_len = buf[pos + hlen]
         name_start = pos + hlen + 1
         name = bytes(buf[name_start : name_start + name_len])
@@ -116,6 +139,10 @@ class _FbxMediaInternal:
             if struct.unpack_from(fmt, buf, cur)[0] == 0:
                 break
             child, cur = cls._parse(buf, cur, wide)
+            if cur > end:
+                # Its overrun would swallow its siblings and the next record
+                # into its tail, which a rewrite then emits twice.
+                raise ValueError("truncated or corrupt FBX record")
             children.append(child)
         return _Record(name, count, props, children, bytes(buf[cur:end])), end
 
@@ -149,20 +176,25 @@ class _FbxMediaInternal:
         """``(version, roots, footer_id, footer_magic)`` of a binary FBX buffer.
 
         Raises:
-            ValueError: Not a binary FBX, or a footer this writer cannot
-                re-emit faithfully (the caller then leaves the file alone).
+            ValueError: Not a binary FBX, a truncated or corrupt one, or a
+                footer this writer cannot re-emit faithfully (the caller then
+                leaves the file alone).
         """
         if bytes(buf[: len(FBX_MAGIC)]) != FBX_MAGIC:
             raise ValueError("not a binary FBX")
-        version = struct.unpack_from("<I", buf, len(FBX_MAGIC))[0]
-        wide = version >= 7500
-        pos = len(FBX_MAGIC) + 4
-        roots: List[_Record] = []
-        while True:
-            record, pos = cls._parse(buf, pos, wide)
-            if record is None:
-                break
-            roots.append(record)
+        try:
+            version = struct.unpack_from("<I", buf, len(FBX_MAGIC))[0]
+            wide = version >= 7500
+            pos = len(FBX_MAGIC) + 4
+            roots: List[_Record] = []
+            while True:
+                record, pos = cls._parse(buf, pos, wide)
+                if record is None:
+                    break
+                roots.append(record)
+        except (struct.error, IndexError) as error:
+            # A file cut short has the magic but not the body.
+            raise ValueError(f"truncated or corrupt FBX: {error}") from error
         footer = bytes(buf[pos:])
         if len(footer) < 16 + cls._FOOTER_TAIL:
             raise ValueError("unrecognised FBX footer")
@@ -194,9 +226,19 @@ class _FbxMediaInternal:
         out.write(b"\0" * 120)
         out.write(magic)
 
-    @staticmethod
-    def _video_records(roots: Iterable[_Record]) -> List[Tuple[str, _Record]]:
-        """``(basename, Content record)`` for every embedded ``Video`` object."""
+    @classmethod
+    def _video_records(
+        cls, roots: Iterable[_Record], wired_only: bool = False
+    ) -> List[Tuple[str, _Record]]:
+        """``(basename, Content record)`` for every embedded ``Video`` object.
+
+        *wired_only* keeps only the media something is connected under -- a
+        material's texture. What nothing references is a file the scene
+        records name (:meth:`FbxMedia.embed_dependencies`), which no
+        converter reads as a texture.
+        """
+        roots = list(roots)
+        wired = cls._wired_ids(roots) if wired_only else None
         found: List[Tuple[str, _Record]] = []
         for root in roots:
             if root.name != b"Objects":
@@ -204,6 +246,10 @@ class _FbxMediaInternal:
             for obj in root.children:
                 if obj.name != b"Video":
                     continue
+                if wired is not None:
+                    head = cls._scalars(obj)
+                    if not head or head[0] not in wired:
+                        continue
                 filename, content = "", None
                 for child in obj.children:
                     if child.name == b"Filename" and len(child.props) > 5:
@@ -216,6 +262,20 @@ class _FbxMediaInternal:
                     )
         return found
 
+    @classmethod
+    def _wired_ids(cls, roots: Iterable[_Record]) -> set:
+        """Every object id a connection names as the CHILD -- wired under
+        something (a Video under its Texture, a Texture under its material)."""
+        wired = set()
+        for root in roots:
+            if root.name != b"Connections":
+                continue
+            for record in root.children:
+                row = cls._scalars(record)
+                if len(row) >= 3 and isinstance(row[1], int):
+                    wired.add(row[1])
+        return wired
+
     @staticmethod
     def _raw(record: _Record) -> bytes:
         """The bytes of a single ``R`` property."""
@@ -224,6 +284,211 @@ class _FbxMediaInternal:
     @staticmethod
     def _pack_raw(data: bytes) -> bytes:
         return b"R" + struct.pack("<I", len(data)) + data
+
+    @staticmethod
+    def _pack_string(data: bytes) -> bytes:
+        return b"S" + struct.pack("<I", len(data)) + data
+
+    @staticmethod
+    def _pack_long(value: int) -> bytes:
+        return b"L" + struct.pack("<q", value)
+
+    @staticmethod
+    def _pack_int(value: int) -> bytes:
+        return b"I" + struct.pack("<i", value)
+
+    @staticmethod
+    def _new_record(
+        name: bytes, props: Sequence[bytes], children: Sequence[_Record], hlen: int
+    ) -> _Record:
+        """A record built here: packed *props*, and the NULL sentinel a record
+        with children closes on (*hlen* is the layout's header length)."""
+        return _Record(
+            name,
+            len(props),
+            b"".join(props),
+            list(children),
+            b"\0" * (hlen + 1) if children else b"",
+        )
+
+    @classmethod
+    def _media_record(cls, oid: int, name: str, data: bytes, hlen: int) -> _Record:
+        """A ``Video`` holding *data* as *name*, wired to nothing.
+
+        The fields an SDK writes for embedded media, every path the bare file
+        name: the deliverable names no folder, and the name is what Unity's
+        ``ModelImporter.ExtractTextures`` writes the bytes back under.
+        """
+        text = name.encode("utf-8")
+        s = cls._pack_string
+
+        def record(tag: bytes, *props: bytes, children=()) -> _Record:
+            return cls._new_record(tag, props, children, hlen)
+
+        def path(key: bytes) -> _Record:
+            return record(b"P", s(key), s(b"KString"), s(b"XRefUrl"), s(b""), s(text))
+
+        return record(
+            b"Video",
+            cls._pack_long(oid),
+            s(text + b"\x00\x01Video"),
+            s(b"Clip"),
+            children=(
+                record(b"Type", s(b"Clip")),
+                record(b"Properties70", children=(path(b"Path"), path(b"RelPath"))),
+                record(b"UseMipMap", cls._pack_int(0)),
+                record(b"Filename", s(text)),
+                record(b"RelativeFilename", s(text)),
+                record(b"Content", cls._pack_raw(data)),
+            ),
+        )
+
+    @staticmethod
+    def _named(entry: Any) -> Tuple[str, str]:
+        """``(file name, path)`` -- an entry :meth:`_add_media` embeds: a path
+        goes in under its own file name, a ``(name, path)`` pair under *name*."""
+        if isinstance(entry, (tuple, list)) and len(entry) == 2:
+            return str(entry[0]), str(entry[1])
+        path = str(entry)
+        return os.path.basename(path.replace("\\", "/")), path
+
+    @staticmethod
+    def _media_id(name: str, taken: set) -> int:
+        """An object id for the media *name*: the same for the same name, so
+        two exports of one scene number it alike, and one *taken* never is."""
+        digest = hashlib.sha256(b"pythontk.FbxMedia:" + name.casefold().encode())
+        oid = int.from_bytes(digest.digest()[:8], "little") & 0x3FFF_FFFF_FFFF_FFFF
+        while not oid or oid in taken:
+            oid += 1
+        return oid
+
+    @classmethod
+    def _shift_count(cls, record: _Record, delta: int, name: bytes = b"Count") -> None:
+        """Move *record*'s *name* counter child by *delta* (never below zero),
+        keeping its integer width."""
+        for child in record.children:
+            if child.name != name:
+                continue
+            head = cls._scalars(child)
+            if head and isinstance(head[0], int):
+                count = max(0, head[0] + delta)
+                wide = bytes(child.payload[:1]) == b"L"
+                child.replaced = cls._pack_long(count) if wide else cls._pack_int(count)
+
+    @classmethod
+    def _add_media(
+        cls,
+        sections: Dict[bytes, _Record],
+        entries: Sequence[Tuple[str, str]],
+        hlen: int,
+    ) -> Dict[str, Any]:
+        """Append a :meth:`_media_record` per ``(name, path)`` in *entries*.
+
+        Each file goes in under *name* -- the spelling its record joins on,
+        which a case-insensitive file system may have found under another. A
+        name the file already embeds -- compared without case, as the file
+        systems Unity extracts onto compare -- is reported ``present`` and
+        left; so is a repeat in *entries*. The ``Definitions`` count each
+        added object, declaring the ``Video`` type when the file had none.
+
+        Raises:
+            ValueError: The file has no ``Objects`` section.
+            OSError: A file in *entries* cannot be read.
+        """
+        report: Dict[str, Any] = {"embedded": [], "present": [], "bytes": 0}
+        objects = sections.get(b"Objects")
+        if objects is None:
+            raise ValueError("FBX has no Objects section")
+        roots = list(sections.values())
+        have = {name.casefold() for name, _record in cls._video_records(roots)}
+        taken = {0}
+        for record in objects.children:
+            head = cls._scalars(record)
+            if head and isinstance(head[0], int):
+                taken.add(head[0])
+        taken |= cls._wired_ids(roots)
+        for name, path in entries:
+            if not name:
+                continue
+            if name.casefold() in have:
+                report["present"].append(name)
+                continue
+            with open(path, "rb") as fh:
+                data = fh.read()
+            oid = cls._media_id(name, taken)
+            taken.add(oid)
+            have.add(name.casefold())
+            objects.children.append(cls._media_record(oid, name, data, hlen))
+            report["embedded"].append(name)
+            report["bytes"] += len(data)
+        added = len(report["embedded"])
+        definitions = sections.get(b"Definitions")
+        if added and definitions is not None:
+            declared = next(
+                (
+                    child
+                    for child in definitions.children
+                    if child.name == b"ObjectType"
+                    and cls._scalars(child)[:1] == [b"Video"]
+                ),
+                None,
+            )
+            if declared is None:
+                definitions.children.append(
+                    cls._new_record(
+                        b"ObjectType",
+                        [cls._pack_string(b"Video")],
+                        [cls._new_record(b"Count", [cls._pack_int(added)], (), hlen)],
+                        hlen,
+                    )
+                )
+            else:
+                cls._shift_count(declared, added)
+            cls._shift_count(definitions, added)
+        return report
+
+    @classmethod
+    def _channel_payloads(cls, roots: Iterable[_Record], key: str) -> Iterator[Any]:
+        """Every Model's user property *key*, JSON-decoded -- one per carrier
+        (a referenced module ships its own). A blank or malformed value is
+        skipped."""
+        wanted = key.encode("utf-8")
+        for root in roots:
+            if root.name != b"Objects":
+                continue
+            for record in root.children:
+                if record.name != b"Model":
+                    continue
+                for child in record.children:
+                    if child.name != b"Properties70":
+                        continue
+                    for prop in child.children:
+                        head = cls._scalars(prop)
+                        if len(head) < 5 or head[0] != wanted:
+                            continue
+                        value = head[4]
+                        if not isinstance(value, bytes) or not value.strip():
+                            continue
+                        try:
+                            yield json.loads(value.decode("utf-8"))
+                        except (ValueError, UnicodeDecodeError):
+                            continue
+
+    @staticmethod
+    def _field_values(payload: Any, path: Sequence[str]) -> Iterator[Any]:
+        """The values at *path* in *payload*; ``"*"`` walks a list."""
+        if not path:
+            yield payload
+            return
+        step, rest = path[0], path[1:]
+        if step == "*":
+            items = payload if isinstance(payload, list) else []
+        elif isinstance(payload, dict) and step in payload:
+            items = [payload[step]]
+        else:
+            items = []
+        for item in items:
+            yield from _FbxMediaInternal._field_values(item, rest)
 
     @staticmethod
     def _scalars(record: _Record) -> List[Any]:
@@ -268,6 +533,26 @@ class _FbxMediaInternal:
 
         return FileUtils.atomic_write(target, write, promote=False)
 
+    @staticmethod
+    def _promote(part: str, target: str) -> None:
+        """Swap the finished *part* in for *target*, or remove it.
+
+        The other half of :meth:`_write_part`, run once its mmap is closed. A
+        replace still refused once :meth:`FileUtils.replace_file` has waited
+        out the lock leaves *target* exactly as it was -- and takes the
+        ``.part`` with it: left behind, it was a full-size copy of the file in
+        the synced export folder, one per refused pass per run (production,
+        2026-10-07: four, ~970 MB).
+        """
+        try:
+            FileUtils.replace_file(part, target)
+        except BaseException:
+            try:
+                os.remove(part)
+            except OSError:
+                pass
+            raise
+
     @classmethod
     def _rewrite_images(
         cls,
@@ -290,6 +575,11 @@ class _FbxMediaInternal:
         that fails to decode or encode keeps its bytes, with a warning.
         *smaller_only* keeps them too when the re-encode is not smaller.
 
+        Only media a material's texture references is read: the files the
+        scene records name (:meth:`FbxMedia.embed_dependencies`) are wired to
+        nothing and read by no converter -- a horizon map is data a resize
+        destroys, and a lightmap EXR no image Pillow opens.
+
         Returns:
             ``{"images", <count_key>, "before", "after"}`` -- embedded image
             count, how many were replaced, and the embedded bytes before and
@@ -302,7 +592,7 @@ class _FbxMediaInternal:
             mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
         ):
             version, roots, footer_id, magic = cls._load(buf)
-            videos = cls._video_records(roots)
+            videos = cls._video_records(roots, wired_only=True)
             report = {
                 "images": len(videos),
                 count_key: 0,
@@ -358,7 +648,7 @@ class _FbxMediaInternal:
             part = cls._write_part(target, version, roots, footer_id, magic)
         # After the mmap closes: Windows refuses to replace a mapped file, and
         # `target` is `src` for an in-place run.
-        FileUtils.replace_file(part, target)
+        cls._promote(part, target)
         return report
 
 
@@ -412,7 +702,9 @@ class FbxMedia(_FbxMediaInternal):
         """Resize every embedded PNG/JPEG whose longest edge exceeds *max_size*.
 
         The same rule :meth:`MeshConvert.optimize_glb_textures` applies to the
-        GLB afterwards -- longest edge to *max_size*, aspect kept, Lanczos --
+        GLB afterwards -- longest edge to *max_size*, aspect kept, Lanczos, a
+        normal map (by its registry filename type here, its slot there)
+        resampled as one (``ImgUtils.resize_image(normal_map=True)``) --
         so an image this shrinks is one that pass would have shrunk anyway;
         pass its ceiling and the deliverable is unchanged. Each image keeps
         its container, so the ``Filename`` the SDK extracts it under still
@@ -439,9 +731,11 @@ class FbxMedia(_FbxMediaInternal):
         Raises:
             ValueError: *src* is not a binary FBX this writer can re-emit.
         """
-        from PIL import Image
+        from pythontk.core_utils.engines.textures.map_registry import MapRegistry
+        from pythontk.img_utils._img_utils import ImgUtils
 
         exempt = {os.path.basename(str(name)) for name in exempt}
+        registry = MapRegistry()
 
         def shrink(name: str, image: Any) -> Any:
             if not max_size or name in exempt or max(image.size) <= max_size:
@@ -456,7 +750,14 @@ class FbxMedia(_FbxMediaInternal):
                 return None
             scale = max_size / float(max(image.size))
             target = tuple(max(1, round(edge * scale)) for edge in image.size)
-            return image.resize(target, Image.LANCZOS)
+            # Only a filename here, no material slot: the registry classifies
+            # it, and resize_image still declines a map whose texels are not
+            # unit normals, so a misnamed one only costs the probe.
+            normal = (
+                registry.resolve_type_from_path(name)
+                in MapRegistry.TANGENT_NORMAL_TYPES
+            )
+            return ImgUtils.resize_image(image, *target, normal_map=normal)
 
         return cls._rewrite_images(
             src,
@@ -534,6 +835,298 @@ class FbxMedia(_FbxMediaInternal):
             png_compress_level=png_compress_level,
             jpeg_quality=jpeg_quality,
         )
+
+    #: Where each scene record names a file by FILE NAME -- what a deliverable
+    #: depends on beyond the textures its materials reference: ``{record key:
+    #: (field path, ...)}``, ``"*"`` walking a list. A record that starts
+    #: naming a file adds its paths here and :meth:`embed_dependencies` ships it.
+    DEPENDENCY_FIELDS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
+        SceneRecords.LIGHTMAPS.key: (("objects", "*", "map"), ("probe", "map")),
+        SceneRecords.SHADOWS.key: (
+            ("planes", "*", "texture"),
+            ("planes", "*", "atlas", "texture"),
+            ("planes", "*", "horizon", "texture"),
+        ),
+    }
+
+    @classmethod
+    def _dependency_names(cls, roots: Iterable[_Record]) -> List[str]:
+        """:meth:`dependencies` of an already-parsed file."""
+        roots = list(roots)
+        return cls.named_files(
+            {
+                key: list(cls._channel_payloads(roots, key))
+                for key in cls.DEPENDENCY_FIELDS
+            }
+        )
+
+    @classmethod
+    def named_files(cls, payloads: Mapping[str, Iterable[Any]]) -> List[str]:
+        """The file names decoded scene records name (:attr:`DEPENDENCY_FIELDS`).
+
+        The walk :meth:`dependencies` runs on an FBX, for a reader that
+        already holds the channels -- the verifier's parsed file, a GLB's
+        extras. In record order, each name once (compared without case); a
+        name a manifest wrote with a folder (one published before 0.11.0) is
+        its file name.
+
+        Parameters:
+            payloads: ``{record key: [decoded payload, ...]}`` -- one payload
+                per carrier (a referenced module ships its own). Keys no
+                record declares are ignored.
+
+        Returns:
+            The file names, folder-less, in record order.
+        """
+        names: List[str] = []
+        seen = set()
+        for key, paths in cls.DEPENDENCY_FIELDS.items():
+            for payload in payloads.get(key) or ():
+                for path in paths:
+                    for value in cls._field_values(payload, path):
+                        if not isinstance(value, str):
+                            continue
+                        name = os.path.basename(value.strip().replace("\\", "/"))
+                        if name and name.casefold() not in seen:
+                            seen.add(name.casefold())
+                            names.append(name)
+        return names
+
+    @classmethod
+    def dependencies(cls, path: str) -> List[str]:
+        """The file names the FBX's scene records name (:attr:`DEPENDENCY_FIELDS`).
+
+        Read off every ``data_export`` carrier in the file: the lightmaps and
+        the reflection probe ``lightmap_metadata`` names, the silhouette,
+        atlas and horizon maps ``shadow_metadata`` names. In record order,
+        each name once (compared without case); a name a manifest wrote with
+        a folder (one published before 0.11.0) is its file name.
+
+        Parameters:
+            path: The FBX to read.
+
+        Returns:
+            The file names, folder-less; empty when no record names one.
+
+        Raises:
+            ValueError: *path* is not a binary FBX this writer can read.
+        """
+        with (
+            open(path, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            _version, roots, _fid, _magic = cls._load(buf)
+            return cls._dependency_names(roots)
+
+    @classmethod
+    def embed(
+        cls, src: str, dst: Optional[str] = None, *, files: Iterable[Any]
+    ) -> Dict[str, Any]:
+        """Embed each of *files* in the FBX as media no material uses.
+
+        Each file becomes a ``Video`` object holding its bytes under its FILE
+        NAME (no folder: the deliverable names none) and wired to nothing, so
+        every material imports as authored. That is the form Unity's FBX
+        importer hands back: measured on 2022.3 and 6000.3 (2026-10-05),
+        ``ModelImporter.ExtractTextures`` writes a bare ``Video``'s bytes out
+        byte for byte under its file name -- EXR, HDR, 8- and 16-bit PNG and
+        WAV alike -- while a Texture bound to a known material slot rebinds
+        that slot. No form surfaces as a sub-asset of the model; extraction
+        is the only way Unity holds embedded media.
+
+        A file name the FBX already embeds (a material's own map, or an
+        earlier run) is left, compared without case, so embedding again
+        changes nothing.
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+            files: The files to embed: paths, or ``(name, path)`` pairs to
+                embed a file under another name.
+
+        Returns:
+            ``{"embedded", "present", "bytes"}`` -- the file names added and
+            the ones already in the file, in *files*' order, and the bytes
+            added. When nothing is added the file is not written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+            OSError: A file in *files* cannot be read.
+        """
+        entries = [cls._named(path) for path in files]
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            sections = {record.name: record for record in roots}
+            hlen = cls._header_fmt(version >= 7500)[1]
+            report = cls._add_media(sections, entries, hlen)
+            if not report["embedded"]:
+                return report
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        cls._promote(part, target)
+        return report
+
+    @classmethod
+    def embed_dependencies(
+        cls,
+        src: str,
+        dst: Optional[str] = None,
+        *,
+        search_dirs: Sequence[str] = (),
+        files: Iterable[Any] = (),
+        logger: Any = None,
+    ) -> Dict[str, Any]:
+        """Embed every file the FBX's scene records name, so nothing ships beside it.
+
+        The post-write step both Scene Exporters and the Unity hand-off run on
+        an FBX deliverable. The records name their files by FILE NAME --
+        ``lightmap_metadata`` its maps and its reflection probe,
+        ``shadow_metadata`` its silhouette, atlas and horizon maps
+        (:meth:`dependencies`) -- and a lighting-only bake leaves its maps on
+        no material, so the FBX used to carry none of them: the consumer
+        copied them in by hand, or imported unlit with a silhouette shadow.
+        Each name is resolved the way the GLB appliers resolve it: the first
+        of *search_dirs* holding that file (the host's own answer to where
+        its maps live), then the FBX's own folder, and goes in as
+        :meth:`embed` puts a file -- under the record's own spelling of the
+        name, the join key. A name the FBX already embeds is left as it is;
+        one found nowhere is reported and warned.
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+            search_dirs: Folders to resolve the names against, in priority
+                order (a DCC's ``LightmapRecords.search_dirs``).
+            files: Further files to embed, for a host whose records name
+                their files by something other than a file name: a path (it
+                goes in under its file name) or a ``(name, path)`` pair -- an
+                audio event names its track, so the track's file rides under
+                the name the consumer matches it by.
+            logger: Where the outcome goes; this module's logger otherwise.
+
+        Returns:
+            ``{"named", "embedded", "present", "missing", "bytes"}`` -- the
+            names the records give, the file names added, the ones already
+            in the file, the named files found nowhere, and the bytes added.
+            When nothing is added the file is not written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+            OSError: A file found or named cannot be read.
+        """
+        log = logger or logging.getLogger(__name__)
+        report: Dict[str, Any] = {
+            "named": [],
+            "embedded": [],
+            "present": [],
+            "missing": [],
+            "bytes": 0,
+        }
+        dirs = [d for d in search_dirs if d]
+        dirs.append(os.path.dirname(os.path.abspath(src)))
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            sections = {record.name: record for record in roots}
+            report["named"] = cls._dependency_names(roots)
+            inside = {name.casefold() for name, _r in cls._video_records(roots)}
+            found: List[Tuple[str, str]] = []
+            for name in report["named"]:
+                if name.casefold() in inside:
+                    report["present"].append(name)
+                    continue
+                path = next(
+                    (
+                        p
+                        for d in dirs
+                        for p in [os.path.join(d, name)]
+                        if os.path.isfile(p)
+                    ),
+                    None,
+                )
+                if path is None:
+                    report["missing"].append(name)
+                else:
+                    found.append((name, path))
+            hlen = cls._header_fmt(version >= 7500)[1]
+            extra = [cls._named(path) for path in files]
+            added = cls._add_media(sections, [*found, *extra], hlen)
+            report["embedded"] = added["embedded"]
+            report["bytes"] = added["bytes"]
+            report["present"] += [
+                n for n in added["present"] if n not in report["present"]
+            ]
+            if report["embedded"]:
+                target = dst or src
+                part = cls._write_part(target, version, roots, footer_id, magic)
+        if report["embedded"]:
+            cls._promote(part, target)
+            log.info(
+                "FBX dependencies: embedded %d file(s), %.1f MB: %s.",
+                len(report["embedded"]),
+                report["bytes"] / 1e6,
+                ", ".join(report["embedded"]),
+            )
+        if report["missing"]:
+            log.warning(
+                "FBX dependencies: %d file(s) the scene records name are in "
+                "neither the FBX nor %s, so the deliverable ships without "
+                "them: %s.",
+                len(report["missing"]),
+                dirs,
+                ", ".join(report["missing"]),
+            )
+        return report
+
+    @classmethod
+    def extract_dependencies(cls, src: str, dst_dir: str) -> Dict[str, str]:
+        """Write each file the FBX's records name AND embeds into *dst_dir*.
+
+        The reverse of :meth:`embed_dependencies`, for a reader of a DELIVERED
+        FBX that joins the records' names against folders -- the GLB build's
+        lightmap and shadow appliers. Each file goes out byte for byte under
+        the record's spelling of its name; a name the FBX does not embed is
+        left out, and so is media no record names (a material's own map is
+        the converter's to read).
+
+        Parameters:
+            src: The FBX to read.
+            dst_dir: An existing folder; same-named files there are replaced.
+
+        Returns:
+            ``{file name: path written}``, in record order; empty when the
+            records name nothing the file embeds.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can read.
+            OSError: A file could not be written.
+        """
+        written: Dict[str, str] = {}
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            _version, roots, _fid, _magic = cls._load(buf)
+            names = cls._dependency_names(roots)
+            if not names:
+                return written
+            media: Dict[str, _Record] = {}
+            for name, record in cls._video_records(roots):
+                media.setdefault(name.casefold(), record)
+            for name in names:
+                record = media.get(name.casefold())
+                if record is None:
+                    continue
+                path = os.path.join(dst_dir, name)
+                with open(path, "wb") as out:
+                    out.write(cls._raw(record))
+                written[name] = path
+        return written
 
     #: The objects an animation take owns, owner first: a stack holds layers,
     #: a layer holds curve nodes, a curve node holds curves.
@@ -680,16 +1273,16 @@ class FbxMedia(_FbxMediaInternal):
                     head = cls._scalars(object_type)
                     count = removed.get(head[0], 0) if head else 0
                     if count:
-                        cls._subtract_count(object_type, count)
+                        cls._shift_count(object_type, -count)
                         total += count
                 if total:
-                    cls._subtract_count(definitions, total)
+                    cls._shift_count(definitions, -total)
 
             report["takes"] = list(stacks.values())
             report["objects"] = {k.decode(): v for k, v in removed.items()}
             target = dst or src
             part = cls._write_part(target, version, roots, footer_id, magic)
-        FileUtils.replace_file(part, target)
+        cls._promote(part, target)
         return report
 
     #: Model classes that draw nothing and bind nothing by themselves -- a
@@ -855,10 +1448,10 @@ class FbxMedia(_FbxMediaInternal):
                     head = cls._scalars(object_type)
                     count = counts.get(head[0], 0) if head else 0
                     if count:
-                        cls._subtract_count(object_type, count)
+                        cls._shift_count(object_type, -count)
                         total += count
                 if total:
-                    cls._subtract_count(definitions, total)
+                    cls._shift_count(definitions, -total)
 
             report["models"] = len(dropped)
             report["kinds"] = RigMachinery.tally(
@@ -867,7 +1460,7 @@ class FbxMedia(_FbxMediaInternal):
             report["objects"] = {k.decode(): v for k, v in counts.items()}
             target = dst or src
             part = cls._write_part(target, version, roots, footer_id, magic)
-        FileUtils.replace_file(part, target)
+        cls._promote(part, target)
         return report
 
     @classmethod
@@ -1079,18 +1672,7 @@ class FbxMedia(_FbxMediaInternal):
         if not gone:
             return
         pose.children = [child for child in pose.children if child not in gone]
-        for child in pose.children:
-            if child.name != b"NbPoseNodes":
-                continue
-            head = cls._scalars(child)
-            if head and isinstance(head[0], int):
-                tag = bytes(child.payload[:1])
-                left = max(0, head[0] - len(gone))
-                child.replaced = (
-                    b"L" + struct.pack("<q", left)
-                    if tag == b"L"
-                    else b"I" + struct.pack("<i", left)
-                )
+        cls._shift_count(pose, -len(gone), b"NbPoseNodes")
 
     @staticmethod
     def _display(raw: bytes) -> str:
@@ -1105,20 +1687,6 @@ class FbxMedia(_FbxMediaInternal):
             if head and isinstance(head[0], bytes)
             else None
         )
-
-    @staticmethod
-    def _pack_string(data: bytes) -> bytes:
-        return b"S" + struct.pack("<I", len(data)) + data
-
-    @classmethod
-    def _subtract_count(cls, record: _Record, count: int) -> None:
-        """Lower *record*'s ``Count`` child by *count* (never below zero)."""
-        for child in record.children:
-            if child.name != b"Count":
-                continue
-            head = cls._scalars(child)
-            if head and isinstance(head[0], int):
-                child.replaced = b"I" + struct.pack("<i", max(0, head[0] - count))
 
     @classmethod
     def rewrite(cls, src: str, dst: str) -> None:

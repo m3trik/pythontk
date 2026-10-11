@@ -117,6 +117,130 @@ class _ImagesMixin:
                 claims["textures"] -= dropped
 
     @classmethod
+    def decode_glb_textures(
+        cls, glb: str, dst: str, *, overwrite: bool = False
+    ) -> Optional[str]:
+        """Write a copy of *glb* whose KTX2 images are PNG; return its path.
+
+        The way in for an importer that cannot read ``KHR_texture_basisu``:
+        Blender 5.1's refuses the WHOLE file when the extension is required,
+        which every KTX2 deliverable this package writes declares. Each KTX2
+        image is decoded (:meth:`Ktx2Encoder.decode`) and replaced in place --
+        same index, so every texture keeps its source -- the extension is
+        dropped from each texture and from ``extensionsUsed`` /
+        ``extensionsRequired``, and the KTX2 payload is reclaimed. Geometry,
+        animation and every other byte are untouched. *glb* itself never is.
+
+        Parameters:
+            glb: The source GLB.
+            dst: Where the copy goes.
+            overwrite: Replace an existing *dst*.
+
+        Returns:
+            *dst*, or ``None`` when no texture needs the extension to reach
+            its image (none uses KTX2, or each has a core ``source`` fallback):
+            every importer reads *glb* as it is.
+
+        Raises:
+            FileExistsError: *dst* exists and *overwrite* is False.
+            FileNotFoundError: A KTX2 image needs decoding and no ``ktx``
+                tool (KTX-Software) is installed.
+            RuntimeError: ``ktx`` could not decode an image.
+        """
+        import shutil
+
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+
+        # Only the images a texture can reach through the extension ALONE: one
+        # with a core ``source`` beside it already reads everywhere.
+        ktx2 = sorted(
+            {
+                ext["source"]
+                for tex in GlbEdit.read(glb).textures
+                for ext in [(tex.get("extensions") or {}).get("KHR_texture_basisu")]
+                if tex.get("source") is None
+                and isinstance(ext, dict)
+                and isinstance(ext.get("source"), int)
+            }
+        )
+        if not ktx2:
+            return None
+        if os.path.exists(dst) and not overwrite:
+            raise FileExistsError(f"Destination exists (pass overwrite=True): {dst}")
+        shutil.copyfile(glb, dst)
+        tmp = TempArtifacts("glb_ktx2_decode", policy="scoped")
+        try:
+            with GlbEdit.open(dst) as edit:
+                images = edit.images
+                jobs = []
+                for index in ktx2:
+                    payload = edit.image_bytes(images[index])
+                    if not payload:
+                        raise RuntimeError(
+                            f"KTX2 image {edit.image_label(index)} is unreadable"
+                        )
+                    jobs.append(
+                        (tmp.path(extension=".ktx2"), tmp.path(extension=".png"))
+                    )
+                    with open(jobs[-1][0], "wb") as fh:
+                        fh.write(bytes(payload))
+                decoded_paths = Ktx2Encoder.decode_all(jobs)
+                failed = next(
+                    (r for r in decoded_paths if isinstance(r, Exception)), None
+                )
+                if failed is not None:
+                    raise failed
+                for index, png_path in zip(ktx2, decoded_paths):
+                    entry = images[index]
+                    with open(png_path, "rb") as fh:
+                        data = base64.b64encode(fh.read()).decode("ascii")
+                    decoded = {
+                        "uri": f"data:image/png;base64,{data}",
+                        "mimeType": "image/png",
+                    }
+                    if entry.get("name"):
+                        decoded["name"] = entry["name"]
+                    images[index] = decoded
+                    # Moved into the BIN when the session closes.
+                    edit.pending_images.append(decoded)
+                for tex in edit.textures:
+                    ext = tex.get("extensions") or {}
+                    basisu = ext.pop("KHR_texture_basisu", None)
+                    if basisu is None:
+                        continue
+                    if tex.get("source") is None:
+                        tex["source"] = basisu.get("source")
+                    if not ext:
+                        tex.pop("extensions", None)
+                for key in ("extensionsUsed", "extensionsRequired"):
+                    names = [
+                        n for n in edit.gltf.get(key) or [] if n != "KHR_texture_basisu"
+                    ]
+                    if names:
+                        edit.gltf[key] = names
+                    else:
+                        edit.gltf.pop(key, None)
+                # The KTX2 payloads now have no reader; reclaim them before the
+                # PNGs are appended on close.
+                GlbEdit.compact_bin(edit)
+                edit.dirty = True
+        except BaseException:
+            try:
+                os.remove(dst)
+            except OSError:
+                pass
+            raise
+        finally:
+            tmp.cleanup()
+        logger.info(
+            "decode_glb_textures: %d KTX2 image(s) decoded to PNG -> %s",
+            len(ktx2),
+            os.path.basename(dst),
+        )
+        return dst
+
+    @classmethod
     def dedupe_glb_images(cls, glb: GlbTarget) -> Dict[str, int]:
         """Collapse byte-identical embedded images onto one copy.
 

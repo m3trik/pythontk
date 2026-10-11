@@ -1,15 +1,17 @@
-// The Environment window: what lights the model, and the switch for the
+// The Environment menu: what lights the model, and the switch for the
 // deliverable's own reflection probe.
 //
 // A baked deliverable carries the room its bake lit as a reflection probe
 // (probe.js); the page lights the model with it, or with its studio when the
-// file has none. The window says which, what the probe is -- its size in the
-// file, where it was captured, the box its reflections project onto -- and
-// turns it off and on: off, the model draws exactly as a deliverable without
-// a probe does (the studio, the materials on their own programs), which is a
-// preview the export can produce, so the switch shows the deliverable both
-// ways rather than a look it cannot ship. Inspect, open beside it, times the
-// difference. Each load starts with the probe on: the deliverable as it ships.
+// file has none. The menu's Lighting details window says which, and what the
+// probe is -- its size in the file, where it was captured, the box its
+// reflections project onto. Its Reflection probe switch, offered while the
+// model has one, turns it off and on: off, the model draws exactly as a
+// deliverable without a probe does (the studio, the materials on their own
+// programs), which is a preview the export can produce, so the switch shows
+// the deliverable both ways rather than a look it cannot ship. Inspect, open
+// beside it, times the difference. Each load starts with the probe on: the
+// deliverable as it ships.
 //
 // "Show capture point and box" draws where the probe was captured and the box
 // its reflections project onto, over the model -- the check that a bake put
@@ -19,6 +21,7 @@
 import * as THREE from 'three';
 import { formatBytes } from './format.js';
 import { applyLighting } from './lightmaps.js';
+import { menuFor } from './menus.js';
 import { current } from './model.js';
 import { probeEnvironment, probeState, probeTarget, setProbeOn } from './probe.js';
 import { DEFAULT_PROBE_INTENSITY, onBeforeDraw, policy, scene, studioTarget } from './scene.js';
@@ -36,26 +39,32 @@ const HELPER_COLOR = 0x7cc3ff;
 const FACE_NAMES = [['−X side', '+X side'], ['floor', 'ceiling'], ['−Z side', '+Z side']];
 
 const win = windowFor('Environment', {
-  title: "What lights the model: the bake's reflection probe, or the page's studio",
+  title: 'What lights the model now, and what the probe is: its size, where it was captured, its box',
+  label: 'Lighting details',
 });
 const section = win.section();
-const probeSwitch = section.addToggle(
-  'Reflection probe',
-  {
-    value: true,
-    title: "Light the model with the room its bake captured (on), or with the page's "
-      + 'studio as a file without a probe is lit (off). Inspect times either.',
-  },
-  (on) => environment.setProbe(on),
-);
-const helperSwitch = section.addToggle(
-  'Show capture point and box',
-  {
-    value: false,
-    title: 'Draw where the probe was captured and the box its reflections project onto',
-  },
-  (on) => showHelpers(on),
-);
+const menu = menuFor('Environment');
+// The probe's switches apply only while the model on screen has one.
+const hasProbe = () => Boolean(probeState());
+const probeSwitch = menu.add('toggle', {
+  label: 'Reflection probe',
+  title: "Light the model with the room its bake captured (on), or with the page's "
+    + 'studio as a file without a probe is lit (off). Inspect times either.',
+  group: 'probe',
+  order: 0,
+  value: true,
+  when: hasProbe,
+  onChange: (on) => environment.setProbe(on),
+});
+menu.add('toggle', {
+  label: 'Show capture point and box',
+  title: 'Draw where the probe was captured and the box its reflections project onto',
+  group: 'probe',
+  order: 1,
+  value: false,
+  when: hasProbe,
+  onChange: (on) => showHelpers(on),
+});
 
 // The helpers drawn while asked for: the capture point and the box's edges, in
 // the MODEL's frame -- they follow it each frame, as the probe's lookups do --
@@ -140,7 +149,7 @@ function showHelpers(on) {
 
 const metres = (values) => values.map((value) => value.toFixed(2)).join(', ');
 
-// The window's rows and switches for the model on screen.
+// The window's rows for the model on screen.
 function rowsFor(probe) {
   if (!probe) {
     return [
@@ -186,13 +195,11 @@ function probeLevel() {
   return `${level.toFixed(2)}${unit ? " (1/π: the bake's units)" : ''}`;
 }
 
-// Bring the window, the HUD's line and the helpers up to date with the model
-// on screen -- after each load, and after the switch.
+// Bring the window, the switch, the HUD's line and the helpers up to date
+// with the model on screen -- after each load, and after the switch.
 export function syncEnvironment() {
   const probe = probeState();
   section.setRows(rowsFor(probe));
-  probeSwitch.hidden = !probe;
-  helperSwitch.hidden = !probe;
   probeSwitch.value = Boolean(probe?.on);
   if (specs) {
     specs.probe = probe;
@@ -219,7 +226,7 @@ export const environment = {
     return probeState();
   },
   /**
-   * Turn the probe on or off for this view (the Environment window's switch);
+   * Turn the probe on or off for this view (the Environment menu's switch);
    * returns the state it ended in -- false with no probe loaded.
    */
   setProbe(on) {

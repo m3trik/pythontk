@@ -239,7 +239,7 @@ class EditTest(_LibraryCase):
         # The import side refuses ids outside the slug grammar (they name a file
         # under .collections/), so every id create_collection makes must fit it.
         bundle = os.path.join(self.other, "b.zip")
-        for name in ("My_Set", "a__b", "Ünïcode Set", "日本語"):
+        for name in ("My_Set", "a__b", "Ünïcode Set", "★★★"):
             with self.subTest(name=name):
                 cid = self.lib.create_collection(name)["id"]
                 self.lib.export(bundle, collection=cid)

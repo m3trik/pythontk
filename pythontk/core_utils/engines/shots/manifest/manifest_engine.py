@@ -20,7 +20,7 @@ Mirrors the :class:`ShotStore` hook pattern: the pure core never imports
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
 from pythontk.core_utils.engines.shots.manifest.manifest_model import (
@@ -124,9 +124,28 @@ class ShotManifest(_ShotManifestInternal):
         ("section", "section_title", "csv_objects", "behaviors", "voice_text", "step")
     )
 
-    def __init__(self, store: ShotStore, match: str = "name"):
+    def __init__(
+        self,
+        store: ShotStore,
+        match: str = "name",
+        rebuild_edited: bool = False,
+        disabled_behaviors: Iterable[str] = (),
+    ):
+        """
+        Parameters:
+            store: The shots to build into and assess.
+            match: How a step finds its shot (:meth:`pair`).
+            rebuild_edited: Rebuild a shot edited by hand since its last build
+                like any other (:meth:`edited_by_hand`).  Off by default: a
+                build keeps such a shot as the hand left it.
+            disabled_behaviors: Behavior names turned off: a build neither keys
+                nor releases them and Assess does not report them; the keys
+                they have stay.
+        """
         self.store = store
         self.match = match
+        self.rebuild_edited = bool(rebuild_edited)
+        self.disabled_behaviors = frozenset(disabled_behaviors)
         self._fps_cache: Optional[float] = None
         # Per-cycle caches (cleared at the top of update()/assess()):
         # transform → standard-attr curves, and per-curve key data.
@@ -459,7 +478,9 @@ class ShotManifest(_ShotManifestInternal):
         Returns:
             Dict mapping ``step_id`` -> action taken
             (``"created"`` | ``"patched"`` | ``"skipped"``
-            | ``"locked"`` | ``"removed"`` | ``"refused"``).  ``"refused"``
+            | ``"locked"`` | ``"kept"`` | ``"removed"`` | ``"refused"``).
+            ``"kept"`` is a shot edited by hand since its last build
+            (:meth:`edited_by_hand`), left as it is.  ``"refused"``
             is a new step whose id the store will not take as a shot name
             (another shot is that clip ignoring case -- ``ShotStore.name_error``);
             it is logged and left unbuilt rather than aborting the batch.
@@ -486,10 +507,11 @@ class ShotManifest(_ShotManifestInternal):
 
         In order: the shot whose ``metadata["step"]`` binding names the step
         (written by every build, so a renamed shot stays paired and an
-        inserted step shifts nothing); then the shot of the step's name
-        unless that shot is bound to another step; then, with ``match="name_then_order"``, the remaining
-        steps and shots in doc and timeline order.  A shot nothing pairs with
-        is an orphan -- reported, never removed by a build.
+        inserted step shifts nothing); then the shot of the step's ID -- or of
+        its :attr:`~BuilderStep.shot_name`, when it was renamed -- unless that
+        shot is bound to another step; then, with ``match="name_then_order"``,
+        the remaining steps and shots in doc and timeline order.  A shot
+        nothing pairs with is an orphan -- reported, never removed by a build.
         """
         shots = self.store.sorted_shots()
         by_binding: Dict[str, Any] = {}
@@ -498,7 +520,7 @@ class ShotManifest(_ShotManifestInternal):
             if bound and bound not in by_binding:
                 by_binding[bound] = shot
         by_name = {shot.name: shot for shot in shots}
-        pairing = ShotPairing()
+        pairing = ShotPairing(timeline=list(shots))
         used: set = set()
 
         def take(sid: str, shot, how: str) -> None:
@@ -511,13 +533,15 @@ class ShotManifest(_ShotManifestInternal):
             shot = by_binding.get(sid)
             if shot is not None and shot.shot_id not in used:
                 take(sid, shot, "binding")
-        for sid in ids:
-            shot = by_name.get(sid)
-            if sid in pairing.shots or shot is None or shot.shot_id in used:
-                continue
-            if (shot.metadata or {}).get("step") not in (None, sid):
-                continue  # bound to another step
-            take(sid, shot, "name")
+        for step in steps:
+            sid = step.step_id
+            for name in dict.fromkeys((sid, step.shot_name)):
+                shot = by_name.get(name)
+                if sid in pairing.shots or shot is None or shot.shot_id in used:
+                    continue
+                if (shot.metadata or {}).get("step") not in (None, sid):
+                    continue  # bound to another step
+                take(sid, shot, "name")
         if self.match == "name_then_order":
             todo = [sid for sid in ids if sid not in pairing.shots]
             free = [shot for shot in shots if shot.shot_id not in used]
@@ -525,6 +549,33 @@ class ShotManifest(_ShotManifestInternal):
                 take(sid, shot, "order")
         pairing.orphans = [shot for shot in shots if shot.shot_id not in used]
         return pairing
+
+    def bind(self, shot, step_id: Optional[str]) -> None:
+        """Make *shot* step *step_id*'s shot -- the binding :meth:`pair`
+        reads first -- or, with ``None``, bind it to no step.
+
+        Another shot bound to *step_id* loses its binding: a step has one
+        shot.  The user's call ("Pair with Step" on a shot the doc does not
+        list): the shot is then the step's, built and assessed as it, under
+        the name it has.  Wrap the call in ``store.scene_edit`` for one undo
+        step.
+        """
+        for other in self.store.sorted_shots():
+            bound = (other.metadata or {}).get("step")
+            if other.shot_id == shot.shot_id:
+                wanted = step_id
+            elif step_id is not None and bound == step_id:
+                wanted = None  # a step has one shot
+            else:
+                continue
+            if bound == wanted:
+                continue
+            meta = dict(other.metadata or {})
+            if wanted:
+                meta["step"] = wanted
+            else:
+                meta.pop("step", None)
+            self.store.update_shot(other.shot_id, metadata=meta)
 
     # ---- behavior-key ownership (the ledger's ``authored`` register) -------
 
@@ -580,7 +631,7 @@ class ShotManifest(_ShotManifestInternal):
         out = []
         for step in steps:
             shot = pairing.shots.get(step.step_id)
-            if shot is None or shot.locked:
+            if shot is None or self._kept(shot):
                 continue
             listed = {(o.name, b) for o in step.objects for b in o.behaviors or ()}
             dropped = sorted(led.authored_pairs(shot.shot_id) - listed)
@@ -599,11 +650,11 @@ class ShotManifest(_ShotManifestInternal):
         """
         led = self.store.edit_ledger
         n = 0
-        for shot in self.store.sorted_shots():
-            if shot.locked:
-                continue
+        for shot in self._behavior_shots():
             for entry in (shot.metadata or {}).get("behaviors", ()):
                 name, behavior = entry.get("name", ""), entry.get("behavior", "")
+                if behavior in self.disabled_behaviors:
+                    continue
                 is_audio = entry.get("kind") == "audio" or entry.get("source_path")
                 if not (name and behavior and is_audio):
                     continue
@@ -652,11 +703,13 @@ class ShotManifest(_ShotManifestInternal):
         """
         from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
 
-        behaviors = list(obj.behaviors or [])
+        listed = list(obj.behaviors or [])
+        off = self.disabled_behaviors
+        behaviors = [b for b in listed if b not in off]
         claimed = {
             b
             for o, b in self.store.edit_ledger.authored_pairs(shot.shot_id)
-            if o == obj.name
+            if o == obj.name and b not in off
         }
         if not behaviors and not claimed:
             return False
@@ -672,8 +725,11 @@ class ShotManifest(_ShotManifestInternal):
         # it: the Apply re-keys exactly what the doc lists now.
         for behavior in sorted(claimed | set(behaviors)):
             self.release_authored(shot.shot_id, obj.name, behavior)
-        anchors = Behaviors.anchor_overrides(behaviors)
-        for behavior, anchor in zip(behaviors, anchors):
+        # Anchors over the whole list: a behavior turned off keeps its place.
+        anchors = Behaviors.anchor_overrides(listed)
+        for behavior, anchor in zip(listed, anchors):
+            if behavior in off:
+                continue
             kwargs: Dict[str, Any] = {
                 "source_path": obj.source_path or "",
                 "recipe": self.recipe,
@@ -867,11 +923,11 @@ class ShotManifest(_ShotManifestInternal):
                 continue
 
             # ---- EXISTING SHOT ----
-            if existing.locked:
+            if self._kept(existing):
                 plan.append(
                     PlannedShot(
                         step=step,
-                        action="locked",
+                        action="locked" if existing.locked else "kept",
                         start=existing.start + cumulative_ripple,
                         end=existing.end + cumulative_ripple,
                         existing_shot_id=existing.shot_id,
@@ -937,6 +993,15 @@ class ShotManifest(_ShotManifestInternal):
 
             new_objs = {n for n in csv_objs if key(n) not in old_keys}
             dropped = {n for n in old_csv_objs if key(n) not in csv_keys}
+            if "csv_objects" not in (existing.metadata or {}):
+                # A shot no build made (the Shot Sequencer's, or split off
+                # there): its members are the scene's, none a previous doc's
+                # to drop -- read as doc objects, a step paired with it
+                # stripped every member it did not list.
+                dropped = set()
+                scene_discovered = {
+                    n for n in existing.objects if key(n) not in csv_keys
+                }
             changed_beh = {
                 name
                 for name in csv_objs
@@ -957,10 +1022,11 @@ class ShotManifest(_ShotManifestInternal):
                 if isinstance(e, dict) and e.get("kind") == "audio"
             }
             audio_changed = new_audio != old_audio
+            renamed = self._new_name(existing, step) is not None
 
             has_content_change = bool(new_objs or dropped or changed_beh or absent)
 
-            if has_content_change or repositioned or audio_changed:
+            if has_content_change or repositioned or audio_changed or renamed:
                 action: Action = "patched"
             else:
                 action = "skipped"
@@ -1012,6 +1078,94 @@ class ShotManifest(_ShotManifestInternal):
             kwargs["description"] = ps.description
         return kwargs
 
+    #: Shot metadata recording the name a build last gave the shot.  A shot
+    #: still so named is the build's to rename -- back to its step's ID once
+    #: the step's :attr:`~BuilderStep.name` is gone; one renamed by hand since
+    #: keeps the hand's name.
+    BUILD_NAME = "build_name"
+
+    #: Shot metadata recording the shot as the last build left it
+    #: (:meth:`_build_record`): what tells a shot edited by hand since.
+    BUILT = "built"
+
+    @staticmethod
+    def _build_record(shot) -> Dict[str, Any]:
+        """What a build leaves on *shot* that only a hand changes: its length
+        (a ripple moves a shot, it does not resize it), its members, its
+        description.  The name has its own record (:attr:`BUILD_NAME`)."""
+        return {
+            "length": round(shot.end - shot.start, 3),
+            "members": sorted({ShotStore.member_key(n) for n in shot.objects}),
+            "description": shot.description or "",
+        }
+
+    def edited_by_hand(self, shot) -> bool:
+        """Whether *shot* was edited since a build last left it: renamed,
+        resized, its members or its description changed.
+
+        A shot a build made before this record existed reads as unedited,
+        save a rename (the name has had its record longer).
+        """
+        meta = shot.metadata or {}
+        built_name = meta.get(self.BUILD_NAME)
+        if built_name is not None and shot.name != built_name:
+            return True
+        record = meta.get(self.BUILT)
+        return record is not None and record != self._build_record(shot)
+
+    def _kept(self, shot) -> bool:
+        """Whether a build leaves *shot* as it is: locked, or edited by hand
+        and not asked to rebuild edited shots (2026-10-07: "make sure that
+        the manifest does not override edited shots on re-build by
+        default")."""
+        return shot.locked or (not self.rebuild_edited and self.edited_by_hand(shot))
+
+    def _behavior_shots(self) -> list:
+        """The shots a build's behavior pass reaches: every one it does not
+        keep (:meth:`_kept`)."""
+        return [s for s in self.store.sorted_shots() if not self._kept(s)]
+
+    def _record_build(self, shot_ids: Iterable[int]) -> None:
+        """Write :attr:`BUILT` on each of *shot_ids*, as the build left it."""
+        for sid in shot_ids:
+            shot = self.store.shot_by_id(sid)
+            if shot is None:
+                continue
+            record = self._build_record(shot)
+            if (shot.metadata or {}).get(self.BUILT) != record:
+                meta = dict(shot.metadata or {})
+                meta[self.BUILT] = record
+                self.store.update_shot(sid, metadata=meta)
+
+    def _new_name(self, existing, step: BuilderStep) -> Optional[str]:
+        """The name a build gives *existing*, *step*'s shot, or ``None`` to
+        leave it: a renamed step's name always; the step's ID only while the
+        shot still has the name a build gave it (:attr:`BUILD_NAME`), so a
+        rename made in the sequencer survives a build -- unless the build
+        rebuilds edited shots, which names a hand-renamed shot back.  A shot
+        no build named (one bound by "Pair with Step") keeps its own name."""
+        target = step.shot_name
+        if existing.name == target:
+            return None
+        built = (existing.metadata or {}).get(self.BUILD_NAME)
+        if not step.name and existing.name != built:
+            if built is None or not self.rebuild_edited:
+                return None
+        return target
+
+    def _rename_kwargs(self, existing, ps: PlannedShot) -> Dict[str, Any]:
+        """``name`` kwarg when the build renames the shot (:meth:`_new_name`),
+        else empty.  A name the store refuses (``ShotStore.name_error``:
+        another shot holds it) is logged and the shot keeps its name."""
+        name = self._new_name(existing, ps.step)
+        if name is None:
+            return {}
+        refused = self.store.name_error(name, shot_id=existing.shot_id)
+        if refused:
+            log.warning("Shot %s not renamed to %s: %s", existing.name, name, refused)
+            return {}
+        return {"name": name}
+
     def _execute_plan(
         self,
         plan: List[PlannedShot],
@@ -1046,27 +1200,30 @@ class ShotManifest(_ShotManifestInternal):
                     # Checked HERE, not in the plan: phase 1 has already
                     # removed the shots it planned to, and one of those may
                     # be the name this step would have collided with.
-                    refused = self.store.name_error(ps.step.step_id)
+                    refused = self.store.name_error(ps.step.shot_name)
                     if refused:
-                        log.warning("Step %s not built: %s", ps.step.step_id, refused)
+                        log.warning("Step %s not built: %s", ps.step.shot_name, refused)
                         actions[ps.step.step_id] = "refused"
                         continue
                     # Store resolved (long / unique) names; missing objects
                     # keep their CSV form so pinning can surface them later.
                     obj_names = self._resolve_names_keep_missing(ps.objects)
                     self.store.define_shot(
-                        name=ps.step.step_id,
+                        name=ps.step.shot_name,
                         start=ps.start,
                         end=ps.end,
                         objects=obj_names,
-                        metadata=ps.metadata,
+                        metadata={
+                            **ps.metadata,
+                            self.BUILD_NAME: ps.step.shot_name,
+                        },
                         description=ps.description,
                     )
                     for n in obj_names:
                         self.store.set_object_pinned(n)
                     actions[ps.step.step_id] = "created"
 
-                elif ps.action in ("locked", "skipped", "patched"):
+                elif ps.action in ("locked", "kept", "skipped", "patched"):
                     # All writes go through update_shot so the store is
                     # dirtied/notified (direct attribute writes are
                     # silently lost on save).  Positions are absolute —
@@ -1079,11 +1236,16 @@ class ShotManifest(_ShotManifestInternal):
                     )
                     if existing is not None:
                         # Every action repositions if an upstream ripple
-                        # displaced the shot; locked shots are content-
-                        # protected, so metadata/description stay untouched.
+                        # displaced the shot; locked and kept shots are
+                        # content-protected, so metadata/description stay.
                         kwargs = self._reposition_kwargs(existing, ps)
-                        if ps.action != "locked":
+                        if ps.action not in ("locked", "kept"):
                             kwargs.update(self._content_kwargs(existing, ps))
+                            kwargs.update(self._rename_kwargs(existing, ps))
+                        if "name" in kwargs:
+                            meta = dict(kwargs.get("metadata", existing.metadata or {}))
+                            meta[self.BUILD_NAME] = kwargs["name"]
+                            kwargs["metadata"] = meta
 
                         csv_resolved: List[str] = []
                         if ps.action == "patched":
@@ -1118,6 +1280,24 @@ class ShotManifest(_ShotManifestInternal):
                             self.store.set_object_pinned(n)
 
                     actions[ps.step.step_id] = ps.action
+
+            # What this build left on every shot it built: the next one tells
+            # a hand's edit by it (edited_by_hand).
+            built = []
+            for ps in plan:
+                if actions.get(ps.step.step_id) not in (
+                    "created",
+                    "patched",
+                    "skipped",
+                ):
+                    continue
+                if ps.existing_shot_id is not None:
+                    built.append(ps.existing_shot_id)
+                else:
+                    shot = self.store.shot_by_name(ps.step.shot_name)
+                    if shot is not None:
+                        built.append(shot.shot_id)
+            self._record_build(built)
 
         return actions
 
@@ -1236,11 +1416,13 @@ class ShotManifest(_ShotManifestInternal):
         else:
             resolve = self._resolve_object
 
+        off = self.disabled_behaviors
         results: List[StepStatus] = []
         for step in steps:
             shot = pairing.shots.get(step.step_id)
             built = shot is not None
             is_locked = built and shot.locked
+            edited = built and not is_locked and self._kept(shot)
 
             # Locked shots are user-finalized — skip detailed checking
             if is_locked:
@@ -1275,7 +1457,8 @@ class ShotManifest(_ShotManifestInternal):
                         broken = [
                             b
                             for b in obj.behaviors
-                            if not verify_fn(obj.name, b, shot.start, shot.end)
+                            if b not in off
+                            and not verify_fn(obj.name, b, shot.start, shot.end)
                         ]
                         status = "missing_behavior" if broken else "valid"
                     else:
@@ -1311,7 +1494,7 @@ class ShotManifest(_ShotManifestInternal):
                     failed = []
                     anchors = Behaviors.anchor_overrides(obj.behaviors)
                     for b, anchor in zip(obj.behaviors, anchors):
-                        if b in unknown:
+                        if b in unknown or b in off:
                             continue
                         try:
                             ok = verify_fn(
@@ -1333,6 +1516,7 @@ class ShotManifest(_ShotManifestInternal):
                         for b in obj.behaviors
                         if b not in failed
                         and b not in unknown
+                        and b not in off
                         and self.is_stale(shot.shot_id, obj.name, b)
                     ]
                     # Over keys the animator owns, Build's guard leaves a
@@ -1410,6 +1594,7 @@ class ShotManifest(_ShotManifestInternal):
                     additional_objects=additional,
                     shrinkable_frames=shrinkable,
                     dropped_behaviors=[list(pair) for pair in dropped],
+                    edited=edited,
                 )
             )
         return results

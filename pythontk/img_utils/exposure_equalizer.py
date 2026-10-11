@@ -258,7 +258,7 @@ class ExposureEqualizer:
         sampled = files[:: max(1, len(files) // sample_count)][:sample_count]
         means, stds = [], []
         for path in sampled:
-            img = cv2.imread(path)
+            img = ImgUtils.cv2_read(path)
             if img is None:
                 continue
             lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype("float32")
@@ -294,7 +294,9 @@ class ExposureEqualizer:
             # stay in the same frame as the copied Orientation tag. Otherwise cv2
             # would right the image while the tag still says "rotate", and an
             # EXIF-aware consumer (RealityScan / Metashape) rotates a second time.
-            img = cv2.imread(path, cv2.IMREAD_IGNORE_ORIENTATION | cv2.IMREAD_COLOR)
+            img = ImgUtils.cv2_read(
+                path, cv2.IMREAD_IGNORE_ORIENTATION | cv2.IMREAD_COLOR
+            )
             if img is None:
                 continue
             lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype("float32")
@@ -328,9 +330,9 @@ class ExposureEqualizer:
 
         JPEG: a single high-``quality`` encode at 4:4:4 chroma, carrying the
         source EXIF when ``preserve_exif`` (via PIL, if available). PNG/BMP
-        are lossless, so a plain write suffices. TIFF is written via
-        ``cv2.imwrite`` — EXIF is not carried and (since pixels are read
-        8-bit) 16-bit sources are truncated; a one-time warning flags it.
+        are lossless, so a plain write suffices. TIFF is written via cv2
+        (``ImgUtils.cv2_write``) — EXIF is not carried and (since pixels are
+        read 8-bit) 16-bit sources are truncated; a one-time warning flags it.
 
         The cv2 fallback for JPEG (PIL missing/broken) keeps quality/4:4:4
         but **cannot write EXIF** — and the pixels were deliberately read
@@ -374,7 +376,7 @@ class ExposureEqualizer:
                 if not self._cv2_fallback_warned:
                     self._cv2_fallback_warned = True
                     logger.error(
-                        f"PIL save failed ({e}); falling back to cv2.imwrite "
+                        f"PIL save failed ({e}); falling back to a cv2 write "
                         f"— EXIF/orientation will be dropped for affected "
                         f"frames (first: {src_path})."
                     )
@@ -383,7 +385,7 @@ class ExposureEqualizer:
                 sf444 = getattr(cv2, "IMWRITE_JPEG_SAMPLING_FACTOR_444", None)
                 if sf is not None and sf444 is not None:
                     params += [int(sf), int(sf444)]
-                return bool(cv2.imwrite(out_path, bgr, params))
+                return ImgUtils.cv2_write(out_path, bgr, params)
         if (
             ext in (".tif", ".tiff")
             and preserve_exif
@@ -395,4 +397,4 @@ class ExposureEqualizer:
                 "16-bit sources are truncated to 8-bit (pixels are read 8-bit "
                 "for LAB matching). Prefer JPEG/PNG sources for equalization."
             )
-        return bool(cv2.imwrite(out_path, bgr))
+        return ImgUtils.cv2_write(out_path, bgr)

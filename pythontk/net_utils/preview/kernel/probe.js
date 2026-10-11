@@ -104,7 +104,7 @@ const WORLD_POSITION_GLSL = [
 
 // The probe's model root, its prefiltered environment and what the file says
 // of it, while one is loaded; null between loads and for a deliverable
-// without one. `on` is this view's switch (the Environment window): off, the
+// without one. `on` is this view's switch (the Environment menu): off, the
 // studio lights the model and its materials are back on their own programs,
 // exactly as a deliverable without a probe draws -- so a frame timed either
 // way is the probe's cost, and nothing else's.

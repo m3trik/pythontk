@@ -89,6 +89,19 @@ def _highlight_values(base: List[float], sample: float, stops: Stops) -> List[fl
     ]
 
 
+def _opacity_rest(sample: float, _stops: Stops) -> bool:
+    """A held alpha of 1 leaves the material as authored, and a held 0 is the
+    presence gate's to hide; only a held partial alpha changes the render."""
+    return sample <= 0.0 or sample >= 1.0
+
+
+def _highlight_rest(sample: float, stops: Stops) -> bool:
+    """A held intensity of 0 adds the LOW stop, which is nothing only when it
+    is black."""
+    low = stops[1] if len(stops) > 1 else ColorStops.BLACK
+    return sample <= 0.0 and not any(float(c) for c in low)
+
+
 def _uncover_emissive(material: Dict[str, Any]) -> Optional[str]:
     """Drop an emissive MAP from a highlighted copy, so the highlight can show.
 
@@ -141,6 +154,9 @@ class PointerChannel:
             is read -- returns a note naming what it changed, or ``None``.
             Runs once per pointer target, guarded by the same "already
             written" check as the channel itself.
+        rest: ``(sample, stops) -> bool``: a value that, HELD through a clip,
+            leaves the render as the material has it -- such a clip writes
+            nothing. ``None``: every held value does.
     """
 
     name: str
@@ -151,6 +167,7 @@ class PointerChannel:
     color_stops: Optional[ColorStops]
     values: Callable[[List[float], float, Stops], List[float]]
     prepare: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None
+    rest: Optional[Callable[[float, Stops], bool]] = None
 
     @property
     def color_key(self) -> Optional[str]:
@@ -193,6 +210,7 @@ CHANNELS: Dict[str, PointerChannel] = {
         blend=True,
         color_stops=None,
         values=_opacity_values,
+        rest=_opacity_rest,
     ),
     "highlight": PointerChannel(
         name="highlight",
@@ -203,6 +221,7 @@ CHANNELS: Dict[str, PointerChannel] = {
         color_stops=ColorStops("highlight_color", "highlight_color_dim"),
         values=_highlight_values,
         prepare=_uncover_emissive,
+        rest=_highlight_rest,
     ),
 }
 
@@ -365,8 +384,10 @@ class _GlbFadesInternal:
         windows: Dict[str, Tuple[float, float]],
         zeros: Dict[str, float],
         fps: float,
+        rest: Optional[Callable[[float], bool]] = None,
     ) -> Dict[str, Tuple[List[float], List[Any]]]:
-        """``{clip: (times, samples)}`` -- the ramp cut to each clip that it moves in."""
+        """``{clip: (times, samples)}`` -- the ramp cut to each clip that it
+        moves in, or holds a value *rest* says changes the render at."""
         from pythontk.file_utils.mesh_convert.glb.clips import GlbClips
 
         per_clip: Dict[str, Tuple[List[float], List[Any]]] = {}
@@ -393,8 +414,16 @@ class _GlbFadesInternal:
             # so the ramp arrived shifted by the first shot's start frame
             # (measured: 7 frames).
             cut = [k + lo for k in cut]
-            if len(cut) < 2 or len({round(s[0], 6) for s in samples}) < 2:
-                continue  # this clip holds a constant value: nothing to animate
+            if len(cut) < 2:
+                continue
+            if len({round(s[0], 6) for s in samples}) < 2 and (
+                rest is None or rest(float(samples[0][0]))
+            ):
+                # Held where the material already is: nothing to animate. A
+                # value held anywhere else is still the render (a shadow
+                # plane's baked intensity x falloff over a still prop), which
+                # unitytk plays.
+                continue
             per_clip[clip] = (cut, samples)
         return per_clip
 
@@ -486,17 +515,27 @@ class GlbFades(_GlbFadesInternal):
         # every clip would change how the object renders in exchange for no
         # animation.
         missing: List[str] = []
-        # node -> [(channel, per_clip)]
-        resolved: Dict[str, List[Tuple[PointerChannel, Dict[str, Any]]]] = {}
+        # node -> [(channel, per_clip, stops)]
+        resolved: Dict[str, List[Tuple[PointerChannel, Dict[str, Any], Stops]]] = {}
         for channel_name, spec in CHANNELS.items():
             for name, keys in sorted((ramps.get(channel_name) or {}).items()):
                 if name not in by_name:
                     missing.append(f"{name}.{channel_name}")
                     continue
+                stops = (
+                    spec.color_stops.resolve((colors.get(spec.name) or {}).get(name))
+                    if spec.color_stops is not None
+                    else ()
+                )
+                rest = (
+                    (lambda v, f=spec.rest, s=stops: f(v, s))
+                    if spec.rest is not None
+                    else None
+                )
                 ramp = sorted((float(k[0]), float(k[1])) for k in keys)
-                per_clip = cls._per_clip(ramp, animations, windows, zeros, fps)
+                per_clip = cls._per_clip(ramp, animations, windows, zeros, fps, rest)
                 if per_clip:
-                    resolved.setdefault(name, []).append((spec, per_clip))
+                    resolved.setdefault(name, []).append((spec, per_clip, stops))
         if missing:
             logger.warning(
                 "Pointer channels: %d ramp(s) name nodes not in this GLB (%s) -- "
@@ -530,18 +569,13 @@ class GlbFades(_GlbFadesInternal):
                 gltf,
                 cls._subtree(gltf, by_name[name]),
                 users,
-                blend=any(spec.blend for spec, _pc in entries),
+                blend=any(spec.blend for spec, _pc, _st in entries),
             )
             if not materials:
                 # A locator drives the ramp but carries no geometry of its own;
                 # nothing under it renders, so there is nothing to animate.
                 continue
-            for spec, per_clip in entries:
-                stops = (
-                    spec.color_stops.resolve((colors.get(spec.name) or {}).get(name))
-                    if spec.color_stops is not None
-                    else ()
-                )
+            for spec, per_clip, stops in entries:
                 for material in materials:
                     pointer = spec.pointer.format(index=material)
                     if pointer in existing:

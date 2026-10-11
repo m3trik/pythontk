@@ -402,6 +402,21 @@ class TestExportRun(unittest.TestCase):
             ExportRun.from_tasks({"version": ""})
         self.assertEqual([w for w in caught if w.category is DeprecationWarning], [])
 
+    def test_the_self_contained_flag_is_retired_and_warns_only_when_set(self):
+        """Retired 2026-10-05: every FBX embeds its media, so nothing reads
+        ``fbx_media_selfcontained``; a caller setting it is told (removed in
+        0.15.0) and still gets a run, and a run that never names it is quiet."""
+        import warnings
+
+        with self.assertWarns(DeprecationWarning) as retired:
+            ExportRun(fbx_media_selfcontained=True)
+        self.assertIn("fbx_media_selfcontained", str(retired.warning))
+        self.assertIn("0.15.0", str(retired.warning))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ExportRun()
+        self.assertEqual([w for w in caught if w.category is DeprecationWarning], [])
+
     def test_every_mode_key_is_popped_and_no_task_is(self):
         tasks = {key: True for key in ExportRun.MODE_KEYS}
         tasks.update({"smart_bake": True, "check_framerate": "ntsc"})

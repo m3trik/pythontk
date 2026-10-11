@@ -36,7 +36,7 @@ from pythontk import (
 from pythontk.img_utils._img_utils import ImageFormat
 from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer
 
-from conftest import BaseTestCase
+from conftest import BaseTestCase, hard_edge_normal_map, unit_length_error
 
 try:
     import cv2  # noqa: F401
@@ -466,6 +466,44 @@ class ImgTest(BaseTestCase):
         """Test resize_image to minimum size."""
         resized = ImgUtils.resize_image(self.im_h, 1, 1)
         self.assertEqual(resized.size, (1, 1))
+
+    def test_resize_image_normal_map_keeps_unit_length(self):
+        """A plain 8-bit Lanczos clips its overshoot at a hard crease and
+        bends those normals; ``normal_map=True`` resamples in float and
+        renormalises, so every texel decodes to a unit vector."""
+        source = hard_edge_normal_map((64, 64))
+        self.assertGreater(
+            unit_length_error(ImgUtils.resize_image(source, 27, 27)), 0.1
+        )
+        resized = ImgUtils.resize_image(source, 27, 27, normal_map=True)
+        self.assertEqual(resized.size, (27, 27))
+        self.assertEqual(resized.mode, "RGB")
+        self.assertLess(unit_length_error(resized), 0.01)
+
+    def test_resize_image_normal_map_keeps_alpha(self):
+        source = hard_edge_normal_map((64, 64), mode="RGBA")
+        resized = ImgUtils.resize_image(source, 27, 27, normal_map=True)
+        self.assertEqual(resized.mode, "RGBA")
+        self.assertLess(unit_length_error(resized), 0.01)
+        self.assertEqual(resized.getchannel("A").getextrema(), (200, 200))
+
+    def test_resize_image_normal_map_leaves_non_normals_to_the_plain_resize(self):
+        """A map whose texels are not outward unit vectors (a mislabelled
+        colour map, a two-channel XY map) has no length to restore, so the
+        flag changes nothing for it."""
+        # Blue-biased noise: its MEDIAN length is ~1 and its Z points out, so
+        # only a per-texel unit-length test tells it from a normal map.
+        texels = np.random.default_rng(7).integers(0, 256, (64, 64, 3), dtype=np.uint8)
+        texels[..., 2] = np.random.default_rng(8).integers(160, 256, (64, 64))
+        colour = Image.fromarray(texels)
+        xy_only = hard_edge_normal_map((64, 64))
+        xy_only = Image.merge("RGB", (*xy_only.split()[:2], Image.new("L", (64, 64))))
+        for image in (colour, xy_only, colour.convert("L")):
+            with self.subTest(mode=image.mode):
+                self.assertEqual(
+                    ImgUtils.resize_image(image, 27, 27, normal_map=True).tobytes(),
+                    ImgUtils.resize_image(image, 27, 27).tobytes(),
+                )
 
     # -------------------------------------------------------------------------
     # Save/Load Tests
@@ -1537,6 +1575,228 @@ class OpenExrFlagTest(unittest.TestCase):
         )
 
 
+@unittest.skipUnless(HAS_CV2, "cv2 not available")
+class Cv2PathIoTest(unittest.TestCase):
+    """OpenCV file IO under a path OpenCV cannot open by itself.
+
+    On Windows ``cv2.imread`` / ``cv2.imwrite`` open a file by a narrow (ANSI)
+    path: any character outside ASCII -- even one the code page holds, as in
+    ``résumé`` -- read as ``None`` and wrote nothing. OpenCV's EXR and HDR
+    codecs also stage through the temp folder by such a path, so under a
+    non-ASCII temp folder every in-memory EXR encode and decode failed. A
+    lightmap in a folder named ``résumé ★`` failed the GLB embed as
+    "Unreadable image" (2026-10-04 release review). Every cv2 path read and
+    write in the package now goes through ``ImgUtils.cv2_read`` /
+    ``cv2_write``, and both stage under ``cv2_temp``. Fixed: 2026-10-05.
+    """
+
+    #: An accent the ANSI code page holds, and a star it cannot.
+    FOLDER = "résumé ★"
+
+    def setUp(self):
+        artifacts = TempArtifacts("cv2_path_io", policy="scoped")
+        self.addCleanup(artifacts.cleanup)
+        self.root = artifacts.dir_path()
+        self.dir = self._folder(self.FOLDER)
+
+    def _folder(self, *parts):
+        folder = os.path.join(self.root, *parts)
+        os.makedirs(folder, exist_ok=True)
+        return folder
+
+    def _exr(self, folder, name="map.exr", value=0.25):
+        """A float EXR in *folder*, put there by Python's own file IO."""
+        ok, data = cv2.imencode(".exr", np.full((4, 4, 3), value, np.float32))
+        self.assertTrue(ok)
+        path = os.path.join(folder, name)
+        with open(path, "wb") as fh:
+            fh.write(data.tobytes())
+        return path
+
+    def _temp_named_like_the_folder(self):
+        """Point TMP and TEMP at a folder named :attr:`FOLDER` for the test."""
+        if os.name != "nt":
+            self.skipTest("the narrow-path temp folder is a Windows matter")
+        import ctypes
+        from unittest import mock
+
+        temp = self._folder("temp", self.FOLDER)
+        buffer = ctypes.create_unicode_buffer(32768)
+        ctypes.windll.kernel32.GetShortPathNameW(temp, buffer, len(buffer))
+        if not buffer.value.isascii():
+            self.skipTest("no short (8.3) names on this volume")
+        patcher = mock.patch.dict(os.environ, {"TEMP": temp, "TMP": temp})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return temp
+
+    def test_a_png_round_trips_through_the_folder(self):
+        img = np.arange(48, dtype=np.uint8).reshape(4, 4, 3)
+        path = os.path.join(self.dir, "a.png")
+        self.assertTrue(ImgUtils.cv2_write(path, img))
+        self.assertEqual(os.listdir(self.dir), ["a.png"])
+        np.testing.assert_array_equal(ImgUtils.cv2_read(path), img)
+
+    def test_an_exr_round_trips_its_float_data(self):
+        img = np.full((4, 4, 4), 0.25, np.float32)
+        img[0, 0] = 3.5  # past 1.0: what an 8-bit read would clip
+        path = os.path.join(self.dir, "a.exr")
+        params = [cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_HALF]
+        self.assertTrue(ImgUtils.cv2_write(path, img, params))
+        back = ImgUtils.cv2_read(path, cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
+        self.assertEqual(back.dtype, np.float32)
+        np.testing.assert_allclose(back, img, atol=1e-3)
+
+    def test_flags_mean_what_they_mean_to_imread(self):
+        path = os.path.join(self.dir, "a.png")
+        self.assertTrue(ImgUtils.cv2_write(path, np.full((4, 4, 4), 200, np.uint8)))
+        self.assertEqual(ImgUtils.cv2_read(path).shape, (4, 4, 3))
+        self.assertEqual(ImgUtils.cv2_read(path, cv2.IMREAD_UNCHANGED).shape, (4, 4, 4))
+        self.assertEqual(ImgUtils.cv2_read(path, cv2.IMREAD_GRAYSCALE).shape, (4, 4))
+
+    def test_what_does_not_decode_reads_as_none(self):
+        empty = os.path.join(self.dir, "empty.png")
+        open(empty, "wb").close()
+        garbage = os.path.join(self.dir, "garbage.png")
+        with open(garbage, "wb") as fh:
+            fh.write(b"not an image")
+        for label, path in (
+            ("missing", os.path.join(self.dir, "missing.png")),
+            ("empty", empty),
+            ("garbage", garbage),
+            ("a folder", self.dir),
+        ):
+            with self.subTest(label):
+                self.assertIsNone(ImgUtils.cv2_read(path))
+
+    def test_a_write_that_fails_returns_false_as_imwrite_does(self):
+        img = np.zeros((2, 2, 3), np.uint8)
+        missing = os.path.join(self.dir, "missing", "a.png")
+        self.assertFalse(ImgUtils.cv2_write(missing, img))
+        with self.assertRaises(cv2.error):  # no writer for the extension
+            ImgUtils.cv2_write(os.path.join(self.dir, "a.unknown"), img)
+
+    def test_a_temp_folder_cv2_cannot_open_still_encodes_and_decodes(self):
+        temp = self._temp_named_like_the_folder()
+        path = os.path.join(self._folder("maps"), "a.exr")
+        img = np.full((4, 4, 3), 0.25, np.float32)
+        self.assertTrue(ImgUtils.cv2_write(path, img))
+        back = ImgUtils.cv2_read(path, cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
+        self.assertIsNotNone(back)
+        np.testing.assert_allclose(back, img, atol=1e-3)
+        self.assertEqual((os.environ["TEMP"], os.environ["TMP"]), (temp, temp))
+
+    def test_the_hdr_encoders_work_under_a_temp_folder_cv2_cannot_open(self):
+        path = self._exr(self._folder("maps"))  # staged while TEMP is ASCII
+        self._temp_named_like_the_folder()
+        self.assertTrue(ImgUtils.encode_hdr_radiance(path).startswith(b"#?"))
+        png, scalar = ImgUtils.encode_hdr_for_web(path)
+        self.assertTrue(png.startswith(b"\x89PNG"))
+        self.assertAlmostEqual(scalar, 0.25, places=3)
+
+    def test_overlapping_blocks_share_one_swap(self):
+        """MapFactory reads maps on a thread pool: with a save/restore per
+        block, the block that ended first put TEMP back under one still
+        encoding, and the last to end left the short spelling in for good."""
+        temp = self._temp_named_like_the_folder()
+        first, second = ImgUtils.cv2_temp(), ImgUtils.cv2_temp()
+        first.__enter__()
+        short = os.environ["TEMP"]
+        self.assertTrue(short.isascii(), "TEMP spelled in ASCII")
+        self.assertTrue(os.path.samefile(short, temp))
+        self.assertEqual(os.environ["TMP"], short)
+        second.__enter__()
+        first.__exit__(None, None, None)
+        self.assertEqual(os.environ["TEMP"], short, "the open block lost its swap")
+        second.__exit__(None, None, None)
+        self.assertEqual((os.environ["TEMP"], os.environ["TMP"]), (temp, temp))
+
+    def test_an_ascii_temp_folder_is_left_alone(self):
+        from unittest import mock
+
+        if not self.root.isascii():
+            self.skipTest("the test temp root is not ASCII")
+        with mock.patch.dict(os.environ, {"TEMP": self.root, "TMP": self.root}):
+            before = dict(os.environ)
+            with ImgUtils.cv2_temp():
+                self.assertEqual(dict(os.environ), before)
+
+    def test_load_and_save_image_read_and_write_float_maps_in_the_folder(self):
+        im = ImgUtils.load_image(self._exr(self.dir, value=0.5))
+        self.assertEqual(im.getpixel((0, 0)), (128, 128, 128))
+        hdr = os.path.join(self.dir, "a.hdr")
+        ImgUtils.save_image(Image.new("RGB", (4, 4), (255, 0, 0)), hdr)
+        self.assertTrue(os.path.isfile(hdr), "the HDR was never written")
+
+    def test_a_16_bit_tiff_is_written_to_the_folder(self):
+        path = os.path.join(self.dir, "a.tif")
+        ImgUtils.save_image(Image.new("RGB", (4, 4), (255, 0, 0)), path, bit_depth=16)
+        self.assertTrue(os.path.isfile(path), "saved, yet no file")
+        back = ImgUtils.cv2_read(path, cv2.IMREAD_UNCHANGED)
+        self.assertEqual(back.dtype, np.uint16)
+        self.assertEqual(tuple(back[0, 0]), (0, 0, 65535))  # BGR
+
+    def test_a_16_bit_tiff_that_is_not_written_raises(self):
+        """cv2 reports a failed write by returning False, and the 16-bit TIFF
+        write never checked it: a file that was never written read as saved."""
+        from unittest import mock
+
+        path = os.path.join(self.dir, "a.tif")
+        with mock.patch.object(ImgUtils, "cv2_write", return_value=False):
+            with self.assertRaises(OSError):
+                ImgUtils.save_image(Image.new("RGB", (4, 4)), path, bit_depth=16)
+
+    def test_the_hdr_encoders_read_a_map_in_the_folder(self):
+        path = self._exr(self.dir)
+        png, scalar = ImgUtils.encode_hdr_for_web(path)
+        self.assertTrue(png.startswith(b"\x89PNG"))
+        self.assertAlmostEqual(scalar, 0.25, places=3)
+        self.assertTrue(ImgUtils.encode_hdr_radiance(path).startswith(b"#?"))
+
+    def test_the_photogrammetry_tools_read_and_write_the_folder(self):
+        from pythontk import ExposureEqualizer, ImageCurator
+
+        src = self._folder(self.FOLDER, "frames")
+        names = [f"f_{i}.png" for i in range(3)]
+        for i, name in enumerate(names):
+            Image.new("RGB", (32, 32), (60 + 40 * i, 90, 120)).save(
+                os.path.join(src, name)
+            )
+        out = self._folder(self.FOLDER, "out")
+        equalized = ExposureEqualizer().equalize_directories(
+            [src], out, reference_dir=src
+        )
+        self.assertEqual(equalized, [os.path.join(out, "frames_eq")])
+        self.assertEqual(sorted(os.listdir(equalized[0])), names)
+        curated = ImageCurator().curate([src], out)
+        self.assertEqual(curated, [os.path.join(out, "frames_curated")])
+        self.assertEqual(sorted(os.listdir(curated[0])), names)
+
+    def test_no_module_opens_an_image_path_through_cv2_itself(self):
+        """Every cv2 read or write by path goes through ``cv2_read`` /
+        ``cv2_write``: a new ``cv2.imread`` would bring the narrow path back."""
+        import pythontk
+
+        root = Path(pythontk.__file__).parent
+        by_path = {"imread", "imreadmulti", "imwrite", "imwritemulti"}
+        offenders = []
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+            for node in ast.walk(tree):
+                func = getattr(node, "func", None)
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(func, ast.Attribute)
+                    and func.attr in by_path
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "cv2"
+                ):
+                    offenders.append(
+                        f"{path.relative_to(root).as_posix()}:{node.lineno}"
+                    )
+        self.assertEqual(offenders, [], "cv2 opens these paths itself")
+
+
 class DilateImageTest(unittest.TestCase):
     """ImgUtils.dilate_image -- texture edge-padding / gutter fill."""
 
@@ -2230,6 +2490,205 @@ class SnapAtlasRectsTest(unittest.TestCase):
     def test_degenerate_rect_passes_through(self):
         (rect,) = ImgUtils.snap_atlas_rects([(0.0, 0.5, 0.25, 0.25)], 64)
         self.assertEqual(rect, (0.0, 0.5, 0.25, 0.25))
+
+
+class PackAtlasRectsTest(unittest.TestCase):
+    """ImgUtils.pack_atlas_rects -- uniform-density, aspect-true, gutter-safe cells."""
+
+    @staticmethod
+    def _skewed(count=60, seed=7):
+        import random
+
+        rng = random.Random(seed)
+        # A room's spread: a few large surfaces, many small props.
+        return [
+            (rng.uniform(0.05, 1.0) ** 2 * 6.0, rng.uniform(0.05, 1.0) ** 2 * 6.0)
+            for _ in range(count)
+        ]
+
+    @staticmethod
+    def _gap(a, b):
+        ar0, ar1, ac0, ac1 = a
+        br0, br1, bc0, bc1 = b
+        return max(bc0 - ac1, ac0 - bc1, br0 - ar1, ar0 - br1)
+
+    def test_every_cell_keeps_its_gutter_at_a_low_resolution(self):
+        """The production report: at a low resolution neighbouring cells met
+        with no gutter (the tiled layout's inset shrinks with its cell) and a
+        cell under a texel vanished while its object still sampled there. Every
+        cell must stay 2 x gutter from every other at every resolution."""
+        extents = self._skewed()
+        for size in (256, 512, 1024):
+            rects = ImgUtils.pack_atlas_rects(extents, size, gutter=2, min_texels=4)
+            px = ImgUtils.atlas_pixel_rects(rects, size)
+            for i, (r0, r1, c0, c1) in enumerate(px):
+                self.assertGreaterEqual(min(r1 - r0, c1 - c0), 4, (size, i))
+                self.assertGreaterEqual(min(r0, c0), 2)
+                self.assertLessEqual(max(r1, c1), size - 2)
+                for j in range(i):
+                    self.assertGreaterEqual(self._gap(px[i], px[j]), 4, (size, i, j))
+
+    def test_the_tiled_layout_this_replaces_loses_the_gutter_there(self):
+        """Pins why the packer exists: the same set through compute_atlas_layout
+        + inset + snap at 256 leaves cells touching (or under a texel)."""
+        extents = self._skewed()
+        tiled = ImgUtils.snap_atlas_rects(
+            ImgUtils.inset_atlas_rects(
+                ImgUtils.compute_atlas_layout([w * h for w, h in extents]), 256, 2
+            ),
+            256,
+        )
+        px = ImgUtils.atlas_pixel_rects(tiled, 256)
+        worst = min(self._gap(px[i], px[j]) for i in range(len(px)) for j in range(i))
+        self.assertLess(worst, 4)
+
+    def test_rects_are_texel_exact_and_round_trip_through_pixel_rects(self):
+        rects = ImgUtils.pack_atlas_rects(self._skewed(20), 512)
+        for sx, sy, ox, oy in rects:
+            for edge in (ox * 512, oy * 512, (ox + sx) * 512, (oy + sy) * 512):
+                self.assertAlmostEqual(edge, round(edge), places=9)
+        self.assertEqual(
+            ImgUtils.atlas_pixel_rects(rects, 512),
+            ImgUtils.atlas_pixel_rects(ImgUtils.snap_atlas_rects(rects, 512), 512),
+        )
+
+    def test_one_density_for_every_item(self):
+        extents = [(4.0, 1.0), (1.0, 1.0), (2.0, 2.0), (1.0, 3.0)]
+        rects = ImgUtils.pack_atlas_rects(extents, 1024, gutter=4, min_texels=4)
+        densities = [
+            (sx * 1024 / w, sy * 1024 / h)
+            for (sx, sy, _ox, _oy), (w, h) in zip(rects, extents)
+        ]
+        flat = [d for pair in densities for d in pair]
+        self.assertLess(max(flat) / min(flat), 1.05)
+
+    def test_one_long_item_does_not_starve_the_rest(self):
+        """A cell in its surface's shape can be longer than the atlas at the
+        group's density (a 30 m corridor wall laid out in a square): it folds
+        toward square at its own area, and every other item keeps the density
+        it has beside an item of that area in a square."""
+        rest = [(1.0, 1.0)] * 20
+        long_px = ImgUtils.atlas_pixel_rects(
+            ImgUtils.pack_atlas_rects([(100.0, 1.0)] + rest, 256), 256
+        )
+        square_px = ImgUtils.atlas_pixel_rects(
+            ImgUtils.pack_atlas_rects([(10.0, 10.0)] + rest, 256), 256
+        )
+        side = min(c1 - c0 for _r0, _r1, c0, c1 in long_px[1:])
+        self.assertGreaterEqual(
+            side, 0.8 * min(c1 - c0 for *_r, c0, c1 in square_px[1:])
+        )
+
+    def test_none_when_nothing_could_fit_and_empty_for_no_items(self):
+        self.assertEqual(ImgUtils.pack_atlas_rects([], 64), [])
+        self.assertIsNone(
+            ImgUtils.pack_atlas_rects([(1.0, 1.0)] * 400, 64, gutter=2, min_texels=4)
+        )
+
+    def test_extent_scales_a_layout_to_its_surface(self):
+        # A layout covering a quarter of its box carries twice the side of one
+        # covering all of it, for the same surface: its islands keep density.
+        full = ImgUtils.atlas_extent(4.0, uv_area=1.0)
+        sparse = ImgUtils.atlas_extent(4.0, uv_area=0.25)
+        self.assertAlmostEqual(full[0], 2.0)
+        self.assertAlmostEqual(sparse[0], 4.0)
+        # A cropped box keeps the crop's aspect.
+        w, h = ImgUtils.atlas_extent(1.0, uv_area=0.1, extent=(0.5, 0.2))
+        self.assertAlmostEqual(w / h, 2.5)
+        # Unknown coverage assumes the fill.
+        self.assertAlmostEqual(
+            ImgUtils.atlas_extent(3.0, None, fill=0.75)[0], (3.0 / 0.75) ** 0.5
+        )
+
+    @staticmethod
+    def _rectangle(width, height, uv_width=1.0, uv_height=1.0):
+        """A width x height quad (two triangles) laid onto a uv_width x uv_height box."""
+        import numpy as np
+
+        corners = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        points = np.array([(x * width, y * height, 0.0) for x, y in corners])
+        uvs = np.array([(x * uv_width, y * uv_height) for x, y in corners])
+        tris = [(0, 1, 2), (0, 2, 3)]
+        return points[tris], uvs[tris]
+
+    def test_axis_scale_reads_the_surface_each_uv_axis_spans(self):
+        # A 4 x 1 panel whose layout fills the square (a production room's
+        # walls and baseboards are laid out so): 4 units per u, 1 per v.
+        su, sv = ImgUtils.uv_axis_scale(*self._rectangle(4.0, 1.0))
+        self.assertAlmostEqual(su, 4.0)
+        self.assertAlmostEqual(sv, 1.0)
+        # The same panel laid out in its own shape: one scale on both axes.
+        su, sv = ImgUtils.uv_axis_scale(*self._rectangle(4.0, 1.0, 1.0, 0.25))
+        self.assertAlmostEqual(su / sv, 1.0)
+        # Mirrored or rotated in the layout: the lengths do not change.
+        points, uvs = self._rectangle(4.0, 1.0)
+        su, sv = ImgUtils.uv_axis_scale(points, uvs[..., ::-1] * [1.0, -1.0])
+        self.assertAlmostEqual(su, 1.0)
+        self.assertAlmostEqual(sv, 4.0)
+
+    def test_axis_scale_shrugs_off_a_sliver(self):
+        """A triangle with almost no uv area has an almost infinite derivative
+        (a concave n-gon's fan, a pole's collapsed uvs): it owns no texels and
+        must not swing the layout's reading. A root mean square read this
+        panel as 0.001 instead of 4."""
+        import numpy as np
+
+        points, uvs = self._rectangle(4.0, 1.0)
+        sliver_points = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]])
+        sliver_uvs = np.array([[[0.0, 0.0], [1.0, 0.0], [1.0, 1e-7]]])
+        su, sv = ImgUtils.uv_axis_scale(
+            np.concatenate([points, sliver_points]), np.concatenate([uvs, sliver_uvs])
+        )
+        self.assertAlmostEqual(su / sv, 4.0, delta=0.04)
+
+    def test_axis_scale_is_none_without_a_layout(self):
+        import numpy as np
+
+        points, uvs = self._rectangle(4.0, 1.0)
+        self.assertIsNone(ImgUtils.uv_axis_scale(points, np.zeros_like(uvs)))
+        self.assertIsNone(
+            ImgUtils.uv_axis_scale(np.zeros((0, 3, 3)), np.zeros((0, 3, 2)))
+        )
+
+    def test_extent_turns_a_stretched_layout_to_its_surfaces_shape(self):
+        """A layout that fills its square whatever the surface's shape ships
+        stretched texels in a square cell (a production baseboard: 13 x 395 cm in a
+        square, 6 texels/cm up its height and 0.2 along it). Its extent takes
+        the surface's shape, at the same density."""
+        w, h = ImgUtils.atlas_extent(4.0, uv_area=1.0, stretch=4.0)
+        self.assertAlmostEqual(w, 4.0)
+        self.assertAlmostEqual(h, 1.0)
+        self.assertAlmostEqual(w * h, 4.0)  # the density is the area's, unchanged
+        # A crop box first, then the stretch: the box measured on the surface.
+        w, h = ImgUtils.atlas_extent(1.0, uv_area=0.1, extent=(0.5, 0.2), stretch=0.25)
+        self.assertAlmostEqual(w / h, 2.5 * 0.25)
+
+    def test_layout_extent_reads_the_box_the_coverage_and_the_stretch(self):
+        """The bakers' one reading of a layout: its triangles give the box the
+        pack places (cropped to the islands when they leave real dead space),
+        the coverage the density is measured over, and the stretch is undone."""
+        import numpy as np
+
+        _points, full = self._rectangle(4.0, 1.0)
+        self.assertEqual(
+            ImgUtils.atlas_layout_extent(4.0, full), ImgUtils.atlas_extent(4.0, 1.0)
+        )
+        # Islands in a quarter of the square's width: the crop's box, and its area.
+        strip = full * [0.25, 1.0]
+        w, h = ImgUtils.atlas_layout_extent(1.0, strip, max_coverage=0.85)
+        self.assertAlmostEqual(w / h, 0.25)
+        self.assertAlmostEqual(w * h, 1.0)  # covered all of its box: area 1
+        # The stretch passes through.
+        self.assertEqual(
+            ImgUtils.atlas_layout_extent(4.0, full, stretch=4.0),
+            ImgUtils.atlas_extent(4.0, 1.0, stretch=4.0),
+        )
+        # No layout yet: an unwrap covering *fill* of a square, stretch ignored.
+        for none in (None, np.zeros((0, 3, 2))):
+            self.assertEqual(
+                ImgUtils.atlas_layout_extent(3.0, none, stretch=9.0, fill=0.75),
+                ImgUtils.atlas_extent(3.0, None, (1.0, 1.0), 0.75),
+            )
 
 
 class CropToUvBboxTest(unittest.TestCase):

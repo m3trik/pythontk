@@ -624,11 +624,12 @@ class TestPythonArgsViaEnv(unittest.TestCase):
     """``python_args_via_env``: a Python child's command line travels in its env.
 
     mayapy.exe decodes its command line in the ANSI code page -- measured on Maya
-    2025: "José" arrived as "Jos\\udce9" and "Жук" as "???" -- while the
-    environment and the working directory arrive intact.
+    2025: an accented letter arrived as a lone surrogate ("é" as "\\udce9") and
+    each letter outside the code page as "?" -- while the environment and the
+    working directory arrive intact.
     """
 
-    WORD = "José Жук"
+    WORD = "Zoë ★"  # a letter cp1252 holds, and a symbol it cannot
     PROBE = (
         "import json, os, sys\n"
         "with open(sys.argv[1], 'w', encoding='utf-8') as fh:\n"
@@ -756,7 +757,7 @@ class TestAnsiCodecFallback(unittest.TestCase):
                     codec = AppLauncher._ansi_codec()
                     no_mbcs(codec)  # one this host has; raises for mbcs off Windows
             self.assertTrue(AppLauncher._ansi_encodable("/tmp/plain"))
-            self.assertFalse(AppLauncher._ansi_encodable("/tmp/Жук"))
+            self.assertFalse(AppLauncher._ansi_encodable("/tmp/★"))
         finally:
             AppLauncher._ANSI_CODEC = saved
 
@@ -764,14 +765,15 @@ class TestAnsiCodecFallback(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "win32", "the ANSI code page is a Windows notion")
 class TestAnsiSafePath(unittest.TestCase):
     """``ansi_safe_path``: a path Maya can open although it reads paths in the ANSI
-    code page. Measured on Maya 2025 (cp1252 here): with a TEMP under "José Жук",
-    ``cmds.file`` save gave "An invalid path was specified" and open "File not
-    found", and Maya read TEMP as "???" and fell back to the CURRENT DIRECTORY for
-    its own temp files; the 8.3 short form of the same folders worked for all three.
+    code page. Measured on Maya 2025 (cp1252 here): with a TEMP under a name mixing
+    an "é" and Cyrillic letters, ``cmds.file`` save gave "An invalid path was
+    specified" and open "File not found", and Maya read TEMP as "???" and fell back
+    to the CURRENT DIRECTORY for its own temp files; the 8.3 short form of the same
+    folders worked for all three.
     """
 
-    CYR = "Жук"  # outside cp1252
-    LATIN = "José"  # inside it
+    OUTSIDE = "★"  # outside cp1252
+    LATIN = "Zoë"  # inside it
 
     def setUp(self):
         import shutil
@@ -779,14 +781,14 @@ class TestAnsiSafePath(unittest.TestCase):
         here = os.path.dirname(os.path.abspath(__file__))
         self.root = os.path.join(here, "temp_tests", f"ansi {os.getpid()}")
         self.addCleanup(shutil.rmtree, self.root, True)
-        self.cyr = os.path.join(self.root, f"{self.LATIN} {self.CYR}", "sub")
-        os.makedirs(self.cyr)
+        self.outside = os.path.join(self.root, f"{self.LATIN} {self.OUTSIDE}", "sub")
+        os.makedirs(self.outside)
         AppLauncher._ANSI_WARNED.clear()
         # 8.3 names are a per-volume setting; without one there is nothing to prove.
-        if _ansi_codec_ok(self.cyr):
-            self.skipTest("this ANSI code page holds Cyrillic")
+        if _ansi_codec_ok(self.outside):
+            self.skipTest("this ANSI code page holds ★")
         # A volume with them off answers the LONG name (a GitHub runner's D:), not None.
-        short = AppLauncher._short_name(os.path.dirname(self.cyr))
+        short = AppLauncher._short_name(os.path.dirname(self.outside))
         if not short or not os.path.basename(short).isascii():
             self.skipTest("no 8.3 short names on this volume")
 
@@ -796,7 +798,7 @@ class TestAnsiSafePath(unittest.TestCase):
         self.assertIsNone(AppLauncher.ansi_safe_path(None))
 
     def test_only_the_components_the_code_page_cannot_hold_are_shortened(self):
-        target = os.path.join(self.cyr, "payload.fbx")
+        target = os.path.join(self.outside, "payload.fbx")
         with open(target, "w") as fh:
             fh.write("x")
         safe = AppLauncher.ansi_safe_path(target)
@@ -809,24 +811,24 @@ class TestAnsiSafePath(unittest.TestCase):
         self.assertIn(os.path.join(self.root, ""), safe)
 
     def test_a_file_not_yet_written_keeps_its_name_under_a_short_folder(self):
-        target = os.path.join(self.cyr, ".out.saving.ma")
+        target = os.path.join(self.outside, ".out.saving.ma")
         safe = AppLauncher.ansi_safe_path(target)
         self.assertTrue(_ansi_codec_ok(safe), ascii(safe))
         self.assertEqual(os.path.basename(safe), ".out.saving.ma")
-        self.assertTrue(os.path.samefile(os.path.dirname(safe), self.cyr))
+        self.assertTrue(os.path.samefile(os.path.dirname(safe), self.outside))
 
     def test_without_a_short_name_it_warns_once_and_keeps_the_path(self):
         from unittest.mock import patch
 
-        target = os.path.join(self.cyr, "a.ma")
+        target = os.path.join(self.outside, "a.ma")
         with patch.object(AppLauncher, "_short_name", return_value=None):
             with self.assertLogs(
                 "pythontk.core_utils.app_launcher._environment", "WARNING"
             ) as logs:
                 self.assertEqual(AppLauncher.ansi_safe_path(target), target)
                 self.assertEqual(
-                    AppLauncher.ansi_safe_path(os.path.join(self.cyr, "b.ma")),
-                    os.path.join(self.cyr, "b.ma"),
+                    AppLauncher.ansi_safe_path(os.path.join(self.outside, "b.ma")),
+                    os.path.join(self.outside, "b.ma"),
                 )
         self.assertEqual(len(logs.records), 1, logs.output)
         self.assertIn("TEMP", logs.output[0])
@@ -835,7 +837,7 @@ class TestAnsiSafePath(unittest.TestCase):
         """``ascii_only``: for a path written INTO a file another program decodes as
         ANSI. RizomUV 2020.1 reads a Lua payload's UTF-8 path bytes that way, so an
         "é" the code page holds breaks there too (measured: ZomLoad / ZomSave under
-        "José Ångström" timed out, the 8.3 form passed)."""
+        a folder named with an "é" and an "Å" timed out, the 8.3 form passed)."""
         latin = os.path.join(self.root, self.LATIN)
         os.makedirs(latin)
         target = os.path.join(latin, "payload.fbx")
@@ -843,7 +845,7 @@ class TestAnsiSafePath(unittest.TestCase):
             fh.write("x")
         # The code page holds it.
         self.assertIs(AppLauncher.ansi_safe_path(target), target)
-        for path in (target, os.path.join(self.cyr, "not_yet.lua")):
+        for path in (target, os.path.join(self.outside, "not_yet.lua")):
             safe = AppLauncher.ansi_safe_path(path, ascii_only=True)
             self.assertTrue(safe.isascii(), ascii(safe))
             self.assertEqual(os.path.basename(safe), os.path.basename(path))
@@ -884,7 +886,7 @@ class TestAnsiSafePath(unittest.TestCase):
         from unittest.mock import patch
 
         with patch.object(sys, "platform", "linux"):
-            self.assertEqual(AppLauncher.ansi_safe_path(self.cyr), self.cyr)
+            self.assertEqual(AppLauncher.ansi_safe_path(self.outside), self.outside)
 
     def test_a_python_childs_temp_is_handed_over_in_its_short_form(self):
         # TMPDIR too: a Python child's tempfile reads it FIRST, and TestSandbox
@@ -892,12 +894,18 @@ class TestAnsiSafePath(unittest.TestCase):
         # mayapy's own tempfile paths back in the form Maya cannot open.
         _, env = AppLauncher.python_args_via_env(
             ["x.py"],
-            {"TEMP": self.cyr, "Tmp": self.cyr, "TMPDIR": self.cyr, "OTHER": self.cyr},
+            {
+                "TEMP": self.outside,
+                "Tmp": self.outside,
+                "TMPDIR": self.outside,
+                "OTHER": self.outside,
+            },
         )
         for key in ("TEMP", "Tmp", "TMPDIR"):
             self.assertTrue(_ansi_codec_ok(env[key]), ascii(env[key]))
-            self.assertTrue(os.path.samefile(env[key], self.cyr))
-        self.assertEqual(env["OTHER"], self.cyr)  # only the temp roots are rewritten
+            self.assertTrue(os.path.samefile(env[key], self.outside))
+        # Only the temp roots are rewritten.
+        self.assertEqual(env["OTHER"], self.outside)
 
 
 class TestAppLauncherSessions(unittest.TestCase):
@@ -1252,6 +1260,197 @@ class TestSpawn(unittest.TestCase):
         if survivors:
             os.killpg(int(child), signal.SIGKILL)
         self.assertEqual(survivors, [], "outlived their parent")
+
+
+class TestWindowlessPython(unittest.TestCase):
+    """``windowless_python``: the interpreter a GUI shortcut runs, console-free.
+
+    pip's gui-script launcher swaps ``python`` for ``pythonw`` without looking
+    for the file (``distlib.scripts._get_alternate_executable``), so in a Python
+    that ships no ``pythonw`` (Blender's) its launcher pointed at nothing. This
+    swaps only to an interpreter that is there.
+    """
+
+    def setUp(self):
+        import shutil
+
+        here = os.path.dirname(os.path.abspath(__file__))
+        self.dir = os.path.join(here, "temp_tests", f"windowless {os.getpid()}")
+        os.makedirs(self.dir, exist_ok=True)
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def _touch(self, name):
+        path = os.path.join(self.dir, name)
+        open(path, "w").close()
+        return path
+
+    def _resolve(self, executable, platform="win32"):
+        from unittest.mock import patch
+
+        with patch.object(sys, "platform", platform):
+            return AppLauncher.windowless_python(executable)
+
+    def test_a_python_with_pythonw_beside_it_runs_windowless(self):
+        python, pythonw = self._touch("python.exe"), self._touch("pythonw.exe")
+        self.assertEqual(self._resolve(python), pythonw)
+
+    def test_a_python_without_pythonw_comes_back_as_it_is(self):
+        """Blender's bundled python.exe: a console, never a missing pythonw."""
+        python = self._touch("python.exe")
+        self.assertEqual(self._resolve(python), python)
+
+    def test_a_host_binary_resolves_to_its_companion(self):
+        """maya.exe -> mayapy.exe, which has no windowless twin."""
+        host, mayapy = self._touch("maya.exe"), self._touch("mayapy.exe")
+        self.assertEqual(self._resolve(host), mayapy)
+
+    def test_off_windows_the_companion_is_already_windowless(self):
+        python = self._touch("python3")
+        self._touch("pythonw")
+        self.assertEqual(self._resolve(python, platform="linux"), python)
+
+
+class TestCreateShortcut(unittest.TestCase):
+    """``create_shortcut``: a desktop / start-menu launcher, Unicode-safe."""
+
+    #: Outside the ANSI code page: ``WScript.Shell`` turned the star into "?"
+    #: and then could not save the link.
+    WORD = "Caf\u00e9 \u2605"
+
+    def setUp(self):
+        import shutil
+
+        here = os.path.dirname(os.path.abspath(__file__))
+        self.dir = os.path.join(here, "temp_tests", f"shortcuts {os.getpid()}")
+        os.makedirs(self.dir, exist_ok=True)
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def test_an_explicit_folder_must_exist(self):
+        missing = os.path.join(self.dir, "missing")
+        with self.assertRaises(FileNotFoundError):
+            AppLauncher.create_shortcut("x", sys.executable, location=missing)
+        self.assertFalse(os.path.exists(missing))
+
+    def test_an_unsupported_platform_says_so(self):
+        from unittest.mock import patch
+
+        with patch.object(sys, "platform", "darwin"):
+            with self.assertRaises(NotImplementedError):
+                AppLauncher.create_shortcut("x", "/bin/x", location=self.dir)
+
+    @staticmethod
+    def _read_link(path):
+        """The link's target, arguments and start folder, read through the
+        shell's Unicode ``Shell.Application`` (never the ANSI WScript.Shell)."""
+        import subprocess
+
+        script = (
+            "[Console]::OutputEncoding = [Text.Encoding]::UTF8\n"
+            "$f = Get-Item -LiteralPath $env:LNK_UNDER_TEST\n"
+            "$l = (New-Object -ComObject Shell.Application)"
+            ".Namespace($f.DirectoryName).ParseName($f.Name).GetLink\n"
+            '"PATH=" + $l.Path; "ARGS=" + $l.Arguments; "CWD=" + $l.WorkingDirectory\n'
+        )
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            env=dict(os.environ, LNK_UNDER_TEST=path),
+            capture_output=True,
+            timeout=60,
+        )
+        lines = out.stdout.decode("utf-8", "replace").splitlines()
+        return dict(line.split("=", 1) for line in lines if "=" in line)
+
+    @unittest.skipUnless(sys.platform == "win32", "a .lnk is a Windows shell link")
+    def test_a_windows_link_keeps_every_character_and_its_app_id(self):
+        target = os.path.join(self.dir, self.WORD, "python.exe")
+        path = AppLauncher.create_shortcut(
+            f"{self.WORD} Tools",
+            target,
+            ["-m", "pkg", "an app"],
+            location=self.dir,
+            comment="Open the tools",
+            app_id="m3trik.shortcut.test",
+        )
+        self.assertEqual(os.path.basename(path), f"{self.WORD} Tools.lnk")
+        link = self._read_link(path)
+        self.assertEqual(link.get("PATH"), target)
+        self.assertEqual(link.get("ARGS"), '-m pkg "an app"')
+        self.assertEqual(link.get("CWD"), os.path.expanduser("~"))
+        # The description and the AppUserModelID have no reader on
+        # Shell.Application; the link stores both as UTF-16 text.
+        with open(path, "rb") as handle:
+            raw = handle.read()
+        for text in ("Open the tools", "m3trik.shortcut.test"):
+            self.assertIn(text.encode("utf-16-le"), raw)
+
+    @unittest.skipUnless(sys.platform == "win32", "a .lnk is a Windows shell link")
+    def test_writing_a_link_again_replaces_it(self):
+        for app in ("first", "second"):
+            path = AppLauncher.create_shortcut(
+                "Tools", sys.executable, ["-m", app], location=self.dir
+            )
+        self.assertEqual(os.listdir(self.dir), ["Tools.lnk"])
+        self.assertEqual(self._read_link(path).get("ARGS"), "-m second")
+
+    def test_a_linux_entry_quotes_its_command_by_the_spec(self):
+        """Quoting first (``"`` ````` ``$`` ``\\`` escaped inside quotes), the
+        string escape on top (so a literal backslash is four), ``%`` doubled."""
+        from unittest.mock import patch
+
+        with patch.object(sys, "platform", "linux"):
+            path = AppLauncher.create_shortcut(
+                f"{self.WORD} Tools",
+                "/opt/py/bin/python3",
+                ["-m", "pkg", "an app", "100%", 'say "hi"', "C:\\x"],
+                location=self.dir,
+                icon="/icons/tools.svg",
+                working_dir="/home/user",
+                comment="Open the tools",
+            )
+        self.assertEqual(os.path.basename(path), "Caf\u00e9-Tools.desktop")
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+        self.assertEqual(lines[0], "[Desktop Entry]")
+        self.assertIn(f"Name={self.WORD} Tools", lines)
+        self.assertIn("Comment=Open the tools", lines)
+        self.assertIn("Icon=/icons/tools.svg", lines)
+        self.assertIn("Path=/home/user", lines)
+        self.assertIn("Terminal=false", lines)
+        self.assertIn(
+            r'Exec=/opt/py/bin/python3 -m pkg "an app" 100%% "say \\"hi\\"" '
+            r'"C:\\\\x"',
+            lines,
+        )
+        if os.name == "posix":
+            import stat
+
+            self.assertTrue(os.stat(path).st_mode & stat.S_IXUSR)
+
+    def test_a_linux_entry_keeps_an_empty_or_multi_line_argument(self):
+        """An empty argument is quoted, not dropped, and a line break is
+        escaped, never written raw: a raw one ended the ``Exec`` line, and
+        everything after it read as keys of its own."""
+        from unittest.mock import patch
+
+        with patch.object(sys, "platform", "linux"):
+            path = AppLauncher.create_shortcut(
+                "Tools", "/bin/x", ["", "a\nb", "end"], location=self.dir
+            )
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+        self.assertIn(r'Exec=/bin/x "" "a\nb" end', lines)
+        self.assertIn("Terminal=false", lines)
+
+    def test_one_string_is_one_argument(self):
+        """As for ``launch``: a str ``args`` was split into its characters."""
+        from unittest.mock import patch
+
+        with patch.object(sys, "platform", "linux"):
+            path = AppLauncher.create_shortcut(
+                "Tools", "/bin/x", "--flag", location=self.dir
+            )
+        with open(path, encoding="utf-8") as handle:
+            self.assertIn("Exec=/bin/x --flag", handle.read().splitlines())
 
 
 if __name__ == "__main__":

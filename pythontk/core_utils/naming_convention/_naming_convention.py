@@ -40,6 +40,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from pythontk.core_utils.presets.store import PresetStore
@@ -55,6 +56,9 @@ CONFIG_PACKAGE = "pythontk"
 #: Env var pointing at an explicit convention file (a project or studio share),
 #: honoured ahead of the per-user doc by :class:`UserConfig`'s discovery.
 CONFIG_ENV_VAR = "PYTHONTK_NAMING_CONVENTION"
+
+#: Shipped, read-only convention presets (the store's built-in tier).
+BUILTIN_PRESETS_DIR = Path(__file__).parent / "presets"
 
 #: The affix placement modes, in the option-box picker's cycle order.
 AFFIX_MODES: Tuple[str, str, str] = ("auto", "suffix", "prefix")
@@ -356,9 +360,13 @@ class NamingConvention(_NamingConventionInternal):
         One store for every host --
         ``<user_config_root>/pythontk/naming_convention/``, beside the
         convention doc -- so a convention saved from Maya's Naming panel loads
-        in Blender's.
+        in Blender's. Built-ins ship read-only in this package's ``presets/``:
+        ``default`` is :attr:`DEFAULTS` (drift-guarded by the tests), the way
+        back to the shipped table after any number of edits.
         """
-        return PresetStore(CONFIG_NAME, package=CONFIG_PACKAGE)
+        return PresetStore(
+            CONFIG_NAME, package=CONFIG_PACKAGE, builtin_dir=BUILTIN_PRESETS_DIR
+        )
 
     @classmethod
     def all_affixes(cls) -> List[str]:

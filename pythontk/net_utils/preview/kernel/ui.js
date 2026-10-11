@@ -3,16 +3,27 @@
 import * as THREE from 'three';
 import { advance, mixer, seek, selectClip, setScrubbing, stepClip, togglePlay } from './animation.js';
 import { emit } from './api.js';
+import { updateCaption } from './captions.js';
 import { closeDialog, dialogResolve } from './dialog.js';
 import { el } from './dom.js';
 import { headsetSpace } from './headset.js';
 import { applyNormalScale, saveNormalScale } from './lookdev.js';
-import { frameCamera } from './model.js';
+import { menuFor, menuKeydown } from './menus.js';
+import { current, frameCamera } from './model.js';
 import { camera, controls, renderer, scene } from './scene.js';
 import { stepHeadset } from './session.js';
 import { noteFirstFrame } from './specs.js';
 
-el.frameBtn.addEventListener('click', () => frameCamera());
+// Re-framing is View's, beside the rest of how the model is shown, its key
+// shown there -- no bar button of its own: the bar is one per category.
+menuFor('View').add('action', {
+  label: 'Frame model',
+  title: 'Re-frame the camera on the model',
+  key: 'f',
+  group: 'camera',
+  when: () => current !== null,
+  run: () => frameCamera(),
+});
 el.normalScale.addEventListener('input', () => applyNormalScale(Number(el.normalScale.value)));
 el.normalSave.addEventListener('click', saveNormalScale);
 el.clipSelect.addEventListener('change', () => selectClip(Number(el.clipSelect.value)));
@@ -35,10 +46,14 @@ addEventListener('keydown', (event) => {
   // the picker: the sliders use arrows, which this page has no shortcut for,
   // and excluding them would cost Space-to-pause after a scrub.
   if (event.target === el.clipSelect) return;
-  if (event.key === 'f') frameCamera();
+  // The menus first: an open dropdown takes the keys that walk it, and every
+  // item's shortcut is theirs (menus.js) -- the page's own included, View's
+  // `f`. A key they took is not also the transport's: Space on a focused
+  // item activates it, and must not pause the clip behind it.
+  const taken = menuKeydown(event);
   // Guarded on there being a mixer: with no clips these keys mean nothing, and
   // Space would otherwise flip a play state the next animated push inherits.
-  if (mixer) {
+  if (mixer && !taken) {
     if (event.code === 'Space') { event.preventDefault(); togglePlay(); }
     if (event.key === '[') stepClip(-1);
     if (event.key === ']') stepClip(1);
@@ -69,6 +84,7 @@ export function startLoop() {
     // Before the hook, so a script's 'frame' callback sees the model posed for
     // THIS frame rather than the previous one.
     advance(delta);
+    updateCaption();
     emit('frame', { delta, time });
     const rendering = performance.now();
     renderer.render(scene, camera);

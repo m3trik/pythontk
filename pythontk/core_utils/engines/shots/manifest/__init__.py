@@ -17,6 +17,11 @@ Sub-modules:
     ``behaviors``        — behavior spec + template loading + ``resolve_keys`` math.
     ``range_resolver``   — merge user/detected ranges into resolved shot bounds.
     ``manifest_engine``  — the ``ShotManifest`` planner + DCC-hooked commit/assess.
+    ``manifest_edits``   — ``ManifestEdits``: a user's edits, composed over a sheet.
+    ``manifest_export``  — ``ManifestExport``: the manifest's rows as CSV, JSON or
+                           Markdown, for a file or the clipboard.
+    ``manifest_tags``    — ``ManifestTags``: steps' colour tags, the user's and
+                           the template's automatic ``color_by``.
 
 All symbols are lazy-loaded via the pythontk root package.
 """

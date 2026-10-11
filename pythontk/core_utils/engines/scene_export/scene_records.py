@@ -243,6 +243,12 @@ class RecordSpec:
             payload is described only in prose.
         web: The record's :class:`WebProjection` -- how a GLB conversion
             publishes it for the glTF runtimes; ``None`` when it publishes none.
+        export_scoped: Whether the record's producer narrows it to the export
+            set (:attr:`ExportContext.scope`): its entries are scene nodes and
+            the files they name ride the deliverable, so an entry for a node
+            the write leaves out ships that node's files with nothing to bind
+            them to. The scene's own copy stays whole: a scoped assembly keeps
+            it (:attr:`ExportSnapshot.scene_wide`) for the exporter to put back.
     """
 
     key: str
@@ -266,6 +272,7 @@ class RecordSpec:
     stamps: Union[bool, Tuple[str, ...]] = False
     shape: Optional[Tuple[str, str]] = None
     web: Optional[WebProjection] = None
+    export_scoped: bool = False
 
     @property
     def path_keys(self) -> Optional[Tuple[str, ...]]:
@@ -440,6 +447,7 @@ class SceneRecords:
         # The maps embedded, keyed by the material each binds to
         # (MeshConvert.apply_glb_lightmaps).
         web=WebProjection("lightmap_web"),
+        export_scoped=True,
     )
     SHADOWS = RecordSpec(
         "shadow_metadata",
@@ -454,6 +462,7 @@ class SceneRecords:
         # Each plane, its source and contact as node indices, its maps as
         # texture indices (MeshConvert.apply_glb_shadows).
         web=WebProjection("shadow_web", version=2),
+        export_scoped=True,
     )
     ARTICULATION = RecordSpec(
         "articulation",
@@ -739,9 +748,15 @@ class SceneRecords:
     #: instructions to the reader (which is what makes it safe for an agent to
     #: read as untrusted content), and no container format named: the same
     #: records are read out of a GLB, a sidecar or a dump, where "the FBX"
-    #: misleads.  The load-bearing sentence is the one about the lightmaps NOT
-    #: being embedded by the materials: a lighting-only bake deliberately
-    #: leaves the map unwired so the authored material survives.
+    #: misleads.  The load-bearing sentence is the one about the files the
+    #: records name: a lighting-only bake deliberately leaves its map off every
+    #: material so the authored material survives, so a delivered file embeds
+    #: those maps -- and every other file a record names -- as media of their
+    #: own (``FbxMedia.embed_dependencies``; the GLB binds them). Delivered,
+    #: not every: the block rides EVERY carrier-bearing write (a File > Export
+    #: or Game Exporter write restamps it too), while only the Scene Exporters
+    #: and unitytk's delivery embed -- so the sentence says what a name joins
+    #: to where the file holds no copy.
     HANDOFF_INSTRUCTIONS = (
         "The file carrying this block embeds every texture its MATERIALS "
         "reference, so material assignment needs no external files or paths. "
@@ -749,13 +764,17 @@ class SceneRecords:
         "value a JSON string; 'reads' names each channel present and what it "
         "holds. 'lightmap_metadata' names each baked object's map by FILE "
         "NAME, with 'uvIndex' (0-based: 1 is the second UV set), 'intensity' "
-        "(the multiplier restoring the bake's range) and 'scaleOffset' "
+        "(informational: the multiplier the map's texels already carry, so the "
+        "map applies as stored) and 'scaleOffset' "
         "([scaleX, scaleY, offsetX, offsetY] within a shared atlas); each "
-        "baked object also carries its own 'lightmapInfo' property. Those maps "
-        "are NOT embedded by the materials -- a lighting-only bake leaves them "
-        "unwired so the authored material survives -- so the file name is a "
-        "join token against maps supplied separately; the manifest names no "
-        "folder. The asset carries no lights; 'rendering' records the setup "
+        "baked object also carries its own 'lightmapInfo' property. No material "
+        "references those maps -- a lighting-only bake leaves them unwired so "
+        "the authored material survives. A delivered file embeds them as media "
+        "of their own, as it does every other file a record names by FILE NAME "
+        "(the reflection probe's HDR, the shadow maps): the file name is the "
+        "join token to that embedded copy, or, where the file holds no copy, "
+        "to one provided with it; the manifest names no folder. "
+        "The asset carries no lights; 'rendering' records the setup "
         "the reference viewer approved it under, so lighting it differently "
         "renders differently without either side being wrong. Check "
         "'version' against the schema you expect."

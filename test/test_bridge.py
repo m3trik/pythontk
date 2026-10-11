@@ -961,14 +961,14 @@ class HandoffSaveAsTest(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "win32", "the ANSI code page is Windows'")
     def test_the_paths_a_template_is_handed_are_ones_maya_can_open(self):
-        """Maya opens and saves through the ANSI code page: under a folder named
-        "Жук" (outside cp1252) ``cmds.file`` said "An invalid path was specified" /
+        """Maya opens and saves through the ANSI code page: under a folder named in
+        Cyrillic (outside cp1252) ``cmds.file`` said "An invalid path was specified" /
         "File not found". The payload and the output reach the template in their
         8.3 short form; the names the code page holds are kept."""
         import re
 
         root = Path(__file__).resolve().parent / "temp_tests" / f"sa {os.getpid()}"
-        where = root / "José Жук"
+        where = root / "Zoë ★"
         where.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, root, True)
         if not (app_handoff.AppLauncher._short_name(str(where)) or "").isascii():
@@ -979,7 +979,7 @@ class HandoffSaveAsTest(unittest.TestCase):
         body = self.runs[0]["script"]
         fbx = re.search(r'FBX = r"(.*)"', body).group(1)
         out = re.search(r'OUT = r"(.*)"', body).group(1)
-        for path in (fbx, out):  # "José Жук" is one component: its 8.3 name is ASCII
+        for path in (fbx, out):  # "Zoë ★" is one component: its 8.3 name is ASCII
             self.assertTrue(path.isascii(), ascii(path))
         self.assertTrue(os.path.samefile(fbx, result["payload"]))
         self.assertTrue(os.path.samefile(os.path.dirname(out), where))

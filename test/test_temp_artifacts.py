@@ -332,6 +332,94 @@ class TestSessionPolicy(TempArtifactsBase):
         self.assertFalse(os.path.exists(self._leave_by("ProcessExit.hard_exit(0)")))
 
 
+class TestSessionOwnership(TempArtifactsBase):
+    """A session store names its owner; one whose owner has exited goes at once.
+
+    A session store goes at its owner's exit only as far as it will go: a
+    process that is killed never runs that cleanup, and one whose files
+    something still holds -- a DCC's helper writing into the TEMP it was
+    handed -- leaves the whole store. Seven days of age sweep then kept them
+    all: 67 test-sandbox roots in four days (measured 2026-10-05), every one
+    free to delete by the next run. The tag carries the owner's id, and the
+    sweep any store runs on its first allocation reclaims an entry whose owner
+    has exited, at any age.
+    """
+
+    def _exited_pid(self):
+        """The id of a process that has exited (and was not reused since)."""
+        from pythontk.core_utils.execution_monitor._sidecar import process_alive
+
+        for _ in range(5):
+            child = subprocess.Popen([sys.executable, "-c", "pass"])
+            child.wait()
+            if not process_alive(child.pid):
+                return child.pid
+        self.skipTest("every exited child's id was reused at once")
+
+    def _entry(self, name, days=0):
+        path = os.path.join(self.dir, name)
+        os.makedirs(path)
+        self.touch(os.path.join(path, "held_at_exit.log"))
+        if days:
+            self.age(os.path.join(path, "held_at_exit.log"), days)
+            self.age(path, days)
+        return path
+
+    def test_a_session_tag_names_its_owner(self):
+        session = TempArtifacts("pfx", dir=self.dir, policy="session")
+        self.assertRegex(
+            os.path.basename(session.path(extension=".fbx")),
+            rf"^pfx_[0-9a-f]{{12,}}-{os.getpid()}\.fbx$",
+        )
+        self.assertTrue(session.dir_path().endswith(f"-{os.getpid()}"))
+        for policy in ("scoped", "detached"):  # outlived on purpose, or owned by no one
+            with self.subTest(policy=policy):
+                other = TempArtifacts("pfx", dir=self.dir, policy=policy).path()
+                self.assertNotIn("-", os.path.basename(other))
+        fixed = session.path(name="script", extension=".lua")
+        self.assertEqual(os.path.basename(fixed), "pfx_script.lua")
+
+    def test_an_entry_whose_owner_exited_is_reclaimed_at_any_age(self):
+        orphan = self._entry(f"pfx_18dba0000000001-{self._exited_pid()}")
+        live = self._entry(f"pfx_18dba0000000002-{os.getpid()}")
+        unnamed = self._entry("pfx_18dba0000000003")  # before tags named owners
+        stale = self._entry("pfx_18dba0000000004", days=10)
+        other = self._entry(f"other_18dba0000000005-{self._exited_pid()}")
+
+        TempArtifacts("pfx", dir=self.dir, policy="session").path()
+
+        self.assertFalse(os.path.exists(orphan), "its owner is gone")
+        self.assertFalse(os.path.exists(stale), "the age sweep still runs")
+        for kept in (live, unnamed, other):
+            self.assertTrue(os.path.isdir(kept), kept)
+
+    def test_an_id_no_process_could_have_is_left_to_the_age_sweep(self):
+        odd = self._entry("pfx_18dba0000000006-99999999999")
+        TempArtifacts("pfx", dir=self.dir, policy="session").path()
+        self.assertTrue(os.path.isdir(odd))
+
+    def test_a_killed_owners_store_goes_at_the_next_allocation(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        body = (
+            "import os, sys\n"
+            f"sys.path.insert(0, {root!r})\n"
+            "from pythontk.file_utils.temp_artifacts import TempArtifacts\n"
+            f"d = TempArtifacts('pfx', dir={self.dir!r}, policy='session').dir_path()\n"
+            "open(os.path.join(d, 'f.txt'), 'w').close()\n"
+            "print(d, end='', flush=True)\n"
+            "os.kill(os.getpid(), 9)  # no exit cleanup runs\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", body], capture_output=True, text=True, timeout=60
+        )
+        left = proc.stdout
+        self.assertTrue(left and os.path.isdir(left), "the killed store must remain")
+
+        TempArtifacts("pfx", dir=self.dir, policy="session").path()
+
+        self.assertFalse(os.path.exists(left))
+
+
 class TestHeldEntries(TempArtifactsBase):
     """An entry that cannot be deleted costs only itself, never its tree.
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from pythontk.core_utils.handoff.app_handoff import (
     HandoffBridge,
@@ -27,6 +27,7 @@ from pythontk.core_utils.handoff.app_handoff import (
 from pythontk.core_utils.handoff.handoff_scope import HandoffScope
 from pythontk.core_utils.deprecation import Deprecation
 from pythontk.net_utils.preview.deliverer import PreviewDeliverer
+from pythontk.net_utils.preview.server import PreviewServer
 
 
 class PreviewBridge(HandoffBridge):
@@ -535,6 +536,7 @@ class PreviewBridge(HandoffBridge):
         ] = None,
         alias_url: Optional[str] = None,
         on_step: Optional[Callable[[Any], Any]] = None,
+        private: bool = False,
     ) -> Dict[str, Any]:
         """Give the live preview a link anyone can open -- view-only, and every
         later push reaches it.
@@ -544,8 +546,8 @@ class PreviewBridge(HandoffBridge):
         files and renders nothing for anyone. Starts serving when no push has
         yet, so a link can go out before the first model does. See
         :meth:`PreviewServer.share` for the parameters -- *on_step* is how a
-        panel hears of a one-time step to offer while the share waits on it --
-        and for what can raise.
+        panel hears of a one-time step to offer while the share waits on it,
+        and *private* a fresh random link per share -- and for what can raise.
 
         Returns:
             :meth:`PreviewServer.share_info`; ``["url"]`` is the link to send.
@@ -560,7 +562,11 @@ class PreviewBridge(HandoffBridge):
                 f"share needs a PreviewDeliverer."
             )
         info = ensure().share(
-            provider=provider, alias=alias, alias_url=alias_url, on_step=on_step
+            provider=provider,
+            alias=alias,
+            alias_url=alias_url,
+            on_step=on_step,
+            private=private,
         )
         self.logger.info(
             "Sharing the preview at %s (%s, view-only).", info["url"], info["label"]
@@ -578,6 +584,15 @@ class PreviewBridge(HandoffBridge):
         """The link to send while the preview is shared, else ``None``."""
         server = getattr(self.deliverer, "server", None)
         return server.share_url if server is not None else None
+
+    def ping_share(self, **options: Any) -> Dict[str, Any]:
+        """Whether a guest can reach the share now: see
+        :meth:`PreviewServer.ping_share` for *options* and the result -- a
+        failed ping, ``error`` saying why, when nothing is served."""
+        server = getattr(self.deliverer, "server", None)
+        if server is None:
+            return PreviewServer._failed_ping("nothing is served")
+        return server.ping_share(**options)
 
     def stop(self) -> None:
         """Stop serving and release the port, ending any share."""
@@ -602,6 +617,12 @@ class FilePreviewBridge(PreviewBridge):
     published exactly as authored, which is what makes this usable as a plain
     viewer for a vendor's asset or an exporter's own output.
 
+    Several files are the PARTS of one scene: each is built the same way and
+    the page shows them together, each at its authored place, so parts
+    exported on their own line up as they do in the scene -- and each can be
+    hidden there, and saved under its own name
+    (:attr:`PreviewDeliverer.PARTS_KEY`).
+
     The user's file is never at risk. ``_release_payload`` refuses any path
     this bridge did not itself mint, so the deliverer's consumed-payload
     delete and the pipeline's ``release_source`` both decline it silently.
@@ -609,6 +630,7 @@ class FilePreviewBridge(PreviewBridge):
     Example:
         >>> bridge = ptk.FilePreviewBridge()
         >>> bridge.push(objects=["C:/assets/prop.fbx"])
+        >>> bridge.push(objects=["C:/assets/room.glb", "C:/assets/props.glb"])
     """
 
     payload_prefix = "file_webxr_preview"
@@ -621,6 +643,9 @@ class FilePreviewBridge(PreviewBridge):
         super().__init__(app_path)
         #: Extra folders the lightmap applier searches, set by the panel.
         self.texture_dirs: List[str] = []
+        #: The last push's source folders, searched after those
+        #: (:meth:`lightmap_search_dirs`); set by :meth:`_produce`.
+        self._source_dirs: Tuple[str, ...] = ()
 
     def lightmap_search_dirs(self) -> Sequence[str]:
         """Where to look for the EXRs a lightmap manifest names.
@@ -628,15 +653,15 @@ class FilePreviewBridge(PreviewBridge):
         The manifest records map BASENAMES plus the folder they were authored
         in, and that hint goes stale the moment the project moves or the file
         is opened on another machine. A DCC bridge answers this from the live
-        host; with no host the only honest answers are the folder the source
-        file came from and whatever the user pointed at. Without them a baked
+        host; with no host the only honest answers are the folders the source
+        files came from and whatever the user pointed at. Without them a baked
         asset previews UNLIT with its maps one folder away, and nothing on the
         page says why -- which is the failure this hook exists to prevent.
         """
         dirs = [d for d in self.texture_dirs if d]
-        source = getattr(self, "_last_source_dir", "")
-        if source and source not in dirs:
-            dirs.append(source)
+        for source in self._source_dirs:
+            if source and source not in dirs:
+                dirs.append(source)
         return tuple(dirs)
 
     def _resolve_objects(self, objects):
@@ -644,32 +669,42 @@ class FilePreviewBridge(PreviewBridge):
         return list(objects or [])
 
     def _produce(self, objects, request) -> Optional[Payload]:
-        """Hand the chosen file to the deliverer as the payload, unexported.
+        """Hand the chosen files to the deliverer as the payload, unexported.
 
-        Nothing is written: the file on disk is already the artifact every
-        other producer spends an export making. Validation is here rather
-        than in the panel so a bridge driven from a script gets the same
-        fix-shaped refusals a button does.
+        Nothing is written: a file on disk is already the artifact every other
+        producer spends an export making. Validation is here rather than in
+        the panel so a bridge driven from a script gets the same fix-shaped
+        refusals a button does -- every file checked before any is built, so
+        a typo in the third does not cost the first two's conversion.
+
+        Every file rides as a part (:attr:`PreviewDeliverer.PARTS_KEY`), one
+        alone included: its own name is what the page offers it under, where
+        the served name is the same ``scene.glb`` for every push.
         """
         if not objects:
             self.logger.error("No file chosen to preview.")
             return None
 
-        path = Path(str(objects[0]))
-        if not path.is_file():
-            self.logger.error(f"No such file to preview: {path}")
-            return None
-
-        extension = path.suffix.lower()
-        if extension not in self.SOURCE_EXTENSIONS:
-            self.logger.error(
-                f"The preview builds from {' or '.join(self.SOURCE_EXTENSIONS)}, "
-                f"not {extension or 'an extensionless file'}: {path.name}"
-            )
-            return None
+        paths = [Path(str(entry)) for entry in objects]
+        for path in paths:
+            if not path.is_file():
+                self.logger.error(f"No such file to preview: {path}")
+                return None
+            extension = path.suffix.lower()
+            if extension not in self.SOURCE_EXTENSIONS:
+                self.logger.error(
+                    f"The preview builds from {' or '.join(self.SOURCE_EXTENSIONS)}, "
+                    f"not {extension or 'an extensionless file'}: {path.name}"
+                )
+                return None
 
         # Remembered for `lightmap_search_dirs`, which the deliverer calls
         # after this returns: a bake's maps most often sit beside the file
-        # that references them, so the source folder is the best free guess.
-        self._last_source_dir = str(path.parent)
-        return Payload(primary=str(path))
+        # that references them, so the source folders are the best free guess.
+        self._source_dirs = tuple(dict.fromkeys(str(path.parent) for path in paths))
+        return Payload(
+            primary=str(paths[0]),
+            extras={
+                PreviewDeliverer.PARTS_KEY: [(str(path), path.name) for path in paths]
+            },
+        )

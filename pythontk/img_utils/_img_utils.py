@@ -834,7 +834,8 @@ class ImgUtils(
 
         Raises:
             ValueError: *name* names a format this class can read but not write.
-            OSError: an EXR/HDR write failed (see :meth:`_save_via_cv2`).
+            OSError: an EXR/HDR write failed (see :meth:`_save_via_cv2`), or a
+                16-bit colour TIFF write (:meth:`_save_high_bit_depth`).
         """
         im = cls.ensure_image(image, mode)  # Now allows optional mode conversion
 
@@ -942,6 +943,94 @@ class ImgUtils(
 
         with Image.open(filepath) as im:
             return im.copy()
+
+    @classmethod
+    def cv2_read(
+        cls, path: Union[str, os.PathLike], flags: Optional[int] = None
+    ) -> Optional["np.ndarray"]:
+        """``cv2.imread`` that opens any path: the image at *path*, or ``None``.
+
+        On Windows ``cv2.imread`` opens its file by a narrow (ANSI) path, so a
+        path with any character outside ASCII -- a folder named ``Résumé ★``,
+        even plain ``résumé`` -- read as ``None``, the same as a missing file.
+        This reads the bytes with Python's own file IO and decodes them in
+        memory (``cv2.imdecode``, under :meth:`cv2_temp`) -- what ``imread``
+        does with them: the same flags, EXIF orientation and pixels.
+
+        Parameters:
+            path: The image file (str or path-like).
+            flags: ``cv2.IMREAD_*`` flags; ``None`` is ``cv2.IMREAD_COLOR``,
+                ``cv2.imread``'s own default. ``cv2.IMREAD_UNCHANGED |
+                cv2.IMREAD_ANYDEPTH`` keeps an EXR's float data.
+
+        Returns:
+            The decoded array (BGR[A], as cv2 orders channels), or ``None``
+            when *path* is missing, empty or does not decode -- as
+            ``cv2.imread``.
+
+        Raises:
+            ImportError: cv2 (opencv-python) is not installed.
+        """
+        return super().cv2_read(path, flags)
+
+    @classmethod
+    def cv2_write(
+        cls,
+        path: Union[str, os.PathLike],
+        image: "np.ndarray",
+        params: Optional[Sequence[int]] = None,
+    ) -> bool:
+        """``cv2.imwrite`` that writes any path: ``True`` once *image* is at *path*.
+
+        On Windows ``cv2.imwrite`` opens its file by a narrow (ANSI) path, so
+        a path with any character outside ASCII wrote nothing and returned
+        ``False``. This encodes in memory (``cv2.imencode``, under
+        :meth:`cv2_temp`) by *path*'s extension and writes the bytes with
+        Python's own file IO -- the bytes ``imwrite`` writes.
+
+        Parameters:
+            path: The file to write (str or path-like); its extension picks
+                the format. Its folder must exist.
+            image: The array to encode (BGR[A], as cv2 orders channels).
+            params: ``cv2.IMWRITE_*`` key/value pairs, as ``cv2.imwrite``
+                takes them.
+
+        Returns:
+            ``False`` when the encode or the write fails (a part-written file
+            is removed) -- as ``cv2.imwrite``, which reports a failure by
+            return, never by raise. Check it.
+
+        Raises:
+            ImportError: cv2 (opencv-python) is not installed.
+            cv2.error: no encoder for *path*'s extension, or *image* is empty
+                -- as ``cv2.imwrite``.
+        """
+        return super().cv2_write(path, image, params)
+
+    @classmethod
+    def cv2_temp(cls):
+        """Spell the temp folder in ASCII for OpenCV, for the block.
+
+        ``with ImgUtils.cv2_temp(): ok, data = cv2.imencode(".exr", image)``.
+        OpenCV's EXR and Radiance HDR codecs cannot work in memory:
+        ``cv2.imencode`` / ``cv2.imdecode`` stage the bytes through a scratch
+        file in the temp folder, opened by a narrow (ANSI) path. Under a temp
+        folder whose path is not ASCII -- a Windows user named Zoë -- every
+        EXR encode and decode failed, and HDR too once the name held a
+        character the code page lacks (``★``). The folder's short (8.3)
+        spelling names it in ASCII where the volume keeps short names; ``TMP``
+        and ``TEMP`` carry it for the block. Blocks open at once -- nested, or
+        on other threads -- share the one swap, undone when the last ends.
+        Anywhere else (not Windows, an ASCII temp folder, a volume without
+        short names) it changes nothing.
+
+        :meth:`cv2_read` and :meth:`cv2_write` enter it themselves; enter it
+        around a direct ``cv2.imencode`` / ``cv2.imdecode`` of EXR or HDR.
+
+        Returns:
+            A context manager.
+        """
+        return super().cv2_temp()
 
     @classmethod
     def list_image_files(cls, directory, exts=None, full_paths=False):
@@ -1307,18 +1396,32 @@ class ImgUtils(
         return False
 
     @classmethod
-    def resize_image(cls, image, x, y):
+    def resize_image(cls, image, x, y, normal_map: bool = False):
         """Returns a resized copy of an image. It doesn't modify the original.
 
         Parameters:
             image (str/obj): An image or path to an image.
             x (int): Size in the x coordinate.
             y (int): Size in the y coordinate.
+            normal_map (bool): Resample as a tangent-space normal map: in
+                float, renormalised to unit length, then encoded to 8 bits. A
+                plain 8-bit Lanczos clips its overshoot at hard edges, which
+                bends those normals -- measured on a production 4K atlas
+                halved, 0.07% of texels off by more than 3 degrees (worst
+                56); renormalised, every texel stays within 0.4 degrees. Only
+                an 8-bit RGB/RGBA map whose texels are outward unit vectors
+                takes this path (alpha resamples as usual); anything else,
+                a two-channel XY map or a mislabelled colour map included,
+                resizes plainly.
 
         Returns:
             (obj) new image of the given size.
         """
         im = cls.ensure_image(image)
+        if normal_map:
+            resized = cls._resize_normal_map(im, (x, y))
+            if resized is not None:
+                return resized
         return im.resize((x, y), Image.Resampling.LANCZOS)
 
     @classmethod
@@ -1909,6 +2012,151 @@ class ImgUtils(
             the same order. ``[]`` for no items; ``[(1, 1, 0, 0)]`` for one.
         """
         return _ImgAtlasInternal.compute_atlas_layout(weights, rows=rows)
+
+    @staticmethod
+    def pack_atlas_rects(
+        extents: Sequence[Tuple[float, float]],
+        size: Union[int, Tuple[int, int]],
+        gutter: int = 2,
+        min_texels: int = 4,
+        align: int = 4,
+    ) -> Optional[List[Tuple[float, float, float, float]]]:
+        """Pack items of natural *extents* into one atlas at a uniform texel density.
+
+        The packing alternative to :meth:`compute_atlas_layout`: where that
+        tiles the whole square by bending each cell's shape, this keeps every
+        item's own aspect and gives every item the SAME texels per unit of
+        its extent -- the largest density at which they all fit
+        (:meth:`pythontk.RectPacker.fit`). Each cell is a whole number of
+        texels, at least *gutter* texels from every neighbour and from the
+        atlas edge (so ``2 * gutter`` between two cells, at every resolution;
+        a tiled cell's gutter shrank to nothing when the cell was small), and
+        every cell's padded slot lies on whole ``align x align`` blocks, so a
+        block-compressed encode never mixes two cells. Ties keep input order:
+        pass items sorted by name and copies of one mesh never trade cells.
+        An item longer than the atlas at the density the rest reach (a 30 m
+        corridor wall in its surface's shape) is folded toward square at its
+        own area, rather than lowering that density for every item.
+
+        Parameters:
+            extents: ``(width, height)`` per item in one unit (world units for
+                a lightmap -- see :meth:`atlas_extent`).
+            size: Atlas pixel size -- ``int`` for square, or ``(width, height)``.
+            gutter: Texels kept free around every cell on every side.
+            min_texels: Smallest cell, in texels per axis.
+            align: Slot grid in texels (4 for BC6H / BC7 / ASTC / UASTC).
+
+        Returns:
+            One ``(scaleX, scaleY, offsetX, offsetY)`` CONTENT rect per item
+            (bottom-left origin, texel-exact: :meth:`atlas_pixel_rects` maps it
+            back onto its integer pixels), in input order; ``[]`` for no items;
+            ``None`` when even every item at *min_texels* does not fit.
+        """
+        return _ImgAtlasInternal.pack_atlas_rects(
+            extents, size, gutter=gutter, min_texels=min_texels, align=align
+        )
+
+    @staticmethod
+    def atlas_extent(
+        area: float,
+        uv_area: Optional[float] = None,
+        extent: Tuple[float, float] = (1.0, 1.0),
+        fill: float = 0.75,
+        stretch: float = 1.0,
+    ) -> Tuple[float, float]:
+        """An item's natural atlas extent: what keeps its texel density equal to the rest.
+
+        A layout's islands cover *uv_area* of the *extent* box the atlas
+        places, and they carry *area* of the surface (world units squared for
+        a lightmap). Scaling that box by ``sqrt(area / uv_area)`` makes one
+        texel cover the same surface on every item packed with
+        :meth:`pack_atlas_rects` -- a sparse layout gets a bigger box, a mesh
+        twice the size twice the texels. A layout not built yet (no
+        *uv_area*) is assumed to cover *fill* of its box.
+
+        *stretch* turns the box to its shape ON THE SURFACE: a layout that
+        fills its square whatever the mesh's shape (a 4 x 1 panel laid over
+        the whole square spans 4 units per u and 1 per v, stretch 4) would
+        otherwise ship that stretch in a square cell -- texels four times
+        longer one way than the other. The box is widened by
+        ``sqrt(stretch)`` and shortened by as much, so its area, and the
+        density, are unchanged.
+
+        Parameters:
+            area: The item's surface area.
+            uv_area: Its islands' total area in UV units, or ``None``.
+            extent: ``(u, v)`` size of the box the atlas places, in UV units
+                -- ``(1, 1)`` for a whole layout, the crop's for a cropped one
+                (:meth:`uv_crop_extent`).
+            fill: Assumed island coverage when *uv_area* is unknown.
+            stretch: Surface per unit u over surface per unit v -- ``su / sv``
+                of :meth:`uv_axis_scale`; 1 for a layout in its mesh's own
+                proportions (or one not built yet).
+
+        Returns:
+            ``(width, height)`` in the unit of ``sqrt(area)``.
+        """
+        return _ImgAtlasInternal.atlas_extent(area, uv_area, extent, fill, stretch)
+
+    @staticmethod
+    def atlas_layout_extent(
+        area: float,
+        uvs: Optional["np.ndarray"] = None,
+        stretch: float = 1.0,
+        max_coverage: float = 0.85,
+        fill: float = 0.75,
+    ) -> Tuple[float, float]:
+        """:meth:`atlas_extent` read off a layout's triangles -- the lightmap bakers' one reading.
+
+        The box the atlas places is the layout's square, or the islands' bbox
+        when they leave real dead space in it (:meth:`uv_crop_extent` with
+        *max_coverage*, the same test the crop takes); the coverage the
+        density is measured over is the triangles' total UV area; the
+        *stretch* (:meth:`uv_axis_scale`'s ``su / sv``) turns the box to its
+        shape on the surface. No layout yet (no triangles) is an unwrap
+        covering *fill* of a square, which a fresh unwrap leaves unstretched.
+
+        Parameters:
+            area: The item's surface area.
+            uvs: ``(N, 3, 2)`` UV corners of the layout's triangles, or ``None``.
+            stretch: Surface per unit u over surface per unit v.
+            max_coverage: Box coverage at or above which the whole square is
+                placed rather than a crop.
+            fill: Assumed island coverage when there is no layout.
+
+        Returns:
+            ``(width, height)`` in the unit of ``sqrt(area)``.
+        """
+        return _ImgAtlasInternal.atlas_layout_extent(
+            area, uvs, stretch, max_coverage, fill
+        )
+
+    @staticmethod
+    def uv_axis_scale(
+        points: "np.ndarray", uvs: "np.ndarray"
+    ) -> Optional[Tuple[float, float]]:
+        """The surface one unit of u and one unit of v span across a layout.
+
+        Per triangle, the derivative of the surface point along each UV axis;
+        its length, averaged as a geometric mean weighted by UV area (the
+        texels each triangle owns) -- the scale that makes texels square on the
+        surface in the least-squares sense of their log aspect, and one a
+        sliver triangle (no UV area, a derivative without bound) cannot swing.
+        A layout in its mesh's own proportions reads one scale on both axes
+        however its islands are turned or mirrored; one stretched to fill its
+        square reads its stretch -- ``su / sv`` is :meth:`atlas_extent`'s
+        *stretch*.
+
+        Parameters:
+            points: ``(N, 3, D)`` surface corners of the layout's triangles
+                (world space for a lightmap; any dimension D).
+            uvs: ``(N, 3, 2)`` UV corners of the same triangles.
+
+        Returns:
+            ``(su, sv)`` in surface units per UV unit, or ``None`` when no
+            triangle has UV area (no layout, or the arrays do not match).
+        """
+        return _ImgAtlasInternal.uv_axis_scale(points, uvs)
 
     @staticmethod
     def atlas_pixel_rects(
@@ -2861,10 +3109,10 @@ class ImgUtils(
         is returned so a viewer can multiply it back and recover linear intensity
         (the ``lightmap_web`` manifest's per-material ``intensity``).
 
-        Reads via cv2 directly, NOT :meth:`load_image` -- that path clips to 0-1 and
-        quantizes to 8-bit (its docstring says so), which would destroy exactly the
-        range this normalization exists to keep. The divide happens BEFORE
-        :meth:`linear_to_srgb`, which clips.
+        Reads with :meth:`cv2_read` (any path), NOT :meth:`load_image` -- that path
+        clips to 0-1 and quantizes to 8-bit (its docstring says so), which would
+        destroy exactly the range this normalization exists to keep. The divide
+        happens BEFORE :meth:`linear_to_srgb`, which clips.
 
         The 8-bit step is stochastic rounding (a fixed seed, one draw per texel
         for all its channels): unbiased, so a smooth wall keeps its gradient

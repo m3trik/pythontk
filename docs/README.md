@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-6542%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-7007%20passed-brightgreen.svg)](../test/)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2C%20Linux-lightgrey.svg)
 
 # pythontk
@@ -146,6 +146,11 @@ ptk.MapFactory.convert_bump_to_normal("height.png", output_format="opengl", inte
 # Identify map types from filenames (100+ naming conventions)
 ptk.MapFactory.resolve_map_type("character_Normal_DirectX.png")  # "Normal_DirectX"
 ptk.MapFactory.resolve_map_type("material_BC.tga")               # "Base_Color"
+# ...every OpenPBR lobe too; MapRegistry.LOBE_TYPE_CHANNELS names the shader input
+ptk.MapFactory.resolve_map_type("car_Coat_Roughness.png")        # "Clearcoat_Roughness"
+# ...and a batch read as one set: a set NAMED for a lobe word keeps its base maps
+ptk.MapFactory.resolve_map_types(["Hero_Coat_BaseColor.png", "Hero_Coat_Roughness.png"])
+# {"Hero_Coat_BaseColor.png": "Base_Color", "Hero_Coat_Roughness.png": "Roughness"}
 ```
 
 All three surfaces are runtime-extensible — new map types, workflow handlers, and conversions register without touching the engine ([worked example](../examples/texture_factory_extensibility_example.py)). The Qt panels that drive these engines interactively — **Map Converter**, **Map Packer**, **Map Compositor** — ship in the [extapps](https://github.com/m3trik/extapps) repo; pythontk itself stays UI-agnostic.
