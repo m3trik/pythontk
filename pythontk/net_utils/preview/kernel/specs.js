@@ -182,7 +182,7 @@ export function measureModel(gltf, load, issues) {
     animation: { clips: load.clips, materials: load.animated.materials, tracks: load.animated.tracks },
     // The bake's reflection probe, or null: `{on, width, height, bytes,
     // bufferView, position, box, decodeMs, prefilterMs}` (see probeState).
-    // `on` follows the Environment window's switch, as `lightmaps.probe`
+    // `on` follows the Environment menu's switch, as `lightmaps.probe`
     // does.
     probe,
     issues,
@@ -240,7 +240,7 @@ function issueText(issue, cap = 3) {
 }
 
 // The HUD's spec lines for *measured* -- again after a switch changes what
-// they say (the Environment window's probe), without logging the issues anew.
+// they say (the Environment menu's probe switch), without logging the issues anew.
 export function paintStats(measured) {
   el.stats.replaceChildren(...specLines(measured).map((text) => {
     const line = document.createElement('div');

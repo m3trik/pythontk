@@ -150,6 +150,21 @@ class _ArticulationMixin:
                 else:
                     out_of_scope += 1
                 continue
+            # A rig is solved in ONE space, its root joints' parent: the page
+            # (articulated_rig.js) and unitytk's controller both refuse a rig
+            # whose roots hang under different nodes, so the manifest does too.
+            spaces = {
+                parents.get(index)
+                for joint, index in zip(joints, indices)
+                if joint.get("parent") is None
+            }
+            if len(spaces) > 1:
+                logger.warning(
+                    "Articulated rig %r: its root joints hang under different "
+                    "nodes -- the rig is not wired.",
+                    name,
+                )
+                continue
             for joint, index in zip(joints, indices):
                 joint["node"] = index
             grab = []

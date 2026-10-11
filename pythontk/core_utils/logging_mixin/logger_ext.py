@@ -102,6 +102,11 @@ class LoggerExt:
 
     DEFAULT_BOX_WIDTH = 100
 
+    #: Every log file opens in this, never the locale's code page: cp1252 (a
+    #: Windows default) has no box glyphs, check marks or arrows, so a record
+    #: or box carrying one raised on write and never reached the file.
+    FILE_ENCODING = "utf-8"
+
     # The text layout every box, divider and table is measured with
     # (``TableMixin`` reads it too): the ONE owner of the layout state. That
     # state (the resolved ``wcwidth`` function) lives on the instance, so a
@@ -432,7 +437,7 @@ class LoggerExt:
             handler = internal_logging.StreamHandler(stream=target_stream)
         elif handler_type == "file":
             handler = internal_logging.FileHandler(
-                kwargs.get("filename", "logfile.log")
+                kwargs.get("filename", "logfile.log"), encoding=LoggerExt.FILE_ENCODING
             )
         elif handler_type == "text_widget":
             handler_cls = LoggerExt._get_text_handler(logger)
@@ -1109,7 +1114,9 @@ class LoggerExt:
             return None
 
         coerced = LoggerExt._coerce_level(level)
-        handler = internal_logging.FileHandler(filename)
+        handler = internal_logging.FileHandler(
+            filename, encoding=LoggerExt.FILE_ENCODING
+        )
         handler.setLevel(coerced)
         handler._pinned_level = coerced != internal_logging.NOTSET
         handler.setFormatter(LevelAwareFormatter(logger=logger, strip_html=True))

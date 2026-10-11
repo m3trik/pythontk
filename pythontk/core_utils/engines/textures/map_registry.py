@@ -219,11 +219,19 @@ class MapRegistry(SingletonMixin):
         # me" is answered by the target, not by the packing scheme.
         # Plain text only: Qt auto-detects rich text in tooltips, so angle brackets
         # would be parsed as markup and silently swallow the word inside them.
+        # STD is also the OpenPBR profile: OpenPBR is a loose-map metal/rough
+        # model with +Y normals, so a key of its own would resolve to this
+        # config byte for byte (the WebXR precedent in `WF`). Its extra lobes
+        # (coat, sheen/fuzz, transmission, subsurface, thin film) are loose maps
+        # every profile passes through; the DCC builders wire them.
         WF.STD: {
             "description": (
-                "Standard PBR workflow (Metallic/Roughness) with separate Opacity. "
-                "Best for general use. Targets: DCC and offline rendering, Marmoset "
-                "Toolbag, Substance, and any engine that takes loose maps."
+                "Standard PBR workflow (Metallic/Roughness) with separate maps, "
+                "including the OpenPBR lobes (coat, sheen, transmission, "
+                "subsurface, thin film). Best for general use. Targets: Maya "
+                "OpenPBR Surface and Standard Surface, Blender Principled BSDF, "
+                "MaterialX / USD, offline rendering, Marmoset Toolbag, Substance, "
+                "and any engine that takes loose maps."
             )
         },
         WF.URP: {
@@ -692,6 +700,13 @@ class MapRegistry(SingletonMixin):
                 "EmissiveMap",
                 "Emission",
                 "EmissionMap",
+                # OpenPBR `emission_color` / Substance `emissiveColor`. Without
+                # them the longest match was `Color`: an emission map classified
+                # as the BASE COLOUR and split off into a set of its own.
+                "Emissive_Color",
+                "EmissiveColor",
+                "Emission_Color",
+                "EmissionColor",
                 "Emit",
                 "Glow",
                 "GlowMap",
@@ -832,31 +847,320 @@ class MapRegistry(SingletonMixin):
             default_background=(0, 0, 0, 255),
             scale_as_mask=True,
         ),
-        "Anisotropy": MapType(
-            name="Anisotropy",
-            aliases=["AnisotropyMap", "Aniso"],
+        # --- OpenPBR lobes ------------------------------------------------
+        # One type per texturable OpenPBR input that tools export as a map.
+        # Canonical names follow glTF (`Clearcoat`, `Sheen`) because those
+        # types predate OpenPBR here; the OpenPBR (`Coat_*`, `Fuzz_*`) and
+        # Substance / Adobe Standard Material spellings are aliases. Every
+        # compound spelling must be registered WHOLE: its trailing token is an
+        # ordinary map-type alias (`Roughness`, `Normal`, `Color`), so an
+        # unregistered `rock_Coat_Roughness` classified as the base Roughness
+        # and based to `rock_Coat` -- the set split, and the coat roughness
+        # drove the material's own roughness. `LOBE_TYPE_CHANNELS` (below)
+        # names the shader input each one drives.
+        "Diffuse_Roughness": MapType(
+            name="Diffuse_Roughness",
+            # OpenPBR `base_diffuse_roughness` (Oren-Nayar); 0 = Lambertian.
+            aliases=[
+                "DiffuseRoughness",
+                "Base_Diffuse_Roughness",
+                "BaseDiffuseRoughness",
+            ],
+            color_space="Linear",
+            mode="L",
+            default_background=(0, 0, 0, 255),
+        ),
+        "Specular_Level": MapType(
+            name="Specular_Level",
+            # The AUTHORING convention -- Substance `specularLevel`, Blender
+            # `Specular IOR Level`, Unreal `Specular`: 0.5 is the neutral 4%
+            # dielectric F0. OpenPBR's `specular_weight` is neutral at 1.0, so
+            # a DCC wiring this into a weight doubles it (mayatk:
+            # `ShaderAttributeMap.TEXTURE_GAINS`). No `Specular_Weight` alias
+            # for that reason: a file spelled after the weight claims the
+            # other scale.
+            aliases=[
+                "SpecularLevel",
+                "Specular_IOR_Level",
+                "SpecularIORLevel",
+            ],
             color_space="Linear",
             mode="L",
             default_background=(127, 127, 127, 255),
         ),
-        "Subsurface_Scattering": MapType(
-            name="Subsurface_Scattering",
-            aliases=["SSS", "Subsurface", "Scattering"],
+        "Specular_Color": MapType(
+            name="Specular_Color",
+            # The specular TINT of OpenPBR / Standard Surface (`specular_color`,
+            # neutral white) and Substance's `specularEdgeColor`. Not the
+            # spec/gloss workflow's F0 colour, which is `Specular` and which
+            # the metal/rough conversion consumes.
+            aliases=[
+                "SpecularColor",
+                "Specular_Tint",
+                "SpecularTint",
+                "Specular_Edge_Color",
+                "SpecularEdgeColor",
+            ],
             color_space="sRGB",
             mode="RGB",
             default_background=(255, 255, 255, 255),
         ),
+        "Anisotropy": MapType(
+            name="Anisotropy",
+            # OpenPBR `specular_roughness_anisotropy`; 0 = isotropic.
+            aliases=[
+                "AnisotropyMap",
+                "Aniso",
+                "Anisotropy_Level",
+                "AnisotropyLevel",
+                "Anisotropic",
+                "Specular_Anisotropy",
+                "SpecularAnisotropy",
+                "Roughness_Anisotropy",
+                "RoughnessAnisotropy",
+            ],
+            color_space="Linear",
+            mode="L",
+            default_background=(127, 127, 127, 255),
+        ),
+        "Anisotropy_Angle": MapType(
+            name="Anisotropy_Angle",
+            # A rotation in turns (1.0 = a full circle: Substance, Blender's
+            # `Anisotropic Rotation`). OpenPBR itself orients anisotropy by a
+            # tangent VECTOR and has no angle input, so a Maya openPBRSurface
+            # reports this map as having no slot; it is registered so the set
+            # stays whole and Blender can wire it.
+            aliases=[
+                "AnisotropyAngle",
+                "Anisotropy_Rotation",
+                "AnisotropyRotation",
+                "Anisotropic_Rotation",
+                "AnisotropicRotation",
+                "Specular_Rotation",
+                "SpecularRotation",
+            ],
+            color_space="Linear",
+            mode="L",
+            default_background=(0, 0, 0, 255),
+        ),
+        "Transmission": MapType(
+            name="Transmission",
+            # OpenPBR `transmission_weight` / glTF KHR_materials_transmission.
+            # No `Translucency` alias: Megascans ships foliage "Translucency"
+            # as an RGB backlight COLOUR, which this mode would flatten.
+            aliases=[
+                "TransmissionMap",
+                "Transmission_Weight",
+                "TransmissionWeight",
+                "Transmissive",
+            ],
+            color_space="Linear",
+            mode="L",
+            default_background=(0, 0, 0, 255),
+            scale_as_mask=True,
+        ),
+        "Transmission_Color": MapType(
+            name="Transmission_Color",
+            aliases=[
+                "TransmissionColor",
+                "Transmission_Tint",
+                "TransmissionTint",
+                "TransmissiveColor",
+                "Absorption_Color",
+                "AbsorptionColor",
+            ],
+            color_space="sRGB",
+            mode="RGB",
+            default_background=(255, 255, 255, 255),
+        ),
+        "Subsurface_Scattering": MapType(
+            name="Subsurface_Scattering",
+            # The subsurface WEIGHT -- OpenPBR `subsurface_weight`, Substance's
+            # grayscale `Scattering` channel, Principled `Subsurface Weight`
+            # (which blendertk already wires it to). The colour is
+            # `Subsurface_Color`. Declared sRGB RGB until the colour had a type
+            # of its own, which sRGB-decoded every weight map read through it.
+            aliases=[
+                "SSS",
+                "Subsurface",
+                "Scattering",
+                "Subsurface_Weight",
+                "SubsurfaceWeight",
+                "SSS_Weight",
+                "SSSWeight",
+                "Scattering_Weight",
+                "ScatteringWeight",
+            ],
+            color_space="Linear",
+            mode="L",
+            default_background=(0, 0, 0, 255),
+            scale_as_mask=True,
+        ),
+        "Subsurface_Color": MapType(
+            name="Subsurface_Color",
+            aliases=[
+                "SubsurfaceColor",
+                "SSS_Color",
+                "SSSColor",
+                "Scattering_Color",
+                "ScatteringColor",
+            ],
+            color_space="sRGB",
+            mode="RGB",
+            default_background=(255, 255, 255, 255),
+        ),
+        "Subsurface_Radius": MapType(
+            name="Subsurface_Radius",
+            # OpenPBR `subsurface_radius`: the scalar mean free path, which is
+            # Standard Surface's `subsurface_scale` and Principled's
+            # `Subsurface Scale` (their per-channel `radius` is OpenPBR's
+            # `subsurface_radius_scale`).
+            aliases=[
+                "SubsurfaceRadius",
+                "SSS_Radius",
+                "SSSRadius",
+                "Scattering_Radius",
+                "ScatteringRadius",
+            ],
+            color_space="Linear",
+            mode="L",
+            default_background=(255, 255, 255, 255),
+            scale_as_mask=True,
+        ),
         "Sheen": MapType(
             name="Sheen",
-            aliases=["SheenMap"],
+            # The sheen WEIGHT: OpenPBR `fuzz_weight` (OpenPBR renamed sheen to
+            # fuzz), Substance `sheenOpacity`.
+            aliases=[
+                "SheenMap",
+                "Sheen_Weight",
+                "SheenWeight",
+                "Sheen_Opacity",
+                "SheenOpacity",
+                "Fuzz",
+                "Fuzz_Weight",
+                "FuzzWeight",
+            ],
             color_space="Linear",
             mode="L",
             default_background=(127, 127, 127, 255),
             scale_as_mask=True,
         ),
+        "Sheen_Color": MapType(
+            name="Sheen_Color",
+            aliases=[
+                "SheenColor",
+                "Sheen_Tint",
+                "SheenTint",
+                "Fuzz_Color",
+                "FuzzColor",
+            ],
+            color_space="sRGB",
+            mode="RGB",
+            default_background=(255, 255, 255, 255),
+        ),
+        "Sheen_Roughness": MapType(
+            name="Sheen_Roughness",
+            aliases=[
+                "SheenRoughness",
+                "Fuzz_Roughness",
+                "FuzzRoughness",
+            ],
+            color_space="Linear",
+            mode="L",
+            default_background=(127, 127, 127, 255),
+        ),
         "Clearcoat": MapType(
             name="Clearcoat",
-            aliases=["ClearcoatMap", "Coat"],
+            # The coat WEIGHT: OpenPBR `coat_weight`, Substance `coatOpacity`.
+            aliases=[
+                "ClearcoatMap",
+                "Coat",
+                "Clear_Coat",
+                "Clear_Coat_Weight",
+                "Clearcoat_Weight",
+                "ClearcoatWeight",
+                "Coat_Weight",
+                "CoatWeight",
+                "Coat_Opacity",
+                "CoatOpacity",
+            ],
+            color_space="Linear",
+            mode="L",
+            default_background=(127, 127, 127, 255),
+            scale_as_mask=True,
+        ),
+        "Clearcoat_Color": MapType(
+            name="Clearcoat_Color",
+            aliases=[
+                "ClearcoatColor",
+                "Clear_Coat_Color",
+                "Clearcoat_Tint",
+                "ClearcoatTint",
+                "Coat_Color",
+                "CoatColor",
+                "Coat_Tint",
+                "CoatTint",
+            ],
+            color_space="sRGB",
+            mode="RGB",
+            default_background=(255, 255, 255, 255),
+        ),
+        "Clearcoat_Roughness": MapType(
+            name="Clearcoat_Roughness",
+            aliases=[
+                "ClearcoatRoughness",
+                "Clear_Coat_Roughness",
+                "Coat_Roughness",
+                "CoatRoughness",
+                "Coat_Rough",
+                "CoatRough",
+            ],
+            color_space="Linear",
+            mode="L",
+            default_background=(0, 0, 0, 255),
+        ),
+        "Clearcoat_Normal": MapType(
+            name="Clearcoat_Normal",
+            # The coat's own tangent-space normal (OpenPBR
+            # `geometry_coat_normal`). Deliberately absent from `NORMAL_TYPES`:
+            # it must never be offered as the base surface's normal.
+            aliases=[
+                "ClearcoatNormal",
+                "Clear_Coat_Normal",
+                "Coat_Normal",
+                "CoatNormal",
+            ],
+            color_space="Linear",
+            mode="RGB",
+            default_background=(127, 127, 255, 255),
+            resolution_critical=True,
+        ),
+        "Thin_Film": MapType(
+            name="Thin_Film",
+            # The thin-film WEIGHT: OpenPBR `thin_film_weight`, glTF
+            # KHR_materials_iridescence `iridescenceTexture`.
+            aliases=[
+                "ThinFilm",
+                "Thin_Film_Weight",
+                "ThinFilmWeight",
+                "Iridescence",
+                "IridescenceMap",
+            ],
+            color_space="Linear",
+            mode="L",
+            default_background=(0, 0, 0, 255),
+            scale_as_mask=True,
+        ),
+        "Thin_Film_Thickness": MapType(
+            name="Thin_Film_Thickness",
+            # OpenPBR units: 1.0 = 1 micrometre (OpenPBR's default film is
+            # 0.5). Blender's `Thin Film Thickness` takes nanometres.
+            aliases=[
+                "ThinFilmThickness",
+                "Iridescence_Thickness",
+                "IridescenceThickness",
+            ],
             color_space="Linear",
             mode="L",
             default_background=(127, 127, 127, 255),
@@ -947,6 +1251,50 @@ class MapRegistry(SingletonMixin):
             self.__class__._resolve_cache = {}
         return self._sorted_candidates
 
+    # The OpenPBR lobe inputs a DCC wires straight from a loose map: map type ->
+    # logical channel. Logical names follow OpenPBR's parameters (`coat`,
+    # `subsurfaceRadius`); the per-shader attribute is each DCC's business
+    # (mayatk `ShaderAttributeMap`, blendertk's Principled table), so both wire
+    # an OpenPBR set from this one vocabulary and cannot drift.
+    LOBE_TYPE_CHANNELS = {
+        "Diffuse_Roughness": "diffuseRoughness",
+        "Specular_Level": "specularWeight",
+        "Specular_Color": "specular",
+        "Anisotropy": "anisotropy",
+        "Transmission": "transmission",
+        "Transmission_Color": "transmissionColor",
+        "Subsurface_Scattering": "subsurface",
+        "Subsurface_Color": "subsurfaceColor",
+        "Subsurface_Radius": "subsurfaceRadius",
+        "Clearcoat": "coat",
+        "Clearcoat_Color": "coatColor",
+        "Clearcoat_Roughness": "coatRoughness",
+        "Clearcoat_Normal": "coatNormal",
+        "Sheen": "sheen",
+        "Sheen_Color": "sheenColor",
+        "Sheen_Roughness": "sheenRoughness",
+        "Thin_Film": "thinFilm",
+        "Thin_Film_Thickness": "thinFilmThickness",
+    }
+
+    # A lobe parameter channel -> the WEIGHT channel that switches its lobe on.
+    # Every OpenPBR lobe weight defaults to 0 (Principled's too), so a coat
+    # colour, roughness or normal wired onto a coat of weight 0 renders nothing
+    # -- connected, correct-looking, invisible. A builder handed a lobe's
+    # parameter map but no weight map opens the weight at 1.0, the way an
+    # emissive map opens the emission weight. A wired weight map always wins.
+    LOBE_GATES = {
+        "coatColor": "coat",
+        "coatRoughness": "coat",
+        "coatNormal": "coat",
+        "sheenColor": "sheen",
+        "sheenRoughness": "sheen",
+        "transmissionColor": "transmission",
+        "subsurfaceColor": "subsurface",
+        "subsurfaceRadius": "subsurface",
+        "thinFilmThickness": "thinFilm",
+    }
+
     # Logical PBR channel -> canonical map type. The join between "what socket a
     # shader read this texture from" (the DCCs' vocabulary) and "what kind of map
     # it is" (this registry's). Both live above pythontk and cannot import each
@@ -956,7 +1304,13 @@ class MapRegistry(SingletonMixin):
     # file, never how it is packed. An MSAO wired into a metallic slot is still an
     # MSAO, and only its FILENAME reveals that. So this is the fallback for files
     # that classify to nothing -- never a replacement for filename classification.
+    #
+    # The OpenPBR lobe channels come from LOBE_TYPE_CHANNELS (above) rather than
+    # a second hand-kept list. The core entries win a shared channel:
+    # `Specular_Color` drives the same input the `specular` channel already
+    # names, and a file found there keeps its long-standing `Specular` reading.
     LOGICAL_CHANNEL_TYPES = {
+        **{channel: map_type for map_type, channel in LOBE_TYPE_CHANNELS.items()},
         "baseColor": "Base_Color",
         "emission": "Emissive",
         "specular": "Specular",
@@ -984,6 +1338,14 @@ class MapRegistry(SingletonMixin):
     # blendertk tried "Normal" FIRST, shadowing a labeled map with an unlabeled
     # one). Also the membership set for "is this a normal map type".
     NORMAL_TYPES = ("Normal_OpenGL", "Normal_DirectX", "Normal")
+
+    # Every map type that stores tangent-space normal VECTORS: the base normal's
+    # conventions plus the coat's own (OpenPBR `geometry_coat_normal`). The
+    # ENCODING membership -- resampled as unit vectors, RDO-capped as a normal,
+    # written to a profile's normal-map container. Never the shader's base
+    # normal: that choice is NORMAL_TYPES / select_normal_type. Reading
+    # NORMAL_TYPES for encoding would resize and compress a coat normal as colour.
+    TANGENT_NORMAL_TYPES = NORMAL_TYPES + ("Clearcoat_Normal",)
 
     # Handedness spellings that pair 1:1 across the two tangent-space
     # conventions, longest tag first. This is the ONLY positional relationship in

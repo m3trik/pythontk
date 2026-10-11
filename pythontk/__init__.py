@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.13.0"
+__version__ = "0.13.1"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -103,6 +103,7 @@ DEFAULT_INCLUDE = {
     # manifest, declared once (SceneRecords.ARTICULATION names them).
     "geo_utils.articulation.record": ["ArticulationRecord", "ArticulationWeb"],
     "img_utils.shadow_atlas": "ShadowAtlas",
+    "img_utils.rect_packer": ["RectPacker", "RectPackResult"],
     "geo_utils.uv.pack": ["UvPack", "PackIslandsResult"],
     "geo_utils.uv.budget": [
         "UvBudget",
@@ -164,6 +165,7 @@ DEFAULT_INCLUDE = {
         "ActiveShotChanged",
         "SettingsChanged",
         "BatchComplete",
+        "ShotsEdited",
         "StoreInvalidated",
         "SHOT_PALETTE",
     ],
@@ -250,6 +252,15 @@ DEFAULT_INCLUDE = {
     ],
     "core_utils.engines.shots.manifest.manifest_engine": [
         "ShotManifest",
+    ],
+    "core_utils.engines.shots.manifest.manifest_edits": [
+        "ManifestEdits",
+    ],
+    "core_utils.engines.shots.manifest.manifest_export": [
+        "ManifestExport",
+    ],
+    "core_utils.engines.shots.manifest.manifest_tags": [
+        "ManifestTags",
     ],
     "core_utils.engines.shots.manifest.range_resolver": [
         "RangeResolver",
@@ -391,7 +402,7 @@ DEFAULT_INCLUDE = {
     # Ecosystem SSoT for type-based name affixes (mesh -> _GEO, material -> _MAT).
     # Qt-free and DCC-free on purpose: uitk's affix picker resolves against it and
     # cannot import a toolkit, and extapps has no DCC at all.
-    "core_utils.naming_convention": [
+    "core_utils.naming_convention._naming_convention": [
         "AffixRule",
         "NamingConvention",
     ],

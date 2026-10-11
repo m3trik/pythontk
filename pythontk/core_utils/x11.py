@@ -1,6 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
-"""A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys."""
+"""A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys,
+window properties."""
 
 import contextlib
 import ctypes
@@ -27,6 +28,7 @@ class _X11Internal:
     _XA_STRING = 31
     _XA_WINDOW = 33
     _ANY_PROPERTY_TYPE = 0
+    _PROP_MODE_REPLACE = 0
     _IS_VIEWABLE = 2
 
     #: ``int (*XErrorHandler)(Display*, XErrorEvent*)``
@@ -102,6 +104,10 @@ class _X11Internal:
                 ),
                 "XKeysymToKeycode": ([vp, ul], ctypes.c_ubyte),
                 "XQueryKeymap": ([vp, ctypes.c_char * 32], i),
+                "XChangeProperty": ([vp, ul, ul, ul, i, i, vp, i], i),
+                "XDeleteProperty": ([vp, ul, ul], i),
+                "XListProperties": ([vp, ul, P(i)], P(ul)),
+                "XFlush": ([vp], i),
                 "XFree": ([vp], i),
                 "XSetErrorHandler": (
                     [cls._ERROR_HANDLER_TYPE],
@@ -250,7 +256,8 @@ class _X11Internal:
 
 
 class X11(_X11Internal):
-    """What an X server can say about windows, the pointer, focus and keys.
+    """What an X server can say about windows, the pointer, focus and keys --
+    and the properties a client sets on its windows.
 
     Linux desktops run X11 or Wayland. Under Wayland, X11 clients -- Maya, an
     xcb app, among them -- run on XWayland, and see only XWayland windows.
@@ -330,6 +337,78 @@ class X11(_X11Internal):
             screen = lib.XDefaultScreen(display)
             atom = cls._atom(lib, display, f"_NET_WM_CM_S{screen}")
             return bool(lib.XGetSelectionOwner(display, atom))
+
+    @classmethod
+    def set_cardinal_property(
+        cls, window: int, name: str, values: Iterable[int]
+    ) -> Optional[bool]:
+        """Set *window*'s property *name* to *values* as format-32 CARDINALs.
+
+        An empty *values* sets an empty property, which a reader can tell from
+        none (KWin reads an empty ``_KDE_NET_WM_BLUR_BEHIND_REGION`` as "the
+        whole window"). Flushed at once: this connection is never pumped.
+
+        Parameters:
+            window: The X window id (a Qt top-level's ``winId()`` on xcb).
+            name: The property's atom name.
+            values: The items, each fitting a C long.
+
+        Returns:
+            True once sent, or None without a server. A window that is gone
+            is a silent no-op (its ``BadWindow`` is absorbed).
+        """
+        items = list(values)
+        data = (ctypes.c_long * max(len(items), 1))(*items)  # C longs on the wire
+        with cls._session() as session:
+            if session is None:
+                return None
+            lib, display = session
+            lib.XChangeProperty(
+                display,
+                window,
+                cls._atom(lib, display, name),
+                cls._XA_CARDINAL,
+                32,
+                cls._PROP_MODE_REPLACE,
+                ctypes.cast(data, ctypes.c_void_p),
+                len(items),
+            )
+            lib.XFlush(display)
+            return True
+
+    @classmethod
+    def delete_property(cls, window: int, name: str) -> Optional[bool]:
+        """Remove *window*'s property *name* (absent is fine). True once sent,
+        or None without a server."""
+        with cls._session() as session:
+            if session is None:
+                return None
+            lib, display = session
+            lib.XDeleteProperty(display, window, cls._atom(lib, display, name))
+            lib.XFlush(display)
+            return True
+
+    @classmethod
+    def has_property(cls, name: str, window: Optional[int] = None) -> Optional[bool]:
+        """Whether *window* -- the root window when None -- carries the
+        property *name*. A window manager advertises a feature this way (KWin
+        sets ``_KDE_NET_WM_BLUR_BEHIND_REGION`` on the root while its blur
+        effect is loaded). None without a server."""
+        with cls._session() as session:
+            if session is None:
+                return None
+            lib, display = session
+            if window is None:
+                window = lib.XDefaultRootWindow(display)
+            atom = cls._atom(lib, display, name)
+            count = ctypes.c_int()
+            atoms = lib.XListProperties(display, window, ctypes.byref(count))
+            if not atoms:
+                return False
+            try:
+                return any(atoms[k] == atom for k in range(count.value))
+            finally:
+                lib.XFree(ctypes.cast(atoms, ctypes.c_void_p))
 
     @classmethod
     def key_down(cls, keysym: int) -> Optional[bool]:

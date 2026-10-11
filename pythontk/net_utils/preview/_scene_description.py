@@ -87,7 +87,10 @@ class _SceneDescriptionMixin:
 
         Returns:
             Always ``schema``, ``asset`` (the served name, or ``None`` before a
-            publish) and ``version`` -- a page read across a publish shows it.
+            publish) and ``version`` -- a page read across a publish shows it
+            -- and ``parts`` (``[{"url", "name"}]``) when the scene was
+            published as several (:meth:`publish_parts`): ``asset`` is the
+            first, the one described.
             The overview adds ``about``, ``title``, ``updated``, ``viewer``
             (``{"page", "three"}``, or ``None`` when no page is served),
             ``rendering`` and ``renderingSource`` (``"asset"`` or
@@ -106,7 +109,12 @@ class _SceneDescriptionMixin:
             raise ValueError(f"start is a whole number from 0, not {start}")
         with self._lock:
             asset, version, updated = self._asset, self._version, self._updated
+            parts = [dict(part) for part in self._parts]
         head = {"schema": self.SCENE_SCHEMA, "asset": asset, "version": version}
+        if len(parts) > 1:
+            # The scene is several files and this describes the first: the
+            # rest are named, each downloadable by its own `url`.
+            head["parts"] = parts
         if asset is None:
             if section is not None:
                 raise KeyError(section)

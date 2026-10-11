@@ -1,11 +1,12 @@
 // The manifest poll: what the server says the page should be showing -- the
-// asset and its version, the active scripts, and the switches (title, start
+// asset (or the parts of one scene) and its version, the active scripts, and the switches (title, start
 // node, locomotion, guest, XR runtime) -- read once a second.
 
-import { setGuest, loadScripts } from './api.js';
+import { isGuest, setGuest, loadScripts } from './api.js';
 import { el } from './dom.js';
 import { load } from './load.js';
 import { locomotion } from './locomotion.js';
+import { refreshMenus } from './menus.js';
 import { setStartName } from './start.js';
 import { setStatus } from './status.js';
 import { setXrRuntime } from './xr.js';
@@ -47,7 +48,11 @@ async function poll() {
     locomotion.enabled = manifest.locomotion !== false;
     // Ahead of the scripts below, which may ask `viewer.guest` as they load.
     const guest = manifest.guest === true;
-    setGuest(guest);
+    if (guest !== isGuest()) {
+      setGuest(guest);
+      // An item that writes is not a guest's to offer.
+      refreshMenus();
+    }
     el.normalSave.hidden = guest;
     // Ahead of the version check, so it lands on the FIRST poll rather than
     // waiting for a publish.
@@ -71,7 +76,12 @@ async function poll() {
     // supersedes it — otherwise a genuinely corrupt GLB re-parses every second.
     if (manifest.version === failedVersion && failCount >= LOAD_RETRIES) return;
 
-    if (!manifest.asset) {
+    // Every part of the scene, in order; a server from before parts names
+    // the one asset.
+    const parts = manifest.parts?.length
+      ? manifest.parts
+      : manifest.asset && [{ name: manifest.asset, url: manifest.asset }];
+    if (!parts) {
       seenVersion = manifest.version;
       setStatus('waiting for the first publish…');
       return;
@@ -80,7 +90,10 @@ async function poll() {
     seenVersion = manifest.version;
     // The query string is what actually defeats a warm HTTP cache when the
     // asset keeps a stable name across pushes.
-    const ok = await load(`${manifest.asset}?v=${manifest.version}`, manifest.version);
+    const ok = await load(
+      parts.map((part) => ({ name: part.name, url: `${part.url}?v=${manifest.version}` })),
+      manifest.version,
+    );
     if (ok === null) return; // superseded mid-load — the newer call owns the bookkeeping
     if (ok) {
       failedVersion = -1;

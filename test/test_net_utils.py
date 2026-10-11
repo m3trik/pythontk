@@ -311,14 +311,15 @@ class TestNetUtils(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "win32", "netstat's console codepage")
     def test_listening_ports_reads_a_localized_netstat(self):
         """netstat writes the console's OEM codepage; read as ANSI text, a
-        French header ("État": cp850 0x90, undefined in cp1252) raised
-        UnicodeDecodeError before a row was read. A real child writes the
+        localized header (a French Windows writes an "É": cp850 0x90, undefined
+        in cp1252) raised UnicodeDecodeError before a row was read. The header
+        here is English with that byte in it ("Élan"). A real child writes the
         bytes, so subprocess's own decoding is what runs."""
         import subprocess
 
         raw = (
-            "\r\nConnexions actives\r\n\r\n"
-            "  Proto  Adresse locale         Adresse distante       État\r\n"
+            "\r\nActive Connections\r\n\r\n"
+            "  Proto  Local Address          Foreign Address        Élan\r\n"
             "  TCP    0.0.0.0:7002           0.0.0.0:0              LISTENING"
             "       4242\r\n"
             "  TCP    127.0.0.1:7002         127.0.0.1:50000        ESTABLISHED"

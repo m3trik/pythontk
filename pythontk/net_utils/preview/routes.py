@@ -164,6 +164,8 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
     def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler API)
         if not self._discard_body() or self._foreign_host():
             return
+        if self._guest and not self._enter_share():
+            return
         route = self.path.split("?", 1)[0].lstrip("/")
         if self._guest:
             self._guest_get(route)
@@ -197,6 +199,8 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         """
         if not self._discard_body() or self._foreign_host():
             return
+        if self._guest and not self._enter_share():
+            return
         if self._guest and not self._guest_may_read(self._route()):
             self.send_error(404)
             return
@@ -217,6 +221,33 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         ):
             return True
         return self._read_body(self._route()) is not None
+
+    def _enter_share(self) -> bool:
+        """Route a guest's request inside its share; False once refused.
+
+        A private share answers only under its path segment
+        (:meth:`PreviewServer.share`): the segment is taken off ``self.path``
+        here, so every route below reads as it does on a share without one.
+        Anything outside it is a 404 -- the same answer as a name that does
+        not exist, so a probe learns nothing -- and the segment without its
+        trailing slash is sent to it with one, or the page's relative URLs
+        would resolve one level up, outside the share.
+        """
+        if self._owner is None:
+            return True
+        path, query = (self.path.split("?", 1) + [""])[:2]
+        route = self._owner._guest_route(path)
+        if route is None:
+            self.send_error(404)
+            return False
+        if route == "/" and not path.endswith("/"):
+            self.send_response(301)
+            self.send_header("Location", path + "/" + (f"?{query}" if query else ""))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
+        self.path = route + (f"?{query}" if query else "")
+        return True
 
     def _route(self) -> str:
         """The request path without its query or leading slash, decoded."""
@@ -428,6 +459,10 @@ class _PreviewHandler(SimpleHTTPRequestHandler):
         body = self._read_body(route)
         if body is None:
             return
+        if self._guest:
+            if not self._enter_share():
+                return
+            route = self.path.split("?", 1)[0].lstrip("/")
         if self._guest and route != VIEWER_CLOSED_PATH:
             # The guest listener has no write routes at all, whatever the route
             # would be on the owner's -- after the drain, like every refusal

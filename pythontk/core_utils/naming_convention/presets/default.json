@@ -1,0 +1,93 @@
+{
+    "_meta": {
+        "description": "The shipped naming convention (_GEO, _MAT, _GRP, ...). Load it to return every entry to its shipped affix."
+    },
+    "group": {
+        "text": "_GRP",
+        "mode": "auto"
+    },
+    "locator": {
+        "text": "_LOC",
+        "mode": "auto"
+    },
+    "joint": {
+        "text": "_JNT",
+        "mode": "auto"
+    },
+    "mesh": {
+        "text": "_GEO",
+        "mode": "auto"
+    },
+    "nurbsCurve": {
+        "text": "_CRV",
+        "mode": "auto"
+    },
+    "camera": {
+        "text": "_CAM",
+        "mode": "auto"
+    },
+    "light": {
+        "text": "_LGT",
+        "mode": "auto"
+    },
+    "displayLayer": {
+        "text": "_LYR",
+        "mode": "auto"
+    },
+    "ikHandle": {
+        "text": "_IKH",
+        "mode": "auto"
+    },
+    "nurbsSurface": {
+        "text": "_SRF",
+        "mode": "auto"
+    },
+    "cluster": {
+        "text": "_CLS",
+        "mode": "auto"
+    },
+    "lattice": {
+        "text": "_LAT",
+        "mode": "auto"
+    },
+    "skinCluster": {
+        "text": "_SKN",
+        "mode": "auto"
+    },
+    "blendShape": {
+        "text": "_BS",
+        "mode": "auto"
+    },
+    "constraint": {
+        "text": "_CON",
+        "mode": "auto"
+    },
+    "material": {
+        "text": "_MAT",
+        "mode": "auto"
+    },
+    "shadingEngine": {
+        "text": "_SG",
+        "mode": "auto"
+    },
+    "texture": {
+        "text": "_TEX",
+        "mode": "auto"
+    },
+    "objectSet": {
+        "text": "_SET",
+        "mode": "auto"
+    },
+    "lightmap": {
+        "text": "_Lightmap",
+        "mode": "auto"
+    },
+    "packedTexture": {
+        "text": "_Packed",
+        "mode": "auto"
+    },
+    "control": {
+        "text": "_CTRL",
+        "mode": "auto"
+    }
+}

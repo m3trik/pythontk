@@ -444,5 +444,192 @@ class TileTokenTest(unittest.TestCase):
             self.assertEqual(MapRegistry.split_tile_token(stem), (stem, ""))
 
 
+class OpenPBRLobeClassificationTest(unittest.TestCase):
+    """An OpenPBR / Adobe Standard Material set must classify map by map.
+
+    Every lobe input names its lobe AND its parameter (``Coat_Roughness``,
+    ``Sheen_Color``), and the parameter half is an ordinary map-type token.
+    Before these types existed the longest alias was that token, so the lobe
+    maps classified as the BASE maps -- a coat roughness was the material's
+    roughness, a coat normal its normal, a sheen colour its base colour -- and
+    the lobe word stayed welded to the base name, so one material grouped as
+    several (``rock``, ``rock_Coat``, ``rock_Sheen``), each with a bogus
+    base-colour or roughness map.
+    """
+
+    # (spelling, expected type) -- the OpenPBR name, the Substance/ASM channel
+    # name and the glTF extension name for each input, where they differ.
+    SPELLINGS = (
+        ("Coat_Roughness", "Clearcoat_Roughness"),
+        ("CoatRoughness", "Clearcoat_Roughness"),
+        ("ClearcoatRoughness", "Clearcoat_Roughness"),
+        ("Coat_Normal", "Clearcoat_Normal"),
+        ("ClearcoatNormal", "Clearcoat_Normal"),
+        ("Coat_Color", "Clearcoat_Color"),
+        ("CoatColor", "Clearcoat_Color"),
+        ("Coat_Weight", "Clearcoat"),
+        ("CoatOpacity", "Clearcoat"),
+        ("Coat", "Clearcoat"),
+        ("Sheen_Color", "Sheen_Color"),
+        ("Fuzz_Color", "Sheen_Color"),
+        ("SheenRoughness", "Sheen_Roughness"),
+        ("Fuzz_Roughness", "Sheen_Roughness"),
+        ("SheenOpacity", "Sheen"),
+        ("Fuzz", "Sheen"),
+        ("Fuzz_Weight", "Sheen"),
+        ("Transmission", "Transmission"),
+        ("Transmission_Weight", "Transmission"),
+        ("Transmission_Color", "Transmission_Color"),
+        ("Subsurface_Weight", "Subsurface_Scattering"),
+        ("Scattering", "Subsurface_Scattering"),
+        ("Subsurface_Color", "Subsurface_Color"),
+        ("ScatteringColor", "Subsurface_Color"),
+        ("Subsurface_Radius", "Subsurface_Radius"),
+        ("Specular_Level", "Specular_Level"),
+        ("SpecularLevel", "Specular_Level"),
+        ("Specular_Color", "Specular_Color"),
+        ("SpecularEdgeColor", "Specular_Color"),
+        ("Specular_Anisotropy", "Anisotropy"),
+        ("AnisotropyLevel", "Anisotropy"),
+        ("Anisotropy_Angle", "Anisotropy_Angle"),
+        ("Anisotropic_Rotation", "Anisotropy_Angle"),
+        ("Thin_Film_Thickness", "Thin_Film_Thickness"),
+        ("Iridescence_Thickness", "Thin_Film_Thickness"),
+        ("Thin_Film", "Thin_Film"),
+        ("Iridescence", "Thin_Film"),
+        ("Diffuse_Roughness", "Diffuse_Roughness"),
+        ("Emission_Color", "Emissive"),
+        ("EmissiveColor", "Emissive"),
+        # `Clear_Coat` is a weight alias, so each of its compounds is one too:
+        # unregistered, `rock_Clear_Coat_Roughness` based to `rock_Clear`.
+        ("Clear_Coat", "Clearcoat"),
+        ("Clear_Coat_Weight", "Clearcoat"),
+        ("Clear_Coat_Roughness", "Clearcoat_Roughness"),
+        ("Clear_Coat_Normal", "Clearcoat_Normal"),
+        ("Clear_Coat_Color", "Clearcoat_Color"),
+    )
+
+    def test_every_lobe_input_classifies_as_itself(self):
+        registry = MapRegistry()
+        for spelling, expected in self.SPELLINGS:
+            with self.subTest(spelling=spelling):
+                self.assertEqual(
+                    registry.resolve_type_from_path(f"rock_{spelling}.png"), expected
+                )
+
+    def test_lobe_inputs_keep_the_set_together(self):
+        """The base name drops the WHOLE lobe suffix, so a set stays one set."""
+        from pythontk.core_utils.engines.textures.map_factory import MapFactory
+
+        for spelling, _ in self.SPELLINGS:
+            with self.subTest(spelling=spelling):
+                self.assertEqual(
+                    MapFactory.get_base_texture_name(f"rock_{spelling}.png"), "rock"
+                )
+
+    def test_the_base_maps_still_classify_as_base_maps(self):
+        """The lobe types must not steal the base inputs they are spelled from."""
+        registry = MapRegistry()
+        for spelling, expected in (
+            ("Roughness", "Roughness"),
+            ("Normal", "Normal"),
+            ("BaseColor", "Base_Color"),
+            ("Color", "Base_Color"),
+            ("Specular", "Specular"),
+            ("Thickness", "Thickness"),
+            ("Emissive", "Emissive"),
+        ):
+            with self.subTest(spelling=spelling):
+                self.assertEqual(
+                    registry.resolve_type_from_path(f"rock_{spelling}.png"), expected
+                )
+
+    def test_a_lobe_colour_is_colour_data_and_its_scalars_are_not(self):
+        """A tint is authored in sRGB; a weight, roughness or radius is data.
+
+        ``Subsurface_Scattering`` is the subsurface WEIGHT (Substance's
+        ``Scattering`` channel; blendertk wires it to Principled's
+        ``Subsurface Weight``) now that its colour has a type of its own, so it
+        must not be sRGB-decoded either.
+        """
+        registry = MapRegistry()
+        for name in (
+            "Clearcoat_Color",
+            "Sheen_Color",
+            "Transmission_Color",
+            "Subsurface_Color",
+            "Specular_Color",
+        ):
+            self.assertEqual(registry.get(name).color_space, "sRGB", name)
+        for name in (
+            "Clearcoat",
+            "Clearcoat_Roughness",
+            "Clearcoat_Normal",
+            "Sheen",
+            "Sheen_Roughness",
+            "Transmission",
+            "Subsurface_Scattering",
+            "Subsurface_Radius",
+            "Specular_Level",
+            "Anisotropy",
+            "Anisotropy_Angle",
+            "Thin_Film",
+            "Thin_Film_Thickness",
+            "Diffuse_Roughness",
+        ):
+            self.assertEqual(registry.get(name).color_space, "Linear", name)
+
+    def test_a_coat_normal_is_never_the_shader_normal(self):
+        self.assertNotIn("Clearcoat_Normal", MapRegistry.NORMAL_TYPES)
+        self.assertIsNone(MapRegistry.select_normal_type({"Clearcoat_Normal"}))
+
+    def test_a_coat_normal_is_encoded_as_a_normal(self):
+        """Vector data all the same: resampled, compressed and contained like
+        the base normal. The encoders read NORMAL_TYPES, which would have sized
+        and compressed a coat normal as colour."""
+        from pythontk.core_utils.engines.textures.output_template import (
+            OutputTemplates,
+        )
+
+        self.assertIn("Clearcoat_Normal", MapRegistry.TANGENT_NORMAL_TYPES)
+        for name in MapRegistry.NORMAL_TYPES:
+            self.assertIn(name, MapRegistry.TANGENT_NORMAL_TYPES)
+        for profile, template in OutputTemplates.BUILTIN.items():
+            with self.subTest(profile=profile):
+                self.assertEqual(
+                    template.resolve("Clearcoat_Normal"), template.resolve("Normal")
+                )
+
+
+class LobeChannelTableTest(unittest.TestCase):
+    """The shared lobe vocabulary both DCC packages wire OpenPBR inputs from."""
+
+    def test_every_lobe_type_is_a_registered_map(self):
+        registry = MapRegistry()
+        for map_type in MapRegistry.LOBE_TYPE_CHANNELS:
+            self.assertIsNotNone(registry.get(map_type), map_type)
+
+    def test_a_lobe_channel_resolves_back_to_its_type(self):
+        """The slot -> type fallback agrees with the type -> slot wiring.
+
+        ``Specular_Color`` is the one type that shares a channel: it drives the
+        same ``specularColor`` input the ``specular`` channel already names, so
+        an unclassifiable file found there keeps its long-standing ``Specular``
+        reading.
+        """
+        for map_type, channel in MapRegistry.LOBE_TYPE_CHANNELS.items():
+            expected = "Specular" if channel == "specular" else map_type
+            self.assertEqual(
+                MapRegistry.resolve_type_from_channel(channel), expected, channel
+            )
+
+    def test_every_gate_is_a_lobe_channel(self):
+        channels = set(MapRegistry.LOBE_TYPE_CHANNELS.values())
+        for dependent, gate in MapRegistry.LOBE_GATES.items():
+            self.assertIn(dependent, channels, dependent)
+            self.assertIn(gate, channels, gate)
+            self.assertNotIn(gate, MapRegistry.LOBE_GATES, f"{gate} is gated itself")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -102,7 +102,7 @@ class _ChannelPackingInternal:
                     "Cannot determine output path from Image object. Please provide output_path or output_dir."
                 )
 
-            base_name = ImgUtils.get_base_texture_name(albedo_map_path)
+            base_name = cls._set_base_name(albedo_map_path, [alpha_map_path])
 
             if output_dir is None:
                 output_dir = os.path.dirname(albedo_map_path)
@@ -147,7 +147,7 @@ class _ChannelPackingInternal:
                     "Cannot determine output path from Image object. Please provide output_path or output_dir."
                 )
 
-            base_name = ImgUtils.get_base_texture_name(metallic_map_path)
+            base_name = cls._set_base_name(metallic_map_path, [alpha_map_path])
             if output_dir is None:
                 output_dir = os.path.dirname(metallic_map_path)
             elif not os.path.isdir(output_dir):
@@ -199,7 +199,7 @@ class _ChannelPackingInternal:
             if not source_map:
                 raise ValueError("No source maps provided to derive output name")
 
-            base_name = cls.get_base_texture_name(source_map)
+            base_name = cls._set_base_name(source_map, originals)
 
             if output_dir is None:
                 if isinstance(source_map, str):
@@ -267,7 +267,10 @@ class _ChannelPackingInternal:
             if not source_map:
                 raise ValueError("No source maps provided to derive output name")
 
-            base_name = cls.get_base_texture_name(source_map)
+            base_name = cls._set_base_name(
+                source_map,
+                (metallic_map_path, ao_map_path, alpha_map_path, detail_map_path),
+            )
 
             if output_dir is None:
                 if isinstance(source_map, str):
@@ -355,7 +358,10 @@ class _ChannelPackingInternal:
             if not source_map:
                 raise ValueError("No source maps provided to derive output name")
 
-            base_name = cls.get_base_texture_name(source_map)
+            base_name = cls._set_base_name(
+                source_map,
+                (metallic_map_path, roughness_map_path, ao_map_path, detail_map_path),
+            )
 
             if output_dir is None:
                 if isinstance(source_map, str):

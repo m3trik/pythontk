@@ -52,6 +52,206 @@ class GroupTexturesBySetTest(BaseTestCase):
         self.assertEqual(only_files, files)
 
 
+class LobeNamedSetTest(BaseTestCase):
+    """A set whose OWN name ends in a lobe word is read against its neighbours.
+
+    ``Hero_Coat_Roughness`` is a coat roughness of set ``Hero`` (OpenPBR) or the
+    roughness of a garment set ``Hero_Coat``; the name alone cannot say which.
+    Once the OpenPBR lobe types were registered every such garment map read as
+    a lobe map, so ``Hero_Coat_BaseColor`` stayed in ``Hero_Coat`` while its
+    normal, roughness and colour split off into a phantom set ``Hero`` as coat
+    maps. ``MapFactory.classify_textures`` reads each file against the others:
+    a set named for a lobe keeps its base maps, an OpenPBR set keeps its lobes.
+    """
+
+    @staticmethod
+    def types(paths, **affixes):
+        return [
+            MapFactory.classify_textures(paths, **affixes)[path][0] for path in paths
+        ]
+
+    def test_a_garment_set_with_its_base_colour_stays_one_set(self):
+        files = [
+            "/x/Hero_Coat_BaseColor.png",
+            "/x/Hero_Coat_Normal.png",
+            "/x/Hero_Coat_Roughness.png",
+            "/x/Hero_Coat_Color.png",
+        ]
+        self.assertEqual(MapFactory.group_textures_by_set(files), {"Hero_Coat": files})
+        self.assertEqual(
+            self.types(files), ["Base_Color", "Normal", "Roughness", "Base_Color"]
+        )
+        self.assertEqual(
+            {base for _type, base in MapFactory.classify_textures(files).values()},
+            {"Hero_Coat"},
+        )
+
+    def test_a_set_named_for_emission_keeps_its_base_colour(self):
+        """Emissive's compound spellings (``Emission_Color``, 2026-10-10) misread
+        a set named ``<x>_Emission`` the same way: v0.13.0 read
+        ``Truck_Emission_Color`` as the Base_Color of set ``Truck_Emission``."""
+        files = [
+            "/x/Truck_Emission_Color.png",
+            "/x/Truck_Emission_Normal.png",
+            "/x/Truck_Emission_Roughness.png",
+        ]
+        self.assertEqual(
+            MapFactory.group_textures_by_set(files), {"Truck_Emission": files}
+        )
+        self.assertEqual(self.types(files), ["Base_Color", "Normal", "Roughness"])
+
+    def test_an_emission_colour_beside_its_base_colour_stays_emissive(self):
+        files = ["/x/rock_BaseColor.png", "/x/rock_Emission_Color.png"]
+        self.assertEqual(MapFactory.group_textures_by_set(files), {"rock": files})
+        self.assertEqual(self.types(files), ["Base_Color", "Emissive"])
+
+    def test_a_set_of_only_lobe_named_maps_reads_as_base_maps(self):
+        """A set of lobe maps with no base map is not a material."""
+        files = [
+            "/x/Hero_Coat_Normal.png",
+            "/x/Hero_Coat_Roughness.png",
+            "/x/Hero_Coat_Color.png",
+        ]
+        self.assertEqual(MapFactory.group_textures_by_set(files), {"Hero_Coat": files})
+        self.assertEqual(self.types(files), ["Normal", "Roughness", "Base_Color"])
+
+    def test_an_openpbr_set_keeps_its_lobes(self):
+        files = [
+            "/x/rock_BaseColor.png",
+            "/x/rock_Coat_Roughness.png",
+            "/x/rock_Coat_Normal.png",
+            "/x/rock_Sheen_Color.png",
+        ]
+        self.assertEqual(MapFactory.group_textures_by_set(files), {"rock": files})
+        self.assertEqual(
+            self.types(files),
+            ["Base_Color", "Clearcoat_Roughness", "Clearcoat_Normal", "Sheen_Color"],
+        )
+
+    def test_both_sets_present_the_lobe_named_set_keeps_its_maps(self):
+        """``Hero`` and ``Hero_Coat`` both exist: the garment keeps its roughness."""
+        hero = ["/x/Hero_BaseColor.png", "/x/Hero_Normal.png"]
+        coat = ["/x/Hero_Coat_BaseColor.png", "/x/Hero_Coat_Roughness.png"]
+        self.assertEqual(
+            MapFactory.group_textures_by_set(hero + coat),
+            {"Hero": hero, "Hero_Coat": coat},
+        )
+        self.assertEqual(
+            MapFactory.classify_textures(hero + coat)["/x/Hero_Coat_Roughness.png"],
+            ("Roughness", "Hero_Coat"),
+        )
+
+    def test_a_transmission_named_set(self):
+        files = ["/x/Truck_Transmission_Color.png", "/x/Truck_Transmission_Normal.png"]
+        self.assertEqual(
+            MapFactory.group_textures_by_set(files), {"Truck_Transmission": files}
+        )
+        self.assertEqual(self.types(files), ["Base_Color", "Normal"])
+
+    def test_the_shortest_lobe_prefix_that_leaves_a_base_map(self):
+        """``Clear`` + ``Coat_Roughness`` is still a lobe; ``Clear_Coat`` +
+        ``Roughness`` is the base reading."""
+        files = ["/x/Hero_Clear_Coat_Roughness.png"]
+        self.assertEqual(
+            MapFactory.classify_textures(files),
+            {files[0]: ("Roughness", "Hero_Clear_Coat")},
+        )
+
+    def test_the_lobe_word_keeps_its_spelling(self):
+        files = ["/x/hero_coat_basecolor.png", "/x/hero_coat_roughness.png"]
+        self.assertEqual(MapFactory.group_textures_by_set(files), {"hero_coat": files})
+
+    def test_udim_tiles_keep_their_own_keys(self):
+        files = [
+            "/x/Hero_Coat_Roughness.1001.png",
+            "/x/Hero_Coat_Roughness.1002.png",
+            "/x/Hero_Coat_Normal.1001.png",
+            "/x/Hero_Coat_Normal.1002.png",
+        ]
+        self.assertEqual(
+            MapFactory.group_textures_by_set(files),
+            {
+                "Hero_Coat.1001": [files[0], files[2]],
+                "Hero_Coat.1002": [files[1], files[3]],
+            },
+        )
+        self.assertEqual(
+            self.types(files), ["Roughness", "Roughness", "Normal", "Normal"]
+        )
+
+    def test_a_tiled_base_map_anchors_every_tile_of_an_openpbr_set(self):
+        files = ["/x/rock_BaseColor.1001.png", "/x/rock_Coat_Roughness.1002.png"]
+        self.assertEqual(
+            sorted(MapFactory.group_textures_by_set(files)), ["rock.1001", "rock.1002"]
+        )
+        self.assertEqual(self.types(files), ["Base_Color", "Clearcoat_Roughness"])
+
+    def test_a_configured_affix_is_stripped_before_the_sets_are_compared(self):
+        garment = ["/x/Mat_Hero_Coat_BaseColor.png", "/x/Hero_Coat_Roughness.png"]
+        self.assertEqual(
+            MapFactory.group_textures_by_set(garment, prefix="Mat_"),
+            {"Hero_Coat": garment},
+        )
+        self.assertEqual(self.types(garment, prefix="Mat_")[1], "Roughness")
+
+        openpbr = ["/x/Mat_rock_BaseColor.png", "/x/rock_Coat_Roughness.png"]
+        self.assertEqual(
+            MapFactory.group_textures_by_set(openpbr, prefix="Mat_"),
+            {"rock": openpbr},
+        )
+        self.assertEqual(self.types(openpbr, prefix="Mat_")[1], "Clearcoat_Roughness")
+
+        suffixed = ["/x/Hero_Coat_v2_BaseColor.png", "/x/Hero_Coat_v2_Roughness.png"]
+        self.assertEqual(
+            MapFactory.group_textures_by_set(suffixed, suffix="_v2"),
+            {"Hero_Coat": suffixed},
+        )
+
+    def test_one_file_alone_keeps_its_per_file_reading_unless_ambiguous(self):
+        """Per-file APIs keep the lobe reading; the batch reads a lone lobe-
+        named map as the base map its set name spells."""
+        path = "/x/Hero_Coat_Roughness.png"
+        self.assertEqual(MapFactory.resolve_map_type(path), "Clearcoat_Roughness")
+        self.assertEqual(MapFactory.get_base_texture_name(path), "Hero")
+        self.assertEqual(
+            MapFactory.classify_textures([path]), {path: ("Roughness", "Hero_Coat")}
+        )
+        # A lobe map whose suffix splits no further is never ambiguous.
+        for path in ("/x/rock_Transmission.png", "/x/rock_CoatRoughness.png"):
+            self.assertEqual(
+                MapFactory.classify_textures([path])[path],
+                (MapFactory.resolve_map_type(path), "rock"),
+            )
+
+    def test_resolve_map_types_is_the_batch_reading(self):
+        files = ["/x/Hero_Coat_BaseColor.png", "/x/Hero_Coat_Roughness.png"]
+        self.assertEqual(
+            MapFactory.resolve_map_types(files),
+            {files[0]: "Base_Color", files[1]: "Roughness"},
+        )
+
+    def test_sort_and_filter_read_the_batch(self):
+        files = ["/x/Hero_Coat_BaseColor.png", "/x/Hero_Coat_Roughness.png"]
+        self.assertEqual(
+            MapFactory.sort_images_by_type(files),
+            {"Base_Color": [files[0]], "Roughness": [files[1]]},
+        )
+        self.assertEqual(
+            MapFactory.filter_images_by_type(files, "Roughness"), [files[1]]
+        )
+
+    def test_the_dominant_set_of_a_garment(self):
+        files = [
+            "/t/Hero_Coat_Normal.png",
+            "/t/Hero_Coat_Roughness.png",
+            "/t/Hero_Coat_Color.png",
+        ]
+        self.assertEqual(
+            MapFactory.dominant_texture_set(files),
+            ("Hero_Coat", os.path.normpath("/t")),
+        )
+
+
 class FilterRedundantMapsTest(BaseTestCase):
     def first_precedence_rule(self):
         """Return the first ``(dominant, redundants)`` pair that has redundants.
@@ -1166,6 +1366,51 @@ class DominantTextureSetTest(BaseTestCase):
     def test_nothing_votes_for_nothing(self):
         self.assertIsNone(MapFactory.dominant_texture_set([]))
         self.assertIsNone(MapFactory.dominant_texture_set(None))
+
+
+class LightmapForBaseTest(BaseTestCase):
+    """``MapFactory.lightmap_for_base`` -- a set renamed takes the lightmap a bake
+    named after it along. mayatk's and blendertk's name syncs each carried a
+    copy (added 2026-10-05). The affix is the live convention's, so a studio's
+    own lightmap affix reads the same."""
+
+    def setUp(self):
+        from pythontk import NamingConvention
+
+        self.prefix, self.suffix = NamingConvention.affix_parts("lightmap")
+
+    def name(self, base, tail=".exr"):
+        return f"{self.prefix}{base}{self.suffix}{tail}"
+
+    def test_the_set_s_lightmap_is_spelled_for_the_new_base(self):
+        for tail in (".exr", "_1.exr", "-2.hdr"):
+            with self.subTest(tail=tail):
+                self.assertEqual(
+                    MapFactory.lightmap_for_base(
+                        self.name("rock", tail), "rock", "stone"
+                    ),
+                    self.name("stone", tail),
+                )
+
+    def test_matched_case_aside_the_affix_kept_as_spelled(self):
+        self.assertEqual(
+            MapFactory.lightmap_for_base(self.name("ROCK"), "rock", "stone"),
+            self.name("stone"),
+        )
+        lower = f"{self.prefix.lower()}rock{self.suffix.lower()}.exr"
+        self.assertEqual(
+            MapFactory.lightmap_for_base(lower, "rock", "stone"),
+            f"{self.prefix.lower()}stone{self.suffix.lower()}.exr",
+        )
+
+    def test_only_a_map_whose_whole_stem_is_the_set_s(self):
+        for other in (
+            self.name("rockery"),  # another set
+            self.name("my_rock"),
+            "rock_Normal.png",  # a material map, not a lightmap
+        ):
+            with self.subTest(other=other):
+                self.assertIsNone(MapFactory.lightmap_for_base(other, "rock", "stone"))
 
 
 if __name__ == "__main__":

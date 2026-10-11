@@ -263,6 +263,58 @@ class TestRename(TiledPathCase):
         self.assertEqual(self.listing(), ["rock.1001.png", "rock.1002.png"])
 
 
+class TestWithName(unittest.TestCase):
+    """The reference-side half of :meth:`TiledPath.rename`: a stored path naming
+    the new file, its folder spelled as it was. mayatk's and blendertk's
+    texture renames each carried a copy (added 2026-10-05)."""
+
+    def test_the_folder_keeps_its_spelling(self):
+        windows = chr(92)
+        for stored, expected in (
+            (f"C:{windows}tex{windows}rock.png", f"C:{windows}tex{windows}stone.png"),
+            ("C:/tex/rock.png", "C:/tex/stone.png"),
+            ("//textures/rock.png", "//textures/stone.png"),  # Blender-relative
+            ("sourceimages/rock.png", "sourceimages/stone.png"),
+            ("rock.png", "stone.png"),
+        ):
+            with self.subTest(stored=stored):
+                self.assertEqual(TiledPath.with_name(stored, "stone.png"), expected)
+
+    def test_the_tokens_ride_in_the_new_name(self):
+        self.assertEqual(
+            TiledPath.with_name("C:/tex/rock.<UDIM>.png", "stone.<UDIM>.png"),
+            "C:/tex/stone.<UDIM>.png",
+        )
+
+
+class TestStem(unittest.TestCase):
+    """What a node or an image is named after its texture: no extension, no
+    tile / frame token. mayatk's and blendertk's syncs each carried the regex
+    (added 2026-10-05)."""
+
+    def test_the_extension_and_every_token_go_with_their_separator(self):
+        for name, stem in (
+            ("rock_Normal.png", "rock_Normal"),
+            ("rock_Base_Color.<UDIM>.png", "rock_Base_Color"),
+            ("rock_<u>_<v>.png", "rock"),
+            ("rock.<UVTILE>.tif", "rock"),
+            ("smoke.<f>.exr", "smoke"),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(TiledPath.stem(name), stem)
+
+    def test_a_concrete_tile_number_is_part_of_the_name(self):
+        """Only a placeholder names a set: ``rock.1001.png`` is one file."""
+        self.assertEqual(TiledPath.stem("rock.1001.png"), "rock.1001")
+
+    def test_a_folder_is_ignored_and_the_ends_trimmed(self):
+        self.assertEqual(
+            TiledPath.stem(f"C:{chr(92)}tex{chr(92)}<UDIM>_rock.png"), "rock"
+        )
+        self.assertEqual(TiledPath.stem("//tex/rock_.<UDIM>.png"), "rock")
+        self.assertEqual(TiledPath.stem(""), "")
+
+
 class TestRootExport(unittest.TestCase):
     def test_the_root_serves_the_class(self):
         import pythontk as ptk

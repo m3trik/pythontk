@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -28,6 +29,13 @@ logger = logging.getLogger(__name__)
 # Output tail size embedded in failure messages — enough for a DCC traceback,
 # small enough to keep exceptions readable.
 _TAIL_CHARS = 4000
+
+# The final line of a Python traceback (``RuntimeError: ...``) and an app's own
+# report line (Blender / Maya print ``Error: ...``; Maya's Script Editor ``# Error:``).
+_EXCEPTION_LINE = re.compile(r"^[A-Za-z_][\w.]*(?:Error|Exception)(?::\s*(.*))?$")
+_REPORT_LINE = re.compile(r"^#?\s*Error:\s*(.+)$")
+# A summary is read in a message box: one line, never a wall of it.
+_SUMMARY_CHARS = 300
 
 
 # How the run is judged. ``CREATED``: the artifact must not survive from a prior run
@@ -64,6 +72,42 @@ class ScriptRunner(_ScriptRunnerInternal):
     which renders a script and launches a *detached* app: here the caller
     needs the result, so the app is waited on and its output returned.
     """
+
+    @staticmethod
+    def failure_summary(output: str) -> Optional[str]:
+        """The child's own last word on why it failed, as one line -- or ``None``.
+
+        The final line of the last Python traceback in *output* (its message, the
+        exception class dropped when it has one), else the last ``Error:`` report
+        line an app printed, clipped to a message box's length. What a person
+        is shown in place of the whole output tail the failure message carries
+        (:attr:`RuntimeError.summary` on a failed
+        :meth:`ScriptRunner.run_script_to_artifact`).
+
+        Parameters:
+            output: The child's combined stdout and stderr.
+
+        Returns:
+            One line of at most 300 characters, or ``None`` when *output*
+            holds no error line.
+
+        Example:
+            failure_summary("...\\nRuntimeError: no importer\\n") --> 'no importer'
+        """
+        found = None
+        for line in reversed((output or "").splitlines()):
+            line = line.strip()
+            match = _EXCEPTION_LINE.match(line)
+            if match:
+                found = (match.group(1) or line).strip() or line
+                break
+            if found is None:
+                match = _REPORT_LINE.match(line)
+                if match:
+                    found = match.group(1).strip()
+        if found and len(found) > _SUMMARY_CHARS:
+            found = found[: _SUMMARY_CHARS - 3].rstrip() + "..."
+        return found
 
     @staticmethod
     def run_script_to_artifact(
@@ -124,7 +168,9 @@ class ScriptRunner(_ScriptRunnerInternal):
             RuntimeError: when the artifact is missing, empty, or (under
                 :data:`REWRITTEN`) unchanged — the message embeds the exit code and
                 output tail, and the exception carries ``script_path`` (the script is
-                kept for debugging).
+                kept for debugging), ``output``, ``returncode`` and ``summary`` (the
+                child's own error line, :meth:`failure_summary`; ``None`` when it
+                printed none).
             FileNotFoundError / subprocess.TimeoutExpired: from the launch itself.
             pythontk.OperationCancelled: when *on_output* returned ``False`` (or an
                 ambient :class:`pythontk.CancelScope` was cancelled).
@@ -206,6 +252,8 @@ class ScriptRunner(_ScriptRunnerInternal):
             )
             error.output = output
             error.returncode = proc.returncode
+            # One line for a person; the message above is for the log.
+            error.summary = ScriptRunner.failure_summary(output)
             raise error
 
         if proc.returncode != 0:

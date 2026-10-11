@@ -2,7 +2,17 @@
 # coding=utf-8
 from bisect import bisect_left
 import math
-from typing import Callable, List, Tuple, Union, Sequence, Any, Optional, TYPE_CHECKING
+from typing import (
+    Callable,
+    Dict,
+    List,
+    Tuple,
+    Union,
+    Sequence,
+    Any,
+    Optional,
+    TYPE_CHECKING,
+)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -1679,6 +1689,52 @@ class MathUtils(
             round_to_aggressive_preferred(7.8) #returns: 10
         """
         return cls.round_to_preferred(value, max_distance=10)
+
+    @staticmethod
+    def best_rotate_order(
+        solutions: Dict[str, Sequence[Sequence[float]]],
+        current: Optional[str] = None,
+        gimbal_margin: float = 10.0,
+    ) -> Optional[str]:
+        """The Euler rotate order that keeps a keyed rotation on the fewest channels.
+
+        A turn about one fixed axis between two keys is ONE channel's change in
+        the right order and all three in the wrong one -- which is both why
+        rotating a prop "on one axis" changes every value and why the keyed
+        turn wobbles (Euler interpolation of three channels is not a turn about
+        one axis). The order that moves each key-to-key step through as few
+        channels as possible is the one the animation was meant for.
+
+        DCC-neutral: the caller re-solves its keys into every candidate order
+        (chained, so each set is continuous) and this scores them.
+
+        Parameters:
+            solutions: ``{order: [(x, y, z) per key, in degrees]}``, one entry
+                per candidate order ("xyz", "zyx", ...), keys in time order.
+            current: The node's present order. Wins ties, so a rotation every
+                order serves equally (a single-axis hinge) is left alone.
+            gimbal_margin: Degrees. An order whose MIDDLE channel comes within
+                this of +/-90 at any key sits at gimbal lock there, and only
+                wins when every order does.
+
+        Returns:
+            (str/None): The best order, or None for no *solutions*.
+        """
+        threshold = math.sin(math.radians(gimbal_margin))
+
+        def score(order):
+            keys = solutions[order]
+            spread = 0.0
+            for a, b in zip(keys, keys[1:]):
+                deltas = [abs(b[i] - a[i]) for i in range(3)]
+                spread += sum(deltas) - max(deltas)
+            middle = "xyz".index(order[1])
+            locked = any(
+                abs(math.cos(math.radians(k[middle]))) < threshold for k in keys
+            )
+            return (locked, round(spread, 6), order != current, order)
+
+        return min(solutions, key=score) if solutions else None
 
     @staticmethod
     def calculate_rotation_distance(

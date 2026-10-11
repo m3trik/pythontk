@@ -272,6 +272,57 @@ class RangeResolver:
         return dropped
 
     @staticmethod
+    def incremental_ranges(
+        steps: List[BuilderStep],
+        shot_ranges: Dict[str, Tuple[float, float]],
+        last_resolved: List[Tuple[str, float, Optional[float], bool]] = (),
+        user_ranges: Optional[Dict[str, Tuple[float, Optional[float]]]] = None,
+    ) -> Dict[str, Tuple[float, float]]:
+        """``{step_id: (start, end)}`` for a Build once some steps have shots.
+
+        Grow-only: a step with a shot keeps its shot's bounds (*shot_ranges*:
+        the store's -- grown to fit, or edited by hand since -- so a range typed
+        before the step was built never puts the old bounds back).  A step without
+        one takes its typed range (*user_ranges*; a start with no end is
+        zero-length there), else its last resolved one, else a zero-length
+        range at its doc predecessor's end -- the first step at the first
+        placed step's start, else frame 1 -- so it lands between its
+        neighbours and the build's fit policy sizes it.
+
+        Parameters:
+            steps: The steps to build, in doc order.
+            shot_ranges: The bounds of the steps that have a shot.
+            last_resolved: :meth:`resolve_ranges`' last result.
+            user_ranges: The ranges the user typed.
+
+        Returns:
+            ``{step_id: (start, end)}`` for every step in *steps* (and any
+            other step a given range names).
+        """
+        ranges = dict(shot_ranges)
+        built = set(ranges)
+        for sid, start, end, _user in last_resolved or ():
+            if sid not in built and end is not None:
+                ranges[sid] = (start, end)
+        for sid, (start, end) in (user_ranges or {}).items():
+            if sid not in built and start is not None:
+                # A typed start alone (Set Start to Current Frame) is a place,
+                # not a length: zero-length there, as an unplaced step is.
+                ranges[sid] = (start, start if end is None else end)
+        for i, step in enumerate(steps):
+            if step.step_id in ranges:
+                continue
+            if i:
+                at = ranges[steps[i - 1].step_id][1]
+            else:
+                at = next(
+                    (ranges[s.step_id][0] for s in steps[1:] if s.step_id in ranges),
+                    1.0,
+                )
+            ranges[step.step_id] = (at, at)
+        return ranges
+
+    @staticmethod
     def parse_range_edit(
         start_text: str, end_text: str
     ) -> Optional[Tuple[float, Optional[float]]]:

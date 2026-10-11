@@ -323,6 +323,51 @@ class _ImgChannelInternal:
         return results
 
     @classmethod
+    def _resize_normal_map(cls, im, size) -> Optional["Image.Image"]:
+        """Body of :meth:`ImgUtils.resize_image` with ``normal_map=True``.
+
+        Returns None when *im* is not an 8-bit RGB/RGBA map of outward unit
+        vectors -- 90% of a ~256px sample within 0.1 of unit length, median Z
+        positive: such a map has no length to restore, and the caller resizes
+        it plainly. Per texel, not a median: noise with a blue bias has a
+        median length of ~1.04 and an outward Z, but only 30% of its texels
+        near the unit shell (production normal maps: 100%).
+        """
+        if np is None or im.mode not in ("RGB", "RGBA"):
+            return None
+        rgb = im.convert("RGB") if im.mode == "RGBA" else im
+        step = max(1, max(rgb.size) // 256)
+        probe = rgb.resize(
+            (max(1, rgb.width // step), max(1, rgb.height // step)),
+            Image.Resampling.NEAREST,
+        )
+        sample = np.asarray(probe, dtype=np.float32) / 127.5 - 1
+        near_unit = np.abs(np.linalg.norm(sample, axis=-1) - 1) < 0.1
+        if near_unit.mean() < 0.9 or np.median(sample[..., 2]) <= 0:
+            return None
+        lanczos = Image.Resampling.LANCZOS
+        vectors = (
+            np.stack(
+                [
+                    np.asarray(band.convert("F").resize(size, lanczos))
+                    for band in rgb.split()
+                ],
+                axis=-1,
+            )
+            / 127.5
+            - 1
+        )
+        length = np.linalg.norm(vectors, axis=-1, keepdims=True)
+        # A texel the resample cancelled to (near) zero has no direction left
+        # to keep; it encodes as found rather than amplified noise.
+        vectors = np.where(length > 1e-4, vectors / np.maximum(length, 1e-4), vectors)
+        encoded = np.clip(np.rint((vectors + 1) * 127.5), 0, 255).astype(np.uint8)
+        result = Image.fromarray(encoded)
+        if im.mode == "RGBA":
+            result.putalpha(im.getchannel("A").resize(size, lanczos))
+        return result
+
+    @classmethod
     def detect_normal_map_format(
         cls,
         image: Union[str, "Image.Image"],

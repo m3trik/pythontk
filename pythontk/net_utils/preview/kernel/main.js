@@ -6,10 +6,12 @@
   it: the stage (scene.js) and the page's own elements (dom.js) at the bottom;
   the model, its lightmaps and reflection probe, specs, animation and the
   headset's rig, surfaces, grab, start and locomotion above them; the page's
-  windows (windows.js -- one per category, a bar button each) and the
-  Environment window (environment.js); then the session that runs a headset
-  frame, the published `viewer` API (api.js), a deliverable's load (load.js),
-  the manifest poll and the page's controls. Importing them builds the page;
+  menubar (menus.js -- one button per category, each a dropdown of its
+  items) and the windows its items open (windows.js), and what the kernel
+  files there itself: the Environment menu (environment.js), the published
+  parts (parts.js) and the clip captions (captions.js); then the session that
+  runs a headset frame, the published `viewer` API (api.js), a deliverable's
+  load (load.js), the manifest poll and the page's controls. Importing them builds the page;
   this module starts it, in the one order that matters: the XR check, then
   the poll, then the frame loop.
 

@@ -560,6 +560,37 @@ class FbxMediaTestCase(unittest.TestCase):
         # The untouched source is still the file it was.
         self.assertEqual(FbxMedia.embedded(self.src)[0]["size"], (512, 256))
 
+    def test_downsize_resamples_a_normal_map_as_one(self):
+        """A map the registry names a normal map is resized in float and
+        renormalised (``ImgUtils.resize_image(normal_map=True)``): this pass
+        is where the pipeline's normals actually shrink, so the GLB texture
+        pass after it never resamples them again."""
+        from PIL import Image
+        from conftest import hard_edge_normal_map, unit_length_error
+
+        def png(image):
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        normal = hard_edge_normal_map((64, 64))
+        src = build_fbx(
+            os.path.join(self.dir, "normals.fbx"),
+            {
+                "crease_Normal_OpenGL.png": png(normal),
+                "crease_Base_Color.png": png(normal),
+            },
+        )
+        out = os.path.join(self.dir, "normals_small.fbx")
+        self.assertEqual(FbxMedia.downsize(src, out, max_size=27)["resized"], 2)
+        payloads = ExpandGrayscaleTestCase._payloads(out)
+        with Image.open(io.BytesIO(payloads["crease_Normal_OpenGL.png"])) as image:
+            self.assertEqual(image.size, (27, 27))
+            self.assertLess(unit_length_error(image), 0.01)
+        # The same pixels named as colour take the plain resample.
+        with Image.open(io.BytesIO(payloads["crease_Base_Color.png"])) as image:
+            self.assertGreater(unit_length_error(image), 0.1)
+
     def test_zero_ceiling_and_exempt_names_write_nothing(self):
         out = os.path.join(self.dir, "untouched.fbx")
         self.assertEqual(FbxMedia.downsize(self.src, out, max_size=0)["resized"], 0)
@@ -1080,6 +1111,514 @@ class DropApparatusTestCase(unittest.TestCase):
         report = FbxMedia.drop_apparatus(self.src, out, section=RIG_SECTION)
         self.assertEqual(report["models"], 0)
         self.assertFalse(os.path.exists(out))
+
+
+def build_carrier_fbx(path: str, channels, media=None, definitions=True) -> str:
+    """An FBX shaped like a Scene Exporter's: a mesh, a ``data_export`` carrier
+    holding *channels* ``{record key: payload}`` as user properties, and the
+    material media *media* ``{name: bytes}`` (each Video wired to a Texture).
+    *definitions* writes the ``Definitions`` counts the SDK writes."""
+    props = [
+        ("P", [key.encode(), b"KString", b"", b"U", json.dumps(value).encode()], [])
+        for key, value in channels.items()
+    ]
+    objects = [
+        ("Model", [1001, b"Crate\x00\x01Model", b"Mesh"], []),
+        (
+            "Model",
+            [1002, b"data_export\x00\x01Model", b"Null"],
+            [("Properties70", [], props)],
+        ),
+    ]
+    media_objects, media_connections = _media_records(media or {})
+    objects += media_objects
+    connections = [
+        ("C", [b"OO", 1001, 0], []),
+        ("C", [b"OO", 1002, 0], []),
+    ] + media_connections
+    roots = []
+    if definitions:
+        counts = {}
+        for kind, _props, _children in objects:
+            counts[kind] = counts.get(kind, 0) + 1
+        roots.append(
+            (
+                "Definitions",
+                [],
+                [
+                    ("Version", [I32(100)], []),
+                    ("Count", [I32(sum(counts.values()))], []),
+                ]
+                + [
+                    ("ObjectType", [kind.encode()], [("Count", [I32(n)], [])])
+                    for kind, n in counts.items()
+                ],
+            )
+        )
+    roots += [("Objects", [], objects), ("Connections", [], connections)]
+    return _write_fbx(path, roots)
+
+
+class EmbedTestCase(unittest.TestCase):
+    """``embed`` / ``embed_dependencies``: an FBX deliverable carries every file
+    its scene records name by file name, so nothing ships beside it.
+
+    The form is the one Unity's FBX importer was MEASURED to hand back (2022.3
+    and 6000.3, 2026-10-05): a bare ``Video`` with ``Content`` and no Texture
+    or connection is extracted by ``ModelImporter.ExtractTextures`` byte for
+    byte under its file name -- EXR, HDR, 8- and 16-bit PNG, WAV alike -- and
+    leaves every material as authored.
+    """
+
+    LIGHTMAPS = {
+        "version": 1,
+        "objects": [
+            {"name": "Crate", "map": "Room_Lightmap.exr", "uvIndex": 1},
+            {"name": "Shelf", "map": "Room_Lightmap.exr", "uvIndex": 1},
+            {"name": "Lamp", "map": "Lamp_Lightmap.exr", "uvIndex": 1},
+        ],
+        "probe": {"map": "Room_Probe.exr", "position": [0, 1, 2], "unit_scale": 0.01},
+    }
+    SHADOWS = {
+        "version": 2,
+        "unit_scale": 0.01,
+        "planes": [
+            {
+                "name": "Box_shadow",
+                "texture": "Box_shadow.png",
+                "type": "horizon",
+                "atlas": {"texture": "shadow_atlas_horizon.png", "rect": [1, 1, 0, 0]},
+                "horizon": {"texture": "Box_horizon.png", "encoding": 2},
+            }
+        ],
+    }
+    #: What the records above name, in record order, the shared atlas once.
+    NAMED = [
+        "Room_Lightmap.exr",
+        "Lamp_Lightmap.exr",
+        "Room_Probe.exr",
+        "Box_shadow.png",
+        "shadow_atlas_horizon.png",
+        "Box_horizon.png",
+    ]
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_embed", policy="scoped")
+        self.dir = self.temp.dir_path()
+        self.maps = os.path.join(self.dir, "sourceimages")
+        os.makedirs(self.maps)
+        # Distinct bytes per file, so a payload proves which file it came from.
+        self.files = {
+            name: name.encode() * 40 + bytes(range(256))
+            for name in self.NAMED
+            if name != "Box_shadow.png"
+        }
+        for name, data in self.files.items():
+            with open(os.path.join(self.maps, name), "wb") as fh:
+                fh.write(data)
+        # The silhouette rides the plane's MATERIAL, as an Embed Media export
+        # writes it.
+        self.silhouette = png_bytes((16, 16), "RGBA")
+        self.src = build_carrier_fbx(
+            os.path.join(self.dir, "deliverable.fbx"),
+            {"lightmap_metadata": self.LIGHTMAPS, "shadow_metadata": self.SHADOWS},
+            media={"Box_shadow.png": self.silhouette},
+        )
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    @staticmethod
+    def _videos(path):
+        """``{Video id: {field: first prop}}`` of every Video in *path*."""
+        found = {}
+        for record in FbxFile.load(path).iter_objects():
+            if record["name"] != "Video":
+                continue
+            fields = {c["name"]: c["props"] for c in record["children"]}
+            found[record["props"][0]] = {
+                k: v[0] if v else None for k, v in fields.items()
+            }
+        return found
+
+    @staticmethod
+    def _counts(path):
+        """``(Definitions Count, {ObjectType: Count})`` of *path*."""
+        section = FbxFile.load(path).section("Definitions")
+        total, kinds = None, {}
+        for child in section["children"]:
+            if child["name"] == "Count":
+                total = child["props"][0]
+            elif child["name"] == "ObjectType":
+                kinds[child["props"][0].decode()] = next(
+                    c["props"][0] for c in child["children"] if c["name"] == "Count"
+                )
+        return total, kinds
+
+    def test_dependencies_are_the_file_names_the_records_name(self):
+        self.assertEqual(FbxMedia.dependencies(self.src), self.NAMED)
+        # No records: nothing named.
+        bare = build_carrier_fbx(os.path.join(self.dir, "bare.fbx"), {})
+        self.assertEqual(FbxMedia.dependencies(bare), [])
+
+    def test_dependencies_read_every_carrier_and_skip_what_is_not_a_name(self):
+        """A referenced module ships its own ``NS:data_export``; a malformed
+        channel, a blank name or a folder-qualified one (an older manifest)
+        must not stop the rest being read."""
+        legacy = {"objects": [{"name": "A", "map": "C:/bake/Old.exr"}, {"name": "B"}]}
+        path = build_carrier_fbx(
+            os.path.join(self.dir, "two.fbx"), {"lightmap_metadata": self.LIGHTMAPS}
+        )
+        other = build_carrier_fbx(
+            os.path.join(self.dir, "legacy.fbx"),
+            {"lightmap_metadata": legacy, "shadow_metadata": "not json {"},
+        )
+        self.assertEqual(
+            FbxMedia.dependencies(path),
+            ["Room_Lightmap.exr", "Lamp_Lightmap.exr", "Room_Probe.exr"],
+        )
+        self.assertEqual(FbxMedia.dependencies(other), ["Old.exr"])
+
+    def test_embed_adds_each_file_as_media_named_by_its_file_name(self):
+        out = os.path.join(self.dir, "out.fbx")
+        paths = [
+            os.path.join(self.maps, n) for n in ("Room_Probe.exr", "Box_horizon.png")
+        ]
+        before = self._videos(self.src)
+        report = FbxMedia.embed(self.src, out, files=paths)
+        self.assertEqual(report["embedded"], ["Room_Probe.exr", "Box_horizon.png"])
+        self.assertEqual(report["present"], [])
+        self.assertEqual(
+            report["bytes"], sum(len(self.files[n]) for n in report["embedded"])
+        )
+        added = {k: v for k, v in self._videos(out).items() if k not in before}
+        self.assertEqual(len(added), 2)
+        for fields in added.values():
+            name = fields["RelativeFilename"].decode()
+            # The bare file name: the deliverable names no folder.
+            self.assertEqual(fields["Filename"].decode(), name)
+            self.assertEqual(fields["Content"], self.files[name])
+        # Media no material uses: nothing is wired to them, and every other
+        # object and connection is the file's own.
+        self.assertEqual(
+            FbxFile.load(out).connections(), FbxFile.load(self.src).connections()
+        )
+        census = FbxFile.load(out).objects_census()
+        self.assertEqual(
+            census, {**FbxFile.load(self.src).objects_census(), "Video": 3}
+        )
+        total, kinds = self._counts(out)
+        self.assertEqual((total, kinds["Video"]), (self._counts(self.src)[0] + 2, 3))
+        # The source is left as it was.
+        self.assertEqual(self._videos(self.src), before)
+
+    def test_a_refused_promotion_strands_no_part_and_keeps_the_file(self):
+        """The rewrite is written beside its target and promoted onto it.
+
+        Production (2026-10-07): a sync client still reading a 218 MB FBX it
+        had just seen change refused that replace, the embed was lost -- the
+        file shipped without its lightmaps -- and its 228 MB ``.part`` stayed
+        in the synced export folder, one per pass per run. A refusal must
+        leave the target exactly as it was and take its ``.part`` with it.
+        Added: 2026-10-07
+        """
+        from unittest import mock
+
+        from pythontk.file_utils._file_utils import FileUtils
+
+        with open(self.src, "rb") as fh:
+            before = fh.read()
+        refusal = PermissionError(13, "held by another process", self.src, 32)
+        with mock.patch.object(FileUtils, "replace_file", side_effect=refusal):
+            with self.assertRaises(PermissionError):
+                FbxMedia.embed(
+                    self.src, files=[os.path.join(self.maps, "Room_Probe.exr")]
+                )
+        strays = [n for n in os.listdir(self.dir) if n.endswith(".part")]
+        self.assertEqual(strays, [], f"partial file left behind: {strays}")
+        with open(self.src, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_a_name_the_file_already_embeds_is_not_embedded_twice(self):
+        """The silhouette is the plane material's own map: already inside."""
+        out = os.path.join(self.dir, "out.fbx")
+        elsewhere = os.path.join(self.dir, "BOX_SHADOW.png")
+        with open(elsewhere, "wb") as fh:
+            fh.write(b"another copy")
+        report = FbxMedia.embed(self.src, out, files=[elsewhere])
+        self.assertEqual(
+            (report["embedded"], report["present"]), ([], ["BOX_SHADOW.png"])
+        )
+        self.assertFalse(os.path.exists(out), "nothing to add, nothing written")
+
+    def test_embedding_again_changes_nothing(self):
+        paths = [os.path.join(self.maps, n) for n in self.files]
+        FbxMedia.embed(self.src, files=paths)  # in place
+        with open(self.src, "rb") as fh:
+            first = fh.read()
+        report = FbxMedia.embed(self.src, files=paths)
+        self.assertEqual(report["embedded"], [])
+        self.assertEqual(sorted(report["present"]), sorted(self.files))
+        with open(self.src, "rb") as fh:
+            self.assertEqual(fh.read(), first)
+        self.assertFalse([n for n in os.listdir(self.dir) if n.endswith(".part")])
+
+    def test_a_video_type_is_declared_when_the_file_had_none(self):
+        src = build_carrier_fbx(os.path.join(self.dir, "plain.fbx"), {})
+        out = os.path.join(self.dir, "plain_out.fbx")
+        FbxMedia.embed(src, out, files=[os.path.join(self.maps, "Room_Probe.exr")])
+        total, kinds = self._counts(out)
+        self.assertEqual((total, kinds.get("Video")), (self._counts(src)[0] + 1, 1))
+        # And a file with no Definitions at all still takes the media.
+        bare = build_carrier_fbx(
+            os.path.join(self.dir, "nodefs.fbx"), {}, definitions=False
+        )
+        report = FbxMedia.embed(bare, files=[os.path.join(self.maps, "Room_Probe.exr")])
+        self.assertEqual(report["embedded"], ["Room_Probe.exr"])
+        self.assertEqual(
+            [r["name"] for r in FbxMedia.embedded(bare)], ["Room_Probe.exr"]
+        )
+
+    def test_media_ids_are_new_and_the_same_for_the_same_name(self):
+        """Stable across re-exports (a diff of two deliverables shows content,
+        not renumbering), and never an id the file already uses."""
+        path = os.path.join(self.maps, "Room_Probe.exr")
+        a, b = os.path.join(self.dir, "a.fbx"), os.path.join(self.dir, "b.fbx")
+        FbxMedia.embed(self.src, a, files=[path])
+        FbxMedia.embed(self.src, b, files=[path])
+        taken = {r["props"][0] for r in FbxFile.load(self.src).iter_objects()}
+        new_a = set(self._videos(a)) - set(self._videos(self.src))
+        self.assertEqual(new_a, set(self._videos(b)) - set(self._videos(self.src)))
+        self.assertFalse(new_a & taken)
+
+    def test_embed_dependencies_resolves_each_named_file_where_the_host_keeps_it(self):
+        """Search folders in order first (the host's own answer, as the GLB
+        appliers take it), the FBX's folder last; a name the materials already
+        embed is left; a name found nowhere is reported and warned."""
+        stale = os.path.join(self.dir, "Room_Lightmap.exr")  # beside the FBX
+        with open(stale, "wb") as fh:
+            fh.write(b"an older atlas of the same name")
+        beside = os.path.join(self.dir, "Lamp_Lightmap.exr")
+        os.replace(os.path.join(self.maps, "Lamp_Lightmap.exr"), beside)
+        os.remove(os.path.join(self.maps, "shadow_atlas_horizon.png"))
+        empty = os.path.join(self.dir, "empty")
+        os.makedirs(empty)
+        out = os.path.join(self.dir, "out.fbx")
+        with self.assertLogs(
+            "pythontk.file_utils.mesh_convert.fbx_media", "WARNING"
+        ) as logs:
+            report = FbxMedia.embed_dependencies(
+                self.src, out, search_dirs=[empty, "", self.maps]
+            )
+        self.assertEqual(report["named"], self.NAMED)
+        self.assertEqual(
+            report["embedded"],
+            [
+                "Room_Lightmap.exr",
+                "Lamp_Lightmap.exr",
+                "Room_Probe.exr",
+                "Box_horizon.png",
+            ],
+        )
+        self.assertEqual(report["present"], ["Box_shadow.png"])
+        self.assertEqual(report["missing"], ["shadow_atlas_horizon.png"])
+        self.assertIn("shadow_atlas_horizon.png", "\n".join(logs.output))
+        payloads = {
+            f["RelativeFilename"].decode(): f["Content"]
+            for f in self._videos(out).values()
+        }
+        self.assertEqual(payloads["Room_Lightmap.exr"], self.files["Room_Lightmap.exr"])
+        self.assertEqual(payloads["Lamp_Lightmap.exr"], self.files["Lamp_Lightmap.exr"])
+        self.assertEqual(payloads["Box_shadow.png"], self.silhouette)
+
+    def test_a_dependency_goes_in_under_the_records_spelling(self):
+        """The name is the join key: Unity looks the extracted copy up by the
+        record's name, and a case-insensitive disk can find the file under
+        another spelling."""
+        if not os.path.exists(os.path.join(self.maps, "ROOM_PROBE.EXR")):
+            self.skipTest("case-sensitive file system")
+        os.replace(
+            os.path.join(self.maps, "Room_Probe.exr"),
+            os.path.join(self.maps, "ROOM_PROBE.EXR"),
+        )
+        out = os.path.join(self.dir, "out.fbx")
+        report = FbxMedia.embed_dependencies(self.src, out, search_dirs=[self.maps])
+        self.assertIn("Room_Probe.exr", report["embedded"])
+        self.assertIn("Room_Probe.exr", [r["name"] for r in FbxMedia.embedded(out)])
+
+    def test_embed_dependencies_carries_the_extra_files_a_host_names(self):
+        """A record that names its files by something other than a file name
+        (the audio events) hands the paths over itself."""
+        sound = os.path.join(self.dir, "Footstep.wav")
+        with open(sound, "wb") as fh:
+            fh.write(b"RIFF....WAVE")
+        out = os.path.join(self.dir, "out.fbx")
+        report = FbxMedia.embed_dependencies(
+            self.src, out, search_dirs=[self.maps], files=[sound]
+        )
+        self.assertIn("Footstep.wav", report["embedded"])
+        self.assertNotIn("Footstep.wav", report["named"])
+        self.assertIn("Footstep.wav", [r["name"] for r in FbxMedia.embedded(out)])
+
+    def test_a_host_file_can_go_in_under_its_join_name(self):
+        """An audio event names its track, not the track's file: the host
+        hands ``(name, path)`` and the file rides under the name the consumer
+        matches it by."""
+        take = os.path.join(self.dir, "footstep_take3.wav")
+        with open(take, "wb") as fh:
+            fh.write(b"RIFF....WAVE take three")
+        out = os.path.join(self.dir, "out.fbx")
+        report = FbxMedia.embed_dependencies(
+            self.src, out, search_dirs=[self.maps], files=[("footstep.wav", take)]
+        )
+        self.assertIn("footstep.wav", report["embedded"])
+        payloads = {
+            f["RelativeFilename"].decode(): f["Content"]
+            for f in self._videos(out).values()
+        }
+        self.assertEqual(payloads["footstep.wav"], b"RIFF....WAVE take three")
+
+    def test_embed_dependencies_writes_nothing_without_records(self):
+        bare = build_carrier_fbx(os.path.join(self.dir, "bare.fbx"), {})
+        out = os.path.join(self.dir, "out.fbx")
+        report = FbxMedia.embed_dependencies(bare, out, search_dirs=[self.maps])
+        self.assertEqual(
+            report,
+            {"named": [], "embedded": [], "present": [], "missing": [], "bytes": 0},
+        )
+        self.assertFalse(os.path.exists(out))
+
+    def test_image_passes_leave_dependency_media_alone(self):
+        """``downsize`` / ``expand_grayscale`` exist for the converter, which
+        reads only what a material binds: a horizon map is DATA (resized, its
+        bits are lost) and an EXR is no image Pillow reads (a warning per map)."""
+        from PIL import Image
+
+        src = build_fbx(
+            os.path.join(self.dir, "mat.fbx"), {"wall.png": png_bytes((512, 256))}
+        )
+        horizon = os.path.join(self.dir, "Big_horizon.png")
+        with open(horizon, "wb") as fh:
+            fh.write(png_bytes((512, 512), "RGBA"))
+        gray = os.path.join(self.dir, "Mask_horizon.png")
+        with open(gray, "wb") as fh:
+            fh.write(encoded(Image.new("L", (8, 8), 40)))
+        exr = os.path.join(self.maps, "Room_Lightmap.exr")
+        FbxMedia.embed(src, files=[horizon, gray, exr])
+        with open(horizon, "rb") as fh:
+            original = fh.read()
+
+        out = os.path.join(self.dir, "small.fbx")
+        with self.assertNoLogs("pythontk.file_utils.mesh_convert.fbx_media", "WARNING"):
+            report = FbxMedia.downsize(src, out, max_size=128)
+        self.assertEqual((report["images"], report["resized"]), (1, 1))
+        rows = {r["name"]: r for r in FbxMedia.embedded(out)}
+        self.assertEqual(rows["wall.png"]["size"], (128, 64))
+        self.assertEqual(rows["Big_horizon.png"]["bytes"], len(original))
+        report = FbxMedia.expand_grayscale(src, os.path.join(self.dir, "rgb.fbx"))
+        self.assertEqual((report["images"], report["expanded"]), (1, 0))
+
+    def test_dependency_media_survive_the_other_rewrites(self):
+        src = build_animated_fbx(
+            os.path.join(self.dir, "anim.fbx"),
+            ["Take 001", "Shot_A"],
+            media={"w.png": b"x"},
+        )
+        FbxMedia.embed(src, files=[os.path.join(self.maps, "Room_Probe.exr")])
+        out = os.path.join(self.dir, "lean.fbx")
+        self.assertEqual(
+            FbxMedia.drop_takes(src, out, names=["Shot_A"])["takes"], ["Shot_A"]
+        )
+        self.assertEqual(
+            [r["name"] for r in FbxMedia.embedded(out)], ["w.png", "Room_Probe.exr"]
+        )
+
+    def test_named_files_walks_decoded_payloads_by_record(self):
+        """The one walk the FBX step, the GLB build and the verifier share:
+        a reader that already holds the channels (the verifier's parsed FBX)
+        asks it without a second parse."""
+        self.assertEqual(
+            FbxMedia.named_files(
+                {
+                    "shadow_metadata": [self.SHADOWS],
+                    "lightmap_metadata": [self.LIGHTMAPS, {"objects": "not a list"}],
+                    "unrelated": [{"map": "ignored.exr"}],
+                }
+            ),
+            self.NAMED,
+        )
+        self.assertEqual(FbxMedia.named_files({}), [])
+
+    def test_extract_dependencies_writes_the_embedded_named_files(self):
+        """The reverse of the embed: what a reader of a DELIVERED FBX needs on
+        disk (the GLB build's appliers join names against folders)."""
+        FbxMedia.embed_dependencies(self.src, search_dirs=[self.maps])
+        out = os.path.join(self.dir, "out")
+        os.makedirs(out)
+        written = FbxMedia.extract_dependencies(self.src, out)
+        self.assertEqual(sorted(written), sorted(self.NAMED))
+        for name, path in written.items():
+            self.assertEqual(os.path.dirname(path), out)
+            with open(path, "rb") as fh:
+                data = fh.read()
+            self.assertEqual(data, self.files.get(name, self.silhouette), name)
+        # Only what the records name: an FBX naming nothing writes nothing.
+        bare = build_fbx(os.path.join(self.dir, "bare.fbx"), {"wall.png": b"x"})
+        self.assertEqual(FbxMedia.extract_dependencies(bare, out), {})
+
+    def test_unreadable_input_raises(self):
+        junk = os.path.join(self.dir, "junk.fbx")
+        with open(junk, "wb") as fh:
+            fh.write(b"; FBX 7.7.0 project file (ASCII)\n" * 20)
+        exr = os.path.join(self.maps, "Room_Probe.exr")
+        with self.assertRaises(ValueError):
+            FbxMedia.embed(junk, files=[exr])
+        with self.assertRaises(ValueError):
+            FbxMedia.embed_dependencies(junk, search_dirs=[self.maps])
+        with self.assertRaises(OSError):
+            FbxMedia.embed(self.src, files=[os.path.join(self.dir, "nowhere.exr")])
+
+    def test_a_truncated_fbx_is_a_value_error(self):
+        """A binary FBX cut short (a copy that never finished) has the magic
+        but not the body: reading it raised ``struct.error``, past every
+        caller that leaves an FBX it cannot re-emit as it was."""
+        from pythontk.file_utils.mesh_convert.fbx_file import FBX_MAGIC
+
+        bodies = {
+            "no_version.fbx": FBX_MAGIC + b"\x01",
+            "cut_header.fbx": FBX_MAGIC + struct.pack("<I", 7700) + b"\x10" * 20,
+            "cut_record.fbx": FBX_MAGIC
+            + struct.pack("<I", 7400)
+            + struct.pack("<III", 4000, 0, 0)
+            + b"\x07Objects",
+        }
+        for name, body in bodies.items():
+            path = os.path.join(self.dir, name)
+            with open(path, "wb") as fh:
+                fh.write(body)
+            with self.subTest(name), self.assertRaises(ValueError):
+                FbxMedia.embed_dependencies(path, files=[self.src])
+
+    def test_a_child_ending_past_its_parent_is_a_value_error(self):
+        """A child record whose end lies past its parent's, still inside the
+        file, parsed: its tail swallowed its siblings and the next top-level
+        record, and the read went on from the parent's end as if whole -- so
+        an embed wrote those bytes twice into a file that read as fine.
+        Added: 2026-10-10
+        """
+        with open(self.src, "rb") as fh:
+            data = bytearray(fh.read())
+        objects = data.index(b"\x07Objects") - 24  # 7700: 24-byte headers
+        child = data.index(b"\x05Model", objects) - 24
+        parent_end = struct.unpack_from("<Q", data, objects)[0]
+        struct.pack_into("<Q", data, child, parent_end + 8)
+        corrupt = os.path.join(self.dir, "overrun.fbx")
+        with open(corrupt, "wb") as fh:
+            fh.write(bytes(data))
+        with self.assertRaises(ValueError):
+            FbxMedia.dependencies(corrupt)
+        with self.assertRaises(ValueError):
+            FbxMedia.embed_dependencies(corrupt, search_dirs=[self.maps])
 
 
 if __name__ == "__main__":

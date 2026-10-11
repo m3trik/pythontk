@@ -733,6 +733,40 @@ class FileTeeAndBufferTest(BaseTestCase):
             Foo.set_log_file(None)
             os.unlink(path)
 
+    def test_a_log_file_takes_any_character_a_record_carries(self):
+        """Both file sinks opened in the locale's code page -- cp1252 on
+        Windows -- so a record or box carrying a glyph it lacks (a box's
+        ``╔═║``, a ``✓``, an arrow) raised on write and never reached the file.
+        Measured 2026-10-10: a Scene Exporter run's ``.log`` lost its
+        EXPORT SUCCESSFUL box, the one line every run writes.
+        Added: 2026-10-10"""
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        class Foo(LoggingMixin):
+            pass
+
+        with TempArtifacts("test_logging_mixin_utf8", policy="scoped") as temp:
+            tee = os.path.join(temp.dir_path(), "tee.log")
+            added = os.path.join(temp.dir_path(), "added.log")
+            Foo.set_log_level("INFO")
+            Foo.set_log_file(tee)
+            Foo.logger.add_file_handler(filename=added, level=logging.INFO)
+            try:
+                Foo.logger.info("✓ café → done")
+                Foo.logger.log_box("EXPORT SUCCESSFUL", ["✓ written"])
+            finally:
+                Foo.set_log_file(None)
+                for handler in Foo.logger.handlers[:]:
+                    if isinstance(handler, logging.FileHandler):
+                        Foo.logger.removeHandler(handler)
+                        handler.close()
+            for path in (tee, added):
+                with open(path, encoding="utf-8") as f:
+                    content = f.read()
+                self.assertIn("✓ café → done", content, path)
+                self.assertIn("EXPORT SUCCESSFUL", content, path)
+                self.assertIn("╔", content, path)
+
     def test_set_log_file_toggle_replaces_and_detaches(self):
         """Re-calling replaces the managed handler; None detaches it."""
 
@@ -1679,8 +1713,8 @@ class LayoutCharacterizationTest(BaseTestCase):
         ),
         "wide": (
             (
-                "\u6f22\u5b57 \u2705 \U0001f642",
-                ["cafe\u0301 ok", "\u6f22\u5b57" * 8, "\u2705 done"],
+                "\uff2f\uff2b \u2705 \U0001f642",
+                ["cafe\u0301 ok", "\uff2f\uff2b" * 8, "\u2705 done"],
             ),
             {"max_width": 20},
         ),
@@ -1731,7 +1765,7 @@ class LayoutCharacterizationTest(BaseTestCase):
             (
                 [
                     ["\u2705", "ok"],
-                    ["\u6f22\u5b57", "cafe\u0301"],
+                    ["\uff2f\uff2b", "cafe\u0301"],
                     ["\U0001f642x", "y"],
                 ],
                 ["s", "msg"],
@@ -1813,11 +1847,11 @@ class LayoutCharacterizationTest(BaseTestCase):
             20,
             (
                 "╔══════════════════╗\n"
-                "║·漢字 ✅ 🙂·······║\n"
+                "║·ＯＫ ✅ 🙂·······║\n"
                 "╟──────────────────╢\n"
                 "║·café ok··········║\n"
-                "║·漢字漢字漢字漢字·║\n"
-                "║·漢字漢字漢字漢字·║\n"
+                "║·ＯＫＯＫＯＫＯＫ·║\n"
+                "║·ＯＫＯＫＯＫＯＫ·║\n"
                 "║·✅ done··········║\n"
                 "╚══════════════════╝\n"
             ),
@@ -1991,7 +2025,7 @@ class LayoutCharacterizationTest(BaseTestCase):
         "narrow": ("a | b | c | d\n--+---+---+--\na | g | m | s"),
         "ragged_rows": ("h1   | h2\n-----+---\nonly |   \na    | b "),
         "wide_chars": (
-            "s    | msg \n-----+-----\n✅   | ok  \n漢字 | café\n🙂x  | y   "
+            "s    | msg \n-----+-----\n✅   | ok  \nＯＫ | café\n🙂x  | y   "
         ),
         "wrap": (
             "k | text                      \n"

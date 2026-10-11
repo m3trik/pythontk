@@ -14,8 +14,9 @@ log and the verifier consume, so nothing is read back off the node and patched.
 Zero-dep and DCC-agnostic, like everything in ``pythontk``.
 """
 
+import contextlib
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import (
     Any,
     Callable,
@@ -77,6 +78,10 @@ class ExportContext:
             so nothing is dropped from a deliverable silently (the shots
             producer names the stale shots it did not declare).  One
             assembly's, like :attr:`records`.
+        scope: The export set, as the host spells its nodes; ``None`` is the
+            whole scene (an authoring publish, a hand-off, a raw export).  The
+            producer of an :attr:`RecordSpec.export_scoped` record keeps only
+            the entries whose node is one of these or sits under one.
     """
 
     PIPELINE = "pipeline"
@@ -90,6 +95,7 @@ class ExportContext:
     rendering: Dict[str, Any] = field(default_factory=dict)
     records: Dict[str, Optional[Record]] = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)
+    scope: Optional[Tuple[str, ...]] = None
 
     def note(self, text: str) -> None:
         """Record one sentence for the report."""
@@ -150,6 +156,11 @@ class ExportSnapshot:
         self.noted: Dict[str, List[str]] = {}
         #: What :meth:`commit` wrote, key -> text (``None`` = cleared).
         self.written: Dict[str, Optional[str]] = {}
+        #: For a scoped assembly (``ctx.scope``): each export-scoped record the
+        #: scope narrowed, as the whole scene produces it (``None`` = cleared)
+        #: -- the scene's own copy, which :meth:`restore_scene_wide` puts back
+        #: once the write that needed the narrow one is done.
+        self.scene_wide: Dict[str, Optional[Record]] = {}
 
     # ---------------------------------------------------------------- assemble
     @classmethod
@@ -199,21 +210,7 @@ class ExportSnapshot:
         for spec in SceneRecords.ordered(selected):
             before = len(ctx.notes)
             try:
-                result = table[spec](ctx)
-                records = [
-                    r
-                    for r in (
-                        [result]
-                        if isinstance(result, Record) or result is None
-                        else list(result)
-                    )
-                    if r is not None
-                ]
-                if not all(isinstance(r, Record) for r in records):
-                    raise TypeError(
-                        f"The {spec.key!r} producer returned a bare payload; it "
-                        "must return Record(s) or None (spec.make(payload))."
-                    )
+                records = cls._records_of(spec, table[spec](ctx))
             except Exception:  # one subsystem's failure must not block the others
                 logger.warning(
                     "Scene record %r was not produced.", spec.key, exc_info=True
@@ -238,7 +235,98 @@ class ExportSnapshot:
                     ctx.records[record.spec.key] = record
         for note in ctx.notes:
             logger.warning(note)
+        if ctx.scope is not None:
+            snapshot._assemble_scene_wide(table, selected)
         return snapshot
+
+    @staticmethod
+    def _records_of(spec: RecordSpec, result: Any) -> List[Record]:
+        """A producer's *result* as a list of records (``None`` dropped).
+
+        Raises:
+            TypeError: The producer returned a bare payload.
+        """
+        records = [
+            r
+            for r in (
+                [result]
+                if isinstance(result, Record) or result is None
+                else list(result)
+            )
+            if r is not None
+        ]
+        if not all(isinstance(r, Record) for r in records):
+            raise TypeError(
+                f"The {spec.key!r} producer returned a bare payload; it "
+                "must return Record(s) or None (spec.make(payload))."
+            )
+        return records
+
+    def _assemble_scene_wide(
+        self, table: Mapping[RecordSpec, Producer], selected: Iterable[RecordSpec]
+    ) -> None:
+        """Fill :attr:`scene_wide`: run each export-scoped producer of this
+        scoped assembly again over the whole scene, and keep its record where
+        the scope narrowed it. Same scene state as the scoped run, so the
+        restore puts back exactly what an unscoped export would have left.
+
+        Silent (:meth:`_silenced`): what a producer says here is either said
+        already, about a node the write ships, or about one it does not --
+        and the export log is the deliverable's. A producer that fails keeps
+        the narrow copy (logged)."""
+        whole = replace(self.ctx, scope=None, records=dict(self.ctx.records), notes=[])
+        for spec in selected:
+            if not spec.export_scoped or spec.key in self.failed:
+                continue
+            try:
+                with self._silenced():
+                    result = table[spec](whole)
+                records = self._records_of(spec, result)
+            except Exception:  # noqa: BLE001 - the write's own copy still ships
+                logger.warning(
+                    "Scene record %r was not produced for the whole scene; the "
+                    "scene keeps the export's narrowed copy.",
+                    spec.key,
+                    exc_info=True,
+                )
+                continue
+            own = next((r for r in records if r.spec.key == spec.key), None)
+            shipped = self.produced.get(spec.key)
+            if (own.text if own else None) != (shipped.text if shipped else None):
+                self.scene_wide[spec.key] = own
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _silenced():
+        """Drop every log record for the duration (``logging.disable``), then
+        put back the level that was disabled before."""
+        previous = logging.root.manager.disable
+        logging.disable(logging.CRITICAL)
+        try:
+            yield
+        finally:
+            logging.disable(previous)
+
+    def restore_scene_wide(self, store) -> Optional["ExportSnapshot"]:
+        """Put the scene's own copy of every record the scope narrowed back on
+        *store* (:attr:`scene_wide`) -- the exporter's restore once the write
+        that shipped the narrow copy is done, so the carrier the scene keeps
+        (and a later hand-off ships as stored) still describes all of it.
+
+        Returns:
+            The authoring snapshot committed, or ``None`` when the scope
+            narrowed nothing.
+        """
+        if not self.scene_wide:
+            return None
+        # The export's provenance and lighting choices, so the restamped
+        # handoff block reads as the export's commit left it.
+        ctx = ExportContext(
+            mode=ExportContext.AUTHORING,
+            source=dict(self.ctx.source),
+            rendering=dict(self.ctx.rendering),
+        )
+        return type(self).publish(store, self.scene_wide, ctx)
 
     @classmethod
     def publish(

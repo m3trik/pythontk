@@ -234,7 +234,7 @@ class ImageCurator:
             files = ImgUtils.list_image_files(src_dir)
             for i, name in enumerate(files):
                 path = os.path.join(src_dir, name)
-                img = cv2.imread(path)
+                img = ImgUtils.cv2_read(path)
                 if img is None:
                     continue
                 # Downsize for hash/sharpness speed. INTER_AREA, not the

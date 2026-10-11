@@ -1,13 +1,17 @@
 # !/usr/bin/python
 # coding=utf-8
-"""The scene-data sidecar -- what an export shipped, beside the deliverable.
+"""The scene-data record -- what an export shipped, kept off the deliverable.
 
-An export ships with ONE sidecar -- ``.{stem}.scene_data.json`` -- an
+Each export has ONE record -- ``.{stem}.scene_data.json`` -- an
 externalized copy of what shipped in the FBX: the exported hierarchy (which
 the FBX carries natively as its node tree) and the ``data_export`` carrier
-channels (which ride into the FBX as user properties).  Consumers get the
-export's metadata without parsing FBX -- and for GLB-only deliverables the
-sidecar is the one guaranteed-readable copy.
+channels (which ride into the FBX as user properties).  It is the exporter's
+own history: the baseline its hierarchy check compares against.  It lives in
+a per-user store keyed by the export folder
+(:meth:`SceneDataSidecarBase.store_dir`), never beside the deliverable --
+"all dependencies should be embedded into the fbx. 0 sidecar." (the user,
+2026-10-05) -- and a record an earlier version left in the export folder
+still reads and moves into the store at the next migration.
 
 Format v3::
 
@@ -34,8 +38,8 @@ Format v3::
 - ``data_export`` -- snapshot of the ``data_export`` carrier at export time
   (``DataNodes.dump``), decoded to nested JSON.  Never includes
   ``data_internal``: that node's contract is scene-private state that must not
-  export, and a sidecar next to the deliverable is a form of export.  Omitted
-  entirely when the carrier shipped nothing.
+  export, and the record of an export is treated as one.  Omitted entirely
+  when the carrier shipped nothing.
 
 One file per stem is the contract (2026-08): the previous trio (manifest +
 ``.prev`` backup + ``.hierarchy_diff.txt`` report) cluttered shared delivery
@@ -69,17 +73,19 @@ import json
 import logging
 import os
 import re
+import shutil
 from typing import Optional, Set, Tuple
 
 import pythontk as ptk
 
 
 class SceneDataSidecarBase:
-    """The scene-data sidecar stored alongside export files, host-agnostic.
+    """The scene-data record of each export, host-agnostic.
 
-    One sidecar per export stem: ``.{stem}.scene_data.json`` -- hierarchy
+    One record per export stem: ``.{stem}.scene_data.json`` -- hierarchy
     baseline (+ optional ``last_diff`` record) and the ``data_export``
-    channel snapshot (see module docstring).  The v2-era companions
+    channel snapshot (see module docstring) -- in the per-user store of the
+    export's folder (:meth:`store_dir`), never beside it.  The v2-era companions
     (``.prev`` backup, ``.hierarchy_diff.txt`` report) are no longer
     written; existing ones still read/migrate and are swept on write.
 
@@ -104,9 +110,36 @@ class SceneDataSidecarBase:
     # Format-v1 manifest name, still recognized for read/migration.
     LEGACY_MANIFEST_SUFFIX = "hierarchy.json"
 
+    #: Where the records live under the per-user config root
+    #: (``UserConfig.user_config_root``), one folder per export folder.
+    STORE_FOLDER: Tuple[str, ...] = ("pythontk", "scene_data")
+
     # ------------------------------------------------------------------
     # Path derivation
     # ------------------------------------------------------------------
+
+    @classmethod
+    def store_dir(cls, export_path: str) -> str:
+        """The per-user folder holding the records of *export_path*'s folder.
+
+        Keyed by the export folder -- its name, for a reader, plus a hash of
+        its full path -- so two folders' same-named deliverables never share
+        a record and a version series stays together.  Not created here.
+
+        Parameters:
+            export_path: The export file path.
+
+        Returns:
+            ``<user config root>/pythontk/scene_data/<folder>_<hash>``.
+        """
+        folder = os.path.dirname(os.path.abspath(export_path))
+        digest = hashlib.sha256(os.path.normcase(folder).encode("utf-8")).hexdigest()
+        label = re.sub(r"[^A-Za-z0-9._-]+", "_", os.path.basename(folder))[:40]
+        return os.path.join(
+            str(ptk.UserConfig.user_config_root()),
+            *cls.STORE_FOLDER,
+            f"{label or 'root'}_{digest[:16]}",
+        )
 
     @classmethod
     def base_stem(cls, export_path: str) -> str:
@@ -132,19 +165,32 @@ class SceneDataSidecarBase:
                 series share one manifest. Opt-in: callers without an active
                 versioning context should leave this False to preserve
                 per-file sidecar behavior.
+
+        Returns:
+            The record's path in the store (:meth:`store_dir`).
         """
-        directory = os.path.dirname(export_path)
         stem = cls._stem_for(export_path, base_stem)
-        return os.path.join(directory, f".{stem}.{cls.MANIFEST_SUFFIX}")
+        return os.path.join(
+            cls.store_dir(export_path), f".{stem}.{cls.MANIFEST_SUFFIX}"
+        )
+
+    @classmethod
+    def _beside_path_for(cls, export_path: str, *, base_stem: bool = False) -> str:
+        """Where a record written before the store sat: beside the export."""
+        stem = cls._stem_for(export_path, base_stem)
+        return os.path.join(
+            os.path.dirname(export_path), f".{stem}.{cls.MANIFEST_SUFFIX}"
+        )
 
     @classmethod
     def _legacy_manifest_path_for(
         cls, export_path: str, *, base_stem: bool = False
     ) -> str:
         """Return the format-v1 (``.hierarchy.json``) manifest path."""
-        directory = os.path.dirname(export_path)
         stem = cls._stem_for(export_path, base_stem)
-        return os.path.join(directory, f".{stem}.{cls.LEGACY_MANIFEST_SUFFIX}")
+        return os.path.join(
+            cls.store_dir(export_path), f".{stem}.{cls.LEGACY_MANIFEST_SUFFIX}"
+        )
 
     @classmethod
     def diff_report_path_for(cls, export_path: str, *, base_stem: bool = False) -> str:
@@ -166,16 +212,14 @@ class SceneDataSidecarBase:
     def find_legacy_manifest(cls, export_path: str) -> Optional[str]:
         """Return the path of a legacy per-version sidecar to migrate from.
 
-        Scans the export directory for ``.{base}_v<N>.scene_data.json`` and
-        ``.{base}_v<N>.hierarchy.json`` files and returns the one with the
-        highest version number (compared as integers, so unpadded ``_v10``
-        ranks above ``_v2``; on a version tie the current naming wins).
-        Returns None if no legacy sidecars exist.
+        Scans the store and the export directory for
+        ``.{base}_v<N>.scene_data.json`` and ``.{base}_v<N>.hierarchy.json``
+        files and returns the one with the highest version number (compared
+        as integers, so unpadded ``_v10`` ranks above ``_v2``; on a version
+        tie the current naming wins, then the store).  Returns None if no
+        legacy sidecars exist.
         """
-        directory = os.path.dirname(export_path)
         base = cls.base_stem(export_path)
-        if not directory or not os.path.isdir(directory):
-            return None
         # Group 2 ranks the current naming above the v1 naming on a tie.
         legacy_re = re.compile(
             rf"^\.{re.escape(base)}_v(\d+)\."
@@ -183,14 +227,57 @@ class SceneDataSidecarBase:
             re.IGNORECASE,
         )
         matches = []
-        for f in os.listdir(directory):
-            m = legacy_re.match(f)
-            if m:
-                matches.append((int(m.group(1)), bool(m.group(2)), f))
+        folders = (cls.store_dir(export_path), os.path.dirname(export_path))
+        for rank, directory in enumerate(folders):
+            if not directory or not os.path.isdir(directory):
+                continue
+            for f in os.listdir(directory):
+                m = legacy_re.match(f)
+                if m:
+                    key = (int(m.group(1)), bool(m.group(2)), -rank)
+                    matches.append((key, os.path.join(directory, f)))
         if not matches:
             return None
-        _, _, name = max(matches, key=lambda t: (t[0], t[1]))
-        return os.path.join(directory, name)
+        return max(matches)[1]
+
+    @classmethod
+    def _evacuate(cls, export_path: str, *, base_stem: bool = False) -> None:
+        """Move this deliverable's records out of its export folder.
+
+        The current and v1 names and their ``.prev`` backups go into the
+        store (:meth:`store_dir`) -- with *base_stem*, every version's -- and
+        a record the store already holds wins over the one beside.
+        Best-effort: a locked file stays to the next migration.
+        """
+        folder = os.path.dirname(export_path)
+        if not folder or not os.path.isdir(folder):
+            return
+        own = cls._stem_for(export_path, False).casefold()
+        base = cls.base_stem(export_path).casefold()
+        suffixes = "|".join(
+            re.escape(s) for s in (cls.MANIFEST_SUFFIX, cls.LEGACY_MANIFEST_SUFFIX)
+        )
+        record_re = re.compile(rf"^\.(.+)\.(?:{suffixes})(?:\.prev)?$", re.IGNORECASE)
+        store = cls.store_dir(export_path)
+        for name in os.listdir(folder):
+            m = record_re.match(name)
+            if not m:
+                continue
+            stem = m.group(1).casefold()
+            series = cls.VERSION_SUFFIX_RE.sub("", stem)
+            if stem != own and not (base_stem and series == base):
+                continue
+            src, dst = os.path.join(folder, name), os.path.join(store, name)
+            try:
+                os.makedirs(store, exist_ok=True)
+                if os.path.exists(dst):
+                    os.remove(src)
+                else:
+                    shutil.move(src, dst)
+            except OSError as e:
+                logging.getLogger(__name__).warning(
+                    "Scene-data record not moved out of %s: %s", folder, e
+                )
 
     @staticmethod
     def _safe_replace(src: str, dst: str) -> bool:
@@ -242,6 +329,7 @@ class SceneDataSidecarBase:
 
         Idempotent: callers can invoke this on every check without harm.
         """
+        cls._evacuate(export_path, base_stem=True)
         promoted = cls._promote_stem(export_path, base_stem=True)
         if promoted:
             return promoted
@@ -267,14 +355,16 @@ class SceneDataSidecarBase:
         Promotes a same-stem v1-named ``.hierarchy.json`` manifest to
         ``.scene_data.json``; with ``base_stem=True`` additionally promotes
         the newest per-version manifest of either naming to the shared
-        base-stem name (the version-series promotion).
+        base-stem name (the version-series promotion).  First, whatever an
+        earlier version left beside the export moves into the store.
 
         Returns the manifest path if one exists after migration, else None.
         The single migration entry point for exporter callers — invoke before
         every manifest read/write.
         """
         if base_stem:
-            return cls.ensure_base_name(export_path)
+            return cls.ensure_base_name(export_path)  # evacuates the series
+        cls._evacuate(export_path)
         return cls._promote_stem(export_path, base_stem=False)
 
     # ------------------------------------------------------------------
@@ -408,9 +498,9 @@ class SceneDataSidecarBase:
     def _set_hidden(path: str) -> None:
         """Best-effort ``FILE_ATTRIBUTE_HIDDEN`` on Windows.
 
-        The dot-prefix convention hides nothing on Windows, and the sidecar
-        sits in shared delivery folders — so the manifest carries the real
-        attribute there (elsewhere the dot-prefix already does the job).
+        The dot-prefix convention hides nothing on Windows, so the manifest
+        carries the real attribute there (elsewhere the dot-prefix already
+        does the job).
         ``os.replace`` hands the result the tmp file's attributes, so this
         must re-run after every write.  Never raises: visibility is
         cosmetic and must not break the export being recorded.
@@ -503,9 +593,9 @@ class SceneDataSidecarBase:
         if last_diff:
             payload["hierarchy"]["last_diff"] = last_diff
         if data:
-            # A sidecar next to the deliverable is a form of export, so it
-            # records no authoring-machine paths (MeshConvert scrubs the GLB
-            # the same way).
+            # The record of an export is treated as one (module docstring), so
+            # it records no authoring-machine paths (MeshConvert scrubs the
+            # GLB the same way).
             payload["data_export"] = ptk.MeshConvert.without_locate_hints(data)
 
         # tmp-then-replace is not just atomicity: a hidden file rejects
@@ -519,6 +609,10 @@ class SceneDataSidecarBase:
         # rather than failing the record.
         text = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
         try:
+            # A record an earlier version left beside the export comes along
+            # first, so the sweep below finds its companions in the store.
+            cls._evacuate(export_path, base_stem=base_stem)
+            os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
             ptk.FileUtils.atomic_write_text(manifest_path, text)
         except OSError:
             return None
@@ -547,6 +641,20 @@ class SceneDataSidecarBase:
         return None
 
     @classmethod
+    def _load_record(cls, export_path: str, *, base_stem: bool) -> Optional[dict]:
+        """The store's record of *export_path*, else one an earlier version
+        left beside it, read in place: a reader moves nothing out of a folder
+        that may be shared (:meth:`migrate_legacy` does)."""
+        for path in (
+            cls.manifest_path_for(export_path, base_stem=base_stem),
+            cls._beside_path_for(export_path, base_stem=base_stem),
+        ):
+            record = cls._load_manifest(path)
+            if record is not None:
+                return record
+        return None
+
+    @classmethod
     def read_manifest(
         cls, export_path: str, *, base_stem: bool = False
     ) -> Optional[Set[str]]:
@@ -559,9 +667,7 @@ class SceneDataSidecarBase:
             A set of hierarchy path strings, or ``None`` if neither the
             manifest nor a backup can be read.
         """
-        data = cls._load_manifest(
-            cls.manifest_path_for(export_path, base_stem=base_stem)
-        )
+        data = cls._load_record(export_path, base_stem=base_stem)
         if data is None:
             return None
         return set(cls._hierarchy_section(data).get("paths", []))
@@ -574,9 +680,7 @@ class SceneDataSidecarBase:
             The decoded channel dict, or ``None`` when no manifest exists or
             it carries no data section (v1 manifests never do).
         """
-        data = cls._load_manifest(
-            cls.manifest_path_for(export_path, base_stem=base_stem)
-        )
+        data = cls._load_record(export_path, base_stem=base_stem)
         if data is None:
             return None
         section = data.get("data_export")
@@ -732,8 +836,7 @@ class SceneDataSidecarBase:
             ``(match, missing, extra)`` where *match* is ``True`` when
             the hierarchies are identical.
         """
-        manifest_path = cls.manifest_path_for(export_path, base_stem=base_stem)
-        data = cls._load_manifest(manifest_path)
+        data = cls._load_record(export_path, base_stem=base_stem)
         if data is None:
             return True, [], []
         section = cls._hierarchy_section(data)

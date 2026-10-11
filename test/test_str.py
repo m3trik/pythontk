@@ -58,7 +58,7 @@ class StrTest(BaseTestCase):
 
     def test_set_case_unicode(self):
         """Test set_case with unicode characters."""
-        self.assertEqual(StrUtils.set_case("ñoño", "upper"), "ÑOÑO")
+        self.assertEqual(StrUtils.set_case("naïve", "upper"), "NAÏVE")
         self.assertEqual(StrUtils.set_case("CAFÉ", "lower"), "café")
         self.assertEqual(StrUtils.set_case("über", "capitalize"), "Über")
 
@@ -646,7 +646,7 @@ class StrTest(BaseTestCase):
 
     def test_truncate_unicode(self):
         """Test truncate with unicode characters."""
-        result = StrUtils.truncate("αβγδεζηθ", 4)
+        result = StrUtils.truncate("Ångström", 4)
         self.assertEqual(len(result), 6)  # 4 chars + 2 for ..
 
     def test_truncate_very_long_string(self):
@@ -2049,11 +2049,11 @@ class CommonNameTest(unittest.TestCase):
 
     def test_a_candidate_with_no_legal_character_falls_back(self):
         """Bug: a candidate written wholly outside the legal set (a group
-        named in another script) legalised to "" and the call answered ""
-        though its items had legal names.
+        named in another script, or in emoji) legalised to "" and the call
+        answered "" though its items had legal names.
         Fixed: 2026-10-04
         """
-        chair = "\u6905\u5b50"  # a group named in Chinese
+        chair = "\U0001fa91"  # a group named with the chair emoji: nothing legal
         self.assertEqual(
             self._name([f"|{chair}|seat_GEO", f"|{chair}|leg_GEO"]), "seat"
         )

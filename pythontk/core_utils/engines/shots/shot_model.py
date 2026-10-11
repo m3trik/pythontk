@@ -8,9 +8,10 @@ and every place that would otherwise reach into a DCC scene is exposed as an
 **overridable hook with a pure default** (see :meth:`ShotStore._scene_fps`,
 :meth:`ShotStore.has_animation`, :meth:`ShotStore.detect_regions`,
 :meth:`ShotStore.assess`, :meth:`ShotStore.publish_export_view`,
-:meth:`ShotStore._resolve_long_names`, :meth:`ShotStore._existing_objects` and
-:meth:`ShotStore._keyed_windows`).  DCC toolkits subclass ``ShotStore``
-and override those hooks; the pure core never imports ``maya`` or ``bpy``.
+:meth:`ShotStore._resolve_long_names`, :meth:`ShotStore._existing_objects`,
+:meth:`ShotStore._keyed_windows` and :meth:`ShotStore._curve_ledger_keys`).
+DCC toolkits subclass ``ShotStore`` and override those hooks; the pure core
+never imports ``maya`` or ``bpy``.
 
 Persistence is pluggable: call :meth:`ShotStore.set_persistence` with a backend
 that implements ``save(data)`` / ``load() -> dict | None``.  Absent a backend
@@ -46,6 +47,11 @@ _log = logging.getLogger(__name__)
 
 _DEFAULT_FPS = 24.0
 
+#: How far inside its bounds a key has to sit to count as a shot's own when
+#: telling an empty shot (``ShotStore.empty_shots``): at a zero gap the frame a
+#: shot starts on is the last of the shot before it, keys and all.
+_BOUND_TOL = 1e-3
+
 
 __all__ = [
     "SHOT_PALETTE",
@@ -58,6 +64,7 @@ __all__ = [
     "ActiveShotChanged",
     "SettingsChanged",
     "BatchComplete",
+    "ShotsEdited",
     "StoreInvalidated",
     "ScenePersistence",
     "ShotEditLedger",
@@ -102,6 +109,7 @@ try:
             "unknown_behavior": "warn",  # no behavior template by that name
             "not_in_doc": "info",  # a shot no doc step pairs with
             "no_objects": "info",  # the doc lists no objects for the step
+            "edited": "locked",  # edited by hand since its build: Build keeps it
         }
     )
 except ImportError:
@@ -231,10 +239,17 @@ class ShotRemoved(StoreEvent):
 
 @dataclass(frozen=True)
 class ActiveShotChanged(StoreEvent):
-    """The active (selected) shot changed."""
+    """The active (selected) shot changed.
+
+    *previous* is the shot it replaced (``None``: there was none) -- what
+    tells a pick that moved from one shot to another from one that only
+    filled an empty slot (a panel selecting the first shot once the active
+    one was deleted).
+    """
 
     name: ClassVar[str] = "active_shot_changed"
     shot_id: Optional[int] = None
+    previous: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -249,6 +264,21 @@ class BatchComplete(StoreEvent):
     """A :meth:`ShotStore.batch_update` context has exited."""
 
     name: ClassVar[str] = "batch_complete"
+
+
+@dataclass(frozen=True)
+class ShotsEdited(StoreEvent):
+    """A :meth:`ShotStore.scene_edit` -- one step of the scene's undo --
+    changed the shot records.
+
+    The one event every panel can follow for an edit made anywhere: the
+    engine's bound edits (trim, resize, slide, ripple, respace, add space)
+    write the shots directly, so this is the only word a panel that did not
+    make the edit gets of them.  *label* names the edit.
+    """
+
+    name: ClassVar[str] = "shots_edited"
+    label: str = ""
 
 
 @dataclass(frozen=True)
@@ -270,6 +300,62 @@ class StoreInvalidated(StoreEvent):
 
 class _ShotStoreInternal(object):
     """Internal helpers for ShotStore."""
+
+    # ---- the claim hooks (``ShotStore.release_replaced`` / ``remap_moved``) --
+
+    def _release_through(self, keys_of) -> Callable[[Any, Any], int]:
+        """The ``on_replace(curve, frames)`` :meth:`ShotStore.release_replaced`
+        returns, resolving a curve's ledger keys through *keys_of*."""
+
+        def on_replace(curve, frames) -> int:
+            ledger = self.edit_ledger
+            if not ledger:  # nothing claimed: no curve's keys need resolving
+                return 0
+            if frames is not None:
+                frames = list(frames)  # read once per ledger key, not once in all
+            if frames is None:  # the curve is gone: all of it
+                released = sum(
+                    ledger.release(key, -math.inf, math.inf) for key in keys_of(curve)
+                )
+            else:
+                released = sum(
+                    ledger.release(key, t) for key in keys_of(curve) for t in frames
+                )
+            if released:
+                self.mark_dirty()
+            return released
+
+        return on_replace
+
+    def _remap_through(self, keys_of) -> Callable[[Any, Any], int]:
+        """The ``on_move(curve, pairs)`` :meth:`ShotStore.remap_moved` returns,
+        resolving a curve's ledger keys through *keys_of*."""
+
+        def on_move(curve, pairs) -> int:
+            ledger = self.edit_ledger
+            if not ledger:  # nothing claimed: no curve's keys need resolving
+                return 0
+            pairs = list(pairs)
+            moved = sum(ledger.remap(key, pairs) for key in keys_of(curve))
+            if moved:
+                self.mark_dirty()
+            return moved
+
+        return on_move
+
+    @staticmethod
+    def _spans_overlap(
+        spans: Iterable[Tuple[float, Optional[float]]],
+        windows: List[Tuple[float, float]],
+    ) -> List[bool]:
+        """Per window, whether any ``(start, stop)`` span overlaps it -- the DCC
+        audio hooks' shared half (:meth:`ShotStore._audio_windows`); a
+        ``stop`` of ``None`` plays on past its start, so only its start has to
+        fall before the window's end."""
+        spans = list(spans)
+        return [
+            any(s <= b and (e is None or e >= a) for s, e in spans) for a, b in windows
+        ]
 
     @staticmethod
     def _sanitize_clip_name(name: str) -> str:
@@ -313,8 +399,10 @@ class ShotStore(_ShotStoreInternal):
     overridable hooks (:meth:`_scene_fps`, :meth:`has_animation`,
     :meth:`detect_regions`, :meth:`assess`, :meth:`publish_export_view`,
     :meth:`_resolve_long_names`, :meth:`_existing_objects`,
-    :meth:`_keyed_windows`, :meth:`_schedule_flush`), each with a pure
-    default; mayatk / blendertk subclass this and override them.
+    :meth:`_keyed_windows`, :meth:`_members_keyed_windows`,
+    :meth:`_audio_windows`, :meth:`_curve_ledger_keys`, :meth:`member_nodes`,
+    :meth:`scene_edit`, :meth:`_schedule_flush`), each with a pure default;
+    mayatk / blendertk subclass this and override them.
 
     Parameters:
         shots: Initial shot list.  Copied on construction.
@@ -383,6 +471,14 @@ class ShotStore(_ShotStoreInternal):
         # Source CSV path (when the store was populated from a manifest CSV).
         # Purely informational — lets the user retrace provenance on reopen.
         self.source_csv: str = ""
+        # The Shot Manifest's edit layers, one per source they edit (a sheet's
+        # path, or "" for the scene's own shots): ``ManifestEdits.to_dict``
+        # payloads, kept apart from the sheet and composed over it on load.
+        self.manifest_edits: Dict[str, Dict[str, Any]] = {}
+        # The Shot Manifest's colour tags, ``{step_id: palette slot}`` per
+        # source, keyed as ``manifest_edits``: how the user organises the
+        # table, never an edit (``ManifestTags``).
+        self.manifest_tags: Dict[str, Dict[str, str]] = {}
         # Export-view projection (opt-in).  When True, every save publishes the
         # FBX-takes + Unity-metadata channels via the ``publish_export_view``
         # hook so any DCC export can carry them.  Off by default.
@@ -474,6 +570,10 @@ class ShotStore(_ShotStoreInternal):
             # delete (which re-creates the shot) or an insert has to put the
             # locks of that moment back with it; see _rekey_gap_locks.
             "locked_gaps": sorted(self.locked_gaps),
+            # The shot the user was on: undoing a new shot returns to it (and
+            # redo to the new one) rather than to whatever survives the
+            # restore.
+            "active": self._active_shot_id,
         }
 
     # ---- pairing with the DCC's own undo queue ---------------------------
@@ -503,6 +603,19 @@ class ShotStore(_ShotStoreInternal):
     def has_boundary_snapshot(self, redo: bool = False) -> bool:
         """True when a restore point is available in that direction."""
         return bool(self._boundary_redo if redo else self._boundary_undo)
+
+    def changed_since_snapshot(self) -> bool:
+        """Whether the store differs from its newest restore point: the shot
+        records, the edit ledger, the gap locks or the active shot.  ``False``
+        with no restore point.
+
+        What a DCC's :meth:`scene_edit` asks to tell an edit that changed what
+        only the store holds -- which the DCC's undo queue cannot see -- from
+        one that changed nothing at all.
+        """
+        if not self._boundary_undo:
+            return False
+        return self._boundary_undo[-1][0] != self._restore_point()
 
     def discard_boundary_snapshot(self) -> None:
         """Drop the most recent restore point without applying it.
@@ -565,9 +678,12 @@ class ShotStore(_ShotStoreInternal):
         self._boundary_redo_stash = None
 
     def _apply_boundary_snapshot(self, state: dict) -> None:
-        """Put back a :meth:`_restore_point`: the ledger, then the shots."""
+        """Put back a :meth:`_restore_point`: the ledger, the shots, then the
+        active shot."""
         self.edit_ledger = ShotEditLedger.from_dict(state.get("ledger"))
         locks = state.get("locked_gaps")
+        has_active = "active" in state
+        active = state.get("active")
         state = state["shots"]
         snap_ids = {rec["shot_id"] for rec in state}
         with self.batch_update():
@@ -611,6 +727,8 @@ class ShotStore(_ShotStoreInternal):
                 if restored != self.locked_gaps:
                     self.locked_gaps = restored
                     self.mark_dirty()
+            if has_active and (active is None or self.shot_by_id(active)):
+                self.set_active_shot(active)
 
     # ---- scene hooks (overridable; pure defaults) ------------------------
 
@@ -694,6 +812,40 @@ class ShotStore(_ShotStoreInternal):
         """
         return [True] * len(windows)
 
+    def _members_keyed_windows(
+        self, entries: List[Tuple[List[str], Tuple[float, float]]]
+    ) -> List[Optional[bool]]:
+        """Per ``(names, (start, end))``, whether a curve of the named objects
+        keys a frame inside the window (overridable hook, :meth:`empty_shots`).
+
+        ``None`` for an entry none of whose names the scene holds -- the caller
+        then asks the whole scene (:meth:`_keyed_windows`).  The shot system's
+        own bound samples (:attr:`edit_ledger` keys) are bookkeeping, not
+        content, and do not count.  Pure default: every window is keyed -- a
+        shot is never called empty on a guess.
+        """
+        return [True] * len(entries)
+
+    def _audio_windows(self, windows: List[Tuple[float, float]]) -> List[bool]:
+        """Per ``(start, end)`` window, whether an audio clip plays in it
+        (overridable hook, :meth:`empty_shots`).
+
+        Pure default: none -- the pure model holds no audio.  DCC subclasses
+        override to read every clip's span (``AudioUtils.read_all_events``).
+        """
+        return [False] * len(windows)
+
+    def _curve_ledger_keys(self, objects=None) -> Callable[[Any], Iterable[str]]:
+        """``keys_of(curve)``: the :attr:`edit_ledger` keys a DCC curve is
+        claimed under (overridable hook; see :meth:`release_replaced`).
+
+        Pure default: a curve is its own key (``str(curve)``) -- Maya claims
+        by anim-curve node name.  A DCC whose curves have no name overrides it:
+        blendertk keys an fcurve by its owner and channel, so it maps through
+        the owners among *objects*.
+        """
+        return lambda curve: (str(curve),)
+
     def publish_export_view(self, strategy: Optional[str] = None) -> Optional[str]:
         """Project the export view onto a DCC carrier (overridable hook).
 
@@ -713,6 +865,129 @@ class ShotStore(_ShotStoreInternal):
         """
         self._flush_dirty()
 
+    @contextmanager
+    def scene_edit(self, label: str = "edit", snapshot: bool = True):
+        """Run a shot edit as one step of the scene's undo (overridable hook).
+
+        Pure default: push a boundary restore point (*snapshot*) and run the
+        body -- the pure model has no native undo queue to pair the point
+        with.  The DCC stores override it to run the body in one named undo
+        step and tag the point with that step (``mayatk.ShotStore`` /
+        ``blendertk.BlenderShotStore``).  Every one ends by emitting
+        :class:`ShotsEdited` when the body changed the shot records.
+
+        Parameters:
+            label: The edit's name (the undo step's, and the event's).
+            snapshot: Push a restore point before the body; ``False`` for an
+                edit that must not record one.
+        """
+        if snapshot:
+            self.push_boundary_snapshot()
+        yield None
+        # Every store's scene_edit ends the same way: an edit that changed the
+        # records since its restore point says so (ShotsEdited) -- only after
+        # a body that did not raise, and never without a point to compare to.
+        if snapshot and self.changed_since_snapshot():
+            self._notify(ShotsEdited(label=label))
+
+    # ---- claims on keys a DCC key edit replaced or moved ------------------
+
+    def release_replaced(
+        self, objects: Optional[Iterable[Any]] = None
+    ) -> Callable[[Any, Optional[Iterable[float]]], int]:
+        """An ``on_replace(curve, frames)`` for the DCC key edits that land a
+        key on an occupied frame (the ``on_replace`` of mayatk's and
+        blendertk's ``AnimUtils`` key edits: Align, Invert, Paste, ...).
+
+        Such an edit REPLACES the key that stood on the frame, and every claim
+        the shot system held on that key -- a gap hold's step, a bound sample,
+        a behavior's authored key -- goes with it, as with every key a system
+        cut drops (:meth:`ShotEditLedger.release`).  Left on the frame, the
+        claims passed to the key that landed there, and the next Build deleted
+        that animator key as a dropped behavior.  A key a delete edit removes
+        goes the same way, so the same callable is that edit's ``on_delete``
+        (Delete Keys, Remove Intermediate Keys, Simplify, Optimize, Untie,
+        Repair) -- and *frames* ``None`` says the CURVE itself is gone (a
+        static curve dropped, a corrupted one deleted): every claim on it goes.
+
+        Parameters:
+            objects: The objects the edit runs over, for a DCC that keys a
+                claim by the curve's owner (:meth:`_curve_ledger_keys`);
+                ``None``: whatever owns the curve.
+
+        Returns:
+            ``on_replace(curve, frames)``: drops every claim at each of
+            *frames* on *curve* (every claim on it, *frames* ``None``) --
+            from the ledger the store holds when it runs, which an undo
+            restore may have swapped -- marks the store dirty when any went,
+            and returns how many did.
+        """
+        return self._release_through(self._curve_ledger_keys(objects))
+
+    def remap_moved(
+        self, objects: Optional[Iterable[Any]] = None
+    ) -> Callable[[Any, Iterable[Tuple[float, float]]], int]:
+        """An ``on_move(curve, pairs)`` for the DCC key edits that move keys
+        (the ``on_move`` of mayatk's and blendertk's ``AnimUtils`` key edits).
+
+        A claimed key the edit MOVES carries its claims to its new frame, as
+        the shot sequencer's own key moves do (:meth:`ShotEditLedger.remap`).
+        Left on the old frame, a claim passed to whatever key arrived there
+        while the key that moved read as the animator's: the next Build
+        deleted the one and keyed the behavior again beside the other.  A
+        moved bound sample then follows its bound at the sequencer's next
+        reconcile, as a dragged one does.
+
+        Parameters:
+            objects: As :meth:`release_replaced`.
+
+        Returns:
+            ``on_move(curve, pairs)``: moves every claim on *curve* from the
+            ``old`` frame of each ``(old, new)`` pair to its ``new`` -- every
+            pair matched against the claims as they stood, so two keys that
+            trade frames trade claims -- marks the store dirty when any moved,
+            and returns how many did.
+        """
+        return self._remap_through(self._curve_ledger_keys(objects))
+
+    def claim_hooks(
+        self, objects: Optional[Iterable[Any]] = None
+    ) -> Tuple[Callable, Callable]:
+        """``(on_replace, on_move)`` over *objects*: :meth:`release_replaced`
+        and :meth:`remap_moved` sharing ONE key resolution
+        (:meth:`_curve_ledger_keys`), so a DCC that resolves a curve's owners
+        by scanning the scene pays that once per edit, however many of the
+        two hooks the edit calls (and nothing for a hook it never calls).
+
+        Parameters:
+            objects: As :meth:`release_replaced`.
+        """
+        keys_of = self._curve_ledger_keys(objects)
+        return self._release_through(keys_of), self._remap_through(keys_of)
+
+    @contextmanager
+    def key_edit(self, label: str = "edit", objects: Optional[Iterable[Any]] = None):
+        """Run a DCC key edit that may replace or move claimed keys.
+
+        Yields ``(on_replace, on_move)`` -- :meth:`release_replaced` and
+        :meth:`remap_moved` over *objects* -- for the edit to take.  When the
+        store claims anything, the edit runs inside :meth:`scene_edit`: one
+        undo step with a restore point taken before it, so undoing the edit
+        puts the claims it released or moved back with its keys.  A store that
+        claims nothing records no restore point (a scene with no shots gets
+        none), and the edit keeps the undo step its caller gives it.
+
+        Parameters:
+            label: The undo step's name.
+            objects: As :meth:`release_replaced`.
+        """
+        hooks = self.claim_hooks(objects)
+        if not self.edit_ledger:
+            yield hooks
+            return
+        with self.scene_edit(label):
+            yield hooks
+
     # ---- active shot (session state, not persisted) ----------------------
 
     @property
@@ -722,10 +997,11 @@ class ShotStore(_ShotStoreInternal):
 
     def set_active_shot(self, shot_id: Optional[int]) -> None:
         """Set the active shot and notify listeners."""
-        if shot_id == self._active_shot_id:
+        previous = self._active_shot_id
+        if shot_id == previous:
             return
         self._active_shot_id = shot_id
-        self._notify(ActiveShotChanged(shot_id=shot_id))
+        self._notify(ActiveShotChanged(shot_id=shot_id, previous=previous))
 
     def is_empty(self) -> bool:
         """``True`` when the store declares no shots.
@@ -1465,7 +1741,8 @@ class ShotStore(_ShotStoreInternal):
         (:meth:`ShotEditLedger.disown_shot`).  Left on the id, they passed to
         the next shot :meth:`define_shot` gave it -- whose Build then deleted
         them as behaviors its doc had dropped.  A restore point holds the
-        ledger as it was, so undoing the removal gives them back.
+        ledger as it was, so undoing the removal gives them back.  Removing
+        the active shot leaves none active (:class:`ActiveShotChanged`).
         """
         for i, s in enumerate(self.shots):
             if s.shot_id == shot_id:
@@ -1473,6 +1750,10 @@ class ShotStore(_ShotStoreInternal):
                 self.edit_ledger.disown_shot(shot_id)
                 self._rekey_gap_locks()
                 self._notify(ShotRemoved(shot_id=shot_id))
+                if shot_id == self._active_shot_id:
+                    # An active id naming no shot is a dangling reference
+                    # every reader would have to guard.
+                    self.set_active_shot(None)
                 self.mark_dirty()
                 return True
         return False
@@ -1621,6 +1902,59 @@ class ShotStore(_ShotStoreInternal):
         if changed:
             self.mark_dirty()
 
+    # ---- renaming --------------------------------------------------------
+
+    #: The store's object-name sets, re-pointed with the members they name.
+    OBJECT_SETS = ("hidden_objects", "pinned_objects", "locked_objects")
+
+    def held_names(self) -> set:
+        """Every name the store holds an object by -- shot members and the
+        :attr:`OBJECT_SETS` -- which is what :meth:`rename_members` re-points."""
+        names = {o for shot in self.shots for o in shot.objects}
+        for attr in self.OBJECT_SETS:
+            names |= getattr(self, attr)
+        return names
+
+    def rename_members(self, renames: Dict[str, str]) -> bool:
+        """Re-point every name the store holds an object by: ``{old: new}``.
+
+        Shot members and the :attr:`OBJECT_SETS` alike, so a re-pointed member
+        keeps its pin (a pin left on the old name no longer keeps the member)
+        and its hidden / locked state.  Two names re-pointed at one node become
+        one member: a doc name a build stored while it could not resolve it,
+        once the scene scan has added the node beside it, is the same object
+        twice.  The host decides what each name now is -- a followed rename,
+        a stale path re-resolved, a doc name now found; this applies it.
+
+        Parameters:
+            renames: ``{old name: new name}``; an entry naming itself is
+                ignored.
+
+        Returns:
+            ``True`` when anything was re-pointed.
+        """
+        renames = {old: new for old, new in renames.items() if old != new}
+        if not renames:
+            return False
+        changed = False
+        with self.batch_update():
+            for shot in self.shots:
+                if not renames.keys() & set(shot.objects):
+                    continue
+                # update_shot sorts and de-duplicates: two names, one member.
+                self.update_shot(
+                    shot.shot_id, objects=[renames.get(o, o) for o in shot.objects]
+                )
+                changed = True
+            for attr in self.OBJECT_SETS:
+                held = getattr(self, attr)
+                if renames.keys() & held:
+                    setattr(self, attr, {renames.get(n, n) for n in held})
+                    changed = True
+        if changed:
+            self.mark_dirty()
+        return changed
+
     # ---- serialisation ---------------------------------------------------
 
     def to_dict(self) -> Dict[str, Any]:
@@ -1653,6 +1987,8 @@ class ShotStore(_ShotStoreInternal):
             "locked_gaps": [list(pair) for pair in sorted(self.locked_gaps)],
             "scene_fps": self.scene_fps,
             "source_csv": self.source_csv,
+            "manifest_edits": dict(self.manifest_edits),
+            "manifest_tags": {k: dict(v) for k, v in self.manifest_tags.items()},
             "auto_publish_export": self.auto_publish_export,
             "clip_name_strategy": self.clip_name_strategy,
             "edit_ledger": self.edit_ledger.to_dict(),
@@ -1715,9 +2051,102 @@ class ShotStore(_ShotStoreInternal):
                     ledger.release_authored(curve, time)
             for shot in stale:
                 self.remove_shot(shot.shot_id)
-            if self.active_shot_id in ids:
-                self.set_active_shot(None)
         return stale
+
+    def empty_shots(self) -> List[ShotBlock]:
+        """The shots that hold nothing, in order: nothing they name is keyed
+        inside their frames -- and, for a shot that names nothing (or nothing
+        the scene still holds), nothing in the scene is -- and no audio plays
+        in them (:meth:`_audio_windows`).
+
+        What the Shot Sequencer draws as an empty band (2026-10-10: "delete
+        empty is leaving behind empty shots").  Naming objects used to keep a
+        shot out of this scope, as a hold -- but a new shot names the objects
+        keyed on its start (at a zero gap, the shot before's last frame), and
+        a shot whose keys were deleted keeps its members: both held nothing
+        and stayed.  A hold that keys nothing in its own frames is empty by
+        this measure too; the deletes ask first, naming every shot.  A stale
+        shot is empty as well (:meth:`stale_shots` is the narrower scope).
+
+        A key ON a bound counts only where no neighbour shares the frame: at
+        a zero gap it is the neighbour's as much as this shot's
+        (:data:`_BOUND_TOL`).  The pure model cannot see keys
+        (:meth:`_members_keyed_windows`, :meth:`_keyed_windows`), so it never
+        calls a shot empty.
+        """
+        shots = self.sorted_shots()
+        windows = []
+        for i, s in enumerate(shots):
+            shared_lo = i > 0 and shots[i - 1].end >= s.start - _BOUND_TOL
+            shared_hi = i + 1 < len(shots) and shots[i + 1].start <= s.end + _BOUND_TOL
+            lo = s.start + (_BOUND_TOL if shared_lo else -_BOUND_TOL)
+            hi = s.end + (-_BOUND_TOL if shared_hi else _BOUND_TOL)
+            windows.append((lo, hi) if lo <= hi else (s.start, s.end))
+        named = [i for i, s in enumerate(shots) if s.objects]
+        keyed: List[Optional[bool]] = [None] * len(shots)
+        if named:
+            answers = self._members_keyed_windows(
+                [(list(shots[i].objects), windows[i]) for i in named]
+            )
+            for i, answer in zip(named, answers):
+                keyed[i] = answer
+        # Naming nothing the scene holds: the scene says.
+        rest = [i for i, k in enumerate(keyed) if k is None]
+        if rest:
+            for i, answer in zip(rest, self._keyed_windows([windows[i] for i in rest])):
+                keyed[i] = answer
+        # Audio is a shot's content too (the Sequencer draws its clips), and a
+        # clip can play through a shot with no key of its own inside it.
+        quiet = [i for i, k in enumerate(keyed) if not k]
+        if quiet:
+            for i, plays in zip(
+                quiet, self._audio_windows([windows[i] for i in quiet])
+            ):
+                keyed[i] = plays
+        return [s for s, k in zip(shots, keyed) if not k]
+
+    #: What :meth:`shots_in_scope` and :meth:`remove_shots_in_scope` take, in
+    #: the order a host offers them: the narrowest first.
+    DELETE_SCOPES = ("stale", "empty", "all")
+
+    def shots_in_scope(self, scope: str) -> List[ShotBlock]:
+        """The shots a delete of *scope* takes, in order.
+
+        Parameters:
+            scope: ``"stale"`` (:meth:`stale_shots`), ``"empty"``
+                (:meth:`empty_shots`) or ``"all"``.
+
+        Raises:
+            ValueError: *scope* is none of :attr:`DELETE_SCOPES`.
+        """
+        if scope == "stale":
+            return self.stale_shots()
+        if scope == "empty":
+            return self.empty_shots()
+        if scope == "all":
+            return self.sorted_shots()
+        raise ValueError(
+            f"shot delete scope {scope!r} is not one of {self.DELETE_SCOPES}"
+        )
+
+    def remove_shots_in_scope(self, scope: str) -> List[ShotBlock]:
+        """Remove the shots of *scope* (:meth:`shots_in_scope`); return what
+        went.
+
+        Records only, like :meth:`remove_stale_shots` (which the ``"stale"``
+        scope is): no key is touched and no other shot moves.  An empty shot
+        keys nothing to cut; "all" leaves every shot's animation in the scene,
+        the claims it held disowned (:meth:`remove_shot`).  Listeners hear one
+        batch.
+        """
+        if scope == "stale":
+            return self.remove_stale_shots()
+        doomed = self.shots_in_scope(scope)
+        if doomed:
+            with self.batch_update():
+                for shot in doomed:
+                    self.remove_shot(shot.shot_id)
+        return doomed
 
     def _scene_scope(self) -> Tuple[set, Optional[set]]:
         """``(stale shot ids, members the scene still holds)`` -- each hook
@@ -2037,6 +2466,22 @@ class ShotStore(_ShotStoreInternal):
         if stored_fps is not None:
             store.scene_fps = float(stored_fps)
         store.source_csv = str(data.get("source_csv", "") or "")
+        edits = data.get("manifest_edits")
+        store.manifest_edits = (
+            {str(k): v for k, v in edits.items() if isinstance(v, dict)}
+            if isinstance(edits, dict)
+            else {}
+        )
+        tags = data.get("manifest_tags")
+        store.manifest_tags = {
+            str(source): {
+                str(step): slot
+                for step, slot in layer.items()
+                if isinstance(slot, str) and slot
+            }
+            for source, layer in (tags.items() if isinstance(tags, dict) else ())
+            if isinstance(layer, dict)
+        }
         store.auto_publish_export = bool(data.get("auto_publish_export", False))
         strat = data.get("clip_name_strategy")
         if strat in CLIP_NAME_STRATEGIES:
@@ -2194,15 +2639,27 @@ class ShotStore(_ShotStoreInternal):
         """
         return ShotStore.leaf_name(node).rsplit(":", 1)[-1]
 
+    def member_nodes(self, name: str) -> List[str]:
+        """Every scene node answering to a doc object *name* (scene hook).
+
+        Several is a duplicate name the scene must fix, none a missing object.
+        Pure default: the name itself; the DCC stores look it up, namespaces
+        included.
+        """
+        return [str(name)]
+
     def resolve_member(self, name: str) -> Tuple[str, str]:
-        """Resolve a doc object *name* to a scene node (scene hook).
+        """Resolve a doc object *name* to one scene node.
 
         Returns ``(node, reason)`` -- *reason* ``"found"`` (*node* is the
         scene's name for it), ``"missing"`` or ``"ambiguous"`` (*node* is
-        *name* unchanged).  Pure default: every name is found as written; the
-        DCC stores look the name up, namespaces included.
+        *name* unchanged): several nodes answering to it (:meth:`member_nodes`)
+        is a finding, never a silent pick.
         """
-        return str(name), "found"
+        hits = self.member_nodes(name)
+        if len(hits) == 1:
+            return hits[0], "found"
+        return str(name), ("ambiguous" if hits else "missing")
 
     @staticmethod
     def resolve_clip_specs(

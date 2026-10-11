@@ -80,6 +80,17 @@ class _TexturesMixin:
         None: ("UASTC", True),
     }
 
+    #: (Basis codec, sRGB transfer) a LIGHTMAP takes in KTX2 mode; None keeps
+    #: every lightmap in a lossless container. UASTC because the atlases are
+    #: among the larger resident images (a 2048 atlas: 22.4 MB as RGBA8 + mips,
+    #: 5.6 MB as UASTC), never ETC1S or RDO. Measured on three production
+    #: atlases against the HDR bake, after the viewer's intensity multiply:
+    #: UASTC 0.48-1.52% median error vs the lossless container's 0.45-1.33%,
+    #: dark-quartile low-frequency error 0.23-1.78% vs 0.12-0.75%, at ~1.7x
+    #: the wire bytes; ETC1S was 2-5x the error and RDO 1.0 doubled the dark
+    #: tail. UASTC level 4 matched level 2 at 20x the encode time.
+    LIGHTMAP_BASIS: Optional[Tuple[str, bool]] = ("UASTC", True)
+
     #: Semantic precedence when one image is sampled by several slots: the
     #: quality/correctness-critical use wins the encode.
     _SEMANTIC_RANK: Dict[str, int] = {"color": 0, "data": 1, "normal": 2}
@@ -552,9 +563,9 @@ class _TexturesMixin:
         sit in the half-resolution chroma planes, where they are resampled as
         if the eye were judging them; the same split
         :attr:`BASIS_BY_SEMANTIC` makes for KTX2. Lightmaps are additionally
-        exempt from the resize (the bake sized them deliberately) and lossless
-        whatever they are sampled as; that exemption is both by the names the
-        ``lightmap_web`` manifest lists and structurally, by texCoord-1
+        exempt from the resize (the bake sized them deliberately) and never
+        lossy-encoded whatever they are sampled as; that exemption is both by
+        the names the ``lightmap_web`` manifest lists and structurally, by texCoord-1
         occlusion/emissive binding, so a digest-deduped image whose name lies
         is still protected. A re-encode that comes out larger keeps the
         original bytes.
@@ -583,12 +594,13 @@ class _TexturesMixin:
           it, and a non-core ``image/ktx2`` that no declaration enables is
           invalid glTF. Same rule as ``MapOptimizer.resolve_compression``,
           keyed structurally (by glTF slot) instead of by filename.
-        * **Lightmaps never take a Basis codec** even in KTX2 mode: ETC1S
-          would blotch them for the same reason lossy WebP does, UASTC would
-          re-quantise a deliberately-authored bake, and their carrier slot's
-          colorspace handling is viewer-rebound -- fidelity wins over GPU
-          residency for exactly these images. Their container then follows
-          *ktx2_fallback*: with fallbacks ON they keep the core-readable PNG,
+        * **Lightmaps take UASTC + sRGB** (:attr:`LIGHTMAP_BASIS`, which says
+          why and what it measured) -- never ETC1S, which blotches them as
+          lossy WebP does, never RDO, and never resampled: a lightmap whose
+          edges are not both powers of two cannot meet the snap below, so it
+          keeps a lossless container instead, as every lightmap does with
+          :attr:`LIGHTMAP_BASIS` set to None. That container follows
+          *ktx2_fallback*: with fallbacks ON it is the core-readable PNG,
           because EXT_texture_webp may only stay out of ``extensionsRequired``
           when the texture carries a PNG/JPEG twin, and WebP + twin costs more
           than the PNG alone (measured: 103 KB + 209 KB vs 209 KB). Pure
@@ -666,6 +678,7 @@ class _TexturesMixin:
         except ImportError:
             logger.warning("optimize_glb_textures: Pillow unavailable; skipped.")
             return {}
+        from pythontk.img_utils._img_utils import ImgUtils
 
         # An extension ("jpg") becomes Pillow's id; an empty one is the policy's.
         image_format = cls._image_format_id(image_format) or cls.WEB_DELIVERY_FORMAT
@@ -677,7 +690,6 @@ class _TexturesMixin:
             # who asked for GPU-resident compression and silently got WebP
             # would ship a deliverable that *looks* optimized while missing
             # the entire point of the request.
-            from pythontk.img_utils._img_utils import ImgUtils
             from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
 
             encoder = ImgUtils.resolve_ktx2_encoder(required=True)
@@ -730,11 +742,11 @@ class _TexturesMixin:
                 if src is not None:
                     kept.add(src)
 
-            # Both non-core containers encode per SLOT semantic -- KTX2 picks
-            # the codec and transfer, WebP picks lossy or lossless -- so the
-            # classification has to happen while the glTF structure is in hand.
-            semantic_aware = is_ktx2 or image_format == "WEBP"
-            semantic_by_image = cls._image_semantics(edit) if semantic_aware else {}
+            # Every image is classified by its SLOT semantic while the glTF
+            # structure is in hand: KTX2 picks the codec and transfer by it,
+            # WebP lossy or lossless, and every container resamples a normal
+            # map as one (ImgUtils.resize_image says why).
+            semantic_by_image = cls._image_semantics(edit)
             #: Whether this pass hands a non-exempt image a container glTF core
             #: cannot read. Both are legal only through a TEXTURE-level
             #: extension (``KHR_texture_basisu`` / ``EXT_texture_webp``), which
@@ -763,8 +775,7 @@ class _TexturesMixin:
             # encoding; the semantic for the same reason -- bytes sampled as a
             # normal map in one material and as base color in another need a
             # UASTC and an ETC1S encode respectively, and in WebP mode a
-            # lossless and a lossy one. (In PNG mode the semantic is a constant
-            # None and the key degenerates to the pair.)
+            # lossless and a lossy one, and a normal map resamples as one.
             before = after = 0
             jobs: Dict[Tuple[str, bool, Optional[str]], bytes] = {}
             #: job key -> did its pixels actually get resampled. Reported so a
@@ -803,7 +814,7 @@ class _TexturesMixin:
                     # the pass that marks them, so they are never orphans.
                     after += len(payload)
                     continue
-                semantic = semantic_by_image.get(index) if semantic_aware else None
+                semantic = semantic_by_image.get(index)
                 key = (hashlib.sha256(payload).hexdigest(), is_exempt, semantic)
                 key_by_index[index] = key
                 jobs.setdefault(key, payload)
@@ -839,6 +850,17 @@ class _TexturesMixin:
                         max(1, round(target[0] * scale)),
                         max(1, round(target[1] * scale)),
                     )
+                # (codec, srgb) when this job takes a Basis encode, else None.
+                # A lightmap takes one only at the size it already has: it is
+                # never resampled, so only POT edges meet the snap below.
+                basis = None
+                if is_ktx2 and not is_exempt:
+                    basis = cls.BASIS_BY_SEMANTIC.get(
+                        semantic, cls.BASIS_BY_SEMANTIC[None]
+                    )
+                elif is_ktx2 and cls.LIGHTMAP_BASIS:
+                    if all(edge >= 4 and not edge & (edge - 1) for edge in pil.size):
+                        basis = cls.LIGHTMAP_BASIS
                 if is_ktx2 and not is_exempt:
                     # KHR_texture_basisu requires multiple-of-4 dimensions and
                     # a full mip pyramid (generated at encode time); POT
@@ -854,11 +876,11 @@ class _TexturesMixin:
                 # key, so distinct keys never collide.
                 resized_by_key[key] = target != pil.size
                 if target != pil.size:
-                    pil = pil.resize(target, Image.LANCZOS)
-                if is_ktx2 and not is_exempt:
-                    codec, srgb = cls.BASIS_BY_SEMANTIC.get(
-                        semantic, cls.BASIS_BY_SEMANTIC[None]
+                    pil = ImgUtils.resize_image(
+                        pil, *target, normal_map=semantic == "normal"
                     )
+                if basis is not None:
+                    codec, srgb = basis
                     from pythontk.file_utils.temp_artifacts import TempArtifacts
 
                     try:
@@ -866,10 +888,10 @@ class _TexturesMixin:
                             out = tmp.path(extension=".ktx2")
                             # RDO rides only when asked (Ktx2Encoder.rdo_kwargs:
                             # a registered encoder need not model it), and it
-                            # is a UASTC-only stage.
+                            # is a UASTC-only stage a lightmap never takes.
                             rdo = (
                                 cls._uastc_rdo_for(semantic, uastc_rdo)
-                                if codec == "UASTC"
+                                if codec == "UASTC" and not is_exempt
                                 else None
                             )
                             encoder.encode(
@@ -930,9 +952,9 @@ class _TexturesMixin:
                             )
                             fb_bytes = fb_mime = None
                     return (encoded, fb_bytes, fb_mime)
-                # Exempt (lightmap) images in KTX2 mode never take a Basis
-                # codec -- the mode's docstring bullet says why -- so they need
-                # a container of their own. WebP is the smallest lossless one,
+                # A lightmap in KTX2 mode that took no Basis codec (an off-size
+                # atlas, or LIGHTMAP_BASIS off) needs a container of its own.
+                # WebP is the smallest lossless one,
                 # but glTF core cannot read it, and EXT_texture_webp may only
                 # stay OUT of ``extensionsRequired`` when the texture also
                 # carries a PNG/JPEG fallback. Carrying both costs MORE than
@@ -994,8 +1016,6 @@ class _TexturesMixin:
             # already in this process's memory, and pickling hundreds of MB out
             # to workers would cost more than the encode saves. The count is
             # the shared encode policy (memory-capped: ImgUtils.encode_workers).
-            from pythontk.img_utils._img_utils import ImgUtils
-
             count = max(1, min(ImgUtils.encode_workers(workers), len(jobs)))
             order = cls._largest_first(jobs)
             if count > 1:
@@ -1013,11 +1033,16 @@ class _TexturesMixin:
             # source index — the twin gets its own appended image at repack).
             replacements: Dict[int, bytes] = {}
             fallbacks: Dict[int, Tuple[bytes, str]] = {}
+            #: The KTX2-mode images that took the lossless container instead of
+            #: a Basis codec (the encode branch says which lightmaps do).
+            lossless_in_ktx2: Set[int] = set()
             for index, key in key_by_index.items():
                 encoded = encoded_by_key.get(key)
                 if encoded is None:
                     after += len(jobs[key])
                     continue
+                if is_ktx2 and not isinstance(encoded, tuple):
+                    lossless_in_ktx2.add(index)
                 if isinstance(encoded, tuple):
                     encoded, fb_bytes, fb_mime = encoded
                     if fb_bytes:
@@ -1128,13 +1153,13 @@ class _TexturesMixin:
                 images.append(fb_image)
                 fallback_image_of[index] = len(images) - 1
 
-            # In KTX2 mode the exempt (lightmap) images took a container of
-            # their own (see the encode branch), so the mime is per image
-            # rather than per run.
-            exempt_mime = "image/webp" if not ktx2_fallback else "image/png"
+            # In KTX2 mode a lightmap without a Basis codec took a container of
+            # its own (see the encode branch), so the mime is per image rather
+            # than per run.
+            lossless_mime = "image/webp" if not ktx2_fallback else "image/png"
             for index in replacements:
                 images[index]["mimeType"] = (
-                    exempt_mime if (is_ktx2 and key_by_index[index][1]) else mime
+                    lossless_mime if index in lossless_in_ktx2 else mime
                 )
             gltf["bufferViews"] = views
             new_bin = b"".join(chunks)

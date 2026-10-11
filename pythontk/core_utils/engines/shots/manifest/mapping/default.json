@@ -145,9 +145,20 @@
         "fill_missing_assets": {
             "kind": "bool",
             "label": "Auto-fill Missing Assets",
-            "tooltip": "Steps the sheet lists no assets for take what their paired shot holds: its members and what animates in its range (no shot, no names -- Build first). Copy Asset Names writes them back to the sheet.",
+            "tooltip": "Steps the sheet lists no assets for take what their paired shot holds: its members and what animates in its range (no shot, no names -- Build first). Export (beside Assess) writes them out with the rest of the manifest.",
             "default": false,
             "set": {"fill_missing_assets": true}
+        },
+        "color_by": {
+            "kind": "choice",
+            "label": "Row Colors",
+            "tooltip": "Color the step rows automatically. A color you pick for a row (right-click a step) shows over it.",
+            "field": "color_by",
+            "default": "none",
+            "choices": {
+                "none": {"label": "Off", "tooltip": "Only the colors you pick."},
+                "section": {"label": "By section", "tooltip": "Each section its own color, in sheet order."}
+            }
         }
     }
 }

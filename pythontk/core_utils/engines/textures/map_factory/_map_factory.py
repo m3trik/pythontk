@@ -271,6 +271,76 @@ class MapFactory(
         return super().get_base_texture_name(filepath_or_filename, prefix, suffix)
 
     @classmethod
+    def classify_textures(
+        cls,
+        paths: Iterable[str],
+        prefix: str = "",
+        suffix: str = "",
+    ) -> Dict[str, Tuple[Optional[str], str]]:
+        """``{path: (map_type, base_name)}`` for every path, each read against the others.
+
+        A file name alone cannot say whether ``Hero_Coat_Roughness`` is the
+        coat roughness of an OpenPBR set ``Hero`` or the roughness of a set
+        named ``Hero_Coat`` (a garment); its neighbours can. Each path first
+        gets its per-file reading -- :meth:`resolve_map_type` and
+        :meth:`get_base_texture_name`, which always take the lobe. A path is
+        AMBIGUOUS when that type is an OpenPBR lobe type
+        (``MapRegistry.LOBE_TYPE_CHANNELS``) and its map suffix splits after a
+        separator into lobe word(s) and a remainder that is wholly a non-lobe
+        map type (``Coat_Roughness`` -> ``Coat`` + ``Roughness``; shortest lobe
+        prefix first, so ``Clear_Coat_Roughness`` stops at ``Roughness``). Its
+        base-map reading moves the lobe word(s), as spelled, into the base.
+
+        The sets the UNAMBIGUOUS typed paths name are the anchors. An ambiguous
+        path takes its base-map reading when that set is an anchor, or when
+        its lobe reading's set is not -- a set of lobe maps with no base map is
+        not a material; otherwise it keeps the lobe reading:
+
+        - ``rock_BaseColor`` + ``rock_Coat_Roughness``: a coat roughness, set ``rock``.
+        - ``Hero_Coat_BaseColor`` + ``Hero_Coat_Roughness``: a Roughness, set ``Hero_Coat``.
+        - ``Hero_Coat_Roughness`` alone: a Roughness, set ``Hero_Coat``.
+        - ``Hero_BaseColor`` + ``Hero_Coat_BaseColor`` + ``Hero_Coat_Roughness``:
+          a Roughness, set ``Hero_Coat``.
+
+        Read the whole batch the files arrived in: a lobe map classified apart
+        from its material's base maps reads as a base map. A tile token never
+        joins a base, and bases compare as :meth:`group_textures_by_set` keys
+        them (case-sensitive, tile token excluded), so one tile's base map
+        anchors every tile.
+
+        Parameters:
+            paths: Texture paths or file names; a repeat is classified once.
+            prefix: User prefix stripped from each base, as
+                :meth:`get_base_texture_name` strips it.
+            suffix: User suffix stripped from each base.
+
+        Returns:
+            Dict[str, Tuple[Optional[str], str]]: ``{path: (map_type, base_name)}``
+            in input order; ``map_type`` is ``None`` for a file carrying no
+            map-type suffix.
+        """
+        return super().classify_textures(paths, prefix, suffix)
+
+    @classmethod
+    def resolve_map_types(cls, paths: Iterable[str]) -> Dict[str, Optional[str]]:
+        """``{path: map_type}`` for a batch, each path read against the others.
+
+        The type half of :meth:`classify_textures`: the drop-in for a caller
+        that caches ``{texture: type}`` over textures it already holds as one
+        set, so a set named for a lobe (``Hero_Coat``) wires its
+        ``Hero_Coat_Roughness`` as Roughness rather than a coat roughness.
+        :meth:`resolve_map_type` stays the per-file answer, for a lone file.
+
+        Parameters:
+            paths: Texture paths or file names.
+
+        Returns:
+            Dict[str, Optional[str]]: ``{path: map_type}`` in input order;
+            ``None`` for a file carrying no map-type suffix.
+        """
+        return super().resolve_map_types(paths)
+
+    @classmethod
     def get_tile_token(cls, filepath_or_filename: str) -> str:
         """The UDIM / UV-tile token on a texture filename, or ``""``.
 
@@ -325,6 +395,11 @@ class MapFactory(
         while the maps WITHIN each tile group together. Collapsing tiles into
         one set instead would overflow the factory's one-path-per-map-type
         inventory and silently drop every tile but the last.
+
+        Each path is keyed by the base :meth:`classify_textures` reads for it
+        against the others, so a set named for a lobe (``Hero_Coat``) keeps
+        its ``Hero_Coat_Roughness`` while an OpenPBR set keeps its
+        ``rock_Coat_Roughness``.
 
         Parameters:
             image_paths (List[str]): A list of full image file paths.
@@ -396,6 +471,30 @@ class MapFactory(
             ``(base, folder)``, or ``None`` when no path is a material map.
         """
         return super().dominant_texture_set(paths)
+
+    @classmethod
+    def lightmap_for_base(
+        cls, map_name: str, old_base: str, new_base: str
+    ) -> Optional[str]:
+        """*map_name* spelled for *new_base* when it is *old_base*'s lightmap, else ``None``.
+
+        A bake names its lightmap after the texture set it lights
+        (:meth:`dominant_texture_set`): ``<base>_Lightmap[_N].exr``, the affix
+        being the naming convention's ``lightmap`` entry. A set renamed takes
+        that map along -- but only a map whose WHOLE stem is that:
+        ``rockery_Lightmap`` is not ``rock``'s. Matched case-insensitively; the
+        affix, an ``_N`` / ``-N`` index and the extension keep their spelling.
+        The one rule mayatk's and blendertk's material-name syncs share.
+
+        Parameters:
+            map_name: A lightmap file name (a path's folder is ignored).
+            old_base: The texture set base it may be named after.
+            new_base: The base to spell it for.
+
+        Returns:
+            The new file name, or ``None`` when *map_name* is not *old_base*'s.
+        """
+        return super().lightmap_for_base(map_name, old_base, new_base)
 
     @classmethod
     def filter_images_by_type(cls, files, types=""):
@@ -791,9 +890,10 @@ class MapFactory(
             # type, so a merged 2-tile set converted tile 1001 alone and dropped
             # 1002 without a word. The tiles rejoin as one list below. (Fresh
             # lists, so the working set never aliases the caller's input list.)
-            base_name = cls.get_base_texture_name(
-                files[0], prefix=prefix, suffix=suffix
-            )
+            # Read against the rest of the asset: its name may end in a lobe word.
+            base_name = cls.classify_textures(files, prefix=prefix, suffix=suffix)[
+                files[0]
+            ][1]
             texture_sets = {}
             for path in files:
                 texture_sets.setdefault(
@@ -933,8 +1033,13 @@ class MapFactory(
         logger: Any = None,
     ) -> List[str]:
         """Internal method to process a single set of textures (one asset)."""
-        # Build inventory
-        map_inventory = MapFactory._build_map_inventory(textures)
+        # The set's members read against each other (`classify_textures`): a
+        # set named for a lobe (`Hero_Coat`) keeps its base maps, and its
+        # outputs keep its name.
+        readings = MapFactory.classify_textures(textures)
+        map_inventory = MapFactory._build_map_inventory(
+            textures, {path: map_type for path, (map_type, _) in readings.items()}
+        )
 
         convert = workflow_config.get("convert", True)
 
@@ -956,7 +1061,7 @@ class MapFactory(
             inventory=map_inventory,
             config=workflow_config,
             output_dir=output_dir or os.path.dirname(reference_path),
-            base_name=MapFactory.get_base_texture_name(reference_path),
+            base_name=readings[reference_path][1],
             tile_token=MapFactory.get_tile_token(reference_path),
             ext=workflow_config.get("output_extension", "png"),
             output_profile=workflow_config.get("output_profile"),
@@ -1096,8 +1201,18 @@ class MapFactory(
         return archived
 
     @staticmethod
-    def _build_map_inventory(textures: List[str]) -> Dict[str, str]:
-        """Build map inventory using ImgUtils."""
+    def _build_map_inventory(
+        textures: List[str], map_types: Optional[Dict[str, Optional[str]]] = None
+    ) -> Dict[str, str]:
+        """``{map_type: path}`` for one set, one path per type.
+
+        Parameters:
+            textures: The set's paths.
+            map_types: ``{path: map_type}`` already read for the set; read here
+                (:meth:`resolve_map_types`, the set as one batch) when omitted.
+        """
+        if map_types is None:
+            map_types = MapFactory.resolve_map_types(textures)
         inventory = {}
         # Prefer more specific FILENAMES (Mixed_AO over AO) when two files
         # resolve to the same type — basename length, not full-path length,
@@ -1105,7 +1220,7 @@ class MapFactory(
         for texture in sorted(
             textures, key=lambda t: len(os.path.basename(t)), reverse=True
         ):
-            map_type = MapFactory.resolve_map_type(texture)
+            map_type = map_types.get(texture)
             if map_type and map_type not in inventory:
                 inventory[map_type] = texture
         return inventory

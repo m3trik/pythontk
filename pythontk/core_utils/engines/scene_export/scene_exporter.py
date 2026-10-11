@@ -36,7 +36,11 @@ import os
 from typing import Any, Callable, Dict, List, Optional
 
 import pythontk as ptk
-from pythontk.core_utils.logging_mixin import LoggingMixin
+from pythontk.core_utils.logging_mixin import (
+    LoggerExt,
+    LoggingMixin,
+    StripHtmlFormatter,
+)
 
 
 class SceneExporterBase(LoggingMixin):
@@ -551,14 +555,25 @@ class SceneExporterBase(LoggingMixin):
         return os.path.join(self.export_dir, f"{prefix}{base_name}.log")
 
     def setup_file_logging(self, log_file_path: str):
-        """Setup file logging to log actions during export."""
-        file_handler = logging.FileHandler(log_file_path)
+        """Setup file logging to log actions during export.
+
+        On :attr:`logger` -- the one the exporter and its task manager both
+        log through. It sat on a bare logger named after the class, which
+        nothing logs to, so every run's ``.log`` was empty (2026-10-09).
+        UTF-8 and plain text, as every pythontk log file: in the locale's code
+        page the run's closing banner -- box glyphs, a check mark -- raised on
+        write, so a clean run at the ERROR level left the file empty
+        (2026-10-10); without the strip its markup and links landed as tags.
+        """
+        self.close_file_handlers()  # a run that never closed its own
+        file_handler = logging.FileHandler(
+            log_file_path, encoding=LoggerExt.FILE_ENCODING
+        )
         file_handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            StripHtmlFormatter("%(asctime)s - %(levelname)s - %(message)s")
         )
         self.file_handler = file_handler
-        root_logger = logging.getLogger(self.__class__.__name__)
-        root_logger.addHandler(self.file_handler)
+        self.logger.addHandler(file_handler)
         self.logger.debug(f"File logging setup complete. Log file: {log_file_path}")
 
         if self.hide_log_file and os.name == "nt":
@@ -567,11 +582,12 @@ class SceneExporterBase(LoggingMixin):
             ctypes.windll.kernel32.SetFileAttributesW(log_file_path, 2)
 
     def close_file_handlers(self):
-        """Close and remove file handlers after logging is complete."""
-        root_logger = logging.getLogger(self.__class__.__name__)
-        handlers = root_logger.handlers[:]
-        for handler in handlers:
-            if isinstance(handler, logging.FileHandler):
-                handler.close()
-                root_logger.removeHandler(handler)
-                self.logger.debug("File handler closed and removed.")
+        """Close and remove the handler :meth:`setup_file_logging` added; a
+        caller's own handlers on the same logger are left alone."""
+        handler = getattr(self, "file_handler", None)
+        if handler is None:
+            return
+        self.file_handler = None
+        self.logger.removeHandler(handler)
+        handler.close()
+        self.logger.debug("File handler closed and removed.")

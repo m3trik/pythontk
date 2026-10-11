@@ -260,7 +260,7 @@ export function holdHeadsetNear() {
 }
 
 // The clip planes a framing chose (frameCamera, homeView), and the view as it
-// then stands. Mid-session -- a push landing, the Frame button -- the framing is
+// then stands. Mid-session -- a push landing, View ▸ Frame model -- the framing is
 // the view the session hands back at its end, and the camera keeps the
 // headset's near plane meanwhile.
 export function settleView(near, far) {

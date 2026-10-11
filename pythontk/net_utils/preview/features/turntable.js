@@ -21,20 +21,16 @@ const DEGREES_PER_SECOND = 14;
 export default function turntable(viewer) {
   let spinning = true;
 
-  // A switch in the View window (`viewer.window`), where the page sorts what
-  // changes how the model is shown, rather than a button of its own on the bar.
-  const view = viewer.window('View', { title: 'How the model is shown' });
-  const toggle = view.section().addToggle(
-    'Turntable',
-    { value: spinning, title: 'Rotate the model continuously (t)' },
-    (on) => { spinning = on; },
-  );
-
-  viewer.on('key', (event) => {
-    if (event.key === 't') {
-      spinning = !spinning;
-      toggle.value = spinning;
-    }
+  // A switch in the View menu (`viewer.menu`), where the page sorts what
+  // changes how the model is shown, rather than a button of its own on the
+  // bar. Its key is the menu's to dispatch, and the menu shows it.
+  viewer.menu('View').add('toggle', {
+    label: 'Turntable',
+    title: 'Rotate the model continuously',
+    key: 't',
+    group: 'motion',
+    value: spinning,
+    onChange: (on) => { spinning = on; },
   });
 
   // Applied to the pivot, not the model: the pivot is what the viewer owns

@@ -134,6 +134,118 @@ class _ImgAtlasInternal:
         return rects
 
     @staticmethod
+    def pack_atlas_rects(
+        extents: Sequence[Tuple[float, float]],
+        size: Union[int, Tuple[int, int]],
+        gutter: int = 2,
+        min_texels: int = 4,
+        align: int = 4,
+    ) -> Optional[List[Tuple[float, float, float, float]]]:
+        """Body of :meth:`ImgUtils.pack_atlas_rects`."""
+        from pythontk.img_utils.rect_packer import RectPacker
+
+        w_px, h_px = (size, size) if isinstance(size, int) else size
+        w_px, h_px = int(w_px), int(h_px)
+        if not extents:
+            return []
+        result = RectPacker.fit(
+            extents,
+            (w_px, h_px),
+            padding=max(0, int(gutter)),
+            align=max(1, int(align)),
+            min_size=max(1, int(min_texels)),
+            fold=True,
+        )
+        if result is None:
+            return None
+        return [
+            (w / w_px, h / h_px, x / w_px, 1.0 - (y + h) / h_px)
+            for (x, y), (w, h) in zip(result.positions, result.sizes)
+        ]
+
+    @staticmethod
+    def atlas_extent(
+        area: float,
+        uv_area: Optional[float] = None,
+        extent: Tuple[float, float] = (1.0, 1.0),
+        fill: float = 0.75,
+        stretch: float = 1.0,
+    ) -> Tuple[float, float]:
+        """Body of :meth:`ImgUtils.atlas_extent`."""
+        eu, ev = max(float(extent[0]), 0.0), max(float(extent[1]), 0.0)
+        covered = float(uv_area) if uv_area and uv_area > 0.0 else 0.0
+        if covered <= 0.0:
+            covered = max(float(fill), 1e-6) * max(eu * ev, 1e-12)
+        k = math.sqrt(max(float(area), 0.0) / covered)
+        # The stretch moves texels between the axes, never in or out: the
+        # box's area -- the density -- stays what the surface area set.
+        stretch = float(stretch) if stretch else 1.0
+        r = math.sqrt(stretch) if math.isfinite(stretch) and stretch > 0.0 else 1.0
+        return (eu * k * r, ev * k / r)
+
+    @staticmethod
+    def atlas_layout_extent(
+        area: float,
+        uvs=None,
+        stretch: float = 1.0,
+        max_coverage: float = 0.85,
+        fill: float = 0.75,
+    ) -> Tuple[float, float]:
+        """Body of :meth:`ImgUtils.atlas_layout_extent`."""
+        tris = None if uvs is None else np.asarray(uvs, dtype=np.float64)
+        if tris is None or tris.ndim != 3 or not len(tris):
+            return _ImgAtlasInternal.atlas_extent(area, None, (1.0, 1.0), fill)
+        flat = tris.reshape(-1, 2)
+        (u0, v0), (u1, v1) = flat.min(axis=0), flat.max(axis=0)
+        box = _ImgAtlasInternal.uv_crop_extent(
+            (float(u0), float(v0), float(u1), float(v1)), max_coverage
+        )
+        a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
+        uv_area = 0.5 * float(
+            np.abs(
+                (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1])
+                - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1])
+            ).sum()
+        )
+        return _ImgAtlasInternal.atlas_extent(
+            area, uv_area if uv_area > 0.0 else None, box, fill, stretch
+        )
+
+    @staticmethod
+    def uv_axis_scale(points, uvs) -> Optional[Tuple[float, float]]:
+        """Body of :meth:`ImgUtils.uv_axis_scale`."""
+        p = np.asarray(points, dtype=np.float64)
+        t = np.asarray(uvs, dtype=np.float64)
+        if p.ndim != 3 or t.ndim != 3 or not len(p) or len(p) != len(t):
+            return None
+        e1, e2 = p[:, 1] - p[:, 0], p[:, 2] - p[:, 0]
+        d1, d2 = t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]
+        det = d1[:, 0] * d2[:, 1] - d2[:, 0] * d1[:, 1]
+        # A triangle collapsed in uv owns no texels and has no derivative.
+        keep = np.abs(det) > 1e-12
+        if not keep.any():
+            return None
+        e1, e2, d1, d2, det = e1[keep], e2[keep], d1[keep], d2[keep], det[keep]
+        # The derivative of the surface point along each uv axis (solving
+        # (u, v) - t0 = a*d1 + b*d2 for a, b): its length is the surface one
+        # unit of that axis spans there.
+        du = (e1 * d2[:, 1:2] - e2 * d1[:, 1:2]) / det[:, None]
+        dv = (e2 * d1[:, 0:1] - e1 * d2[:, 0:1]) / det[:, None]
+        du, dv = np.linalg.norm(du, axis=1), np.linalg.norm(dv, axis=1)
+        live = (du > 0.0) & (dv > 0.0)  # a triangle with no surface spans nothing
+        if not live.any():
+            return None
+        # A GEOMETRIC mean weighted by uv area (the texels each triangle owns):
+        # the scale that makes texels square on the surface in the least-squares
+        # sense of their log aspect, and one a sliver cannot swing -- its
+        # derivative grows as 1/area while its weight shrinks with it, where a
+        # root mean square (area x derivative^2 ~ 1/area) ran away.
+        w = np.abs(det[live])
+        su = math.exp(float((w * np.log(du[live])).sum() / w.sum()))
+        sv = math.exp(float((w * np.log(dv[live])).sum() / w.sum()))
+        return (su, sv)
+
+    @staticmethod
     def atlas_pixel_rects(
         rects: Sequence[Tuple[float, float, float, float]],
         size: Union[int, Tuple[int, int]],

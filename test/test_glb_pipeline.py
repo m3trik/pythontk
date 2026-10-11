@@ -67,6 +67,27 @@ class GlbPipelineTestCase(unittest.TestCase):
         ):
             return GlbPipeline.build(src, **kwargs)
 
+    def test_a_staged_build_searches_the_deliverables_folders(self):
+        """A host converting a STAGED copy names where the file ships: "beside
+        the FBX" is then the stage, and the shadow rigs' loose maps beside the
+        deliverable went unfound (mayatk's exporter stages since 2026-10-08)."""
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        # A root every OS reads as absolute ("D:\" is relative on POSIX).
+        root = os.path.abspath(os.sep)
+        shipped = os.path.join(root, "exports", "asset.fbx")
+        dirs = MeshConvert.fbx_media_dirs(shipped)
+        self.assertEqual(
+            dirs,
+            [
+                os.path.join(root, "exports"),
+                os.path.join(root, "exports", "sourceimages"),
+                os.path.join(root, "sourceimages"),
+            ],
+        )
+        self._build(self._stub_fbx(), shadow_dirs=dirs)
+        self.assertEqual(list(self.calls[0][3]["shadow_dirs"]), dirs)
+
     def test_the_stages_run_in_order_with_the_dials_forwarded(self):
         """Convert (sidecar, lightmap dirs, no prompt) then optimize (the caller's
         params plus its fallback choice), and the report carries both outcomes."""
@@ -578,6 +599,65 @@ class TestDropSplitTakes(unittest.TestCase):
         drop, report = self._drop({"shot_metadata": [self.SHOTS]})
         drop.assert_called_once()
         self.assertEqual(report["src"], "scratch.fbx")
+
+
+class TestEmbeddedDependencies(GlbPipelineTestCase):
+    """A GLB built from a DELIVERED FBX reads the maps the FBX carries.
+
+    The exporters embed every file the records name in the FBX and ship
+    nothing beside it (``FbxMedia.embed_dependencies``), while the lightmap and
+    shadow appliers join names against folders -- so a GLB made from that FBX
+    elsewhere (a preview of a delivered file) came out unlit with the bake
+    sitting inside its own source.
+    """
+
+    LIGHTMAPS = {
+        "version": 1,
+        "objects": [{"name": "Crate", "map": "Room_Lightmap.exr", "uvIndex": 1}],
+    }
+
+    def _delivered_fbx(self):
+        from test_fbx_media import build_carrier_fbx
+
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        maps = self.temp.dir_path()
+        self.lightmap = b"an embedded half-float bake" * 9
+        with open(os.path.join(maps, "Room_Lightmap.exr"), "wb") as fh:
+            fh.write(self.lightmap)
+        src = build_carrier_fbx(
+            self.temp.path(extension=".fbx"), {"lightmap_metadata": self.LIGHTMAPS}
+        )
+        FbxMedia.embed_dependencies(src, search_dirs=[maps])
+        os.remove(os.path.join(maps, "Room_Lightmap.exr"))  # the FBX alone
+        return src
+
+    def test_the_fbx_s_own_maps_are_searched_first(self):
+        seen = {}
+
+        def convert(src, dst=None, **kwargs):
+            dirs = list(kwargs["lightmap_dirs"])
+            seen["dirs"] = dirs
+            with open(os.path.join(dirs[0], "Room_Lightmap.exr"), "rb") as fh:
+                seen["bytes"] = fh.read()
+            return self._fake_convert(src, dst, **kwargs)
+
+        with (
+            unittest.mock.patch(CONVERT, side_effect=convert),
+            unittest.mock.patch(OPTIMIZE, side_effect=self._fake_optimize),
+        ):
+            built = GlbPipeline.build(self._delivered_fbx(), lightmap_dirs=["D:/maps"])
+        self.assertEqual(seen["bytes"], self.lightmap)
+        # The deliverable's own copies first, as a manifest's own folders
+        # are; the host's folders after them.
+        self.assertEqual(seen["dirs"][1:], ["D:/maps"])
+        self.assertEqual(built["dependencies"], ["Room_Lightmap.exr"])
+        self.assertFalse(os.path.exists(seen["dirs"][0]), "scratch left behind")
+
+    def test_an_fbx_that_embeds_nothing_adds_no_folder(self):
+        built = self._build(self._real_fbx(), lightmap_dirs=["D:/maps"])
+        self.assertEqual(self.calls[0][3]["lightmap_dirs"], ["D:/maps"])
+        self.assertEqual(built["dependencies"], [])
 
 
 if __name__ == "__main__":

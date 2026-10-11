@@ -9,6 +9,7 @@ decided here, once.
 """
 
 import json
+import logging
 import os
 import pathlib
 import unittest
@@ -412,7 +413,86 @@ def _boom(ctx):
 PRODUCERS = {SR.VISIBILITY: _visibility, SR.SHOTS: _shots, SR.LIGHTMAPS: _nothing}
 
 
+def _scoped_lightmaps(ctx):
+    """A lightmap producer over two marked nodes, narrowed to ``ctx.scope``
+    the way a DCC's is: a root and its descendants."""
+    nodes = ["|ROOM|wall", "|TEMP|old"]
+    if ctx.scope is not None:
+        nodes = [
+            n for n in nodes if any(n == r or n.startswith(r + "|") for r in ctx.scope)
+        ]
+    if not nodes:
+        return None
+    return SR.LIGHTMAPS.make(
+        {"objects": [{"name": n.rsplit("|", 1)[-1], "map": "room.exr"} for n in nodes]}
+    )
+
+
 class TestSnapshot(SceneRecordsCase):
+    def test_a_scoped_assembly_ships_the_export_set_and_keeps_the_scene_whole(self):
+        """An export-scoped record names only what the write ships, and the
+        scene's own copy is kept for the exporter to put back after it.
+        Measured 2026-10-09: a production FBX's lightmap record named five
+        objects of a hidden group the export left out, and the post-write
+        embed shipped their stale maps (two it could not find failed the
+        verifier). Added: 2026-10-09"""
+        self.assertTrue(SR.LIGHTMAPS.export_scoped)
+        self.assertTrue(SR.SHADOWS.export_scoped)
+        self.assertFalse(SR.SHOTS.export_scoped)
+        producers = {SR.LIGHTMAPS: _scoped_lightmaps, SR.SHOTS: _shots}
+        snap = ExportSnapshot.assemble(producers, ExportContext(scope=("|ROOM",)))
+        self.assertEqual(
+            [o["name"] for o in snap.record(SR.LIGHTMAPS)["objects"]], ["wall"]
+        )
+        self.assertEqual(
+            list(snap.scene_wide), ["lightmap_metadata"], "only what the scope narrowed"
+        )
+        snap.commit(DictStore)
+        self.assertEqual(
+            len(SR.LIGHTMAPS.load(DictStore)["objects"]),
+            1,
+            "the write ships the scoped copy",
+        )
+        snap.restore_scene_wide(DictStore)
+        self.assertEqual(
+            len(SR.LIGHTMAPS.load(DictStore)["objects"]), 2, "the scene keeps it whole"
+        )
+
+    def test_an_assembly_the_scope_does_not_narrow_has_nothing_to_restore(self):
+        producers = {SR.LIGHTMAPS: _scoped_lightmaps}
+        for scope in (None, ("|ROOM", "|TEMP")):
+            snap = ExportSnapshot.assemble(producers, ExportContext(scope=scope))
+            self.assertEqual(snap.scene_wide, {}, scope)
+            self.assertIsNone(snap.restore_scene_wide(DictStore), scope)
+
+    def test_the_scene_wide_pass_says_nothing(self):
+        """What a producer logs in the scene-wide pass is said already (a node
+        the write ships) or about one it does not ship: the export log hears
+        the scoped pass alone, and logging is handed back as it was.
+        Added: 2026-10-09"""
+
+        def loud(ctx):
+            logging.getLogger("pythontk.test.loud").warning("scope=%s", ctx.scope)
+            return _scoped_lightmaps(ctx)
+
+        with self.assertLogs("pythontk.test.loud", "WARNING") as logs:
+            snap = ExportSnapshot.assemble(
+                {SR.LIGHTMAPS: loud}, ExportContext(scope=("|ROOM",))
+            )
+        self.assertEqual(logs.output, ["WARNING:pythontk.test.loud:scope=('|ROOM',)"])
+        self.assertIn("lightmap_metadata", snap.scene_wide)
+        self.assertEqual(logging.root.manager.disable, logging.NOTSET)
+
+    def test_a_scope_that_ships_none_of_a_records_nodes_restores_the_whole(self):
+        snap = ExportSnapshot.assemble(
+            {SR.LIGHTMAPS: _scoped_lightmaps}, ExportContext(scope=("|PROPS",))
+        )
+        self.assertIsNone(snap.record(SR.LIGHTMAPS), "nothing lightmapped ships")
+        snap.commit(DictStore)
+        self.assertIsNone(SR.LIGHTMAPS.load(DictStore))
+        snap.restore_scene_wide(DictStore)
+        self.assertEqual(len(SR.LIGHTMAPS.load(DictStore)["objects"]), 2)
+
     def test_assemble_orders_by_dependency_and_hands_prior_records_over(self):
         ctx = ExportContext(clip_mode="both", clip_span=(5.0, 50.0))
         snap = ExportSnapshot.assemble(PRODUCERS, ctx)

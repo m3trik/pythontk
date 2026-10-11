@@ -9,15 +9,25 @@ it with a :class:`~pythontk.ShareTunnel`, whose provider terminates TLS on a
 public name. The owner's listener stays on loopback and answers no public name;
 who may write is decided by the socket a request arrived on.
 
+A PRIVATE share adds a fresh random path segment to its link
+(``https://<name>/<token>/``) and the guest listener answers nothing outside
+it, so a link is good for one share only -- the provider's own name, which
+Tailscale keeps for good, opens nothing by itself. :meth:`ping_share` asks the
+link from this machine whether a guest can reach it.
+
 One job of :class:`~pythontk.PreviewServer`, composed in ``server.py``; its
 methods reach the rest of the server through ``self``.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import secrets
 import threading
 import time
+import urllib.error
+import urllib.request
 from functools import partial
 from typing import Any, Callable, Dict, Optional, Union
 from urllib.parse import urlparse
@@ -49,6 +59,10 @@ class _SharingMixin:
     ALIAS_ENV = "PYTHONTK_PREVIEW_ALIAS"
     ALIAS_URL_ENV = "PYTHONTK_PREVIEW_ALIAS_URL"
 
+    #: Bytes of randomness in a private share's path segment: 96 bits, as
+    #: 16 URL-safe characters -- unguessable, and short enough to read out.
+    SHARE_TOKEN_BYTES = 12
+
     # ------------------------------------------------------------------
     # Sharing
     # ------------------------------------------------------------------
@@ -60,9 +74,34 @@ class _SharingMixin:
 
     @property
     def guest_url(self) -> Optional[str]:
-        """The guest listener on loopback: what a guest sees, from this machine."""
+        """The guest listener on loopback: what a guest sees, from this machine
+        -- under a private share's path segment, the only place it answers."""
         port = self.guest_port
-        return None if port is None else f"http://{self.host}:{port}/"
+        if port is None:
+            return None
+        return f"http://{self.host}:{port}{self._share_path()}"
+
+    def _share_path(self) -> str:
+        """The path a guest's page is served under: ``/``, or a private
+        share's ``/<token>/``."""
+        token = self._share_token
+        return f"/{token}/" if token else "/"
+
+    def _guest_route(self, path: str) -> Optional[str]:
+        """*path* as the guest listener routes it -- a private share's segment
+        taken off -- or ``None`` when it lies outside the share.
+
+        The segment is compared in constant time: it is the share's only
+        secret, and a comparison that stops at the first wrong character
+        would time its way to it a character at a time.
+        """
+        token = self._share_token
+        if not token:
+            return path
+        head, _, rest = path.lstrip("/").partition("/")
+        if not secrets.compare_digest(head.encode(), token.encode()):
+            return None
+        return "/" + rest
 
     def start_guest(self, port: int = 0) -> int:
         """Open the read-only listener a share points at; its port. Idempotent.
@@ -167,7 +206,7 @@ class _SharingMixin:
     def _guest_files(self) -> set:
         """Served paths a guest may fetch besides the page: the kernel modules
         it imports, and what its manifest names -- each script with the
-        modules it imports beside it, and the asset."""
+        modules it imports beside it, and every part of the asset."""
         files = set(self._kernel_files()) if self._viewer else set()
         with self._lock:
             for name, source in self._scripts.items():
@@ -175,6 +214,7 @@ class _SharingMixin:
                     files.update(self._served_files(name, source))
             if self._asset:
                 files.add(self._asset)
+            files.update(part["url"] for part in self._parts)
         return files
 
     def share(
@@ -186,6 +226,7 @@ class _SharingMixin:
         alias_url: Optional[str] = None,
         timeout: Optional[float] = None,
         on_step: Optional[Callable[[Any], Any]] = None,
+        private: bool = False,
     ) -> Dict[str, Any]:
         """Give this preview a link anyone can open: view-only, and live.
 
@@ -216,6 +257,13 @@ class _SharingMixin:
                 enables Funnel), on the thread running this call -- which then
                 waits for the user to take it and returns the link. ``None``:
                 such a share fails at once as that ``StepRequired``.
+            private: Add a fresh random path segment to the link
+                (``https://<name>/<token>/``), answering nothing outside it:
+                each share's link is its own, dead once the share ends, and
+                the provider's name alone -- Tailscale's is the machine's,
+                for good -- opens nothing. Keeps no alias: a stable redirect
+                would be a lasting door to every private link. A share
+                running with the other choice is replaced.
 
         Returns:
             :meth:`share_info`.
@@ -234,11 +282,11 @@ class _SharingMixin:
         """
         from pythontk.net_utils.share_tunnel import ShareTunnel
 
-        if alias is None:
+        if private or alias is False:
+            alias = alias_url = None
+        elif alias is None:
             alias = os.environ.get(self.ALIAS_ENV, "").strip() or None
-        elif alias is False:
-            alias = None
-        if alias_url is None:
+        if alias_url is None and alias is not None:
             alias_url = os.environ.get(self.ALIAS_URL_ENV, "").strip() or None
         name = ShareTunnel.resolve_provider(provider)
         with self._share_lock:
@@ -249,11 +297,18 @@ class _SharingMixin:
                 and current.is_running
                 and current.provider == name
                 and current.alias == alias
+                and bool(self._share_token) == bool(private)
             ):
                 with self._lock:
                     self._alias_url = alias_url
                 return self.share_info()
             generation = self._end_share()
+            # Before the listener opens: from its first request, a private
+            # share's guest listener answers under the segment only.
+            with self._lock:
+                self._share_token = (
+                    secrets.token_urlsafe(self.SHARE_TOKEN_BYTES) if private else None
+                )
             port = self.start_guest()
         options = {} if timeout is None else {"timeout": timeout}
         # The provider's wait (seconds -- a quick tunnel's name takes 6-18 s
@@ -330,6 +385,7 @@ class _SharingMixin:
             tunnel, self._tunnel = self._tunnel, None
             starting, self._starting = self._starting, None
             self._alias_url = None
+            self._share_token = None
         self._share_generation += 1
         if starting is not None:
             starting.cancel()  # never blocks: that start holds its own lock
@@ -344,36 +400,135 @@ class _SharingMixin:
 
         Returns:
             ``{"url", "tunnel_url", "scene_url", "provider", "label",
-            "public", "guests", "guest_url", "alias_error"}``. ``url`` is the
-            link to hand out: the alias's address when there is an alias AND
-            its last update landed, else the tunnel's own -- a stale alias
-            must never be what gets sent. ``scene_url`` is where the share
-            serves :meth:`describe_scene` -- the link for someone's tools or
-            agent -- always on the tunnel, since an alias is one redirect page
-            rather than a site.
+            "public", "private", "guests", "guest_url", "alias_error"}``.
+            ``url`` is the link to hand out: the alias's address when there
+            is an alias AND its last update landed, else the tunnel's own --
+            under a private share's segment -- since a stale alias must never
+            be what gets sent. ``tunnel_url`` is the link the tunnel serves,
+            the segment included. ``scene_url`` is where the share serves
+            :meth:`describe_scene` -- the link for someone's tools or agent --
+            always on the tunnel, since an alias is one redirect page rather
+            than a site.
         """
         with self._lock:
             tunnel, alias_url = self._tunnel, self._alias_url
+            path = self._share_path()
         if tunnel is None or not tunnel.is_running:
             return None
+        # None with the tunnel's link: a client that exits between the check
+        # above and the read reads as a link that is gone, not a crash. The
+        # provider's own spelling stands unless a private segment is added.
         tunnel_url = tunnel.url
+        if tunnel_url and path != "/":
+            tunnel_url = f"{tunnel_url.rstrip('/')}{path}"
         alias_live = (
             bool(alias_url) and tunnel.alias is not None and not tunnel.alias_error
         )
         return {
             "url": alias_url if alias_live else tunnel_url,
             "tunnel_url": tunnel_url,
-            # None with tunnel_url: a client that exits between the check
-            # above and the read reads as a link that is gone, not a crash.
             "scene_url": (
                 f"{tunnel_url.rstrip('/')}/{SCENE_PATH}" if tunnel_url else None
             ),
             "provider": tunnel.provider,
             "label": tunnel.label,
             "public": tunnel.public,
+            "private": path != "/",
             "guests": self.guest_count(),
             "guest_url": self.guest_url,
             "alias_error": tunnel.alias_error,
+        }
+
+    def ping_share(
+        self, timeout: float = 10.0, attempts: int = 3, wait: float = 2.0
+    ) -> Dict[str, Any]:
+        """Ask the share's link for its manifest, from this machine, the way
+        a guest's page does: whether a guest can reach the share NOW.
+
+        End to end -- public DNS, the provider's TLS, the tunnel, the guest
+        listener -- and it is this share that answers: the reply must be the
+        guest manifest at this server's version, so a provider's error page
+        or a stale tunnel answering 200 does not pass. A ping is no guest: it
+        sends no page id, so :meth:`guest_count` never counts it. The tunnel's
+        own link is asked, never an alias, which is a page on another server.
+
+        A brand-new name can take seconds to reach every resolver, so a miss
+        is asked again, *attempts* times in all, *wait* seconds apart.
+
+        Parameters:
+            timeout: Seconds one request may take.
+            attempts: Requests at most; the first that passes ends it.
+            wait: Seconds between attempts.
+
+        Returns:
+            ``{"ok", "url", "status", "ms", "attempts", "error"}`` -- ``ms``
+            the round trip of the request that answered (``None`` without
+            one), ``status`` its HTTP status, ``error`` why it did not pass
+            (``None`` when it did). Never raises: nothing shared is a failed
+            ping, said in ``error``.
+        """
+        info = self.share_info()
+        if info is None:
+            return self._failed_ping("nothing is shared")
+        if not info["tunnel_url"]:
+            return self._failed_ping("the share's link is gone")
+        result = self._failed_ping(None)
+        result["url"] = info["tunnel_url"]
+        url = f"{info['tunnel_url'].rstrip('/')}/manifest.json"
+        for attempt in range(max(1, int(attempts))):
+            if attempt:
+                time.sleep(wait)
+            # Each attempt's own: a miss after an answer must not report the
+            # earlier answer's status and round trip as its own.
+            result.update(attempts=attempt + 1, status=None, ms=None)
+            started = time.perf_counter()
+            try:
+                request = urllib.request.Request(
+                    url,
+                    headers={
+                        "User-Agent": "pythontk-preview-ping",
+                        "Cache-Control": "no-cache",
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    status, body = response.status, response.read(1 << 20)
+                result["ms"] = round((time.perf_counter() - started) * 1000, 1)
+                result["status"] = status
+                try:
+                    payload = json.loads(body.decode("utf-8"))
+                except ValueError:  # a provider's own page, answering 200
+                    payload = None
+                if not (isinstance(payload, dict) and payload.get("guest") is True):
+                    result["error"] = "the link answered, but not with this share"
+                    continue
+                if payload.get("version") != self.version:
+                    result["error"] = (
+                        f"the link answered with version {payload.get('version')}, "
+                        f"not this server's {self.version}"
+                    )
+                    continue
+                result.update(ok=True, error=None)
+                return result
+            except urllib.error.HTTPError as error:
+                result["ms"] = round((time.perf_counter() - started) * 1000, 1)
+                result["status"] = error.code
+                result["error"] = f"HTTP {error.code} {error.reason}".strip()
+            except (urllib.error.URLError, OSError, ValueError) as error:
+                reason = getattr(error, "reason", None) or error
+                result["error"] = str(reason) or type(error).__name__
+        return result
+
+    @staticmethod
+    def _failed_ping(error: Optional[str]) -> Dict[str, Any]:
+        """:meth:`ping_share`'s result before an answer: nothing passed --
+        *error* says why, ``None`` while the asking is still to come."""
+        return {
+            "ok": False,
+            "url": None,
+            "status": None,
+            "ms": None,
+            "attempts": 0,
+            "error": error,
         }
 
     @property

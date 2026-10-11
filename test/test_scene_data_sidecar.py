@@ -15,6 +15,7 @@ import unittest
 from pythontk.core_utils.engines.scene_export.scene_data_sidecar import (
     SceneDataSidecarBase as SD,
 )
+from pythontk.core_utils.test_sandbox import TestSandbox
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -29,6 +30,11 @@ class _Closing(SD):
 
 class SidecarCase(unittest.TestCase):
     def setUp(self):
+        # The records live in a per-user store under the config root: never
+        # the developer's own.
+        sandbox = TestSandbox.user_config()
+        sandbox.__enter__()
+        self.addCleanup(sandbox.__exit__, None, None, None)
         self.dir = os.path.join(HERE, "temp_tests", "scene_data_sidecar")
         shutil.rmtree(self.dir, ignore_errors=True)
         os.makedirs(self.dir)
@@ -77,21 +83,29 @@ class TestManifestIO(SidecarCase):
         )
 
     def test_a_failed_write_returns_none_and_leaves_nothing(self):
-        export = os.path.join(self.dir, "missing_subdir", "shot.fbx")
-        self.assertIsNone(SD.write_manifest(export, {"A"}))
+        from unittest import mock
+
+        from pythontk.file_utils._file_utils import FileUtils
+
+        with mock.patch.object(
+            FileUtils, "atomic_write_text", side_effect=OSError("disk full")
+        ):
+            self.assertIsNone(SD.write_manifest(self.export, {"A"}))
         self.assertEqual(os.listdir(self.dir), [])
+        self.assertIsNone(SD.read_manifest(self.export))
 
     def test_a_write_sweeps_the_v2_companions(self):
-        manifest = SD.manifest_path_for(self.export)
-        for stale in (manifest + ".prev", SD.diff_report_path_for(self.export)):
+        # Where a v2 writer left them: beside the deliverable.
+        prev = os.path.join(self.dir, ".asset_v003.scene_data.json.prev")
+        for stale in (prev, SD.diff_report_path_for(self.export)):
             with open(stale, "w") as fh:
                 fh.write("{}")
         SD.write_manifest(self.export, {"A"})
-        self.assertFalse(os.path.exists(manifest + ".prev"))
-        self.assertFalse(os.path.exists(SD.diff_report_path_for(self.export)))
+        self.assertEqual(os.listdir(self.dir), [])
+        self.assertFalse(os.path.exists(SD.manifest_path_for(self.export) + ".prev"))
 
     def test_a_v1_name_migrates_to_the_current_one(self):
-        legacy = SD._legacy_manifest_path_for(self.export)
+        legacy = os.path.join(self.dir, ".asset_v003.hierarchy.json")
         with open(legacy, "w", encoding="utf-8") as fh:
             json.dump({"paths": ["A"], "object_count": 1, "hash": "h"}, fh)
         self.assertEqual(
@@ -107,6 +121,55 @@ class TestManifestIO(SidecarCase):
                 json.dump({"format": 3, "hierarchy": {"paths": ["v%d" % n]}}, fh)
         SD.migrate_legacy(self.export, base_stem=True)
         self.assertEqual(SD.read_manifest(self.export, base_stem=True), {"v10"})
+
+
+class TestNothingBesideTheDeliverable(SidecarCase):
+    """The record is the exporter's own -- the next export's history of this
+    deliverable -- so it lives in a per-user store keyed by the export folder,
+    never beside the file (the user's rule, 2026-10-05: zero sidecar files).
+    """
+
+    def test_a_written_record_leaves_the_export_folder_empty(self):
+        written = SD.write_manifest(self.export, {"A"}, data={"shots": {"x": 1}})
+        self.assertEqual(os.listdir(self.dir), [])
+        self.assertNotEqual(os.path.dirname(written), self.dir)
+        self.assertEqual(SD.read_manifest(self.export), {"A"})
+        self.assertEqual(SD.read_data(self.export), {"shots": {"x": 1}})
+
+    def test_a_record_left_beside_moves_into_the_store(self):
+        beside = os.path.join(self.dir, ".asset_v003.scene_data.json")
+        with open(beside, "w", encoding="utf-8") as fh:
+            json.dump({"format": 3, "hierarchy": {"paths": ["A"]}}, fh)
+        # A reader takes nothing from the folder (a shared one is not ours).
+        self.assertEqual(SD.read_manifest(self.export), {"A"})
+        self.assertTrue(os.path.exists(beside))
+        SD.migrate_legacy(self.export)
+        self.assertEqual(os.listdir(self.dir), [])
+        self.assertEqual(SD.read_manifest(self.export), {"A"})
+
+    def test_a_locked_record_is_reported_once_per_migration(self):
+        """A record the folder will not give up stays readable in place, and a
+        versioned migration says so once -- it used to try the move twice."""
+        from unittest import mock
+
+        beside = os.path.join(self.dir, ".asset.scene_data.json")
+        with open(beside, "w", encoding="utf-8") as fh:
+            json.dump({"format": 3, "hierarchy": {"paths": ["A"]}}, fh)
+        module = "pythontk.core_utils.engines.scene_export.scene_data_sidecar"
+        locked = mock.patch(f"{module}.shutil.move", side_effect=PermissionError())
+        with locked, self.assertLogs(module, "WARNING") as logs:
+            SD.migrate_legacy(self.export, base_stem=True)
+        self.assertEqual(len(logs.output), 1, logs.output)
+        self.assertTrue(os.path.exists(beside))
+        self.assertEqual(SD.read_manifest(self.export, base_stem=True), {"A"})
+
+    def test_each_export_folder_keeps_its_own_records(self):
+        other = os.path.join(self.dir, "other", "asset_v003.fbx")
+        os.makedirs(os.path.dirname(other))
+        SD.write_manifest(self.export, {"A"})
+        SD.write_manifest(other, {"B"})
+        self.assertEqual(SD.read_manifest(self.export), {"A"})
+        self.assertEqual(SD.read_manifest(other), {"B"})
 
 
 class TestCompare(SidecarCase):

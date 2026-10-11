@@ -6,7 +6,8 @@
 ``.desktop`` entries), ``resolve_app_path`` (``$ENV`` -> ``find_app`` ->
 install-dir scan, first hit wins), ``scan_install_dirs`` /
 ``scan_for_executables`` (the install-layout globs), and ``companion_python`` /
-``looks_like_python`` (the interpreter a host binary ships beside it).
+``looks_like_python`` (the interpreter a host binary ships beside it) /
+``windowless_python`` (that interpreter's console-free twin, for a GUI).
 
 One job of :class:`AppLauncher`, composed in ``_app_launcher.py``. A cross-call
 goes through the facade (imported on use: that module imports this one for its
@@ -342,6 +343,39 @@ class _DiscoveryMixin:
             if os.path.exists(candidate):
                 return candidate
         return None
+
+    @staticmethod
+    def windowless_python(executable: Optional[str] = None) -> Optional[str]:
+        """The interpreter to run a GUI program with, opening no console window.
+
+        :meth:`companion_python` of *executable*, swapped on Windows for the
+        ``pythonw`` beside it when there is one (a venv, a python.org install).
+        A host's own Python has none (``mayapy``, Blender's bundled
+        ``python``), so it comes back as it is and opens a console; a program
+        started that way detaches from it itself (uitk's
+        ``Bootstrap.detach_console``). Elsewhere the companion itself: Linux
+        and macOS open no console for a GUI program.
+
+        Parameters:
+            executable: A host or interpreter binary; ``sys.executable`` when omitted.
+
+        Returns:
+            The interpreter's path, or ``None`` when *executable* is a host with
+            no discoverable Python.
+        """
+        from pythontk.core_utils.app_launcher._app_launcher import AppLauncher
+
+        python = AppLauncher.companion_python(executable)
+        if not python or sys.platform != "win32":
+            return python
+        folder, base = os.path.split(python)
+        stem, ext = os.path.splitext(base)
+        lower = stem.lower()
+        if lower.startswith("python") and not lower.startswith("pythonw"):
+            windowless = os.path.join(folder, "pythonw" + stem[len("python") :] + ext)
+            if os.path.isfile(windowless):
+                return windowless
+        return python
 
     @staticmethod
     def find_app(app_identifier):

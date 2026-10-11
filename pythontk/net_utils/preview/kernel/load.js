@@ -2,6 +2,11 @@
 // in their one order -- the fades wired, the lighting read and spent, the
 // lightmaps bound, the clips set up, the model measured, stood and framed --
 // before the scripts are told it is in.
+//
+// A deliverable is one file or several PARTS (parts.js): each part is
+// fetched and parsed, and the passes that belong to a file -- its fades, its
+// lightmaps -- run on each; the parts hang under one root, which is the model
+// every later pass measures, lights, animates and frames.
 
 import * as THREE from 'three';
 import { setupAnimation, wirePointerTracks } from './animation.js';
@@ -11,9 +16,11 @@ import { environmentLoaded } from './environment.js';
 import { formatBytes } from './format.js';
 import { applyLighting, applyLightmaps, resetLightmaps } from './lightmaps.js';
 import { syncLookdev } from './lookdev.js';
+import { refreshMenus } from './menus.js';
 import { current, disposeModel, layout, loader, measureBounds, setModel } from './model.js';
+import { composite, setParts } from './parts.js';
 import { loadProbe, releaseProbe, useProbe } from './probe.js';
-import { readRenderingPolicy } from './scene.js';
+import { readExtras, readRenderingPolicy } from './scene.js';
 import { glbJsonBytes, measureModel, setSpecs, showSpecs } from './specs.js';
 import { findStart, homeView } from './start.js';
 import { setStatus } from './status.js';
@@ -27,39 +34,73 @@ import { surfaces } from './surfaces.js';
 // a completion that no longer holds it discards its result and stays silent.
 let loadGeneration = 0;
 
-export async function load(url, version) {
+// One part's bytes, named for what failed when it does: "load failed: HTTP
+// 404" says nothing about which of four files it was.
+async function fetchPart(source, many) {
+  const response = await fetch(source.url);
+  if (!response.ok) {
+    const reason = `HTTP ${response.status} ${response.statusText}`.trim();
+    throw new Error(many ? `${source.name}: ${reason}` : reason);
+  }
+  return response.arrayBuffer();
+}
+
+/**
+ * Load *sources* -- `[{name, url}]`, the published parts in order (a bare url
+ * is one part) -- as version *version*. Resolves true once it is on screen,
+ * false when it failed (the status line says why), and null when a newer
+ * load superseded it.
+ */
+export async function load(sources, version) {
   const generation = ++loadGeneration;
-  let gltf;
+  const wanted = typeof sources === 'string' ? [{ name: sources, url: sources }] : sources;
+  const many = wanted.length > 1;
+  const loaded = [];
   // Fetched and parsed as two steps rather than one `loadAsync`, so each is
   // timed on its own and the file's size is known: "the preview is slow to
   // appear" is a download on a share link and a parse on a big GLB, and the
-  // two want different fixes.
+  // two want different fixes. The parts download together and parse one
+  // after another, so each phase is the time the whole set took in it.
   const loadTiming = { bytes: 0, jsonBytes: 0 };
   try {
     const fetching = performance.now();
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`.trim());
-    const buffer = await response.arrayBuffer();
+    const buffers = await Promise.all(wanted.map((source) => fetchPart(source, many)));
     const parsing = performance.now();
     loadTiming.fetchMs = parsing - fetching;
-    loadTiming.bytes = buffer.byteLength;
-    loadTiming.jsonBytes = glbJsonBytes(buffer);
-    gltf = await loader.parseAsync(buffer, THREE.LoaderUtils.extractUrlBase(url));
+    for (const [index, buffer] of buffers.entries()) {
+      const source = wanted[index];
+      loadTiming.bytes += buffer.byteLength;
+      loadTiming.jsonBytes += glbJsonBytes(buffer);
+      let gltf;
+      try {
+        gltf = await loader.parseAsync(buffer, THREE.LoaderUtils.extractUrlBase(source.url));
+      } catch (error) {
+        throw many ? new Error(`${source.name}: ${error.message || error}`) : error;
+      }
+      loaded.push({ name: source.name, url: source.url, gltf });
+    }
     loadTiming.parseMs = performance.now() - parsing;
   } catch (error) {
+    for (const part of loaded) disposeModel(part.gltf.scene);
     if (generation !== loadGeneration) return null; // superseded — newer load owns the status line
     setStatus(`load failed: ${error.message || error}`, 'error');
     return false;
   }
   const settingUp = performance.now();
-  // The bake's reflection probe (probe.js), decoded off the file's own buffer
-  // BEFORE the check below: it awaits, and a load superseded meanwhile must
-  // put neither its model nor its probe up.
+  // The bake's reflection probe (probe.js) -- the first part's that carries
+  // one -- decoded off that file's own buffer BEFORE the check below: it
+  // awaits, and a load superseded meanwhile must put neither its model nor
+  // its probe up.
   const probeIssues = [];
-  const probe = await loadProbe(gltf, probeIssues);
+  let probe = null;
+  for (const part of loaded) {
+    probe = await loadProbe(part.gltf, probeIssues);
+    if (probe) break;
+  }
   if (generation !== loadGeneration) {
     if (probe) probe.prefiltered.dispose();
-    disposeModel(gltf.scene); // parsed but never shown; free it rather than leak it
+    // Parsed but never shown; free them rather than leak them.
+    for (const part of loaded) disposeModel(part.gltf.scene);
     return null;
   }
   // A prompt is ALWAYS about the deliverable on screen — what to record, what
@@ -69,7 +110,16 @@ export async function load(url, version) {
   // to a question whose subject has gone. (A recording already RUNNING is
   // dropped by the same event, in `playblast.js`.)
   closeDialog(false);
-  setModel(gltf.scene);
+  // One part is its own root, exactly as a single file always loaded; several
+  // hang under one, each at its authored place.
+  let root = loaded[0].gltf.scene;
+  if (many) {
+    root = new THREE.Group();
+    root.name = 'parts';
+    for (const part of loaded) root.add(part.gltf.scene);
+  }
+  setModel(root);
+  setParts(loaded, root);
 
   // A lightmapped material already contains its DIFFUSE lighting, so the viewer's own
   // light is what has to give way: a second rig on top of a bake leaves the baked shadows
@@ -87,19 +137,28 @@ export async function load(url, version) {
   const issues = [];
   // Before setupAnimation: the mixer binds a clip's tracks when its action is
   // created, so tracks added afterwards would never be played.
-  const animated = await wirePointerTracks(gltf);
+  const animated = { tracks: 0, materials: 0 };
+  for (const part of loaded) {
+    const wired = await wirePointerTracks(part.gltf);
+    animated.tracks += wired.tracks;
+    animated.materials += wired.materials;
+  }
   // Read before applying: the deliverable's own policy is what applyLighting
   // then spends, so a load that read nothing must fall back BEFORE the lights
-  // are set rather than after.
-  readRenderingPolicy(gltf);
-  const lightmapped = applyLightmaps(gltf, issues);
+  // are set rather than after. The first part that publishes one.
+  const recipe = loaded.find((part) => readExtras(part.gltf, 'scene_sidecar')?.handoff?.rendering);
+  readRenderingPolicy((recipe || loaded[0]).gltf);
+  const lightmapped = applyLightmaps(loaded.map((part) => part.gltf), issues);
   // After the lightmaps: the probe's lookup chains onto the baked shader edit.
   issues.push(...probeIssues);
-  if (probe) useProbe(probe, gltf.scene);
+  if (probe) useProbe(probe, root);
   else releaseProbe();
   applyLighting();
   syncLookdev();
-  const clipCount = setupAnimation(gltf);
+  // The whole set as one deliverable, for the passes that read it whole: the
+  // clips of every part in one picker, the model measured across the parts.
+  const whole = composite(loaded, root);
+  const clipCount = setupAnimation(whole.gltf, whole.shots);
 
   measureBounds();
 
@@ -108,12 +167,12 @@ export async function load(url, version) {
   // look alike until the difference is blamed on the baker. See measureModel
   // for the units, and why the count is no longer a fraction of materials.
   loadTiming.setupMs = performance.now() - settingUp;
-  const specs = measureModel(gltf, { ...loadTiming, clips: clipCount, animated }, issues);
+  const specs = measureModel(whole.gltf, { ...loadTiming, clips: clipCount, animated }, issues);
   const materialCount = specs.materials.instances;
   setSpecs(specs);
   showSpecs(specs);
-  // The Environment window's rows and switches, and the probe helpers, for
-  // this model.
+  // The Environment menu's switch and window rows, and the probe helpers,
+  // for this model.
   environmentLoaded();
   // Laid out, its start found, its surfaces read and the view opened BEFORE
   // the event: a 'load' subscriber is told the model is in, and asking
@@ -124,9 +183,23 @@ export async function load(url, version) {
   findStart();
   surfaces.setRoot(current);
   homeView();
-  emit('load', { model: current, gltf, lightmapped, materialCount, clips: clipCount, specs });
+  // What applies changed with the model: a clip to caption, a probe to
+  // switch, a part to hide.
+  refreshMenus();
+  emit('load', {
+    model: current,
+    // The PRIMARY part's: what a script reading the deliverable's extras by
+    // node index binds against. `parts` names every part, each with its own.
+    gltf: loaded[0].gltf,
+    parts: loaded.map((part) => ({ name: part.name, model: part.gltf.scene, gltf: part.gltf })),
+    lightmapped,
+    materialCount,
+    clips: clipCount,
+    specs,
+  });
+  const files = many ? `${loaded.length} files · ` : '';
   setStatus(
-    `v${version} · ${formatBytes(loadTiming.bytes)} · updated ${new Date().toLocaleTimeString()}`,
+    `v${version} · ${files}${formatBytes(loadTiming.bytes)} · updated ${new Date().toLocaleTimeString()}`,
     'live',
   );
   return true;

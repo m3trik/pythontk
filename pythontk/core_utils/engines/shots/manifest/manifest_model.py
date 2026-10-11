@@ -15,9 +15,10 @@ import io
 import logging
 import re
 from dataclasses import dataclass, field, fields
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Tuple
 
 from pythontk import SchemaSpec
+from pythontk.core_utils.deprecation import Deprecation
 from pythontk.str_utils._str_utils import StrUtils
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
 from pythontk.net_utils.remote_file import RemoteFile
@@ -147,7 +148,7 @@ class _ManifestModelInternal(object):
 
         def _asset_names(cell: str) -> List[str]:
             # One object per line: a name can't hold a newline, so a cell
-            # listing several (as ``asset_column`` writes them) splits safely.
+            # listing several (as an export's Objects cell does) splits safely.
             names = (n.strip() for n in cell.splitlines())
             return [n for n in names if n and n.upper() not in asset_excludes]
 
@@ -463,6 +464,12 @@ class ManifestModel(_ManifestModelInternal):
 
         return Behaviors.detect(text)
 
+    @Deprecation.symbol(
+        "ManifestExport (the manifest as a table: CSV, JSON or Markdown)",
+        remove_in="0.14.0",
+        since="2026-10-10",
+        reason="The Shot Manifest's Copy Asset Names gave way to Export.",
+    )
     @staticmethod
     def asset_column(
         source: str,
@@ -471,6 +478,9 @@ class ManifestModel(_ManifestModelInternal):
     ) -> List[str]:
         """The source sheet's asset column, row for row, with *fills* written
         into the empty asset cells of their steps.
+
+        Retired: the panel exports the manifest as a table instead
+        (:class:`~pythontk.ManifestExport`).
 
         Pasted over the sheet's asset column from its first row, it lands
         every name in its step's row and rewrites every other cell with the
@@ -516,27 +526,21 @@ class ManifestModel(_ManifestModelInternal):
                 column[row] = "\n".join(names)
         return column
 
+    @Deprecation.symbol(
+        "ManifestExport.clipboard",
+        remove_in="0.14.0",
+        since="2026-10-10",
+        reason="It takes a whole table; one column is a table of one.",
+    )
     @staticmethod
     def column_clipboard(cells: List[str]) -> Tuple[str, str]:
-        """``(tsv, html)`` clipboard forms of one column of *cells*.
-
-        Spreadsheets paste the HTML table (a ``<br>`` stays a line break in
-        its cell); the TSV, with multi-line cells quoted, is the plain-text
-        fallback.
-        """
-        import html
-
-        def _tsv(cell: str) -> str:
-            if any(ch in cell for ch in '\t\n"'):
-                return '"' + cell.replace('"', '""') + '"'
-            return cell
-
-        tsv = "\n".join(_tsv(c) for c in cells)
-        body = "".join(
-            "<tr><td>" + html.escape(c).replace("\n", "<br>") + "</td></tr>"
-            for c in cells
+        """``(tsv, html)`` clipboard forms of one column of *cells*
+        (``ManifestExport.clipboard`` of a one-column table)."""
+        from pythontk.core_utils.engines.shots.manifest.manifest_export import (
+            ManifestExport,
         )
-        return tsv, f"<table>{body}</table>"
+
+        return ManifestExport.clipboard([[c] for c in cells])
 
     @staticmethod
     def parse_csv(
@@ -587,14 +591,25 @@ class BuilderObject:
     kind: str = "scene"  # "scene" | "audio"
     source_path: str = ""  # file path for audio creation (transient)
     # Where the name came from: "column" (the sheet's asset cell),
-    # "description" (named by a behavior phrase in the step's prose) or
-    # "shot" (auto-filled from the paired shot).
+    # "description" (named by a behavior phrase in the step's prose),
+    # "shot" (auto-filled from the paired shot) or "member" (a member of the
+    # step's shot the step does not list -- shown by the panel, never edited).
     origin: str = "column"
+    #: The sheet's own value of each field an edit changed (``name``,
+    #: ``behaviors``; ``step`` -- the step the sheet lists it under, when it
+    #: was moved) -- filled by ``ManifestEdits.apply``, empty when unedited.
+    sheet: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class BuilderStep:
-    """One step (= one future sequencer shot)."""
+    """One step (= one future sequencer shot).
+
+    ``step_id`` is the step's identity -- what its shot is bound to
+    (``metadata["step"]``), what ranges and assessments are keyed by -- and
+    never changes; ``name`` renames the step's shot without moving that
+    binding (:attr:`shot_name`).
+    """
 
     step_id: str  # e.g. "A04"
     section: str  # e.g. "A"
@@ -608,6 +623,17 @@ class BuilderStep:
     # (row, column) of this step's asset cell in the source CSV, so a
     # generated asset list can be written back into the right cell.
     asset_cell: Optional[Tuple[int, int]] = None
+    #: The shot's name when it is not the step ID (a rename); empty = the ID.
+    #: A build writes it onto the paired shot, which stays bound to the ID.
+    name: str = ""
+    #: The sheet's own value of each field an edit changed (``name``,
+    #: ``description``) -- filled by ``ManifestEdits.apply``.
+    sheet: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def shot_name(self) -> str:
+        """The name this step's shot carries: :attr:`name`, else the step ID."""
+        return self.name or self.step_id
 
     @property
     def display_text(self) -> str:
@@ -711,7 +737,8 @@ class BuilderStep:
                         source_path=sources.get(key, ""),
                     )
                 )
-            # A shot bound to a doc step IS that step (``ShotManifest.pair``).
+            # A shot bound to a doc step IS that step (``ShotManifest.pair``),
+            # whatever it has been renamed since.
             step_id = meta.get("step") or shot.name
             steps.append(
                 cls(
@@ -721,6 +748,7 @@ class BuilderStep:
                     description=shot.description,
                     objects=objects,
                     audio=meta.get("voice_text", ""),
+                    name=shot.name if shot.name != step_id else "",
                 )
             )
             ranges[step_id] = (shot.start, shot.end)
@@ -731,7 +759,9 @@ class BuilderStep:
 # Build plan (compute-then-commit)
 # ---------------------------------------------------------------------------
 
-Action = Literal["created", "patched", "skipped", "locked", "removed", "refused"]
+Action = Literal[
+    "created", "patched", "skipped", "locked", "kept", "removed", "refused"
+]
 
 
 @dataclass
@@ -808,17 +838,25 @@ class StepStatus:
     #: ``[obj, behavior]`` the shot holds keys for that the doc no longer
     #: lists -- the manifest's own output, which Build removes.
     dropped_behaviors: List[List[str]] = field(default_factory=list)
+    #: The shot was edited by hand since its last build, and Build keeps it
+    #: as it is (``ShotManifest.edited_by_hand``; off when the build was
+    #: asked to rebuild edited shots).
+    edited: bool = False
 
     @property
     def status(self) -> str:
         """Worst-of-children rollup.
 
-        Priority: ``"locked"`` (user-finalized) > ``"missing_shot"`` >
-        the object statuses in :attr:`ROLLUP` order > ``"no_objects"`` (the
-        doc lists none -- informational, never a silent "valid") > ``"valid"``.
+        Priority: ``"locked"`` (user-finalized) > ``"edited"`` (kept as the
+        hand left it) > ``"missing_shot"`` > the object statuses in
+        :attr:`ROLLUP` order > ``"no_objects"`` (the doc lists none --
+        informational, never a silent "valid") > ``"valid"``.  An edited
+        step's objects keep their own statuses.
         """
         if self.locked:
             return "locked"
+        if self.edited:
+            return "edited"
         if not self.built:
             return "missing_shot"
         found = {o.status for o in self.objects}
@@ -841,6 +879,7 @@ class StepStatus:
         "no_objects": "The doc lists no objects for this step.",
         "not_in_doc": "No doc step pairs with this shot -- Build never removes it; right-click to remove it yourself.",
         "locked": "Locked: user-finalized, never modified by Build.",
+        "edited": "Edited by hand since its last Build -- Build leaves it as it is; turn on Rebuild Edited Shots (header menu) to rebuild it from the doc.",
     }
 
     #: Object statuses that name the step, worst first.
@@ -863,8 +902,9 @@ class StepStatus:
     def needs_build(self) -> bool:
         """Whether a Build would change this step: its shot is not built, an
         object is one a Build fixes (:attr:`BUILD_FIXES`), or the shot holds
-        keys of behaviors the doc dropped.  Never for a locked step."""
-        if self.locked:
+        keys of behaviors the doc dropped.  Never for a locked or a kept
+        (edited) step: Build leaves both as they are."""
+        if self.locked or self.edited:
             return False
         if not self.built or self.dropped_behaviors:
             return True
@@ -907,11 +947,75 @@ class ShotPairing:
         shots: ``{step_id: ShotBlock}`` for every paired step.
         how: ``{step_id: "binding" | "name" | "order"}`` -- how it paired.
         orphans: Shots no step pairs with ("not in the doc"), timeline order.
+        timeline: Every shot the pairing read, in timeline order.
     """
 
     shots: Dict[str, Any] = field(default_factory=dict)
     how: Dict[str, str] = field(default_factory=dict)
     orphans: List[Any] = field(default_factory=list)
+    timeline: List[Any] = field(default_factory=list)
+
+    def rows(
+        self,
+        steps: List["BuilderStep"],
+        hide_missing: bool = False,
+        orphans: bool = True,
+        keep: Iterable[str] = (),
+    ) -> List[Tuple[Optional["BuilderStep"], Optional[Any]]]:
+        """The manifest's rows: ``(step, shot)`` per step in doc order --
+        ``shot`` ``None`` for a step with no shot yet -- and ``(None, shot)``
+        per orphan, where the timeline has it.
+
+        An orphan follows the row of the shot before it on the timeline
+        (after any orphan already there), so a shot split off or added in the
+        Shot Sequencer sits beside the shots it sits between; one with no
+        paired shot before it leads the row of the paired shot after it, and
+        with none at all the orphans close the list.
+
+        Parameters:
+            steps: The steps that were paired, in doc order.
+            hide_missing: Leave out the steps with no shot ("missing shot")
+                -- every shot keeps its row.
+            orphans: List the orphans (only a sheet can leave a shot out).
+            keep: Step IDs shown whatever *hide_missing* says (a step the
+                user just added).
+        """
+        keep = set(keep)
+        rows = [
+            (step, self.shots.get(step.step_id))
+            for step in steps
+            if not hide_missing or step.step_id in self.shots or step.step_id in keep
+        ]
+        if not orphans or not self.orphans:
+            return rows
+        orphan_ids = {shot.shot_id for shot in self.orphans}
+        after: Dict[Optional[int], List[Any]] = {}  # paired shot -> orphans
+        before: Dict[Optional[int], List[Any]] = {}
+        anchor: Optional[int] = None
+        leading: List[Any] = []
+        # No timeline (a pairing made by hand): nothing to place the orphans
+        # by, so they close the list rather than vanish.
+        for shot in self.timeline or self.orphans:
+            if shot.shot_id not in orphan_ids:
+                if anchor is None and leading:
+                    before[shot.shot_id] = leading
+                anchor = shot.shot_id
+            elif anchor is None:
+                leading.append(shot)
+            else:
+                after.setdefault(anchor, []).append(shot)
+        if anchor is None:  # no shot pairs: the orphans close the list
+            return rows + [(None, shot) for shot in leading]
+        out: List[Tuple[Optional["BuilderStep"], Optional[Any]]] = []
+        for step, shot in rows:
+            key = shot.shot_id if shot is not None else None
+            out.extend((None, s) for s in before.pop(key, ()))
+            out.append((step, shot))
+            out.extend((None, s) for s in after.pop(key, ()))
+        # Anchored on a shot whose step is not among *steps*: never dropped.
+        for rest in (*before.values(), *after.values()):
+            out.extend((None, s) for s in rest)
+        return out
 
 
 # ---------------------------------------------------------------------------

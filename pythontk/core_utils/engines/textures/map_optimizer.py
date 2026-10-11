@@ -433,6 +433,13 @@ class MapOptimizer(HelpMixin):
             if (rw, rh) != pot:
                 pot_target = pot
         will_resize = resize_to is not None or pot_target is not None
+        # A normal map resamples AS one (ImgUtils.resize_image says why); the
+        # flag rides the size ops so apply stays a pure dispatcher.
+        resample: Dict[str, Any] = (
+            {"normal_map": True}
+            if map_type_key in MapRegistry.TANGENT_NORMAL_TYPES
+            else {}
+        )
 
         # --- 1. Depalettize before resize (preserves high-quality resampling)
         if will_resize and mode in ("P", "PA"):
@@ -517,7 +524,7 @@ class MapOptimizer(HelpMixin):
                         f"Resize: {width}x{height} -> "
                         f"{rw}x{rh} (exceeds max_size={max_size})"
                     ),
-                    params={"size": resize_to},
+                    params={"size": resize_to, **resample},
                 )
             )
             width, height = rw, rh
@@ -526,7 +533,7 @@ class MapOptimizer(HelpMixin):
         if force_pot and width > 0 and height > 0:
             pw, ph = cls._snap_pot(width, height, pot_mode, max_size)
             if (width, height) != (pw, ph):
-                params: Dict[str, Any] = {"size": (pw, ph)}
+                params: Dict[str, Any] = {"size": (pw, ph), **resample}
                 # The snap derives the short edge from the source ratio, so a
                 # shift past the tolerance means the min-1 floor really did
                 # reshape an extreme ratio. That is the surprising half of a
@@ -672,7 +679,9 @@ class MapOptimizer(HelpMixin):
                 # this split exists to prevent (and it would silently ignore
                 # a budget's round-down).
                 w, h = op.params["size"]
-                image = ImgUtils.resize_image(image, w, h)
+                image = ImgUtils.resize_image(
+                    image, w, h, normal_map=op.params.get("normal_map", False)
+                )
         return image
 
     @staticmethod
@@ -965,7 +974,7 @@ class MapOptimizer(HelpMixin):
 
         RDO is a UASTC stage, so it reaches a ``.ktx2`` map that
         :meth:`resolve_compression` sent to UASTC -- normals, packed and linear
-        data -- capped for a normal map (:attr:`MapRegistry.NORMAL_TYPES`) at
+        data -- capped for a normal map (:attr:`MapRegistry.TANGENT_NORMAL_TYPES`) at
         ``Ktx2Encoder.UASTC_RDO_NORMAL_MAX``, the same cap the GLB texture pass
         applies. An ETC1S map has no RDO stage, which is the codec's design
         rather than a declined request, so it is not reported; a request
@@ -999,7 +1008,7 @@ class MapOptimizer(HelpMixin):
             return None, None
         return (
             Ktx2Encoder.rdo_for(
-                uastc_rdo, normal_map=map_type_key in MapRegistry.NORMAL_TYPES
+                uastc_rdo, normal_map=map_type_key in MapRegistry.TANGENT_NORMAL_TYPES
             ),
             None,
         )

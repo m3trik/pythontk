@@ -13,7 +13,7 @@ cross-call is spelled ``AppLauncher.<name>``, so patching the facade reaches it:
 * :mod:`._discovery` -- where an app is installed: ``find_app``,
   ``resolve_app_path``, ``scan_install_dirs``, ``scan_for_executables``, and
   ``companion_python`` / ``looks_like_python`` (the interpreter a host binary
-  pairs with).
+  pairs with) and ``windowless_python`` (its console-free twin, for a GUI).
 * :mod:`._environment` -- the environment a child inherits: ``process_environ``
   (the LIVE block, not the ``os.environ`` snapshot), ``handoff_env``,
   ``desktop_env``, ``python_args_via_env`` (a Python child's argv carried in
@@ -25,6 +25,9 @@ cross-call is spelled ``AppLauncher.<name>``, so patching the facade reaches it:
 * :mod:`._processes` -- running processes (``get_running_processes``,
   ``close_process``, ``process_tree``) and the lifetime binding ``spawn`` puts
   a child under.
+* :mod:`._shortcuts` -- a launcher on the desktop or in the start menu
+  (``create_shortcut``: a Windows ``.lnk`` through ``IShellLinkW``, a Linux
+  ``.desktop`` entry).
 
 The concept modules hold private mixins of the facade. ``process_stream`` (the
 line streams ``run`` and ``spawn`` output feeds) and ``x11`` (the Xlib client

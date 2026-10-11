@@ -958,6 +958,55 @@ class TestExportVerifier(_FixtureCase):
                 FAIL, [r.status for r in rows if r.check == "clips_vs_takes"], mode
             )
 
+    # ---- a declared Shots + Full Sequence export ---------------------------
+
+    def _shots_alone(self, clip_mode):
+        """What Blender's split shipped until 2026-10-05: the shots, and no
+        whole-timeline stack or clip beside them."""
+        glb = build_glb(self.path("asset.glb"), clip_name="Shot_1")
+        fbx = build_fbx(self.path("asset.fbx"), ("Shot_1",))
+        build_sidecar(
+            self.path(".asset.scene_data.json"),
+            [{"name": "Shot_1", "start": 0, "end": 15}],
+            clip_mode=clip_mode,
+        )
+        return glb, fbx
+
+    def test_a_declared_both_export_without_its_whole_timeline_fails(self):
+        """A Shots + Full Sequence export whose split replaced the whole
+        timeline shipped the same files as Shots Only while declaring both, and
+        every gate passed: the clips matched their takes and ``clip_origin``
+        SKIPped for want of an undeclared clip (measured on Blender 5.1,
+        2026-10-04)."""
+        glb, fbx = self._shots_alone("both")
+        report = ExportVerifier(glb=glb, fbx=fbx).run(
+            ["check_clips_vs_takes", "check_fbx_takes"]
+        )
+        statuses = {}
+        for row in report.rows:
+            statuses.setdefault(row.check, []).append(row.status)
+        self.assertIn(FAIL, statuses["clips_vs_takes"])
+        self.assertEqual(statuses["fbx_takes"], [FAIL])
+        failed = [row.detail for row in report.rows if row.status == FAIL]
+        self.assertTrue(all("whole-timeline" in d for d in failed), failed)
+
+    def test_shots_only_needs_no_whole_timeline(self):
+        glb, fbx = self._shots_alone("shots")
+        report = ExportVerifier(glb=glb, fbx=fbx).run(
+            ["check_clips_vs_takes", "check_fbx_takes"]
+        )
+        self.assertTrue(report.ok, report.summary())
+
+    def test_a_declared_both_fbx_with_its_whole_timeline_take_passes(self):
+        fbx = build_fbx(self.path("asset.fbx"), ("Shot_1", "Take 001"))
+        build_sidecar(
+            self.path(".asset.scene_data.json"),
+            [{"name": "Shot_1", "start": 0, "end": 15}],
+            clip_mode="both",
+        )
+        report = ExportVerifier(fbx=fbx).run(["check_fbx_takes"])
+        self.assertEqual([r.status for r in report.rows], [PASS], report.summary())
+
     # ---- clip origin ------------------------------------------------------
     #
     # The defect these cover shipped a production assembly: the exporter
@@ -1446,6 +1495,105 @@ class TestExportVerifier(_FixtureCase):
     def test_cli_list_checks(self):
         glb, _ = self._good_pair()
         self.assertEqual(_main([glb, "--list-checks"]), 0)
+
+
+class TestSidecarInTheStore(_FixtureCase):
+    """The exporters keep a deliverable's record in the per-user store of its
+    folder, nothing beside it (``SceneDataSidecarBase.store_dir``); one an
+    earlier version left beside the deliverable still serves."""
+
+    def setUp(self):
+        super().setUp()
+        from pythontk.core_utils.test_sandbox import TestSandbox
+
+        sandbox = TestSandbox.user_config()
+        sandbox.__enter__()
+        self.addCleanup(sandbox.__exit__, None, None, None)
+
+    def _stored(self, deliverable: str, name: str) -> str:
+        from pythontk.core_utils.engines.scene_export.scene_data_sidecar import (
+            SceneDataSidecarBase,
+        )
+
+        store = SceneDataSidecarBase.store_dir(deliverable)
+        os.makedirs(store, exist_ok=True)
+        return build_sidecar(os.path.join(store, name), [])
+
+    def test_the_store_s_record_is_found(self):
+        glb = build_glb(self.path("asset.glb"))
+        stored = self._stored(glb, ".asset.scene_data.json")
+        self.assertEqual(ExportVerifier(glb=glb).sidecar_path, stored)
+
+    def test_the_store_wins_over_a_record_left_beside(self):
+        glb = build_glb(self.path("asset_v003.glb"))
+        build_sidecar(self.path(".asset_v003.scene_data.json"), [])
+        stored = self._stored(glb, ".asset.scene_data.json")
+        self.assertEqual(ExportVerifier(glb=glb).sidecar_path, stored)
+
+
+class TestFbxDependenciesGate(_FixtureCase):
+    """``fbx_dependencies``: every file an FBX's records name is inside it.
+
+    The deliverable ships nothing beside it (the user's rule of 2026-10-05:
+    every dependency embedded, zero sidecar files), so a map the records name
+    and the file lacks is a Unity import with no lightmap and a GLB built from
+    the file with no lighting -- and nothing else says so.
+    """
+
+    RECORDS = {
+        "lightmap_metadata": {
+            "version": 1,
+            "objects": [{"name": "Crate", "map": "Crate_Lightmap.exr", "uvIndex": 1}],
+            "probe": {"map": "Room_Probe.exr", "position": [0, 0, 0]},
+        },
+        "shadow_metadata": {
+            "version": 2,
+            "planes": [{"name": "P", "texture": "P_shadow.png"}],
+        },
+    }
+
+    def _fbx(self, embed=()):
+        from test_fbx_media import build_carrier_fbx
+
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        path = build_carrier_fbx(self.path("asset.fbx"), self.RECORDS)
+        files = []
+        for name in embed:
+            files.append(self.path(name))
+            with open(files[-1], "wb") as fh:
+                fh.write(name.encode() * 4)
+        if files:
+            FbxMedia.embed(path, files=files)
+        return path
+
+    def _gate(self, fbx):
+        rows = ExportVerifier(fbx=fbx, sidecar=None).run(["check_fbx_dependencies"])
+        self.assertEqual(len(rows.rows), 1)
+        return rows.rows[0]
+
+    def test_every_named_file_inside_passes(self):
+        row = self._gate(
+            self._fbx(embed=("Crate_Lightmap.exr", "Room_Probe.exr", "P_shadow.png"))
+        )
+        self.assertEqual(row.status, PASS, row.detail)
+        self.assertIn("3", row.detail)
+
+    def test_a_named_file_the_fbx_lacks_fails_naming_it(self):
+        row = self._gate(self._fbx(embed=("Crate_Lightmap.exr",)))
+        self.assertEqual(row.status, FAIL)
+        self.assertIn("Room_Probe.exr", row.detail)
+        self.assertIn("P_shadow.png", row.detail)
+        self.assertNotIn("Crate_Lightmap.exr", row.detail)
+
+    def test_records_naming_nothing_and_no_fbx_skip(self):
+        from test_fbx_media import build_carrier_fbx
+
+        bare = build_carrier_fbx(self.path("bare.fbx"), {})
+        self.assertEqual(self._gate(bare).status, SKIP)
+        glb_only = ExportVerifier(glb=build_glb(self.path("only.glb")), sidecar=None)
+        row = glb_only.run(["check_fbx_dependencies"]).rows[0]
+        self.assertEqual(row.status, SKIP)
 
 
 if __name__ == "__main__":

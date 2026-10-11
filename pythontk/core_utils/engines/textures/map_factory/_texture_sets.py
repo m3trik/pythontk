@@ -16,6 +16,7 @@ from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.tiled_path import TiledPath
 from pythontk.iter_utils._iter_utils import IterUtils
 from pythontk.str_utils._str_utils import StrUtils
+from pythontk.core_utils.naming_convention import NamingConvention
 from pythontk.core_utils.engines.textures.map_registry import MapRegistry
 
 
@@ -189,6 +190,126 @@ class _TextureSetInternal:
         ).rstrip(registry.SEPARATORS)
 
     @classmethod
+    def _split_reading_types(cls) -> set:
+        """The map types a compound spelling can be misread as: the lobe types,
+        and Emissive, whose ``Emission_Color`` / ``Emissive_Color`` (2026-10-10)
+        read a set named ``<x>_Emission``'s base colour as an emission colour."""
+        return set(cls._map_registry.LOBE_TYPE_CHANNELS) | {"Emissive"}
+
+    @classmethod
+    def _base_map_reading(
+        cls, path: str, prefix: str = "", suffix: str = ""
+    ) -> Optional[Tuple[str, str]]:
+        """The base-map reading of a lobe-named file, or None when it has none.
+
+        ``Hero_Coat_Roughness`` reads per file as a coat roughness of set
+        ``Hero``; its base-map reading is the roughness of a set named
+        ``Hero_Coat``. The matched map suffix is split after each separator
+        inside it, shortest lobe prefix first, until the remainder is WHOLLY a
+        map-type suffix of a non-lobe type: ``Clear_Coat_Roughness`` passes
+        ``Coat_Roughness`` (still a lobe) and stops at ``Roughness``. The lobe
+        word(s) join the base exactly as spelled; the configured affixes and a
+        trailing separator come off as :meth:`get_base_texture_name` takes them.
+
+        Parameters:
+            path: A texture path or file name.
+            prefix: User prefix stripped from the base.
+            suffix: User suffix stripped from the base.
+
+        Returns:
+            ``(map_type, base)`` for the base-map reading, or ``None`` when the
+            suffix has no lobe-word + base-map split.
+        """
+        registry = cls._map_registry
+        name_only = os.path.splitext(os.path.basename(str(path)))[0]
+        # The tile token never joins the base: off before the suffix is split.
+        stem, _tile = registry.split_tile_token(name_only)
+        base, _tail = registry.split_map_suffix(stem)
+        split_types = cls._split_reading_types()
+        for cut in range(len(base) + 1, len(stem)):
+            if stem[cut] not in registry.SEPARATORS:
+                continue
+            rest = stem[cut:]  # the separator + the remainder
+            if registry.split_map_suffix(rest)[0]:
+                continue  # the remainder is not wholly a map-type suffix
+            # A dummy extension: `resolve_type_from_path` splits one off, and a
+            # remainder must never lose a dotted token to it.
+            map_type = registry.resolve_type_from_path(f"{rest}.png")
+            if map_type and map_type not in split_types:
+                return map_type, StrUtils.strip_known_affix(
+                    stem[:cut], prefix=prefix, suffix=suffix
+                ).rstrip(registry.SEPARATORS)
+        return None
+
+    @classmethod
+    def classify_textures(
+        cls,
+        paths: Iterable[str],
+        prefix: str = "",
+        suffix: str = "",
+    ) -> Dict[str, Tuple[Optional[str], str]]:
+        """Body of :meth:`MapFactory.classify_textures`."""
+        readings: Dict[str, Tuple[Optional[str], str]] = {}
+        alternatives: Dict[str, Tuple[str, str]] = {}
+        split_types = cls._split_reading_types()
+        for path in paths:
+            if path in readings:
+                continue
+            map_type = cls.resolve_map_type(path)
+            readings[path] = (
+                map_type,
+                cls.get_base_texture_name(path, prefix=prefix, suffix=suffix),
+            )
+            if map_type in split_types:
+                alternative = cls._base_map_reading(path, prefix, suffix)
+                if alternative:
+                    alternatives[path] = alternative
+        if not alternatives:
+            return readings
+
+        # The sets the unambiguous maps name. A lobe reading needs its set to
+        # exist apart from the ambiguous files (an OpenPBR set has a base map);
+        # a base-map reading wins whenever its own set exists, or the lobe's
+        # does not (lobe maps with no base map are not a material).
+        anchors = {
+            base
+            for path, (map_type, base) in readings.items()
+            if map_type and path not in alternatives
+        }
+        for path, alternative in alternatives.items():
+            if alternative[1] in anchors or readings[path][1] not in anchors:
+                readings[path] = alternative
+        return readings
+
+    @classmethod
+    def resolve_map_types(cls, paths: Iterable[str]) -> Dict[str, Optional[str]]:
+        """Body of :meth:`MapFactory.resolve_map_types`."""
+        return {
+            path: map_type
+            for path, (map_type, _base) in cls.classify_textures(paths).items()
+        }
+
+    @classmethod
+    def _set_base_name(cls, path: str, neighbours: Iterable[Any] = ()) -> str:
+        """*path*'s base name read against the other paths of its set.
+
+        For a writer that names one output after a source it holds together
+        with that source's set-mates (a channel pack): non-path entries (an
+        in-memory image) are skipped.
+
+        Parameters:
+            path: The source the output is named after.
+            neighbours: The other sources, in any form.
+
+        Returns:
+            str: The base name :meth:`classify_textures` gives *path*.
+        """
+        if not isinstance(path, str):
+            return cls.get_base_texture_name(path)  # its own pathlike check
+        batch = [path] + [n for n in neighbours if isinstance(n, str) and n != path]
+        return cls.classify_textures([n for n in batch if n])[path][1]
+
+    @classmethod
     def get_tile_token(cls, filepath_or_filename: str) -> str:
         """Body of :meth:`MapFactory.get_tile_token`."""
         ImgUtils.assert_pathlike(filepath_or_filename, "filepath_or_filename")
@@ -233,15 +354,20 @@ class _TextureSetInternal:
         suffix: str = "",
     ) -> Dict[str, List[str]]:
         """Body of :meth:`MapFactory.group_textures_by_set`."""
-        texture_sets = {}
-        for path in image_paths:
-            base_name = cls.get_base_texture_name(path, prefix=prefix, suffix=suffix)
-            key = f"{base_name}{cls.get_tile_token(path)}"
-            if key not in texture_sets:
-                texture_sets[key] = []
+        paths = list(image_paths)
+        return cls._group_by_reading(
+            paths, cls.classify_textures(paths, prefix=prefix, suffix=suffix)
+        )
 
-            texture_sets[key].append(path)
-
+    @classmethod
+    def _group_by_reading(
+        cls, paths: List[str], readings: Dict[str, Tuple[Optional[str], str]]
+    ) -> Dict[str, List[str]]:
+        """``{<base><tile token>: paths}`` from a :meth:`classify_textures` result."""
+        texture_sets: Dict[str, List[str]] = {}
+        for path in paths:
+            key = f"{readings[path][1]}{cls.get_tile_token(path)}"
+            texture_sets.setdefault(key, []).append(path)
         return texture_sets
 
     @classmethod
@@ -262,12 +388,13 @@ class _TextureSetInternal:
     @classmethod
     def dominant_texture_set(cls, paths: Iterable[str]) -> Optional[Tuple[str, str]]:
         """Body of :meth:`MapFactory.dominant_texture_set`."""
+        texts = [text for text in (str(path or "") for path in paths or ()) if text]
+        readings = cls.classify_textures(texts)
         votes: List[Tuple[str, str]] = []
-        for path in paths or ():
-            text = str(path or "")
-            if not text or not cls.resolve_map_type(text):
+        for text in texts:
+            map_type, base = readings[text]
+            if not map_type:
                 continue  # not a material map
-            base = cls.get_base_texture_name(text)
             if base:
                 folder = os.path.dirname(text)
                 votes.append((base, os.path.normpath(folder) if folder else ""))
@@ -282,6 +409,18 @@ class _TextureSetInternal:
 
         base = majority([b for b, _folder in votes])
         return base, majority([f for b, f in votes if b == base])
+
+    @staticmethod
+    def lightmap_for_base(map_name: str, old_base: str, new_base: str) -> Optional[str]:
+        """Body of :meth:`MapFactory.lightmap_for_base`."""
+        stem, ext = os.path.splitext(os.path.basename(str(map_name or "")))
+        prefix, suffix = NamingConvention.affix_parts("lightmap")
+        match = re.fullmatch(
+            rf"({re.escape(prefix)}){re.escape(old_base)}({re.escape(suffix)}[_-]*\d*)",
+            stem,
+            flags=re.IGNORECASE,
+        )
+        return f"{match[1]}{new_base}{match[2]}{ext}" if match else None
 
     @classmethod
     def _supplement_sets_from_dir(
@@ -333,21 +472,24 @@ class _TextureSetInternal:
         if not dir_files:
             return texture_sets
 
-        dir_by_set = cls.group_textures_by_set(dir_files, prefix=prefix, suffix=suffix)
+        # The directory is one batch: its files read against each other, so a
+        # set named for a lobe (``Hero_Coat``) finds its maps under that name.
+        dir_readings = cls.classify_textures(dir_files, prefix=prefix, suffix=suffix)
+        dir_by_set = cls._group_by_reading(dir_files, dir_readings)
 
         for base_name, files in texture_sets.items():
             siblings = dir_by_set.get(base_name)
             if not siblings:
                 continue
 
-            present_types = {cls.resolve_map_type(f) for f in files}
+            present_types = set(cls.resolve_map_types(files).values())
             present_paths = {os.path.normcase(os.path.abspath(f)) for f in files}
 
             for sib in siblings:
                 key = os.path.normcase(os.path.abspath(sib))
                 if key in present_paths:
                     continue
-                map_type = cls.resolve_map_type(sib)
+                map_type = dir_readings[sib][0]
                 if not map_type or map_type in present_types:
                     continue
 
@@ -366,7 +508,9 @@ class _TextureSetInternal:
     def filter_images_by_type(cls, files, types=""):
         """Body of :meth:`MapFactory.filter_images_by_type`."""
         types = IterUtils.make_iterable(types)
-        return [f for f in files if cls.resolve_map_type(f) in types]
+        files = list(files)
+        by_path = cls.resolve_map_types(files)
+        return [f for f in files if by_path[f] in types]
 
     @classmethod
     def sort_images_by_type(
@@ -377,13 +521,18 @@ class _TextureSetInternal:
             # Convert dictionary to list of tuples
             files = list(files.items())
 
+        files = list(files)
+        # Read as one batch, so a set named for a lobe keeps its base maps.
+        by_path = cls.resolve_map_types(
+            file[0] if isinstance(file, tuple) else file for file in files
+        )
         sorted_images = {}
         for file in files:
             # Determine if the input is a path or a tuple of (path, file data)
             is_tuple = isinstance(file, tuple)
 
             file_path = file[0] if is_tuple else file
-            map_type = cls.resolve_map_type(file_path)
+            map_type = by_path[file_path]
             if not map_type:
                 continue
 

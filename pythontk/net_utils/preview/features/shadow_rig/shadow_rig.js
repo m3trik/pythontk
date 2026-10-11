@@ -31,10 +31,30 @@
            instance matrix -- the way the Maya expression does. A horizon
            plane is fed its source in the contact frame just before it draws,
            off world matrices the renderer has already refreshed.
+    cache  a horizon plane does not march per screen pixel: its shadow is
+           marched over the plane's own UVs into its slot of ONE R8 atlas
+           (a texel per CACHE_TEXEL map pixels) and the plane samples that,
+           so a frame costs one bilinear fetch per pixel -- what the
+           projected rig costs -- and both eyes of a headset share one
+           march. A plane re-marches only when its placement, the source or
+           the ground moves in the CONTACT's frame (a turntable spin, or a
+           prop carried with its own light, re-marches nothing), every due
+           plane in ONE pass into the atlas, within CACHE_BUDGET texels a
+           frame; a plane the budget defers keeps the placement it was
+           marched at, so its image and its position never disagree.
+           Measured on an Iris Xe, 16 chairs at one 2048-pixel eye: the
+           per-pixel march cost 1.5-6x a PCF shadow map's frame time; one
+           pass re-marching all 16 every frame cost about one shadow map
+           (a target and a render per plane had cost four); a still light
+           costs nothing. `session.cache = false` marches per pixel again
+           (the parity pins read the shader's own answer that way).
 
   Everything is placed in MODEL space (the glTF root's frame, metres): the page
   centres the model and spins the pivot, and a placement in that frame is
-  unaffected. The record's lengths are DCC units times `unit_scale`. A plane's
+  unaffected. The horizon shader works in WORLD space, so its ground -- a
+  model-space height like the placement's -- goes through the model's world
+  matrix too: the page stands a model on its lowest point, which need not be
+  the ground. The record's lengths are DCC units times `unit_scale`. A plane's
   UVs are brought back to the unit square first (the DCC remaps a packed plane's
   UVs into its atlas rect so a fallback viewer needs no transform; here the
   rect is applied per plane, per instance).
@@ -45,6 +65,17 @@
   the next load. The InstancedMesh is a child of the model and dies with it.
   A plane's fade keeps working: the page binds the KHR_animation_pointer ramp
   to the ORIGINAL material, whose opacity this script copies every frame.
+
+  The record's `intensity` is the DCC's shadowIntensity, which the DCC has
+  ALREADY multiplied into the opacity it bakes (Maya's expression, Blender's
+  driver; Unity keeps it as `recordIntensity`, informational). So it applies
+  only to a plane whose opacity the file does not state: the converter writes
+  no fade track for a ramp that holds one value (glb/fades.py), and the
+  material's alpha then arrives at 1 -- measured on a real export, a bare
+  factor -- leaving the record's number the only statement of the authored
+  dial. A plane with a fade track takes its opacity from the ramp alone, and
+  one whose static alpha is below 1 from that alpha: the DCC's opacity never
+  exceeds its intensity, so an alpha under 1 is that opacity already stated.
 
   Activate:  automatic -- PreviewServer.AUTO_SCRIPTS turns it on for any
              deliverable whose root extras carry `shadow_web`;
@@ -71,6 +102,19 @@ const DIRECTIONAL_AXIS = [0, -1, 0];
 const ALPHA_POINTER = /^\/materials\/(\d+)\/pbrMetallicRoughness\/baseColorFactor$/;
 const RECT_IDENTITY = [1, 1, 0, 0];
 const CANVAS_DEFAULT = [-1, 1, -0.5, 0.5];
+//: A horizon cache texel, in map pixels: the shadow holds no detail finer than
+//: the map, and the penumbra softens what it does hold.
+const CACHE_TEXEL = 3;
+//: A plane's slot in the atlas, texels square, gutter included; what it uses
+//: of it is sized to the plane as placed, from CACHE_MIN up.
+const CACHE_SLOT = 256;
+const CACHE_MIN = 16;
+//: Texels re-marched per frame across every plane; the rest wait their turn.
+//: About seven chair-sized planes: a light moving every frame costs a bounded
+//: march whatever the prop count, and a still one costs nothing.
+const CACHE_BUDGET = 1 << 16;
+//: How far a key may drift (contact-frame units) before a plane re-marches.
+const CACHE_EPSILON = 1e-5;
 
 // One program for both types. The instanced path carries the rect and the
 // opacity/intensity pair per instance; the per-mesh path carries them as
@@ -78,6 +122,7 @@ const CANVAS_DEFAULT = [-1, 1, -0.5, 0.5];
 const VERTEX = /* glsl */ `
 uniform vec4 uRect;
 uniform vec2 uParams;
+uniform vec4 uCacheRect;
 varying vec2 vUv;
 varying vec3 vWorld;
 varying vec4 vRect;
@@ -99,7 +144,12 @@ void main() {
   vec4 world = modelMatrix * local;
   vWorld = world.xyz;
   vUv = uv;
+#ifdef SH_CACHE_BAKE
+  // the cache: the plane's own UV square onto its rect of the atlas
+  gl_Position = vec4((uCacheRect.xy + uv * uCacheRect.zw) * 2.0 - 1.0, 0.0, 1.0);
+#else
   gl_Position = projectionMatrix * viewMatrix * world;
+#endif
 }
 `;
 
@@ -129,6 +179,9 @@ uniform vec3 uAxisB;
 uniform vec3 uAxisUp;
 uniform vec4 uSource;          // xyz world; w 1 = a position, 0 = the direction the source SHINES
 uniform vec2 uSourceSize;      // diameter (metres), angular diameter (radians) -- FULL widths, halved in the shader
+uniform sampler2D uCache;      // the atlas of horizon shadows marched over each plane's UVs (R)
+uniform vec4 uCacheRect;       // this plane's rect in it: x0, y0, w, h (normalised)
+uniform int uCached;           // 1: sample uCache instead of marching
 varying vec2 vUv;
 varying vec3 vWorld;
 varying vec4 vRect;
@@ -138,12 +191,16 @@ varying vec2 vParams;
 // block the atlas packer placed at uHorizonRect.zw, each S texels square; row
 // 0 of a tile is the PNG's top row (the frame's b0 edge) -- and three.js
 // uploads a data texture unflipped, so a texel address is the block origin
-// plus the tile plus the texel.
+// plus the tile plus the texel. The block origin and S are fixed per draw:
+// main works them out once (shAddress), not every fetch of the march.
+ivec2 shOrigin;
+int shS;
+void shAddress() {
+  shS = int(uHorizonParams.x + 0.5);
+  shOrigin = ivec2(uHorizonRect.zw * vec2(textureSize(uHorizonMap, 0)) + 0.5);
+}
 vec4 SH_Fetch(int tile, int xi, int yi) {
-  ivec2 size = textureSize(uHorizonMap, 0);
-  int S = int(uHorizonParams.x + 0.5);
-  ivec2 origin = ivec2(uHorizonRect.zw * vec2(size) + 0.5);
-  return texelFetch(uHorizonMap, origin + ivec2(tile * S + xi, yi), 0);
+  return texelFetch(uHorizonMap, shOrigin + ivec2(tile * shS + xi, yi), 0);
 }
 
 // >>> BEGIN GENERATED shadow_horizon body
@@ -196,12 +253,15 @@ vec4 SH_Fetch(int tile, int xi, int yi) {
 //  the 98th percentile on chair- and table-sized props at 128 pixels; a ray
 //  that still walks at the cap returns the penumbra it has so far.
 #define SH_MAX_STEPS 256
+#define SH_PI 3.14159265358979
 
 // ---------------------------------------------------------------- the map
 //  What the layout needs, built once per fragment. ground is the height of
 //  the ground plane along the map's up axis IN THE MAP'S FRAME: the spans
 //  are heights above it, so the fragment's own height is replaced by it
-//  (see ShAlpha) and every ray starts at height 0.
+//  (see ShAlpha) and every ray starts at height 0. interior says whether the
+//  map carries the interior distance field (a marker texel, ShHasInterior):
+//  maps baked before it still march, with a vertical-only inner penumbra.
 struct ShField
 {
     int   size;        // footprint pixels per side, S (a power of two)
@@ -210,20 +270,8 @@ struct ShField
     vec4  bounds;      // the footprint in the frame: a0, a1, b0, b1
     float heightScale; // the height a 16-bit channel value of 65535 stands for
     float ground;
+    bool  interior;    // the interior distance field is present
 };
-
-ShField ShMakeField(int size, int spans, int levels, vec4 bounds,
-                    float heightScale, float ground)
-{
-    ShField g;
-    g.size = max(1, size);
-    g.spans = max(1, spans);
-    g.levels = max(0, levels);
-    g.bounds = bounds;
-    g.heightScale = max(heightScale, 1e-6);
-    g.ground = ground;
-    return g;
-}
 
 // ------------------------------------------------------------- decoding
 //  A channel in [0, 1] back to its byte, then two bytes to their word.
@@ -251,6 +299,41 @@ vec4 ShCellTexel(ShField g, int level, int xi, int yi)
     return SH_Fetch(g.spans + 1, xi, y0 + yi);
 }
 
+//  The interior distance: from a solid pixel's centre to the nearest empty
+//  one, in 1/4 pixel (8-bit, 0 on an empty pixel) -- how far a blocked ray
+//  has to turn sideways to see past the column. It sits in the pyramid
+//  tile's free right half, rows 0 .. S/2 - 1: texel (S/2 + x/2, y/2) holds
+//  the 2 x 2 pixels it covers as R (even x, even y), G (odd, even), B
+//  (even, odd), A (odd, odd). Texel (S/2, S/2) is the marker that says so.
+float ShInterior(ShField g, int xi, int yi)
+{
+    vec4 c = SH_Fetch(g.spans + 1, (g.size >> 1) + (xi >> 1), yi >> 1);
+    int q = (xi & 1) + 2 * (yi & 1);
+    float v = q == 0 ? c.r : (q == 1 ? c.g : (q == 2 ? c.b : c.a));
+    return ShByte(v) / 4.0;
+}
+bool ShHasInterior(ShField g)
+{
+    vec4 m = SH_Fetch(g.spans + 1, g.size >> 1, g.size >> 1);
+    return ShByte(m.r) == 83.0 && ShByte(m.g) == 72.0
+        && ShByte(m.b) == 1.0 && ShByte(m.a) == 165.0;
+}
+
+ShField ShMakeField(int size, int spans, int levels, vec4 bounds,
+                    float heightScale, float ground)
+{
+    ShField g;
+    g.size = max(1, size);
+    g.spans = max(1, spans);
+    g.levels = max(0, levels);
+    g.bounds = bounds;
+    g.heightScale = max(heightScale, 1e-6);
+    g.ground = ground;
+    g.interior = false;
+    g.interior = ShHasInterior(g);
+    return g;
+}
+
 // --------------------------------------------------------------- helpers
 //  How far the ray's height range [h0, h1] misses a span [lo, hi]; 0 when
 //  they overlap -- the hit test and the penumbra's gap in one.
@@ -263,38 +346,77 @@ float ShGap(float h0, float h1, float lo, float hi)
 
 //  The coarsest level whose cell edges include the integer pixel boundary
 //  b: the count of its trailing zero bits, capped (b == 0 is every level).
+//  b & -b isolates the lowest set bit, a power of two log2 returns exactly.
 int ShAlignment(int b, int levels)
 {
-    int a = 0;
-    while (a < levels && ((b >> a) & 1) == 0) a++;
-    return a;
+    if (b == 0) return levels;
+    return min(int(log2(float(b & (-b))) + 0.5), levels);
+}
+
+//  The fraction of a disc source hidden by a straight edge whose distance
+//  from the disc's centre is s radii: 0 at s >= 1 (clear), 1/2 at s = 0
+//  (the hard shadow's edge), 1 at s <= -1 (buried). The circular segment's
+//  area -- the S-shaped falloff a round source (the sun, a bulb) throws,
+//  flat at both ends where a linear ramp would draw Mach bands.
+float ShDisc(float s)
+{
+    if (s >= 1.0) return 0.0;
+    if (s <= -1.0) return 1.0;
+    return (acos(s) - s * sqrt(1.0 - s * s)) / SH_PI;
 }
 
 // ------------------------------------------------------------- the march
 //  o and d are the ray in PIXEL space (origin, pixels per unit t; t runs in
 //  frame units along the horizontal), slope its rise per unit t, rho the
-//  source's angular radius, [tEnter, tExit] its passage through the field,
-//  pixelSize the smaller pixel pitch in frame units and aspect the larger
-//  over it: the distance field is measured in the smaller pitch, so a
-//  pixel step along the other axis is aspect units of it.
+//  source's angular radius, cosEl the cosine of the ray's elevation,
+//  [tEnter, tExit] its passage through the field, pixelSize the smaller
+//  pixel pitch in frame units and aspect the larger over it: the distance
+//  fields are measured in the smaller pitch, so a pixel step along the
+//  other axis is aspect units of it.
+//
+//  Angles are true angles at the fragment. The ray runs t / cosEl to a
+//  point t out, so a gap h above or below it subtends h cosEl^2 / t and a
+//  gap l beside it l cosEl / t -- the source's angular radius is measured
+//  the same way. (Dividing by t alone, the scale of the horizontal ground,
+//  had read a high source's penumbra 1 / cosEl^2 too narrow.)
+//
+//  The answer is the share of the source's disc the prop hides (ShDisc),
+//  from a signed angle: a lit ray's least clearance over every pixel it
+//  crosses, or a blocked ray's depth -- the least turn that frees it: up,
+//  over every span above it anywhere along the walk (a thin seat is not
+//  escaped by its thickness: tilting up only moves where the ray meets
+//  it), or sideways, out of the deepest column it crosses by the interior
+//  distance (which also finds a slab's nearest edge). So the penumbra
+//  straddles the hard edge, half out and half in, and a member thinner
+//  than the penumbra keeps no umbra at all: its shadow greys out with
+//  distance, as a real one does.
 //
 //  Level by level: the cell at the ray's position is skipped whole when the
-//  ray clears the cell's bound by more than the margin rho * t (the height a
-//  gap has to have at that distance to lie outside the source disc);
-//  otherwise the level drops until level 0, where the K spans decide
+//  ray clears the cell's bound by more than the margin (rho in the true
+//  angle at the cell's exit -- the gap there has to lie outside the source
+//  disc); otherwise the level drops until level 0, where the K spans decide
 //  exactly. After a cell the level climbs back as far as the boundary just
-//  crossed is aligned. HeightFieldMap._march is the same walk over every
-//  level-0 pixel; the skipped cells are exactly the ones that could not
-//  have changed its answer.
-float ShMarch(ShField g, vec2 o, vec2 d, float slope, float rho,
+//  crossed is aligned. A blocked ray walks on only while it is buried less
+//  than rho -- deeper, the disc is hidden whole; a column cell skipped
+//  above the ray is one no turn under rho rises over. HeightFieldMap._march
+//  is the same walk over every level-0 pixel; the skipped cells are exactly
+//  the ones that could not have changed its answer.
+float ShMarch(ShField g, vec2 o, vec2 d, float slope, float rho, float cosEl,
               float tEnter, float tExit, float pixelSize, float aspect)
 {
     int level = g.levels;
     float t = tEnter;
-    float clearance = 1e30;
+    float c2 = cosEl * cosEl;
+    // the margins as heights and lateral distances per unit t
+    float rhoV = rho / max(c2, 1e-12);
+    float rhoL = rho / max(cosEl, 1e-12);
+    float clearance = 1e30;   // the least angle a lit ray clears by
+    float rise = 0.0;         // the turn up over every span above it so far
+    float side = 0.0;         // the turn sideways out of the columns it hits
     bool hit = false;
     bool zx = abs(d.x) < 1e-12;
     bool zy = abs(d.y) < 1e-12;
+    vec2 invD = vec2(zx ? 0.0 : 1.0 / d.x, zy ? 0.0 : 1.0 / d.y);
     vec2 nudge = vec2(d.x >= 0.0 ? 1e-4 : -1e-4, d.y >= 0.0 ? 1e-4 : -1e-4);
     // The ray's position in pixels. After a cell it is rebuilt from the
     // boundary just crossed -- an exact integer -- never from o + d * t,
@@ -303,21 +425,22 @@ float ShMarch(ShField g, vec2 o, vec2 d, float slope, float rho,
     vec2 p = o + d * t + nudge;
     for (int iter = 0; iter < SH_MAX_STEPS; ++iter)
     {
-        if (t >= tExit || hit) break;
+        if (t >= tExit) break;
         int cell = 1 << level;
         int n = g.size >> level;
-        int cx = int(floor(p.x / float(cell)));
-        int cy = int(floor(p.y / float(cell)));
+        // floor, then the level's cell: an arithmetic shift floors a
+        // negative too, which the bounds test below then rejects
+        int cx = int(floor(p.x)) >> level;
+        int cy = int(floor(p.y)) >> level;
         if (cx < 0 || cy < 0 || cx >= n || cy >= n) break;
         // the cell's exit along the ray
         float bx = float((cx + (d.x > 0.0 ? 1 : 0)) * cell);
         float by = float((cy + (d.y > 0.0 ? 1 : 0)) * cell);
-        float tx = zx ? 1e30 : (bx - o.x) / d.x;
-        float ty = zy ? 1e30 : (by - o.y) / d.y;
+        float tx = zx ? 1e30 : (bx - o.x) * invD.x;
+        float ty = zy ? 1e30 : (by - o.y) * invD.y;
         float te = min(min(tx, ty), tExit);
         float h0 = slope * t;
         float h1 = slope * te;
-        float margin = rho * te;
         if (level > 0)
         {
             vec4 c = ShCellTexel(g, level, cx, cy);
@@ -327,7 +450,10 @@ float ShMarch(ShField g, vec2 o, vec2 d, float slope, float rho,
             {
                 // holds a solid column: its neighbourhood's hull bounds every
                 // span and every nearest-column hull a pixel in it can meet
-                descend = ShGap(h0, h1, ShHeight8(g, c.r), ShHeight8(g, c.g)) <= margin;
+                float lo = ShHeight8(g, c.r);
+                descend = ShGap(h0, h1, lo, ShHeight8(g, c.g)) <= rhoV * te;
+                // passed beneath: rising over it takes more than rho
+                if (!descend && h1 < lo) rise = 1e30;
             }
             else
             {
@@ -335,7 +461,7 @@ float ShMarch(ShField g, vec2 o, vec2 d, float slope, float rho,
                 // under the margin -- the exact test reads the field
                 // bilinearly, one pixel past the cell at most, and its own
                 // half-pixel comes off too (both in the larger pitch)
-                descend = max(distC - 1.5 * aspect, 0.0) * pixelSize <= margin;
+                descend = max(distC - 1.5 * aspect, 0.0) * pixelSize <= rhoL * te;
             }
             if (descend)
             {
@@ -345,26 +471,32 @@ float ShMarch(ShField g, vec2 o, vec2 d, float slope, float rho,
         }
         else
         {
+            float tmid = max(0.5 * (t + te), 1e-9);
             bool solid = false;
+            bool blocked = false;
             float gap = 1e30;
+            float up = -1.0;   // the rise over this pixel's spans above the ray
             for (int k = 0; k < g.spans; ++k)
             {
                 vec4 s = ShSpanTexel(g, k, cx, cy);
                 if (ShWord(s.b, s.a) <= 0.0) continue;
                 solid = true;
-                float gk = ShGap(h0, h1, ShHeight16(g, s.r, s.g), ShHeight16(g, s.b, s.a));
-                if (gk <= 0.0) { hit = true; break; }
-                gap = min(gap, gk);
+                float lo = ShHeight16(g, s.r, s.g);
+                float hi = ShHeight16(g, s.b, s.a);
+                float gk = ShGap(h0, h1, lo, hi);
+                if (hi >= h0) up = max(up, hi - h0);
+                if (gk <= 0.0) blocked = true;
+                else gap = min(gap, gk);
             }
-            if (hit) break;
-            float tmid = max(0.5 * (t + te), 1e-9);
-            if (!solid)
+            if (up >= 0.0) rise = max(rise, up * c2 / tmid);
+            if (blocked || (!hit && !solid))
             {
-                // The distance field and the nearest column's hull, read
+                // The distance fields and the nearest column's hull, read
                 // BILINEARLY at the ray's midpoint through the pixel: per-
                 // pixel values would make the penumbra jump a quarter of its
                 // width when a boundary-hugging ray lands one pixel over in
-                // float32 (measured in the viewer: 0.21 against 0.07).
+                // float32 (measured in the viewer: 0.21 against 0.07). Inside
+                // and out alike, so the two meet at zero on the edge.
                 vec2 m = o + d * tmid - 0.5;
                 vec2 f = floor(m);
                 vec2 w = clamp(m - f, 0.0, 1.0);
@@ -372,22 +504,42 @@ float ShMarch(ShField g, vec2 o, vec2 d, float slope, float rho,
                 int y0 = clamp(int(f.y), 0, g.size - 1);
                 int x1 = min(x0 + 1, g.size - 1);
                 int y1 = min(y0 + 1, g.size - 1);
-                vec4 a00 = ShAuxTexel(g, x0, y0);
-                vec4 a10 = ShAuxTexel(g, x1, y0);
-                vec4 a01 = ShAuxTexel(g, x0, y1);
-                vec4 a11 = ShAuxTexel(g, x1, y1);
-                // x the distance in pixels, y the hull's bottom, z its top
-                vec3 v00 = vec3(ShDist16(a00.r, a00.g), ShHeight8(g, a00.a), ShHeight8(g, a00.b));
-                vec3 v10 = vec3(ShDist16(a10.r, a10.g), ShHeight8(g, a10.a), ShHeight8(g, a10.b));
-                vec3 v01 = vec3(ShDist16(a01.r, a01.g), ShHeight8(g, a01.a), ShHeight8(g, a01.b));
-                vec3 v11 = vec3(ShDist16(a11.r, a11.g), ShHeight8(g, a11.a), ShHeight8(g, a11.b));
-                vec3 v = mix(mix(v00, v10, w.x), mix(v01, v11, w.x), w.y);
-                float lateral = max(v.x - 0.5 * aspect, 0.0) * pixelSize;
-                float vertical = ShGap(h0, h1, v.y, v.z);
-                gap = sqrt(lateral * lateral + vertical * vertical);
+                if (blocked)
+                {
+                    hit = true;
+                    float turn = 1e30;
+                    if (g.interior)
+                    {
+                        float i0 = mix(ShInterior(g, x0, y0), ShInterior(g, x1, y0), w.x);
+                        float i1 = mix(ShInterior(g, x0, y1), ShInterior(g, x1, y1), w.x);
+                        turn = max(mix(i0, i1, w.y) - 0.5 * aspect, 0.0) * pixelSize * cosEl / tmid;
+                    }
+                    side = max(side, turn);
+                }
+                else
+                {
+                    vec4 a00 = ShAuxTexel(g, x0, y0);
+                    vec4 a10 = ShAuxTexel(g, x1, y0);
+                    vec4 a01 = ShAuxTexel(g, x0, y1);
+                    vec4 a11 = ShAuxTexel(g, x1, y1);
+                    // x the distance in pixels, y the hull's bottom, z its top
+                    vec3 v00 = vec3(ShDist16(a00.r, a00.g), ShHeight8(g, a00.a), ShHeight8(g, a00.b));
+                    vec3 v10 = vec3(ShDist16(a10.r, a10.g), ShHeight8(g, a10.a), ShHeight8(g, a10.b));
+                    vec3 v01 = vec3(ShDist16(a01.r, a01.g), ShHeight8(g, a01.a), ShHeight8(g, a01.b));
+                    vec3 v11 = vec3(ShDist16(a11.r, a11.g), ShHeight8(g, a11.a), ShHeight8(g, a11.b));
+                    vec3 v = mix(mix(v00, v10, w.x), mix(v01, v11, w.x), w.y);
+                    float lateral = max(v.x - 0.5 * aspect, 0.0) * pixelSize * cosEl;
+                    float vertical = ShGap(h0, h1, v.y, v.z) * c2;
+                    clearance = min(clearance, sqrt(lateral * lateral + vertical * vertical) / tmid);
+                }
             }
-            clearance = min(clearance, gap / tmid);
+            else if (!hit)
+            {
+                clearance = min(clearance, gap * c2 / tmid);
+            }
         }
+        // buried deeper than rho every way: the disc is hidden whole
+        if (hit && min(rise, side) >= rho) break;
         // leave the cell, and climb as far as the boundary crossed allows
         t = te;
         p = o + d * te;
@@ -398,9 +550,8 @@ float ShMarch(ShField g, vec2 o, vec2 d, float slope, float rho,
         if (ty <= tx) a = max(a, ShAlignment(int(by + 0.5), g.levels));
         if (a > level) level = a;
     }
-    if (hit) return 1.0;
-    if (rho <= 1e-12) return 0.0;
-    return clamp(1.0 - clearance / rho, 0.0, 1.0);
+    if (rho <= 1e-12) return hit ? 1.0 : 0.0;
+    return ShDisc(hit ? -min(rise, side) / rho : clearance / rho);
 }
 
 // ------------------------------------------------------------- the alpha
@@ -467,7 +618,7 @@ float ShAlpha(ShField g, vec3 worldPos, vec3 origin,
     float tExit = min(txHi, tyHi);
     if (tExit <= tEnter) return 0.0;
     float pitch = min(px.x, px.y);
-    return ShMarch(g, o, d, slope, rho, tEnter, tExit, pitch,
+    return ShMarch(g, o, d, slope, rho, horiz, tEnter, tExit, pitch,
                    max(px.x, px.y) / max(pitch, 1e-12));
 }
 // <<< END GENERATED shadow_horizon body
@@ -476,10 +627,28 @@ void main() {
   float opacity = vParams.x;
   float intensity = vParams.y;
   if (uMode == 1) {
-    ShField g = ShMakeField(
-      int(uHorizonParams.x + 0.5), int(uHorizonParams.y + 0.5), int(uHorizonParams.z + 0.5),
-      uHorizonBounds, uHorizonScale, uGround);
-    float a = ShAlpha(g, vWorld, uOrigin, uAxisA, uAxisB, uAxisUp, uSource, uSourceSize);
+    float a;
+#ifdef SH_CACHE_BAKE
+    bool cached = false;
+#else
+    bool cached = uCached == 1;
+#endif
+    if (cached) {
+      // half a texel in from the rect's edge: the gutter never bleeds in
+      vec2 inset = 0.5 / vec2(textureSize(uCache, 0));
+      vec2 at = uCacheRect.xy + clamp(vUv * uCacheRect.zw, inset, uCacheRect.zw - inset);
+      a = texture2D(uCache, at).r;
+    } else {
+      shAddress();
+      ShField g = ShMakeField(
+        int(uHorizonParams.x + 0.5), int(uHorizonParams.y + 0.5), int(uHorizonParams.z + 0.5),
+        uHorizonBounds, uHorizonScale, uGround);
+      a = ShAlpha(g, vWorld, uOrigin, uAxisA, uAxisB, uAxisUp, uSource, uSourceSize);
+    }
+#ifdef SH_CACHE_BAKE
+    gl_FragColor = vec4(a, 0.0, 0.0, 1.0);
+    return;
+#endif
     gl_FragColor = vec4(uColor, a * opacity * intensity);
   } else {
     vec4 tex = texture2D(uMap, vUv * vRect.xy + vRect.zw);
@@ -670,8 +839,236 @@ function makeMaterial(THREE, mode, map, color, side) {
       uAxisUp: { value: new THREE.Vector3(0, 1, 0) },
       uSource: { value: new THREE.Vector4(0, 1, 0, 0) },
       uSourceSize: { value: new THREE.Vector2(0, 0) },
+      uCache: { value: null },
+      uCacheRect: { value: new THREE.Vector4(0, 0, 1, 1) },
+      uCached: { value: 0 },
     },
   });
+}
+
+/* ------------------------------------------------------------ the cache --- */
+
+// dP/du and dP/dv of a quad's local positions over its (unit-square) UVs, off
+// its first triangle: the cache's two texel axes, whatever way a DCC laid the
+// quad's UVs out.
+function uvAxes(THREE, geometry) {
+  const pos = geometry.getAttribute('position');
+  const uv = geometry.getAttribute('uv');
+  const index = geometry.index;
+  const at = (k) => (index ? index.getX(k) : k);
+  const [i0, i1, i2] = [at(0), at(1), at(2)];
+  const p0 = new THREE.Vector3().fromBufferAttribute(pos, i0);
+  const e1 = new THREE.Vector3().fromBufferAttribute(pos, i1).sub(p0);
+  const e2 = new THREE.Vector3().fromBufferAttribute(pos, i2).sub(p0);
+  const d1u = uv.getX(i1) - uv.getX(i0);
+  const d1v = uv.getY(i1) - uv.getY(i0);
+  const d2u = uv.getX(i2) - uv.getX(i0);
+  const d2v = uv.getY(i2) - uv.getY(i0);
+  const det = d1u * d2v - d2u * d1v;
+  if (Math.abs(det) < 1e-12) return null;
+  const du = e1.clone().multiplyScalar(d2v).addScaledVector(e2, -d1v).divideScalar(det);
+  const dv = e2.clone().multiplyScalar(d1u).addScaledVector(e1, -d2u).divideScalar(det);
+  return { du, dv };
+}
+
+// The session's atlas: one R8 target of CACHE_SLOT-square slots, one per
+// horizon plane, and the scene its bake meshes are drawn into in one pass.
+// Never repacked -- a plane's sub-rect moves within its own slot only.
+function makeAtlas(THREE, renderer, count) {
+  const limit = renderer.capabilities.maxTextureSize || 4096;
+  let slot = CACHE_SLOT;
+  let cols = Math.ceil(Math.sqrt(count));
+  while (cols * slot > limit && slot > 2 * CACHE_MIN) slot >>= 1;
+  cols = Math.max(1, Math.min(cols, Math.floor(limit / slot)));
+  // past the GPU's largest texture a plane gets no slot and marches per pixel
+  const rows = Math.max(1, Math.min(Math.ceil(count / cols), Math.floor(limit / slot)));
+  const target = new THREE.WebGLRenderTarget(cols * slot, rows * slot, {
+    format: THREE.RedFormat,
+    type: THREE.UnsignedByteType,
+    depthBuffer: false,
+    stencilBuffer: false,
+    generateMipmaps: false,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    wrapS: THREE.ClampToEdgeWrapping,
+    wrapT: THREE.ClampToEdgeWrapping,
+  });
+  return { target, slot, cols, capacity: cols * rows, used: 0, scene: new THREE.Scene(), camera: new THREE.Camera() };
+}
+
+// A horizon plane's cache: its slot of the atlas, and a mesh that draws the
+// plane's own quad into it through the bake program -- the display material's
+// uniform OBJECTS, shared, so feeding the source feeds both. All but uCache:
+// a sampler bound to the target being drawn is a feedback loop WebGL refuses
+// the draw over (measured: GL_INVALID_OPERATION, an atlas of zeros), sampled
+// or not.
+function makeCache(THREE, atlas, plane) {
+  const axes = uvAxes(THREE, plane.mesh.geometry);
+  if (!axes || atlas.used >= atlas.capacity) return null;
+  const index = atlas.used;
+  atlas.used += 1;
+  const material = new THREE.ShaderMaterial({
+    vertexShader: VERTEX,
+    fragmentShader: FRAGMENT,
+    uniforms: { ...plane.material.uniforms, uCache: { value: null } },
+    defines: { SH_CACHE_BAKE: '' },
+    side: THREE.DoubleSide,
+    depthTest: false,
+    depthWrite: false,
+    blending: THREE.NoBlending,
+  });
+  const mesh = new THREE.Mesh(plane.mesh.geometry, material);
+  mesh.matrixAutoUpdate = false;
+  mesh.frustumCulled = false;
+  mesh.visible = false;
+  atlas.scene.add(mesh);
+  plane.material.uniforms.uCache.value = atlas.target.texture;
+  return {
+    material,
+    mesh,
+    axes,
+    // the slot's corner, texels, inside its one-texel gutter
+    corner: [(index % atlas.cols) * atlas.slot + 1, Math.floor(index / atlas.cols) * atlas.slot + 1],
+    size: [0, 0],
+    key: new Float64Array(24).fill(NaN),
+    next: new Float64Array(24),
+    valid: false,
+    stamp: 0,
+    placed: { position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), scale: new THREE.Vector3() },
+  };
+}
+
+// What a plane's cached shadow depends on, in the CONTACT's frame: the plane's
+// placement, the source, the ground and the source's size. A rigid motion of
+// all of them together -- the page's turntable, a prop carried with its own
+// light -- leaves it unchanged.
+function cacheKey(THREE, plane, out) {
+  const t = scratch(THREE);
+  const u = plane.material.uniforms;
+  t.a.copy(plane.contact.matrixWorld).invert();
+  t.b.multiplyMatrices(t.a, plane.mesh.matrixWorld);
+  out.set(t.b.elements, 0);
+  const src = u.uSource.value;
+  if (src.w > 0.5) t.c.set(src.x, src.y, src.z).applyMatrix4(t.a);
+  else t.c.set(src.x, src.y, src.z).transformDirection(t.a);
+  out[16] = t.c.x;
+  out[17] = t.c.y;
+  out[18] = t.c.z;
+  out[19] = src.w;
+  out[20] = u.uGround.value;
+  out[21] = u.uSourceSize.value.x;
+  out[22] = u.uSourceSize.value.y;
+  out[23] = u.uHorizonMap.value ? u.uHorizonMap.value.id : -1;
+  return out;
+}
+
+function keyMoved(a, b) {
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i];
+    const y = b[i];
+    if (!(Math.abs(x - y) <= CACHE_EPSILON * Math.max(1, Math.abs(x), Math.abs(y)))) return true;
+  }
+  return false;
+}
+
+// The plane's rect in its slot as placed now: CACHE_TEXEL map pixels a texel
+// along each UV axis, in world units, inside the slot's gutter.
+function cacheSize(THREE, session, plane) {
+  const t = scratch(THREE);
+  const h = plane.horizon;
+  const pitch = Math.min(h.bounds[1] - h.bounds[0], h.bounds[3] - h.bounds[2]) / h.size;
+  const texel = CACHE_TEXEL * pitch * session.model.matrixWorld.getMaxScaleOnAxis();
+  t.n.setFromMatrix4(plane.mesh.matrixWorld);
+  const room = session.atlas.slot - 2;
+  const side = (axis) => {
+    const length = t.s.copy(axis).applyMatrix3(t.n).length();
+    return Math.min(room, Math.max(CACHE_MIN, Math.ceil(length / Math.max(texel, 1e-9))));
+  };
+  return [side(plane.cache.axes.du), side(plane.cache.axes.dv)];
+}
+
+// Stage a due plane for this frame's pass: its rect, its world matrix, its
+// placement remembered. Returns the texels it will march.
+function stageCache(THREE, session, plane) {
+  const cache = plane.cache;
+  const atlas = session.atlas;
+  const [w, h] = cacheSize(THREE, session, plane);
+  cache.size = [w, h];
+  const W = atlas.target.width;
+  const H = atlas.target.height;
+  plane.material.uniforms.uCacheRect.value.set(cache.corner[0] / W, cache.corner[1] / H, w / W, h / H);
+  cache.mesh.matrix.copy(plane.mesh.matrixWorld);
+  cache.mesh.matrixWorldNeedsUpdate = true;
+  cache.mesh.visible = true;
+  cache.key.set(cache.next);
+  cache.valid = true;
+  cache.stamp = session.frame;
+  cache.placed.position.copy(plane.node.position);
+  cache.placed.quaternion.copy(plane.node.quaternion);
+  cache.placed.scale.copy(plane.node.scale);
+  session.cacheStats.bakes += 1;
+  session.cacheStats.texels += w * h;
+  return w * h;
+}
+
+// One pass for every staged plane: the atlas is never cleared (the others'
+// rects stand), and the headset's own camera stays out of it.
+function marchAtlas(renderer, session) {
+  const atlas = session.atlas;
+  const previous = renderer.getRenderTarget();
+  const xr = renderer.xr.enabled;
+  const autoClear = renderer.autoClear;
+  renderer.xr.enabled = false;
+  renderer.autoClear = false;
+  renderer.setRenderTarget(atlas.target);
+  renderer.render(atlas.scene, atlas.camera);
+  renderer.setRenderTarget(previous);
+  renderer.autoClear = autoClear;
+  renderer.xr.enabled = xr;
+  for (const mesh of atlas.scene.children) mesh.visible = false;
+}
+
+// Re-march the planes whose key moved, stalest first, within the budget, in
+// one pass. A plane left over keeps the placement its cache was marched at;
+// one with no cache yet marches per pixel until its turn comes.
+function refreshCaches(THREE, renderer, session) {
+  if (!session.atlas) return;
+  session.frame += 1;
+  const due = [];
+  for (const plane of session.planes) {
+    if (!plane.cache) continue;
+    const u = plane.material.uniforms;
+    if (!session.cache || !u.uHorizonMap.value || !plane.source || !plane.contact) {
+      u.uCached.value = 0;
+      continue;
+    }
+    plane.node.updateWorldMatrix(true, true);
+    plane.contact.updateWorldMatrix(true, false);
+    plane.source.updateWorldMatrix(true, false);
+    feedSource(THREE, session, plane);
+    cacheKey(THREE, plane, plane.cache.next);
+    if (!plane.cache.valid || keyMoved(plane.cache.key, plane.cache.next)) due.push(plane);
+  }
+  due.sort((a, b) => (a.cache.valid - b.cache.valid) || (a.cache.stamp - b.cache.stamp));
+  let budget = CACHE_BUDGET;
+  let staged = 0;
+  for (const plane of due) {
+    const cache = plane.cache;
+    const u = plane.material.uniforms;
+    if (budget > 0) {
+      budget -= stageCache(THREE, session, plane);
+      u.uCached.value = 1;
+      staged += 1;
+    } else if (cache.valid) {
+      plane.node.position.copy(cache.placed.position);
+      plane.node.quaternion.copy(cache.placed.quaternion);
+      plane.node.scale.copy(cache.placed.scale);
+      plane.node.updateMatrix();
+    } else {
+      u.uCached.value = 0;
+    }
+  }
+  if (staged) marchAtlas(renderer, session);
 }
 
 // Replaces the page's depth-from-opacity rule on a plane this script takes
@@ -703,7 +1100,7 @@ function attachMap(THREE, session, parser, plane, material) {
 }
 
 // `resolve`: glTF node index -> Object3D (`viewer.nodeResolver`).
-function build(THREE, model, gltf, environment, resolve) {
+function build(THREE, renderer, model, gltf, environment, resolve) {
   const parser = gltf.parser;
   const manifest = readManifest(parser);
   if (!manifest || !Array.isArray(manifest.planes) || !manifest.planes.length) return null;
@@ -719,6 +1116,11 @@ function build(THREE, model, gltf, environment, resolve) {
     owned: [],
     pending: [],
     ready: null,
+    // the horizon cache (see the header): on unless a caller turns it off
+    cache: true,
+    cacheStats: { bakes: 0, texels: 0 },
+    atlas: null,
+    frame: 0,
   };
 
   for (const record of manifest.planes) {
@@ -744,6 +1146,12 @@ function build(THREE, model, gltf, environment, resolve) {
     const atlasIndex = record.atlas?.texture_index;
     const source = resolve(record.source_node);
     const contact = resolve(record.contact_node);
+    // The material the mesh WEARS, through the loader's own association --
+    // the index the page's fade shim binds by -- falling back to the
+    // manifest's: the shadow pass runs before the fade pass, which may
+    // isolate a shared material onto a clone.
+    const materialIndex = parser.associations.get(original)?.materials ?? record.material;
+    const isFaded = faded.has(materialIndex);
     const plane = {
       record,
       node,
@@ -755,7 +1163,9 @@ function build(THREE, model, gltf, environment, resolve) {
       contact,
       follow: !!record.follow_source && !!source && !!contact,
       directional: record.source_type === 'directional',
-      intensity: finite(record.intensity, 1),
+      // Once: a fade track, or a static alpha below 1, already states the
+      // opacity the DCC multiplied it into (see the header).
+      intensity: isFaded || original.opacity < 1 ? 1 : finite(record.intensity, 1),
       // The rect applies only when the colour map IS the atlas; a silhouette
       // bound on its own is the whole tile.
       rect: mode === 0 && Number.isInteger(atlasIndex) && atlasIndex === mapIndex
@@ -763,7 +1173,7 @@ function build(THREE, model, gltf, environment, resolve) {
         : RECT_IDENTITY.slice(),
       mapIndex,
       useOwnMap: mode === 0 && ownIndex === mapIndex && !!original.map,
-      faded: faded.has(record.material),
+      faded: isFaded,
       extent: quadExtent(mesh.geometry),
       ground: finite(record.ground, 0) * unit,
       radius: finite(record.radius, 0.5) * unit,
@@ -775,6 +1185,7 @@ function build(THREE, model, gltf, environment, resolve) {
         ? record.canvas.map(Number)
         : CANVAS_DEFAULT.slice(),
       material: null,
+      cache: null,
       batch: null,
       instance: -1,
       lastOpacity: NaN,
@@ -869,11 +1280,23 @@ function build(THREE, model, gltf, environment, resolve) {
     plane.mesh.onBeforeRender = plane.horizon
       ? function beforeHorizonDraw() {
         this.material.depthWrite = false;
-        feedSource(THREE, plane);
+        // a cached plane samples its rect: only the per-pixel march reads the
+        // frame and the source (refreshCaches fed the bake already)
+        if (this.material.uniforms.uCached.value !== 1) feedSource(THREE, session, plane);
       }
       : keepDepthOff;
     // The original is detached: this script now owns its disposal.
     session.owned.push(material, plane.original);
+  }
+  // The horizon planes' one atlas (see the header).
+  const horizons = session.planes.filter((plane) => plane.horizon && plane.material);
+  if (horizons.length && renderer) {
+    session.atlas = makeAtlas(THREE, renderer, horizons.length);
+    session.owned.push(session.atlas.target);
+    for (const plane of horizons) {
+      plane.cache = makeCache(THREE, session.atlas, plane);
+      if (plane.cache) session.owned.push(plane.cache.material);
+    }
   }
   session.ready = Promise.all(session.pending).then(() => session);
   return session;
@@ -890,7 +1313,7 @@ function teardown(session) {
         if (value?.isTexture && value !== session.environment) value.dispose();
       }
       item.dispose();
-    } else if (item.isBufferGeometry) {
+    } else if (item.isBufferGeometry || item.isRenderTarget) {
       item.dispose();
     }
   }
@@ -900,7 +1323,7 @@ function teardown(session) {
 
 /* ----------------------------------------------------------- per frame --- */
 
-const _m = { a: null, b: null, c: null, s: null, q: null, pos: null, scl: null, dir: null, up: null };
+const _m = { a: null, b: null, c: null, s: null, q: null, pos: null, scl: null, dir: null, up: null, n: null };
 
 function scratch(THREE) {
   if (!_m.a) {
@@ -913,6 +1336,7 @@ function scratch(THREE) {
     _m.scl = new THREE.Vector3();
     _m.dir = new THREE.Vector3();
     _m.up = new THREE.Vector3(0, 1, 0);
+    _m.n = new THREE.Matrix3();
   }
   return _m;
 }
@@ -978,7 +1402,7 @@ function place(THREE, session, plane) {
 // carry, and it takes a float4x4 out of Unity's instancing buffer. The axes
 // come out normalised, which is the frame the map was baked in -- a scaled
 // contact locator would not be one.
-function feedSource(THREE, plane) {
+function feedSource(THREE, session, plane) {
   if (!plane.source || !plane.contact) return;
   const t = scratch(THREE);
   const u = plane.material.uniforms;
@@ -995,8 +1419,15 @@ function feedSource(THREE, plane) {
   u.uAxisUp.value.set(0, 1, 0).transformDirection(contact);
   // The ground plane's height along that up, from any point on it. The map's
   // intervals were baked as elevations seen FROM this plane, and the shared
-  // body projects every fragment onto it.
-  u.uGround.value = t.c.set(0, plane.ground, 0).sub(u.uOrigin.value).dot(u.uAxisUp.value);
+  // body projects every fragment onto it. The ground is a MODEL-space height
+  // (the placement's), so its point goes through the model's world matrix:
+  // read as world Y it parted from the plane the moment the model stood
+  // anywhere but on y = 0.
+  u.uGround.value = t.c
+    .set(0, plane.ground, 0)
+    .applyMatrix4(session.model.matrixWorld)
+    .sub(u.uOrigin.value)
+    .dot(u.uAxisUp.value);
   if (plane.directional) {
     // The uniform holds the direction the source SHINES (w = 0) -- the
     // reference's vocabulary; the shader negates it.
@@ -1008,7 +1439,7 @@ function feedSource(THREE, plane) {
   }
 }
 
-function update(THREE, session) {
+function update(THREE, renderer, session) {
   const t = scratch(THREE);
   for (const plane of session.planes) {
     // The fade lives on the ORIGINAL material (the page bound the ramp there
@@ -1038,6 +1469,7 @@ function update(THREE, session) {
       plane.batch.mesh.instanceMatrix.needsUpdate = true;
     }
   }
+  refreshCaches(THREE, renderer, session);
 }
 
 export default function shadowRig(viewer) {
@@ -1059,7 +1491,7 @@ export default function shadowRig(viewer) {
     teardown(session);
     session = null;
     try {
-      session = build(THREE, model, gltf, viewer.scene.environment, viewer.nodeResolver(gltf, model));
+      session = build(THREE, viewer.renderer, model, gltf, viewer.scene.environment, viewer.nodeResolver(gltf, model));
     } catch (error) {
       console.warn('shadow_rig: could not read the shadow manifest', error);
     }
@@ -1069,6 +1501,6 @@ export default function shadowRig(viewer) {
   });
 
   viewer.on('frame', () => {
-    if (session) update(THREE, session);
+    if (session) update(THREE, viewer.renderer, session);
   });
 }

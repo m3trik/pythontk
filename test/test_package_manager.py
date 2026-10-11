@@ -668,8 +668,9 @@ class InstallTargetedTest(BaseTestCase):
     def test_pip_arguments_travel_in_the_environment_not_argv(self):
         """mayapy.exe decodes its ANSI command line as UTF-8.
 
-        Measured on Maya 2025: an argument "José" arrived as "Jos\\udce9" and "Жук" as
-        "???", while the environment and the working directory arrived intact. So a
+        Measured on Maya 2025: an accented letter arrived as a lone surrogate ("é" as
+        "\\udce9") and each letter outside the code page as "?", while the environment
+        and the working directory arrived intact. So a
         ``--target`` path through a prefs dir with a non-ASCII letter made pip install
         into a DIFFERENT directory, and nothing imported from the real one afterwards.
         No path may reach pip through argv.
@@ -677,7 +678,7 @@ class InstallTargetedTest(BaseTestCase):
         from unittest import mock
         from pythontk.core_utils import package_manager as pm_mod
 
-        target = "X:/Users/Jos\u00e9/site"
+        target = "X:/Users/Zo\u00eb/site"
         seen = []
 
         class _Result:
@@ -737,7 +738,7 @@ class InstallTargetedTest(BaseTestCase):
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
         with TempArtifacts("pip_argv", policy="scoped") as tmp:
-            where = tmp.dir_path("Jos\u00e9 \u00c5ngstr\u00f6m")
+            where = tmp.dir_path("Zo\u00eb \u00c5ngstr\u00f6m")
             info = os.path.join(where, "probe_dist-1.0.dist-info")
             os.makedirs(info)
             with open(os.path.join(info, "METADATA"), "w") as fh:

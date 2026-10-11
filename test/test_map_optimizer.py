@@ -29,6 +29,7 @@ from pythontk import (
 )
 from pythontk.core_utils.engines.textures.map_factory import MapFactory
 from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer, Op
+from conftest import hard_edge_normal_map, unit_length_error
 
 
 class _TextureFixture(unittest.TestCase):
@@ -123,6 +124,29 @@ class TestProject(unittest.TestCase):
 
     def test_empty_plan_is_identity(self):
         self.assertEqual(MapOptimizer.project([], 64, 32, "L"), (64, 32, "L"))
+
+
+class TestNormalMapResample(unittest.TestCase):
+    """A normal map's resize and POT snap resample it AS a normal map:
+    in float, renormalised, so a crease does not bend its normals."""
+
+    def test_a_normal_maps_resize_ops_carry_the_flag(self):
+        image = hard_edge_normal_map((64, 64))
+        for kwargs in ({"max_size": 27}, {"force_pot": True, "max_size": 48}):
+            with self.subTest(**kwargs):
+                plan = MapOptimizer.plan(image, map_type_key="Normal_OpenGL", **kwargs)
+                sized = [op for op in plan if op.kind in ("resize", "force_pot")]
+                self.assertTrue(sized)
+                self.assertTrue(all(op.params.get("normal_map") for op in sized))
+                result = MapOptimizer.apply(image, plan)
+                self.assertLess(unit_length_error(result), 0.01)
+
+    def test_other_maps_resize_plainly(self):
+        image = ImgUtils.create_image("RGB", (64, 64))
+        plan = MapOptimizer.plan(image, max_size=27, map_type_key="Base_Color")
+        resize = [op for op in plan if op.kind == "resize"]
+        self.assertEqual(len(resize), 1)
+        self.assertFalse(resize[0].params.get("normal_map"))
 
 
 class TestPotCeiling(unittest.TestCase):

@@ -7,6 +7,7 @@ assert what it does rather than construct a second one; a standalone run of
 this module activates it in ``setUp``.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -215,6 +216,312 @@ class TestSandboxTestCase(unittest.TestCase):
         self.assertEqual(NamingConvention.affix("lightmap"), "_LM")
         self.assertEqual(NamingConvention.affix("mesh"), "_MSH")
         self.assertEqual(NamingConvention.affix("group"), "_GRP")
+
+
+class ActivatedTest(unittest.TestCase):
+    """:meth:`TestSandbox.activated` -- every guard for a block, then off again.
+
+    For a host that outlives the run: mayatk's in-session harness runs a suite
+    inside the user's own Maya, and :meth:`TestSandbox.activate` left that
+    session refusing browser launches, keeping nothing from the trash and
+    writing temp files into a root deleted when Maya exits.
+
+    Each case runs in a fresh interpreter: this process is already sandboxed,
+    and a block entered under standing guards leaves them standing.
+    """
+
+    #: Run in the child first: what every guard replaces, captured by identity.
+    PRELUDE = "\n".join(
+        [
+            "import json, os, sys, tempfile, webbrowser",
+            "sys.path.insert(0, {repo!r})",
+            "from pythontk.core_utils.test_sandbox import TestSandbox",
+            "from pythontk.file_utils._file_utils import FileUtils",
+            "def snapshot():",
+            "    return [",
+            "        [id(getattr(webbrowser, n)) for n in TestSandbox._LAUNCHERS],",
+            "        [id(getattr(webbrowser, n).__dict__.get('open'))",
+            "         for n in TestSandbox._LAUNCHER_TYPES],",
+            "        [id(FileUtils.__dict__[n]) for n in ('move_to_trash', 'can_trash')],",
+            "        tempfile.tempdir,",
+            "        {{n: os.environ.get(n) for n in ('TMPDIR', 'TEMP', 'TMP',",
+            "                                       TestSandbox._ROOT_ENV)}},",
+            "    ]",
+            "def refused():",
+            "    try:",
+            "        webbrowser.open('http://127.0.0.1:1/')",
+            "    except RuntimeError:",
+            "        return True",
+            "    return False",
+            "before = snapshot()",
+            "report = {{}}",
+        ]
+    )
+
+    def _child(self, body):
+        """Run *body* after :attr:`PRELUDE` in a fresh interpreter; return the
+        ``report`` dict it prints as its last line."""
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        code = self.PRELUDE.format(repo=repo) + "\n" + body
+        out = subprocess.check_output([sys.executable, "-c", code], text=True)
+        return json.loads(out.splitlines()[-1])
+
+    def test_every_guard_comes_off_on_exit(self):
+        report = self._child(
+            "\n".join(
+                [
+                    "with TestSandbox.activated() as root:",
+                    "    report['active'] = TestSandbox.is_active()",
+                    "    report['refused'] = refused()",
+                    "    report['in_root'] = tempfile.gettempdir() == root",
+                    "    report['trash_guarded'] = not FileUtils.can_trash(root)",
+                    "report['restored'] = snapshot() == before",
+                    "report['inactive'] = not TestSandbox.is_active()",
+                    "report['root_gone'] = not os.path.exists(root)",
+                    "print(json.dumps(report))",
+                ]
+            )
+        )
+        self.assertEqual(
+            report,
+            dict.fromkeys(
+                ("active", "refused", "in_root", "trash_guarded", "restored")
+                + ("inactive", "root_gone"),
+                True,
+            ),
+        )
+
+    def test_every_guard_comes_off_when_the_block_raises(self):
+        report = self._child(
+            "\n".join(
+                [
+                    "try:",
+                    "    with TestSandbox.activated() as root:",
+                    "        raise ValueError('a failing run')",
+                    "except ValueError:",
+                    "    report['raised'] = True",
+                    "report['restored'] = snapshot() == before",
+                    "report['inactive'] = not TestSandbox.is_active()",
+                    "report['root_gone'] = not os.path.exists(root)",
+                    "print(json.dumps(report))",
+                ]
+            )
+        )
+        self.assertEqual(
+            report,
+            dict.fromkeys(("raised", "restored", "inactive", "root_gone"), True),
+        )
+
+    def test_a_reload_inside_the_block_is_rearmed_and_still_restored(self):
+        """mayatk's in-session harness reloads pythontk inside the block: the
+        reloaded ``FileUtils`` trashed for real, and the reloaded sandbox read
+        as off. ``rearm()`` carries the standing guards over; the way out
+        still puts back what each class had."""
+        report = self._child(
+            "\n".join(
+                [
+                    "import importlib",
+                    "import pythontk.core_utils.test_sandbox as ts_mod",
+                    "import pythontk.file_utils._file_utils as fu_mod",
+                    "guarded = lambda F: F.__dict__['move_to_trash'].__func__.__name__",
+                    "with TestSandbox.activated():",
+                    "    importlib.reload(fu_mod)",
+                    "    importlib.reload(ts_mod)",
+                    "    F2 = fu_mod.FileUtils",
+                    "    reals = (F2.__dict__['move_to_trash'], F2.__dict__['can_trash'])",
+                    "    report['lost_on_reload'] = guarded(F2) == 'move_to_trash'",
+                    "    TestSandbox.rearm()",
+                    "    report['rearmed'] = guarded(F2) == 'no_trash'",
+                    "    report['reloaded_reads_active'] = ts_mod.TestSandbox.is_active()",
+                    "report['restored'] = snapshot() == before",
+                    "report['reloaded_class_restored'] = (",
+                    "    F2.__dict__['move_to_trash'], F2.__dict__['can_trash']) == reals",
+                    "print(json.dumps(report))",
+                ]
+            )
+        )
+        self.assertEqual(
+            report,
+            dict.fromkeys(
+                ("lost_on_reload", "rearmed", "reloaded_reads_active", "restored")
+                + ("reloaded_class_restored",),
+                True,
+            ),
+        )
+
+    def test_guards_standing_on_entry_stay_standing(self):
+        """A block inside an :meth:`activate`'d process (a conftest import in a
+        runner's child) neither re-redirects nor takes anything down."""
+        report = self._child(
+            "\n".join(
+                [
+                    "root = TestSandbox.activate()",
+                    "standing = snapshot()",
+                    "with TestSandbox.activated() as inner:",
+                    "    report['same_root'] = inner == root",
+                    "report['kept'] = snapshot() == standing",
+                    "report['active'] = TestSandbox.is_active()",
+                    "report['root_kept'] = os.path.isdir(root)",
+                    "print(json.dumps(report))",
+                ]
+            )
+        )
+        self.assertEqual(
+            report,
+            dict.fromkeys(("same_root", "kept", "active", "root_kept"), True),
+        )
+
+
+class OrphanRootTest(unittest.TestCase):
+    """A root its owner could not remove goes at the next activation.
+
+    A root's owner removes it at exit as far as it will go, and a runner that
+    exits while the GUI Maya it launched still holds files in the root (its
+    licence log, its scratch) left the whole root -- for the seven-day age
+    sweep: 67 roots in four days (measured 2026-10-05), every one free to
+    delete by the next run. The root is a session store, which names its
+    owner (``TempArtifacts``), so the next activation's sweep reclaims it.
+
+    Hermetic: both children nest inside this test's own root.
+    """
+
+    def setUp(self):
+        TestSandbox.activate()
+
+    def _child(self, tail):
+        """A child that activates the sandbox, prints its root, then *tail*."""
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        code = "\n".join(
+            [
+                "import os, sys",
+                f"sys.path.insert(0, {repo!r})",
+                "from pythontk.core_utils.test_sandbox import TestSandbox",
+                "root = TestSandbox.temp()",
+                "print(root, flush=True)",
+                tail,
+            ]
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=60
+        )
+        return proc.stdout.strip()
+
+    def test_the_root_names_its_owner(self):
+        root = TestSandbox.temp()
+        self.assertTrue(os.path.basename(root).endswith(f"-{os.getpid()}"), root)
+
+    def test_a_killed_owners_root_goes_at_the_next_activation(self):
+        orphan = self._child("os.kill(os.getpid(), 9)  # no exit cleanup runs")
+        self.assertTrue(orphan and os.path.isdir(orphan), "the killed root remains")
+
+        self._child("")
+
+        self.assertFalse(os.path.exists(orphan))
+
+
+class DetachedLaunchTest(unittest.TestCase):
+    """A detached app is launched with the host's environment, not the sandbox's.
+
+    ``AppLauncher.launch(detached=True)`` is the launch that keeps running after
+    the launcher ends, and the root goes when its owner does -- at exit, or at
+    the next activation's sweep of a root whose owner has exited. A GUI Maya
+    the mayatk runner launched kept the root as its TEMP after the run, the
+    user went on working in it, and another suite's activation swept the root:
+    the WebXR preview's FBX was deleted between its export and its conversion
+    (measured 2026-10-05, "FBX source not found").
+
+    A waited child is unchanged -- it ends inside the run, so it shares the
+    root (mayapy chunks, FBX2glTF) -- and so is a value the caller chose.
+    """
+
+    REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    #: Set at the C level in the child, as a DCC host sets its own variables:
+    #: invisible to ``os.environ``, inherited by every child all the same.
+    NATIVE = "PYTHONTK_NATIVE_PROBE"
+    #: The grandchild: writes the variables it was handed to ``argv[1]``.
+    PROBE = (
+        "import json, os, sys\n"
+        f"names = ('TMPDIR', 'TEMP', 'TMP', 'PYTHONTK_TEST_TEMP_ROOT', {NATIVE!r})\n"
+        "with open(sys.argv[1], 'w') as fh:\n"
+        "    json.dump({n: os.environ.get(n) for n in names}, fh)\n"
+    )
+
+    def setUp(self):
+        TestSandbox.activate()
+        self.scratch = TempArtifacts("detached_probe", policy="scoped")
+        self.addCleanup(self.scratch.cleanup, force=True)
+
+    def test_a_detached_app_gets_the_host_env_and_a_waited_one_the_root(self):
+        outs = {k: self.scratch.path(extension=".json") for k in ("d", "w", "c")}
+        chosen = self.scratch.dir_path()
+        code = "\n".join(
+            [
+                "import ctypes, json, os, sys",
+                f"sys.path.insert(0, {self.REPO!r})",
+                "from pythontk.core_utils.test_sandbox import TestSandbox",
+                "from pythontk.core_utils.app_launcher import AppLauncher",
+                "names = ('TMPDIR', 'TEMP', 'TMP', TestSandbox._ROOT_ENV)",
+                "host = {n: os.environ.get(n) for n in names}",
+                "if os.name == 'nt':",
+                "    ctypes.windll.kernel32.SetEnvironmentVariableW(",
+                f"        {self.NATIVE!r}, 'host-set')",
+                "else:",
+                f"    ctypes.CDLL(None).setenv({self.NATIVE.encode()!r}, b'host-set', 1)",
+                "root = TestSandbox.activate()",
+                f"probe = {self.PROBE!r}",
+                "def run(out, **kwargs):",
+                "    AppLauncher.launch(sys.executable, ['-c', probe, out], **kwargs).wait()",
+                f"run({outs['d']!r}, detached=True)",
+                f"run({outs['w']!r}, detached=False)",
+                f"run({outs['c']!r}, detached=True, env=dict(os.environ, TEMP={chosen!r}))",
+                "print(json.dumps({'host': host, 'root': root}))",
+            ]
+        )
+        out = subprocess.check_output([sys.executable, "-c", code], text=True)
+        seen = json.loads(out.splitlines()[-1])
+        host, root = seen["host"], seen["root"]
+        got = {}
+        for key, path in outs.items():
+            with open(path, encoding="utf-8") as fh:
+                got[key] = json.load(fh)
+
+        native = got["d"].pop(self.NATIVE)
+        self.assertEqual(got["d"], host, "a detached app keeps the host's env")
+        self.assertEqual(native, "host-set", "...read from the live block")
+        for name in ("TMPDIR", "TEMP", "TMP", TestSandbox._ROOT_ENV):
+            self.assertEqual(got["w"][name], root, f"a waited child shares {name}")
+        self.assertEqual(got["c"]["TEMP"], chosen, "the caller's own value stands")
+        self.assertEqual(got["c"]["TMP"], host["TMP"])
+
+    def test_nothing_redirected_means_nothing_to_undo(self):
+        code = "\n".join(
+            [
+                "import sys",
+                f"sys.path.insert(0, {self.REPO!r})",
+                "from pythontk.core_utils.test_sandbox import TestSandbox",
+                "before = TestSandbox.host_environ()",
+                "with TestSandbox.activated():",
+                "    during = TestSandbox.host_environ() is not None",
+                "print(before is None, during, TestSandbox.host_environ() is None)",
+            ]
+        )
+        out = subprocess.check_output([sys.executable, "-c", code], text=True)
+        self.assertEqual(out.split(), ["True", "True", "True"])
+
+    def test_a_shallow_patch_of_the_state_gets_the_record_back(self):
+        """mayatk's runner tests wrap a fresh ``temp()`` in
+        ``mock.patch.dict(TestSandbox._state, ...)``, a shallow copy: a record
+        edited in place would outlive the patch, and every later detached
+        launch in that process would get the test's long-gone values."""
+        before = TestSandbox._state["host_env"]
+        with (
+            unittest.mock.patch.dict(os.environ),
+            unittest.mock.patch.dict(TestSandbox._state, {}),
+        ):
+            TestSandbox._redirect_env("PYTHONTK_SANDBOX_PROBE", "redirected")
+            self.assertIn("PYTHONTK_SANDBOX_PROBE", TestSandbox._state["host_env"])
+        self.assertEqual(TestSandbox._state["host_env"], before)
+        self.assertNotIn("PYTHONTK_SANDBOX_PROBE", os.environ)
 
 
 class PytestLeakGateTest(unittest.TestCase):

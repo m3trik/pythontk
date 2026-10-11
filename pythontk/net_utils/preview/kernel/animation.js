@@ -317,7 +317,10 @@ function applySequence(seconds) {
   mixer.update(0);
 }
 
-export function setupAnimation(gltf) {
+// *manifest* is the deliverable's `animation_web` block -- read off *gltf* by
+// default; a set of parts hands in theirs merged (parts.js), its clip indices
+// already into the merged `animations`.
+export function setupAnimation(gltf, manifest = readExtras(gltf, SHOTS.webKey)) {
   // Reset FIRST: a model swap must not leave the previous model's mixer driving
   // the frame loop, nor its clip names in the picker.
   if (mixer) mixer.stopAllAction();
@@ -341,7 +344,6 @@ export function setupAnimation(gltf) {
     return 0;
   }
 
-  const manifest = readExtras(gltf, SHOTS.webKey);
   animationManifest = manifest;
   // Joined on the glTF animation INDEX, which is what the block carries it by —
   // names are what a user reads, not a key: nothing stops two AnimStacks from
@@ -551,6 +553,12 @@ export function shotDescription() {
     ? sequenceSegment.entry
     : clips[clipIndex];
   return entry?.meta?.description || null;
+}
+
+// Whether any clip of the model on screen carries a description -- what
+// decides that there is a caption to offer (captions.js).
+export function hasDescriptions() {
+  return clips.some((entry) => Boolean(entry.meta?.description));
 }
 
 // Whether the user owns the scrubber (a drag, an arrow key) -- the transport

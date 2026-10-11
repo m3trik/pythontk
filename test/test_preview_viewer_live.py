@@ -1477,14 +1477,14 @@ class TestPreviewViewerLive(unittest.TestCase):
         before = set(os.listdir(beside))
 
         def drive(server, page):
-            self._press(page, "Export", "Export playblast")
+            self._press(page, "Export", "Playblast")
             page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
             page.click("#dialogCancel")
             page.wait_for_selector("#dialog", state="hidden", timeout=30_000)
             return {
                 "button": page.eval_on_selector(
-                    "#panels .window[data-category='Export'] "
-                    "button:has-text('Export playblast')",
+                    "#menus .menu[data-category='Export'] "
+                    ".item:has-text('Playblast') .label",
                     "el => el.textContent",
                 ),
                 "badge": page.eval_on_selector(
@@ -1496,10 +1496,10 @@ class TestPreviewViewerLive(unittest.TestCase):
         found = self._load(glb, probe=self._record_probe(), then=drive)
 
         self.assertEqual(found["errors"], [])
-        # The button is the recording's own progress readout, so it saying
+        # The item is the recording's own progress readout, so it saying
         # anything else is this having started one -- and the bar's Export
         # button, which carries a running job's badge.
-        self.assertEqual(found["button"], "Export playblast…")
+        self.assertEqual(found["button"], "Playblast…")
         self.assertEqual(found["badge"], "Export")
         self.assertEqual(
             [n for n in set(os.listdir(beside)) - before if n.endswith(".mp4")],
@@ -1534,7 +1534,7 @@ class TestPreviewViewerLive(unittest.TestCase):
             server.finish_playblast = held
             try:
                 page.evaluate("(name) => window.__select(name)", "SHOT_B")
-                self._press(page, "Export", "Export playblast")
+                self._press(page, "Export", "Playblast")
                 page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
                 page.select_option(
                     "#dialogFields label:has-text('Quality') select", "draft"
@@ -1546,7 +1546,7 @@ class TestPreviewViewerLive(unittest.TestCase):
                     arg=badge,
                     timeout=300_000,
                 )
-                self._press(page, "Export", "Export image")
+                self._press(page, "Export", "Image")
                 page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
                 page.click("#dialogConfirm")
                 page.wait_for_function(
@@ -1597,7 +1597,7 @@ class TestPreviewViewerLive(unittest.TestCase):
 
         def drive(server, page):
             before = page.evaluate(picker)
-            self._press(page, "Export", "Export playblast")
+            self._press(page, "Export", "Playblast")
             page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
             escaped = []
             # Backwards, past the prompt's own controls and twice over the bar
@@ -1754,7 +1754,7 @@ class TestPreviewViewerLive(unittest.TestCase):
             # than re-derived from how the page happens to set it, so the
             # restore check holds whatever the runner's display and clamp.
             page_ratio = page.evaluate("() => window.__pixelRatio()")
-            self._press(page, "Export", "Export playblast")
+            self._press(page, "Export", "Playblast")
             page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
             if burn_in:
                 page.click("#dialogFields label:has-text('shot name')")
@@ -2185,7 +2185,7 @@ class TestPreviewViewerLive(unittest.TestCase):
         before = set(os.listdir(beside))
 
         def drive(server, page):
-            self._press(page, "Export", "Export image")
+            self._press(page, "Export", "Image")
             page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
             page.click("#dialogCancel")
             page.wait_for_selector("#dialog", state="hidden", timeout=30_000)
@@ -2220,7 +2220,7 @@ class TestPreviewViewerLive(unittest.TestCase):
                     # file is the bridge's scratch, and is gone by the time
                     # anyone presses a button.
                     os.remove(glb)
-                    self._press(page, "Export", "Export image")
+                    self._press(page, "Export", "Image")
                     page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
                     with page.expect_download(timeout=60_000) as download:
                         page.click("#dialogConfirm")
@@ -2263,7 +2263,7 @@ class TestPreviewViewerLive(unittest.TestCase):
 
         def drive(server, page):
             page_ratio = page.evaluate("() => window.__pixelRatio()")
-            self._press(page, "Export", "Export image")
+            self._press(page, "Export", "Image")
             page.wait_for_selector("#dialog:not([hidden])", timeout=30_000)
             if preset is not None:
                 page.select_option(
@@ -2310,13 +2310,40 @@ class TestPreviewViewerLive(unittest.TestCase):
 
     # ------------------------------------------------------------------ driver
     @staticmethod
-    def _press(page, category, label):
-        """Open *category*'s window from the bar if it is shut, as a user
-        does, and press the button in it whose text starts *label*."""
+    def _menu(page, category):
+        """Open *category*'s menu from the bar if it is shut, as a user does;
+        its dropdown's selector."""
+        menu = f"#menus .menu[data-category='{category}']"
+        if page.is_hidden(menu):
+            page.click(f"#categories button[data-category='{category}']")
+        return menu
+
+    @classmethod
+    def _press(cls, page, category, label):
+        """Press the item of *category*'s menu whose text has *label*,
+        opening the menu first as a user does."""
+        page.click(f"{cls._menu(page, category)} .item:has-text('{label}')")
+
+    @classmethod
+    def _menu_items(cls, page, category):
+        """``[label, key]`` of every item *category*'s menu offers now, in
+        order -- opened to read, as a user reads it, and shut again."""
+        items = page.eval_on_selector_all(
+            f"{cls._menu(page, category)} .item",
+            "(nodes) => nodes.map((n) => [n.querySelector('.label').textContent,"
+            " n.querySelector('.key').textContent])",
+        )
+        page.keyboard.press("Escape")
+        return items
+
+    @classmethod
+    def _open_window(cls, page, category):
+        """Open *category*'s window from its menu item if it is shut; its
+        selector."""
         window = f"#panels .window[data-category='{category}']"
         if page.is_hidden(window):
-            page.click(f"#categories button[data-category='{category}']")
-        page.click(f"{window} button:has-text('{label}')")
+            page.click(f"{cls._menu(page, category)} .item.window")
+        return window
 
     @staticmethod
     def _window_rows(page, category):
@@ -2332,6 +2359,9 @@ class TestPreviewViewerLive(unittest.TestCase):
         self, glb, then_publish=None, probe=None, then=None, scripts=(), host=None
     ):
         """Serve *glb*, open it in the real page, return the probe's findings.
+
+        A list of files is published as the parts of one scene
+        (``PreviewServer.publish_parts``).
 
         *scripts* are packaged viewer scripts to activate alongside the probe
         -- the ones a push names, as opposed to those a deliverable turns on
@@ -2358,7 +2388,10 @@ class TestPreviewViewerLive(unittest.TestCase):
         for name in scripts:
             server.add_script(name)
         server.add_script("probe", probe or self.probe)
-        server.publish(glb)
+        if isinstance(glb, (list, tuple)):
+            server.publish_parts(glb)
+        else:
+            server.publish(glb)
         console = []
         try:
             with sync_playwright() as p:
@@ -2665,6 +2698,39 @@ class TestPreviewViewerLive(unittest.TestCase):
         material = self._lit(self._load(self._lightmapped_glb()))
 
         self.assertAlmostEqual(material["lightMapIntensity"], self.BAKE_VALUE, places=3)
+
+    @unittest.skipUnless(ptk.ImgUtils.ktx2_available(), "needs toktx")
+    def test_a_KTX2_lightmap_binds_and_lights_like_the_lossless_one(self):
+        """KTX2 delivery encodes the bake as UASTC + sRGB
+        (``MeshConvert.LIGHTMAP_BASIS``), a compressed texture the page's
+        KTX2Loader decodes and the lightmap rebind then re-labels -- so the
+        face it lights must read as the lossless delivery's does, and the
+        rebind must still land on the bake UV in sRGB."""
+        import shutil
+
+        pbr = {"metallicFactor": 0.0, "roughnessFactor": 1.0}
+        lossless = self._lightmapped_glb(bake_value=0.5, pbr=pbr, environment=0.0)
+        ktx2 = os.path.join(self.temp.dir_path(), "ktx2.glb")
+        shutil.copyfile(lossless, ktx2)
+        ptk.MeshConvert.optimize_glb_textures(ktx2, max_size=0, image_format="KTX2")
+        images = ptk.MeshConvert._read_glb(ktx2).gltf["images"]
+        self.assertEqual([i.get("mimeType") for i in images], ["image/ktx2"])
+
+        def sample(_server, page):
+            return {"face": page.evaluate("() => window.__sample()")}
+
+        faces = {}
+        for name, glb in (("lossless", lossless), ("ktx2", ktx2)):
+            found = self._load(glb, then=sample)
+            self.assertEqual(found["console_errors"], [], name)
+            self.assertEqual(found["lightmapped"], 1, name)
+            material = self._lit(found)
+            self.assertTrue(material["hasLightMap"], name)
+            self.assertEqual(material["lightMapChannel"], 1, name)
+            self.assertIs(material["lightMapSRGB"], True, name)
+            faces[name] = found["face"]
+        self.assertGreater(faces["lossless"], 20, "the fixture face must be lit")
+        self.assertLessEqual(abs(faces["ktx2"] - faces["lossless"]), 3, faces)
 
     def test_a_baked_scene_turns_the_key_light_OFF(self):
         """A lightmap already CONTAINS its lighting, so a scene-wide key light
@@ -3296,11 +3362,10 @@ class TestPreviewViewerLive(unittest.TestCase):
     }"""
 
     def _flip_probe(self, page):
-        """The Environment window's probe switch, flipped as a user flips it."""
-        window = "#panels .window[data-category='Environment']"
-        if page.is_hidden(window):
-            page.click("#categories button[data-category='Environment']")
-        page.click(f"{window} label.toggle:has-text('Reflection probe')")
+        """The Environment menu's probe switch, flipped as a user flips it --
+        and the menu shut again, as a user leaves it."""
+        self._press(page, "Environment", "Reflection probe")
+        page.keyboard.press("Escape")
 
     def test_the_environment_window_turns_the_probe_off_and_on(self):
         """The switch the probe belongs behind -- not Inspect's: off, a baked
@@ -3356,8 +3421,8 @@ class TestPreviewViewerLive(unittest.TestCase):
 
     def test_the_studio_comes_back_for_a_file_without_a_probe(self):
         """Freed while a probe lit the model, the studio is built again when
-        the next push carries none -- and the window says so, its switches
-        gone with the probe."""
+        the next push carries none -- and the window says so, the menu's
+        switches gone with the probe."""
         room = {"image": self._probe_image([]), "position": [0, 0, 0], "box": None}
         pbr = {"metallicFactor": 1.0, "roughnessFactor": 0.3}
 
@@ -3367,11 +3432,7 @@ class TestPreviewViewerLive(unittest.TestCase):
                     "() => window.__api.environment.maps.map((m) => [m.name, m.active])"
                 ),
                 "rows": self._window_rows(page, "Environment"),
-                "switches": page.evaluate(
-                    "() => [...document.querySelectorAll("
-                    "\"#panels .window[data-category='Environment'] label.toggle\")]"
-                    ".map((n) => !n.hidden)"
-                ),
+                "items": self._menu_items(page, "Environment"),
             }
 
         found = self._load(
@@ -3382,7 +3443,8 @@ class TestPreviewViewerLive(unittest.TestCase):
         self.assertEqual(found["console_errors"], [])
         self.assertEqual(found["maps"], [["studio", True]])
         self.assertIn("the studio (three.js RoomEnvironment)", found["rows"])
-        self.assertEqual(found["switches"], [False, False])
+        # The probe's switches apply only while there is a probe.
+        self.assertEqual(found["items"], [["Lighting details", ""]])
 
     def test_the_environment_window_states_the_level_the_probe_plays_at(self):
         """REGRESSION (2026-10-04): the window said "1/π: the bake's units"
@@ -3480,37 +3542,45 @@ class TestPreviewViewerLive(unittest.TestCase):
             sorted(found["sizes"]), [["probe", 336, 64], ["studio", 768, 1024]]
         )
 
-    def test_the_bar_carries_one_button_per_category(self):
-        """What the page offers, sorted: one bar button per category beside
-        Frame, each opening its window, rather than a button per script --
-        the turntable's switch in View, the still's export in Export, the
-        profiler in Inspect, the probe's switch in Environment. A window
-        shuts from its own header too, and a key a script owns still drives
-        its control."""
+    def test_the_bar_carries_one_menu_per_category(self):
+        """What the page offers, sorted: one bar button per category, each a
+        dropdown of its items, rather than a button per script -- the
+        turntable's switch in View beside the page's own Frame model,
+        the still in Export beside the GLB, the profiler's window in Inspect,
+        the lighting window in Environment. A key an item owns drives it with
+        the menu shut, a window shuts from its own header too, and an item
+        that asks puts its prompt up with the menu gone."""
+        turntable = "#menus .menu[data-category='View'] .item:has-text('Turntable')"
 
         def drive(server, page):
             bar = page.evaluate(
                 "() => [...document.querySelectorAll('#controls button')]"
                 ".filter((b) => !b.closest('[hidden]')).map((b) => b.textContent.trim())"
             )
-            view = "#panels .window[data-category='View']"
-            page.click("#categories button[data-category='View']")
-            opened = page.is_visible(view)
-            spinning = page.is_checked(f"{view} label.toggle input")
+            menus = {
+                category: self._menu_items(page, category)
+                for category in ("View", "Environment", "Inspect", "Export")
+            }
+            spinning = page.get_attribute(turntable, "aria-checked")
             page.keyboard.press("t")
-            after_t = page.is_checked(f"{view} label.toggle input")
-            page.click(f"{view} header .close")
-            closed = page.is_hidden(view)
-            self._press(page, "Export", "Export image")
+            after_t = page.get_attribute(turntable, "aria-checked")
+            inspect = self._open_window(page, "Inspect")
+            opened = page.is_visible(inspect)
+            page.click(f"{inspect} header .close")
+            closed = page.is_hidden(inspect)
+            self._press(page, "Export", "Image")
             prompt = page.is_visible("#dialog:not([hidden])")
+            dropdown = page.is_visible("#menus .menu[data-category='Export']")
             page.click("#dialogCancel")
             return {
                 "bar": bar,
-                "opened": opened,
+                "menus": menus,
                 "spinning": spinning,
                 "afterT": after_t,
+                "opened": opened,
                 "closed": closed,
                 "prompt": prompt,
+                "dropdown": dropdown,
             }
 
         found = self._load(
@@ -3519,13 +3589,191 @@ class TestPreviewViewerLive(unittest.TestCase):
             then=drive,
         )
         self.assertEqual(found["console_errors"], [])
+        self.assertEqual(found["bar"], ["View", "Environment", "Inspect", "Export"])
         self.assertEqual(
-            found["bar"], ["Frame", "View", "Environment", "Inspect", "Export"]
+            found["menus"],
+            {
+                "View": [["Frame model", "F"], ["Turntable", "T"]],
+                "Environment": [["Lighting details", ""]],
+                "Inspect": [["Performance", "I"]],
+                "Export": [["GLB", ""], ["Image…", ""]],
+            },
         )
+        self.assertEqual((found["spinning"], found["afterT"]), ("true", "false"))
         self.assertTrue(found["opened"])
-        self.assertEqual((found["spinning"], found["afterT"]), (True, False))
         self.assertTrue(found["closed"])
         self.assertTrue(found["prompt"], "Export image did not ask for its size")
+        self.assertFalse(found["dropdown"], "the menu stayed open behind the prompt")
+
+    def test_a_menu_is_walked_and_shut_from_the_keyboard(self):
+        """The menubar's keys: arrows walk the open dropdown and step to the
+        next category's, Escape shuts it back onto its bar button, a press
+        outside shuts it -- and a key a second item claims stays the first
+        one's, the second left without it rather than both firing."""
+        view = "#menus .menu[data-category='View']"
+        environment = "#menus .menu[data-category='Environment']"
+
+        def drive(server, page):
+            focused = "() => document.activeElement.textContent"
+            page.click("#categories button[data-category='View']")
+            page.keyboard.press("ArrowDown")
+            first = page.evaluate(focused)
+            page.keyboard.press("ArrowDown")
+            second = page.evaluate(focused)
+            page.keyboard.press("ArrowRight")
+            stepped = (page.is_hidden(view), page.is_visible(environment))
+            page.keyboard.press("Escape")
+            shut = page.is_hidden(environment)
+            on_button = page.evaluate("() => document.activeElement.dataset.category")
+            page.click("#categories button[data-category='View']")
+            page.mouse.click(5, 300)  # the canvas: outside the dropdown
+            outside = page.is_hidden(view)
+            page.evaluate(
+                """() => window.__api.menu('View').add('action', {
+                  label: 'Second claim', key: 'f', run: () => { window.__second = true; },
+                })"""
+            )
+            page.keyboard.press("f")
+            return {
+                "first": first,
+                "second": second,
+                "stepped": stepped,
+                "shut": shut,
+                "onButton": on_button,
+                "outside": outside,
+                "secondRan": page.evaluate("() => window.__second === true"),
+                "items": self._menu_items(page, "View"),
+            }
+
+        found = self._load(self._lightmapped_glb(), scripts=["turntable"], then=drive)
+        self.assertEqual(found["console_errors"], [])
+        self.assertEqual(
+            (found["first"], found["second"]), ("Frame modelF", "TurntableT")
+        )
+        self.assertEqual(found["stepped"], (True, True))
+        self.assertTrue(found["shut"])
+        self.assertEqual(found["onButton"], "Environment")
+        self.assertTrue(found["outside"])
+        self.assertFalse(found["secondRan"], "a second claim on 'f' fired")
+        self.assertIn(["Second claim", ""], found["items"])
+
+    def test_the_parts_of_a_scene_load_together_and_each_can_be_hidden(self):
+        """Several files are the parts of one scene: loaded together under one
+        model, each at its authored place, its bake bound by its own manifest
+        and its clips in the one picker -- bound to ITS nodes by uuid, since a
+        name is unique within a file only. View hides a part (and a push
+        keeps it hidden, by name); Export saves each under its own name."""
+        parts = [self._lightmapped_glb(), self._animated_glb()]
+
+        def drive(server, page):
+            state = page.evaluate(
+                """() => {
+                  const api = window.__api;
+                  const second = api.parts[1];
+                  const ids = new Set();
+                  second.model.traverse((n) => ids.add(n.uuid));
+                  return {
+                    names: api.parts.map((p) => p.name),
+                    under: api.parts.every((p) => p.model.parent === api.model),
+                    rebound: second.gltf.animations.every((clip) => clip.tracks.every(
+                      (t) => ids.has(viewer_node(t.name)))),
+                    status: document.getElementById('status').textContent,
+                  };
+                  function viewer_node(name) {
+                    return api.THREE.PropertyBinding.parseTrackName(name).nodeName;
+                  }
+                }"""
+            )
+            menus = {c: self._menu_items(page, c) for c in ("View", "Export")}
+            self._press(page, "View", state["names"][1])
+            page.keyboard.press("Escape")
+            hidden = page.evaluate(
+                "() => window.__api.parts.map((p) => p.model.visible)"
+            )
+            server.publish_parts(parts)
+            page.wait_for_function("() => window.__probe.loads >= 2", timeout=180_000)
+            kept = page.evaluate("() => window.__api.parts.map((p) => p.model.visible)")
+            stem = pathlib.Path(state["names"][0]).stem
+            with page.expect_download() as download:
+                self._press(page, "Export", f"GLB: {stem}.glb")
+            # What the probe found of the two parts, before the push below
+            # replaces it with the lone file's.
+            state = {**page.evaluate("() => window.__probe"), **state}
+            # The first hidden too, then pushed ALONE: one file has no View
+            # switch to bring it back, so a name hidden among parts must not
+            # hide it.
+            self._press(page, "View", state["names"][0])
+            page.keyboard.press("Escape")
+            server.publish_parts(parts[:1])
+            page.wait_for_function("() => window.__probe.loads >= 3", timeout=180_000)
+            alone = page.evaluate(
+                "() => window.__api.parts.map((p) => p.model.visible)"
+            )
+            state.update(
+                menus=menus,
+                hidden=hidden,
+                kept=kept,
+                alone=alone,
+                saved=download.value.suggested_filename,
+                stem=stem,
+            )
+            return state
+
+        found = self._load(parts, then=drive)
+        self.assertEqual(found["console_errors"], [])
+        # Both fixtures are called alike, so the second is numbered: the page
+        # tells parts apart by name.
+        first = pathlib.Path(parts[0]).name
+        self.assertEqual(pathlib.Path(parts[1]).name, first)
+        stem, suffix = first.rsplit(".", 1)
+        names = [first, f"{stem} (2).{suffix}"]
+        self.assertEqual(found["names"], names)
+        self.assertTrue(found["under"])
+        self.assertTrue(found["rebound"], "a part's clip is bound by a shared name")
+        self.assertIn("2 files", found["status"])
+        self.assertEqual(found["lightmapped"], 1, "the first part's bake is unbound")
+        self.assertEqual(found["clipCount"], 2, "the second part's clips are missing")
+        self.assertEqual(
+            found["menus"]["View"],
+            [["Frame model", "F"], [names[0], ""], [names[1], ""]],
+        )
+        # Beside the playblast the animated part activates.
+        self.assertEqual(
+            [
+                label
+                for label, _key in found["menus"]["Export"]
+                if label.startswith("GLB")
+            ],
+            [f"GLB: {pathlib.Path(name).stem}.glb" for name in names],
+        )
+        self.assertEqual(found["hidden"], [True, False])
+        self.assertEqual(found["kept"], [True, False], "a push showed the hidden part")
+        self.assertEqual(found["alone"], [True], "a lone file stayed hidden")
+        self.assertEqual(found["saved"], f"{found['stem']}.glb")
+
+    def test_the_playing_shots_description_is_captioned_on_request(self):
+        """View ▸ Clip descriptions: the note the DCC's Shots panel recorded for
+        the shot on screen, over the view -- offered only when a clip has one,
+        on until switched off, and gone on a shot that states none."""
+
+        def drive(server, page):
+            items = self._menu_items(page, "View")
+            page.evaluate("() => window.__api.playClip('SHOT_B')")
+            page.wait_for_selector("#caption:not([hidden])", timeout=30_000)
+            shown = page.eval_on_selector("#caption", "el => el.textContent")
+            self._press(page, "View", "Clip descriptions")
+            page.wait_for_selector("#caption", state="hidden", timeout=30_000)
+            self._press(page, "View", "Clip descriptions")
+            page.keyboard.press("Escape")
+            page.wait_for_selector("#caption:not([hidden])", timeout=30_000)
+            page.evaluate("() => window.__api.playClip('SHOT_A')")
+            page.wait_for_selector("#caption", state="hidden", timeout=30_000)
+            return {"items": items, "shown": shown}
+
+        found = self._load(self._shots_only_glb(described=True), then=drive)
+        self.assertEqual(found["console_errors"], [])
+        self.assertIn(["Clip descriptions", ""], found["items"])
+        self.assertEqual(found["shown"], self.SHOT_B_DESCRIPTION)
 
     def test_the_probes_capture_point_and_box_are_drawn_on_request(self):
         """Where the bake put its probe, over the model: the check that it can
@@ -3542,9 +3790,7 @@ class TestPreviewViewerLive(unittest.TestCase):
         )
 
         def show(server, page):
-            window = "#panels .window[data-category='Environment']"
-            page.click("#categories button[data-category='Environment']")
-            page.click(f"{window} label.toggle:has-text('Show capture point')")
+            self._press(page, "Environment", "Show capture point")
             return {
                 "rows": self._window_rows(page, "Environment"),
                 "helpers": page.evaluate(
@@ -4238,9 +4484,9 @@ export default function probe(viewer) {
         a public name, in a secure context -- which is what a tunnel adds, so
         the flags stand in for one with no network. The guest loads the model
         and can enter VR (``navigator.xr``), is marked a guest, never receives
-        the owner-only script (no Export Image button), is counted while open
-        and retired by its own close beacon -- and none of it touches the
-        owner's viewer state."""
+        the owner-only script (Export offers the GLB -- the link IS the
+        deliverable -- and no Image), is counted while open and retired by its
+        own close beacon -- and none of it touches the owner's viewer state."""
         import time
 
         from playwright.sync_api import sync_playwright
@@ -4283,6 +4529,7 @@ export default function probe(viewer) {
                       saveHidden: document.getElementById('normalSave').hidden,
                     })"""
                 )
+                found["export"] = self._menu_items(page, "Export")
                 found["guests_open"] = server.guest_count()
                 page.close(run_before_unload=True)
                 deadline = time.monotonic() + 10  # the beacon is asynchronous
@@ -4299,10 +4546,83 @@ export default function probe(viewer) {
         self.assertIs(found["secure"], True)
         self.assertIs(found["xr"], True, "a secure-context guest must get WebXR")
         self.assertEqual(found["meshes"], 1)
-        self.assertNotIn("Export", found["buttons"], "an owner-only script's window")
+        self.assertEqual(found["export"], [["GLB", ""]], "an owner-only script's item")
         self.assertIs(found["saveHidden"], True)
         self.assertEqual((found["guests_open"], found["guests_closed"]), (1, 0))
         self.assertIs(found["owner_viewer"], False)
+
+    def test_a_private_share_serves_the_whole_page_under_its_own_path(self):
+        """A private link is the page under ``/<token>/``: every URL the page
+        asks for is relative, so the kernel, its manifest, the scripts, the
+        model and the close beacon all resolve inside the segment -- and the
+        bare provider address opens nothing. Shared through a provider whose
+        link is the guest listener on loopback (a secure context), so the
+        page runs exactly as a guest's does, with no network."""
+        import time
+        import urllib.error
+        import urllib.request
+        import unittest.mock
+
+        from playwright.sync_api import sync_playwright
+
+        loopback = {
+            "label": "Loopback tunnel",
+            "executable": sys.executable,
+            "args": [
+                "-u",
+                "-c",
+                "import time; print('http://{host}:{port}', flush=True); "
+                "time.sleep(600)",
+            ],
+            "url": r"(http://127\.0\.0\.1:\d+)",
+            "ready": None,
+            "public": True,
+            "install": "https://example.test/install",
+        }
+        server = ptk.PreviewServer(viewer=True, title="live-test", port=0).start()
+        server.add_script("probe", self.probe)
+        server.publish(self._animated_glb())
+        console = []
+        try:
+            with unittest.mock.patch.dict(
+                ptk.ShareTunnel.PROVIDERS, {"loopback": loopback}
+            ):
+                info = server.share(provider="loopback", private=True, alias=False)
+                link = info["url"]
+                root = link[: link.index("/", len("http://"))] + "/"
+                with self.assertRaises(urllib.error.HTTPError) as outside:
+                    urllib.request.urlopen(root, timeout=5)
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(
+                        channel="msedge",
+                        headless=True,
+                        args=["--enable-unsafe-swiftshader"],
+                    )
+                    page = browser.new_page()
+                    page.on("pageerror", lambda e: console.append(f"[pageerror] {e}"))
+                    page.goto(link, wait_until="domcontentloaded", timeout=120_000)
+                    page.wait_for_function(
+                        "() => window.__probe && window.__probe.ready === true",
+                        timeout=180_000,
+                    )
+                    found = page.evaluate(
+                        "() => ({guest: window.__api.guest, meshes: window.__probe.meshes})"
+                    )
+                    found["guests_open"] = server.guest_count()
+                    page.close(run_before_unload=True)
+                    deadline = time.monotonic() + 10  # the beacon is asynchronous
+                    while server.guest_count() and time.monotonic() < deadline:
+                        time.sleep(0.1)
+                    found["guests_closed"] = server.guest_count()
+                    browser.close()
+        finally:
+            server.stop()
+
+        self.assertEqual(outside.exception.code, 404, "the bare address opened")
+        self.assertEqual(console, [])
+        self.assertIs(found["guest"], True)
+        self.assertEqual(found["meshes"], 1)
+        self.assertEqual((found["guests_open"], found["guests_closed"]), (1, 0))
 
     # ------------------------------------------------- getting around in VR
     # The page's headset locomotion, driven through the same `update(delta,

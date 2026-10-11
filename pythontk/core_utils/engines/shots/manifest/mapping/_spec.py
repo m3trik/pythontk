@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from pythontk import SchemaSpec
 
 from pythontk.core_utils.engines.shots.manifest.manifest_model import ColumnMap
+from pythontk.core_utils.engines.shots.manifest.manifest_tags import ManifestTags
 
 
 @dataclass(frozen=True)
@@ -236,6 +237,16 @@ class MappingSpec(SchemaSpec, _MappingSpecInternal):
         ),
         example=True,
         default=False,
+    )
+    color_by: str = SchemaSpec.spec_field(
+        help=(
+            "Colour the step rows automatically: `section` gives each section "
+            "its own colour, in sheet order. A colour the user picks for a "
+            "row shows over it."
+        ),
+        choices=tuple(ManifestTags.RULES),
+        example="section",
+        default="none",
     )
     options: Optional[Dict[str, Any]] = SchemaSpec.spec_field(
         help=(

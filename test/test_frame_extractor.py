@@ -3,18 +3,27 @@
 """Unit tests for pythontk FrameExtractor.
 
 Focused regression coverage for argument validation on
-``FrameExtractor.extract_frames``. These tests do not require cv2 or a
-real video file because the ``step`` guard runs before any cv2 use.
+``FrameExtractor.extract_frames`` -- those tests need neither cv2 nor a
+real video file, because the ``step`` guard runs before any cv2 use -- and
+for frames written to a folder ``cv2.imwrite`` cannot open (these write a
+short clip, so they need cv2).
 
 Run with:
     python -m pytest test_frame_extractor.py -v
 """
 
+import os
 import unittest
 
-from pythontk import FrameExtractor
+from pythontk import FrameExtractor, TempArtifacts
 
 from conftest import BaseTestCase
+
+try:  # after conftest, which turns OpenEXR on before cv2 loads
+    import cv2
+    import numpy as np
+except ImportError:
+    cv2 = None
 
 
 class FrameExtractorTest(BaseTestCase):
@@ -38,6 +47,47 @@ class FrameExtractorTest(BaseTestCase):
             "definitely_missing_clip.mp4", "out", step=5
         )
         self.assertEqual(result, [])
+
+
+@unittest.skipUnless(cv2 is not None, "cv2 not available")
+class FrameExtractorOutputPathTest(BaseTestCase):
+    """Frames written to a folder ``cv2.imwrite`` cannot open by itself.
+
+    On Windows ``cv2.imwrite`` opens its file by a narrow (ANSI) path, so an
+    output folder named ``résumé ★`` got no frames: every write returned False
+    and the extraction reported none. Fixed: 2026-10-05.
+    """
+
+    def setUp(self):
+        artifacts = TempArtifacts("frame_extractor_path", policy="scoped")
+        self.addCleanup(artifacts.cleanup)
+        root = artifacts.dir_path()
+        self.video = os.path.join(root, "clip.avi")
+        writer = cv2.VideoWriter(
+            self.video, cv2.VideoWriter_fourcc(*"MJPG"), 10.0, (32, 32)
+        )
+        for i in range(6):
+            frame = np.full((32, 32, 3), 40 * i, np.uint8)
+            frame[::4] = 255  # edges: every frame has a sharpness to rank
+            writer.write(frame)
+        writer.release()
+        self.out = os.path.join(root, "résumé ★")
+
+    def test_every_step_frame_is_written(self):
+        saved = FrameExtractor().extract_frames(self.video, self.out, step=2)
+        self.assertEqual(len(saved), 3)
+        self.assertEqual(
+            sorted(os.listdir(self.out)), [os.path.basename(p) for p in saved]
+        )
+
+    def test_the_sharpest_frame_of_each_window_is_written(self):
+        saved = FrameExtractor().extract_frames_sharpest(
+            self.video, self.out, window_sec=0.3
+        )
+        self.assertTrue(saved, "no frame written")
+        self.assertEqual(
+            sorted(os.listdir(self.out)), [os.path.basename(p) for p in saved]
+        )
 
 
 if __name__ == "__main__":

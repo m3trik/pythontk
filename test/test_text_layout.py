@@ -66,7 +66,7 @@ class TextLayoutTest(BaseTestCase):
     #: included: the goldens below hold with or without the optional package.
     SAMPLES = [
         "abc",
-        "漢字",
+        "ＯＫ",  # fullwidth Latin: two columns a character, as CJK
         "✅",
         "\U0001f642",
         "cafe\u0301",
@@ -91,7 +91,7 @@ class TextLayoutTest(BaseTestCase):
             raise ValueError(ch)
 
         # A raising function falls through to the heuristic.
-        self.assertEqual(TextLayout(wcwidth=broken).char_width("漢"), 2)
+        self.assertEqual(TextLayout(wcwidth=broken).char_width("Ｗ"), 2)
 
     def test_one_layouts_resolution_never_reaches_another(self):
         """The state is the instance's: the old class attribute was shared by

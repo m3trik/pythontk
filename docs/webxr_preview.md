@@ -156,18 +156,67 @@ to honour. The viewer-script rows still apply — those describe the page, and t
 one either source publishes to.
 
 In the page, the model stands at its true size, centred on the floor; the view opens through the
-scene's start camera when it has one (see *Where a view starts*), and **Frame** frames the whole
-model (`f`).
+scene's start camera when it has one (see *Where a view starts*), and **View ▸ Frame model**
+frames the whole model (`f`).
 
-Beside Frame the bar carries **one button per category** -- **View**, **Environment**,
-**Inspect**, **Export**, **Rig** -- and each opens its window, top right, where every part of the
-page that files under that category has a section: the turntable's switch under View, the
-reflection probe's under Environment, the profiler under Inspect, the still and the playblast under
-Export, an articulated rig's sliders under Rig. A category shows once something files under it, so
-the bar stays the same few buttons however many scripts a push activates, and a phone-sized
-viewport keeps every control in reach. A window shuts from its bar button or its own ×; a script's
-shortcut (`t`, `i`) still drives its control. The bar's Export button says when a still or a
-playblast is being written with the window shut.
+The bar is a **menubar**: one button per category -- **View**, **Environment**, **Inspect**,
+**Export**, **Rig** -- each opening a dropdown of what the page and its scripts offer under it.
+An item is one of three kinds: an **action** (Export ▸ GLB; a label ending in `…` asks before it
+acts), a **switch** (View ▸ Turntable, checked while on -- the dropdown stays open on one, so a
+run of them is set in one go), or a **window** item that opens a persistent panel, top right, for
+what has to stay up: Inspect ▸ Performance (the profiler), Environment ▸ Lighting details, Rig ▸
+Pose rigs (an articulated rig's sliders). What shows is what applies to the model on screen: the
+probe's switches only with a probe, Clip descriptions only when a clip has one, a part per file
+only with several, Playblast only with a clip -- and a category shows on the bar only while
+something under it applies, so the bar stays the same few buttons however many scripts a push
+activates, and a phone-sized viewport keeps every control in reach.
+
+| Menu | Items |
+|:---|:---|
+| View | Frame model (`f`); Turntable (`t`, the `turntable` script); Clip descriptions; one switch per part |
+| Environment | Reflection probe; Show capture point and box; Lighting details (window) |
+| Inspect | Performance (window, `i`; the `inspect` script) |
+| Export | GLB (one per part); Image… (`snapshot`); Playblast… (auto with a clip) |
+| Rig | Pose rigs (window; an articulated rig) |
+
+Each item's key is shown beside it, and one table holds every key, so a key has one owner: a
+second item claiming it is left without one (and the console says so). With a dropdown open the
+arrows walk it and step to the next category's, Escape shuts it, and a press outside does too. A
+window shuts from its item or its own ×. The bar's Export button says when a still or a playblast
+is being written with the menu shut.
+
+**Clip descriptions** (View) captions the shot on screen with the note the DCC's Shots panel
+recorded for it -- the segment's on FULL SEQUENCE, so it changes at each shot boundary -- over the
+view and never in a still or a playblast (whose own burn-in is asked as it records). On by
+default; the choice is the browser's, so a reviewer who turned it off is not handed it back by
+the next push.
+
+**Export ▸ GLB** saves the file the page is showing, as served -- for a guest on a share too: the
+link is the deliverable -- under the published file's own name.
+
+### Previewing the parts of one scene
+
+```python
+ptk.FilePreviewBridge().push(objects=["C:/scene/room.glb", "C:/scene/props.fbx"])
+server.publish_parts(["room.glb", "props.glb"])   # the server's own form
+```
+
+Several files are the **parts of one scene** -- a room, the props in it, a character, each exported
+on its own -- and the page shows them **together, each at its authored place**, so they line up
+the way they do in the scene they came from. One push publishes them as ONE version (a page
+polling between two publishes would show half a scene); each is built as one file is (an FBX
+converted, a GLB as authored). In the panel, **Source Files** takes several (`;` between them;
+Browse picks as many as you select).
+
+What belongs to a FILE runs on each part: its fades, its lightmaps (by its own manifest), and its
+clips -- all of them in the one clip picker, each bound to its own file's nodes by uuid, since a
+node name is unique within a file only. What belongs to the DELIVERABLE is answered once: the
+reflection probe and the lighting recipe come from the first part that carries one. The first file
+is the **primary**: `scene.json`, a still's and a recording's name, and a script reading the
+deliverable's extras by node index (`load`'s `gltf`) read it; `viewer.parts` names every part.
+**View** lists the parts, each a switch that hides it -- and a hidden part stays hidden across
+pushes, by name -- and **Export ▸ GLB** saves each under its own name. Two files called alike are
+numbered (`model (2).glb`), since the page tells parts apart by name.
 
 A second slot, `#lookdev`, is the area for dials that tune how the model *reads*: the **Normals** dial (`normalTexture.scale`, saved into the GLB through `POST /settings`).
 Each dial hides itself when the model gives it nothing to do, and the area follows them;
@@ -217,8 +266,8 @@ The same measurement is `viewer.specs` for a script (and the `specs` of the `'lo
 
 ### Inspect -- what the preview costs
 
-**Inspect** -- tick it among the WebXR Preview's viewer scripts, then press `i` or its bar button --
-opens the Inspect window: what the preview *costs*, measured on the device rendering it:
+**Inspect** -- tick it among the WebXR Preview's viewer scripts, then **Inspect ▸ Performance**
+or `i` -- opens a window of what the preview *costs*, measured on the device rendering it:
 
 | Section | Reads |
 |---|---|
@@ -229,19 +278,20 @@ opens the Inspect window: what the preview *costs*, measured on the device rende
 | **Load** | download, parse, setup -- with the reflection probe's decode and prefilter as a line of its own, a part of setup -- and the first frame's program compile and texture upload |
 | **Issues** | the warning line's list, whole |
 
-The probe's per-pixel cost is the frame time with the Environment window's switch on against
+The probe's per-pixel cost is the frame time with the Environment menu's switch on against
 off; in a headset, set it before entering and read the card. **Copy report** puts all of it on the
 clipboard as JSON for a bug report, and every load logs a summary table to the console. In a headset, where the page's own chrome is not drawn at all, the
 panel rides beside your view as a card: open it on the desktop before entering, or press **B** or
 **Y** in the session. How long the *push* took is the panel's business rather than the page's --
 see *Cost and budget*.
 
-### The Environment window
+### The Environment menu
 
 What lights the model: the bake's **reflection probe** when the file carries one (see *A bake's
-reflection probe replaces the studio*), else the page's studio. The window says which, what the
-probe is -- its size in the file, where it was captured, the box its reflections project onto, and
-which faces of that box are open (read as distant) -- and holds two switches:
+reflection probe replaces the studio*), else the page's studio. **Lighting details** opens a window
+that says which, and what the probe is -- its size in the file, where it was captured, the box its
+reflections project onto, and which faces of that box are open (read as distant). While the model
+has a probe the menu holds two switches:
 
 - **Reflection probe** turns it off and on for this view. Off, the model draws exactly as the same
   file shipped without a probe would (the Lightmap Baker's own switch): the studio lights it and its
@@ -252,9 +302,9 @@ which faces of that box are open (read as distant) -- and holds two switches:
 - **Show capture point and box** draws where the bake captured the probe and the box its
   reflections project onto, over the model, in its frame -- the check that the bake put its probe
   where it can see the room. An open face is drawn at the model's reach. It is no part of the model:
-  Frame and the HUD measure without it.
+  Frame model and the HUD measure without it.
 
-The window is the page's chrome, so it is not drawn in a headset: set the switch on the desktop
+The menu is the page's chrome, so it is not drawn in a headset: set the switch on the desktop
 before entering. Scripts read the same through `viewer.environment`.
 
 ### In the headset
@@ -308,7 +358,7 @@ the headset, the controllers and every camera three.js derives from them move to
 model stays put. three.js drives the desktop camera from the headset while a session runs; the
 page keeps the desktop view aside -- where the orbit camera stood, its field of view, its clip
 planes and what it turned about -- and puts it back as the session ends (a push landing
-mid-session, or **Frame**, re-frames the view that comes back). The session draws with a
+mid-session, or **View ▸ Frame model**, re-frames the view that comes back). The session draws with a
 headset's near plane, 2 cm, whatever the model's size: the desktop's is sized to the model -- 23 cm
 for a 150 m ground framed whole -- and would cut away the blink, the comfort vignette and a
 controller brought near the face. The surfaces a walk and an arc strike are indexed per mesh as the
@@ -326,7 +376,7 @@ start before you push, and it carries the field of view the desktop view opens w
 | View | What it takes from the camera |
 |---|---|
 | **Headset** | where it stands and which way it looks. You arrive on the floor under it (the first walkable surface below, so a camera at eye height stands you where its feet would be), facing its view direction, through a short fade-in. Its height, tilt and field of view are the headset's own: the floor has to stay where your feet are. With locomotion off, it is where you stay |
-| **Desktop** | all of it. The page opens looking through it with its *horizontal* field of view (the one Maya's film-gate fill and Blender's sensor fit both hold for a landscape frame), orbiting about what it looks at. **Frame** (`f`) still frames the whole model |
+| **Desktop** | all of it. The page opens looking through it with its *horizontal* field of view (the one Maya's film-gate fill and Blender's sensor fit both hold for a landscape frame), orbiting about what it looks at. **View ▸ Frame model** (`f`) still frames the whole model |
 
 - **The push ships it whatever the scope.** The page reads it, so a selection that left it out would
   start every view on the whole model with nothing to say why -- the reason the data-export carrier
@@ -372,12 +422,15 @@ nothing for anyone. Guests need no install -- only the builder does (a tunnel cl
 ```python
 info = preview.share()               # {"url": the link to send, "guests": 0, ...}
 preview.share(provider="tailscale_funnel")
+preview.share(private=True)          # a fresh random link, good for this share only
+preview.ping_share()                 # {"ok", "ms", "status", "error", ...}: can a guest reach it?
 preview.share_url                    # None once the share ends -- or once its tunnel dies
 preview.unshare()                    # the owner's page and server are untouched
 ```
 
 In the WebXR Preview panel the **Sharing** row is the switch: **Off**, **Auto** or a provider.
-Picking one brings the link up at once and copies it; it then stays up across pushes, and every push
+Picking one brings the link up at once, copies it, and checks it answers (below); it then stays up
+across pushes, and every push
 logs it -- the same link each time, since a guest's page picks each push up by itself and a new link
 per push would strand everyone holding the last one. A share that dropped is brought back by the
 next push; one that cannot come up is logged there rather than put in a dialog. **Off** takes it
@@ -385,14 +438,35 @@ down. A provider that needs a one-time step first (Tailscale, until the tailnet 
 offered -- **Open Page** -- and the share waits for it in the background, the panel free meanwhile:
 once the step is taken the link comes up by itself, and the footer says what it waits on until then.
 The row's option box carries **Share Now** (also the retry after a failed share), **Copy Link**
-(which brings the link up when the row is on and it is not), **Copy Scene Link** (the scene as data,
-for someone's agent -- [below](#reading-the-scene-as-data)) and **Stop Sharing**, and the footer
+(which brings the link up when the row is on and it is not), **Test Link** (the check again),
+**Copy Scene Link** (the scene as data, for someone's agent --
+[below](#reading-the-scene-as-data)) and **Stop Sharing**, and the footer
 shows the link and how many guest tabs have it open right now (`guest_count`: polled within the
 viewer timeout), re-read every two seconds while the panel shows. Every address the panel logs --
 the link, the page a step takes, where to install a missing client -- is a link in the log.
 The row starts **Off** each session and is never restored: a link is a door to this machine, and a
 session opens it only when asked -- a row left on yesterday would otherwise share today's first
 push unprompted.
+
+**Is it up? (`ping_share`).** A provider can report a link before a guest can open it: a quick
+tunnel's new name not yet in every resolver, a client that dropped as it came up, a provider's
+error page answering in its place. So every new link is **checked**, off the UI thread, and the log
+says so -- *Link checked: a guest can reach it (412 ms)*, or why not. The check asks the tunnel's
+own link for the guest manifest, end to end (public DNS, the provider's TLS, the tunnel, the guest
+listener), and passes only when it is THIS share at this server's version that answers -- a 200
+from anything else does not pass. It sends no page id, so it never counts as a guest; it asks the
+tunnel, never an alias (a page on another server); and a miss is asked again (three tries, two
+seconds apart) before it is reported, since a brand-new name is usually seconds from answering.
+
+**A link per share (Private Link).** `share(private=True)` -- the panel's **Private Link** row --
+adds a fresh random path segment to the link (`https://<name>/<16 characters>/`, 96 bits) and the
+guest listener answers nothing outside it: a 404, the same as a name that does not exist, so a
+probe learns nothing; the bare segment is redirected inside it, or the page's relative URLs would
+resolve one level up. The segment is compared in constant time. A link is then good for ONE share:
+the next has another, and the last one opens nothing -- which is what makes Tailscale's link, your
+machine's name for good, disposable (a cloudflared link is random per share already). A private
+share keeps no alias (below): a redirect that never changes would be a lasting door to every
+private link. Flipping the row while shared re-shares at once, with a new link.
 
 ### How it works
 
@@ -507,10 +581,10 @@ Each of these fails the share at once with the next step, rather than waiting ou
 - **Every Tailscale port already serving** -- three shares are up on this machine (or a serve of your
   own holds a port); the share says so and names cloudflared, which has no such limit.
 
-What a share does not change: the link **is** the deliverable -- a guest can save the GLB, so stop
-sharing when the review is over. The Cloudflare quick tunnel's name is unguessable but not secret
-once sent; the Funnel name is stable and guessable. There is no guest authentication; a share is for
-people you send the link to.
+What a share does not change: the link **is** the deliverable -- a guest can save the GLB (Export ▸
+GLB), so stop sharing when the review is over. The Cloudflare quick tunnel's name is unguessable but
+not secret once sent; the Funnel name is stable and guessable unless the share is private. There is
+no guest authentication; a share is for people you send the link to.
 
 ### Reading the scene as data
 
@@ -619,24 +693,36 @@ default* — the server outlives every push, so a script registered once must no
 next push that simply says nothing about scripts. An explicit `[]` is still an instruction.
 
 A module's default export receives the viewer API -- `apiVersion` (see below), `THREE`, `scene`, `renderer`, `camera`,
-`controls`, `pivot`, `model`, `bounds`, `policy`, `specs` (the load's measurement -- see *What the
+`controls`, `pivot`, `model` (with several parts, the root they hang under), `parts` (`[{name,
+model, gltf}]`, the published files in order -- see *Previewing the parts of one scene*), `bounds`,
+`policy`, `specs` (the load's measurement -- see *What the
 page tells you*), `guest` (true on a view-only share, where every
-write is refused -- see *Sharing a link*), `setStatus`, `window(category, {title})` (the page's
-window for a category -- `'View'`, `'Environment'`, `'Inspect'`, `'Export'`, `'Rig'` or one of the
-script's own -- made on first ask with its bar button, shared by every script that names it:
-`section(title)` adds a block the script owns, with `setRows`, `addButton`, `addSlider`,
-`addToggle(label, {value, title}, onChange)` and `remove`; `show`, `toggle`, `shown`, `onShow(fn)`,
-and `setBadge(text, owner)` to mark the bar button while a job runs -- each owner (the script's
-name) sets and clears its own, and the button shows the newest one standing. A script's controls go
-here, not on the bar), `addButton(label, onClick)` (a bar button of its own, for the rare action
-that cannot wait
+write is refused -- see *Sharing a link*), `setStatus`, `menu(category, {title})` (the menubar's
+menu for a category -- `'View'`, `'Environment'`, `'Inspect'`, `'Export'`, `'Rig'` or one of the
+script's own -- made on first ask with its bar button, shared by every script that names it.
+`add(kind, spec)` files an item: `'action'` (`run()`; a label ending in `…` asks first) or
+`'toggle'` (`{value, onChange(on)}`), each with `{label, title, key, group, order, when(),
+enabled()}` -- `key` a single-key shortcut, owned once across the page; `group` the items a
+separator sets apart; `order` the place; `when()` whether the item applies to what is on screen,
+asked as the menu opens and after every load (a bar button shows only while something under it
+applies); `enabled()` whether it can act now. It returns `{element, kind, label, value, hidden,
+disabled, remove()}`, `label` and `value` settable -- `value` without calling `onChange`. The
+menu's `setBadge(text, owner)` marks the bar button while a job runs -- each owner (the script's
+name) sets and clears its own, and the button shows the newest one standing -- and `refresh()`
+re-asks `when` after something it reads changed that a load did not. A script's controls go here,
+not on the bar), `window(category, {title, label, key})` (a persistent panel, opened from an item
+in the category's menu -- `label`, `'<category> panel'` by default, checked while open -- for what
+has to stay up: `section(title)` adds a block the script owns, with `setRows`, `addButton`,
+`addSlider`, `addToggle(label, {value, title}, onChange)` and `remove`; `show`, `toggle`, `shown`,
+`onShow(fn)`, `item` and the menu's `setBadge`), `addButton(label, onClick)` (a bar button of its
+own, for the rare action that cannot wait
 a click), `addPanel(title)` (a free panel of label/value rows in the page's chrome, stacked
 top-right after the windows -- `setRows`, `show`, an `addButton` of its own, `addToggle`, and
 `addSlider(label, {min, max, step, value, format}, onInput)` for a labelled slider under the rows,
 whose `value` a script can set without firing `onInput`; hidden until shown, written as text),
 `environment` (what lights the model: `probe` -- the bake's reflection probe on screen or null,
 `{on, width, height, bytes, bufferView, position, box, decodeMs, prefilterMs}` -- `setProbe(on)`,
-the Environment window's switch, and `maps`, the environment maps held in GPU memory),
+the Environment menu's switch, and `maps`, the environment maps held in GPU memory),
 `addHeadsetCard({name, width, height, metres, radius, over})` (a card of text in the headset,
 where the page's chrome is not drawn -- a canvas in its colours on a plane in the headset's layer,
 hidden until shown, `over` the model when asked; `draw(paint)` repaints it and hands
@@ -649,13 +735,14 @@ materials as a list, whether it carries one, an array or none),
 to the object the loader made of it, through the loader's own association table, never by a name a
 production assembly repeats), `grab` (see *Grabbing* below),
 `showDialog({title, fields, confirm})`, and `on(event, fn)` for `'load'` / `'frame'` /
-`'rendered'` / `'key'` -- `'rendered'` fires after each frame is drawn, with the page's CPU time
+`'rendered'` / `'key'` -- `'load'` names the primary part's `gltf` and every part (`parts`), and
+`'rendered'` fires after each frame is drawn, with the page's CPU time
 for it (`cpuMs`) and the part spent inside `renderer.render` (`renderMs`).
 A script that writes a file through the server gets the page's half of that too:
 `captureSize(maxEdge)` — the size to capture at and the pixel ratio to *render* at for it, clamped
 to what the GPU allocates, the one sizing rule a playblast and a still share — `refusal(response)`,
-the server's own reason for a refused request, for the status line, and `download(url)`, which
-saves a served file rather than navigating the page to it. Hand `download` a path **relative to the
+the server's own reason for a refused request, for the status line, and `download(url, name)`, which
+saves a served file -- under *name*, or the served one -- rather than navigating the page to it. Hand `download` a path **relative to the
 page** (or a route that answers `Content-Disposition: attachment`): a browser honours `download`
 only on the page's own origin, and the page is as validly open at `localhost` as at the
 `127.0.0.1` the server's `url` spells — an absolute link navigates a `localhost` tab to the file.
@@ -677,7 +764,7 @@ an optional module must never make a good preview *look* broken, because the one
 is a headset where the console is not visible.
 
 Six ship in the box: **`turntable`** (hands-free rotation on the desktop, on the pivot so it
-survives a push; it holds still in a headset; a switch in the View window, `t`),
+survives a push; it holds still in a headset; View ▸ Turntable, `t`),
 **`inspect`** (the profiler: frame time against the display's budget, CPU and GPU time, draw calls,
 estimated GPU memory, the file's composition and the load's phases -- the numbers a GLB's size does
 not tell you; see *Inspect -- what the preview costs*) and **`shadow_rig`** (the runtime half of the DCC shadow
@@ -689,9 +776,9 @@ of `ShadowProjection.model`; the contract is `mayatk/docs/shadow_rig_morphing.md
 **`articulated_rig`** (the runtime half of the DCC articulated rigs: reads the `extras.articulation_web`
 manifest `MeshConvert.apply_glb_articulation` writes, builds each rig's `ArticulationModel` -- a
 port of pythontk's, pinned by its golden cases, `Conformance.cases("articulation")` -- registers every grabbed part with
-`viewer.grab`, and shows each rig's section of the Rig window; see *Grabbing* below and
+`viewer.grab`, and shows each rig's section of the Rig window, Rig ▸ Pose rigs; see *Grabbing* below and
 `mayatk/docs/articulated_rig.md`), and
-**`snapshot`** (**Export image…** in the Export window: the current view saved as a PNG — see
+**`snapshot`** (**Export ▸ Image…**: the current view saved as a PNG — see
 *Exporting a still* below). `turntable`, `inspect` and `snapshot` are checkboxes on the WebXR Preview option box,
 which passes an explicit list every push: the panel
 is authoritative, so a script registered on the server by other code is cleared by the next push
@@ -715,10 +802,10 @@ code standard's holon is (`m3trik/docs/CODE_STANDARD.md` section 0):
 | Part | Here |
 |:---|:---|
 | Charter | the composition root's header (`kernel/main.js`) and this document |
-| Surface (published) | the `viewer` object a script is handed (`kernel/api.js`), its events (`'load'`, `'frame'`, `'rendered'`, `'key'`), and the manifest keys of `kernel/records.js` |
+| Surface (published) | the `viewer` object a script is handed (`kernel/api.js`) -- its menus (`menu`, `window`) among it -- its events (`'load'`, `'frame'`, `'rendered'`, `'key'`), and the manifest keys of `kernel/records.js` |
 | Model | host-free modules on plain arrays, no three.js: each feature's `model.js` (`ArticulationModel`, the shadow model) and the shared vector and quaternion math (`kernel/math.js`) |
 | Adapters | three.js-bound modules: the kernel, and each feature's entry module |
-| Parts and kernel | `kernel/` is the viewer, one part per module (the stage, the model, lightmaps and the reflection probe, specs, animation, the headset's rig, surfaces, grab, start and locomotion, the session, the windows and the Environment window, the API, the load, the poll, the controls); `features/<name>` are the plug-ins -- a file, or a folder once a feature has a model of its own |
+| Parts and kernel | `kernel/` is the viewer, one part per module (the stage, the model, lightmaps and the reflection probe, specs, animation, the headset's rig, surfaces, grab, start and locomotion, the session, the menubar and the windows its items open, the Environment menu, the parts and the clip captions, the API, the load, the poll, the controls); `features/<name>` are the plug-ins -- a file, or a folder once a feature has a model of its own |
 | Seams | features activated through the manifest (`PreviewServer.SCRIPTS`, `add_script`); the kernel's events |
 | Contracts | `kernel/records.js`, generated by `m3trik/scripts/sync_scene_records.py` from `ptk.SceneRecords`: every record's key, version and web key, and the JSDoc typedefs of each declared manifest shape (`ArticulationWeb` ...) |
 | Proof | `m3trik/scripts/check_js_types.py` (`tsc --checkJs` over `jsconfig.json` at the repo root), `check_layers.py` (features over the kernel, peers of each other, by their imports), the Playwright suites, and the golden cases every model port is held to (`ptk.Conformance`) |
@@ -994,7 +1081,7 @@ keep direct lighting dynamic, or vertex-bake the low-frequency term.
   model's own axes, box-projects reflections onto the room, and plays it at
   `environment.probeIntensity` (1/pi -- the lightmaps' unit, a white card's radiance three.js reads
   as irradiance); its reflections play whole. The studio is freed while the probe lights the model.
-  The Environment window switches it off and on -- off is the same file shipped without one -- and
+  The Environment menu switches it off and on -- off is the same file shipped without one -- and
   draws where it was captured; Unity gets it too, as a box-projected Reflection Probe (unitytk's
   `LightmapMetadataApplier`, intensity 1 there: Unity's lightmaps carry no 1/pi). Measured on a production soldering table against
   Arnold's render of the same room, through the bake, its GLB and this page: a metal housing from
@@ -1034,7 +1121,7 @@ which takes the studio's place: the studio's own 6.3 MB is freed while the probe
 and the prefilter's scratch target, as large again, is freed with the generator that made it.
 Per frame it adds no draw call and no texture fetch -- it is read where the studio was -- and a few
 instructions per pixel for the model-space lookup and the box projection; Inspect's frame time with
-the Environment window's switch on against off is that cost on the device.
+the Environment menu's switch on against off is that cost on the device.
 
 ### Do we retain the original AO maps?
 
@@ -1245,10 +1332,10 @@ at all, since the picker already names it.
 
 ## Recording a clip
 
-**Export playblast…** (the Export window) writes the clip the transport is on to a movie file —
+**Export ▸ Playblast…** writes the clip the transport is on to a movie file —
 one declared shot, the whole-timeline clip, or `FULL SEQUENCE` (every shot laid back onto the
-timeline it was cut from), which records as one continuous movie exactly as it plays. Its section
-appears whenever the deliverable ships clips, because that is when the clip picker does: `playblast` is an
+timeline it was cut from), which records as one continuous movie exactly as it plays. Its item
+applies whenever the model on screen has a clip, because that is when the clip picker shows: `playblast` is an
 `AUTO_SCRIPTS` entry keyed on `animation_web`, so there is no checkbox to have forgotten on the push
 a reviewer just watched.
 
@@ -1322,7 +1409,7 @@ Details worth knowing:
   faster); with the pool **1920 and 1280 cost the same** (46.7ms and 45.1ms per frame). What a
   bigger preset still costs is file size and wire time — what a reviewer on a headset over Wi-Fi
   waits for, and what Draft is for. The saved status line states the size that was written.
-- **Pressing the button opens an export prompt** rather than recording at once. It states what is
+- **The item opens an export prompt** rather than recording at once. It states what is
   about to be written (clip, frame count, rate — the clip is the picker's to choose and the rate is
   the deliverable's, so the prompt only shows them) and offers the quality preset and the two
   burn-ins below. Cancel,
@@ -1357,9 +1444,9 @@ Details worth knowing:
 
 ## Exporting a still
 
-**Export image…** (the Export window) saves the current view — the camera where the reviewer
+**Export ▸ Image…** saves the current view — the camera where the reviewer
 left it, the pose the transport is holding — as a PNG. It is the `snapshot` viewer script, a checkbox on the panel's
-Viewer Scripts row; the HUD and the control bar are page markup over the canvas and are not in it.
+Viewer Scripts row; the HUD, the menubar and a caption are page markup over the canvas and are not in it.
 
 ```
   page     [raise pixel ratio] -> render -> drawImage onto a pad -> [restore]   (one task)

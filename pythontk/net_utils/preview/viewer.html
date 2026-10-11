@@ -187,12 +187,51 @@
   }
   .panel .toggle[hidden] { display: none; }
   .panel .toggle input { margin: 0; accent-color: #6fb3ff; cursor: pointer; }
-  /* The category windows (windows.js): one per bar button, its parts as
-     sections under one header. The SECTIONS scroll, so the header and its
-     close stay in view however long a window grows. */
+  /* The menubar (menus.js): one button per category, each opening a
+     dropdown of its items -- actions, switches, and the window items that
+     open a panel. The caret is drawn, not written: the button's text is the
+     category (and a running job's badge). */
   #categories { display: contents; }
+  button.ui.category::after { content: "\25B4"; margin-left: 7px; color: #9aa0a6; font-size: 10px; }
   button.ui.category.open { border-color: rgba(111, 179, 255, .6); }
   button.ui.category.busy { color: #7cc3ff; }
+  /* Above the panels and the VR button (z-index 999 inline), under the one
+     modal: a dropdown is the thing being pointed at while it is open. */
+  .menu {
+    position: fixed; z-index: 998; display: flex; flex-direction: column;
+    min-width: 21ch; max-width: min(42ch, calc(100vw - 24px)); overflow: auto;
+    padding: 5px; border-radius: 8px;
+    background: rgba(20, 22, 26, .96); border: 1px solid rgba(255, 255, 255, .16);
+    backdrop-filter: blur(8px); box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  }
+  .menu[hidden] { display: none; }
+  /* A row reads "[check] Label ........ KEY": the check column is kept on
+     every row, checked or not, so labels line up down the menu. */
+  .menu .item {
+    display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; align-items: center;
+    font: inherit; color: #e8eaed; text-align: left; background: none;
+    border: 0; border-radius: 5px; padding: 6px 9px; cursor: pointer;
+  }
+  .menu .item:hover:not(:disabled), .menu .item:focus-visible { background: rgba(111, 179, 255, .16); outline: none; }
+  .menu .item:disabled { color: #6b7076; cursor: default; }
+  .menu .item .check::before { content: ""; }
+  .menu .item.checked .check::before { content: "\2713"; color: #7cc3ff; }
+  .menu .item .label { overflow-wrap: anywhere; }
+  .menu .item .key { color: #9aa0a6; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .menu .separator { height: 1px; margin: 4px 6px; background: rgba(255, 255, 255, .1); }
+  /* The playing clip's description (captions.js): centred above the
+     transport, in the HUD's chrome, and never in the way of a click. */
+  #caption {
+    position: fixed; left: 50%; bottom: 104px; transform: translateX(-50%);
+    max-width: min(70ch, calc(100vw - 24px)); padding: 7px 14px; border-radius: 8px;
+    background: rgba(20, 22, 26, .82); border: 1px solid rgba(255, 255, 255, .1);
+    backdrop-filter: blur(8px); pointer-events: none; text-align: center;
+    white-space: pre-line; overflow-wrap: anywhere;
+  }
+  #caption[hidden] { display: none; }
+  /* The windows (windows.js): one per category, opened from its menu, its
+     parts as sections under one header. The SECTIONS scroll, so the header
+     and its close stay in view however long a window grows. */
   .panel.window header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .panel.window .close {
     font: inherit; font-size: 15px; line-height: 1; color: #9aa0a6; background: none;
@@ -238,10 +277,12 @@
   <span id="clipTime"></span>
 </div>
 
+<div id="caption" hidden></div>
+
 <div id="controls">
-  <button class="ui" id="frameBtn" title="Re-frame the camera on the model">Frame</button>
-  <!-- One button per category window: View, Environment, Inspect, Export,
-       Rig (kernel/windows.js). Each appears once something files under it. -->
+  <!-- The menubar: one button per category -- View, Environment, Inspect,
+       Export, Rig, then a script's own (kernel/menus.js). Each appears once
+       something filed under it applies to the model on screen. -->
   <div id="categories"></div>
   <div id="lookdev" hidden>
     <span class="ui" id="normals" hidden
@@ -255,6 +296,9 @@
     </span>
   </div>
 </div>
+
+<!-- The menubar's dropdowns, each placed against its bar button as it opens. -->
+<div id="menus"></div>
 
 <div id="dialog" hidden>
   <form id="dialogForm">

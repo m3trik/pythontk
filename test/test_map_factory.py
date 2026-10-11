@@ -1387,6 +1387,126 @@ class TestMapFactoryImageInputRegressions(unittest.TestCase):
         self.assertIsInstance(result, Image.Image)
 
 
+class TestOpenPBRSet(unittest.TestCase):
+    """An OpenPBR texture set survives the factory whole.
+
+    Before the lobe map types were registered, ``rock_Coat_Roughness`` and
+    ``rock_Sheen_Color`` classified as the BASE ``Roughness`` / ``Base_Color``
+    and grouped as sets of their own (``rock_Coat``, ``rock_Sheen``), and an
+    unclassified lobe map (``rock_Transmission``) was dropped at inventory
+    build -- so a set came out of the factory with its coat roughness posing as
+    a material roughness and its transmission gone.
+    """
+
+    LOBES = (
+        "Coat_Roughness",
+        "Coat_Normal",
+        "Sheen_Color",
+        "Transmission",
+        "Subsurface_Color",
+        "Specular_Level",
+        "Thin_Film_Thickness",
+    )
+
+    def setUp(self):
+        self.temp = ptk.TempArtifacts("test_map_factory_openpbr", policy="scoped")
+        self.dir = self.temp.dir_path()
+        self.paths = []
+        for suffix, mode, value in (
+            ("BaseColor", "RGB", (128, 128, 128)),
+            ("Metallic", "L", 0),
+            ("Roughness", "L", 200),
+            ("Normal_OpenGL", "RGB", (128, 128, 255)),
+        ) + tuple(
+            (lobe, "RGB" if "Color" in lobe or "Normal" in lobe else "L", 40)
+            for lobe in self.LOBES
+        ):
+            if mode == "RGB" and not isinstance(value, tuple):
+                value = (value,) * 3
+            path = os.path.join(self.dir, f"rock_{suffix}.png")
+            ImgUtils.save_image(ImgUtils.create_image(mode, (16, 16), value), path)
+            self.paths.append(path)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_one_set_with_every_lobe_passed_through(self):
+        self.assertEqual(list(MapFactory.group_textures_by_set(self.paths)), ["rock"])
+
+        out = os.path.join(self.dir, "out")
+        results = MapFactory.prepare_maps(
+            self.paths, output_dir=out, config="PBR Metallic/Roughness"
+        )
+        types = {MapFactory.resolve_map_type(p): p for p in results}
+        for expected in (
+            "Clearcoat_Roughness",
+            "Clearcoat_Normal",
+            "Sheen_Color",
+            "Transmission",
+            "Subsurface_Color",
+            "Specular_Level",
+            "Thin_Film_Thickness",
+        ):
+            self.assertIn(expected, types, f"{expected} lost: {sorted(types)}")
+        # The material's own roughness is the base map, not the coat's.
+        roughness = ImgUtils.ensure_image(types["Roughness"])
+        self.assertEqual(roughness.convert("L").getpixel((0, 0)), 200)
+
+
+class TestLobeNamedSet(unittest.TestCase):
+    """A set named for a lobe (``Hero_Coat``) survives the factory as base maps.
+
+    Read file by file, ``Hero_Coat_Roughness`` is a coat roughness of set
+    ``Hero``; read against ``Hero_Coat_BaseColor`` it is the garment's own
+    roughness. The factory groups, inventories and names a set by the batch
+    reading (``MapFactory.classify_textures``), so the garment's roughness is
+    processed as a Roughness and every output keeps the set's name.
+    """
+
+    def setUp(self):
+        self.temp = ptk.TempArtifacts("test_map_factory_lobe_named", policy="scoped")
+        self.dir = self.temp.dir_path()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def make(self, name, mode, value):
+        path = os.path.join(self.dir, name)
+        ImgUtils.save_image(ImgUtils.create_image(mode, (16, 16), value), path)
+        return path
+
+    def test_a_garment_set_is_processed_as_base_maps(self):
+        paths = [
+            self.make("Hero_Coat_BaseColor.png", "RGB", (128, 128, 128)),
+            self.make("Hero_Coat_Roughness.png", "L", 200),
+            self.make("Hero_Coat_Normal.png", "RGB", (128, 128, 255)),
+        ]
+        out = os.path.join(self.dir, "out")
+        os.makedirs(out)
+        results = MapFactory.prepare_maps(
+            paths, output_dir=out, config="PBR Metallic/Roughness"
+        )
+
+        self.assertIsInstance(results, list, f"one set expected: {results}")
+        readings = MapFactory.classify_textures(results)
+        self.assertEqual(
+            {base for _type, base in readings.values()}, {"Hero_Coat"}, results
+        )
+        types = {map_type: path for path, (map_type, _base) in readings.items()}
+        self.assertFalse(
+            [t for t in types if t and t.startswith("Clearcoat")],
+            f"a garment map was processed as a coat map: {sorted(types)}",
+        )
+        roughness = ImgUtils.ensure_image(types["Roughness"])
+        self.assertEqual(roughness.convert("L").getpixel((0, 0)), 200)
+
+    def test_a_pack_is_named_for_the_set_its_sources_share(self):
+        roughness = self.make("Hero_Coat_Roughness.png", "L", 200)
+        metallic = self.make("Hero_Coat_Metallic.png", "L", 0)
+        packed = MapFactory.pack_orm_texture(None, roughness, metallic)
+        self.assertEqual(os.path.basename(packed), "Hero_Coat_ORM.png")
+
+
 class TestRegisterHandlerIdempotent(unittest.TestCase):
     """register_handler must replace (not duplicate) a handler re-registered
     after a module reload, where the class object identity changes but the

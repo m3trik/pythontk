@@ -307,9 +307,11 @@ export function resetLightmaps() {
 }
 
 // Bind the deliverable's lightmaps (see bindLightmaps) and keep how many
-// materials took one -- the count applyLighting turns on.
-export function applyLightmaps(gltf, issues = []) {
-  lightmapped = bindLightmaps(gltf, issues);
+// materials took one -- the count applyLighting turns on. *gltfs* is one
+// file, or the parts of one scene (parts.js): each binds the bake its own
+// manifest names, and the count is the set's.
+export function applyLightmaps(gltfs, issues = []) {
+  lightmapped = [].concat(gltfs).reduce((sum, gltf) => sum + bindLightmaps(gltf, issues), 0);
   return lightmapped;
 }
 

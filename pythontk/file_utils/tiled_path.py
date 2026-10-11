@@ -10,7 +10,9 @@ that touches such a path asks the same four questions of it: does it name a
 set (:meth:`TiledPath.has_token`), is that set frames or tiles
 (:meth:`TiledPath.is_frame_sequence`), which one real file stands for it
 (:meth:`TiledPath.representative`), and which files are in it
-(:meth:`TiledPath.tiles`).
+(:meth:`TiledPath.tiles`). Renaming one is :meth:`TiledPath.rename` (the files)
+plus :meth:`TiledPath.with_name` (each path naming them), and
+:meth:`TiledPath.stem` is what a host names something after it with.
 
 One table answers all four (:attr:`TiledPath.TOKENS`).  Before it existed the
 answer depended on which copy asked: four vocabularies had grown across the
@@ -317,6 +319,51 @@ class TiledPath:
                     pass  # the original error is the one worth raising
             raise
         return pairs
+
+    @staticmethod
+    def with_name(stored: Optional[str], new_name: str) -> str:
+        """*stored* naming *new_name* instead, its folder spelled as it was.
+
+        The reference-side half of :meth:`rename`, which renames the files and
+        leaves whatever names them to the caller: a reader is repointed by
+        changing only the file name of the path it stores -- tokens and all --
+        so a relative path stays relative (a DCC's own ``//`` prefix included)
+        and either separator stays as written, and the new path resolves the
+        renamed file exactly as the old one resolved the old. A pure string op.
+
+        Parameters:
+            stored: A path as a reader stores it.
+            new_name: The new file name -- no folder.
+
+        Returns:
+            The stored spelling with *new_name* for its last component.
+        """
+        stored = stored or ""
+        head = re.split(r"[\\/]", stored)[-1]
+        return stored[: len(stored) - len(head)] + new_name
+
+    @classmethod
+    def stem(cls, file_name: Optional[str]) -> str:
+        """*file_name* with no extension and no tile / frame token, nor the
+        separator before one: ``rock_Base_Color.<UDIM>.png`` -> ``rock_Base_Color``.
+
+        What a host names something AFTER its texture with -- a file node, an
+        image datablock -- once, for every tile. Every placeholder goes,
+        wherever it sits (``rock_<u>_<v>.png`` -> ``rock``); a concrete tile
+        number is a file name like any other and stays (``rock.1001.png`` ->
+        ``rock.1001``). A path's folder is dropped first and separators left at
+        either end are trimmed. A pure string op; a host's own naming rules
+        (Maya's legal characters) are the host's to add.
+
+        Parameters:
+            file_name: A file name or path.
+        """
+        name = re.split(r"[\\/]", file_name or "")[-1]
+        stem = os.path.splitext(name)[0]
+        stem = re.sub(
+            rf"[._]?(?:{cls.TOKEN_RE.pattern})", "", stem, flags=re.IGNORECASE
+        )
+        return stem.strip("._ ")
 
     @classmethod
     def representative(cls, path: Optional[str]) -> Optional[str]:

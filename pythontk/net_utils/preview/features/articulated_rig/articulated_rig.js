@@ -183,9 +183,13 @@ function formatValue(rig, slot, value) {
 }
 
 function buildPanel(viewer, session, rig) {
-  // A section of the Rig window (`viewer.window`), one per rig, opened with
-  // the model on the desktop: the sliders are how a rig is posed by hand.
-  const rigWindow = viewer.window('Rig', { title: 'Pose the articulated rigs by hand' });
+  // A section of the Rig window (`viewer.window`, Rig ▸ Pose rigs), one per
+  // rig, opened with the model on the desktop: the sliders are how a rig is
+  // posed by hand.
+  const rigWindow = viewer.window('Rig', {
+    title: "Each rig's joints as sliders, to pose it by hand",
+    label: 'Pose rigs',
+  });
   const panel = rigWindow.section(`Articulated rig: ${rig.record.name}`);
   const reach = rig.model.joints.reduce((sum, joint) => sum + norm(joint.t), 0) || 1;
   rig.sliders = rig.model.channels.map((_c, slot) => {

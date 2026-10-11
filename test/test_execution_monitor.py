@@ -20,7 +20,7 @@ _SIDECAR = os.path.join(
     "_sidecar.py",
 )
 _HAS_DISPLAY = sys.platform == "win32" or bool(os.environ.get("DISPLAY"))
-_NON_ASCII = "Jos\u00e9 \u0416\u0443\u043a"
+_NON_ASCII = "Zo\u00eb \u2605"  # a letter cp1252 holds, and one it cannot
 
 
 def _sidecar_argv(call):

@@ -33,6 +33,11 @@ runner never loads a conftest)::
     import pythontk as ptk
     ptk.TestSandbox.activate()
 
+A host that goes on after the run -- the user's own Maya, where mayatk's
+in-session harness runs a suite -- takes the guards for the run only:
+``with ptk.TestSandbox.activated():`` puts back everything it put up, an
+exception included.
+
 A test that legitimately exercises a browser launch patches ``webbrowser.open``
 itself: ``unittest.mock.patch`` layers over the guard and restores it after. A
 test of the trash itself runs inside :meth:`TestSandbox.real_trash`.
@@ -44,8 +49,8 @@ stores -- through the shared user-config root.
 
 import os
 import tempfile
-from contextlib import contextmanager
-from typing import Callable, Dict, Iterator, List
+from contextlib import ExitStack, contextmanager
+from typing import Callable, Dict, Iterator, List, Optional, Tuple
 
 
 class _TestSandboxInternal:
@@ -69,13 +74,18 @@ class _TestSandboxInternal:
     #: Names the root for a child, which nests its own inside it rather than
     #: re-deriving it from :attr:`_TEMP_ENV` (see :meth:`TestSandbox.temp`).
     _ROOT_ENV = "PYTHONTK_TEST_TEMP_ROOT"
+    #: The root's ``TempArtifacts`` prefix; a session store, so its tag names its owner.
+    _ROOT_PREFIX = "ptk_test_sandbox"
 
     _state: Dict[str, object] = {
         "guard": None,  # the one function standing in for every launcher
+        "launchers": None,  # the (owner, name, real) entries the guard stands in for
         "temp_dir": None,
         "temp_store": None,  # the TempArtifacts owning temp_dir; held so its exit cleanup fires
         "trash": None,  # the real FileUtils.move_to_trash, while the guard stands in
         "can_trash": None,  # ...and the real FileUtils.can_trash
+        "trash_owners": None,  # (FileUtils class, its move, its can) per class guarded
+        "host_env": {},  # {variable: its value before the first redirect, None = unset}
     }
 
     @classmethod
@@ -118,6 +128,97 @@ class _TestSandboxInternal:
 
         return no_trash
 
+    @classmethod
+    def _lift_browser(cls) -> None:
+        """Put back every launcher :meth:`TestSandbox.browser` stands in for."""
+        state = cls._state
+        for owner, name, real in state["launchers"] or ():
+            if real is not None:
+                setattr(owner, name, real)
+            elif name in vars(owner):  # inherited before the guard took the name
+                delattr(owner, name)
+        state["guard"] = state["launchers"] = None
+
+    @classmethod
+    def _guard_trash(cls, owner) -> None:
+        """Stand the trash guard in on *owner*, a ``FileUtils`` class, keeping
+        its own calls to put back (:meth:`_lift_trash`)."""
+        cls._state["trash_owners"].append(
+            (owner, owner.__dict__["move_to_trash"], owner.__dict__["can_trash"])
+        )
+        owner.move_to_trash = staticmethod(cls._make_trash_guard())
+        # A prompt asks first: told "no trash" too, it says what will happen.
+        owner.can_trash = staticmethod(lambda path: False)
+
+    @classmethod
+    def _lift_trash(cls) -> None:
+        """Put back each guarded class's own :meth:`FileUtils.move_to_trash`
+        and ``can_trash`` -- a reload inside the block guards a second one."""
+        state = cls._state
+        if state["trash"] is None:
+            return
+        for owner, move, can in state["trash_owners"] or ():
+            owner.move_to_trash = move
+            owner.can_trash = can
+        state["trash"] = state["can_trash"] = state["trash_owners"] = None
+
+    @classmethod
+    def _redirect_env(cls, name: str, value: Optional[str]) -> None:
+        """Set *name* to *value* (unset for ``None``), recording what it was
+        before the first redirect -- what :meth:`TestSandbox.host_environ`
+        hands back. Every guard that changes a variable goes through here
+        (uitk's presets root too), or a detached app would inherit that one.
+
+        The record is replaced, never edited in place: a test that snapshots
+        :attr:`_state` with ``mock.patch.dict`` (a shallow copy) gets the
+        record back with everything else.
+        """
+        ledger = cls._state["host_env"]
+        if name not in ledger:
+            cls._state["host_env"] = {**ledger, name: os.environ.get(name)}
+        cls._set_env(name, value)
+
+    @classmethod
+    def _restore_env(cls, name: str, value: Optional[str]) -> None:
+        """Put *name* back to *value* (unset for ``None``). Forgotten once
+        that is the host's own value; a nested guard restoring to an outer
+        guard's value leaves it recorded."""
+        ledger = cls._state["host_env"]
+        if name in ledger and ledger[name] == value:
+            cls._state["host_env"] = {k: v for k, v in ledger.items() if k != name}
+        cls._set_env(name, value)
+
+    @staticmethod
+    def _set_env(name: str, value: Optional[str]) -> None:
+        """``os.environ[name] = value``, where ``None`` unsets it."""
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+    @classmethod
+    def _temp_snapshot(cls) -> Tuple[Optional[str], Dict[str, Optional[str]]]:
+        """What :meth:`TestSandbox.temp` changes, read before it does."""
+        names = cls._TEMP_ENV + (cls._ROOT_ENV,)
+        return tempfile.tempdir, {name: os.environ.get(name) for name in names}
+
+    @classmethod
+    def _lift_temp(
+        cls, snapshot: Tuple[Optional[str], Dict[str, Optional[str]]]
+    ) -> None:
+        """Point the temp dir and its variables back where *snapshot* found
+        them, then remove the root (best-effort: what is still held goes at
+        exit, as before)."""
+        state = cls._state
+        tempdir, env = snapshot
+        tempfile.tempdir = tempdir
+        for name, value in env.items():
+            cls._restore_env(name, value)
+        store = state["temp_store"]
+        state["temp_dir"] = state["temp_store"] = None
+        if store is not None:
+            store.cleanup(force=True)
+
 
 class TestSandbox(_TestSandboxInternal):
     """Keep this process's side effects off the developer's machine. Idempotent."""
@@ -144,12 +245,17 @@ class TestSandbox(_TestSandboxInternal):
         import webbrowser
 
         guard = cls._make_guard()
-        for name in cls._LAUNCHERS:
-            setattr(webbrowser, name, guard)
+        # The real ones, kept so :meth:`activated` can put them back.
+        real = [
+            (webbrowser, name, getattr(webbrowser, name)) for name in cls._LAUNCHERS
+        ]
         for name in cls._LAUNCHER_TYPES:
             browser_type = getattr(webbrowser, name, None)
             if browser_type is not None:
-                browser_type.open = guard
+                real.append((browser_type, "open", vars(browser_type).get("open")))
+        for owner, name, _ in real:
+            setattr(owner, name, guard)
+        state["launchers"] = real
         state["guard"] = guard
 
     @classmethod
@@ -160,12 +266,16 @@ class TestSandbox(_TestSandboxInternal):
         hand-off payload and scratch dir that defaults to it -- resolves inside
         the root for the rest of the process, and ``TMPDIR``/``TEMP``/``TMP``
         point there so a child process (mayapy, Blender, FBX2glTF) inherits the
-        same. The root goes at interpreter exit, or at
-        :meth:`ProcessExit.hard_exit`, which skips it; a process that is killed
-        instead leaves it for the age-gated sweep the next activation runs, so
-        the worst case is one stale directory rather than thousands of loose
-        files. Prefix sweeps inside a run still work: they scan whatever
-        ``gettempdir()`` answers.
+        same -- a waited one: a detached app outlives the root, so it is
+        launched with the host's (:meth:`host_environ`). The root goes at
+        interpreter exit, or at
+        :meth:`ProcessExit.hard_exit`, which skips it. A root that outlives its
+        owner -- the process was killed, or a file in it was still held when
+        it exited -- goes at the next activation, which reclaims every root
+        whose owner has exited (a session store's tag names its owner, see
+        :class:`TempArtifacts`), so the worst case is one stale directory
+        until the next run. Prefix sweeps inside a run still work: they scan
+        whatever ``gettempdir()`` answers.
 
         Those variables are not enough for a Python child: a fresh
         interpreter derives its temp dir from them by probing each with a
@@ -188,11 +298,11 @@ class TestSandbox(_TestSandboxInternal):
         # the sweep of prior killed runs looks where they landed. In a child:
         # inside the parent's root, by name.
         parent = os.environ.get(cls._ROOT_ENV) or None
-        store = TempArtifacts("ptk_test_sandbox", policy="session", dir=parent)
+        store = TempArtifacts(cls._ROOT_PREFIX, policy="session", dir=parent)
         root = store.dir_path()
         tempfile.tempdir = root
         for name in cls._TEMP_ENV + (cls._ROOT_ENV,):
-            os.environ[name] = root
+            cls._redirect_env(name, root)
         state["temp_store"] = store
         state["temp_dir"] = root
         return root
@@ -214,9 +324,38 @@ class TestSandbox(_TestSandboxInternal):
 
         state["trash"] = FileUtils.__dict__["move_to_trash"]
         state["can_trash"] = FileUtils.__dict__["can_trash"]
-        FileUtils.move_to_trash = staticmethod(cls._make_trash_guard())
-        # A prompt asks first: told "no trash" too, it says what will happen.
-        FileUtils.can_trash = staticmethod(lambda path: False)
+        state["trash_owners"] = []
+        cls._guard_trash(FileUtils)
+
+    @classmethod
+    def rearm(cls) -> None:
+        """Carry the standing guards over a reload of pythontk.
+
+        Reloading re-executes ``FileUtils`` and this module: the new
+        ``FileUtils`` trashes for real, and the new ``TestSandbox`` reads as
+        off. mayatk's in-session harness reloads pythontk inside its sandbox
+        (the user's long-lived Maya may hold stale modules), so a lightmap
+        re-bake there sent scratch maps to the user's Recycle Bin. Called after
+        such a reload, this shares the standing state with the reloaded
+        sandbox and stands the trash guard in on the reloaded ``FileUtils``,
+        whose own calls the way out puts back. A no-op where nothing was
+        reloaded and no guard stands.
+        """
+        import sys
+
+        state = cls._state
+        module = sys.modules.get(__name__)
+        reloaded = getattr(module, "_TestSandboxInternal", None)
+        if reloaded is not None and reloaded._state is not state:
+            reloaded._state = state
+            module.TestSandbox.launches = cls.launches
+            module.TestSandbox.trashed = cls.trashed
+        if state["trash"] is None:
+            return
+        from pythontk.file_utils._file_utils import FileUtils
+
+        if not any(owner is FileUtils for owner, _, _ in state["trash_owners"]):
+            cls._guard_trash(FileUtils)
 
     @classmethod
     @contextmanager
@@ -245,6 +384,89 @@ class TestSandbox(_TestSandboxInternal):
         cls.browser()
         cls.trash()
         return cls.temp()
+
+    @classmethod
+    @contextmanager
+    def activated(cls) -> Iterator[str]:
+        """Every guard for the ``with`` block only; yields the temp root.
+
+        :meth:`activate` suits a process that is all test run -- a runner, or
+        a DCC it launched -- since nothing undoes it. A host that goes on after
+        the run needs the guards gone again: mayatk's in-session harness runs a
+        suite inside the user's own Maya, and under :meth:`activate` that
+        session went on refusing browser launches, keeping nothing from the
+        trash and writing temp files into a root deleted when Maya exits.
+
+        On the way out, an exception included, the launchers, the trash and the
+        temp dir (``TMPDIR``/``TEMP``/``TMP`` with it) are put back as the block
+        found them, and the root is removed. A guard already standing on entry
+        (an :meth:`activate` before the block) stays standing: the block takes
+        down only what it put up.
+        """
+        state = cls._state
+        with ExitStack() as lift:
+            if state["guard"] is None:
+                lift.callback(cls._lift_browser)
+                cls.browser()
+            if state["trash"] is None:
+                lift.callback(cls._lift_trash)
+                cls.trash()
+            if state["temp_dir"] is None:
+                lift.callback(cls._lift_temp, cls._temp_snapshot())
+                cls.temp()
+            yield state["temp_dir"]
+
+    @classmethod
+    def host_environ(
+        cls, env: Optional[Dict[str, str]] = None
+    ) -> Optional[Dict[str, str]]:
+        """*env* (default: the live process environment) as the host had it,
+        before any guard redirected a variable in it -- or ``None`` while
+        nothing is redirected.
+
+        For a child that outlives the run: the root goes when its owner does,
+        at exit or at the next activation's sweep of a root whose owner has
+        exited, so a child still writing into it loses its files.
+        :meth:`AppLauncher.launch <pythontk.AppLauncher.launch>` hands this to
+        every detached launch -- measured: a GUI Maya the mayatk runner
+        launched kept the root as its TEMP, the user went on working in it,
+        and the WebXR preview's FBX was swept between export and conversion.
+
+        Only a variable that still holds the sandbox's value goes back: one
+        the caller set itself in *env* is its own choice.
+
+        Parameters:
+            env: The child's environment; ``None`` reads this process's live
+                block (:meth:`AppLauncher.process_environ
+                <pythontk.AppLauncher.process_environ>`) -- what an inheriting
+                child gets, a DCC host's own variables included, which the
+                ``os.environ`` snapshot misses.
+
+        Returns:
+            A new dict, or ``None`` when no guard has a variable redirected
+            (the child can inherit as is).
+        """
+        ledger = cls._state["host_env"]
+        if not ledger:
+            return None
+        if env is None:
+            from pythontk.core_utils.app_launcher import AppLauncher
+
+            env = AppLauncher.process_environ()
+        out = dict(env)
+        # Windows names are case-insensitive, and the live block keeps its
+        # own spelling: match the key as it is there, or a second spelling
+        # would ride beside the redirected one.
+        keys = {k.upper(): k for k in out} if os.name == "nt" else {}
+        for name, value in ledger.items():
+            key = keys.get(name.upper(), name)
+            if out.get(key) != os.environ.get(name):
+                continue
+            if value is None:
+                out.pop(key, None)
+            else:
+                out[key] = value
+        return out
 
     @classmethod
     def is_active(cls) -> bool:
@@ -299,15 +521,12 @@ class TestSandbox(_TestSandboxInternal):
             var: os.environ.get(var) for var in (CONFIG_ROOT_ENV_VAR, CONFIG_ENV_VAR)
         }
         with TempArtifacts("ptk_user_config", policy="scoped") as store:
-            os.environ[CONFIG_ROOT_ENV_VAR] = store.dir_path()
-            os.environ.pop(CONFIG_ENV_VAR, None)
+            cls._redirect_env(CONFIG_ROOT_ENV_VAR, store.dir_path())
+            cls._redirect_env(CONFIG_ENV_VAR, None)
             NamingConvention.reload()
             try:
                 yield os.environ[CONFIG_ROOT_ENV_VAR]
             finally:
                 for var, value in saved.items():
-                    if value is None:
-                        os.environ.pop(var, None)
-                    else:
-                        os.environ[var] = value
+                    cls._restore_env(var, value)
                 NamingConvention.reload()

@@ -154,15 +154,15 @@ class _SidecarMixin:
     #: as untrusted content), and it names the asset through the block's own
     #: ``asset`` key rather than saying "this file".
     #:
-    #: The load-bearing sentence is the one about lightmaps NOT being embedded.
+    #: The load-bearing sentence is the one about the files the records name.
     #: An FBX embeds what its MATERIALS reference, and a lighting-only bake
     #: deliberately does not wire its map into a material -- that is the point,
-    #: the PBR material survives the bake -- so the maps the manifest names are
-    #: the one part of the deliverable that genuinely does not travel with it.
-    #: Measured on a delivered room: 23.0 MB of the 23.5 MB file is embedded
-    #: material textures and not one byte of it is the lightmap. Saying so in
-    #: the file is what stops that being a surprise the recipient has to be
-    #: told about out of band.
+    #: the PBR material survives the bake -- so until 2026-10-05 the maps the
+    #: manifest names were the one part of the deliverable that did not travel
+    #: with it (measured on a delivered room: 23.0 MB of the 23.5 MB file was
+    #: material textures and not one byte the lightmap). The exporters now
+    #: embed them as media of their own (``FbxMedia.embed_dependencies``), and
+    #: the sentence says the name joins to that embedded copy.
     #:
     #: Unlike the glTF text this refers to "the FBX carrying this block" rather
     #: than to an ``asset`` key. The block is stamped by an export PREPARER,
@@ -506,8 +506,8 @@ class _SidecarMixin:
         into ``nodes[N].extras.fromFBX.userProperties`` (probe-measured), so the
         block :meth:`build_fbx_handoff` stamps for the FBX arrives inside the
         GLB as well -- where it is not provenance but a WRONG self-description:
-        it states that the lightmaps the manifest names are not embedded, which
-        is true of the FBX and false of a GLB that embeds them, and its
+        it states that no material references the lightmaps the manifest names,
+        which is true of the FBX and false of a GLB that binds them, and its
         ``reads`` map names ``data_export.<channel>`` paths that do not exist in
         a glTF. A deliverable carrying two accounts of itself, one of them
         wrong, is worse than one carrying none -- and the GLB has its own, in
@@ -1421,13 +1421,22 @@ class _SidecarMixin:
             logger.warning("Unparsable %s on node %r: %s", key, node.get("name"), error)
             return None
 
-    @staticmethod
-    def _data_export_carrier(gltf: dict, key: str) -> Optional[Tuple[dict, dict]]:
+    @classmethod
+    def _data_export_carrier(cls, gltf: dict, key: str) -> Optional[Tuple[dict, dict]]:
         """``(node, holder)`` for the *key* channel :meth:`data_export_channel`
         reads -- the carrier node, and the dict in it that holds the channel
         -- or ``None`` when no node carries one. The one place the reader's
         precedence lives, so a writer can put a channel back where it was read.
+
+        The scene's own carrier (``data_export``, no namespace) wins over a
+        referenced module's (``NS:data_export``), which an assembly export
+        carries beside it in whatever order the writer put them; a module's
+        is read only where the scene's carries no such channel, the first in
+        file order. unitytk's importers apply the same rule
+        (``CarrierImport``), so the two deliverables of one export read the
+        same record.
         """
+        first = None
         for node in gltf.get("nodes", []) or []:
             extras = node.get("extras") or {}
             # The same TWO on-disk shapes :meth:`_reconcile_node_markers` walks,
@@ -1444,8 +1453,12 @@ class _SidecarMixin:
                 extras,
             ):
                 if props.get(key) is not None:
-                    return node, props
-        return None
+                    name = str(node.get("name") or "").split("|")[-1]
+                    if name == cls.DATA_EXPORT_NODE:
+                        return node, props
+                    first = first or (node, props)
+                    break
+        return first
 
     @staticmethod
     def _write_data_export(node: dict, key: str, value: Any) -> None:

@@ -13,13 +13,18 @@ two are one chain, and its settings are the Scene Exporter's own GLB rows
 recipe -- resolved by the methods the exporters call
 (:meth:`pythontk.ExportRun.glb_texture_params`, :attr:`pythontk.ExportRun.rendering`).
 What the deliverer decides for itself stops at where the scratch files live.
+
+A payload may carry the PARTS of one scene (:attr:`PreviewDeliverer.PARTS_KEY`)
+-- several files the page shows together, at their authored places: each
+runs the same build, and the set is published as one version
+(:meth:`PreviewServer.publish_parts`).
 """
 
 from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 from pythontk.core_utils.handoff.app_handoff import Deliverer, HandoffRequest, Payload
 from pythontk.core_utils.deprecation import Deprecation
@@ -124,10 +129,11 @@ class PreviewDeliverer(Deliverer):
 
     def publish(
         self,
-        glb: Union[str, Path],
+        glb: Union[str, Path, Sequence[Union[str, Path]]],
         move: bool = False,
         open_browser: Union[bool, str, None] = None,
         scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None,
+        labels: Optional[Sequence[Optional[str]]] = None,
     ) -> Dict[str, Any]:
         """Put *glb* on the server and report what the viewer now sees.
 
@@ -140,7 +146,9 @@ class PreviewDeliverer(Deliverer):
         unticked script box turns a script off.
 
         Parameters:
-            glb: The file to serve.
+            glb: The file to serve -- or the parts of one scene, primary
+                first, published together as one version
+                (:meth:`PreviewServer.publish_parts`).
             move: Move rather than copy. True only for an artifact the caller
                 minted -- a file the *user* chose is never moved out from
                 under them.
@@ -153,9 +161,13 @@ class PreviewDeliverer(Deliverer):
                 the deliverer's own default -- so a script registered directly
                 on a long-lived server survives a publish that says nothing;
                 ``[]`` clears them.
+            labels: The name the page offers each file under, in order
+                (Export ▸ GLB); ``None`` -- or a ``None`` entry -- keeps the
+                served name for one file, and the file's own for parts.
 
         Returns:
-            ``{"url", "version", "asset", "opened_browser"}``.
+            ``{"url", "version", "asset", "parts", "opened_browser"}`` --
+            ``parts`` the manifest's ``[{"url", "name"}]``.
         """
         server = self.ensure_server()
         if scripts is None:
@@ -167,7 +179,15 @@ class PreviewDeliverer(Deliverer):
         server.user_pos = self.user_pos
         server.locomotion = self.locomotion
 
-        version = server.publish(glb, move=move)
+        if isinstance(glb, (str, Path)):
+            label = labels[0] if labels else None
+            version = server.publish(glb, move=move, label=label)
+        else:
+            names = [
+                (label if label else Path(path).name)
+                for path, label in zip(glb, labels or [None] * len(glb))
+            ]
+            version = server.publish_parts(glb, labels=names, move=move)
 
         # Asked after publishing, so the freshest possible poll counts.
         if open_browser is None:
@@ -181,10 +201,12 @@ class PreviewDeliverer(Deliverer):
         # where none does.
         opened = should_open and server.open_in_browser()
 
+        manifest = server.manifest()
         return {
             "url": server.url,
             "version": version,
-            "asset": server.manifest()["asset"],
+            "asset": manifest["asset"],
+            "parts": manifest["parts"],
             "opened_browser": opened,
         }
 
@@ -199,6 +221,12 @@ class PreviewDeliverer(Deliverer):
     #: (``time.perf_counter``), so :meth:`deliver` can time the host's half
     #: -- everything before the build, the export chiefly -- as ``"export"``.
     STARTED_KEY = "_push_started"
+    #: Where a producer lists the PARTS of one scene on its
+    #: :class:`Payload`'s ``extras``: ``[(path, label), ...]``, the primary
+    #: first -- each built as the primary is and published together
+    #: (:meth:`publish`), *label* the name the page offers it under. Absent,
+    #: the payload is its ``primary`` alone.
+    PARTS_KEY = "parts"
 
     @staticmethod
     def _glb_rows(value: Any) -> Dict[str, Any]:
@@ -291,10 +319,6 @@ class PreviewDeliverer(Deliverer):
     def deliver(
         self, bridge, payload: Payload, request: HandoffRequest
     ) -> Optional[Dict[str, Any]]:
-        # Imported here rather than at module scope: the pipeline pulls in the
-        # managed-binary installer, which no other PreviewServer user needs.
-        from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
-
         if not payload.primary:
             bridge.logger.error("Preview delivery got no exported file to convert.")
             return None
@@ -314,11 +338,6 @@ class PreviewDeliverer(Deliverer):
                 return None
             texture_params = self._texture_params(run, bridge.logger)
 
-        # Allocate the GLB through the bridge's own payload artifacts rather
-        # than deriving a path from the FBX: that keeps it inside the prefix
-        # namespace every other bridge artifact joins, so the age-gated sweep
-        # reclaims it after a hard DCC crash -- the case no `finally` survives.
-        glb = bridge._make_payload_path(extension=".glb")
         extras = payload.extras or {}
         # The host's live texture folders (:meth:`PreviewBridge.lightmap_search_dirs`),
         # read through ``getattr`` because a deliverer is pluggable: mounted on
@@ -327,58 +346,28 @@ class PreviewDeliverer(Deliverer):
         hook = getattr(bridge, "lightmap_search_dirs", None)
         lightmap_dirs = hook() if callable(hook) else ()
 
-        try:
-            built = GlbPipeline.build(
-                payload.primary,
-                dst=glb,
-                # Applied INSIDE the conversion, ahead of its fade pass: a
-                # material clone copies its source as it stands, so a repair
-                # made afterwards would land only on the original and every
-                # fade clone would keep the converter's packing (measured).
-                sidecar=extras.get("scene_sidecar"),
-                # Request-scoped: a preview's overlay describes THIS push (an
-                # effect at the panel's current settings), never the next one.
-                data_export=request.get("data_export"),
-                lightmap_dirs=lightmap_dirs,
-                # The Scene Exporter's texture rows, resolved by its own method:
-                # the preview once named a container and inherited the web
-                # ceiling, so every push was cut to 2048 px whatever the export
-                # was set to. Untouched, the rows resize nothing (OFF).
-                texture_params=texture_params,
-                downsize=bool(request.params.get("EMBED_TEXTURES", True)),
-                # Scratch through the bridge's own payload store (swept after a
-                # crash), and the superseded payload released as soon as the
-                # downsized copy exists -- peak footprint one FBX, not two.
-                # `_release_payload` refuses what the bridge did not mint, so a
-                # producer's durable file is never deleted.
-                scratch_path=lambda extension: bridge._make_payload_path(
-                    extension=extension
-                ),
-                release_source=bridge._release_payload,
-                # Request-scoped like the two knobs above, and for the extra
-                # reason that a callback is a live UI object: parked on the
-                # deliverer -- a CLASS attribute, shared by every instance of
-                # the bridge -- it would outlive the panel that supplied it and
-                # keep being called into a closed window.
-                progress=request.get("progress"),
-                logger=bridge.logger,
+        # The parts of one scene, or the primary alone. What DESCRIBES the
+        # scene -- its sidecar, a preview overlay on its in-band channels --
+        # rides the primary only: it was produced for that file, and its node
+        # references are that file's.
+        parts = list(extras.get(self.PARTS_KEY) or [(payload.primary, None)])
+        builds = []
+        for index, (source, label) in enumerate(parts):
+            built = self._build(
+                bridge,
+                request,
+                source,
+                texture_params,
+                lightmap_dirs,
+                sidecar=extras.get("scene_sidecar") if index == 0 else None,
+                data_export=request.get("data_export") if index == 0 else None,
+                label=label if len(parts) > 1 else None,
             )
-        except (OSError, RuntimeError, ValueError) as error:
-            # Nothing consumed the payload, so it stays on disk as evidence.
-            bridge.logger.error("Preview conversion to GLB failed: %s", error)
-            return None
-
-        # The FBX has been fully consumed -- the GLB exists and nothing reads
-        # the payload again. Released HERE rather than left to the store's
-        # age-gated sweep because this bridge is the one shape that store
-        # cannot serve: its ``detached`` policy is right for a hand-off whose
-        # target app reads the file AFTER we return (no completion signal, so
-        # nothing may delete), and wrong for a blocking round trip that
-        # converts and publishes inside one call. Measured on a production
-        # assembly: 324 MB per push, 3.1 GB of them waiting out ``max_age_days``
-        # in the system temp dir.
-        if bridge._release_payload(built["src"]):
-            bridge.logger.debug("Released the consumed FBX payload: %s", built["src"])
+            if built is None:
+                for done in builds:  # scratch the published set will never use
+                    bridge._release_payload(done["glb"])
+                return None
+            builds.append(built)
 
         sidecar = extras.get("scene_sidecar")
         if not (sidecar or {}).get("sections"):
@@ -396,10 +385,11 @@ class PreviewDeliverer(Deliverer):
 
         publishing = time.perf_counter()
         published = self.publish(
-            glb,
+            builds[0]["glb"] if len(builds) == 1 else [b["glb"] for b in builds],
             # The GLB is this bridge's own scratch artifact and nothing reads
             # it again once the server owns a copy.
             move=True,
+            labels=[label for _source, label in parts],
             # Request-scoped like `glb_options`. `.get`'s default is not
             # enough: `push()` names both knobs explicitly, so the keys are
             # PRESENT and None whenever the caller said nothing -- read with a
@@ -419,16 +409,17 @@ class PreviewDeliverer(Deliverer):
         timings: Dict[str, float] = {}
         if started is not None:
             timings["export"] = round(max(delivering - started, 0.0), 3)
-        timings.update(
-            (stage, seconds)
-            for stage, seconds in (built.get("timings") or {}).items()
-            if stage != "total"
-        )
+        # Each stage across the parts, in the order the first ran them.
+        for each in builds:
+            for stage, seconds in (each["built"].get("timings") or {}).items():
+                if stage != "total":
+                    timings[stage] = round(timings.get(stage, 0.0) + seconds, 3)
         timings["publish"] = round(finished - publishing, 3)
         timings["total"] = round(
             finished - (started if started is not None else delivering), 3
         )
 
+        built = builds[0]["built"]
         return {
             **published,
             # The per-section outcome the conversion recorded (what the panel
@@ -455,6 +446,90 @@ class PreviewDeliverer(Deliverer):
             "data_export": list(built.get("data_export") or []),
             # ``{stage: seconds}`` in the order they ran, ending in ``total``
             # -- ``export`` (the host's half), the build's stages
-            # (:meth:`GlbPipeline.build`), ``publish``.
+            # (:meth:`GlbPipeline.build`, summed over the parts), ``publish``.
             "timings": timings,
+            # Per part, in order: the file it came from and its lightmap bind
+            # -- the keys above being the primary's.
+            "builds": [
+                {"source": str(b["source"]), "lightmaps": b["built"].get("lightmaps")}
+                for b in builds
+            ],
         }
+
+    def _build(
+        self,
+        bridge,
+        request: HandoffRequest,
+        source: Union[str, Path],
+        texture_params: Dict[str, Any],
+        lightmap_dirs: Sequence[str],
+        sidecar: Optional[Dict[str, Any]],
+        data_export: Optional[Dict[str, Any]],
+        label: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Build *source* into a scratch GLB; ``{"source", "glb", "built"}``,
+        or ``None`` once the failure is logged -- named by *label* when the
+        push has several parts."""
+        # Imported here rather than at module scope: the pipeline pulls in the
+        # managed-binary installer, which no other PreviewServer user needs.
+        from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
+
+        # Allocate the GLB through the bridge's own payload artifacts rather
+        # than deriving a path from the FBX: that keeps it inside the prefix
+        # namespace every other bridge artifact joins, so the age-gated sweep
+        # reclaims it after a hard DCC crash -- the case no `finally` survives.
+        glb = bridge._make_payload_path(extension=".glb")
+        try:
+            built = GlbPipeline.build(
+                source,
+                dst=glb,
+                # Applied INSIDE the conversion, ahead of its fade pass: a
+                # material clone copies its source as it stands, so a repair
+                # made afterwards would land only on the original and every
+                # fade clone would keep the converter's packing (measured).
+                sidecar=sidecar,
+                # Request-scoped: a preview's overlay describes THIS push (an
+                # effect at the panel's current settings), never the next one.
+                data_export=data_export,
+                lightmap_dirs=lightmap_dirs,
+                # The Scene Exporter's texture rows, resolved by its own method:
+                # the preview once named a container and inherited the web
+                # ceiling, so every push was cut to 2048 px whatever the export
+                # was set to. Untouched, the rows resize nothing (OFF).
+                texture_params=texture_params,
+                downsize=bool(request.params.get("EMBED_TEXTURES", True)),
+                # Scratch through the bridge's own payload store (swept after a
+                # crash), and the superseded payload released as soon as the
+                # downsized copy exists -- peak footprint one FBX, not two.
+                # `_release_payload` refuses what the bridge did not mint, so a
+                # producer's durable file is never deleted.
+                scratch_path=lambda extension: bridge._make_payload_path(
+                    extension=extension
+                ),
+                release_source=bridge._release_payload,
+                # Request-scoped like the two knobs above, and for the extra
+                # reason that a callback is a live UI object: parked on the
+                # deliverer -- a CLASS attribute, shared by every instance of
+                # the bridge -- it would outlive the panel that supplied it and
+                # keep being called into a closed window.
+                progress=request.get("progress"),
+                logger=bridge.logger,
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            # Nothing consumed the payload, so it stays on disk as evidence.
+            what = f" ({label})" if label else ""
+            bridge.logger.error("Preview conversion to GLB failed%s: %s", what, error)
+            return None
+
+        # The FBX has been fully consumed -- the GLB exists and nothing reads
+        # the payload again. Released HERE rather than left to the store's
+        # age-gated sweep because this bridge is the one shape that store
+        # cannot serve: its ``detached`` policy is right for a hand-off whose
+        # target app reads the file AFTER we return (no completion signal, so
+        # nothing may delete), and wrong for a blocking round trip that
+        # converts and publishes inside one call. Measured on a production
+        # assembly: 324 MB per push, 3.1 GB of them waiting out ``max_age_days``
+        # in the system temp dir.
+        if bridge._release_payload(built["src"]):
+            bridge.logger.debug("Released the consumed FBX payload: %s", built["src"])
+        return {"source": source, "glb": glb, "built": built}

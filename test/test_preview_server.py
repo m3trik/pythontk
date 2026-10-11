@@ -744,10 +744,14 @@ class PreviewServerTestCase(unittest.TestCase):
         self.assertEqual(page.count("for (const holder of"), 1)
         # Read BEFORE the lights are set, or the first frame of a new model is
         # lit by the previous one's policy. In the load path itself: the
-        # Environment window re-applies the lighting too, after its switch.
+        # Environment menu re-applies the lighting too, after its switch. Of
+        # several parts, the first that publishes one (parts.js).
         load = (self.root / "kernel" / "load.js").read_text(encoding="utf-8")
+        self.assertIn(
+            "readExtras(part.gltf, 'scene_sidecar')?.handoff?.rendering", load
+        )
         self.assertLess(
-            load.index("readRenderingPolicy(gltf)"), load.index("applyLighting();")
+            load.index("readRenderingPolicy("), load.index("applyLighting();")
         )
         # Only finite NUMBERS are taken. The published policy is documentation
         # as much as data -- `lightMapIntensity` is deliberately a sentence --
@@ -945,8 +949,9 @@ class PreviewServerTestCase(unittest.TestCase):
         self.assertLess(loop.index("advance(delta)"), loop.index("emit('frame'"))
         advance = page[page.index("export function advance(delta)") :]
         self.assertIn("mixer.update(delta)", advance[: advance.index("\n}\n")])
-        # Set up per model swap, or the second push plays the first's clips.
-        self.assertIn("setupAnimation(gltf);", page)
+        # Set up per model swap, or the second push plays the first's clips --
+        # on the whole set of parts, their clips in one picker.
+        self.assertIn("setupAnimation(whole.gltf, whole.shots);", page)
 
     def test_the_viewer_opens_on_the_clip_the_file_names(self):
         """``animations[0]`` is the wrong default on a shot-split deliverable.
@@ -968,6 +973,85 @@ class PreviewServerTestCase(unittest.TestCase):
         # The picker leads with the declared shots; the glTF's own animation
         # order is left alone, so index-keyed consumers still agree with it.
         self.assertIn("entry.meta?.declared", page)
+
+    # -- parts ----------------------------------------------------------
+
+    def test_publish_parts_serves_every_part_as_one_version(self):
+        """The parts of one scene reach the page together: ONE version naming
+        every file -- a page polling between two single publishes would show
+        half a scene -- the first as the asset, each under its own name."""
+        server = self._serve()
+        room = self._asset("room.glb", b"glTF-room")
+        props = self._asset("props.glb", b"glTF-props")
+        version = server.publish_parts([room, props])
+        self.assertEqual(version, 1)
+        manifest = server.manifest()
+        self.assertEqual(manifest["asset"], "scene.glb")
+        self.assertEqual(
+            manifest["parts"],
+            [
+                {"url": "scene.glb", "name": "room.glb"},
+                {"url": "scene_1.glb", "name": "props.glb"},
+            ],
+        )
+        self.assertEqual(self._get("scene_1.glb")[1], b"glTF-props")
+        self.assertTrue(room.is_file() and props.is_file(), "a part was moved")
+
+    def test_parts_called_alike_are_numbered(self):
+        """The page names a part by its label -- its View switch, the name it
+        stays hidden by, its download -- so two files called alike (one
+        ``model.glb`` per folder) must not share one."""
+        server = self._serve()
+        first, second = self.assets / "one", self.assets / "two"
+        first.mkdir()
+        second.mkdir()
+        (first / "model.glb").write_bytes(b"glTF-1")
+        (second / "MODEL.glb").write_bytes(b"glTF-2")
+        server.publish_parts([first / "model.glb", second / "MODEL.glb"])
+        self.assertEqual(
+            [part["name"] for part in server.manifest()["parts"]],
+            ["model.glb", "MODEL (2).glb"],
+        )
+
+    def test_a_single_publish_is_one_part_under_its_served_name(self):
+        """``publish`` is the one-part case of the same manifest: a page reads
+        ``parts`` alone. With no label the served name stands -- a scratch
+        export's own name is a random tag, never one to hand out."""
+        server = self._serve()
+        server.publish(self._asset())
+        self.assertEqual(
+            server.manifest()["parts"], [{"url": "scene.glb", "name": "scene.glb"}]
+        )
+        server.publish(self._asset(), label="cube.glb")
+        self.assertEqual(server.manifest()["parts"][0]["name"], "cube.glb")
+
+    def test_a_part_the_next_publish_drops_is_removed(self):
+        """A part past the next publish's count is the previous scene's: kept,
+        it would sit in the serve root for the session -- and a guest's
+        allow-list follows the manifest, so nothing could fetch it anyway."""
+        server = self._serve()
+        server.publish_parts([self._asset("a.glb"), self._asset("b.glb")])
+        server.publish(self._asset("c.glb"))
+        self.assertFalse((self.root / "scene_1.glb").exists())
+        self.assertEqual([p["url"] for p in server.manifest()["parts"]], ["scene.glb"])
+
+    def test_publish_parts_refuses_what_it_cannot_publish(self):
+        server = self._serve()
+        with self.assertRaises(ValueError):
+            server.publish_parts([])
+        with self.assertRaises(ValueError):
+            server.publish_parts([self._asset("a.glb")], labels=["a", "b"])
+        with self.assertRaises(FileNotFoundError):
+            server.publish_parts([self._asset("a.glb"), self.assets / "gone.glb"])
+        self.assertEqual(server.version, 0, "a refused set published part of itself")
+
+    def test_a_guest_may_read_every_part(self):
+        """A share's allow-list is what the manifest names -- every part."""
+        server = self._serve()
+        server.publish_parts([self._asset("a.glb"), self._asset("b.glb", b"glTF-b")])
+        port = server.start_guest()
+        status, body, _ = _raw(port, "GET", "/scene_1.glb")
+        self.assertEqual((status, body), (200, b"glTF-b"))
 
 
 class PreviewScriptsTestCase(unittest.TestCase):
@@ -1281,7 +1365,9 @@ class PreviewScriptsTestCase(unittest.TestCase):
         (:meth:`_shortcuts`): a ``code`` counts as the key it presses --
         ``code === 'Space'`` and ``key === ' '`` are one press -- and a handler
         the reader gets no key out of fails, rather than passing as one that
-        binds nothing.
+        binds nothing. A menu item's key (``key: 'f'``, dispatched by
+        ``menus.js``, either case) is a binding like any other: the menus
+        refuse a second claim at run time, and this catches it before.
         """
         self._serve()
         sources = {"page": _served_page(self.root)}
@@ -1298,11 +1384,23 @@ class PreviewScriptsTestCase(unittest.TestCase):
                 self.assertTrue(keys, f"{name} handles keys, but no shortcut was read")
             for key in keys:
                 owners.setdefault(key, []).append(name)
+            for key in self._menu_keys(source):
+                for press in {key.lower(), key.upper()}:
+                    owners.setdefault(press, []).append(f"{name} (menu item)")
         self.assertIn("page", handling, "the page's key handler was not found")
-        self.assertGreater(len(handling), 1, "no script's key handler was found")
         self.assertIn(" ", owners, "the page's Space was not read as a key press")
+        # The page's own item (View: Frame model) and two scripts' (View:
+        # Turntable, Inspect: Performance) -- read, or the check is vacuous.
+        self.assertTrue({"f", "t", "i"} <= set(owners), sorted(owners))
         shared = {key: who for key, who in owners.items() if len(who) > 1}
         self.assertEqual(shared, {}, "one key press fires several actions")
+
+    @staticmethod
+    def _menu_keys(source):
+        """Every single-character ``key:`` a menu item or window declares in
+        *source*, one entry per declaration -- two in one file are a clash
+        too. A word (a preset's ``key: 'high'``) is no shortcut."""
+        return [key for _quote, key in re.findall(r"\bkey:\s*(['\"])(\S)\1", source)]
 
     #: A ``KeyboardEvent.code`` as the ``key`` values the same press reports,
     #: where the two are spelled differently. A letter's code covers both cases
@@ -1778,6 +1876,60 @@ class PreviewDelivererTestCase(unittest.TestCase):
             "stages overlap: their sum exceeds the total",
         )
         self.assertTrue(PreviewBridge.timing_summary(result).startswith("Push took "))
+
+    def test_a_file_push_of_several_files_publishes_them_as_parts(self):
+        """File on Disk with several files: each built as one file is, then
+        published as ONE version -- each under its own file's name, the
+        user's files left where they were."""
+        from pythontk.net_utils.preview.bridge import FilePreviewBridge
+
+        bridge = FilePreviewBridge()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        folder = Path(self.temp.dir_path())
+        files = []
+        for name in ("room.fbx", "props.fbx"):
+            path = folder / name
+            path.write_bytes(b"fake-fbx-payload")
+            files.append(path)
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with unittest.mock.patch(target, side_effect=self._fake_convert):
+            result = bridge.push(objects=[str(path) for path in files])
+        self.assertEqual(result["version"], 1)
+        self.assertEqual(
+            result["parts"],
+            [
+                {"url": "scene.glb", "name": "room.fbx"},
+                {"url": "scene_1.glb", "name": "props.fbx"},
+            ],
+        )
+        self.assertEqual(len(self.converted), 2)
+        self.assertEqual(
+            [Path(b["source"]).name for b in result["builds"]],
+            ["room.fbx", "props.fbx"],
+        )
+        self.assertTrue(
+            all(path.is_file() for path in files), "a user's file was moved"
+        )
+        self.assertEqual(
+            bridge.lightmap_search_dirs(),
+            (str(folder),),
+            "the parts' folder is searched",
+        )
+
+    def test_a_file_push_refuses_every_file_before_building_any(self):
+        """A missing third file must not cost the first two their build."""
+        from pythontk.net_utils.preview.bridge import FilePreviewBridge
+
+        bridge = FilePreviewBridge()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        good = Path(self.temp.dir_path()) / "room.fbx"
+        good.write_bytes(b"fake-fbx-payload")
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with unittest.mock.patch(target, side_effect=self._fake_convert):
+            result = bridge.push(objects=[str(good), str(good.with_name("gone.fbx"))])
+        self.assertIsNone(result)
+        self.assertEqual(self.converted, [])
+        self.assertEqual(self.server.version, 0)
 
     def test_a_push_can_name_the_scripts_for_that_delivery(self):
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
@@ -3718,7 +3870,7 @@ class PreviewSnapshotTestCase(unittest.TestCase):
         self._publish()
         with unittest.mock.patch(
             "pythontk.net_utils.preview.server.os.replace",
-            side_effect=OSError("C:\\\u0444\u043e\u0442\u043e\\cube_view_001.png"),
+            side_effect=OSError("C:\\photos \u2605\\cube_view_001.png"),
         ):
             error = self._refused(_png())
         self.assertEqual(error.code, 500)
@@ -4433,6 +4585,170 @@ class PreviewShareTestCase(unittest.TestCase):
         bridge.unshare()
         self.assertIsNone(bridge.share_url)
         self.assertTrue(self.server.is_running)
+
+    # -- private links and the ping -------------------------------------
+
+    def _private(self):
+        """A private share, and its path segment."""
+        info = self._share(private=True)
+        token = info["tunnel_url"][len(self.LINK) + 1 : -1]
+        return info, token
+
+    def test_a_private_share_answers_only_under_its_own_path(self):
+        """The link carries a fresh random segment and the guest listener
+        answers nothing outside it: the provider's name alone -- Tailscale's
+        is the machine's, for good -- opens nothing."""
+        info, token = self._private()
+        host = "guest-share.example.test"
+        self.assertIs(info["private"], True)
+        self.assertEqual(len(token), 16)
+        self.assertEqual(info["url"], f"{self.LINK}/{token}/")
+        self.assertEqual(info["scene_url"], f"{self.LINK}/{token}/{SCENE_PATH}")
+        self.assertTrue(self.server.guest_url.endswith(f"/{token}/"))
+        port = self.server.guest_port
+        status, body, _ = _raw(port, "GET", f"/{token}/manifest.json?id=t", host=host)
+        self.assertEqual(status, 200)
+        self.assertIs(json.loads(body)["guest"], True)
+        self.assertEqual(_raw(port, "GET", f"/{token}/", host=host)[0], 200)
+        for outside in ("/", "/manifest.json", f"/{token[:-1]}x/manifest.json"):
+            self.assertEqual(_raw(port, "GET", outside, host=host)[0], 404, outside)
+            self.assertEqual(_raw(port, "HEAD", outside, host=host)[0], 404, outside)
+        # The bare segment is sent inside, or the page's relative URLs would
+        # resolve one level up, outside the share.
+        status, _body, headers = _raw(port, "GET", f"/{token}", host=host)
+        self.assertEqual((status, headers.get("Location")), (301, f"/{token}/"))
+        # A guest tab's close beacon is inside too; outside is not a route.
+        self.assertEqual(
+            _raw(port, "POST", f"/{token}/viewer-closed?id=t", host=host, body=b"")[0],
+            204,
+        )
+        self.assertEqual(
+            _raw(port, "POST", "/viewer-closed?id=t", host=host, body=b"")[0], 404
+        )
+
+    def test_each_private_share_mints_its_own_link(self):
+        """A private link is good for one share: the next has another, and the
+        last one opens nothing."""
+        _info, first = self._private()
+        self.server.unshare()
+        info, second = self._private()
+        self.assertNotEqual(first, second)
+        status = _raw(
+            self.server.guest_port,
+            "GET",
+            f"/{first}/manifest.json",
+            host="guest-share.example.test",
+        )[0]
+        self.assertEqual(status, 404)
+        self.assertEqual(info["url"], f"{self.LINK}/{second}/")
+
+    def test_switching_to_private_replaces_the_running_share(self):
+        """Asked for the other choice, a running share is not handed back."""
+        self.assertIs(self._share()["private"], False)
+        info = self._share(private=True)
+        self.assertIs(info["private"], True)
+        self.assertIs(self._share()["private"], False)
+
+    def test_a_private_share_keeps_no_alias(self):
+        """A stable redirect would be a lasting door to every private link."""
+        folder = Path(self.temp.dir_path())
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                PreviewServer.ALIAS_ENV: str(folder),
+                PreviewServer.ALIAS_URL_ENV: "https://you.example.test/vr",
+            },
+        ):
+            info, token = self._private()
+        self.assertFalse((folder / "index.html").exists())
+        self.assertEqual(info["url"], f"{self.LINK}/{token}/")
+
+    def _loopback(self):
+        """A provider whose link is the guest listener itself, on loopback --
+        so a ping travels a real HTTP round trip to the share."""
+        from pythontk.net_utils.share_tunnel import ShareTunnel
+
+        loopback = {
+            **self.fake,
+            "args": [
+                "-u",
+                "-c",
+                "import time; print('http://{host}:{port}', flush=True); "
+                "time.sleep(600)",
+            ],
+            "url": r"(http://127\.0\.0\.1:\d+)",
+        }
+        patcher = unittest.mock.patch.dict(
+            ShareTunnel.PROVIDERS, {"fake-loopback": loopback}
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_ping_reaches_the_share_through_its_own_link(self):
+        """End to end, and it is THIS share that answers: the guest manifest
+        at this server's version -- through a private segment as well. A
+        ping is no guest tab."""
+        self._loopback()
+        for private in (False, True):
+            info = self._share(provider="fake-loopback", private=private)
+            ping = self.server.ping_share(timeout=5, attempts=1)
+            self.assertTrue(ping["ok"], ping)
+            self.assertEqual((ping["status"], ping["url"]), (200, info["tunnel_url"]))
+            self.assertIsInstance(ping["ms"], float)
+            self.assertEqual(self.server.share_info()["guests"], 0, "a ping counted")
+            self.server.unshare()
+
+    def test_a_ping_says_why_a_link_does_not_pass(self):
+        """Nothing shared, a link that cannot be reached, and a link that
+        answers but not as this share -- each a failed ping, said, and asked
+        again as many times as it was told before it gives up."""
+        nothing = self.server.ping_share(attempts=1)
+        self.assertEqual(
+            (nothing["ok"], nothing["error"]), (False, "nothing is shared")
+        )
+        self._loopback()
+        info = self._share(provider="fake-loopback")
+        owner = {**info, "tunnel_url": self.server.url}  # the owner's manifest
+        with unittest.mock.patch.object(
+            PreviewServer, "share_info", return_value=owner
+        ):
+            stranger = self.server.ping_share(timeout=5, attempts=2, wait=0)
+        self.assertFalse(stranger["ok"])
+        self.assertEqual(stranger["attempts"], 2)
+        self.assertEqual(
+            stranger["error"], "the link answered, but not with this share"
+        )
+        gone = {**info, "tunnel_url": "http://127.0.0.1:9/"}  # discard: refused
+        with unittest.mock.patch.object(PreviewServer, "share_info", return_value=gone):
+            refused = self.server.ping_share(timeout=2, attempts=1)
+        self.assertFalse(refused["ok"])
+        self.assertTrue(refused["error"])
+
+    def test_a_ping_reports_its_last_attempt_alone(self):
+        """A provider's own page answering 200 is not this share, said so --
+        and a miss after it reports no status or round trip: the earlier
+        answer's would read as the link answering, slowly, with a 200."""
+        import urllib.error
+
+        page = unittest.mock.MagicMock(status=200)
+        page.__enter__.return_value = page
+        page.read.return_value = b"<html>tunnel starting</html>"
+        info = {"tunnel_url": "http://127.0.0.1:9/"}
+        answers = [page, urllib.error.URLError("timed out"), page]
+        with unittest.mock.patch.object(PreviewServer, "share_info", return_value=info):
+            with unittest.mock.patch("urllib.request.urlopen", side_effect=answers):
+                missed = self.server.ping_share(attempts=2, wait=0)
+                answered = self.server.ping_share(attempts=1)
+        self.assertEqual(missed["attempts"], 2)
+        self.assertEqual(
+            (missed["status"], missed["ms"], missed["error"]),
+            (None, None, "timed out"),
+        )
+        self.assertEqual(answered["status"], 200)
+        self.assertIsInstance(answered["ms"], float)
+        self.assertEqual(
+            answered["error"], "the link answered, but not with this share"
+        )
 
     def test_the_bridge_hands_its_caller_the_providers_step(self):
         """The panel shares through the bridge; a step the provider stops on

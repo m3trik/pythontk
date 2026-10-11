@@ -74,6 +74,66 @@ class TestHooks(unittest.TestCase):
         )
         self.assertEqual(exporter._resolve_export_dir("out"), os.path.abspath("out"))
 
+    def test_the_log_file_records_what_the_run_logs(self):
+        """Measured 2026-10-09: a production export's ``.log`` was 0 bytes --
+        the handler sat on a bare logger named after the class, which neither
+        the exporter nor its task manager logs through. Closing removes only
+        that handler: a caller's own on the same logger stays.
+        Added: 2026-10-09"""
+        import logging
+
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        exporter = _Exporter(log_level="INFO")
+        exporter.hide_log_file = False
+        caller = logging.NullHandler()
+        exporter.logger.addHandler(caller)
+        self.addCleanup(exporter.logger.removeHandler, caller)
+        with TempArtifacts("test_scene_exporter_log", policy="scoped") as temp:
+            path = os.path.join(temp.dir_path(), "run.log")
+            exporter.setup_file_logging(path)
+            exporter.task_manager.logger.info("Executing Task #1/1: smart_bake")
+            exporter.close_file_handlers()
+            with open(path, encoding="utf-8") as fh:
+                self.assertIn("Executing Task #1/1: smart_bake", fh.read())
+        self.assertIn(caller, exporter.logger.handlers)
+        self.assertFalse(
+            [h for h in exporter.logger.handlers if isinstance(h, logging.FileHandler)]
+        )
+
+    def test_the_log_file_keeps_the_run_banner_at_every_level(self):
+        """Measured 2026-10-10 on real Maya exports: at the panel's ERROR level
+        a clean run's ``.log`` was 0 bytes, and at every level the EXPORT
+        SUCCESSFUL box was missing -- the file opened in cp1252, so the box's
+        glyphs raised on write. The banner bypasses the level, so with it
+        written the file always records how the run ended; its markup and the
+        records' links are stripped to plain text.
+        Added: 2026-10-10"""
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        exporter = _Exporter(log_level="ERROR")
+        exporter.hide_log_file = False
+        with TempArtifacts("test_scene_exporter_banner", policy="scoped") as temp:
+            path = os.path.join(temp.dir_path(), "run.log")
+            exporter.setup_file_logging(path)
+            try:
+                exporter.logger.log_box(
+                    "EXPORT SUCCESSFUL",
+                    ["✓ File written successfully", "Path: café.fbx"],
+                    level="SUCCESS",
+                )
+                link = exporter.logger.log_link("pCube1", "select", node="|pCube1")
+                exporter.logger.error(f"Missing → {link}")
+            finally:
+                exporter.close_file_handlers()
+            with open(path, encoding="utf-8") as fh:
+                content = fh.read()
+        self.assertIn("EXPORT SUCCESSFUL", content)
+        self.assertIn("✓ File written successfully", content)
+        self.assertIn("Missing → pCube1", content)
+        self.assertNotIn("<span", content)
+        self.assertNotIn("<a ", content)
+
     def test_the_kept_edits_advice_is_the_hosts_word(self):
         exporter = _Exporter()
         exporter.task_manager.kept_edits = ["tied keys"]
