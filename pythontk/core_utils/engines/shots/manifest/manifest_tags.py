@@ -8,8 +8,9 @@ and nothing saved in a scene records a hue.  Two layers, the user's shown over
 the automatic:
 
 * **the user's** -- ``{step_id: slot}`` per source on the scene's
-  ``ShotStore.manifest_tags``, keyed as the Local Edits layers are (the sheet's
-  path, ``""`` for the scene's own shots).  Not an edit: a tag organises the
+  ``ShotStore.manifest_tags``, keyed and found as the Local Edits layers are
+  (``ManifestEdits.layer_key``: the sheet's path, else its file name; ``""``
+  for the scene's own shots).  Not an edit: a tag organises the
   table, changes nothing a Build reads, and shows whether Local Edits is on or
   off.
 * **the automatic** -- the mapping template's ``color_by`` rule
@@ -23,6 +24,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 
 from pythontk.core_utils.color import Palette
+from pythontk.core_utils.engines.shots.manifest.manifest_edits import ManifestEdits
 
 __all__ = ["ManifestTags"]
 
@@ -97,11 +99,13 @@ class ManifestTags(_ManifestTagsInternal):
 
         Parameters:
             store: A ``ShotStore``, or ``None`` (no scene store: no tags).
-            source: The layer's key (the sheet's path, ``""`` for the scene).
+            source: The sheet's path (``""`` for the scene), found as
+                ``ManifestEdits.layer_key`` finds it.
         """
-        if store is None:
+        key = ManifestEdits.layer_key(store, source)
+        if key is None:
             return {}
-        return dict(store.manifest_tags.get(source) or {})
+        return dict(store.manifest_tags.get(key) or {})
 
     @staticmethod
     def assign(
@@ -109,18 +113,21 @@ class ManifestTags(_ManifestTagsInternal):
     ) -> bool:
         """Tag *step_ids* of *source* with *slot*, or clear their tags (``None``).
 
-        A layer left empty is dropped.  The store is marked dirty only when a
-        tag actually changed.
+        A layer found under another spelling or path of the sheet is re-keyed
+        to *source* first (``ManifestEdits.adopt_layers``), its edits with
+        it.  A layer left empty is dropped.  The store is marked dirty only
+        when a tag actually changed (or a layer moved).
 
         Parameters:
             store: The ``ShotStore`` to write.
-            source: The layer's key (the sheet's path, ``""`` for the scene).
+            source: The sheet's path (``""`` for the scene).
             step_ids: The steps to tag.
             slot: A palette slot key, or ``None`` / ``""`` to clear.
 
         Returns:
             Whether any tag changed.
         """
+        ManifestEdits.adopt_layers(store, source)
         before = dict(store.manifest_tags.get(source) or {})
         tags = dict(before)
         for step_id in step_ids:

@@ -2157,6 +2157,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.math_utils.key_curve",
+    "name": "CurveKey",
+    "qualname": "CurveKey",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.geo_utils.uv.cylinder_seams",
     "name": "CylinderSeams",
     "qualname": "CylinderSeams",
@@ -2563,6 +2570,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.math_utils.key_curve",
+    "name": "KeyCurve",
+    "qualname": "KeyCurve",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.key_stash.key_stash_model",
     "name": "KeyStash",
     "qualname": "KeyStash",
@@ -2689,6 +2703,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "MarkersChanged",
+    "qualname": "MarkersChanged",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.img_utils.mask_generator",
     "name": "MaskGenerator",
     "qualname": "MaskGenerator",
@@ -2769,6 +2790,13 @@
     "module": "pythontk.core_utils.naming_convention._naming_convention",
     "name": "NamingConvention",
     "qualname": "NamingConvention",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "NativeStepFollowed",
+    "qualname": "NativeStepFollowed",
     "tier": "root"
   },
   {

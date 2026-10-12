@@ -8,12 +8,15 @@ path, byte count) has to match what a real run then produces — a projection
 that drifts is worse than no projection at all.
 """
 
+import glob
 import io
 import os
 import shutil
 import struct
 import tempfile
+import time
 import unittest
+from unittest import mock
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -674,6 +677,50 @@ class TestStageMaps(_TextureFixture):
     Added: 2026-09-13
     """
 
+    def setUp(self):
+        super().setUp()
+        # The encode cache is a TempArtifacts store in the system temp dir:
+        # each test gets its own, removed with test_dir.
+        self.temp_root = os.path.join(self.test_dir, "tmp")
+        os.makedirs(self.temp_root)
+        patcher = mock.patch.object(tempfile, "tempdir", self.temp_root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _slots(self):
+        """``{file name: path}`` of every encode the cache holds."""
+        found = {}
+        for slot in glob.glob(os.path.join(self.temp_root, "map_optimizer_cache_*")):
+            for name in os.listdir(slot):
+                if not name.startswith("."):
+                    found[name] = os.path.join(slot, name)
+        return found
+
+    @staticmethod
+    def _counting():
+        """Count encodes: wraps the real ``optimize_map``, never replaces it."""
+        return mock.patch.object(
+            MapOptimizer, "optimize_map", wraps=MapOptimizer.optimize_map
+        )
+
+    def _stage(self, sources, folder, max_size=None, temp_staging=True):
+        """One ``stage_maps`` pass over ``{key: path}`` into *folder*."""
+        return MapOptimizer.stage_maps(
+            {key: {"path": path} for key, path in sources.items()},
+            self._assess(max_size=max_size),
+            clamp={"max_size": max_size} if max_size else {},
+            staging_dir=os.path.join(self.test_dir, folder),
+            temp_staging=temp_staging,
+            logger=MagicMock(),
+        )
+
+    def _compact(self, name, size=(64, 64)):
+        """A PNG already written as a re-encode writes it: nothing to save."""
+        path = self.texture(name, size=size)
+        image = ImgUtils.ensure_image(path).copy()
+        ImgUtils.save_image(image, path, optimize=True)
+        return path
+
     @staticmethod
     def _assess(max_size=None):
         def assess(path):
@@ -691,13 +738,19 @@ class TestStageMaps(_TextureFixture):
 
         return assess
 
-    def _bloated(self, name, size=(64, 64)):
+    def _bloated(self, name, size=(64, 64), color=(128, 128, 128)):
         """A PNG saved uncompressed: optimal by every rule but its byte count."""
         from PIL import Image
 
         path = os.path.join(self.test_dir, name)
-        Image.new("RGB", size, (128, 128, 128)).save(path, compress_level=0)
+        Image.new("RGB", size, color).save(path, compress_level=0)
         return path
+
+    @staticmethod
+    def _shipped(report):
+        """The file the export ships for the report's one source."""
+        (record,) = report["results"]
+        return record["written"] if record["status"] == "optimized" else record["path"]
 
     def test_needed_maps_are_written_and_recompressible_ones_re_encoded(self):
         big = self.texture("big_BaseColor.png", size=(256, 256))
@@ -837,7 +890,7 @@ class TestStageMaps(_TextureFixture):
         )
         self.assertEqual(again["results"][0]["written"], written)
         self.assertEqual(os.path.getmtime(written), stamp, "reused, not rewritten")
-        # The same staged name under a TIGHTER pass is stale: re-judged, redone.
+        # The same staged name under a TIGHTER pass is another key: redone.
         tighter = MapOptimizer.stage_maps(
             {"a": {"path": src}},
             self._assess(max_size=64),
@@ -847,6 +900,195 @@ class TestStageMaps(_TextureFixture):
         )
         self.assertEqual(tighter["results"][0]["status"], "optimized")
         self.assertEqual(ImgUtils.get_image_size(written)[0], 64)
+
+    def test_a_staged_copy_from_a_looser_pass_is_not_reused(self):
+        """A copy staged under a 128 px ceiling is not what an unclamped pass
+        ships: the 4096 -> 1024 USD export measured 2026-10-10 shipped 3/3 maps
+        at the old ceiling (the copy was newer than its source, so reused)."""
+        src = self._bloated("loose_BaseColor.png", size=(256, 256))
+        staging = os.path.join(self.test_dir, "textures")
+        os.makedirs(staging)
+        clamped = MapOptimizer.stage_maps(
+            {"a": {"path": src}},
+            self._assess(max_size=128),
+            clamp={"max_size": 128},
+            staging_dir=staging,
+            logger=MagicMock(),
+        )
+        self.assertEqual(ImgUtils.get_image_size(self._shipped(clamped)), (128, 128))
+        unclamped = MapOptimizer.stage_maps(
+            {"a": {"path": src}},
+            self._assess(),
+            staging_dir=staging,
+            logger=MagicMock(),
+        )
+        self.assertEqual(ImgUtils.get_image_size(self._shipped(unclamped)), (256, 256))
+
+    def test_a_staged_copy_of_another_source_is_never_reused(self):
+        """Another scene's same-named map, older than the copy staged from the
+        first, ships its OWN pixels (measured 2026-10-10: 2/2 shipped the
+        first scene's)."""
+        import time
+
+        for folder in ("scene_a", "scene_b"):
+            os.makedirs(os.path.join(self.test_dir, folder))
+        first = self._bloated(
+            os.path.join("scene_a", "crate_BaseColor.png"), color=(200, 30, 30)
+        )
+        second = self._bloated(
+            os.path.join("scene_b", "crate_BaseColor.png"), color=(30, 30, 200)
+        )
+        staging = os.path.join(self.test_dir, "textures")
+        os.makedirs(staging)
+        MapOptimizer.stage_maps(
+            {"a": {"path": first}},
+            self._assess(),
+            staging_dir=staging,
+            logger=MagicMock(),
+        )
+        an_hour_ago = time.time() - 3600
+        os.utime(second, (an_hour_ago, an_hour_ago))
+        report = MapOptimizer.stage_maps(
+            {"a": {"path": second}},
+            self._assess(),
+            staging_dir=staging,
+            logger=MagicMock(),
+        )
+        with Image.open(self._shipped(report)) as shipped:
+            self.assertEqual(shipped.convert("RGB").getpixel((0, 0)), (30, 30, 200))
+
+    def test_a_second_temp_staged_pass_encodes_nothing(self):
+        """An FBX export's staging dir is a throwaway, so every export encoded
+        every map again (three 4K maps: 4.8-5.5 s, measured 2026-10-10). A
+        second pass is served by the cache: no encode, the same bytes, and
+        the cache itself untouched."""
+        sources = {
+            "a": self.texture("cached_BaseColor.png", size=(256, 256)),  # resized
+            "b": self._bloated("flat_BaseColor.png"),  # re-encoded only
+        }
+        first = self._stage(sources, "run1", max_size=64)
+        self.assertEqual((first["optimized"], first["cached"]), (2, 0))
+        slots = self._slots()
+        self.assertEqual(sorted(slots), ["cached_BaseColor.png", "flat_BaseColor.png"])
+        stamps = {name: os.stat(path).st_mtime_ns for name, path in slots.items()}
+
+        with self._counting() as encode:
+            again = self._stage(sources, "run2", max_size=64)
+
+        self.assertEqual(encode.call_count, 0)
+        self.assertEqual((again["optimized"], again["cached"]), (2, 2))
+        for before, after in zip(first["results"], again["results"]):
+            self.assertTrue(after["cached"])
+            self.assertTrue(
+                after["written"].startswith(os.path.join(self.test_dir, "run2"))
+            )
+            with open(before["written"], "rb") as a, open(after["written"], "rb") as b:
+                self.assertEqual(a.read(), b.read(), after["key"])
+        self.assertEqual(
+            {name: os.stat(path).st_mtime_ns for name, path in self._slots().items()},
+            stamps,
+        )
+
+    def test_a_throwaway_stage_links_the_cache_and_a_durable_one_copies_it(self):
+        """A deliverable owns its bytes: an edit to a durable staged map must
+        never write into the cache through a shared link."""
+        src = self._bloated("linked_BaseColor.png")
+        throwaway = self._stage({"a": src}, "scratch")
+        durable = self._stage({"a": src}, "textures", temp_staging=False)
+        (slot,) = self._slots().values()
+        self.assertTrue(os.path.samefile(self._shipped(throwaway), slot))
+        self.assertFalse(os.path.samefile(self._shipped(durable), slot))
+        self.assertEqual(durable["cached"], 1)
+        with open(self._shipped(durable), "rb") as a, open(slot, "rb") as b:
+            self.assertEqual(a.read(), b.read())
+
+    def test_a_kept_recompress_is_not_retried(self):
+        """A re-encode that saves under 5% ships the source; the verdict is
+        remembered, so the next pass does not pay the trial encode again (a
+        4K PNG: 0.8-1.1 s, every export)."""
+        src = self._compact("kept_BaseColor.png")
+        first = self._stage({"a": src}, "run1")
+        (record,) = first["results"]
+        self.assertEqual(record["status"], "kept")
+        self.assertEqual(self._slots(), {}, "the verdict is cached, not the encode")
+
+        with self._counting() as encode:
+            again = self._stage({"a": src}, "run2")
+
+        self.assertEqual(encode.call_count, 0)
+        (cached,) = again["results"]
+        self.assertEqual((cached["status"], cached["cached"]), ("kept", True))
+        self.assertEqual(cached["size_after"], record["size_after"])
+        self.assertIsNone(cached["written"])
+
+    def test_a_changed_clamp_re_encodes_exactly_the_affected_maps(self):
+        """A size ceiling enters the key as its effect on each map: tightening
+        it re-encodes the maps it reaches and no other."""
+        sources = {
+            "big": self.texture("big_BaseColor.png", size=(256, 256)),
+            "mid": self.texture("mid_BaseColor.png", size=(128, 128)),
+            "small": self._bloated("small_BaseColor.png", size=(32, 32)),
+        }
+        self._stage(sources, "run1", max_size=128)
+
+        with self._counting() as encode:
+            tighter = self._stage(sources, "run2", max_size=64)
+
+        encoded = {call.kwargs["texture_path"] for call in encode.call_args_list}
+        self.assertEqual(encoded, {sources["big"], sources["mid"]})
+        by_key = {record["key"]: record for record in tighter["results"]}
+        self.assertEqual(ImgUtils.get_image_size(by_key["big"]["written"]), (64, 64))
+        self.assertEqual(ImgUtils.get_image_size(by_key["mid"]["written"]), (64, 64))
+        self.assertTrue(by_key["small"]["cached"])
+
+    def test_a_cache_hit_keeps_its_slot_from_the_age_sweep(self):
+        """Review 2026-10-12: a hit never refreshed its slot, so a map shipped
+        every day was swept -- and encoded again -- a week after its first
+        encode.  A hit touches the slot directory; the encode keeps its own
+        mtime (the copy a durable stage carries)."""
+        src = self._bloated("aged_BaseColor.png")
+        self._stage({"a": src}, "run1")
+        (encode,) = self._slots().values()
+        slot = os.path.dirname(encode)
+        week_ago = time.time() - 8 * 24 * 3600
+        os.utime(slot, (week_ago, week_ago))
+        stamp = os.stat(encode).st_mtime_ns
+
+        again = self._stage({"a": src}, "run2")
+
+        self.assertTrue(again["results"][0]["cached"])
+        self.assertGreater(os.stat(slot).st_mtime, time.time() - 3600)
+        self.assertEqual(os.stat(encode).st_mtime_ns, stamp)
+
+    def test_an_option_the_prediction_cannot_see_enters_the_key(self):
+        """Bug (review 2026-10-12): the key held the template, the container
+        and the predicted outcome, so an option that changes the bytes and
+        not the prediction -- a KTX2 encode's RDO dictionary, which *clamp*
+        passes through -- reused another request's encode.  Every option
+        enters as given; a size rule only as its effect on the map."""
+        src = self.texture("dict_BaseColor.png", size=(64, 64))
+
+        def key(**options):
+            request = {"texture_path": src, "output_type": "ktx2", **options}
+            return MapOptimizer._stage_key(request, False)
+
+        self.assertIsNotNone(key())
+        self.assertNotEqual(
+            key(uastc_rdo_dictionary=256), key(uastc_rdo_dictionary=8192)
+        )
+        self.assertEqual(key(max_size=4096), key(max_size=2048), "out of reach")
+
+    def test_optimize_map_check_existing_is_retired(self):
+        """Its mtime-only reuse is the stale-map defect: it still works this
+        release, and says so."""
+        src = self._bloated("retired_BaseColor.png")
+        with self.assertWarns(DeprecationWarning):
+            written = MapOptimizer.optimize_map(
+                src,
+                output_dir=os.path.join(self.test_dir, "out"),
+                check_existing=True,
+            )
+        self.assertTrue(os.path.isfile(written))
 
 
 class TestDeliveryBudget(_TextureFixture):

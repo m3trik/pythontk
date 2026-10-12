@@ -487,6 +487,161 @@ def build_animated_fbx(path: str, takes, declared=None, media=None) -> str:
     return _write_fbx(path, roots)
 
 
+#: FBX ticks per frame at the curve fixtures' 30 fps.
+FRAME = 46186158000 // 30
+#: ``KeyAttrFlags`` the curve fixtures spell: interpolation, tangent mode,
+#: weights (the FBX SDK's ``FbxAnimCurveDef`` bits).
+CONSTANT, LINEAR, CUBIC = 0x2, 0x4, 0x8
+CONSTANT_NEXT, AUTO, USER, BREAK = 0x100, 0x100, 0x400, 0x800
+TIME_INDEPENDENT, CLAMP, CLAMP_PROGRESSIVE = 0x2000, 0x1000, 0x4000
+WEIGHTED_RIGHT, WEIGHTED_NEXT_LEFT = 0x01000000, 0x02000000
+
+
+def packed_weights(right: float = 1 / 3, next_left: float = 1 / 3) -> float:
+    """A key's two tangent weights as ``KeyAttrDataFloat`` stores them: two
+    16-bit fractions of 9999 in one float's bits (right weight low)."""
+    word = struct.pack("<HH", int(right * 9999), int(next_left * 9999))
+    return struct.unpack("<f", word)[0]
+
+
+def build_curve_fbx(
+    path: str, takes, current=None, layers=None, base_layer=lambda take: "BaseLayer"
+) -> str:
+    """An FBX whose takes animate real curves, written by :class:`FbxWriter`.
+
+    *takes* is ``{take: {channel: keys}}`` in file order. A channel is
+    ``(model, property, component)``, or ``(model, property, component,
+    layer)`` to key it on that layer index of the take (0, ``BaseLayer``, by
+    default). Its keys are ``[(frame, value), ...]`` -- linear, as Maya writes
+    a linear tangent -- or ``{"keys": [...], "flags": [...], "data": [...]}``
+    spelling each key's ``KeyAttrFlags`` and four ``KeyAttrDataFloat``
+    values. Every take has a stack, its layers, a curve node per (model,
+    property, layer) declaring ``d|X`` / ``d|Y`` / ``d|Z``, and a curve per
+    channel; each declares its key extent as its span. ``Takes/Current``
+    names *current* (default: the first take); *layers* ``{take: count}``
+    gives a take extra, empty layers; *base_layer* names a take's first layer
+    (Maya's ``BaseLayer``; Blender names it after the take). 30 fps
+    (``TimeMode`` 6).
+    """
+    from pythontk.file_utils.mesh_convert._fbx_writer import FbxNode, FbxWriter
+
+    w = FbxWriter
+    uid = iter(range(10_000, 1_000_000))
+    models = {}
+    objects = FbxNode("Objects")
+    connections = FbxNode("Connections")
+    counts = {}
+
+    def obj(kind, oid, name, cls=""):
+        counts[kind] = counts.get(kind, 0) + 1
+        return objects.add(kind, w.i64(oid), f"{name}\x00\x01{cls}", "")
+
+    def link(child, parent, prop=None):
+        row = ["OO" if prop is None else "OP", w.i64(child), w.i64(parent)]
+        connections.add("C", *row, *([] if prop is None else [prop]))
+
+    for channels in takes.values():
+        for model, *_rest in channels:
+            if model not in models:
+                models[model] = next(uid)
+                record = obj("Model", models[model], model, "Model")
+                record.props[2] = "Null"
+                link(models[model], 0)
+
+    spans = {}
+    for take, channels in takes.items():
+        stack = next(uid)
+        stack_record = obj("AnimationStack", stack, take, "AnimStack")
+        wanted = max(
+            [(layers or {}).get(take, 1)]
+            + [key[3] + 1 for key in channels if len(key) > 3]
+        )
+        layer_ids = []
+        for index in range(wanted):
+            layer_ids.append(next(uid))
+            name = base_layer(take) if index == 0 else f"{take}_Layer{index}"
+            obj("AnimationLayer", layer_ids[-1], name, "AnimLayer")
+            link(layer_ids[-1], stack)
+        nodes = {}
+        first = last = None
+        for key, spec in channels.items():
+            model, prop, comp = key[:3]
+            layer = key[3] if len(key) > 3 else 0
+            if isinstance(spec, dict):
+                keys, flags, data = spec["keys"], spec["flags"], spec["data"]
+            else:
+                keys = spec
+                flags = [LINEAR | USER] * len(keys)
+                data = [(0.0, 0.0, packed_weights(), 0.0)] * len(keys)
+            node_key = (model, prop, layer)
+            if node_key not in nodes:
+                nodes[node_key] = next(uid)
+                short = {"Lcl Translation": "T", "Lcl Rotation": "R"}.get(prop, "S")
+                node = obj(
+                    "AnimationCurveNode", nodes[node_key], short, "AnimCurveNode"
+                )
+                props = node.add("Properties70")
+                for axis in ("d|X", "d|Y", "d|Z"):
+                    props.p(axis, "Number", "", "A", 0.0)
+                link(nodes[node_key], layer_ids[layer])
+                link(nodes[node_key], models[model], prop)
+            curve = next(uid)
+            record = obj("AnimationCurve", curve, "", "AnimCurve")
+            record.add("Default", 0.0)
+            record.add("KeyVer", 4009)
+            record.add("KeyTime", w.array("l", [round(f * FRAME) for f, _ in keys]))
+            record.add("KeyValueFloat", w.array("f", [v for _, v in keys]))
+            record.add("KeyAttrFlags", w.array("i", flags))
+            record.add("KeyAttrDataFloat", w.array("f", [x for d in data for x in d]))
+            record.add("KeyAttrRefCount", w.array("i", [1] * len(keys)))
+            link(curve, nodes[node_key], comp)
+            if keys:
+                lo, hi = round(keys[0][0] * FRAME), round(keys[-1][0] * FRAME)
+                first = lo if first is None else min(first, lo)
+                last = hi if last is None else max(last, hi)
+        spans[take] = (first or 0, last or 0)
+        props = stack_record.add("Properties70")
+        for name, value in (
+            ("LocalStart", spans[take][0]),
+            ("LocalStop", spans[take][1]),
+            ("ReferenceStart", spans[take][0]),
+            ("ReferenceStop", spans[take][1]),
+        ):
+            props.p(name, "KTime", "Time", "", w.i64(value))
+
+    settings = FbxNode("GlobalSettings")
+    settings.add("Version", 1000)
+    grid = settings.add("Properties70")
+    grid.p("TimeMode", "enum", "", "", 6)
+    grid.p("CustomFrameRate", "double", "Number", "", -1.0)
+    definitions = FbxNode("Definitions")
+    definitions.add("Version", 100)
+    definitions.add("Count", sum(counts.values()))
+    for kind, count in counts.items():
+        definitions.add("ObjectType", kind).add("Count", count)
+    sections = FbxNode("Takes")
+    if takes:
+        sections.add("Current", current or next(iter(takes)))
+    for take, (start, stop) in spans.items():
+        entry = sections.add("Take", take)
+        entry.add("FileName", take.replace(" ", "_") + ".tak")
+        entry.add("LocalTime", w.i64(start), w.i64(stop))
+        entry.add("ReferenceTime", w.i64(start), w.i64(stop))
+    records = FbxWriter.header_records("pythontk test") + [
+        settings,
+        definitions,
+        objects,
+        connections,
+        sections,
+    ]
+    return FbxWriter.write(path, records)
+
+
+def frames(first: int, last: int, motion=lambda f: f * 0.5):
+    """Per-frame keys over ``first..last`` -- a resampled take -- of *motion*."""
+    return [(f, motion(f)) for f in range(first, last + 1)]
+
+
 class FbxMediaTestCase(unittest.TestCase):
     def setUp(self):
         self.temp = TempArtifacts("test_fbx_media", policy="scoped")
@@ -727,6 +882,288 @@ class DropTakesTestCase(unittest.TestCase):
             [e["name"] for e in json.loads(values[0])], ["Shot_A", "Shot_B"]
         )
         self.assertEqual(FbxFile.load(self.src).user_properties("absent"), [])
+
+
+def take_keys(path: str):
+    """``{take: {channel label: [(ticks, value), ...]}}`` -- every curve's keys."""
+    model = FbxFile.load(path)._take_model()
+    labels = model["labels"]
+    return {
+        take["name"]: {
+            labels[key]: list(zip(channel["curve"].times, channel["curve"].values))
+            for key, channel in take["channels"].items()
+        }
+        for take in model["takes"]
+    }
+
+
+class MergeTakesTestCase(unittest.TestCase):
+    """``merge_takes``: the takes ``FbxFile.take_layout`` calls live, as ONE take.
+
+    No DCC merges takes on import (Maya plays the one ``FBXImportSetTake``
+    names; Blender assigns the first stack per object), so a Shots Only file
+    imported anywhere lost every shot but one.
+    """
+
+    T = ("cube", "Lcl Translation", "d|X")
+    U = ("sphere", "Lcl Translation", "d|Z")
+    LABEL_T = "cube.Lcl Translation.d|X"
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_merge", policy="scoped")
+        self.dir = self.temp.dir_path()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _src(self, takes, **kwargs):
+        return build_curve_fbx(os.path.join(self.dir, "takes.fbx"), takes, **kwargs)
+
+    def _windows(self):
+        """Shots Only: per-frame keys at the shots' own frames, every animated
+        node in every take (still where idle), a gap-0 seam between A and B,
+        a gap between B and C."""
+        return {
+            "A": {self.T: frames(1, 10), self.U: frames(1, 10, lambda f: 3.0)},
+            "B": {self.T: frames(10, 20), self.U: frames(10, 20, lambda f: 3.0)},
+            "C": {self.T: frames(30, 40), self.U: frames(30, 40, lambda f: f - 27.0)},
+        }
+
+    def test_every_key_keeps_its_time_and_a_seam_is_kept_once(self):
+        src = self._src(self._windows())
+        out = os.path.join(self.dir, "merged.fbx")
+        report = FbxMedia.merge_takes(src, out)
+
+        self.assertEqual(report["path"], out)
+        self.assertEqual(report["take"], "Take 001")
+        self.assertEqual(report["takes"], ["A", "B", "C"])
+        self.assertEqual(report["channels"], 2)
+        self.assertEqual(report["seams"], 2)  # frame 10, on each channel
+        self.assertEqual(report["keys"], 2 * (10 + 11 + 11 - 1))
+        before, after = take_keys(src), take_keys(out)
+        self.assertEqual(list(after), ["Take 001"])
+        for label in (self.LABEL_T, "sphere.Lcl Translation.d|Z"):
+            merged = dict(after["Take 001"][label])
+            union = sorted({key for take in before.values() for key in take[label]})
+            self.assertEqual(sorted(merged.items()), union)
+            self.assertEqual(len(merged), len(union), "a seam key written twice")
+
+    def test_a_channel_only_a_later_take_animates_is_rewired(self):
+        """B animates what the kept take A does not: a component A's curve node
+        lacks (cube ty), a property A has no curve node for (cube rotation), a
+        model A never animates (sphere) and a layer A does not have. Each is
+        wired onto the kept take, or the drop of B takes it away."""
+        takes = {
+            "A": {self.T: frames(1, 10)},
+            "B": {
+                self.T: frames(11, 20),
+                ("cube", "Lcl Translation", "d|Y"): frames(11, 20),
+                ("cube", "Lcl Rotation", "d|Y"): frames(11, 20),
+                self.U: frames(11, 20),
+                ("cube", "Lcl Scaling", "d|X", 1): frames(11, 20, lambda f: 1.0 + f),
+            },
+        }
+        src = self._src(takes)
+        out = os.path.join(self.dir, "merged.fbx")
+        report = FbxMedia.merge_takes(src, out)
+
+        self.assertEqual(report["takes"], ["A", "B"])
+        self.assertGreaterEqual(report["rewired"], 4)
+        after = take_keys(out)["Take 001"]
+        self.assertEqual(len(after), 5)
+        for key, keys in takes["B"].items():
+            label = ".".join(key[:3]) + (f" [layer {key[3]}]" if len(key) > 3 else "")
+            got = dict(after[label])
+            for frame, value in keys:
+                self.assertEqual(got[round(frame * FRAME)], value, (label, frame))
+        model = FbxFile.load(out)._take_model()
+        self.assertEqual(len(model["takes"][0]["layers"]), 2)
+        self.assertEqual(FbxFile.load(out).take_layout()["kind"], "single")
+
+    def test_spans_widen_and_the_kept_take_is_current(self):
+        src = self._src(self._windows())
+        out = os.path.join(self.dir, "merged.fbx")
+        FbxMedia.merge_takes(src, out)
+
+        fbx = FbxFile.load(out)
+        self.assertEqual(fbx.take_names(), ["Take 001"])
+        stack = next(r for r in fbx.iter_objects() if r["name"] == "AnimationStack")
+        spans = {p["props"][0]: p["props"][4] for p in stack["children"][0]["children"]}
+        whole = (1 * FRAME, 40 * FRAME)
+        self.assertEqual((spans[b"LocalStart"], spans[b"LocalStop"]), whole)
+        self.assertEqual((spans[b"ReferenceStart"], spans[b"ReferenceStop"]), whole)
+        takes = fbx.section("Takes")["children"]
+        self.assertEqual(
+            [(c["name"], c["props"][0]) for c in takes],
+            [("Current", b"Take 001"), ("Take", b"Take 001")],
+        )
+        entry = {c["name"]: c["props"] for c in takes[1]["children"]}
+        self.assertEqual(entry["FileName"], [b"Take_001.tak"])
+        self.assertEqual(tuple(entry["LocalTime"]), whole)
+        self.assertEqual(tuple(entry["ReferenceTime"]), whole)
+        definitions = fbx.section("Definitions")["children"]
+        counts = {
+            c["props"][0]: c["children"][0]["props"][0]
+            for c in definitions
+            if c["name"] == "ObjectType"
+        }
+        census = fbx.objects_census()
+        self.assertEqual(
+            {k.decode(): v for k, v in counts.items()},
+            {k: census.get(k, 0) for k in (k.decode() for k in counts)},
+        )
+        self.assertEqual(census["AnimationStack"], 1)
+
+    def test_overlapping_takes_that_agree_interleave_their_keys(self):
+        """Merged on request, a sparse cover and a per-frame slice share the
+        slice's frames: each time is kept once, and past the slice's last key
+        the curve runs on to the cover's next key along the cover's line."""
+        src = self._src(
+            {
+                "Scene": {self.T: [(1, 0.5), (100, 50.0)]},
+                "early": {self.T: frames(1, 30)},
+            }
+        )
+        out = os.path.join(self.dir, "merged.fbx")
+        report = FbxMedia.merge_takes(src, out, takes=["Scene", "early"])
+
+        self.assertEqual((report["keys"], report["seams"]), (31, 1))
+        model = FbxFile.load(out)._take_model()
+        (channel,) = model["takes"][0]["channels"].values()
+        curve = channel["curve"]
+        self.assertEqual(curve.times, [f * FRAME for f in list(range(1, 31)) + [100]])
+        for frame in (10.5, 30, 45, 60, 99):
+            self.assertAlmostEqual(
+                FbxFile._evaluate_curve(curve, round(frame * FRAME)), frame * 0.5
+            )
+
+    def test_disagreeing_takes_raise_naming_take_channel_and_frame(self):
+        src = self._src(
+            {
+                "Walk": {self.T: frames(1, 30)},
+                "Run": {self.T: frames(1, 30, lambda f: f * 0.75)},
+            }
+        )
+        out = os.path.join(self.dir, "merged.fbx")
+        with self.assertRaises(ValueError) as caught:
+            FbxMedia.merge_takes(src, out, takes=["Walk", "Run"])
+        message = str(caught.exception)
+        for part in ("Walk", "Run", self.LABEL_T, "frame 1"):
+            self.assertIn(part, message)
+        self.assertFalse(os.path.exists(out))
+
+    def test_the_default_merges_the_live_takes_and_drops_the_rest(self):
+        takes = self._windows()
+        takes["Alt"] = {self.T: frames(1, 10, lambda f: -f)}
+        src = self._src(takes)
+        self.assertEqual(FbxFile.load(src).take_layout()["stash"], ["Alt"])
+        out = os.path.join(self.dir, "merged.fbx")
+        report = FbxMedia.merge_takes(src, out, name="Shots")
+
+        self.assertEqual(report["takes"], ["A", "B", "C"])
+        self.assertEqual(report["dropped"], ["Alt"])
+        self.assertEqual(FbxFile.load(out).take_names(), ["Shots"])
+        merged = dict(take_keys(out)["Shots"][self.LABEL_T])
+        self.assertEqual(merged[1 * FRAME], 0.5, "Alt's motion leaked in")
+
+    def test_one_take_merges_to_itself(self):
+        src = self._src({"Clip": {self.T: frames(1, 30), self.U: frames(5, 9)}})
+        out = os.path.join(self.dir, "merged.fbx")
+        report = FbxMedia.merge_takes(src, out, name=None)
+
+        self.assertEqual(
+            (report["take"], report["seams"], report["rewired"]), ("Clip", 0, 0)
+        )
+        self.assertEqual(take_keys(out), take_keys(src))
+        self.assertEqual(FbxFile.load(out).take_layout()["kind"], "single")
+
+    def test_an_unknown_take_raises(self):
+        src = self._src(self._windows())
+        with self.assertRaises(ValueError) as caught:
+            FbxMedia.merge_takes(src, os.path.join(self.dir, "x.fbx"), takes=["Nope"])
+        self.assertIn("Nope", str(caught.exception))
+
+    def test_in_place_merge_replaces_the_source(self):
+        src = self._src(self._windows())
+        FbxMedia.merge_takes(src)
+        self.assertEqual(FbxFile.load(src).take_names(), ["Take 001"])
+        self.assertFalse([n for n in os.listdir(self.dir) if n.endswith(".part")])
+
+    def test_kept_takes_stay_whole_beside_the_merge(self):
+        """A layout's stash rides beside the merged take, untouched, so ONE
+        import carries what plays and what an importer parks (Blender makes
+        an action per stack and object)."""
+        takes = self._windows()
+        takes["Alt"] = {self.T: frames(1, 10, lambda f: -f)}
+        src = self._src(takes)
+        out = os.path.join(self.dir, "merged.fbx")
+        report = FbxMedia.merge_takes(src, out, keep=["Alt"])
+
+        self.assertEqual(report["takes"], ["A", "B", "C"])
+        self.assertEqual(report["dropped"], [])
+        fbx = FbxFile.load(out)
+        self.assertEqual(fbx.take_names(), ["Take 001", "Alt"])
+        self.assertEqual(take_keys(out)["Alt"], take_keys(src)["Alt"])
+        layout = fbx.take_layout()
+        self.assertEqual(
+            (layout["current"], layout["live"], layout["stash"]),
+            ("Take 001", ["Take 001"], ["Alt"]),
+        )
+        self.assertEqual(fbx.objects_census()["AnimationStack"], 2)
+
+    def test_keep_refuses_a_merged_take_its_name_or_an_unknown_take(self):
+        takes = self._windows()
+        takes["Alt"] = {self.T: frames(1, 10, lambda f: -f)}
+        src = self._src(takes)
+        out = os.path.join(self.dir, "x.fbx")
+        for kwargs, part in (
+            ({"keep": ["A"]}, "'A'"),
+            ({"keep": ["Nope"]}, "Nope"),
+            ({"keep": ["Alt"], "name": "Alt"}, "'Alt'"),
+        ):
+            with self.assertRaises(ValueError, msg=kwargs) as caught:
+                FbxMedia.merge_takes(src, out, **kwargs)
+            self.assertIn(part, str(caught.exception))
+            self.assertFalse(os.path.exists(out))
+
+    def test_a_corrupt_curve_array_is_a_value_error(self):
+        """Bug (review 2026-10-12): a curve array whose zlib stream is broken
+        raised ``zlib.error`` out of the merge, past the callers' ``(OSError,
+        ValueError)`` fallbacks; ``FbxFile.load`` already said ValueError."""
+        src = self._src(
+            {"A": {self.T: frames(1, 300)}, "B": {self.T: frames(300, 600)}}
+        )
+        with open(src, "rb") as fh:
+            data = bytearray(fh.read())
+        at = data.find(b"KeyTime") + len(b"KeyTime")
+        self.assertEqual(data[at : at + 1], b"l")  # an int64 array ...
+        self.assertEqual(int.from_bytes(data[at + 5 : at + 9], "little"), 1)  # zlib
+        for i in range(at + 15, at + 53):  # past the header, into the stream
+            data[i] ^= 0xFF
+        with open(src, "wb") as fh:
+            fh.write(bytes(data))
+        out = os.path.join(self.dir, "x.fbx")
+        with self.assertRaises(ValueError):
+            FbxMedia.merge_takes(src, out)
+        self.assertFalse(os.path.exists(out))
+
+    def test_a_layer_named_after_its_take_takes_the_merged_name(self):
+        """Blender names each layer after its take, and its importer names an
+        action ``<object>|<take>|<layer>`` once they differ -- a merged Shots
+        Only file arrived as ``cube|Take 001|A``, named after one shot."""
+        takes = self._windows()
+        takes["Alt"] = {self.T: frames(1, 10, lambda f: -f)}
+        src = self._src(takes, base_layer=lambda take: take)
+        out = os.path.join(self.dir, "merged.fbx")
+        FbxMedia.merge_takes(src, out, keep=["Alt"])
+
+        fbx = FbxFile.load(out)
+        layers = [
+            FbxFile._display_name(r["props"][1])
+            for r in fbx.iter_objects()
+            if r["name"] == "AnimationLayer"
+        ]
+        self.assertEqual(sorted(layers), ["Alt", "Take 001"])
 
 
 def encoded(image, fmt: str = "PNG") -> bytes:

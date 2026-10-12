@@ -225,6 +225,7 @@ class TestSectionVocabulary(unittest.TestCase):
                 "transforms",
                 "instances",
                 "visibility",
+                "stepped_keys",
                 "lights",
                 "world",
                 "skins",

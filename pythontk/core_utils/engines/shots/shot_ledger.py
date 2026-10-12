@@ -43,6 +43,24 @@ _LEDGER_EPS = 1.0e-3
 NO_OWNER = -1
 
 
+class StepClaim(tuple):
+    """A step claim as :meth:`ShotEditLedger.claimed_step` returns it:
+    ``(in_type, out_type, value)``, unpacked as before, plus the halves a v2
+    claim recorded -- :attr:`in_half`, the key's IN half the hold froze, and
+    :attr:`out_half`, its OUT half before the step -- each the DCC's own list
+    of numbers (Maya: ``[angle, weight]``; Blender: the handle's offset from
+    its key), ``None`` where the claim recorded none."""
+
+    in_half: Optional[list] = None
+    out_half: Optional[list] = None
+
+    def __new__(cls, in_type, out_type, value, in_half=None, out_half=None):
+        self = super().__new__(cls, (in_type, out_type, value))
+        self.in_half = None if in_half is None else [float(x) for x in in_half]
+        self.out_half = None if out_half is None else [float(x) for x in out_half]
+        return self
+
+
 class _ShotEditLedgerInternal(object):
     """Internal helpers for :class:`ShotEditLedger`.
 
@@ -81,11 +99,16 @@ class ShotEditLedger(_ShotEditLedgerInternal):
     Two registers, both keyed by curve name and both holding time-first
     records:
 
-    * ``steps`` - ``[time, in_type, out_type(, value)]``, the two types being
-      what the key carried BEFORE the system stepped it, and its value then
-      (absent from claims recorded before values were kept).
-    * ``keys`` - ``[time, owner_shot_id, edge]``, the owner naming the shot
-      bound (``"start"`` / ``"end"``) the sample was created for.
+    * ``steps`` - ``[time, in_type, out_type(, value(, halves))]``, the two
+      types being what the key carried BEFORE the system stepped it, and its
+      value then (absent from claims recorded before values were kept);
+      *halves* (format 2) ``{"in": [...], "out": [...]}``: the IN half the
+      hold froze and the OUT half before the step (:class:`StepClaim`).
+    * ``keys`` - ``[time, owner_shot_id, edge(, stays)]``, the owner naming
+      the shot bound (``"start"`` / ``"end"``) the sample was created for;
+      ``stays`` (written only when set) marks a sample that is disowned IN
+      PLACE when its bound moves instead of following it
+      (:meth:`key_stays`).
     * ``authored`` - ``[time, owner_shot_id, behavior, obj, stamp]``, a key
       a behavior wrote on one of its channels for that shot's object; *stamp*
       is the effect recipe it was keyed under (``EffectRecipe.fingerprint``,
@@ -96,11 +119,21 @@ class ShotEditLedger(_ShotEditLedgerInternal):
     pass can run as often as it likes without stacking duplicates.
     """
 
+    #: The payload format :meth:`to_dict` writes.  2 (2026-10-12, maintainer
+    #: 2026-10-11): a step claim carries the halves its hold touched and
+    #: identifies its key by value + in-half (:meth:`is_same_key`), and a DCC
+    #: may key its curves by identity (blendertk: action, slot, path, index).
+    #: A payload without a version is format 1 and loads as before.
+    FORMAT_VERSION: int = 2
+
     def __init__(self, eps: float = _LEDGER_EPS):
         self.eps = float(eps)
         self._steps: Dict[str, List[list]] = {}
         self._keys: Dict[str, List[list]] = {}
         self._authored: Dict[str, List[list]] = {}
+        #: The format the ledger was read from (:meth:`from_dict`): a DCC
+        #: migrates what an older one spelled differently (its curve keys).
+        self.source_version: int = self.FORMAT_VERSION
 
     def __bool__(self) -> bool:
         return bool(self._steps or self._keys or self._authored)
@@ -137,6 +170,8 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         in_type: str,
         out_type: str,
         value: Optional[float] = None,
+        in_half: Optional[Iterable[float]] = None,
+        out_half: Optional[Iterable[float]] = None,
     ) -> bool:
         """Claim the step the system is about to write at ``(curve, time)``.
 
@@ -145,8 +180,13 @@ class ShotEditLedger(_ShotEditLedgerInternal):
             time: Frame the step is written on.
             in_type: The key's in-tangent type BEFORE the step.
             out_type: The key's out-tangent type BEFORE the step.
-            value: The key's value -- with *in_type*, what tells this key
+            value: The key's value -- with *in_half*, what tells this key
                 from one written over it later (:meth:`is_same_key`).
+            in_half: The key's IN half as the hold froze it (the DCC's list
+                of numbers): a derived in-half re-derived from the next
+                shot's every move, re-shaping the held shot's last segment.
+            out_half: The key's OUT half before the step, which the step
+                discards (a weighted tangent's weight), for the release.
 
         Returns:
             ``False`` when the pair is already claimed - the caller stepped it
@@ -158,16 +198,22 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         if self._index_of(recs, time, self.eps) is not None:
             return False
         rec = [float(time), str(in_type), str(out_type)]
-        if value is not None:
-            rec.append(float(value))
+        halves = {
+            side: [float(x) for x in half]
+            for side, half in (("in", in_half), ("out", out_half))
+            if half is not None
+        }
+        if value is not None or halves:
+            rec.append(None if value is None else float(value))
+        if halves:
+            rec.append(halves)
         recs.append(rec)
         self._steps[curve] = self._sorted(recs)
         return True
 
-    def claimed_step(
-        self, curve: str, time: float
-    ) -> Optional[Tuple[str, str, Optional[float]]]:
-        """The claim at ``(curve, time)``, left in place: ``(in, out, value)``.
+    def claimed_step(self, curve: str, time: float) -> Optional[StepClaim]:
+        """The claim at ``(curve, time)``, left in place: ``(in, out, value)``
+        (a :class:`StepClaim`, with the halves a format-2 claim recorded).
 
         The types are what the key carried before the system stepped it --
         what a copy of the key should carry, since the step is the system's
@@ -181,7 +227,14 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         if i is None:
             return None
         rec = recs[i]
-        return (rec[1], rec[2], rec[3] if len(rec) > 3 else None)
+        halves = rec[4] if len(rec) > 4 and isinstance(rec[4], dict) else {}
+        return StepClaim(
+            rec[1],
+            rec[2],
+            rec[3] if len(rec) > 3 else None,
+            halves.get("in"),
+            halves.get("out"),
+        )
 
     @staticmethod
     def is_same_key(
@@ -189,31 +242,51 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         in_type: str,
         value: float,
         tol: float = 1e-6,
+        in_half: Optional[Iterable[float]] = None,
+        half_tol: float = 1e-4,
     ) -> bool:
         """Whether the key now on a claim's frame is the one the system stepped.
 
-        The hold writes a key's OUT side only, so the key it stepped keeps its
-        in side, and its value unless the animator re-poses it.  A key written
-        over it since keeps neither: a Maya paste lands every key with a
-        ``fixed`` in side (measured 2026-10-10) and the value it was copied
-        with.  Releasing such a claim "restored" the old interpolation onto the
-        animator's pasted key -- a stepped key copied in the Graph Editor lost
-        its step on the next shot edit that moved its seam.  Either surviving
-        is enough: a re-pose keeps the in side, and a key inserted beside it
-        re-derives the in side but keeps the value.  A claim recorded without
-        a value is always the same key (the behavior before values were kept).
+        A claim that recorded the key's frozen IN half (format 2, maintainer
+        2026-10-11) knows it by value AND that half: the hold froze the half,
+        so the key it stepped keeps both until the animator re-poses or
+        re-tangents it, and a key written over it since -- a paste -- has its
+        own.  A step pasted over a held seam with another value or slope is
+        the animator's.  The in side's TYPE says nothing there: a Blender
+        paste copies the source's easing, which is how a pasted step read as
+        the hold's own (BACKLOG 2026-10-10).  *in_half* is that half as the
+        key carries it now; a caller without it compares the value alone.
+
+        A format-1 claim (no half recorded) keeps the old rule.  The hold
+        wrote the OUT side only, so its key kept its in side, and its value
+        unless re-posed; a Maya paste lands a ``fixed`` in side and the
+        copied value (measured 2026-10-10).  Either surviving is enough.  A
+        claim recorded without a value is always the same key.
 
         Parameters:
             claim: :meth:`claimed_step`'s ``(in, out, value)``.
             in_type: The in side the key on the claim's frame carries now.
             value: That key's value now.
             tol: Relative tolerance for the value comparison.
+            in_half: The key's IN half now, in the DCC's numbers.
+            half_tol: Absolute tolerance per number of the half comparison.
         """
         rec_in, _rec_out, rec_value = claim
-        if rec_value is None or in_type == rec_in:
-            return True
+        rec_half = getattr(claim, "in_half", None)
         value = float(value)
-        return abs(value - rec_value) <= tol * max(1.0, abs(value), abs(rec_value))
+        same_value = rec_value is None or abs(value - rec_value) <= tol * max(
+            1.0, abs(value), abs(rec_value)
+        )
+        if rec_half is not None:
+            if not same_value:
+                return False
+            if in_half is None:
+                return True
+            now = [float(x) for x in in_half]
+            return len(now) == len(rec_half) and all(
+                abs(a - b) <= half_tol for a, b in zip(now, rec_half)
+            )
+        return rec_value is None or in_type == rec_in or same_value
 
     def owns_step(self, curve: str, time: float) -> bool:
         """True when the system wrote the step at ``(curve, time)``."""
@@ -249,7 +322,12 @@ class ShotEditLedger(_ShotEditLedgerInternal):
     # ---- system-authored keys --------------------------------------------
 
     def record_key(
-        self, curve: str, time: float, owner: int = NO_OWNER, edge: str = ""
+        self,
+        curve: str,
+        time: float,
+        owner: int = NO_OWNER,
+        edge: str = "",
+        stays: bool = False,
     ) -> bool:
         """Claim a sample the system created for a shot bound.
 
@@ -259,6 +337,10 @@ class ShotEditLedger(_ShotEditLedgerInternal):
             owner: ``shot_id`` of the shot whose bound the sample serves;
                 :data:`NO_OWNER` when no bound is responsible for it.
             edge: ``"start"`` or ``"end"`` - which of the owner's bounds.
+            stays: The sample is a pose of the shot's own motion, not a
+                fencepost: when its bound moves it is disowned where it is
+                (cut only where provably redundant) instead of FOLLOWING the
+                bound, which would re-time the motion it pins (:meth:`key_stays`).
 
         Returns:
             ``False`` when the sample is already claimed.
@@ -266,7 +348,10 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         recs = self._keys.setdefault(curve, [])
         if self._index_of(recs, time, self.eps) is not None:
             return False
-        recs.append([float(time), int(owner), str(edge)])
+        rec = [float(time), int(owner), str(edge)]
+        if stays:
+            rec.append(True)
+        recs.append(rec)
         self._keys[curve] = self._sorted(recs)
         return True
 
@@ -274,6 +359,19 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         """True when the system created the sample at ``(curve, time)``."""
         recs = self._keys.get(curve)
         return bool(recs) and self._index_of(recs, time, self.eps) is not None
+
+    def key_stays(self, curve: str, time: float) -> bool:
+        """True when the claimed sample at ``(curve, time)`` stays where it is
+        when its bound moves (``record_key(stays=True)``) -- a split's seam
+        pin, the preceding shot's own evaluated pose on its end.  Following
+        the bound would re-time the motion it pins, the reason the Ctrl edge
+        drag never moves a sample (2026-09-19); a sample the reconcile would
+        otherwise move is disowned in place instead."""
+        recs = self._keys.get(curve)
+        if not recs:
+            return False
+        i = self._index_of(recs, time, self.eps)
+        return i is not None and len(recs[i]) > 3 and bool(recs[i][3])
 
     def release_key(self, curve: str, time: float) -> bool:
         """Drop the claim on a sample.  ``True`` when one was held."""
@@ -570,6 +668,10 @@ class ShotEditLedger(_ShotEditLedgerInternal):
                 recs = reg[curve]
                 for rec in recs:
                     rec[0] = round(rec[0] * ratio + offset, 4)
+                    if reg is self._steps and abs(ratio - 1.0) >= 1.0e-12:
+                        # A step claim's halves are slopes on the old clock:
+                        # the claim reads as format 1 from here.
+                        del rec[4:]
                 moved += len(recs)
                 reg[curve] = self._sorted(recs)
         return moved
@@ -611,11 +713,15 @@ class ShotEditLedger(_ShotEditLedgerInternal):
     # ---- serialisation ----------------------------------------------------
 
     def to_dict(self) -> Dict[str, Any]:
-        """Plain-dict form for the scene payload.  Empty registers are omitted."""
+        """Plain-dict form for the scene payload.  Empty registers are
+        omitted; a ledger with anything in it says its :attr:`FORMAT_VERSION`.
+        """
         out: Dict[str, Any] = {}
+        if self:
+            out["version"] = self.FORMAT_VERSION
         if self._steps:
             out["steps"] = {
-                crv: [list(r) for r in recs]
+                crv: [[dict(x) if isinstance(x, dict) else x for x in r] for r in recs]
                 for crv, recs in sorted(self._steps.items())
             }
         if self._keys:
@@ -636,15 +742,30 @@ class ShotEditLedger(_ShotEditLedgerInternal):
         A missing or blank payload gives an empty ledger, so a scene written
         before the ledger existed loads without a migration step.  Records
         short of their payload are tolerated (a plain time list restores as
-        unowned samples) rather than failing the whole scene load.
+        unowned samples) rather than failing the whole scene load.  A payload
+        without a ``version`` is format 1 (:attr:`source_version`), and loads
+        as it always did.
         """
         led = cls()
+        try:
+            led.source_version = int((data or {}).get("version", 1))
+        except (TypeError, ValueError):
+            led.source_version = 1
         for crv, recs in ((data or {}).get("steps") or {}).items():
             for rec in recs:
                 try:
                     step = [float(rec[0]), str(rec[1]), str(rec[2])]
-                    if len(rec) > 3 and rec[3] is not None:
-                        step.append(float(rec[3]))
+                    value = rec[3] if len(rec) > 3 else None
+                    halves = rec[4] if len(rec) > 4 and isinstance(rec[4], dict) else {}
+                    halves = {
+                        side: [float(x) for x in halves[side]]
+                        for side in ("in", "out")
+                        if isinstance(halves.get(side), (list, tuple))
+                    }
+                    if value is not None or halves:
+                        step.append(None if value is None else float(value))
+                    if halves:
+                        step.append(halves)
                     led._steps.setdefault(crv, []).append(step)
                 except (IndexError, TypeError, ValueError):
                     continue
@@ -656,7 +777,10 @@ class ShotEditLedger(_ShotEditLedgerInternal):
                         continue
                     owner = int(rec[1]) if len(rec) > 1 else NO_OWNER
                     edge = str(rec[2]) if len(rec) > 2 else ""
-                    led._keys.setdefault(crv, []).append([float(rec[0]), owner, edge])
+                    key = [float(rec[0]), owner, edge]
+                    if len(rec) > 3 and rec[3]:
+                        key.append(True)
+                    led._keys.setdefault(crv, []).append(key)
                 except (IndexError, TypeError, ValueError):
                     continue
         for crv, recs in ((data or {}).get("authored") or {}).items():

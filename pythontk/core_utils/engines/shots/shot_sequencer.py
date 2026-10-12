@@ -34,6 +34,11 @@ Hook contract (override in a DCC subclass; defaults describe an empty scene):
 ``_gap_hold_seams()`` / ``_release_gap_holds(s)`` / ``_apply_gap_holds(s)``
                                       the inter-shot gap holds
 ``_pin_bound_keys(pins)``             key curves on shot bounds, changing nothing
+``_pin_bound_poses(objs, w, pins)``   key the pose played on bounds, holds too
+``_freeze_left_behind(objs, w)``      hold the slopes a leaving run's keys gave
+``_poses_differ(pairs, objects)``    whether two frames play different poses
+``_gaps_keyed(windows)``              whether the animator keyed inside a gap
+``_retime_closing_gaps(retimes)``     retime a closing gap's keys, before moves
 ``_curve_exists(curve)``              the scene still has a ledger key's curve
 ``_follow_unresolved_claims(c)``      re-key claims whose owner was renamed
 ``_reconcile_boundaries(plan)``       fencepost reconcile around a plan write
@@ -59,14 +64,22 @@ from __future__ import annotations
 
 import bisect
 import contextlib
+import logging
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from pythontk.core_utils.engines.shots.shot_apply import ShotApply
 from pythontk.core_utils.engines.shots.shot_model import ShotBlock, ShotStore
-from pythontk.core_utils.engines.shots.shot_plan import ShotPlanner
+from pythontk.core_utils.engines.shots.shot_plan import GapRetime, ShotPlanner
 
 # Below this a frame delta is no move at all.
 _EPS = 1e-6
+# How far past a shot's bounds an unbounded envelope (the first shot's lead-in,
+# the last one's tail) is read for content -- the DCC cut's own cap.
+_CONTENT_REACH = 1.0e7
+# Frames within which a key is ON a frame: the DCC writers' own tolerance.
+_KEY_TOL = 1.0e-3
+
+_log = logging.getLogger(__name__)
 
 __all__ = ["ShotSequencer"]
 
@@ -163,6 +176,74 @@ class _ShotSequencerHooks(object):
         """
         return 0
 
+    def _pin_bound_poses(
+        self,
+        objects: List[str],
+        window: Tuple[float, float],
+        pins: List[Tuple[float, int, str]],
+        attr: Optional[str] = None,
+        crossing: bool = False,
+    ) -> int:
+        """Key the pose each of *objects*' (*attr*'s) curves plays on every
+        bound frame *pins* names (``[(frame, shot_id, edge), ...]``), on the
+        curves with a key inside *window* (closed, tolerance already in it)
+        -- content about to LEAVE, so the
+        shots on those bounds keep what it gave them.  *crossing*: the curves
+        whose segment runs across *window* keyless too -- the window is about
+        to close (a delete), which re-times that segment.  Unlike
+        :meth:`_pin_bound_keys` a held or extrapolated pose is keyed too: the
+        key making the hold is the one leaving.  Every key put in is claimed
+        for its bound, ``stays``.  Returns the number of keys put in.
+        """
+        return 0
+
+    def _freeze_left_behind(
+        self,
+        objects: List[str],
+        window: Tuple[float, float],
+        attr: Optional[str] = None,
+    ) -> int:
+        """Hold, on each of *objects*' (*attr*'s) curves keyed inside
+        *window* (a run about to LEAVE), the derived slope of the keys it
+        leaves behind: the last key before it keeps its IN half, the first
+        after it its OUT half, each at the angle it plays now.  A derived
+        slope is computed from both neighbours, so with the run gone those
+        keys re-derive and the content they close or open plays differently
+        (:meth:`move_sequences_to_shot`; a gap hold's stepped key's IN half
+        excepted, BACKLOG 2026-10-11, the held tail).  Returns the halves
+        held.  Pure default: nothing to hold."""
+        return 0
+
+    def _poses_differ(
+        self,
+        pairs: List[Tuple[float, float]],
+        objects: Optional[List[Tuple[str, Optional[str]]]] = None,
+    ) -> List[bool]:
+        """Per ``(frame_a, frame_b)`` of *pairs*: whether the content curves
+        -- or only *objects*' (``[(obj, attr or None), ...]``) -- play a
+        different value at the two frames, keyed or held (the value a curve
+        plays where no key is: a hold, an interpolation, its extrapolation).
+        The pose test behind the gap-0 closing rule
+        (:meth:`ShotSequencer._close_flush_seams`), read before anything
+        moves.  Pure default: every pose agrees."""
+        return [False] * len(pairs)
+
+    def _gaps_keyed(self, windows: List[Tuple[float, float]]) -> List[bool]:
+        """Per ``(start, end)`` window -- a gap's interior -- whether the
+        animator keyed anything inside it now (the system's bound samples
+        are its bookkeeping, not content).  What :meth:`respace`'s closing
+        rule asks before it closes a gap flush (:meth:`_seams_hold_keys`).
+        Pure default: nothing is keyed."""
+        return [False] * len(windows)
+
+    def _retime_closing_gaps(self, retimes: List[GapRetime]) -> int:
+        """Retime each gap of *retimes* -- one a placement narrows to the
+        frame the closing rule kept -- BEFORE anything moves: its keys
+        compress toward its left edge, inside the gap they are in, their
+        claims with them (the respace's shrink stage, the DCC's own gap
+        retime).  Returns the curves retimed.  Pure default: none."""
+        return 0
+
     def _curve_exists(self, curve: str) -> bool:
         """Whether the scene still has the curve a ledger key names.  Pure
         default: ``True`` -- without a scene nothing is known gone, so nothing
@@ -176,7 +257,14 @@ class _ShotSequencerHooks(object):
         return False
 
     def _reconcile_boundaries(self, plan) -> Callable[[], None]:
-        """Reconcile shared samples around a plan write; returns the finisher."""
+        """Reconcile shared samples around a plan write; returns the finisher.
+
+        The chokepoint every whole-shot move passes (:meth:`_apply_plan` and
+        :meth:`_move_shot_content`), so it is where a split seam is made whole
+        whatever op opened it: a keyed shared sample is copied onto the
+        following shot's new start, and a KEYLESS one is first pinned with
+        the preceding shot's own pose (:meth:`_opened_seams`,
+        :meth:`ShotPlanner.keyless_seam`)."""
         return lambda: None
 
     def _move_content_keys(
@@ -298,6 +386,10 @@ class ShotSequencer(_ShotSequencerHooks):
         store: Existing store to wrap.  Takes precedence over *shots*.
     """
 
+    #: ``{shot_id: (start, end)}`` an enclosing edit is about to write
+    #: (:meth:`pending_bounds`).  Replaced, never mutated in place.
+    _pending_bounds_map: Dict[int, Tuple[Optional[float], Optional[float]]] = {}
+
     def __init__(
         self,
         shots: Optional[List[ShotBlock]] = None,
@@ -307,6 +399,61 @@ class ShotSequencer(_ShotSequencerHooks):
             self.store = store
         else:
             self.store = self.STORE_CLASS(shots)
+
+    @contextlib.contextmanager
+    def pending_bounds(
+        self, bounds: Dict[int, Tuple[Optional[float], Optional[float]]]
+    ):
+        """Declare the bounds an edit is about to write, for every whole-shot
+        move made inside the block.
+
+        A split seam is pinned where the move LEAVES a gap (the one rule,
+        maintainer 2026-10-10: an op on one shot never changes what another
+        plays inside its own span -- a keyless seam pulled apart re-timed the
+        shot before it from its first frame).  An edit that moves its
+        neighbours BEFORE it writes its own new bound opens a gap that its
+        next write closes, and judged move by move that transient gap is a
+        split: Move to Shot growing its destination around what it is about
+        to land, a slide rippling its neighbour out of the way before the
+        pivot follows.  Pinned there, the seam is a key the landing has to
+        fight.  Inside this block :meth:`_opened_seams` judges each pair on
+        the bounds declared here (:meth:`ShotPlanner.boundary_splits`
+        ``pending=``).
+
+        Nested blocks merge, the OUTER declaration winning per side: the
+        outermost edit knows where its whole sequence ends (Move to Shot's
+        head room is a slide whose own declaration moves the destination's
+        start, which the landing then fills).
+
+        Parameters:
+            bounds: ``{shot_id: (start, end)}``; ``None`` on a side leaves
+                that side to the moves themselves.
+        """
+        outer = self._pending_bounds_map
+        merged = {k: tuple(v) for k, v in (bounds or {}).items()}
+        for sid, (o_start, o_end) in outer.items():
+            i_start, i_end = merged.get(sid, (None, None))
+            merged[sid] = (
+                o_start if o_start is not None else i_start,
+                o_end if o_end is not None else i_end,
+            )
+        self._pending_bounds_map = merged
+        try:
+            yield
+        finally:
+            self._pending_bounds_map = outer
+
+    def _opened_seams(self, plan) -> List[Tuple[int, int, float, float]]:
+        """The contiguous seams *plan* leaves OPEN once the enclosing edit is
+        done (:meth:`pending_bounds`): where a DCC's
+        :meth:`_reconcile_boundaries` pins a keyless seam with the preceding
+        shot's own pose (:meth:`ShotPlanner.keyless_seam`).  The KEYED
+        shared sample keeps :meth:`ShotPlanner.boundary_splits` without
+        *pending*: its copy is how a landing on the seam leaves the
+        neighbour its opening pose (``ShotStore.enclosing_bounds``)."""
+        return ShotPlanner.boundary_splits(
+            self.store, plan, pending=self._pending_bounds_map
+        )
 
     # ---- delegated properties -------------------------------------------
 
@@ -399,6 +546,56 @@ class ShotSequencer(_ShotSequencerHooks):
         else:
             parts.append(f"on {where}")
         return " · ".join(parts)
+
+    @staticmethod
+    def paste_pairs(
+        rows: Iterable[Tuple[Any, str, Any]],
+        destinations: Iterable[Tuple[Any, str]],
+        leaf: Optional[Callable[[Any], Any]] = None,
+    ) -> List[Tuple[Any, str, Any]]:
+        """Which copied row each destination row of a key paste receives --
+        the Shot Sequencer's key clipboard, in both DCCs.
+
+        A lone copied row goes on every destination, as a Graph Editor pastes
+        one curve onto each selected one.  Otherwise a row lands on the
+        destination of its own attribute: on the same object when that is
+        among them, else the n-th destination object of an attribute takes
+        the n-th copied object of it (cycling), so copying two objects and
+        pasting onto two others pairs them in order.  A destination whose
+        attribute was not copied gets nothing.
+
+        Parameters:
+            rows: ``[(obj, attr, keys)]`` -- the copied rows; *keys* is
+                carried through untouched.
+            destinations: ``[(obj, attr)]`` -- the rows pasted onto.
+            leaf: Maps an object name to the name two rows' objects are
+                compared by (mayatk: the DAG leaf, as a copy and a paste may
+                spell one node long and short); identity by default.
+
+        Returns:
+            ``[(dest_obj, dest_attr, keys)]`` in destination order.
+        """
+        rows = list(rows)
+        destinations = list(destinations)
+        if len(rows) == 1:
+            return [(obj, attr, rows[0][2]) for obj, attr in destinations]
+        same_name = leaf or (lambda name: name)
+        by_attr: Dict[str, List[Tuple[Any, Any]]] = {}
+        for obj, attr, keys in rows:
+            by_attr.setdefault(attr, []).append((obj, keys))
+        seen: Dict[str, int] = {}
+        pairs = []
+        for obj, attr in destinations:
+            sources = by_attr.get(attr)
+            if not sources:
+                continue
+            keys = next((k for o, k in sources if same_name(o) == same_name(obj)), None)
+            if keys is None:
+                i = seen.get(attr, 0)
+                keys = sources[i % len(sources)][1]
+                seen[attr] = i + 1
+            pairs.append((obj, attr, keys))
+        return pairs
 
     def shot_by_id(self, shot_id: int) -> Optional[ShotBlock]:
         return self.store.shot_by_id(shot_id)
@@ -751,6 +948,8 @@ class ShotSequencer(_ShotSequencerHooks):
             sequences = [s for s in sequences if s["kind"] == "anim"]
         if not sequences:
             return
+        for s in sequences:
+            self._animator_run(s)
 
         def content_by_obj() -> Dict[str, List[Dict[str, Any]]]:
             """The destination's sequences keyed by object, as they sit NOW."""
@@ -772,6 +971,38 @@ class ShotSequencer(_ShotSequencerHooks):
             return
 
         affected_shots: set = {dest_shot_id}
+
+        seam_samples: Dict[int, List[str]] = {}  # id(seq) -> ["start", "end"]
+        if not copy:
+            # What leaves a source gave the shots beside it their poses on the
+            # facing bounds; pinned before anything moves (the destination is
+            # edited by the move itself).  A FLUSH bound's sample is the
+            # neighbour's pose too, and is copied, not carried: its facing
+            # slope is held here, and a copy is put back once the run has
+            # moved (:meth:`_seam_samples_of`).  The keys the run leaves
+            # behind keep the slopes they play into their own content first:
+            # the source plays the same up to its last stayed key (BACKLOG
+            # 2026-10-11, "A01_2" / "C02").
+            for sid, grp in groups.items():
+                for seq in grp:
+                    if sid is not None and seq["kind"] == "anim":
+                        self._freeze_left_behind(
+                            [seq["obj"]],
+                            (seq["start"] - _KEY_TOL, seq["end"] + _KEY_TOL),
+                            attr=seq.get("attr"),
+                        )
+                        self._hold_neighbour_poses(
+                            sid,
+                            [seq["obj"]],
+                            (seq["start"] - _KEY_TOL, seq["end"] + _KEY_TOL),
+                            attr=seq.get("attr"),
+                            skip=(dest_shot_id,),
+                            flush=True,
+                            crossing=False,
+                        )
+                        sides = self._seam_samples_of(seq, sid, dest_shot_id)
+                        if sides:
+                            seam_samples[id(seq)] = sides
 
         # Pre-register moved anim objects on dest so that the post-move
         # _recompute_shot_objects pass actually scans them.  Without this,
@@ -804,12 +1035,34 @@ class ShotSequencer(_ShotSequencerHooks):
             if max(s["end"] for s in grp) < dest.start - _EPS
         }
         block_min = 0.0
+        # What lands ON the destination's start owns the seam there
+        # (maintainer 2026-09-23): the head block, and a group from after it
+        # whose objects have nothing there (anchored to the start, step 2).
+        # Where the shot before closes flush on a different pose, the
+        # destination opens a frame later and keeps it (the closing rule,
+        # 2026-10-11): the frame the shot before ends on stays its own.  An
+        # anchored group took that frame from it -- SOL gap 0, B11's first
+        # run sent to B10_2 played B10_1's last frame 98.35 off.
+        head_objs = {s["obj"] for grp in head_groups.values() for s in grp}
+        floor = max(
+            [
+                self._head_landing_floor(dest, grp, min(s["start"] for s in grp))
+                for sid, grp in groups.items()
+                if sid not in head_groups
+                and not any(
+                    dest_seqs_by_obj.get(s["obj"]) or s["obj"] in head_objs for s in grp
+                )
+            ]
+            or [0.0]
+        )
+        room = 0.0
         if head_groups:
             head_seqs = [s for grp in head_groups.values() for s in grp]
             for s in head_seqs:
                 self._absorb_gap_overhang(s, dest.start)
             block_min = min(s["start"] for s in head_seqs)
             block_max = max(s["end"] for s in head_seqs)
+            floor = max(floor, self._head_landing_floor(dest, head_seqs, block_min))
             if any(dest_seqs_by_obj.get(s["obj"]) for s in head_seqs):
                 # The block's own displacement when it already sat within a
                 # shot-gap of the destination -- it and the content it joins
@@ -821,18 +1074,25 @@ class ShotSequencer(_ShotSequencerHooks):
                     block_max - block_min + min(dest.start - block_max, separation),
                     "up",
                 )
-                self.add_shot_space(dest_shot_id, room, edge="leading")
-                # Everything from the destination's start onward travelled
-                # with the pad -- its own content, the gap behind it, the
-                # downstream shots -- and so did the tail groups' keys.
-                for sid, grp in groups.items():
-                    if sid in head_groups:
-                        continue
-                    if min(s["start"] for s in grp) >= dest.start - _EPS:
-                        for s in grp:
-                            s["start"] += room
-                            s["end"] += room
-                dest_seqs_by_obj = content_by_obj()
+                # The room is the block's to fill, so the destination opens
+                # where it opens now: its seam with the shot before is not
+                # split, and is not pinned (:meth:`pending_bounds`).
+                with self.pending_bounds({dest_shot_id: (dest.start, None)}):
+                    self.add_shot_space(dest_shot_id, room, edge="leading")
+        if floor > _EPS:
+            self.set_shot_start(dest_shot_id, dest.start + floor, ripple=True)
+        if room + floor > _EPS:
+            # Everything from the destination's start onward travelled with
+            # the pad -- its own content, the gap behind it, the downstream
+            # shots -- and so did the tail groups' keys.
+            for sid, grp in groups.items():
+                if sid in head_groups:
+                    continue
+                if min(s["start"] for s in grp) >= dest.start - floor - _EPS:
+                    for s in grp:
+                        s["start"] += room + floor
+                        s["end"] += room + floor
+            dest_seqs_by_obj = content_by_obj()
 
         # ---- 2. resolve every landing spot BEFORE anything moves ----------
         # Purely arithmetic, against the destination's CURRENT content: what
@@ -901,12 +1161,19 @@ class ShotSequencer(_ShotSequencerHooks):
                     if sid is not None
                     and (self.shot_by_id(sid) or dest).start >= old_end - _EPS
                 }
+                # The ripple keeps the next shot where it was relative to the
+                # destination's end -- flush stays flush -- which lands the
+                # last run's closing pose on that shot's opening one: a
+                # frame apart where they differ (the closing rule).
+                shift = room + self._landing_floor(
+                    dest, self.store.snap(needed_end, "up"), room, placements, groups
+                )
                 dest.end = self.store.snap(needed_end, "up")
-                self.ripple_downstream(dest_shot_id, old_end, room)
+                self.ripple_downstream(dest_shot_id, old_end, shift)
                 for seq, source_id, _target in placements:
                     if source_id in travelled:
-                        seq["start"] += room
-                        seq["end"] += room
+                        seq["start"] += shift
+                        seq["end"] += shift
 
             # The moved block owns the seam it lands on (maintainer decision,
             # 2026-09-23). Room inserted at the head of a destination the
@@ -919,9 +1186,27 @@ class ShotSequencer(_ShotSequencerHooks):
             for seq, source_id, target in placements:
                 if source_id in head_groups and seq["kind"] == "anim":
                     self._drop_claimed_seam_copy(seq, target, dest.start)
+            # A run landing on the destination's last frame -- or a head block
+            # becoming the last key before the next shot -- is the next shot's
+            # opening pose's new neighbour: pinned first, that pose keeps its
+            # value and the slope its own content plays (a landing a frame away
+            # re-derived it -- the next shot opened 0.97 off, 2026-10-11).
+            self._hold_landing_neighbour(dest, placements, groups, head_groups)
             send = self._copy_sequence if copy else self._move_sequence
             for seq, _source_id, target in placements:
                 send(seq, target)
+                for side in seam_samples.get(id(seq), ()):
+                    # The run's sample on a flush seam stays the neighbour's:
+                    # a copy of the landed key goes back to its frame (where
+                    # the run sat when it left, a ripple included).
+                    frame = seq["start"] if side == "start" else seq["end"]
+                    landed = target + (frame - seq["start"])
+                    self.copy_attribute_keys(
+                        seq["obj"],
+                        seq.get("attr"),
+                        frame - landed,
+                        window=(landed, landed),
+                    )
 
             moved_objs = {
                 seq["obj"] for seq, _s, _t in placements if seq["kind"] == "anim"
@@ -946,6 +1231,410 @@ class ShotSequencer(_ShotSequencerHooks):
         # Move to Shot grew "Shot 3.4-5" 748 -> 781 and left 38 of its 39
         # claimed end samples -- stepped -- at 748, inside the shot.
         self.reconcile_system_edits()
+
+    @staticmethod
+    def _plan_bounds(plan) -> Dict[int, Tuple[float, float]]:
+        """``{shot_id: (start, end)}`` of *plan* -- a :class:`MovePlan`'s moves'
+        new bounds, or a bounds dict as it is."""
+        if isinstance(plan, dict):
+            return plan
+        return {sid: (m.new_start, m.new_end) for sid, m in plan.moves.items()}
+
+    def _seam_samples_of(
+        self, seq: Dict[str, Any], source_id: int, dest_id: int
+    ) -> List[str]:
+        """Which ends of *seq* (``"start"``, ``"end"``), about to leave
+        *source_id*, hold the sample of a FLUSH seam with a shot other than
+        *dest_id*: its first key on the source's start, its last on the
+        source's end.
+
+        That sample is the neighbour's pose too -- the closing pose of the
+        shot before, by the fencepost, or the opening one of the shot after
+        -- so it is copied, not carried (the rule a shot move follows).
+        Carried, the curve's first key left with the run and every shot
+        before played its new first key's extrapolation: measured
+        2026-10-11 on a production assembly, SOLENOID 4.85 off over 1734
+        frames.
+        """
+        shots = self.sorted_shots()
+        idx = next((i for i, s in enumerate(shots) if s.shot_id == source_id), None)
+        if idx is None:
+            return []
+        src = shots[idx]
+        out: List[str] = []
+        if idx > 0:
+            prev = shots[idx - 1]
+            if (
+                prev.shot_id != dest_id
+                and abs(prev.end - src.start) < _KEY_TOL
+                and abs(seq["start"] - src.start) <= _KEY_TOL
+            ):
+                out.append("start")
+        if idx + 1 < len(shots):
+            nxt = shots[idx + 1]
+            if (
+                nxt.shot_id != dest_id
+                and abs(nxt.start - src.end) < _KEY_TOL
+                and abs(seq["end"] - src.end) <= _KEY_TOL
+                and abs(seq["end"] - seq["start"]) > _KEY_TOL
+            ):
+                out.append("end")
+        return out
+
+    def _head_landing_floor(self, dest, head_seqs, block_min: float) -> float:
+        """The frame *dest* opens later by when a Move to Shot head block --
+        *head_seqs*, landing from *block_min* on *dest*'s start -- would land
+        flush behind a shot closing on a different pose; otherwise 0
+        (:meth:`_close_flush_seams`).  The runs read are those opening the
+        block, each against the shot before's closing pose."""
+        shots = self.sorted_shots()
+        idx = next(i for i, s in enumerate(shots) if s.shot_id == dest.shot_id)
+        if idx == 0:
+            return 0.0
+        prev = shots[idx - 1]
+        if abs(prev.end - dest.start) > _KEY_TOL:
+            return 0.0  # a gap: the block's first pose has its own frame
+        first = [
+            seq
+            for seq in head_seqs
+            if seq["kind"] == "anim" and abs(seq["start"] - block_min) <= _KEY_TOL
+        ]
+        if not first:
+            return 0.0
+
+        def layout(floors: Dict[int, float]) -> Dict[int, Tuple[float, float]]:
+            shift = floors.get(dest.shot_id, 0.0)
+            return {dest.shot_id: (dest.start + shift, dest.end + shift)}
+
+        def seams(plan) -> List[Tuple[int, int]]:
+            flush = abs(plan[dest.shot_id][0] - prev.end) < _KEY_TOL
+            return [(prev.shot_id, dest.shot_id)] if flush else []
+
+        def poses(_prev_id, _next_id) -> List[tuple]:
+            return [
+                (prev.end, seq["start"], [(seq["obj"], seq.get("attr"))])
+                for seq in first
+            ]
+
+        _plan, apart = self._close_flush_seams(layout, seams=seams, poses=poses)
+        return apart.get(dest.shot_id, 0.0)
+
+    def _hold_landing_neighbour(self, dest, placements, sources, heads=()) -> int:
+        """Pin the pose and facing slope the shot after *dest* opens on
+        (:meth:`_pin_bound_poses`) for each anim run of *placements* that
+        becomes that pose's new neighbour: one landing on *dest*'s last
+        frame, or a head block (its source in *heads*) landing past the last
+        key of its curve that stays before the next shot -- that shot played
+        the stayed key's hold or extrapolation, and would play the block's.
+        Measured 2026-10-11 on a production assembly: a head block landing
+        clear of its destination's end became its curve's last key, and
+        "D05" played its pose (SOCKET_WRENCH 1.7 off over all 61 frames).
+        A next shot that is itself a source of the move (*sources*) is the
+        move's to edit.  Returns the number of keys pinned."""
+        shots = self.sorted_shots()
+        idx = next((i for i, s in enumerate(shots) if s.shot_id == dest.shot_id), None)
+        if idx is None or idx + 1 >= len(shots) or shots[idx + 1].shot_id in sources:
+            return 0
+        nxt = shots[idx + 1]
+        pinned = 0
+        for seq, sid, target in placements:
+            if seq["kind"] != "anim":
+                continue
+            end = target + (seq["end"] - seq["start"])
+            if sid in heads:
+                keys = self._animator_times_in(
+                    seq["obj"], seq.get("attr"), (-_CONTENT_REACH, nxt.start - _KEY_TOL)
+                )
+                lo, hi = seq["start"] - _KEY_TOL, seq["end"] + _KEY_TOL
+                still = [t for t in keys if not lo <= t <= hi]
+                if not still or max(still) > end + _KEY_TOL:
+                    continue  # the next shot's left neighbour is not the block
+            elif end < dest.end - 1.0:
+                continue  # lands clear of the destination's end
+            pinned += self._pin_bound_poses(
+                [seq["obj"]],
+                (seq["start"] - _KEY_TOL, seq["end"] + _KEY_TOL),
+                [(float(nxt.start), nxt.shot_id, "start")],
+                attr=seq.get("attr"),
+            )
+        return pinned
+
+    def _landing_floor(
+        self, dest, new_end: float, room: float, placements, sources
+    ) -> float:
+        """The frame the destination's next shot keeps from a Move to Shot
+        landing, when it is flush with the destination and the run(s)
+        landing on its new end close on a different pose than its opening
+        one (:meth:`_close_flush_seams`); otherwise 0.  A next shot that is
+        itself a source of the move (*sources*) opens on whatever the move
+        leaves it, which is the move's own edit of both shots."""
+        shots = self.sorted_shots()
+        idx = next(i for i, s in enumerate(shots) if s.shot_id == dest.shot_id)
+        if idx + 1 >= len(shots):
+            return 0.0
+        nxt = shots[idx + 1]
+        if abs(nxt.start - dest.end) > _KEY_TOL or nxt.shot_id in sources:
+            return 0.0  # a gap the ripple keeps, or a shot the move edits
+        enders = [
+            seq
+            for seq, _sid, target in placements
+            if seq["kind"] == "anim"
+            and abs(target + (seq["end"] - seq["start"]) - new_end) <= 1.0 - _KEY_TOL
+        ]
+        if not enders:
+            return 0.0
+
+        def layout(floors: Dict[int, float]) -> Dict[int, Tuple[float, float]]:
+            shift = room + floors.get(nxt.shot_id, 0.0)
+            out = {dest.shot_id: (dest.start, new_end)}
+            for s in shots[idx + 1 :]:
+                out[s.shot_id] = (s.start + shift, s.end + shift)
+            return out
+
+        def seams(plan) -> List[Tuple[int, int]]:
+            lo, hi = plan[dest.shot_id][1], plan[nxt.shot_id][0]
+            return [(dest.shot_id, nxt.shot_id)] if abs(hi - lo) < _KEY_TOL else []
+
+        def poses(_prev_id, _next_id) -> List[tuple]:
+            # Each run's own closing pose, read where it is now, against the
+            # opening pose of the shot it lands beside.
+            return [
+                (seq["end"], nxt.start, [(seq["obj"], seq.get("attr"))])
+                for seq in enders
+            ]
+
+        _plan, apart = self._close_flush_seams(layout, seams=seams, poses=poses)
+        return apart.get(nxt.shot_id, 0.0)
+
+    def _close_flush_seams(
+        self,
+        make_plan: Callable[[Dict[int, float]], Any],
+        seams: Optional[Callable[[Any], List[Tuple[int, int]]]] = None,
+        poses: Optional[Callable[[int, int], tuple]] = None,
+        keep: Optional[Callable[[List[Tuple[int, int]]], List[bool]]] = None,
+    ):
+        """Build an op's plan with every seam it closes decided: flush where
+        the two poses agree, kept as a straight cut where they differ --
+        exactly one frame apart, no empty frame between the shots, the gap
+        hold stepping the transition (the user's words, 2026-10-12).
+
+        The maintainer's rule (2026-10-11) for every op that closes a seam to
+        gap 0 -- a delete, the scoped gap collapse, a respace to 0, a band
+        move, a slide, a Ctrl edge, Move to Shot's landing: one frame holds
+        one pose, so a seam whose two poses differ keeps a frame of its own,
+        and the op is never refused and never re-times a shot.  "Poses" are
+        keyed AND held -- the value each curve plays there, read by the DCC
+        (:meth:`_poses_differ`) before anything moves.  A widened seam can
+        move what follows it, so the plan is asked again until no new seam
+        closes; a seam left apart re-closes on a later op only once its poses
+        agree.  The seams kept apart -- kept as straight cuts -- are reported in
+        one info line (:meth:`_report_straight_cuts`).
+
+        Parameters:
+            make_plan: ``{shot_id: frames} -> plan``, the op's own planner
+                (a :class:`MovePlan`, or ``{shot_id: (start, end)}``) with a
+                floor on the gap BEFORE each named shot.
+            seams: ``plan -> [(prev_id, next_id), ...]``, the seams the op
+                closes; default :meth:`ShotPlanner.closing_seams` -- flush
+                once the plan applies, apart now.
+            poses: ``(prev_id, next_id) -> [(frame_a, frame_b, objects),
+                ...]``, where each side's pose is read now (any pair that
+                differs keeps the seam apart); default the previous shot's
+                end and the next one's start, every content curve
+                (``objects`` ``None``).
+            keep: ``[(prev_id, next_id), ...] -> [bool, ...]``, the op's own
+                further reason a seam keeps its frame though its poses agree
+                (:meth:`respace`: its gap holds keys, :meth:`_seams_hold_keys`);
+                default none.
+
+        Returns:
+            ``(plan, {shot_id: frames})`` -- the plan to apply and the seams
+            it keeps apart.
+        """
+        one = self.store.snap(1.0) or 1.0
+        widen: Dict[int, float] = {}
+        why: Dict[int, str] = {}  # each kept seam's reason, for the report
+        plan = make_plan(widen)
+        if not self._scene_available():
+            return plan, widen
+        asked: set = set()
+        for _ in range(len(self.store.shots)):
+            if seams is not None:
+                found = seams(plan)
+            else:
+                found = ShotPlanner.closing_seams(self.store, self._plan_bounds(plan))
+            todo = [pair for pair in found if pair not in asked]
+            if not todo:
+                break
+            asked.update(todo)
+            clash = []
+            kept = keep(todo) if keep is not None else [False] * len(todo)
+            for (prev_id, next_id), differ, held in zip(
+                todo, self._seam_poses_differ(todo, poses), kept
+            ):
+                if differ or held:
+                    clash.append(next_id)
+                    why[next_id] = "poses differ" if differ else "gap holds keys"
+            if not clash:
+                break
+            for sid in clash:
+                widen[sid] = one
+            plan = make_plan(widen)
+        if widen:
+            self._report_straight_cuts(widen, why)
+        return plan, widen
+
+    def _report_straight_cuts(self, widen: Dict[int, float], why: Dict[int, str]):
+        """The one info line naming the seams :meth:`_close_flush_seams` kept
+        apart, by reason -- "kept as straight cuts": no empty frame sits
+        between the two shots, the gap hold steps the transition (maintainer
+        2026-10-12)."""
+        shots = self.sorted_shots()
+        groups: Dict[str, List[str]] = {}
+        for i, shot in enumerate(shots):
+            if shot.shot_id in widen and i > 0:
+                groups.setdefault(why.get(shot.shot_id, "poses differ"), []).append(
+                    f"{shots[i - 1].name}|{shot.name}"
+                )
+        count = sum(len(v) for v in groups.values())
+        _log.info(
+            "%d seam%s kept as %s %s",
+            count,
+            "" if count == 1 else "s",
+            "a straight cut" if count == 1 else "straight cuts",
+            "; ".join(
+                f"({reason}): {', '.join(names)}" for reason, names in groups.items()
+            ),
+        )
+
+    def _seams_hold_keys(self, pairs: List[Tuple[int, int]]) -> List[bool]:
+        """Per seam ``(prev_id, next_id)``: whether the gap between the two
+        shots holds the animator's keys now (:meth:`_gaps_keyed`).
+
+        The further reason :meth:`respace` and a slide
+        (:meth:`_closing_slide_start`) keep a seam's frame.  A gap's keys are
+        retimed into its new width, and a width of 0 is refused -- that would
+        cut or stack the animator's keys -- so a seam closed flush over a
+        keyed gap left the keys where they were, and the shot after played
+        them: SOL_REPLACE_ASSEMBLY pulled into Blender with its stepped keys,
+        a respace to 0 played A04 0.0012 off.  One frame apart, the keys keep
+        a gap to be retimed into (a slide's: :meth:`_retime_closed_gap`).
+        """
+        windows = []
+        for prev_id, next_id in pairs:
+            prev, nxt = self.shot_by_id(prev_id), self.shot_by_id(next_id)
+            windows.append((prev.end + _KEY_TOL, nxt.start - _KEY_TOL))
+        return list(self._gaps_keyed(windows)) if windows else []
+
+    def _seam_poses_differ(self, pairs, poses=None) -> List[bool]:
+        """:meth:`_poses_differ` for seams ``[(prev_id, next_id), ...]``: each
+        read where *poses* says (``(frame_a, frame_b, objects)``), default the
+        previous shot's end and the next shot's start over the whole content.
+        One DCC read per object set."""
+        asks: List[tuple] = []  # (seam index, object key, (frame_a, frame_b))
+        for n, (prev_id, next_id) in enumerate(pairs):
+            if poses is not None:
+                reads = poses(prev_id, next_id)
+            else:
+                prev, nxt = self.shot_by_id(prev_id), self.shot_by_id(next_id)
+                reads = [(prev.end, nxt.start, None)]
+            for frame_a, frame_b, objects in reads:
+                key = None if objects is None else tuple(sorted(objects))
+                asks.append((n, key, (float(frame_a), float(frame_b))))
+        out: List[bool] = [False] * len(pairs)
+        for key in {k for _n, k, _f in asks}:
+            mine = [a for a in asks if a[1] == key]
+            got = self._poses_differ(
+                [f for _n, _k, f in mine], None if key is None else list(key)
+            )
+            for (n, _k, _f), differ in zip(mine, got):
+                out[n] = out[n] or bool(differ)
+        return out
+
+    def _hold_neighbour_poses(
+        self,
+        shot_id: int,
+        objects: Iterable[str],
+        window: Tuple[float, float],
+        attr: Optional[str] = None,
+        skip: Iterable[int] = (),
+        flush: bool = False,
+        crossing: Optional[bool] = None,
+    ) -> int:
+        """Pin, before content of *objects* inside *window* leaves *shot_id*,
+        the pose each shot beside it plays on its facing bound
+        (:meth:`_pin_bound_poses`): the previous shot's end, the next shot's
+        start -- neither in *skip*, and only across a gap unless *flush*.
+        *flush* (a delete): a seam shared with *shot_id* is pinned too -- the
+        frame is the neighbour's once *shot_id* is gone (the delete's cut
+        leaves a flush closing sample to the next shot), and where the next
+        shot then lands is the closing rule's (:meth:`_close_flush_seams`) --
+        and so is every curve crossing *window* keyless, which the closing
+        would re-time (*crossing*, default *flush*: a Move to Shot closes
+        nothing, so it leaves those alone).
+
+        The one rule (maintainer 2026-10-10): an op on one shot never changes
+        what another plays inside its own span.  The keys leaving were the
+        neighbours' too wherever a curve's segment crossed into them -- the
+        ramp out of the previous shot's last key, the value the leaving shot's
+        last key held over every shot after it.  Measured 2026-10-11 on a
+        production assembly at gap 10: deleting "A01_2" left "A02" playing
+        KEYS 78 units off over all 81 of its frames, deleting "C01" moved
+        "C02"'s SOLENOID by 7.2 over 256; at gap 0 the delete handed "A02"
+        the deleted shot's closing pose -- KEYS 80 off.
+
+        Returns the number of keys pinned.
+        """
+        shots = self.sorted_shots()
+        idx = next((i for i, s in enumerate(shots) if s.shot_id == shot_id), None)
+        objects = list(objects or ())
+        if idx is None or not objects:
+            return 0
+        shot, skip = shots[idx], set(skip)
+        prev = shots[idx - 1] if idx > 0 else None
+        nxt = shots[idx + 1] if idx + 1 < len(shots) else None
+        pins: List[Tuple[float, int, str]] = []
+        if prev is not None and prev.shot_id not in skip:
+            if flush or prev.end < shot.start - _EPS:
+                pins.append((float(prev.end), prev.shot_id, "end"))
+        if nxt is not None and nxt.shot_id not in skip:
+            if flush or nxt.start > shot.end + _EPS:
+                pins.append((float(nxt.start), nxt.shot_id, "start"))
+        if not pins:
+            return 0
+        return self._pin_bound_poses(
+            objects,
+            (float(window[0]), float(window[1])),
+            pins,
+            attr=attr,
+            crossing=flush if crossing is None else crossing,
+        )
+
+    def _animator_run(self, seq: Dict[str, Any]) -> None:
+        """Narrow *seq*, in place, to the animator's own keys inside it.
+
+        A run's drawn extent is its MOTION, and motion can run on into a
+        sample the system planted for a bound -- a pin follows its bound, so
+        it is never content to send (:meth:`_animator_times_in`).  Measured
+        2026-10-11 on a production assembly at gap 0: a clip ending on the
+        next shot's claimed start pin, on the shared frame, read as content
+        from AFTER the destination; Move to Shot appended it behind the
+        destination's own, the curve's last pose became the moved block's
+        and the shot after played it -- KEYS 78 units off over all 81 frames.
+
+        A key selection (``"times"``), an audio clip and a run with no key of
+        the animator's in it are left as they are, and a run is only ever
+        narrowed: read a key-time tolerance wide, so a key ON an end (stored
+        single-precision in Blender) still holds that end.  In place, like
+        :meth:`_absorb_gap_overhang`: the caller's dict reports what moved.
+        """
+        if seq["kind"] != "anim" or seq.get("times"):
+            return
+        lo, hi = seq["start"], seq["end"]
+        tol = self.ledger.eps
+        own = self._animator_times_in(seq["obj"], seq.get("attr"), (lo - tol, hi + tol))
+        if own:
+            seq["start"], seq["end"] = max(lo, min(own)), min(hi, max(own))
 
     def _absorb_gap_overhang(self, seq: Dict[str, Any], dest_start: float) -> None:
         """Widen a head-bound *seq* over its own keys hanging in the gap.
@@ -1110,6 +1799,12 @@ class ShotSequencer(_ShotSequencerHooks):
             self._cut_passed_bound_keys(
                 on_bound, old_start, old_end, new_start, new_end
             )
+            # What each side plays across a moved edge, pinned (and a flush
+            # shrink's closing), as a plain edge edit does it -- a grow from
+            # its new bound (below).
+            closing = self._hold_edge_neighbours(
+                shot, new_start, new_end, grow_from_new=True
+            )
             self._reconcile_pending_bounds(
                 shot_id,
                 new_start if head_delta > _EPS else old_start,
@@ -1127,11 +1822,15 @@ class ShotSequencer(_ShotSequencerHooks):
             # shot to 55 and moved the key to 60.  A SHRINKING edge still
             # ripples from the old bound -- nothing of the shot's is left
             # between the two (a trim stops at content).
-            if abs(tail_delta) > _EPS:
+            if "end" in closing:
+                closing["end"]()
+            elif abs(tail_delta) > _EPS:
                 self.ripple_downstream(
                     shot_id, new_end if tail_delta > 0 else old_end, tail_delta
                 )
-            if abs(head_delta) > _EPS:
+            if "start" in closing:
+                closing["start"]()
+            elif abs(head_delta) > _EPS:
                 self.ripple_upstream(
                     shot_id, new_start if head_delta < 0 else old_start, head_delta
                 )
@@ -1478,13 +2177,129 @@ class ShotSequencer(_ShotSequencerHooks):
         old_start = shot.start
         old_end = shot.end
         new_start = self._clamp_slide_start(shot, new_start, direction)
+        new_start = self._closing_slide_start(shot, new_start, direction)
         delta = new_start - old_start
         if abs(delta) < _EPS:
             return
         self._slide(shot, old_start, old_end, new_start, delta, direction, _enforce)
 
+    def _closing_slide_start(
+        self, shot: ShotBlock, new_start: float, direction: Optional[str]
+    ) -> float:
+        """*new_start* for a slide, one frame short of a neighbour it would
+        land flush on with a different pose (:meth:`_close_flush_seams`): the
+        band move (``move_shot``), a gap handle's slide, the scoped gap
+        collapse.  The slide's own layout (:meth:`_slid_bounds`) is the plan:
+        the side that ripples keeps its gap, so only the other can close.
+        A gap holding the animator's keys keeps its frame too, as a
+        respace's does (:meth:`_seams_hold_keys`; maintainer 2026-10-12):
+        the keys are retimed into it (:meth:`_retime_closed_gap`)."""
+        delta = new_start - shot.start
+        if abs(delta) < _EPS:
+            return new_start
+        shots = self.sorted_shots()
+        idx = next(i for i, s in enumerate(shots) if s.shot_id == shot.shot_id)
+        nxt = shots[idx + 1] if idx + 1 < len(shots) else None
+
+        def layout(floors: Dict[int, float]) -> Dict[int, Tuple[float, float]]:
+            start = new_start + floors.get(shot.shot_id, 0.0)
+            if nxt is not None:
+                start -= floors.get(nxt.shot_id, 0.0)
+            return self._slid_bounds(shot, start - shot.start, direction)
+
+        _plan, apart = self._close_flush_seams(layout, keep=self._seams_hold_keys)
+        out = new_start + apart.get(shot.shot_id, 0.0)
+        if nxt is not None:
+            out -= apart.get(nxt.shot_id, 0.0)
+        return out
+
+    def _retime_closed_gap(
+        self, shot: ShotBlock, new_start: float, direction: Optional[str]
+    ) -> int:
+        """Before a slide lands *shot* a frame from the shot before it, that
+        gap's keys -- the stationary shot's, which it does not carry -- are
+        retimed into the frame the closing rule kept (:meth:`_seams_hold_keys`),
+        as a respace retimes them (maintainer 2026-10-12, "same as respace").
+        Left where they were, the slid shot landed over them and played them
+        (A [0, 60] still, B [100, 160] moved to 60: 0.5 for 1.0).  The poses
+        both bounds play are pinned first (:meth:`_pin_bound_poses`), so
+        neither shot plays the retime.  Rippled upstream, the shot before
+        moves with *shot* and the gap keeps its width.  Returns the curves
+        retimed."""
+        if direction == "upstream":
+            return 0
+        shots = self.sorted_shots()
+        idx = next(i for i, s in enumerate(shots) if s.shot_id == shot.shot_id)
+        if idx == 0:
+            return 0
+        prev = shots[idx - 1]
+        return self._retime_closing_gap(prev, shot, prev.end, new_start)
+
+    def _retime_closing_gap(
+        self, left: ShotBlock, right: ShotBlock, new_lo: float, new_hi: float
+    ) -> int:
+        """The gap between *left* and *right* is about to become ``(new_lo,
+        new_hi)``, the frame the closing rule kept for its keys
+        (:meth:`_seams_hold_keys`): the poses both bounds play are pinned
+        (:meth:`_pin_bound_poses`), the keys retimed into that width at the
+        gap's left edge (:meth:`_retime_closing_gaps`), then carried to
+        *new_lo* when that edge moves -- a Shift edge growing *left*'s end
+        (:meth:`set_shot_edge`).  Before anything else moves; the one step
+        behind a slide's and a Shift edge's closed gap.  Returns the curves
+        retimed (0: no gap closing to a kept frame, or no keys in it)."""
+        if not self._scene_available():
+            return 0
+        lo, hi = left.end, right.start
+        width = new_hi - new_lo
+        one = self.store.snap(1.0) or 1.0
+        if hi - lo <= one + _KEY_TOL or not -_EPS < width <= one + _EPS:
+            return 0  # no gap to close, or one the edit keeps open
+        if not self._seams_hold_keys([(left.shot_id, right.shot_id)])[0]:
+            return 0
+        content = self._content_objects()
+        self._pin_bound_poses(
+            content,
+            (lo + _KEY_TOL, hi - _KEY_TOL),
+            [(lo, left.shot_id, "end"), (hi, right.shot_id, "start")],
+        )
+        done = self._retime_closing_gaps(
+            [GapRetime(left.shot_id, right.shot_id, lo, hi, max(0.0, width), 0.0)]
+        )
+        if done and abs(new_lo - lo) > _EPS:
+            # Strictly inside the retimed width: neither bound's key goes.
+            self._move_content_keys(content, lo, lo + width, new_lo - lo, lo_open=True)
+        return done
+
+    def _slid_bounds(self, shot, delta: float, direction: Optional[str]) -> dict:
+        """``{shot_id: (start, end)}`` once *shot* has slid by *delta* and the
+        *direction* side rippled with it: the :meth:`pending_bounds` of a
+        slide.  Its two steps -- the ripple, then the pivot -- each leave the
+        pivot and its rippled neighbour a gap apart for a moment, and the
+        seam between them is not split: both sides' content moves by the
+        same delta."""
+        shots = self.sorted_shots()
+        idx = next(i for i, s in enumerate(shots) if s.shot_id == shot.shot_id)
+        moving = [shot]
+        if direction == "downstream":
+            moving += shots[idx + 1 :]
+        elif direction == "upstream":
+            moving += shots[:idx]
+        snap = self.store.snap  # as the planner and the pivot mover land them
+        return {s.shot_id: (snap(s.start + delta), snap(s.end + delta)) for s in moving}
+
     def _slide(self, shot, old_start, old_end, new_start, delta, direction, enforce):
-        """The ordered ripple + content move behind :meth:`slide_shot`."""
+        """The ordered ripple + content move behind :meth:`slide_shot`, a
+        gap it closes over the shot before retimed first
+        (:meth:`_retime_closed_gap`)."""
+        self._retime_closed_gap(shot, new_start, direction)
+        with self.pending_bounds(self._slid_bounds(shot, delta, direction)):
+            self._slide_moves(shot, old_start, old_end, new_start, delta, direction)
+        if enforce:
+            self._enforce_gap_holds()
+        self.store.mark_dirty()
+
+    def _slide_moves(self, shot, old_start, old_end, new_start, delta, direction):
+        """:meth:`_slide`'s ripple and pivot move, in their collision-safe order."""
         shot_id = shot.shot_id
         # Vacate the destination side before moving the pivot: when the
         # pivot moves TOWARD the shots about to ripple, moving it first
@@ -1507,10 +2322,6 @@ class ShotSequencer(_ShotSequencerHooks):
                 self.ripple_upstream(shot_id, old_start, delta, carry_gap=False)
         else:
             self._move_shot_content(shot, new_start)
-
-        if enforce:
-            self._enforce_gap_holds()
-        self.store.mark_dirty()
 
     def ripple_downstream(
         self, shot_id: int, after_frame: float, delta: float, carry_gap: bool = True
@@ -1586,20 +2397,121 @@ class ShotSequencer(_ShotSequencerHooks):
         Called automatically after every timeline-modifying operation, and
         idempotent: a second run finds every seam already held and every
         claim still wanted, so it writes nothing.
+
+        Every pass offers every unheld seam its pin, and keeps no memory of
+        the last: what a seam needs is read from the scene each time, so an
+        edit made by any other path (a Graph Editor key, an undo, a reload)
+        can never leave one skipped.  The hook is what has to be cheap where
+        there is nothing to write -- measured 2026-10-11 on a production
+        assembly, a New Shot spent 1.0 of its 1.5 s in 190 pin writes that
+        inserted nothing; the DCC hooks now decline those from one read of
+        the curve (mayatk ``_pinnable_frames``, blendertk ``_pinnable``).
         """
         if not self._scene_available():
             return
-        seams = self._holdable_seams(self._gap_hold_seams())
+        raw = self._gap_hold_seams()
+        seams = self._holdable_seams(raw)
         # A pin moves no seam, but a key a DCC puts ON a bound instead of
         # pinning beside it (its merge distance) can: read the seams again
-        # while a pass changed anything.
+        # while a pass changed anything.  Each pass also carries a keyless
+        # crossing one gap on (:meth:`_through_pins`).
         for _pass in range(len(self.store.shots)):
             pins = self._hold_pin_bounds(seams)
+            through = self._through_pins(raw, seams)
+            for curve, want in through.items():
+                pins[curve] = sorted(set(pins.get(curve, ())) | set(want))
+            claimed = {c: self.ledger.key_times(c) for c in through}
             if not pins or not self._pin_bound_keys(pins):
                 break
-            seams = self._holdable_seams(self._gap_hold_seams())
+            self._keep_through_ends(through, claimed)
+            raw = self._gap_hold_seams()
+            seams = self._holdable_seams(raw)
         self._release_gap_holds(seams)
         self._apply_gap_holds(seams)
+
+    def _through_pins(
+        self, raw: Dict[str, list], held: Dict[str, list]
+    ) -> Dict[str, List[Tuple[float, int, str]]]:
+        """``{curve: [(frame, shot_id, edge), ...]}`` for each seam of *raw*
+        that :meth:`_holdable_seams` dropped from *held*: a shot's start pin,
+        the curve running on through that shot keyless and across the gap
+        after it.  That shot's END and the next shot's START are pinned
+        (:meth:`_pin_bound_keys`), so the crossing ends on the shot's own
+        pose, the gap holds from there like any other (the next pass), and a
+        ripple of what follows no longer re-times the segment.
+
+        Unpinned, a ramp running on from a start pin -- a curve no member of
+        the shot keys, held from the gap before -- was re-timed by every
+        ripple past it: a trim played the next shot 1.2 off, and on SOL
+        pulled into Blender a band move played the shots it crossed about 1.0
+        off (the LCKR door ramp through 30 shots, a SCREWDRIVER ramp).
+        """
+        eps = self.ledger.eps
+        shots = self.sorted_shots()
+        out: Dict[str, List[Tuple[float, int, str]]] = {}
+        for curve, times in raw.items():
+            kept = held.get(curve, ())
+            for t in times:
+                if any(abs(t - k) <= eps for k in kept):
+                    continue
+                i = next(
+                    (j for j, s in enumerate(shots) if abs(s.start - t) <= eps), None
+                )
+                if i is None or i + 1 >= len(shots):
+                    continue
+                shot, nxt = shots[i], shots[i + 1]
+                if nxt.start - shot.end < _EPS:
+                    continue  # flush: no gap to hold
+                out.setdefault(curve, []).extend(
+                    [
+                        (float(shot.end), shot.shot_id, "end"),
+                        (float(nxt.start), nxt.shot_id, "start"),
+                    ]
+                )
+        return out
+
+    def _keep_through_ends(
+        self, through: Dict[str, list], claimed: Dict[str, List[float]]
+    ) -> None:
+        """Mark the END pins :meth:`_through_pins` just put in ``stays``: each
+        is the shot's own pose on its end, so a later move of that end leaves
+        it where it is (disowned) instead of carrying it off -- followed, a
+        grow re-timed the shot's whole crossing (0.44 off).  *claimed*: each
+        curve's claimed times before the pins went in; only new ones are
+        marked."""
+        led = self.ledger
+        for curve, want in through.items():
+            before = claimed.get(curve, ())
+            for frame, shot_id, edge in want:
+                if edge != "end" or any(abs(frame - t) <= led.eps for t in before):
+                    continue
+                for t, owner, e in led.key_records(curve):
+                    if abs(t - frame) <= led.eps and (owner, e) == (shot_id, edge):
+                        led.release_key(curve, t)
+                        led.record_key(curve, t, owner, e, stays=True)
+
+    def _hold_runs_through_shots(
+        self, key_time: float, next_key: Optional[float]
+    ) -> bool:
+        """Whether a hold from a key at *key_time* to the curve's next key at
+        *next_key* (``None``: none, the hold is the curve's own extrapolation)
+        runs through the start of a shot -- what that shot plays, so a DCC's
+        :meth:`_release_gap_holds` keeps it.
+
+        A gap hold stops at the next shot's start, where it is pinned before
+        it is written (:meth:`_hold_pin_bounds`).  A scene held before that
+        pin existed has holds running on to the curve's next key, through
+        every shot between, and those shots play the held pose: released,
+        the restored interpolation re-timed all of them (measured
+        2026-10-11 on a production assembly: a respace 10 -> 0 played a held
+        door off its hold in 15 shots, by up to 1.22 in "C12", and the
+        layout settled only on a second respace).  Kept, the claim still
+        goes: the step is the shots' pose now, not a seam's.
+        """
+        if next_key is None:
+            return False
+        lo, hi = key_time + _KEY_TOL, next_key - _KEY_TOL
+        return any(lo < s.start < hi for s in self.store.shots)
 
     def _holdable_seams(self, seams: Dict[str, list]) -> Dict[str, list]:
         """*seams* without the ones that are a shot's claimed START sample.
@@ -1750,8 +2662,11 @@ class ShotSequencer(_ShotSequencerHooks):
             return 0.0
         delta = new_end - shot.end
         old_end = shot.end
-        shot.end = self.store.snap(new_end)
+        # Ripple first, then the bound (resize_shot_bounds' order): written
+        # first, a flush neighbour read as no neighbour and its seam was
+        # never split -- see :meth:`add_shot_space`.
         self.ripple_downstream(shot_id, old_end, delta)
+        shot.end = self.store.snap(new_end)
         self.reconcile_system_edits()
         return delta
 
@@ -1828,12 +2743,13 @@ class ShotSequencer(_ShotSequencerHooks):
         new_end = self.store.snap(shot.start + new_duration)
 
         # A growing end ripples FIRST and a shrinking one AFTER the scale --
-        # see :meth:`resize_shot`.
-        if delta > 0:
-            self.ripple_downstream(shot_id, old_end, delta)
-        self.scale_shot_keys(shot.start, old_end, shot.start, new_end)
-        if delta < 0:
-            self.ripple_downstream(shot_id, old_end, delta)
+        # see :meth:`resize_shot` (and its pending bounds).
+        with self.pending_bounds({shot_id: (shot.start, new_end)}):
+            if delta > 0:
+                self.ripple_downstream(shot_id, old_end, delta)
+            self.scale_shot_keys(shot.start, old_end, shot.start, new_end)
+            if delta < 0:
+                self.ripple_downstream(shot_id, old_end, delta)
         shot.end = new_end
         self.reconcile_system_edits()
         self.store.mark_dirty()
@@ -1894,17 +2810,27 @@ class ShotSequencer(_ShotSequencerHooks):
         # shot that belonged beyond it.
         tail_delta = new_end - old_end
         head_delta = new_start - old_start
-        if tail_delta > _EPS:
-            self.ripple_downstream(shot_id, old_end, tail_delta)
-        if head_delta < -_EPS:
-            self.ripple_upstream(shot_id, old_start, head_delta)
+        # A flush neighbour on a retimed edge keeps its own pose and slope
+        # there: a curve crossing that seam keyless is pinned first, so the
+        # DCC's retime (:meth:`scale_shot_keys`) has a key to hold the
+        # neighbour's half on (BACKLOG 2026-10-11: keyless, the next shot
+        # opened 0.08 off).
+        self._pin_retimed_seams(shot, head_delta, tail_delta)
+        # The retimed content fills the new span, its closing pose landing on
+        # the new seam: the ripple's moment of gap is no split to pin
+        # (:meth:`pending_bounds`).
+        with self.pending_bounds({shot_id: (new_start, new_end)}):
+            if tail_delta > _EPS:
+                self.ripple_downstream(shot_id, old_end, tail_delta)
+            if head_delta < -_EPS:
+                self.ripple_upstream(shot_id, old_start, head_delta)
 
-        self.scale_shot_keys(old_start, old_end, new_start, new_end)
+            self.scale_shot_keys(old_start, old_end, new_start, new_end)
 
-        if tail_delta < -_EPS:
-            self.ripple_downstream(shot_id, old_end, tail_delta)
-        if head_delta > _EPS:
-            self.ripple_upstream(shot_id, old_start, head_delta)
+            if tail_delta < -_EPS:
+                self.ripple_downstream(shot_id, old_end, tail_delta)
+            if head_delta > _EPS:
+                self.ripple_upstream(shot_id, old_start, head_delta)
         shot.start = new_start
         shot.end = new_end
 
@@ -1914,6 +2840,166 @@ class ShotSequencer(_ShotSequencerHooks):
             # follow it or be cleaned up.
             self.reconcile_system_edits()
         self.store.mark_dirty()
+
+    def _pin_retimed_seams(self, shot, head_delta: float, tail_delta: float) -> int:
+        """Pin the pose every content curve plays on each FLUSH seam of *shot*
+        whose edge a retime moves (:meth:`_pin_bound_poses`, keyless curves
+        crossing it included), claimed as the shot before's end -- the
+        sample the fencepost gives that shot.  Returns the keys pinned."""
+        shots = self.sorted_shots()
+        idx = next(i for i, s in enumerate(shots) if s.shot_id == shot.shot_id)
+        pins = []
+        if abs(tail_delta) > _EPS and idx + 1 < len(shots):
+            if abs(shots[idx + 1].start - shot.end) < _KEY_TOL:
+                pins.append((float(shot.end), shot.shot_id, "end"))
+        if abs(head_delta) > _EPS and idx > 0:
+            prev = shots[idx - 1]
+            if abs(prev.end - shot.start) < _KEY_TOL:
+                pins.append((float(shot.start), prev.shot_id, "end"))
+        if not pins:
+            return 0
+        content = self._content_objects()
+        return sum(
+            self._pin_bound_poses(
+                content, (pin[0] - _KEY_TOL, pin[0] + _KEY_TOL), [pin], crossing=True
+            )
+            for pin in pins
+        )
+
+    def _hold_edge_neighbours(
+        self, shot, new_start: float, new_end: float, grow_from_new: bool = False
+    ) -> Dict[str, Any]:
+        """Before a plain edge edit of *shot* to ``[new_start, new_end]``
+        ripples its neighbours: what each side plays across every moved edge,
+        pinned; and the ripple of each edge a FLUSH neighbour shrinks onto
+        (``{"start": apply, "end": apply}``, each a callable running it; an
+        edge left out takes the plain ripple).
+
+        On each moved edge, every content curve is keyed
+        (:meth:`_pin_bound_poses`, keyless crossings included) where *shot*
+        keeps playing to -- its new bound for a shrink; for a grow its old
+        one, or the new one when the ripple runs from there
+        (*grow_from_new*, :meth:`fit_shot_to_content`: the keys the shot grew
+        over stay with it) -- and on the neighbour's facing bound, each
+        claimed for that bound.  A curve crossing the edge keyless ran from a key that stays
+        to one the ripple moves, and both shots played it re-timed (BACKLOG
+        2026-10-11: SOL "C02_2" 0.096 off over 55 frames after a flush
+        shrink; across a gap, a ramp no member of the shot keys -- the gap
+        hold never steps a shot's start pin -- played the next shot 1.2 off
+        after a trim, "A02" 1.5 in the Blender pull).  A flush GROW is the
+        split's to pin (:meth:`_reconcile_boundaries`).
+
+        A flush shrink closes the seam again on the new bound: flush where
+        *shot*'s pose there and the neighbour's on the old seam agree, a
+        frame short where they differ -- the closing rule
+        (:meth:`_close_flush_seams`, maintainer 2026-10-11), so there the
+        neighbour moves one frame less than the edge.  The old seam's sample
+        is the neighbour's from here: its claims are re-named for it, and the
+        neighbour's window reaches over the frames *shot* gave up, so it
+        rides."""
+        shots = self.sorted_shots()
+        idx = next(i for i, s in enumerate(shots) if s.shot_id == shot.shot_id)
+        # (edge, before, after, where before closes, where after opens, flush)
+        sides = []
+        if idx + 1 < len(shots) and abs(new_end - shot.end) > _EPS:
+            nxt = shots[idx + 1]
+            flush = abs(nxt.start - shot.end) < _KEY_TOL
+            close = new_end if grow_from_new else min(new_end, shot.end)
+            if not (flush and new_end > shot.end):
+                sides.append(("end", shot, nxt, close, nxt.start, flush))
+        if idx > 0 and abs(new_start - shot.start) > _EPS:
+            prev = shots[idx - 1]
+            flush = abs(prev.end - shot.start) < _KEY_TOL
+            opening = new_start if grow_from_new else max(new_start, shot.start)
+            if not (flush and new_start < shot.start):
+                sides.append(("start", prev, shot, prev.end, opening, flush))
+        plans: Dict[str, Any] = {}
+        content = self._content_objects() if sides else []
+        for edge, before, after, close, opening, flush in sides:
+            # Flush, the old seam's sample changes sides: *shot*'s claim on it
+            # is the neighbour's from here.
+            if flush and edge == "end":
+                self._rename_seam_claims(
+                    opening, (shot.shot_id, "end"), (after.shot_id, "start")
+                )
+            elif flush:
+                self._rename_seam_claims(
+                    close, (shot.shot_id, "start"), (before.shot_id, "end")
+                )
+            for pin in (
+                (close, before.shot_id, "end"),
+                (opening, after.shot_id, "start"),
+            ):
+                self._pin_bound_poses(
+                    content,
+                    (pin[0] - _KEY_TOL, pin[0] + _KEY_TOL),
+                    [pin],
+                    crossing=True,
+                )
+            if not flush:
+                continue  # the plain ripple keeps the gap: nothing closes
+
+            def layout(floors, edge=edge, after=after, close=close, opening=opening):
+                floor = floors.get(after.shot_id, 0.0)
+                if edge == "end":  # what follows comes back onto the new end
+                    return ShotPlanner.plan_ripple_downstream(
+                        self.store,
+                        shot.shot_id,
+                        close,
+                        min(0.0, close - opening + floor),
+                        carry_gap=True,
+                    )
+                return ShotPlanner.plan_ripple_upstream(  # what precedes comes on
+                    self.store,
+                    shot.shot_id,
+                    opening,
+                    max(0.0, opening - close - floor),
+                    carry_gap=True,
+                )
+
+            pair = (before.shot_id, after.shot_id)
+            plan, apart = self._close_flush_seams(
+                layout,
+                seams=lambda _plan, pair=pair: [pair],
+                poses=lambda _p, _n, ab=(close, opening): [(ab[0], ab[1], None)],
+            )
+
+            # Landed flush, the seam's one sample is the shot before's (the
+            # fencepost), whichever pin survived the merge.
+            landing = (
+                None
+                if after.shot_id in apart
+                else (close if edge == "end" else opening)
+            )
+
+            def apply(plan=plan, pair=pair, landing=landing):
+                self._apply_plan(plan)
+                if landing is not None:
+                    self._rename_seam_claims(
+                        landing, (pair[1], "start"), (pair[0], "end")
+                    )
+
+            plans[edge] = apply
+        return plans
+
+    def _rename_seam_claims(
+        self, frame: float, old: tuple, new: tuple, stays: Optional[bool] = None
+    ) -> int:
+        """Re-name every claim on *frame* made for ``old = (shot_id, edge)`` as
+        ``new``'s, keeping whether it stays unless *stays* says: a seam sample
+        changing sides (:meth:`_hold_edge_neighbours`), or a bound's sample
+        that is the content's pose now (:meth:`add_shot_space`).  Returns the
+        claims re-named."""
+        renamed = 0
+        for crv in self.ledger.keyed_curves():
+            for t, owner, edge in self.ledger.key_records(crv):
+                if abs(t - frame) > _KEY_TOL or (owner, edge) != tuple(old):
+                    continue
+                keep = self.ledger.key_stays(crv, t) if stays is None else stays
+                self.ledger.release_key(crv, t)
+                self.ledger.record_key(crv, t, new[0], new[1], stays=keep)
+                renamed += 1
+        return renamed
 
     def resize_shot_bounds(
         self,
@@ -2019,6 +3105,12 @@ class ShotSequencer(_ShotSequencerHooks):
         # reconcile after the ripple: with carry_gap the frames it uncovers
         # are still the gap's until the ripple has moved that content away.
         self._cut_passed_bound_keys(on_bound, old_start, old_end, new_start, new_end)
+        # What each side plays across a moved edge is pinned first, and a
+        # shrinking edge a neighbour is FLUSH with closes that seam again on
+        # the new bound, under the closing rule -- before the pending
+        # reconcile, which would move the old seam's sample with this shot's
+        # bound when it is the neighbour's now.
+        closing = self._hold_edge_neighbours(shot, new_start, new_end)
         self._reconcile_pending_bounds(
             shot_id,
             new_start if head_delta > _EPS else old_start,
@@ -2027,9 +3119,13 @@ class ShotSequencer(_ShotSequencerHooks):
 
         # Ripple BEFORE the pivot's bounds are written, in both directions
         # (see the docstring).
-        if abs(tail_delta) > _EPS:
+        if "end" in closing:
+            closing["end"]()
+        elif abs(tail_delta) > _EPS:
             self.ripple_downstream(shot_id, old_end, tail_delta)
-        if abs(head_delta) > _EPS:
+        if "start" in closing:
+            closing["start"]()
+        elif abs(head_delta) > _EPS:
             self.ripple_upstream(shot_id, old_start, head_delta)
 
         shot.start = new_start
@@ -2139,10 +3235,32 @@ class ShotSequencer(_ShotSequencerHooks):
         if push and nxt is not None:
             if ne > nxt.start + _EPS or abs(nxt.start - old_e) < _EPS:
                 nxt_start = ne
+        if not scale:
+            # An edge closing a GAP onto the neighbour's facing bound stops a
+            # frame short where the two poses differ (the closing rule).  A
+            # push past that bound is not a closing: the frames it takes are
+            # the neighbour's content, one pose each.
+            ns, ne = self._closing_edges(
+                shot,
+                prev if prev_end is None else None,
+                nxt if nxt_start is None else None,
+                ns,
+                ne,
+            )
+        else:
+            # A retime closing a gap that holds the animator's keys stops a
+            # frame short too, and the keys are retimed into that frame
+            # before the shot's own are (maintainer 2026-10-12, "same rule"):
+            # left there, the retimed shot was written across them.
+            ns, ne = self._closing_edges(shot, prev, nxt, ns, ne, retime=True)
         if abs(ns - old_s) < _EPS and abs(ne - old_e) < _EPS:
             return False
 
         if scale:
+            if prev is not None and ns < old_s - _EPS:
+                self._retime_closing_gap(prev, shot, prev.end, ns)
+            if nxt is not None and ne > old_e + _EPS:
+                self._retime_closing_gap(shot, nxt, ne, nxt.start)
             self.scale_shot_keys(old_s, old_e, ns, ne)
         # (giver, receiver, lo, hi): the frames that changed hands, the
         # neighbour's side ``None`` where they came from or went to a gap.
@@ -2166,6 +3284,43 @@ class ShotSequencer(_ShotSequencerHooks):
             self._hand_over_members(handed)
         self.store.mark_dirty()
         return True
+
+    def _closing_edges(
+        self, shot, prev, nxt, ns: float, ne: float, retime: bool = False
+    ):
+        """``(ns, ne)`` for an edge edit of *shot*, each a frame short of the
+        neighbour (*prev* / *nxt*, ``None`` where it moves or is absent) it
+        would close a gap onto with a different pose
+        (:meth:`_close_flush_seams`).  The edge's own new bounds are the
+        plan; the poses are read where each shot ends and starts now.
+        *retime* (a Shift edge, which writes its keys across the new span):
+        the poses are not asked, only whether the gap holds the animator's
+        keys (:meth:`_seams_hold_keys`; maintainer 2026-10-12, "same rule")."""
+        closes_lo = (
+            prev is not None
+            and abs(ns - prev.end) < _EPS
+            and shot.start > prev.end + _EPS
+        )
+        closes_hi = (
+            nxt is not None
+            and abs(ne - nxt.start) < _EPS
+            and shot.end < nxt.start - _EPS
+        )
+        if not (closes_lo or closes_hi):
+            return ns, ne
+
+        def layout(floors: Dict[int, float]) -> Dict[int, Tuple[float, float]]:
+            lo = ns + (floors.get(shot.shot_id, 0.0) if closes_lo else 0.0)
+            hi = ne - (floors.get(nxt.shot_id, 0.0) if closes_hi else 0.0)
+            return {shot.shot_id: (lo, max(lo, hi))}
+
+        if retime:
+            plan, _apart = self._close_flush_seams(
+                layout, poses=lambda _p, _n: [], keep=self._seams_hold_keys
+            )
+        else:
+            plan, _apart = self._close_flush_seams(layout)
+        return plan[shot.shot_id]
 
     def _hand_over_members(self, handed) -> None:
         """Move membership with the frames a bound handed over.
@@ -2213,16 +3368,18 @@ class ShotSequencer(_ShotSequencerHooks):
         if shot is None:
             raise ValueError(f"No shot with id {shot_id}")
 
-        new_start = self._clamp_slide_start(
-            shot, new_start, "downstream" if ripple else None
-        )
+        direction = "downstream" if ripple else None
+        new_start = self._clamp_slide_start(shot, new_start, direction)
+        new_start = self._closing_slide_start(shot, new_start, direction)
         delta = new_start - shot.start
         if abs(delta) < _EPS:
             return
 
         old_end = shot.end
+        slid = self._slid_bounds(shot, delta, direction)
+        self._retime_closed_gap(shot, new_start, direction)
 
-        with self._content_batch():
+        with self._content_batch(), self.pending_bounds(slid):
             # Vacate the destination side first for forward moves (see
             # slide_shot) so the pivot's keys can't be double-shifted.
             # The pivot carries its own trailing gap; the ripple must not.
@@ -2460,7 +3617,24 @@ class ShotSequencer(_ShotSequencerHooks):
         vacated = max(0.0, span_end - shot.start)
         name = shot.name
 
-        curves_cut = self._cut_shot_content(shot_id) if delete_contents else 0
+        curves_cut = 0
+        if delete_contents:
+            lo, hi, lo_open, _hi_closed = ShotPlanner.envelope_for(shots, idx)
+            self._hold_neighbour_poses(
+                shot_id,
+                # Every keyed object: what the closing re-times is any curve
+                # crossing the span, the shot's members or not.
+                self._content_objects(),
+                # The cut's own window: a flush closing sample stays, the
+                # next shot's opening pose (the DCC ``_cut_shot_content``).
+                (
+                    max(lo, shot.start - _CONTENT_REACH)
+                    + (_KEY_TOL if lo_open else -_KEY_TOL),
+                    min(hi, shot.end + _CONTENT_REACH) - _KEY_TOL,
+                ),
+                flush=True,
+            )
+            curves_cut = self._cut_shot_content(shot_id)
 
         # The shot's own bound samples go with it -- cut where provably
         # redundant, released otherwise -- BEFORE the gap closes.  Disowned
@@ -2477,12 +3651,19 @@ class ShotSequencer(_ShotSequencerHooks):
             # Pivot -1: no shot is exempt, everything at or after the vacated
             # span comes back by its width.  The shot's record is already gone
             # so the plan cannot pick it up as one of the shots to move.
-            plan = ShotPlanner.plan_ripple_downstream(
-                self.store, -1, span_end, -vacated
+            # Landing flush on the shot before, the next shot keeps a frame
+            # of its own where the two poses differ (maintainer 2026-10-11).
+            plan, apart = self._close_flush_seams(
+                lambda floors: ShotPlanner.plan_ripple_downstream(
+                    self.store,
+                    -1,
+                    span_end,
+                    -(vacated - floors.get(nxt.shot_id, 0.0)),
+                )
             )
             if plan.sequence or plan.parked:
                 self._apply_plan(plan)
-                closed = vacated
+                closed = vacated - apart.get(nxt.shot_id, 0.0)
 
         self.reconcile_system_edits()
         self.store.mark_dirty()
@@ -2613,12 +3794,17 @@ class ShotSequencer(_ShotSequencerHooks):
         # what actually animates in it.  Seeding it empty instead makes
         # ``collect_object_segments`` fall back to a scene-wide probe for
         # keyed objects, which adopts objects this shot never claimed.
+        # The tail belongs with the step its head is -- by the head's binding,
+        # or its own link -- through a NON-binding link (``ShotStore.step_links``):
+        # a step has one shot, but the export sections the tail with it.
+        step = (shot.metadata or {}).get("step") or self.store.step_links().get(shot_id)
         tail = self.define_shot(
             name=tail_name,
             start=at,
             end=tail_end,
             objects=list(shot.objects),
             description=shot.description,
+            metadata={self.store.STEP_LINK: step} if step else None,
         )
         self._recompute_shot_objects(shot_id)
         self._recompute_shot_objects(tail.shot_id)
@@ -2721,16 +3907,40 @@ class ShotSequencer(_ShotSequencerHooks):
                 self.slide_shot(
                     shot_id, old_start + head, direction="downstream", _enforce=False
                 )
+                # The start's claimed samples rode with the content and are
+                # its opening pose now: left to follow the start back, they
+                # stretched the shot's first segment (SOL harness: "A01_2"
+                # KEYS_translateY 1.65 off over 16 frames).  Kept where they
+                # landed (``stays``).
+                self._rename_seam_claims(
+                    shot.start, (shot_id, "start"), (shot_id, "start"), stays=True
+                )
                 shot.start = old_start
             if abs(tail) > _EPS:
                 pre_tail_end = shot.end
-                shot.end = self.store.snap(pre_tail_end + tail)
+                new_end = self.store.snap(pre_tail_end + tail)
                 # Ripple by what the END ACTUALLY moved rather than by the
                 # amount asked for -- the same value ``fit_shot_to_content``
                 # passes.  The plan snaps its own destinations, so the two
                 # agree today; deriving it from the bound is what keeps them
                 # agreeing if either side's rounding ever changes.
-                self.ripple_downstream(shot_id, pre_tail_end, shot.end - pre_tail_end)
+                if tail > 0:
+                    # Room AFTER the content: ripple first, from the end as
+                    # it stands, then write it (resize_shot_bounds' order).
+                    # Written first, a flush neighbour read as no neighbour:
+                    # its envelope took the seam sample the shot ends on, and
+                    # a keyless seam was never seen to split -- both shots
+                    # played differently (2026-10-11: a 10-frame pad moved
+                    # the shot's own frames 0.16 and the next 1.10).
+                    self.ripple_downstream(
+                        shot_id, pre_tail_end, new_end - pre_tail_end
+                    )
+                    shot.end = new_end
+                else:
+                    shot.end = new_end
+                    self.ripple_downstream(
+                        shot_id, pre_tail_end, shot.end - pre_tail_end
+                    )
 
         head_delta = shot.start - old_start
         tail_delta = shot.end - old_end
@@ -2790,14 +4000,39 @@ class ShotSequencer(_ShotSequencerHooks):
         respace changes, so content living in one has nowhere to be carried to
         (``retime_gaps``; see :meth:`_apply_plan`).
 
+        Every gap is HELD before anything is pinned (:meth:`_enforce_gap_holds`
+        first, a no-op where the holds already stand).  A shot's frames after
+        its last key hold that key's pose -- the hold rule every other op
+        applies -- and the respace pins every bound shape-preservingly, which
+        on a tail the hold had not reached yet pinned the curve PLAYED ON
+        toward the next shot's first key: the same scene played its tail on
+        after a respace and held it after any other op (BACKLOG 2026-10-05;
+        maintainer 2026-10-10: tails keep holding, an op on one shot never
+        changes what another plays inside its own span).  Held first, the
+        tail is a hold segment, which the pin declines, so it stays held at
+        its held pose.  Pinning the end instead was measured and rejected:
+        padded tails drift toward the next shot's first pose.
+
         Parameters:
             gap: Frames of gap between consecutive shots.
             start_frame: Timeline frame for the first shot.
             respect_locks: When False, spend *gap* on locked gaps too.  The
                 locks are left set either way.
         """
-        plan = ShotPlanner.plan_respace(
-            self.store, gap, start_frame, respect_locks=respect_locks
+        self._enforce_gap_holds()
+        # A seam it closes to 0 stays a frame apart where its poses differ
+        # (maintainer 2026-10-11): never refused, never re-timing a shot --
+        # and where its gap holds keys, which a zero-width retime would leave
+        # inside the next shot (:meth:`_seams_hold_keys`).
+        plan, _apart = self._close_flush_seams(
+            lambda floors: ShotPlanner.plan_respace(
+                self.store,
+                gap,
+                start_frame,
+                respect_locks=respect_locks,
+                seam_gaps=floors,
+            ),
+            keep=self._seams_hold_keys,
         )
         self._apply_plan(plan, retime_gaps=True)
         self._enforce_gap_holds()

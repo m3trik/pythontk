@@ -179,7 +179,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/shots/manifest/behaviors/_behaviors.py` — Behaviors — load JSON keying recipes and resolve them to keyframe math.
 - `class Behaviors(_BehaviorsInternal)`
-  - methods: templates, load_behavior, phrase_table, subjects, detect, from_cell, list_behaviors, resolve_keys, effect_of, keyed, place_of, phase_durations, anchor_overrides, compute_duration, apply_to_shots
+  - methods: templates, load_behavior, phrase_table, subjects, detect, from_cell, list_behaviors, resolve_keys, is_audio_entry, entry_anchors, label, anchored, key_window, effect_of, keyed, place_of, phase_durations, anchor_overrides, compute_duration, apply_to_shots
 
 ### `core_utils/engines/shots/manifest/behaviors/_spec.py` — Schema for a *behavior* template file, defined as a dataclass.
 - constants: KNOWN_VERIFY_MODES
@@ -188,11 +188,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/shots/manifest/manifest_edits.py` — The Shot Manifest's edit layer: a user's changes to a build sheet, kept
 - `class ManifestEdits(_ManifestEditsInternal)`
-  - methods: to_dict, from_dict, has_edits, count, step_record, object_record, is_added, hidden_steps, hidden_objects, anchor, name_taken, stale, set_step, set_object, revert_step, revert_object, add_step, remove_step, rename_all, clear, apply
+  - methods: to_dict, from_dict, layer_key, same_sheet, adopt_layers, sheet_options, set_sheet_options, read, write, has_edits, count, step_record, object_record, is_added, hidden_steps, hidden_objects, anchor, name_taken, stale, set_step, set_object, revert_step, revert_object, add_step, remove_step, rename_all, clear, apply
 
 ### `core_utils/engines/shots/manifest/manifest_engine.py` — Shot Manifest engine — pure planning/orchestration core with scene hooks.
 - `class ShotManifest(_ShotManifestInternal)`
-  - methods: recipe, rewire_audio, apply_behaviors, sync, update, pair, bind, unowned_keys, release_authored, release_dropped, adopt_placed_clips, is_stale, reapply_object, edited_by_hand, fill_missing_assets, assess, from_csv, resolve_duration
+  - methods: recipe, unkeyed_behaviors, rewire_audio, apply_behaviors, sync, update, pair, bind, unowned_keys, release_authored, release_dropped, adopt_placed_clips, is_stale, reapply_object, planned_markers, place_markers, edited_by_hand, fill_missing_assets, assess, from_csv, resolve_duration
 
 ### `core_utils/engines/shots/manifest/manifest_export.py` — The Shot Manifest as a table to hand on: a spreadsheet for the sheet's
 - `class ManifestExport(_ManifestExportInternal)`
@@ -221,7 +221,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/shots/manifest/mapping/_mapping.py` — CSV mapping resolver — interprets JSON mapping files.
 - constants: DEFAULT_DIR
 - `class Mapping(_MappingInternal)`
-  - methods: templates, seed_user_folder, discover, retired, load_mapping, option_specs, apply_options, resolve, choice_values
+  - methods: templates, seed_user_folder, discover, retired, load_mapping, option_specs, apply_options, resolve, infer_options, choice_values
 
 ### `core_utils/engines/shots/manifest/mapping/_spec.py` — Schema for a CSV *mapping* file, defined as a dataclass.
 - constants: AUDIO_METHODS
@@ -244,8 +244,9 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/shots/shot_ledger.py` — Ledger of the edits the shot system authors on a scene's animation.
 - constants: NO_OWNER
+- `class StepClaim(tuple)`
 - `class ShotEditLedger(_ShotEditLedgerInternal)`
-  - methods: step_count, key_count, curves, record_step, claimed_step, is_same_key, owns_step, release_step, step_times, stepped_curves, record_key, owns_key, release_key, release, key_times, key_records, keyed_curves, disown_shot, disown_absent, record_authored, owns_authored, owns_any, release_authored, authored, authored_curves, authored_stamps, authored_pairs, shift, remap, retime, forget_curve, rename_curve, to_dict, from_dict
+  - methods: step_count, key_count, curves, record_step, claimed_step, is_same_key, owns_step, release_step, step_times, stepped_curves, record_key, owns_key, key_stays, release_key, release, key_times, key_records, keyed_curves, disown_shot, disown_absent, record_authored, owns_authored, owns_any, release_authored, authored, authored_curves, authored_stamps, authored_pairs, shift, remap, retime, forget_curve, rename_curve, to_dict, from_dict
 
 ### `core_utils/engines/shots/shot_model.py` — DCC-agnostic shot data model and persistent store.
 - constants: CLIP_NAME_STRATEGIES
@@ -261,14 +262,16 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class SettingsChanged(StoreEvent)`
 - `class BatchComplete(StoreEvent)`
 - `class ShotsEdited(StoreEvent)`
+- `class MarkersChanged(StoreEvent)`
 - `class StoreInvalidated(StoreEvent)`
+- `class NativeStepFollowed(StoreEvent)`
 - `class ShotStore(_ShotStoreInternal)`
-  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, changed_since_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, has_animation, detect_regions, assess, publish_export_view, scene_edit, release_replaced, remap_moved, claim_hooks, key_edit, active_shot_id, set_active_shot, is_empty, update_effect_recipe, notify_settings_changed, add_listener, remove_listener, batch_update, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, watch_settings, invalidate, flush_pending, snap, enclosing_bounds, compute_gap, sorted_shots, shot_by_id, shot_by_name, name_error, unique_among, unique_name, default_name, define_shot, update_shot, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, held_names, rename_members, to_dict, stale_shots, remove_stale_shots, empty_shots, shots_in_scope, remove_shots_in_scope, to_export_view, export_records, produce_export_records, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, member_key, member_nodes, resolve_member, resolve_clip_specs, declared_range
+  - methods: snapshot_bounds, push_boundary_snapshot, tag_boundary_snapshot, peek_boundary_tag, has_boundary_snapshot, changed_since_snapshot, discard_boundary_snapshot, restore_boundary_snapshot, redo_boundary_snapshot, clear_boundary_snapshots, follow_native_step, following_native_step, native_undo_sync_held, add_native_step_listener, remove_native_step_listener, has_animation, detect_regions, assess, publish_export_view, scene_edit, release_replaced, remap_moved, claim_hooks, key_edit, active_shot_id, set_active_shot, is_empty, update_effect_recipe, notify_settings_changed, add_listener, remove_listener, batch_update, marker_owner, set_markers, is_gap_locked, lock_gap, unlock_gap, lock_all_gaps, unlock_all_gaps, set_persistence, active, set_active, clear_active, add_invalidation_listener, remove_invalidation_listener, watch_settings, invalidate, flush_pending, snap, enclosing_bounds, compute_gap, sorted_shots, shot_by_id, shot_by_name, name_error, unique_among, unique_name, default_name, define_shot, update_shot, add_system_members, system_members, remove_shot, append_shot, is_object_hidden, set_object_hidden, is_object_pinned, set_object_pinned, remove_object_from_shots, held_names, rename_members, to_dict, stale_shots, remove_stale_shots, empty_shots, shots_in_scope, remove_shots_in_scope, to_export_view, step_links, export_records, produce_export_records, transient_edit, in_transient_edit, refresh_export_view, enable_auto_export, disable_auto_export, from_dict, rescale_to_fps, mark_dirty, save, is_detection_relevant, detect_and_define, leaf_name, member_key, member_nodes, resolve_member, resolve_clip_specs, declared_range
 
 ### `core_utils/engines/shots/shot_plan.py` — Pure planning layer for multi-shot topology transformations.
 - `class ShotBoundaryConflict(RuntimeError)`
 - `class ShotPlanner(_ShotPlannerInternal)`
-  - methods: envelope_for, in_window, objects_to_adopt, move_windows, plan_pivot_move, boundary_splits, key_collisions, plan_respace, plan_gap_retimes, plan_ripple_downstream, plan_reorder, plan_ripple_upstream
+  - methods: envelope_for, in_window, objects_to_adopt, move_windows, plan_pivot_move, boundary_splits, keyless_seam, key_collisions, plan_respace, closing_seams, plan_gap_retimes, plan_ripple_downstream, plan_reorder, plan_ripple_upstream
 - `class ShotMove`
   - methods: delta, moves
 - `class MovePlan`
@@ -282,7 +285,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/shots/shot_sequencer.py` — Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
 - `class ShotSequencer(_ShotSequencerHooks)`
-  - methods: shots, hidden_objects, markers, is_object_hidden, set_object_hidden, sorted_shots, describe_key_selection, shot_by_id, shot_by_name, ledger, define_shot, detect_next_shot, collect_shot_sequences, sequence_separation, move_sequences_to_shot, copy_sequences_to_shot, fit_shot_to_content, trim_shot_to_content, extend_shot_to_fit, move_object_keys, move_stepped_keys, move_object_in_shot, move_shot, slide_shot, ripple_downstream, ripple_upstream, reconcile_system_edits, expand_shot, resize_object, set_shot_duration, resize_shot, resize_shot_bounds, set_shot_edge, set_shot_start, move_shot_to_position, new_shot, insert_shot, delete_shot, merge_shots, split_shot, add_shot_space, respace, apply_gap, to_dict, from_dict, collect_object_segments, move_attribute_keys, copy_attribute_keys, scale_shot_keys, scale_object_keys, detect_shots
+  - methods: pending_bounds, shots, hidden_objects, markers, is_object_hidden, set_object_hidden, sorted_shots, describe_key_selection, paste_pairs, shot_by_id, shot_by_name, ledger, define_shot, detect_next_shot, collect_shot_sequences, sequence_separation, move_sequences_to_shot, copy_sequences_to_shot, fit_shot_to_content, trim_shot_to_content, extend_shot_to_fit, move_object_keys, move_stepped_keys, move_object_in_shot, move_shot, slide_shot, ripple_downstream, ripple_upstream, reconcile_system_edits, expand_shot, resize_object, set_shot_duration, resize_shot, resize_shot_bounds, set_shot_edge, set_shot_start, move_shot_to_position, new_shot, insert_shot, delete_shot, merge_shots, split_shot, add_shot_space, respace, apply_gap, to_dict, from_dict, collect_object_segments, move_attribute_keys, copy_attribute_keys, scale_shot_keys, scale_object_keys, detect_shots
 
 ### `core_utils/engines/shots/shot_transfer.py` — Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
 - `class ShotTransfer(_ShotTransferInternal)`
@@ -648,11 +651,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `file_utils/mesh_convert/fbx_file.py` — Zero-dependency binary-FBX reader: header, node records, objects, takes.
 - constants: FBX_MAGIC
 - `class FbxFile(_FbxFileInternal)`
-  - methods: load, is_fbx, section, iter_objects, objects_census, object_names, take_names, user_properties, take_curves, take_spans, connections
+  - methods: load, is_fbx, section, iter_objects, objects_census, object_names, take_names, user_properties, take_curves, take_spans, take_layout, connections
 
 ### `file_utils/mesh_convert/fbx_media.py` — Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 - `class FbxMedia(_FbxMediaInternal)`
-  - methods: embedded, downsize, expand_grayscale, named_files, dependencies, embed, embed_dependencies, extract_dependencies, drop_takes, drop_apparatus, rewrite
+  - methods: embedded, downsize, expand_grayscale, named_files, dependencies, embed, embed_dependencies, extract_dependencies, drop_takes, merge_takes, drop_apparatus, rewrite
 
 ### `file_utils/mesh_convert/glb/clips.py` — Rebuild a GLB's shot clips from its one whole-timeline animation.
 - `class GlbClips(_GlbClipsInternal)`
@@ -859,6 +862,12 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `math_utils/_math_utils.py`
 - `class MathUtils(_MathClusteringInternal, _MathCurveFitInternal, HelpMixin)`
   - methods: eval_expression, convert_length_unit, metres_per_unit, calculate_uv_padding, uv_tile_margin, udim_to_tile, majority_tile, fit_into_tile, next_clear_offset, max_axis_skew, linear_sum_assignment, kmeans_clustering, kmeans_1d, get_kmeans_threshold, move_decimal_point, get_vector_from_two_points, clamp, clamp_range, normalize, get_magnitude, dot_product, cross_product, move_point_relative, move_point_relative_along_vector, distance_between_points, get_center_of_two_points, get_angle_from_two_vectors, get_angle_from_three_points, get_two_sides_of_asa_triangle, xyz_rotation, lerp, safe_normalize, smoothstep, resolve_falloff_profile, bspline_clamped_knots, bspline_basis, ricker, catenary, catenary_sag, evaluate_sampled_progress, generate_geometric_sequence, remap, point_segment_distance, nearest_power_of_two, is_close_to_whole, step_offset, round_value, round_to_preferred, round_to_aggressive_preferred, best_rotate_order, calculate_rotation_distance, fit_hermite_slopes, evaluate_hermite, reduce_samples
+
+### `math_utils/key_curve.py` — Keyed 1-D animation curves: cubic Bezier spans, step holds and infinity.
+- constants: INTERPOLATIONS, INFINITY_MODES, TIME_EPS
+- `class CurveKey`
+- `class KeyCurve`
+  - methods: times, index_at, control_points, segments, evaluate, value_bounds, normalization, to_preview, copy, with_keys_moved, with_handle, with_infinity, bezier_parameter
 
 ### `math_utils/noise.py`
 - `class BandLimitedNoise`

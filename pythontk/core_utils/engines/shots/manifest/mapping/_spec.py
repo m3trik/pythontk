@@ -180,10 +180,39 @@ class _MappingSpecInternal(object):
                 for name, choice in choices.items():
                     if not isinstance(choice, dict):
                         errs.append(f"{key!r}.{name!r} must be a mapping")
+                    elif "try" in choice:
+                        errs.extend(
+                            _MappingSpecInternal._try_errors(key, name, choices)
+                        )
                     elif "set" in choice:
                         _patch(f"{key!r}.{name!r}.set", choice["set"])
             else:
                 errs.append(f"{key!r}: kind {kind!r} is not 'bool' or 'choice'")
+        return errs
+
+    @staticmethod
+    def _try_errors(key: str, name: str, choices: Dict[str, Any]) -> List[str]:
+        """What is wrong with choice *name*'s ``try``: it names other plain
+        choices of option *key*, each setting only ``columns`` (the layouts a
+        parse can try), and sets nothing itself."""
+        where = f"{key!r}.{name!r}"
+        tried = choices[name]["try"]
+        if "set" in choices[name]:
+            return [f"{where}: a choice has 'set' or 'try', not both"]
+        if not isinstance(tried, list) or not tried:
+            return [f"{where}.try must be a non-empty list of choice names"]
+        errs: List[str] = []
+        for other in tried:
+            target = choices.get(other)
+            if not isinstance(target, dict) or other == name:
+                errs.append(f"{where}.try: {other!r} is not another choice")
+            elif "try" in target:
+                errs.append(f"{where}.try: {other!r} tries choices itself")
+            elif set(target.get("set", {})) - {"columns"}:
+                errs.append(
+                    f"{where}.try: {other!r} sets more than 'columns', which "
+                    "is all a parse can try"
+                )
         return errs
 
     @staticmethod
@@ -253,8 +282,12 @@ class MappingSpec(SchemaSpec, _MappingSpecInternal):
             "Settings the template exposes in the UI, each a partial template "
             "merged over it: `{key: {kind: bool|choice, label, tooltip, "
             "default, set, unset, choices: {value: {label, tooltip, set}}}}`; "
-            "a choice may name a schema `field` (`columns.object_case`) "
-            "instead, offering that field's allowed values (optional)."
+            "a choice may `try` other choices instead of `set`ting anything "
+            "(`{try: [classic, numbered]}`): their `columns` patches become "
+            "`columns.layouts`, read the sheet each way and keep the one "
+            "reading the most steps. An option may name a schema `field` "
+            "(`columns.object_case`) instead, offering that field's allowed "
+            "values (optional)."
         ),
         validate=_MappingSpecInternal.validate_options,
         example={

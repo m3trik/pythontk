@@ -405,6 +405,9 @@ class SceneRecords:
         # The file's clips joined to the shots by glTF animation index
         # (MeshConvert.apply_glb_animations).
         web=WebProjection("animation_web"),
+        # Each clip's objects name only what the write carries; every take
+        # ships (ShotStore.export_records).
+        export_scoped=True,
     )
     #: No longer written (the ranges ride ``shot_metadata``'s clips); declared
     #: so a file written before 0.11.0 still reads (:meth:`declared_takes`),

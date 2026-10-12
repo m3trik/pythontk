@@ -22,7 +22,7 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from pythontk import ShotSequencer, ShotStore  # noqa: E402
+from pythontk import ShotPlanner, ShotSequencer, ShotStore  # noqa: E402
 
 
 class _SequencerTest(unittest.TestCase):
@@ -150,28 +150,29 @@ class TestBoundsOnlyEdits(_SequencerTest):
 
 class TestTopology(_SequencerTest):
     def test_move_to_position(self):
-        self.seq.move_shot_to_position(self.sid("C"), 1)
-        self.assertBounds(("C", 1, 16), ("A", 16, 25), ("B", 25, 40))
+        self.seq.move_shot_to_position(self.sid("C"), 1)  # at the default gap, 10
+        self.assertBounds(("C", 1, 16), ("A", 26, 35), ("B", 45, 60))
 
     def test_insert_after(self):
+        # The store's default gap, 10 (maintainer 2026-10-11), after A.
         block = self.seq.insert_shot("N", 5, after_shot_id=self.sid("A"))
-        self.assertEqual((block.name, block.start, block.end), ("N", 10, 15))
-        self.assertBounds(("A", 1, 10), ("N", 10, 15), ("B", 20, 35), ("C", 40, 55))
+        self.assertEqual((block.name, block.start, block.end), ("N", 20, 25))
+        self.assertBounds(("A", 1, 10), ("N", 20, 25), ("B", 30, 45), ("C", 50, 65))
 
     def test_insert_at_front(self):
         self.seq.insert_shot("N", 4, at_position=1, gap=2)
         self.assertBounds(("N", 1, 5), ("A", 7, 16), ("B", 21, 36), ("C", 41, 56))
 
     def test_insert_appends_by_default(self):
-        self.seq.insert_shot("N", 6)
-        self.assertBounds(("A", 1, 10), ("B", 15, 30), ("C", 35, 50), ("N", 50, 56))
+        self.seq.insert_shot("N", 6)  # the default gap, 10, after C
+        self.assertBounds(("A", 1, 10), ("B", 15, 30), ("C", 35, 50), ("N", 60, 66))
 
     def test_new_shot_takes_the_next_name_and_the_initial_length(self):
         self.seq.store.initial_shot_length = 20
         block = self.seq.new_shot(after_shot_id=self.sid("A"))
         self.assertEqual((block.name, block.objects), ("Shot_4", []))
-        self.assertBounds(
-            ("A", 1, 10), ("Shot_4", 10, 30), ("B", 35, 50), ("C", 55, 70)
+        self.assertBounds(  # the default gap, 10, after A
+            ("A", 1, 10), ("Shot_4", 20, 40), ("B", 45, 60), ("C", 65, 80)
         )
 
     def test_insert_refuses_a_taken_name_before_anything_moves(self):
@@ -229,6 +230,25 @@ class TestTopology(_SequencerTest):
             self.seq.split_shot(self.sid("B"), 20, name="C")
         self.assertBounds(("A", 1, 10), ("B", 15, 30), ("C", 35, 50))
 
+    def test_a_split_links_the_tail_to_its_heads_step(self):
+        """Bug: the tail got a name and a description and nothing relating
+        it to its head's step, so its export carried no section.
+        Fixed: 2026-10-11 -- a non-binding link (``ShotStore.STEP_LINK``),
+        never the head's binding: a step has one shot."""
+        b = self.sid("B")
+        self.seq.store.update_shot(b, metadata={"step": "B01", "section": "B"})
+        tail = self.seq.split_shot(b, 20, name="B01_2")
+        self.assertEqual(tail.metadata, {ShotStore.STEP_LINK: "B01"})
+        self.assertEqual(self.seq.store.shot_by_id(b).metadata["step"], "B01")
+        again = self.seq.split_shot(tail.shot_id, 25)  # a tail split again
+        self.assertEqual(again.metadata, {ShotStore.STEP_LINK: "B01"})
+        clips = self.seq.store.to_export_view()["shot_metadata"]["shots"]
+        self.assertEqual(
+            {c["clip"]: c.get("section") for c in clips if c["clip"].startswith("B")},
+            {"B": "B", "B01_2": "B", "B01_2_2": "B"},
+        )
+        self.assertEqual(self.seq.split_shot(self.sid("A"), 5).metadata, {})
+
 
 class TestSpacing(_SequencerTest):
     def test_add_trailing_space(self):
@@ -275,6 +295,8 @@ class TestSpacing(_SequencerTest):
 
 class TestPureQueries(_SequencerTest):
     def test_sequence_separation_is_one_frame_past_the_gap(self):
+        self.assertEqual(self.seq.sequence_separation(), 11.0)  # default gap 10
+        self.seq.store.gap = 0
         self.assertEqual(self.seq.sequence_separation(), 1.0)
         self.seq.store.gap = 4
         self.assertEqual(self.seq.sequence_separation(), 5.0)
@@ -569,6 +591,26 @@ class TestHookContract(_SequencerTest):
         self.assertEqual(self.seq.fit_shot_to_content(b, mode="trim"), (3.0, -5.0))
         self.assertBounds(("A", 4, 13), ("B", 18, 25), ("C", 30, 45))
 
+    def test_a_run_ending_on_the_next_shots_pin_lands_in_front(self):
+        """Found 2026-10-11 by the SOL gap-0 acceptance: at gap 0 a run's
+        drawn extent ended on the next shot's claimed start pin -- the
+        SYSTEM's sample, on the shared frame -- so Move to Shot read a block
+        from BEFORE the destination as one from after it and appended it
+        behind the destination's content, where the shot after played it
+        (KEYS 78 off over all 81 frames).  The run is the animator's keys."""
+        seq = _Recording()
+        for name, (start, end) in zip("PQR", ((0, 50), (50, 100), (100, 150))):
+            seq.define_shot(name, start, end, objects=["p"])
+        q = seq.shot_by_name("Q").shot_id
+        seq.segments[q] = [{"obj": "p", "start": 50, "end": 90}]
+        seq.times = [0.0, 20.0, 40.0]  # the animator's keys; 50 is Q's pin
+        seq.calls.clear()
+        seq.move_sequences_to_shot(
+            [{"kind": "anim", "obj": "p", "start": 0.0, "end": 50.0}], q
+        )
+        moves = [c for c in seq.calls if c[0] == "move_attr"]
+        self.assertEqual(moves, [("move_attr", "p", None, 50.0, (0.0, 40.0))])
+
     def test_markers_are_not_sequences(self):
         b = self.sid("B")
         self.seq.segments[b] = [ShotSequencer._point_segment("b", 20.0)]
@@ -636,13 +678,22 @@ class TestGapHoldPins(_SequencerTest):
         stop the A-B hold, and that pin is then its only key in B -- the
         seam of the B-C gap.  Held, it would hold B still from its first
         frame; the curve has nothing in B to hold."""
-        b = self.sid("B")
+        b, c = self.sid("B"), self.sid("C")
         self.seq.ledger.record_key("crv", 15.0, b, "start")
         self.seq.ledger.record_key("thru", 15.0, b, "start")
         self.seq.scans = [{"crv": [8.0, 15.0], "thru": [15.0]}]
         self.seq.calls.clear()
         self.seq._enforce_gap_holds()
-        self.assertEqual(self.pins(), [{"crv": [(15.0, b, "start")]}])
+        # Not held, but the crossing it opens is ended on B's own end and the
+        # next shot's start pinned: the gap after B holds from there on the
+        # next pass, and a ripple of C no longer re-times the segment.
+        self.assertEqual(
+            self.pins()[0],
+            {
+                "crv": [(15.0, b, "start"), (30.0, b, "end"), (35.0, c, "start")],
+                "thru": [(30.0, b, "end"), (35.0, c, "start")],
+            },
+        )
         self.assertEqual(self.seq.calls[-1], ("hold", {"crv": [8.0]}))
 
     def test_a_seam_the_system_already_holds_is_not_pinned_again(self):
@@ -655,6 +706,156 @@ class TestGapHoldPins(_SequencerTest):
 
     def test_without_a_scene_nothing_is_pinned(self):
         self.assertEqual(ShotSequencer()._pin_bound_keys({"crv": [(1.0, 0, "")]}), 0)
+
+
+class TestGapHoldPinsKeepNoMemory(_SequencerTest):
+    """Every gap-hold pass offers every unheld seam its pin, reading the scene
+    afresh: it keeps no memory of the last pass.
+
+    A memo of settled seams (tried 2026-10-11 for the New Shot cost) went
+    stale whenever the keys changed by any path but the sequencer's own: an
+    undo put the curve back without its pin while the memo still called the
+    seam settled, and the next edit held the gap on past the next shot's
+    start.  The cost is the DCC hook's to keep low where there is nothing to
+    write (mayatk ``_pinnable_frames``, blendertk ``_pinnable``).
+    """
+
+    SEQUENCER = _Recording
+
+    def pins(self):
+        return [call[1] for call in self.seq.calls if call[0] == "pin"]
+
+    def enforce(self):
+        self.seq.calls.clear()
+        self.seq._enforce_gap_holds()
+        return self.pins()
+
+    def test_a_second_pass_offers_the_same_pins_again(self):
+        self.seq.scans = [{"crv": [8.0], "other": [32.0]}]
+        first = self.enforce()
+        self.assertEqual(
+            first,
+            [
+                {
+                    "crv": [(15.0, self.sid("B"), "start")],
+                    "other": [(35.0, self.sid("C"), "start")],
+                }
+            ],
+        )
+        self.assertEqual(self.enforce(), first, "nothing remembered between passes")
+
+    def test_a_new_shot_offers_every_unheld_gap(self):
+        """The hook decides what an untouched gap needs (nothing, cheaply)."""
+        self.seq.scans = [{"crv": [8.0], "other": [32.0, 48.0]}]
+        self.enforce()
+        self.seq.calls.clear()
+        new = self.seq.insert_shot("D", 10, gap=10)
+        self.assertEqual(
+            self.pins(),
+            [
+                {
+                    "crv": [(15.0, self.sid("B"), "start")],
+                    "other": [
+                        (35.0, self.sid("C"), "start"),
+                        (60.0, new.shot_id, "start"),
+                    ],
+                }
+            ],
+        )
+
+
+class TestRespaceHoldsTailsFirst(_SequencerTest):
+    """BACKLOG 2026-10-05 (maintainer 2026-10-10: tails keep HOLDING): a
+    respace pinned every bound shape-preservingly, so a shot tail the hold had
+    not reached yet was pinned where the curve PLAYED ON toward the next
+    shot's first key -- after a respace it played on, after any other op it
+    held.  The respace now holds every gap BEFORE its plan pins anything, so
+    a held tail is a hold segment the pin declines."""
+
+    SEQUENCER = _Recording
+
+    def test_every_gap_is_held_before_the_plan_is_applied(self):
+        self.seq.calls.clear()
+        self.seq.respace(gap=7)
+        names = [call[0] for call in self.seq.calls]
+        applied = names.index("apply_plan")
+        self.assertEqual(names[:applied], ["seams", "release", "hold"])
+        self.assertIn("hold", names[applied:], "and again on the new seams")
+
+
+class _SeamScene(_Recording):
+    """Records which contiguous seams each whole-shot move leaves open --
+    through the plan writer as a DCC's does, and the pivot mover."""
+
+    def _apply_plan(self, plan, retime_gaps=False):
+        self.calls.append(("opened", self._opened_seams(plan)))
+        super()._apply_plan(plan, retime_gaps)
+
+    def _reconcile_boundaries(self, plan):
+        self.calls.append(("opened", self._opened_seams(plan)))
+        return super()._reconcile_boundaries(plan)
+
+
+class TestPendingBounds(_SequencerTest):
+    """A seam is pinned where a move LEAVES a gap (BACKLOG 2026-10-07): an
+    edit that moves its neighbours before it writes its own new bound opens a
+    gap for a moment that its next write closes, and declares where it ends
+    (``pending_bounds``) so that moment is no split."""
+
+    SEQUENCER = _SeamScene
+
+    def opened(self):
+        return [call[1] for call in self.seq.calls if call[0] == "opened"]
+
+    def flush(self, *names):
+        """Make each named shot end where the next one starts."""
+        for name in names:
+            shots = self.seq.sorted_shots()
+            i = next(k for k, s in enumerate(shots) if s.name == name)
+            self.seq.store.update_shot(shots[i].shot_id, end=shots[i + 1].start)
+
+    def test_nested_blocks_merge_with_the_outer_side_winning(self):
+        seq = self.seq
+        with seq.pending_bounds({1: (5.0, None)}):
+            with seq.pending_bounds({1: (7.0, 9.0), 2: (1.0, 2.0)}):
+                self.assertEqual(
+                    seq._pending_bounds_map, {1: (5.0, 9.0), 2: (1.0, 2.0)}
+                )
+            self.assertEqual(seq._pending_bounds_map, {1: (5.0, None)})
+        self.assertEqual(seq._pending_bounds_map, {})
+
+    def test_a_declared_bound_closes_the_ripples_moment_of_gap(self):
+        """Move to Shot's expansion: the neighbour ripples, then the bound."""
+        self.flush("A")
+        a, b = self.sid("A"), self.sid("B")
+        plan = ShotPlanner.plan_ripple_downstream(self.seq.store, a, 20.0, 5.0)
+        self.assertEqual(self.seq._opened_seams(plan), [(a, b, 15.0, 20.0)])
+        with self.seq.pending_bounds({a: (1.0, 20.0)}):
+            self.assertEqual(self.seq._opened_seams(plan), [])
+
+    def test_a_slide_splits_only_the_seam_it_really_opens(self):
+        """B slides +5 flush with C: C ripples first, then B follows -- the
+        B|C seam moves whole and is never split; A|B, flush too, is, from
+        the FIRST plan on: C's ripple already re-times a segment crossing
+        A|B to a key in C (2026-10-11, a production ramp through 30 shots)."""
+        self.flush("A", "B")
+        a, b = self.sid("A"), self.sid("B")
+        self.seq.calls.clear()
+        self.seq.move_shot(b, 20)
+        reports = self.opened()
+        self.assertEqual(reports[0], [(a, b, 15.0, 20.0)], "before C moves")
+        self.assertTrue(all(r in ([], [(a, b, 15.0, 20.0)]) for r in reports))
+
+    def test_a_leading_pad_still_opens_its_head_seam(self):
+        """Room at B's head is room A's content does not fill -- reported
+        from the first plan of the pad on, B|C never."""
+        self.flush("A", "B")
+        a, b = self.sid("A"), self.sid("B")
+        self.seq.calls.clear()
+        self.seq.add_shot_space(b, 5, edge="leading")
+        reports = self.opened()
+        self.assertEqual(reports[0], [(a, b, 15.0, 20.0)])
+        self.assertTrue(all(r in ([], [(a, b, 15.0, 20.0)]) for r in reports))
 
 
 class _MergeScene(_Recording):
@@ -690,6 +891,442 @@ class TestMergeRetiresItsInnerBounds(_SequencerTest):
             ],
         )
         self.assertBounds(("A", 1, 30), ("C", 35, 50))
+
+
+class _VacateScene(_Recording):
+    """Records the content cut and the neighbour pose pins put before it."""
+
+    def _cut_shot_content(self, shot_id):
+        self.calls.append(("cut", shot_id))
+        return 0
+
+    def _pin_bound_poses(self, objects, window, pins, attr=None, crossing=False):
+        self.calls.append(("pose_pins", sorted(objects), window, pins, attr))
+        return 0
+
+    def _freeze_left_behind(self, objects, window, attr=None):
+        self.calls.append(("freeze", sorted(objects), window, attr))
+        return 0
+
+
+class _ClashScene(_Recording):
+    """A scene whose named seams hold two different poses: the DCC hook
+    answers a read of one shot's end against another's start (as they are
+    when it is asked, before anything moves) by name."""
+
+    def __init__(self, *a, **kw):
+        self.clashing = set()  # {(preceding name, following name)}
+        self.differ = set()  # {(frame_a, frame_b)} read as two poses
+        super().__init__(*a, **kw)
+
+    def _poses_differ(self, pairs, objects=None):
+        self.calls.append(("clash_check", list(pairs)))
+        out = []
+        for a, b in pairs:
+            if (a, b) in self.differ:
+                out.append(True)
+                continue
+            ends = {s.name for s in self.store.shots if abs(s.end - a) < 1e-6}
+            starts = {s.name for s in self.store.shots if abs(s.start - b) < 1e-6}
+            out.append(any((x, y) in self.clashing for x in ends for y in starts))
+        return out
+
+    def copy_attribute_keys(self, obj, attr, delta, times=None, window=None):
+        self.calls.append(("copy_attr", obj, attr, delta, window))
+        return 1
+
+
+class TestAClosingSeamStaysOneFrameApartWhereItsPosesDiffer(_SequencerTest):
+    """The maintainer's rule (2026-10-11) for every op that closes a seam to
+    gap 0 -- delete, the scoped gap collapse, respace to 0: a seam closes
+    flush where its two poses (keyed or held) agree and stays exactly one
+    frame apart where they differ, never refused and never re-timing a
+    shot.  Replaces the respace's refusal (``ShotBoundaryConflict``) and the
+    delete's silent hand-over of the next shot's opening (BACKLOG
+    2026-10-11, S1 and S2)."""
+
+    SEQUENCER = _ClashScene
+
+    def test_respace_to_zero_leaves_a_disagreeing_seam_one_frame_apart(self):
+        self.seq.clashing = {("A", "B")}
+        self.seq.respace(gap=0, start_frame=1)
+        self.assertBounds(("A", 1, 10), ("B", 11, 26), ("C", 26, 41))
+
+    def test_an_agreeing_seam_closes_flush(self):
+        self.seq.respace(gap=0, start_frame=1)
+        self.assertBounds(("A", 1, 10), ("B", 10, 25), ("C", 25, 40))
+
+    def test_respacing_twice_is_idempotent(self):
+        self.seq.clashing = {("A", "B")}
+        self.seq.respace(gap=0, start_frame=1)
+        self.seq.respace(gap=0, start_frame=1)
+        self.assertBounds(("A", 1, 10), ("B", 11, 26), ("C", 26, 41))
+        self.seq.clashing = set()  # the poses now agree: it closes flush
+        self.seq.respace(gap=0, start_frame=1)
+        self.assertBounds(("A", 1, 10), ("B", 10, 25), ("C", 25, 40))
+
+    def test_a_delete_closing_onto_a_disagreeing_seam_keeps_one_frame(self):
+        seq = _ClashScene()
+        for name, (start, end) in zip("PQR", ((0, 50), (50, 100), (100, 150))):
+            seq.define_shot(name, start, end, objects=[name.lower()])
+        seq.clashing = {("P", "R")}
+        seq.delete_shot(seq.shot_by_name("Q").shot_id)
+        self.assertEqual(
+            [(s.name, s.start, s.end) for s in seq.sorted_shots()],
+            [("P", 0, 50), ("R", 51, 101)],
+        )
+
+    def test_a_scoped_collapse_keeps_one_frame_where_the_poses_differ(self):
+        self.seq.clashing = {("A", "B")}
+        self.seq.apply_gap(0, scope="end", shot_id=self.sid("A"))
+        self.assertBounds(("A", 1, 10), ("B", 11, 26), ("C", 31, 46))
+
+    def test_the_seams_kept_as_straight_cuts_are_reported(self):
+        """The maintainer's words (2026-10-12): a seam kept a frame apart is
+        a straight cut -- no empty frame between the shots, the gap hold
+        stepping the transition."""
+        self.seq.clashing = {("A", "B")}
+        with self.assertLogs(
+            "pythontk.core_utils.engines.shots.shot_sequencer", "INFO"
+        ) as logs:
+            self.seq.respace(gap=0, start_frame=1)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn(
+            "1 seam kept as a straight cut (poses differ): A|B", logs.output[0]
+        )
+
+    def test_a_band_move_lands_a_frame_short_where_the_poses_differ(self):
+        """A body drag is ``move_shot``: B dropped onto A's end."""
+        self.seq.clashing = {("A", "B")}
+        self.seq.move_shot(self.sid("B"), 10)
+        self.assertBounds(("A", 1, 10), ("B", 11, 26), ("C", 31, 46))
+
+    def test_a_band_move_lands_flush_where_the_poses_agree(self):
+        self.seq.move_shot(self.sid("B"), 10)
+        self.assertBounds(("A", 1, 10), ("B", 10, 25), ("C", 30, 45))
+
+    def test_a_slide_stops_a_frame_short_of_either_neighbour(self):
+        """A gap handle's plain drag: the shot alone, clamped by both sides."""
+        self.seq.clashing = {("A", "B"), ("B", "C")}
+        self.seq.slide_shot(self.sid("B"), 5, direction=None)
+        self.assertBounds(("A", 1, 10), ("B", 11, 26), ("C", 35, 50))
+        self.seq.slide_shot(self.sid("B"), 40, direction=None)
+        self.assertBounds(("A", 1, 10), ("B", 19, 34), ("C", 35, 50))
+
+    def test_a_slide_lands_flush_where_the_poses_agree(self):
+        self.seq.slide_shot(self.sid("B"), 20, direction=None)
+        self.assertBounds(("A", 1, 10), ("B", 20, 35), ("C", 35, 50))
+
+    def test_a_ctrl_edge_stops_a_frame_short_where_the_poses_differ(self):
+        self.seq.clashing = {("A", "B"), ("B", "C")}
+        self.seq.set_shot_edge(self.sid("A"), new_end=15, push=True)
+        self.seq.set_shot_edge(self.sid("C"), new_start=30, push=True)
+        self.assertBounds(("A", 1, 14), ("B", 15, 30), ("C", 31, 50))
+
+    def test_a_ctrl_edge_lands_flush_where_the_poses_agree(self):
+        self.seq.set_shot_edge(self.sid("A"), new_end=15, push=True)
+        self.seq.set_shot_edge(self.sid("C"), new_start=30, push=True)
+        self.assertBounds(("A", 1, 15), ("B", 15, 30), ("C", 30, 50))
+
+    def test_a_ctrl_edge_pushed_past_the_neighbour_is_no_closing(self):
+        """The frames a push takes are the neighbour's content, one pose
+        each: the neighbour's facing bound gives way to the edge, as before."""
+        self.seq.clashing = {("A", "B")}
+        self.seq.set_shot_edge(self.sid("A"), new_end=20, push=True)
+        self.assertBounds(("A", 1, 20), ("B", 20, 30), ("C", 35, 50))
+
+    def test_a_plan_leaving_no_seam_flush_reads_no_poses(self):
+        """Only a flush seam can put two poses on one frame, so a plan that
+        leaves none asks the DCC nothing (each ask reads every curve the plan
+        moves: a second of a production delete)."""
+        self.seq.clashing = {("A", "B")}
+        self.seq.calls.clear()
+        self.seq.respace(gap=10, start_frame=1)
+        self.assertNotIn("clash_check", [c[0] for c in self.seq.calls])
+        self.seq.respace(gap=0, start_frame=1)
+        self.assertIn("clash_check", [c[0] for c in self.seq.calls])
+
+
+class TestMoveToShotCopiesASharedSample(unittest.TestCase):
+    """Move to Shot copies, not carries, a run's sample on a FLUSH seam of
+    its shot: it is the neighbour's pose too (the fencepost gives the shot
+    before the shared frame).  Bug (2026-10-11, SOL_REPLACE_ASSEMBLY gap 0):
+    "B12"'s last run opened on B11's end, the curve's first key; carried
+    away, every shot before played the new first key's extrapolation --
+    SOLENOID 4.85 off over 1734 frames."""
+
+    def setUp(self):
+        self._prefs_tmp = tempfile.mkdtemp(prefix="shot_sequencer_prefs_")
+        ShotStore._prefs_dir_override = self._prefs_tmp
+        ShotStore._active = None
+        ShotStore._persistence = None
+        self.seq = _ClashScene()
+        for name, (start, end) in zip(
+            "PQRS", ((0, 50), (50, 100), (100, 150), (160, 200))
+        ):
+            self.seq.define_shot(name, start, end, objects=[name.lower()])
+
+    def tearDown(self):
+        ShotStore._prefs_dir_override = None
+        ShotStore._active = None
+        shutil.rmtree(self._prefs_tmp, ignore_errors=True)
+
+    def _send(self, run, dest):
+        self.seq.times = [run["start"], run["end"]]
+        self.seq.move_sequences_to_shot([run], self.seq.shot_by_name(dest).shot_id)
+        return [c for c in self.seq.calls if c[0] == "copy_attr"]
+
+    def test_a_run_opening_on_a_flush_start_leaves_a_copy(self):
+        got = self._send({"kind": "anim", "obj": "q", "start": 50.0, "end": 80.0}, "S")
+        # Landed at S's start (nothing of q's there): the first key goes back.
+        self.assertEqual(got, [("copy_attr", "q", None, -110.0, (160.0, 160.0))])
+
+    def test_a_run_closing_on_a_flush_end_leaves_a_copy(self):
+        got = self._send({"kind": "anim", "obj": "q", "start": 70.0, "end": 100.0}, "S")
+        self.assertEqual(got, [("copy_attr", "q", None, -90.0, (190.0, 190.0))])
+
+    def test_a_run_off_the_seams_is_carried_whole(self):
+        got = self._send({"kind": "anim", "obj": "q", "start": 60.0, "end": 80.0}, "S")
+        self.assertEqual(got, [])
+
+    def test_a_head_landing_keeps_a_frame_where_the_poses_differ(self):
+        """P's run lands in front of Q, flush behind P: the block owns Q's
+        start (maintainer 2026-09-23), a frame after P's end where P closes
+        on a different pose (the closing rule, 2026-10-11)."""
+        self.seq.differ = {(50.0, 10.0)}  # P's end vs the block's first key
+        self.seq.times = [10.0, 30.0]
+        self.seq.move_sequences_to_shot(
+            [{"kind": "anim", "obj": "p", "start": 10.0, "end": 30.0}],
+            self.seq.shot_by_name("Q").shot_id,
+        )
+        q = self.seq.shot_by_name("Q")
+        self.assertEqual((q.start, q.end), (51.0, 101.0))
+        moved = [c for c in self.seq.calls if c[0] == "move_attr" and c[1] == "p"]
+        self.assertEqual(moved[-1][3], 41.0, "the block lands on Q's new start")
+
+    def test_a_head_landing_is_flush_where_the_poses_agree(self):
+        self.seq.times = [10.0, 30.0]
+        self.seq.move_sequences_to_shot(
+            [{"kind": "anim", "obj": "p", "start": 10.0, "end": 30.0}],
+            self.seq.shot_by_name("Q").shot_id,
+        )
+        self.assertEqual(self.seq.shot_by_name("Q").start, 50.0)
+
+    def test_the_destinations_own_seam_is_the_move_s_to_edit(self):
+        """Q's run ending on R's start, sent INTO R: R takes it."""
+        got = self._send({"kind": "anim", "obj": "q", "start": 70.0, "end": 100.0}, "R")
+        self.assertEqual(got, [])
+
+
+class _ShrinkScene(_ClashScene):
+    """A clash scene that records its pose pins too."""
+
+    def _pin_bound_poses(self, objects, window, pins, attr=None, crossing=False):
+        self.calls.append(("pose_pins", window, pins, crossing))
+        return 0
+
+
+class TestAPlainShrinkClosesItsFlushSeam(_SequencerTest):
+    """A plain edge shrink (``resize_shot_bounds``) of a shot FLUSH with its
+    neighbour pins both poses first -- the shot's on its new bound, the
+    neighbour's on the old seam -- and ripples the neighbour onto the new
+    bound under the closing rule: flush where they agree, a frame short
+    where they differ (BACKLOG 2026-10-11: a ramp crossing the seam keyless
+    was compressed between the two shots' keys, SOL "C02_2" 0.096 off)."""
+
+    SEQUENCER = _ShrinkScene
+
+    def setUp(self):
+        super().setUp()
+        self.seq.shot_by_name("B").start = 10.0  # A [1, 10] | B [10, 30] flush
+
+    def pins(self):
+        return [c[2] for c in self.seq.calls if c[0] == "pose_pins"]
+
+    def test_the_next_shot_lands_a_frame_short_where_the_poses_differ(self):
+        self.seq.differ = {(6.0, 10.0)}  # A's pose at 6 vs B's at 10
+        self.seq.calls.clear()
+        self.seq.resize_shot_bounds(self.sid("A"), 1, 6)
+        self.assertBounds(("A", 1, 6), ("B", 7, 27), ("C", 32, 47))
+        a, b = self.sid("A"), self.sid("B")
+        self.assertEqual(self.pins(), [[(6.0, a, "end")], [(10.0, b, "start")]])
+        first_move = next(
+            i for i, c in enumerate(self.seq.calls) if c[0] == "apply_plan"
+        )
+        pinned = [i for i, c in enumerate(self.seq.calls) if c[0] == "pose_pins"]
+        self.assertLess(pinned[-1], first_move, "pinned before anything moves")
+
+    def test_the_next_shot_lands_flush_where_the_poses_agree(self):
+        self.seq.resize_shot_bounds(self.sid("A"), 1, 6)
+        self.assertBounds(("A", 1, 6), ("B", 6, 26), ("C", 31, 46))
+
+    def test_a_head_shrink_brings_the_shot_before_on(self):
+        self.seq.differ = {(10.0, 14.0)}  # A's pose at 10 vs B's at 14
+        self.seq.calls.clear()
+        self.seq.resize_shot_bounds(self.sid("B"), 14, 30)
+        self.assertBounds(("A", 4, 13), ("B", 14, 30), ("C", 35, 50))
+        a, b = self.sid("A"), self.sid("B")
+        self.assertEqual(self.pins(), [[(10.0, a, "end")], [(14.0, b, "start")]])
+
+    def test_the_old_seams_claim_is_the_neighbours(self):
+        a, b = self.sid("A"), self.sid("B")
+        self.seq.ledger.record_key("crv", 10.0, a, "end", stays=True)
+        self.seq.differ = {(6.0, 10.0)}
+        self.seq.resize_shot_bounds(a, 1, 6)
+        self.assertEqual(self.seq.ledger.key_records("crv"), [(10.0, b, "start")])
+        self.assertTrue(self.seq.ledger.key_stays("crv", 10.0))
+
+    def test_a_shrink_beside_a_gap_pins_both_sides_and_keeps_the_gap(self):
+        """Across a gap nothing closes: the gap keeps its width, and both
+        sides of it are pinned (a ramp crossing it keyless was re-timed)."""
+        b, c = self.sid("B"), self.sid("C")
+        self.seq.calls.clear()
+        self.seq.resize_shot_bounds(b, 10, 26)
+        self.assertBounds(("A", 1, 10), ("B", 10, 26), ("C", 31, 46))
+        self.assertEqual(self.pins(), [[(26.0, b, "end")], [(35.0, c, "start")]])
+
+    def test_a_grow_beside_a_gap_pins_where_the_shot_played_to(self):
+        b, c = self.sid("B"), self.sid("C")
+        self.seq.calls.clear()
+        self.seq.resize_shot_bounds(b, 10, 33)
+        self.assertBounds(("A", 1, 10), ("B", 10, 33), ("C", 38, 53))
+        self.assertEqual(self.pins(), [[(30.0, b, "end")], [(35.0, c, "start")]])
+
+    def test_a_flush_grow_is_the_splits_to_pin(self):
+        self.seq.calls.clear()
+        self.seq.resize_shot_bounds(self.sid("A"), 1, 14)
+        self.assertEqual(self.pins(), [])
+
+
+class TestContentLeavingAShotKeepsItsNeighboursPoses(_SequencerTest):
+    """Content leaving a shot -- deleted, or sent to another shot -- first
+    pins the pose each shot BESIDE it plays at its facing bound, so what the
+    removed keys gave those shots (a held last value, the ramp into or out
+    of them) stays theirs.
+
+    Bug (found 2026-10-11 by the SOL_REPLACE_ASSEMBLY acceptance, gap 10):
+    deleting a shot whose last key held a curve's value for the rest of the
+    timeline left the next shot playing the shot BEFORE's value instead --
+    KEYS 78 units off over all 81 frames of "A02", SOLENOID 7.2 over 256 of
+    "C02"; Move to Shot of a run out of "A01_2" did the same to "A02"."""
+
+    SEQUENCER = _VacateScene
+
+    def pins(self):
+        return [c for c in self.seq.calls if c[0] in ("pose_pins", "cut")]
+
+    def test_a_delete_pins_both_neighbours_before_the_cut(self):
+        a, b, c = self.sid("A"), self.sid("B"), self.sid("C")
+        self.seq.calls.clear()
+        self.seq.delete_shot(b)
+        self.assertEqual(
+            self.pins(),
+            [
+                (
+                    "pose_pins",
+                    ["a", "b", "c", "stray"],  # every curve the closing re-times
+                    (14.999, 34.999),  # the cut's window: 35 is C's
+                    [(10.0, a, "end"), (35.0, c, "start")],
+                    None,
+                ),
+                ("cut", b),
+            ],
+        )
+
+    def test_a_delete_keeping_its_content_pins_nothing(self):
+        self.seq.calls.clear()
+        self.seq.delete_shot(self.sid("B"), delete_contents=False)
+        self.assertEqual(self.pins(), [])
+
+    def test_a_retime_pins_its_flush_seams_first(self):
+        """A Shift retime holds what a FLUSH neighbour plays on the moved
+        edge: every content curve is pinned on that seam (keyless crossings
+        too), claimed as the earlier shot's end, before anything moves
+        (BACKLOG 2026-10-11: keyless, the next shot opened 0.08 off)."""
+        b = self.seq.shot_by_name("B")
+        b.start, b.end = 10.0, 35.0  # A|B and B|C flush
+        self.seq.calls.clear()
+        self.seq.resize_shot(self.sid("B"), 5, 40)
+        pins = [p[3] for p in self.pins()]
+        self.assertEqual(
+            pins, [[(35.0, self.sid("B"), "end")], [(10.0, self.sid("A"), "end")]]
+        )
+        first_move = next(
+            i for i, x in enumerate(self.seq.calls) if x[0] in ("apply_plan", "cut")
+        )
+        self.assertLess(self.seq.calls.index(self.pins()[-1]), first_move)
+
+    def test_a_delete_pins_its_flush_neighbours_too(self):
+        """At gap 0 the bounds a deleted shot shares are its neighbours' once
+        it is gone (maintainer 2026-10-11): both are pinned, and where the
+        next shot lands is the closing rule's (it was left unpinned, and
+        "A02" played the deleted shot's closing pose, KEYS 80 off)."""
+        seq = _VacateScene()
+        for name, (start, end) in zip("PQR", ((0, 50), (50, 100), (100, 150))):
+            seq.define_shot(name, start, end, objects=[name.lower()])
+        p, q, r = (seq.shot_by_name(n).shot_id for n in "PQR")
+        seq.calls.clear()
+        seq.delete_shot(q)
+        calls = [c for c in seq.calls if c[0] in ("pose_pins", "cut")]
+        self.assertEqual([c[0] for c in calls], ["pose_pins", "cut"])
+        self.assertEqual(calls[0][3], [(50.0, p, "end"), (100.0, r, "start")])
+
+    def test_a_next_shot_one_gap_away_is_pinned_whatever_closes(self):
+        seq = _VacateScene()
+        for name, (start, end) in zip("PQR", ((0, 50), (50, 100), (110, 150))):
+            seq.define_shot(name, start, end, objects=[name.lower()])
+        p, q, r = (seq.shot_by_name(n).shot_id for n in "PQR")
+        seq.calls.clear()
+        seq.delete_shot(q)
+        self.assertEqual(
+            [c[3] for c in seq.calls if c[0] == "pose_pins"],
+            [[(50.0, p, "end"), (110.0, r, "start")]],
+        )
+
+    def test_move_to_shot_pins_the_source_neighbour_that_is_not_the_destination(
+        self,
+    ):
+        a, c = self.sid("A"), self.sid("C")
+        self.seq.calls.clear()
+        self.seq.move_sequences_to_shot(
+            [{"kind": "anim", "obj": "b", "start": 17.0, "end": 28.0}], a
+        )
+        pins = [x for x in self.seq.calls if x[0] == "pose_pins"]
+        self.assertEqual(
+            pins,
+            [("pose_pins", ["b"], (16.999, 28.001), [(35.0, c, "start")], None)],
+        )
+        first_move = next(
+            i
+            for i, x in enumerate(self.seq.calls)
+            if x[0] in ("move_attr", "apply_plan")
+        )
+        self.assertLess(self.seq.calls.index(pins[0]), first_move)
+
+    def test_a_copy_leaves_its_source_and_pins_nothing(self):
+        self.seq.calls.clear()
+        self.seq.copy_sequences_to_shot(
+            [{"kind": "anim", "obj": "b", "start": 17.0, "end": 28.0}],
+            self.sid("A"),
+        )
+        self.assertFalse([x for x in self.seq.calls if x[0] in ("pose_pins", "freeze")])
+
+    def test_move_to_shot_holds_what_the_run_leaves_behind_first(self):
+        """The keys a run leaves in its source keep the slopes they play
+        into their own content (BACKLOG 2026-10-11: the source re-timed up
+        to its last stayed key, SOL "A01_2" / "C02")."""
+        self.seq.calls.clear()
+        self.seq.move_sequences_to_shot(
+            [{"kind": "anim", "obj": "b", "start": 17.0, "end": 28.0}], self.sid("A")
+        )
+        frozen = [x for x in self.seq.calls if x[0] == "freeze"]
+        self.assertEqual(frozen, [("freeze", ["b"], (16.999, 28.001), None)])
+        first_move = next(
+            i
+            for i, x in enumerate(self.seq.calls)
+            if x[0] in ("move_attr", "apply_plan")
+        )
+        self.assertLess(self.seq.calls.index(frozen[0]), first_move)
 
 
 class _PointClipScene(_Recording):
@@ -967,6 +1604,44 @@ class TestDescribeKeySelection(unittest.TestCase):
             self.describe([("Box01", "", [1, 10])]),
             "2 keys · frames 1–10 (9f) · on Box01",
         )
+
+
+class TestPastePairs(unittest.TestCase):
+    """``ShotSequencer.paste_pairs``: which copied key row each destination
+    row of the Shot Sequencer's Ctrl+V receives -- lifted from mayatk's key
+    menu so blendertk's pastes the same way (2026-10-11)."""
+
+    pair = staticmethod(ShotSequencer.paste_pairs)
+
+    def test_a_lone_row_goes_on_every_destination(self):
+        self.assertEqual(
+            self.pair([("A", "tx", "k")], [("B", "ty"), ("C", "tz")]),
+            [("B", "ty", "k"), ("C", "tz", "k")],
+        )
+
+    def test_a_row_lands_on_the_same_objects_attribute(self):
+        rows = [("A", "tx", "ka"), ("B", "tx", "kb"), ("A", "ty", "kay")]
+        self.assertEqual(
+            self.pair(rows, [("B", "tx"), ("A", "ty")]),
+            [("B", "tx", "kb"), ("A", "ty", "kay")],
+        )
+
+    def test_other_objects_take_the_copied_ones_in_order_cycling(self):
+        rows = [("A", "tx", "ka"), ("B", "tx", "kb")]
+        self.assertEqual(
+            self.pair(rows, [("C", "tx"), ("D", "tx"), ("E", "tx")]),
+            [("C", "tx", "ka"), ("D", "tx", "kb"), ("E", "tx", "ka")],
+        )
+
+    def test_an_attribute_not_copied_gets_nothing(self):
+        rows = [("A", "tx", "ka"), ("A", "ty", "kay")]
+        self.assertEqual(self.pair(rows, [("A", "rz")]), [])
+
+    def test_the_injected_leaf_matches_two_spellings_of_one_object(self):
+        rows = [("|grp|A", "tx", "ka"), ("|grp|B", "tx", "kb")]
+        leaf = lambda name: name.split("|")[-1]  # noqa: E731
+        self.assertEqual(self.pair(rows, [("B", "tx")], leaf=leaf), [("B", "tx", "kb")])
+        self.assertEqual(self.pair(rows, [("B", "tx")]), [("B", "tx", "ka")])
 
 
 if __name__ == "__main__":

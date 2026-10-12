@@ -22,8 +22,13 @@
             "kind": "choice",
             "label": "Step IDs",
             "tooltip": "How the sheet writes its step IDs and section rows.",
-            "default": "classic",
+            "default": "auto",
             "choices": {
+                "auto": {
+                    "label": "Auto (whichever reads the sheet)",
+                    "tooltip": "Reads the sheet both ways below and keeps the one that finds more steps, so a sheet writing A01.) and one writing A01 / IN_01 each read as they are.",
+                    "try": ["classic", "numbered"]
+                },
                 "classic": {
                     "label": "A01.)  +  named steps (SETUP)",
                     "tooltip": "IDs like A01.); a bare word (SETUP) is a step; sections are SECTION X: Title rows.",

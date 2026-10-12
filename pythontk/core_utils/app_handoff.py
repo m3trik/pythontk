@@ -5,6 +5,7 @@
 A one-release stub for code importing the old path; import the names from the
 pythontk root instead (``from pythontk import ...``).
 """
+
 from pythontk.core_utils.deprecation import Deprecation
 
 Deprecation.attributes(

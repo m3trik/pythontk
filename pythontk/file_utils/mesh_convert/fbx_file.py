@@ -12,15 +12,37 @@ census questions a verifier asks. Array payloads are **skipped by default** —
 a 200 MB production FBX parses in well under a second because the geometry is
 never inflated.
 
+It also reads the animation as an importer does: each curve evaluated the way
+Maya reads it back (constant, linear, cubic with stored or Maya-computed
+slopes, weighted), which is how :meth:`FbxFile.take_layout` tells which takes
+together hold all of a file's motion -- the input to
+:meth:`FbxMedia.merge_takes`.
+
 Read-only by design: there is no writer here, so this can never be what
 damages the file it inspects.
 """
 
+import math
 import os
 import struct
 import zlib
+from bisect import bisect_left, bisect_right
 from collections import Counter
-from typing import Any, Collection, Dict, Iterator, List, Optional, Tuple, Union
+from typing import (
+    Any,
+    Collection,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
+
+from pythontk.math_utils.key_curve import KeyCurve
 
 #: The 23-byte magic every binary FBX starts with.
 FBX_MAGIC = b"Kaydara FBX Binary  \x00\x1a\x00"
@@ -30,8 +52,71 @@ FBX_MAGIC = b"Kaydara FBX Binary  \x00\x1a\x00"
 _NAME_CLASS_SEPARATOR = b"\x00\x01"
 
 
+class _FbxCurve(NamedTuple):
+    """One ``AnimationCurve`` as stored -- what :class:`FbxFile` evaluates.
+
+    *times* (FBX ticks) and *values* per key; the attribute runs
+    ``KeyAttrRefCount`` encodes: each run's ``KeyAttrFlags`` (*flags*), its
+    four ``KeyAttrDataFloat`` values (*data*) and the key it starts at
+    (*starts*); *clamp*, the value step under which a Maya clamped key on this
+    curve's channel is flat.
+    """
+
+    times: List[int]
+    values: List[float]
+    flags: List[int]
+    data: List[Tuple[float, ...]]
+    starts: List[int]
+    clamp: float
+
+
 class _FbxFileInternal:
-    """Record parsing for :class:`FbxFile`."""
+    """Record parsing for :class:`FbxFile`, and the curve model its take
+    layout -- and :meth:`FbxMedia.merge_takes` -- judge takes by."""
+
+    #: FBX ticks per second (``FbxTime``'s unit) in every file this reader
+    #: has met -- Maya and Blender both write the 7.x default. A file whose
+    #: ``OtherFlags/TCDefinition`` is not 127 pins another rate; the times
+    #: below are returned as stored, in that file's ticks.
+    TICKS_PER_SECOND = 46186158000
+
+    #: ``KeyAttrFlags`` bits, the FBX SDK's ``FbxAnimCurveDef``: interpolation
+    #: (the segment AFTER the key), tangent mode, weights.
+    _INTERPOLATION = 0x0E
+    _CONSTANT, _LINEAR, _CUBIC = 0x02, 0x04, 0x08
+    #: On a constant key: the segment takes the NEXT key's value (step-next).
+    _CONSTANT_NEXT = 0x100
+    _TANGENT_AUTO, _TANGENT_TCB, _TANGENT_USER = 0x100, 0x200, 0x400
+    _CLAMP, _CLAMP_PROGRESSIVE = 0x1000, 0x4000
+    _WEIGHTED_RIGHT, _WEIGHTED_NEXT_LEFT = 0x01000000, 0x02000000
+    #: A tangent weight is a 16-bit fraction of this (``0.3333`` = 3333).
+    _WEIGHT_DIVIDER = 9999.0
+    #: Maya's clamped tangent goes flat beside a key nearer than this in
+    #: Maya's internal unit (measured, Maya 2025: 0.049 flat, 0.051 not, at
+    #: any key spacing or magnitude) -- radians on a rotation.
+    _CLAMP_THRESHOLD = 0.05
+    _ANGULAR_PROPERTIES = ("Lcl Rotation",)
+    #: ``GlobalSettings/TimeMode`` -> frames per second (``FbxTime::EMode``);
+    #: 14 is custom (``CustomFrameRate``).
+    _TIME_MODE_FPS = {
+        1: 120.0,
+        2: 100.0,
+        3: 60.0,
+        4: 50.0,
+        5: 48.0,
+        6: 30.0,
+        7: 30.0,
+        8: 30000 / 1001,
+        9: 30000 / 1001,
+        10: 25.0,
+        11: 24.0,
+        12: 1000.0,
+        13: 24000 / 1001,
+        15: 96.0,
+        16: 72.0,
+        17: 60000 / 1001,
+        18: 120000 / 1001,
+    }
 
     _SCALAR_PROPS = {
         b"Y": ("<h", 2),
@@ -151,6 +236,661 @@ class _FbxFileInternal:
             max(lasts) if lasts else None,
             a[2] + b[2],
         )
+
+    # ---- curve model ------------------------------------------------------
+
+    @classmethod
+    def _clamp_threshold(cls, prop: str) -> float:
+        """The value step under which a Maya clamped key on *prop* is flat, in
+        the file's unit: radians in Maya, so degrees for a rotation."""
+        if prop in cls._ANGULAR_PROPERTIES:
+            return math.degrees(cls._CLAMP_THRESHOLD)
+        return cls._CLAMP_THRESHOLD
+
+    @classmethod
+    def _frame_rate(cls, time_mode: Any, custom: Any = None) -> Optional[float]:
+        """Frames per second for a ``TimeMode`` (and ``CustomFrameRate``)."""
+        if time_mode == 14 and isinstance(custom, (int, float)) and custom > 0:
+            return float(custom)
+        return cls._TIME_MODE_FPS.get(time_mode)
+
+    @classmethod
+    def _key_curve(
+        cls, arrays: Mapping[str, Any], clamp: float = _CLAMP_THRESHOLD
+    ) -> _FbxCurve:
+        """A :class:`_FbxCurve` from one curve's decoded arrays.
+
+        Attribute runs that do not account for every key (a writer that left
+        them out) read as one linear run -- what Blender's importer assumes of
+        every key.
+
+        Raises:
+            ValueError: The curve has a different number of times and values.
+        """
+        times = list(arrays.get("KeyTime") or ())
+        values = list(arrays.get("KeyValueFloat") or ())
+        if len(times) != len(values):
+            raise ValueError(
+                f"FBX curve has {len(times)} key times and {len(values)} values"
+            )
+        flags = list(arrays.get("KeyAttrFlags") or ())
+        floats = list(arrays.get("KeyAttrDataFloat") or ())
+        counts = list(arrays.get("KeyAttrRefCount") or ())
+        if (
+            len(flags) != len(counts)
+            or len(floats) != 4 * len(counts)
+            or min(counts, default=0) < 0
+            or sum(counts) != len(times)
+        ):
+            flags, floats, counts = [cls._LINEAR], [0.0] * 4, [len(times)]
+        starts: List[int] = []
+        at = 0
+        for count in counts:
+            starts.append(at)
+            at += count
+        data = [tuple(floats[4 * j : 4 * j + 4]) for j in range(len(counts))]
+        return _FbxCurve(times, values, flags, data, starts, clamp)
+
+    @staticmethod
+    def _key_attr(curve: _FbxCurve, index: int) -> Tuple[int, Tuple[float, ...]]:
+        """``(flags, data)`` of key *index*: the attribute run it falls in."""
+        run = bisect_right(curve.starts, index) - 1
+        return curve.flags[run], curve.data[run]
+
+    @classmethod
+    def _computed(cls, flags: int) -> bool:
+        """True for a key whose slopes the importer computes rather than reads.
+
+        Maya writes its spline, clamped and auto keys as cubic keys in AUTO
+        tangent mode with ZERO slopes, and its importer recomputes them from
+        the neighbouring keys (measured, Maya 2025 / FBX 2020.3.6: a plain
+        export re-imports within 1e-7 of the original). A TCB key, which
+        neither Maya nor Blender writes, is evaluated as a spline key.
+        """
+        return (
+            (flags & cls._INTERPOLATION) == cls._CUBIC
+            and bool(flags & (cls._TANGENT_AUTO | cls._TANGENT_TCB))
+            and not flags & cls._TANGENT_USER
+        )
+
+    @classmethod
+    def _auto_slope(cls, curve: _FbxCurve, index: int, flags: int) -> float:
+        """The slope (value per second) Maya computes for a computed key.
+
+        Spline (no clamp bit): the central difference; at an end, the one
+        secant. Clamped (``GenericClamp``): spline, but flat beside a
+        neighbour nearer than the curve's clamp step. Auto
+        (``ClampProgressive``): flat at an end or an extremum, else spline
+        capped at three times either side's secant, so no segment overshoots.
+        Measured against Maya's own tangents on irregular key sets.
+        """
+        times, values = curve.times, curve.values
+        last = len(times) - 1
+        if last < 1:
+            return 0.0
+        tps = cls.TICKS_PER_SECOND
+        if index in (0, last):
+            other = 1 if index == 0 else last - 1
+            rise, run = values[other] - values[index], times[other] - times[index]
+            if flags & cls._CLAMP_PROGRESSIVE or not run:
+                return 0.0
+            if flags & cls._CLAMP and abs(rise) < curve.clamp:
+                return 0.0
+            return rise / (run / tps)
+        v0, v1, v2 = values[index - 1 : index + 2]
+        before, after = times[index] - times[index - 1], times[index + 1] - times[index]
+        if not before or not after:
+            return 0.0
+        left, right = (v1 - v0) / (before / tps), (v2 - v1) / (after / tps)
+        spline = (v2 - v0) / ((before + after) / tps)
+        if flags & cls._CLAMP_PROGRESSIVE:
+            if left * right <= 0:
+                return 0.0
+            return math.copysign(
+                min(abs(spline), 3 * abs(left), 3 * abs(right)), spline
+            )
+        if flags & cls._CLAMP and (
+            abs(v1 - v0) < curve.clamp or abs(v2 - v1) < curve.clamp
+        ):
+            return 0.0
+        return spline
+
+    @classmethod
+    def _out_slope(cls, curve: _FbxCurve, index: int) -> float:
+        """Key *index*'s right slope, value per second: its ``RightSlope``,
+        or computed (:meth:`_computed`)."""
+        flags, data = cls._key_attr(curve, index)
+        if cls._computed(flags):
+            return cls._auto_slope(curve, index, flags)
+        return data[0]
+
+    @classmethod
+    def _in_slope(cls, curve: _FbxCurve, index: int) -> float:
+        """Key *index*'s left slope: computed, or the ``NextLeftSlope`` the key
+        BEFORE it stores. A first key has none stored; its right slope stands
+        in (an unbroken tangent)."""
+        flags, _data = cls._key_attr(curve, index)
+        if cls._computed(flags):
+            return cls._auto_slope(curve, index, flags)
+        if index == 0:
+            return cls._out_slope(curve, 0)
+        return cls._key_attr(curve, index - 1)[1][1]
+
+    @classmethod
+    def _weights(cls, flags: int, data: Sequence[float]) -> Tuple[float, float]:
+        """``(right, next left)`` tangent weights, as fractions of the segment
+        duration: two 16-bit fractions of 9999 in the bits of the third data
+        float (right low), each read only when its weighted bit is set --
+        otherwise a third, which makes the cubic a plain Hermite."""
+        right = left = 1.0 / 3.0
+        if flags & (cls._WEIGHTED_RIGHT | cls._WEIGHTED_NEXT_LEFT):
+            low, high = struct.unpack("<HH", struct.pack("<f", data[2]))
+            if flags & cls._WEIGHTED_RIGHT:
+                right = low / cls._WEIGHT_DIVIDER
+            if flags & cls._WEIGHTED_NEXT_LEFT:
+                left = high / cls._WEIGHT_DIVIDER
+        return right, left
+
+    @classmethod
+    def _evaluate_curve(cls, curve: _FbxCurve, ticks: int) -> float:
+        """The curve's value at *ticks*, as Maya's importer evaluates it.
+
+        Each key's flags shape the segment AFTER it: constant (or step-next),
+        linear, or cubic -- a Bezier whose control points sit a weight's
+        fraction of the segment in from each key along its slope (a third,
+        unweighted: a Hermite). Before the first key and after the last the
+        curve holds its end value. Pinned against Maya's own evaluation of a
+        Maya-written file (``test_assets/fbx/maya_tangents.fbx``: every tangent
+        type within 1e-7). Velocity bits, which no DCC here writes, are ignored.
+        """
+        times, values = curve.times, curve.values
+        if not times:
+            return 0.0
+        if ticks <= times[0]:
+            return values[0]
+        if ticks >= times[-1]:
+            return values[-1]
+        i = bisect_right(times, ticks) - 1
+        t0, t1 = times[i], times[i + 1]
+        v0, v1 = values[i], values[i + 1]
+        if ticks == t0:
+            return v0
+        flags, data = cls._key_attr(curve, i)
+        mode = flags & cls._INTERPOLATION
+        if mode == cls._CONSTANT:
+            return v1 if flags & cls._CONSTANT_NEXT else v0
+        u = (ticks - t0) / (t1 - t0)
+        if mode != cls._CUBIC:
+            return v0 + (v1 - v0) * u
+        span = (t1 - t0) / cls.TICKS_PER_SECOND
+        right, left = cls._weights(flags, data)
+        y1 = v0 + cls._out_slope(curve, i) * right * span
+        y2 = v1 - cls._in_slope(curve, i + 1) * left * span
+        if flags & (cls._WEIGHTED_RIGHT | cls._WEIGHTED_NEXT_LEFT):
+            # Time control points as fractions of the segment, in [0, 1].
+            u = KeyCurve.bezier_parameter(u, 0.0, right, 1.0 - left, 1.0)
+        a = 1.0 - u
+        return a * a * a * v0 + 3.0 * a * u * (a * y1 + u * y2) + u * u * u * v1
+
+    @staticmethod
+    def _values_match(a: float, b: float, tolerance: float) -> bool:
+        """Equal within *tolerance*: absolute below 1, relative above -- a
+        float32 key carries about seven significant digits."""
+        return abs(a - b) <= tolerance * max(1.0, abs(a), abs(b))
+
+    @classmethod
+    def _disagreement(
+        cls, a: _FbxCurve, b: _FbxCurve, tolerance: float
+    ) -> Optional[Tuple[int, float, float]]:
+        """The earliest key, of either curve, inside their overlap where the
+        other evaluates differently: ``(ticks, a's value, b's value)``, or
+        ``None``. Curves that only touch compare that one instant -- a seam
+        agrees when both hold one value there."""
+        if not a.times or not b.times:
+            return None
+        lo, hi = max(a.times[0], b.times[0]), min(a.times[-1], b.times[-1])
+        if lo > hi:
+            return None
+        found = None
+        for mine, other, flip in ((a, b, False), (b, a, True)):
+            for i in range(bisect_left(mine.times, lo), bisect_right(mine.times, hi)):
+                at, own = mine.times[i], mine.values[i]
+                theirs = cls._evaluate_curve(other, at)
+                if not cls._values_match(own, theirs, tolerance):
+                    hit = (at, theirs, own) if flip else (at, own, theirs)
+                    if found is None or at < found[0]:
+                        found = hit
+                    break
+        return found
+
+    @classmethod
+    def _build_take_model(
+        cls,
+        rows: Sequence[Tuple[str, int, str, Optional[Mapping[str, Any]]]],
+        links: Sequence[Tuple[str, Any, Any, Optional[str]]],
+    ) -> Dict[str, Any]:
+        """Every take's channels and curves, from a file's objects and wiring.
+
+        Parameters:
+            rows: ``(record name, uid, display name, arrays)`` per object, in
+                file order; *arrays* holds an ``AnimationCurve``'s decoded
+                :attr:`FbxFile.CURVE_ARRAYS`, ``None`` for anything else.
+            links: ``(kind, child, parent, property)`` per connection.
+
+        Returns:
+            ``{"takes": [...], "labels": {channel: label}}``. Each take (file
+            order): ``{"name", "stack", "layers": [layer uid per index],
+            "channels": {channel: {"curve": _FbxCurve, "id", "node",
+            "layer"}}, "nodes": {(target, property, layer index): node}}``. A
+            channel is ``(target uid, property, component, layer index)`` --
+            layers matched by their order in the stack, the one identity both
+            Maya (scene layers by name) and Blender (a layer named after its
+            take) share. Its label is ``target.property.component``, the
+            target ``name#uid`` where names repeat, `` [layer i]`` past the
+            base layer. A curve node without curves (a still channel) has no
+            channel: nothing keys it.
+        """
+        kind: Dict[Any, str] = {}
+        name: Dict[Any, str] = {}
+        arrays: Dict[Any, Mapping[str, Any]] = {}
+        stacks: List[Any] = []
+        for record, uid, display, curve_arrays in rows:
+            kind[uid], name[uid] = record, display
+            if record == "AnimationStack":
+                stacks.append(uid)
+            if curve_arrays is not None:
+                arrays[uid] = curve_arrays
+        members: Dict[Any, List[Tuple[Any, Optional[str]]]] = {}
+        targets: Dict[Any, List[Tuple[Any, str]]] = {}
+        for _kind, child, parent, prop in links:
+            members.setdefault(parent, []).append((child, prop))
+            if prop is not None and kind.get(child) == "AnimationCurveNode":
+                targets.setdefault(child, []).append((parent, prop))
+
+        takes: List[Dict[str, Any]] = []
+        for stack in stacks:
+            layers = [
+                c for c, _p in members.get(stack, ()) if kind.get(c) == "AnimationLayer"
+            ]
+            channels: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+            nodes: Dict[Tuple[Any, ...], Any] = {}
+            for index, layer in enumerate(layers):
+                for node, _p in members.get(layer, ()):
+                    if kind.get(node) != "AnimationCurveNode":
+                        continue
+                    for target, prop in targets.get(node, ()):
+                        nodes.setdefault((target, prop, index), node)
+                        clamp = cls._clamp_threshold(prop)
+                        for curve, component in members.get(node, ()):
+                            key = (target, prop, component, index)
+                            if (
+                                component is None
+                                or curve not in arrays
+                                or key in channels
+                            ):
+                                continue
+                            channels[key] = {
+                                "curve": cls._key_curve(arrays[curve], clamp),
+                                "id": curve,
+                                "node": node,
+                                "layer": index,
+                            }
+            takes.append(
+                {
+                    "name": name[stack],
+                    "stack": stack,
+                    "layers": layers,
+                    "channels": channels,
+                    "nodes": nodes,
+                }
+            )
+
+        used = {key[0] for take in takes for key in take["channels"]}
+        repeats = Counter(name.get(target, "") for target in used)
+        labels: Dict[Tuple[Any, ...], str] = {}
+        for take in takes:
+            for key in take["channels"]:
+                if key in labels:
+                    continue
+                target, prop, component, index = key
+                label = name.get(target, "")
+                if repeats[label] > 1:
+                    label = f"{label}#{target}"
+                label = f"{label}.{prop}.{component}"
+                labels[key] = label + (f" [layer {index}]" if index else "")
+        return {"takes": takes, "labels": labels}
+
+    @staticmethod
+    def _take_extent(take: Mapping[str, Any]) -> Optional[Tuple[int, int]]:
+        """``(first, last)`` key over every curve of *take*, in ticks."""
+        curves = [c["curve"].times for c in take["channels"].values()]
+        firsts = [times[0] for times in curves if times]
+        if not firsts:
+            return None
+        return min(firsts), max(times[-1] for times in curves if times)
+
+    @classmethod
+    def _when(cls, ticks: int, fps: Optional[float]) -> str:
+        """*ticks* for a message: a frame at *fps*, else seconds."""
+        seconds = ticks / cls.TICKS_PER_SECOND
+        if fps:
+            return f"frame {round(seconds * fps, 3):g}"
+        return f"{seconds:g} s"
+
+    @classmethod
+    def _first_conflict(
+        cls,
+        take: Mapping[str, Any],
+        others: Sequence[Mapping[str, Any]],
+        labels: Mapping[Tuple[Any, ...], str],
+        tolerance: float,
+        fps: Optional[float],
+    ) -> Optional[str]:
+        """Why *take* cannot join *others*: the earliest overlap, over the
+        channels they share, where a key of one evaluates differently on the
+        other -- ``"'Run' disagrees with 'Walk' on cube.Lcl
+        Translation.d|X at frame 1: 0.75 vs 0.5"`` -- or ``None``."""
+        worst = None
+        for other in others:
+            for key, channel in take["channels"].items():
+                theirs = other["channels"].get(key)
+                if theirs is None:
+                    continue
+                hit = cls._disagreement(channel["curve"], theirs["curve"], tolerance)
+                if hit is not None and (worst is None or hit[0] < worst[0]):
+                    worst = (hit[0], hit[1], hit[2], other["name"], labels[key])
+        if worst is None:
+            return None
+        at, mine, theirs, other, label = worst
+        return (
+            f"{take['name']!r} disagrees with {other!r} on {label} at "
+            f"{cls._when(at, fps)}: {mine:.7g} vs {theirs:.7g}"
+        )
+
+    @staticmethod
+    def _adds_keys(take: Mapping[str, Any], kept: Sequence[Mapping[str, Any]]) -> bool:
+        """True when *take* keys a channel at a time no curve of *kept* spans
+        (a key on a channel none of them animates included)."""
+        for key, channel in take["channels"].items():
+            times = channel["curve"].times
+            if not times:
+                continue
+            spans = sorted(
+                (
+                    k["channels"][key]["curve"].times[0],
+                    k["channels"][key]["curve"].times[-1],
+                )
+                for k in kept
+                if key in k["channels"] and k["channels"][key]["curve"].times
+            )
+            inside = 0
+            lo = hi = None
+            for first, last in spans + [(None, None)]:
+                if lo is not None and (first is None or first > hi):
+                    inside += bisect_right(times, hi) - bisect_left(times, lo)
+                    lo = None
+                if first is None:
+                    break
+                if lo is None:
+                    lo, hi = first, last
+                else:
+                    hi = max(hi, last)
+            if inside < len(times):
+                return True
+        return False
+
+    @classmethod
+    def _layout(
+        cls,
+        model: Mapping[str, Any],
+        current: Optional[str],
+        tolerance: float,
+        fps: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """:meth:`FbxFile.take_layout` of a :meth:`_build_take_model`."""
+        takes = list(model["takes"])
+        names = [take["name"] for take in takes]
+        extents = [cls._take_extent(take) for take in takes]
+        tps = cls.TICKS_PER_SECOND
+        rows = [
+            {
+                "name": take["name"],
+                "index": index,
+                "start": None if extent is None else extent[0] / tps,
+                "end": None if extent is None else extent[1] / tps,
+            }
+            for index, (take, extent) in enumerate(zip(takes, extents), 1)
+        ]
+        keyed = [i for i, extent in enumerate(extents) if extent is not None]
+        seed = next(
+            (i for i in keyed if names[i] == current), keyed[0] if keyed else None
+        )
+
+        accepted: List[int] = [] if seed is None else [seed]
+        stash: List[int] = []
+        conflicts: Dict[str, str] = {}
+        for i in keyed:
+            if i == seed:
+                continue
+            reason = cls._first_conflict(
+                takes[i], [takes[j] for j in accepted], model["labels"], tolerance, fps
+            )
+            if reason is None:
+                accepted.append(i)
+            else:
+                stash.append(i)
+                conflicts[names[i]] = reason
+
+        # The widest takes first, so a cover keeps its place and its slices
+        # add nothing; then any kept take the rest now cover goes too.
+        def coverage(i: int) -> Tuple[Any, ...]:
+            curves = [c["curve"].times for c in takes[i]["channels"].values()]
+            spread = sum(t[-1] - t[0] for t in curves if t)
+            return (-spread, -sum(len(t) for t in curves), i != seed, i)
+
+        live: List[int] = []
+        for i in sorted(accepted, key=coverage):
+            if cls._adds_keys(takes[i], [takes[j] for j in live]):
+                live.append(i)
+        for i in list(reversed(live)):
+            rest = [takes[j] for j in live if j != i]
+            if rest and not cls._adds_keys(takes[i], rest):
+                live.remove(i)
+        live.sort()
+        redundant = [i for i in range(len(takes)) if i not in live and i not in stash]
+
+        if not live:
+            kind = "none"
+        elif stash:
+            kind = "conflicted"
+        elif len(live) > 1:
+            kind = "merged"
+        elif redundant:
+            kind = "covered"
+        else:
+            kind = "single"
+        return {
+            "takes": rows,
+            "current": current if current in names else None,
+            "kind": kind,
+            "live": [names[i] for i in live],
+            "redundant": [names[i] for i in redundant],
+            "stash": [names[i] for i in sorted(stash)],
+            "conflicts": conflicts,
+        }
+
+    @classmethod
+    def _union_curves(
+        cls, curves: Sequence[_FbxCurve]
+    ) -> Tuple[
+        List[int], List[float], List[int], List[Tuple[float, ...]], List[int], int
+    ]:
+        """ONE curve holding every key of *curves* (in take order) at its time.
+
+        A time several curves key is kept once -- the key of a curve that
+        continues past it, since a key's flags and slopes describe the segment
+        AFTER it -- and counted as a seam. Each key keeps its own flags and
+        data; where the next key comes from another curve (a gap between two
+        takes' keys), the left side of that next key is that curve's own: its
+        stored left slope and weight, or its right slope at a first key (an
+        unbroken tangent). Across a gap the earlier take's last key still
+        decides the interpolation -- a constant last key holds its pose until
+        the next take starts.
+
+        Curves that follow one another (a Shots Only file: each take its own
+        window, at most a shared seam frame between two) are joined run by
+        run; overlapping ones key by key.
+
+        Returns:
+            ``(times, values, flags, data, counts, seams)`` -- the keys, their
+            attribute runs (``KeyAttrRefCount``'s encoding, each curve's own
+            runs kept as stored) and how many keys a shared time collapsed.
+        """
+        keyed = sorted(
+            (o for o, curve in enumerate(curves) if curve.times),
+            key=lambda o: (curves[o].times[0], o),
+        )
+        # A seam drops the earlier curve's key there, so a one-key curve on
+        # either side of one is joined key by key: run by run, a gap before a
+        # dropped lone key met that key's slope, not the kept one's.
+        follows = all(
+            curves[a].times[-1] < curves[b].times[0]
+            or (
+                curves[a].times[-1] == curves[b].times[0]
+                and len(curves[a].times) > 1
+                and len(curves[b].times) > 1
+            )
+            for a, b in zip(keyed, keyed[1:])
+        )
+        if not follows:
+            return cls._interleave_curves(curves)
+        times: List[int] = []
+        values: List[float] = []
+        flags: List[int] = []
+        data: List[Tuple[float, ...]] = []
+        counts: List[int] = []
+        seams = 0
+
+        def run(f: int, d: Tuple[float, ...], count: int, join: bool) -> None:
+            if not count:
+                return
+            if join and counts and flags[-1] == f and data[-1] == d:
+                counts[-1] += count
+            else:
+                flags.append(f)
+                data.append(d)
+                counts.append(count)
+
+        for position, o in enumerate(keyed):
+            curve = curves[o]
+            nxt = keyed[position + 1] if position + 1 < len(keyed) else None
+            seam = nxt is not None and curve.times[-1] == curves[nxt].times[0]
+            keep = len(curve.times) - (1 if seam else 0)
+            seams += 1 if seam else 0
+            times.extend(curve.times[:keep])
+            values.extend(curve.values[:keep])
+            gap = nxt is not None and not seam
+            ends = curve.starts[1:] + [len(curve.times)]
+            first = True
+            for f, d, start, end in zip(curve.flags, curve.data, curve.starts, ends):
+                end = min(end, keep)
+                if gap and end == keep:
+                    end -= 1  # the last key is re-pointed below
+                run(f, d, max(0, end - start), first)
+                first = first and end <= start
+            if gap:
+                f, d = cls._junction(*cls._key_attr(curve, keep - 1), nxt, 0, curves)
+                run(f, d, 1, True)
+        return times, values, flags, data, counts, seams
+
+    @classmethod
+    def _interleave_curves(
+        cls, curves: Sequence[_FbxCurve]
+    ) -> Tuple[
+        List[int], List[float], List[int], List[Tuple[float, ...]], List[int], int
+    ]:
+        """:meth:`_union_curves` of curves that overlap, key by key."""
+        entries = sorted(
+            (t, order, i)
+            for order, curve in enumerate(curves)
+            for i, t in enumerate(curve.times)
+        )
+        picked: List[Tuple[int, int]] = []
+        seams = 0
+        at = 0
+        while at < len(entries):
+            stop = at
+            while stop < len(entries) and entries[stop][0] == entries[at][0]:
+                stop += 1
+            group = entries[at:stop]
+            seams += len(group) - 1
+            picked.append(
+                next(
+                    ((o, i) for _t, o, i in group if i + 1 < len(curves[o].times)),
+                    (group[0][1], group[0][2]),
+                )
+            )
+            at = stop
+        times = [curves[o].times[i] for o, i in picked]
+        values = [curves[o].values[i] for o, i in picked]
+        flags: List[int] = []
+        data: List[Tuple[float, ...]] = []
+        for p, (o, i) in enumerate(picked):
+            curve = curves[o]
+            key_flags, key_data = cls._key_attr(curve, i)
+            following = times[p + 1] if p + 1 < len(times) else None
+            joined = i + 1 < len(curve.times) and curve.times[i + 1] == following
+            if following is not None and not joined:
+                key_flags, key_data = cls._junction(
+                    key_flags, key_data, *picked[p + 1], curves
+                )
+            flags.append(key_flags)
+            data.append(key_data)
+        return (times, values, *cls._attr_runs(flags, data), seams)
+
+    @classmethod
+    def _junction(
+        cls,
+        flags: int,
+        data: Tuple[float, ...],
+        order: int,
+        index: int,
+        curves: Sequence[_FbxCurve],
+    ) -> Tuple[int, Tuple[float, ...]]:
+        """A key's attributes re-pointed at a next key from another curve:
+        the left slope, weight and weighted bit become that key's own."""
+        nxt = curves[order]
+        if index > 0:
+            left_flags, left_data = cls._key_attr(nxt, index - 1)
+            slope = left_data[1]
+            weighted = left_flags & cls._WEIGHTED_NEXT_LEFT
+            left_word = struct.unpack("<HH", struct.pack("<f", left_data[2]))[1]
+        else:
+            slope = cls._key_attr(nxt, index)[1][0]
+            weighted = 0
+            left_word = int(cls._WEIGHT_DIVIDER / 3)
+        right_word = struct.unpack("<HH", struct.pack("<f", data[2]))[0]
+        word = struct.unpack("<f", struct.pack("<HH", right_word, left_word))[0]
+        flags = (flags & ~cls._WEIGHTED_NEXT_LEFT) | weighted
+        return flags, (data[0], slope, word, data[3])
+
+    @staticmethod
+    def _attr_runs(
+        flags: Sequence[int], data: Sequence[Tuple[float, ...]]
+    ) -> Tuple[List[int], List[Tuple[float, ...]], List[int]]:
+        """Per-key attributes as ``KeyAttrRefCount`` runs: ``(flags, data,
+        counts)``, consecutive identical keys sharing one run."""
+        run_flags: List[int] = []
+        run_data: List[Tuple[float, ...]] = []
+        counts: List[int] = []
+        for f, d in zip(flags, data):
+            if counts and run_flags[-1] == f and run_data[-1] == d:
+                counts[-1] += 1
+            else:
+                run_flags.append(f)
+                run_data.append(d)
+                counts.append(1)
+        return run_flags, run_data, counts
 
 
 class FbxFile(_FbxFileInternal):
@@ -310,11 +1050,16 @@ class FbxFile(_FbxFileInternal):
                         found.append(props[4] if len(props) == 5 else props[4:])
         return found
 
-    #: FBX ticks per second (``FbxTime``'s unit) in every file this reader
-    #: has met -- Maya and Blender both write the 7.x default. A file whose
-    #: ``OtherFlags/TCDefinition`` is not 127 pins another rate; the times
-    #: below are returned as stored, in that file's ticks.
-    TICKS_PER_SECOND = 46186158000
+    #: The ``AnimationCurve`` arrays :meth:`take_layout` reads. Load with
+    #: ``decode_arrays=FbxFile.CURVE_ARRAYS`` to have them at hand; a file
+    #: loaded without them is read again for them.
+    CURVE_ARRAYS = (
+        "KeyTime",
+        "KeyValueFloat",
+        "KeyAttrFlags",
+        "KeyAttrDataFloat",
+        "KeyAttrRefCount",
+    )
 
     def take_curves(self) -> Dict[str, Dict[Tuple[str, str, str], Tuple[Any, ...]]]:
         """What each take animates: ``{take: {(target, property, channel):
@@ -430,6 +1175,124 @@ class FbxFile(_FbxFileInternal):
                     max(lasts) / self.TICKS_PER_SECOND,
                 )
         return spans
+
+    def take_layout(self, tolerance: float = 1e-4) -> Dict[str, Any]:
+        """Which takes, imported together, carry ALL of the file's animation.
+
+        No DCC merges takes on import -- Maya plays the one take
+        ``FBXImportSetTake`` names, Blender assigns each object the first
+        stack's action -- so a file whose motion is split across takes (a
+        Shots Only export, per-object stacks) imports one take's worth. This
+        sorts the takes so a caller imports everything: the ``live`` takes,
+        merged into one by :meth:`FbxMedia.merge_takes` when there is more
+        than one, and the ``stash`` takes -- alternatives -- parked whole.
+
+        One rule decides every layout. Each take keys channels (an animated
+        object's property component, per layer) over intervals, judged by the
+        file's own interpolation (constant, linear, cubic with stored or
+        Maya-computed slopes, weighted). The seed is the file's current take
+        if it keys anything, else the first take that does. Every other take,
+        in file order, is compared with each take accepted so far on every
+        channel both key: a key of either inside their overlap that the other
+        evaluates differently (beyond *tolerance*) sends the take to
+        ``stash`` WHOLE -- a take is one coherent motion, never split.
+        Touching at one frame with one value is a seam, not a conflict. The
+        accepted takes are then kept widest first while each still keys some
+        channel at a time no kept take spans: those are ``live``; the rest
+        (a slice of a covering take, a take that keys nothing) are
+        ``redundant``.
+
+        Edge cases: a cover listed after its slices still covers them (the
+        widest take is weighed first; equal widths prefer the seed, then file
+        order); two identical takes keep the first; a take that keys only
+        channels the live takes span adds nothing even where the live takes
+        leave a gap between them; a curve node with no curves keys nothing;
+        a channel two layers key is two channels (layers are matched by
+        their order in the stack).
+
+        Parameters:
+            tolerance: Two values agree when they differ by at most this --
+                absolute below 1, relative above (a float32 key holds about
+                seven significant digits).
+
+        Returns:
+            ``{"takes", "current", "kind", "live", "redundant", "stash",
+            "conflicts"}``. ``takes`` lists every take in file order as
+            ``{"name", "index", "start", "end"}``: ``index`` is 1-based --
+            Maya's ``FBXImportSetTake -takeIndex`` -- and ``start`` / ``end``
+            the take's key extent in SECONDS (:meth:`take_spans`' unit),
+            ``None`` for a take that keys nothing. ``current`` is the take the
+            file declares current, or ``None``. ``live`` / ``redundant`` /
+            ``stash`` are take names in file order; ``conflicts`` maps each
+            stashed take to why (take, channel, frame, both values). ``kind``
+            is for logging: ``"none"`` (nothing is keyed), ``"conflicted"``
+            (something is stashed), ``"merged"`` (more than one live take),
+            ``"covered"`` (one live take, others redundant) or ``"single"``.
+            Only ``"merged"`` -- or ``"conflicted"`` with several live takes
+            -- needs a merge; any other file imports as it is.
+
+        Raises:
+            ValueError: A curve whose key times and values differ in count.
+        """
+        return self._layout(
+            self._take_model(), self._current_take(), tolerance, self._fps()
+        )
+
+    def _curves_decoded(self) -> bool:
+        """True when every curve's :attr:`CURVE_ARRAYS` were read as lists."""
+        for record in self.iter_objects():
+            if record["name"] != "AnimationCurve":
+                continue
+            for child in record["children"]:
+                if child["name"] in self.CURVE_ARRAYS and child["props"]:
+                    if not isinstance(child["props"][0], list):
+                        return False
+        return True
+
+    def _take_model(self) -> Dict[str, Any]:
+        """:meth:`_build_take_model` of this file -- read again, payloads
+        skipped, when it was loaded without its curve arrays."""
+        source = self
+        if not self._curves_decoded():
+            source = type(self).load(
+                self.path, decode_arrays=self.CURVE_ARRAYS, raw_payloads=False
+            )
+        rows = []
+        for record in source.iter_objects():
+            props = record["props"]
+            if not props or not isinstance(props[0], int):
+                continue
+            arrays = None
+            if record["name"] == "AnimationCurve":
+                arrays = {
+                    child["name"]: child["props"][0]
+                    for child in record["children"]
+                    if child["name"] in self.CURVE_ARRAYS and child["props"]
+                }
+            display = self._display_name(props[1]) if len(props) > 1 else None
+            rows.append((record["name"], props[0], display or "", arrays))
+        return self._build_take_model(rows, source.connections())
+
+    def _current_take(self) -> Optional[str]:
+        """The take ``Takes/Current`` names, or ``None``."""
+        for child in (self.section("Takes") or {}).get("children", []):
+            if child["name"] == "Current" and child["props"]:
+                value = child["props"][0]
+                if isinstance(value, (bytes, bytearray)) and value:
+                    return bytes(value).decode("utf-8", "replace")
+        return None
+
+    def _fps(self) -> Optional[float]:
+        """The file's frame rate (``GlobalSettings`` ``TimeMode``), or ``None``."""
+        found: Dict[bytes, Any] = {}
+        for child in (self.section("GlobalSettings") or {}).get("children", []):
+            if child["name"] != "Properties70":
+                continue
+            for prop in child["children"]:
+                props = prop["props"]
+                if len(props) >= 5 and props[0] in (b"TimeMode", b"CustomFrameRate"):
+                    found[props[0]] = props[4]
+        return self._frame_rate(found.get(b"TimeMode"), found.get(b"CustomFrameRate"))
 
     def connections(self) -> List[Tuple[str, Any, Any, Optional[str]]]:
         """Every ``C`` record as ``(kind, child_id, parent_id, property)``.

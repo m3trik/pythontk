@@ -362,6 +362,127 @@ class Behaviors(_BehaviorsInternal):
         return keys
 
     @staticmethod
+    def is_audio_entry(entry: Dict[str, Any]) -> bool:
+        """Whether a shot's behavior entry (``metadata["behaviors"]``) is an
+        audio clip: ``kind`` audio, or naming a ``source_path`` to load."""
+        return entry.get("kind") == "audio" or bool(entry.get("source_path"))
+
+    @staticmethod
+    def entry_anchors(entries: List[Dict[str, Any]]) -> List[Optional[float]]:
+        """The ``anchor_override`` a build keys each of a shot's behavior
+        *entries* at, aligned with them: an audio clip none (it starts the
+        shot), every other entry by :meth:`anchor_overrides` over its
+        object's non-audio entries, in doc order.
+
+        The build loop (:meth:`apply_to_shots`) and the manifest's markers
+        (``ShotManifest.planned_markers``) place through it.
+        """
+        per_obj: Dict[str, List[str]] = {}
+        for entry in entries:
+            if not Behaviors.is_audio_entry(entry):
+                per_obj.setdefault(entry.get("name", ""), []).append(
+                    entry.get("behavior", "")
+                )
+        spread = {
+            name: iter(Behaviors.anchor_overrides(names))
+            for name, names in per_obj.items()
+        }
+        return [
+            None if Behaviors.is_audio_entry(e) else next(spread[e.get("name", "")])
+            for e in entries
+        ]
+
+    @staticmethod
+    def label(name: str) -> str:
+        """A behavior's name as people read it: ``"fade_in"`` -> ``"Fade In"``."""
+        return name.replace("_", " ").title() if name else ""
+
+    @staticmethod
+    def anchored(
+        block: Dict[str, Any], phase: str, anchor_override: Any = None
+    ) -> Dict[str, Any]:
+        """*block* with the anchor it is keyed at: *anchor_override* when
+        given, else the block's own, else its phase's end of the range (``in``
+        at the start, ``out`` at the end).
+
+        The one anchor precedence: the appliers, the verifiers and
+        :meth:`key_window` place a block through it before
+        :meth:`resolve_keys`.
+
+        Parameters:
+            block: An ``in`` or ``out`` block of a template's attribute.
+            phase: ``"in"`` or ``"out"`` -- which one *block* is.
+            anchor_override: ``"start"``, ``"end"`` or a fraction (the build's
+                spread, :meth:`anchor_overrides`); ``None`` keeps the block's.
+        """
+        if anchor_override is not None:
+            return dict(block, anchor=anchor_override)
+        if "anchor" not in block:
+            return dict(block, anchor="start" if phase == "in" else "end")
+        return block
+
+    @staticmethod
+    def key_window(
+        behavior: Any,
+        start: float,
+        end: float,
+        anchor_override: Any = None,
+        recipe: Optional[EffectRecipe] = None,
+    ) -> Optional[Tuple[float, float]]:
+        """The ``(first, last)`` frames *behavior*'s keys fall on when it is
+        keyed over ``start..end`` -- where an applier puts them, without
+        keying.
+
+        An ``effect`` template is placed by the recipe the effect writer keys
+        with (:meth:`EffectRecipe.window`: a fade at its place or *anchor*, a
+        pulse and a clip over the range); a template keying its own
+        ``attributes`` spans its blocks, each placed by :meth:`anchored`. An
+        audio clip starts at *start*.
+
+        Parameters:
+            behavior: A template name or a loaded template dict.
+            start: The range's first frame (a shot's start).
+            end: Its last frame.
+            anchor_override: Where the build places it
+                (:meth:`anchor_overrides`); ``None`` = the template's own.
+            recipe: The scene's recipe (the defaults when omitted).
+
+        Returns:
+            ``(first, last)``, or ``None`` for a name no template answers or
+            a template that keys nothing.
+        """
+        try:
+            tmpl = (
+                Behaviors.load_behavior(behavior)
+                if isinstance(behavior, str)
+                else dict(behavior or {})
+            )
+        except (FileNotFoundError, ValueError):
+            return None
+        if (tmpl.get("verify") or {}).get("mode") == "audio_clip":
+            return float(start), float(start)
+        effect = Behaviors.effect_of(tmpl)
+        if effect is not None:
+            recipe = recipe or EffectRecipe()
+            return recipe.window(
+                effect, start, end, Behaviors.place_of(tmpl), anchor_override
+            )
+        times = [
+            k["time"]
+            for attr_def in (tmpl.get("attributes") or {}).values()
+            for phase in ("in", "out")
+            if attr_def.get(phase)
+            for k in Behaviors.resolve_keys(
+                Behaviors.anchored(attr_def[phase], phase, anchor_override),
+                start,
+                end,
+            )
+        ]
+        if not times:
+            return None
+        return float(min(times)), float(max(times))
+
+    @staticmethod
     def effect_of(behavior: Any) -> Optional[str]:
         """The recipe effect a behavior keys (``"fade_in"``, ``"pulse"``, ...),
         or ``None`` for a template keying its own ``attributes`` -- or a name
@@ -693,8 +814,7 @@ class Behaviors(_BehaviorsInternal):
             batch goes on.
         """
 
-        def _is_audio(entry):
-            return (entry.get("kind") == "audio") or bool(entry.get("source_path"))
+        _is_audio = Behaviors.is_audio_entry
 
         if exists_fn is None:
 
@@ -827,16 +947,10 @@ class Behaviors(_BehaviorsInternal):
                 for e in entries
                 if e.get("name") and e.get("behavior") and not _is_audio(e)
             ]
-            # Where each behavior lands: Behaviors.anchor_overrides, the one
+            # Where each behavior lands: Behaviors.entry_anchors, the one
             # placement rule (points spread over the shot in doc order; a span
             # such as the highlight keeps its own anchors).
-            per_obj: Dict[str, List[str]] = {}
-            for entry in non_audio:
-                per_obj.setdefault(entry["name"], []).append(entry["behavior"])
-            anchors = {
-                name: iter(Behaviors.anchor_overrides(names))
-                for name, names in per_obj.items()
-            }
+            anchors = Behaviors.entry_anchors(non_audio)
             # Every guard is settled BEFORE anything is keyed: a behavior just
             # applied keys the object, and a check made after it would read
             # those fresh keys as the animator's and skip the object's other
@@ -872,9 +986,8 @@ class Behaviors(_BehaviorsInternal):
                     if not _release(shot, name, behavior):
                         unreleased.add((name, behavior))
 
-            for entry in non_audio:
+            for entry, anchor in zip(non_audio, anchors):
                 obj_name, behavior = entry["name"], entry["behavior"]
-                anchor = next(anchors[obj_name])
                 if behavior in skip_behaviors:
                     continue
                 node = nodes[obj_name]

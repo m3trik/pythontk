@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.13.1"
+__version__ = "0.14.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -83,6 +83,7 @@ DEFAULT_INCLUDE = {
     "math_utils.noise": "BandLimitedNoise",
     "math_utils.weights": "Weights",
     "math_utils.ramp_keys": "RampKeys",
+    "math_utils.key_curve": ["KeyCurve", "CurveKey"],
     "geo_utils.polyline": "Polyline",
     "geo_utils.pointcloud": "PointCloud",
     "geo_utils.rail_surface": "RailSurface",
@@ -166,7 +167,9 @@ DEFAULT_INCLUDE = {
         "SettingsChanged",
         "BatchComplete",
         "ShotsEdited",
+        "MarkersChanged",
         "StoreInvalidated",
+        "NativeStepFollowed",
         "SHOT_PALETTE",
     ],
     # The shot system's record of what IT wrote on scene curves, so those

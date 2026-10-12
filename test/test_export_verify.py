@@ -799,6 +799,441 @@ class TestFbxFile(_FixtureCase):
             FbxFile.load(junk)
 
 
+class TestFbxCurveEvaluation(unittest.TestCase):
+    """The curve evaluator ``take_layout`` judges takes by: an FBX curve read
+    the way Maya's importer reads it. Each key's ``KeyAttrFlags`` picks the
+    segment after it -- constant, linear or cubic -- and a cubic key's slopes
+    are STORED (user / broken tangents, value per second) or, for Maya's
+    spline / clamped / auto keys, COMPUTED: Maya writes those slopes as 0 and
+    recomputes them on import (measured, Maya 2025 / FBX 2020.3.6)."""
+
+    @staticmethod
+    def _curve(keys, flags, data=None, clamp=0.05):
+        from test_fbx_media import FRAME, packed_weights
+
+        data = data or [(0.0, 0.0, packed_weights(), 0.0)] * len(keys)
+        return FbxFile._key_curve(
+            {
+                "KeyTime": [round(f * FRAME) for f, _ in keys],
+                "KeyValueFloat": [v for _, v in keys],
+                "KeyAttrFlags": list(flags),
+                "KeyAttrDataFloat": [x for d in data for x in d],
+                "KeyAttrRefCount": [1] * len(keys),
+            },
+            clamp=clamp,
+        )
+
+    @staticmethod
+    def _at(curve, frame):
+        from test_fbx_media import FRAME
+
+        return FbxFile._evaluate_curve(curve, round(frame * FRAME))
+
+    def test_constant_holds_and_constant_next_jumps(self):
+        from test_fbx_media import CONSTANT, CONSTANT_NEXT
+
+        curve = self._curve(
+            [(0, 1.0), (10, 5.0), (20, 2.0)],
+            [CONSTANT, CONSTANT | CONSTANT_NEXT, CONSTANT],
+        )
+        self.assertEqual(
+            [self._at(curve, f) for f in (-3, 0, 5, 10, 15, 20, 30)],
+            [1.0, 1.0, 1.0, 5.0, 2.0, 2.0, 2.0],
+        )
+
+    def test_linear_interpolates_in_time(self):
+        from test_fbx_media import LINEAR
+
+        curve = self._curve([(0, 0.0), (10, 10.0), (20, 0.0)], [LINEAR] * 3)
+        self.assertAlmostEqual(self._at(curve, 2.5), 2.5)
+        self.assertAlmostEqual(self._at(curve, 17), 3.0)
+
+    def test_cubic_is_hermite_on_the_stored_slopes(self):
+        """A user tangent's slopes are the stored ones, in value per SECOND:
+        RightSlope on the key, the next key's left slope (NextLeftSlope) on
+        the key before it."""
+        from test_fbx_media import CUBIC, USER, packed_weights
+
+        w = packed_weights()
+        curve = self._curve(
+            [(0, 0.0), (10, 10.0)],
+            [CUBIC | USER] * 2,
+            [(30.0, -30.0, w, 0.0), (0.0, 0.0, w, 0.0)],
+        )
+        # Hermite at the midpoint: mean + dt * (m0 - m1) / 8, dt = 1/3 s.
+        self.assertAlmostEqual(self._at(curve, 5), 5.0 + (1 / 3) * 60.0 / 8)
+        self.assertAlmostEqual(self._at(curve, 0), 0.0)
+        self.assertAlmostEqual(self._at(curve, 10), 10.0)
+
+    def test_weights_of_a_third_are_the_unweighted_curve(self):
+        from test_fbx_media import (
+            CUBIC,
+            USER,
+            WEIGHTED_NEXT_LEFT,
+            WEIGHTED_RIGHT,
+            packed_weights,
+        )
+
+        keys = [(0, 0.0), (10, 10.0)]
+        data = [(30.0, -30.0, packed_weights(), 0.0), (0.0, 0.0, packed_weights(), 0.0)]
+        plain = self._curve(keys, [CUBIC | USER] * 2, data)
+        weighted = self._curve(
+            keys, [CUBIC | USER | WEIGHTED_RIGHT | WEIGHTED_NEXT_LEFT] * 2, data
+        )
+        long_out = self._curve(
+            keys,
+            [CUBIC | USER | WEIGHTED_RIGHT | WEIGHTED_NEXT_LEFT] * 2,
+            [(30.0, -30.0, packed_weights(0.8, 0.1), 0.0)] + data[1:],
+        )
+        for frame in (1, 2.5, 5, 7.5, 9):
+            self.assertAlmostEqual(
+                self._at(weighted, frame), self._at(plain, frame), places=3
+            )
+        # Weighted, time itself bends: the Bezier through (0, 0), (0.8, 8),
+        # (0.9, 11), (1, 10) in (segment fraction, value), read at time 0.5
+        # off a dense polyline of the curve -- an independent reference.
+        right, left = int(0.8 * 9999) / 9999, int(0.1 * 9999) / 9999
+        y1, y2 = 30.0 * right / 3, 10.0 + 30.0 * left / 3
+        points = []
+        for n in range(20001):
+            s = n / 20000
+            a = 1 - s
+            points.append(
+                (
+                    3 * a * a * s * right + 3 * a * s * s * (1 - left) + s**3,
+                    3 * a * a * s * y1 + 3 * a * s * s * y2 + 10.0 * s**3,
+                )
+            )
+        (x0, v0), (x1, v1) = next(
+            (p, q) for p, q in zip(points, points[1:]) if p[0] <= 0.5 <= q[0]
+        )
+        reference = v0 + (v1 - v0) * (0.5 - x0) / (x1 - x0)
+        self.assertAlmostEqual(self._at(long_out, 5), reference, places=5)
+        self.assertGreater(abs(reference - self._at(plain, 5)), 1.0)
+
+    def test_computed_slopes_are_maya_s(self):
+        """Maya's three computed tangents, per key (value per frame here, at
+        30 fps): spline is the central difference (an end, its one secant);
+        clamped is spline but flat beside a neighbour closer than 0.05 in
+        Maya's internal unit -- radians on a rotation, so 2.865 degrees in the
+        file; auto is flat at an end or an extremum, else spline capped at
+        three times either side's secant (no overshoot)."""
+        from test_fbx_media import (
+            AUTO,
+            CLAMP,
+            CLAMP_PROGRESSIVE,
+            CUBIC,
+            TIME_INDEPENDENT,
+        )
+
+        keys = [(0, 1.0), (2, 1.5), (3, 4.0), (8, 4.2), (9, 0.0), (17, 0.1), (18, 6.0)]
+        spline = CUBIC | AUTO | TIME_INDEPENDENT
+        expected = {
+            spline: [0.25, 1.0, 0.45, -0.666667, -0.455556, 0.666667, 5.9],
+            spline | CLAMP: [0.25, 1.0, 0.45, -0.666667, -0.455556, 0.666667, 5.9],
+            spline | CLAMP_PROGRESSIVE: [0.0, 0.75, 0.12, 0.0, 0.0, 0.0375, 0.0],
+        }
+        for flags, slopes in expected.items():
+            curve = self._curve(keys, [flags] * len(keys))
+            got = [FbxFile._out_slope(curve, i) / 30 for i in range(len(keys))]
+            for i, (a, b) in enumerate(zip(got, slopes)):
+                self.assertAlmostEqual(a, b, places=5, msg=(hex(flags), i))
+            for i in range(1, len(keys)):
+                self.assertAlmostEqual(
+                    FbxFile._in_slope(curve, i), FbxFile._out_slope(curve, i)
+                )
+        clamped = self._curve(
+            [(0, 0.0), (10, 5.0), (20, 5.04), (30, 10.0)], [spline | CLAMP] * 4
+        )
+        self.assertEqual([FbxFile._out_slope(clamped, i) for i in (1, 2)], [0.0, 0.0])
+        rotation = self._curve(
+            [(0, 0.0), (10, 5.0), (20, 7.8), (30, 20.0)],
+            [spline | CLAMP] * 4,
+            clamp=FbxFile._clamp_threshold("Lcl Rotation"),
+        )
+        self.assertEqual(FbxFile._out_slope(rotation, 1), 0.0)
+        self.assertNotEqual(
+            FbxFile._out_slope(
+                self._curve(
+                    [(0, 0.0), (10, 5.0), (20, 7.8), (30, 20.0)], [spline | CLAMP] * 4
+                ),
+                1,
+            ),
+            0.0,
+        )
+
+    def test_a_maya_written_file_evaluates_as_maya_reads_it(self):
+        """Every tangent type Maya's exporter writes -- auto, spline, clamped
+        (translation and rotation), linear, step, step-next, flat, plateau,
+        broken fixed and weighted -- against Maya's own samples of the same
+        file after re-importing it (``test_assets/fbx/maya_tangents.json``)."""
+        folder = os.path.join(os.path.dirname(__file__), "test_assets", "fbx")
+        with open(os.path.join(folder, "maya_tangents.json"), encoding="utf-8") as fh:
+            truth = json.load(fh)
+        model = FbxFile.load(os.path.join(folder, "maya_tangents.fbx"))._take_model()
+        curves = {
+            model["labels"][key]: channel["curve"]
+            for key, channel in model["takes"][0]["channels"].items()
+        }
+        props = {"t": "Lcl Translation", "r": "Lcl Rotation", "s": "Lcl Scaling"}
+        tick = FbxFile.TICKS_PER_SECOND / truth["fps"]
+        samples = 0
+        for name, entry in truth["curves"].items():
+            node, attr = name.split(".")
+            curve = curves[f"{node}.{props[attr[0]]}.d|{attr[1].upper()}"]
+            first = entry["frames"][0]
+            for i, value in enumerate(entry["values"]):
+                frame = first + i * truth["step"]
+                got = FbxFile._evaluate_curve(curve, round(frame * tick))
+                self.assertAlmostEqual(got, value, delta=1e-6, msg=(name, frame))
+                samples += 1
+        self.assertEqual(len(truth["curves"]), 14)
+        self.assertGreater(samples, 1400)
+
+    def test_a_gap_before_a_one_key_seam_meets_the_key_that_is_kept(self):
+        """Bug (review 2026-10-12): the run-wise union of following takes
+        joined a gap to the next curve -- a ONE-key one seaming into the curve
+        after it, whose seam keeps that curve's key and drops its own -- so
+        the key before the gap took the dropped key's slope.  A [0, 3], B one
+        key at 9 (+300/s), C [9, 12] (-300/s): A's last segment read +300 at
+        9.  The key-by-key union is the reference."""
+        from test_fbx_media import CUBIC, USER, packed_weights
+
+        w = packed_weights()
+        a = self._curve(
+            [(0, 0.0), (3, 3.0)], [CUBIC | USER] * 2, [(0.0,) * 2 + (w, 0.0)] * 2
+        )
+        b = self._curve([(9, 10.0)], [CUBIC | USER], [(300.0, 300.0, w, 0.0)])
+        c = self._curve(
+            [(9, 10.0), (12, 0.0)],
+            [CUBIC | USER] * 2,
+            [(-300.0, -300.0, w, 0.0), (0.0, 0.0, w, 0.0)],
+        )
+        self.assertEqual(
+            FbxFile._union_curves([a, b, c]), FbxFile._interleave_curves([a, b, c])
+        )
+
+
+class TestFbxTakeLayout(_FixtureCase):
+    """``take_layout``: which of a file's takes, together, hold all its
+    animation. One rule: the current take seeds the live set; a take that
+    disagrees with it on a shared channel's overlap is stashed whole; one that
+    agrees and adds keys is live; one that adds nothing is redundant."""
+
+    T = ("cube", "Lcl Translation", "d|X")
+    S = ("sphere", "Lcl Rotation", "d|Y")
+
+    def _layout(self, takes, current=None, **kwargs):
+        from test_fbx_media import build_curve_fbx
+
+        path = build_curve_fbx(self.path("takes.fbx"), takes, current=current)
+        return FbxFile.load(path).take_layout(**kwargs)
+
+    @staticmethod
+    def _verdict(layout):
+        return layout["kind"], layout["live"], layout["redundant"], layout["stash"]
+
+    @staticmethod
+    def _frames(*args, **kwargs):
+        from test_fbx_media import frames
+
+        return frames(*args, **kwargs)
+
+    def test_a_file_without_animation_is_none(self):
+        layout = self._layout({})
+        self.assertEqual(self._verdict(layout), ("none", [], [], []))
+        self.assertEqual((layout["takes"], layout["current"]), ([], None))
+        still = self._layout({"Take 001": {}})
+        self.assertEqual(still["kind"], "none")
+        self.assertEqual(still["live"], [])
+
+    def test_one_take_is_single(self):
+        layout = self._layout({"Take 001": {self.T: self._frames(1, 30)}})
+        self.assertEqual(self._verdict(layout), ("single", ["Take 001"], [], []))
+        self.assertEqual(layout["current"], "Take 001")
+        (take,) = layout["takes"]
+        self.assertEqual((take["name"], take["index"]), ("Take 001", 1))
+        self.assertAlmostEqual(take["start"], 1 / 30)
+        self.assertAlmostEqual(take["end"], 30 / 30)
+
+    def _cover_and_slices(self):
+        motion = {
+            "Take 001": {
+                self.T: self._frames(1, 100),
+                self.S: self._frames(1, 100, lambda f: -f),
+            }
+        }
+        for name, (a, b) in (("early", (1, 30)), ("late", (50, 70))):
+            motion[name] = {
+                self.T: self._frames(a, b),
+                self.S: self._frames(a, b, lambda f: -f),
+            }
+        return motion
+
+    def test_a_covering_take_is_covered_wherever_it_sits(self):
+        """Maya's split beside its whole-timeline take [Take 001, early, late],
+        and the same with the cover last: the slices add nothing."""
+        takes = self._cover_and_slices()
+        layout = self._layout(takes)
+        self.assertEqual(
+            self._verdict(layout), ("covered", ["Take 001"], ["early", "late"], [])
+        )
+        last = {name: takes[name] for name in ("early", "late", "Take 001")}
+        layout = self._layout(last, current="early")
+        self.assertEqual(
+            self._verdict(layout), ("covered", ["Take 001"], ["early", "late"], [])
+        )
+        self.assertEqual([t["index"] for t in layout["takes"]], [1, 2, 3])
+
+    def test_a_sparse_cover_is_judged_by_its_own_interpolation(self):
+        """A Blender push: a simplified whole-scene take (two linear keys)
+        over per-frame shots. Its keys agree with theirs only through its
+        interpolation; stepped, the same keys disagree."""
+        from test_fbx_media import CONSTANT, packed_weights
+
+        shots = {
+            "early": {self.T: self._frames(1, 30)},
+            "late": {self.T: self._frames(50, 70)},
+        }
+        linear = {"Scene": {self.T: [(1, 0.5), (100, 50.0)]}, **shots}
+        self.assertEqual(
+            self._verdict(self._layout(linear)),
+            ("covered", ["Scene"], ["early", "late"], []),
+        )
+        data = [(0.0, 0.0, packed_weights(), 0.0)] * 2
+        stepped = {
+            "Scene": {
+                self.T: {
+                    "keys": [(1, 0.5), (100, 50.0)],
+                    "flags": [CONSTANT] * 2,
+                    "data": data,
+                }
+            },
+            **shots,
+        }
+        self.assertEqual(
+            self._verdict(self._layout(stepped)),
+            ("conflicted", ["Scene"], [], ["early", "late"]),
+        )
+
+    def test_shots_only_windows_are_merged(self):
+        """Per-frame keys at each shot's own frames, every node in every take
+        (still where idle), gaps between; a take that animates nothing is
+        redundant."""
+        takes = {
+            "A": {
+                self.T: self._frames(1, 30),
+                self.S: self._frames(1, 30, lambda f: 2.0),
+            },
+            "B": {
+                self.T: self._frames(41, 60),
+                self.S: self._frames(41, 60, lambda f: f),
+            },
+            "Still": {},
+            "C": {
+                self.T: self._frames(71, 90, lambda f: 9.0),
+                self.S: self._frames(71, 90),
+            },
+        }
+        layout = self._layout(takes)
+        self.assertEqual(
+            self._verdict(layout), ("merged", ["A", "B", "C"], ["Still"], [])
+        )
+        self.assertEqual(
+            [(t["name"], t["index"]) for t in layout["takes"]],
+            [("A", 1), ("B", 2), ("Still", 3), ("C", 4)],
+        )
+        still = layout["takes"][2]
+        self.assertEqual((still["start"], still["end"]), (None, None))
+
+    def test_a_gap_zero_seam_is_a_seam_not_a_conflict(self):
+        """Touching at one frame with one value is a seam; with two values the
+        later take is stashed, and the layout says where."""
+        seam = {
+            "A": {self.T: self._frames(1, 50)},
+            "B": {self.T: self._frames(50, 100)},
+        }
+        self.assertEqual(
+            self._verdict(self._layout(seam)), ("merged", ["A", "B"], [], [])
+        )
+        jump = {
+            "A": {self.T: self._frames(1, 50)},
+            "B": {self.T: self._frames(50, 100, lambda f: f * 0.5 + 1.0)},
+        }
+        layout = self._layout(jump)
+        self.assertEqual(self._verdict(layout), ("conflicted", ["A"], [], ["B"]))
+        self.assertIn("frame 50", layout["conflicts"]["B"])
+        self.assertIn("cube.Lcl Translation.d|X", layout["conflicts"]["B"])
+
+    def test_per_object_stacks_are_merged(self):
+        takes = {
+            "cube|Action": {self.T: self._frames(1, 50)},
+            "sphere|Action": {self.S: self._frames(1, 50, lambda f: -f)},
+        }
+        self.assertEqual(
+            self._verdict(self._layout(takes)),
+            ("merged", ["cube|Action", "sphere|Action"], [], []),
+        )
+
+    def test_a_clip_library_keeps_the_current_take_and_stashes_the_rest(self):
+        """Same channel, same frames, different motion: alternatives. The
+        file's current take plays (else the first); the rest go whole."""
+        takes = {
+            "Walk": {self.T: self._frames(1, 30)},
+            "Run": {self.T: self._frames(1, 30, lambda f: f * 0.75)},
+            "Idle": {
+                self.T: self._frames(1, 30, lambda f: 0.0),
+                self.S: self._frames(1, 30),
+            },
+        }
+        self.assertEqual(
+            self._verdict(self._layout(takes)),
+            ("conflicted", ["Walk"], [], ["Run", "Idle"]),
+        )
+        self.assertEqual(
+            self._verdict(self._layout(takes, current="Run")),
+            ("conflicted", ["Run"], [], ["Walk", "Idle"]),
+        )
+
+    def test_a_take_adding_a_channel_only_it_animates_is_live(self):
+        takes = {
+            "Take 001": {self.T: self._frames(1, 100)},
+            "X": {self.T: self._frames(1, 50), self.S: self._frames(1, 50)},
+        }
+        self.assertEqual(
+            self._verdict(self._layout(takes)), ("merged", ["Take 001", "X"], [], [])
+        )
+
+    def test_values_match_within_a_relative_tolerance(self):
+        """Absolute below 1, relative above: a float32 key at 10,000 carries
+        about a thousandth, so an absolute 1e-4 would split one motion."""
+
+        def seam(value_at_50, base=0.0):
+            return {
+                "A": {self.T: self._frames(1, 50, lambda f: base + f * 0.01)},
+                "B": {
+                    self.T: [(50, base + value_at_50)]
+                    + self._frames(51, 60, lambda f: base + f * 0.01)
+                },
+            }
+
+        self.assertEqual(self._layout(seam(0.50005))["kind"], "merged")
+        self.assertEqual(self._layout(seam(0.5002))["kind"], "conflicted")
+        self.assertEqual(self._layout(seam(0.75, base=10000.0))["kind"], "merged")
+        self.assertEqual(
+            self._layout(seam(0.75, base=10000.0), tolerance=0)["kind"], "conflicted"
+        )
+
+    def test_an_undecoded_file_reads_its_curves_itself(self):
+        from test_fbx_media import build_curve_fbx
+
+        path = build_curve_fbx(self.path("t.fbx"), self._cover_and_slices())
+        decoded = FbxFile.load(path, decode_arrays=FbxFile.CURVE_ARRAYS)
+        self.assertEqual(FbxFile.load(path).take_layout(), decoded.take_layout())
+        spans = FbxFile.load(path, span_arrays=("KeyTime",))
+        self.assertEqual(spans.take_layout(), decoded.take_layout())
+
+
 class TestFbxTakeChannels(_FixtureCase):
     """``check_fbx_take_channels``: a declared take that lost a channel to the
     split, or stops short of its window, is a shot Unity plays wrong."""

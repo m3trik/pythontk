@@ -286,6 +286,107 @@ class TestEditing(unittest.TestCase):
         )
 
 
+class TestTheScenesLayers(unittest.TestCase):
+    """Bug: a sheet's edit layer was found by its exact path, so a sheet
+    moved, renamed in its folder's spelling or opened through another mount
+    found no layer and its edits silently stopped applying (SOL_REPLACE_ASSEMBLY
+    keeps the 5 renames that fix its sheet's object names under a personal
+    Dropbox folder's path).
+    Fixed: 2026-10-11 -- the path first, else the ONE layer of that file
+    name, re-keyed to the new path on save (maintainer 2026-10-11)."""
+
+    OLD = "O:/Dropbox/someone/docs/x.csv"
+    NEW = "C:/mount/elsewhere/x.csv"
+
+    def setUp(self):
+        self.store = ShotStore()
+        edits = ManifestEdits()
+        edits.set_object("A01", "door", "name", "door_geo")
+        self.store.manifest_edits[self.OLD] = edits.to_dict()
+        self.store.manifest_tags[self.OLD] = {"A01": "tag3"}
+
+    def test_a_moved_sheet_finds_its_layer_by_file_name(self):
+        self.assertEqual(ManifestEdits.layer_key(self.store, self.NEW), self.OLD)
+        steps = ManifestEdits.read(self.store, self.NEW).apply(_sheet())
+        self.assertEqual(_names(steps)["A01"], ["door_geo", "bolt01"])
+
+    def test_the_exact_path_wins_in_either_spelling(self):
+        self.store.manifest_edits[self.NEW] = ManifestEdits().to_dict()
+        self.assertEqual(ManifestEdits.layer_key(self.store, self.NEW), self.NEW)
+        backslashed = self.OLD.replace("/", "\\")
+        self.assertEqual(ManifestEdits.layer_key(self.store, backslashed), self.OLD)
+
+    def test_two_same_named_sheets_never_share_edits(self):
+        other = ManifestEdits()
+        other.set_step("A01", "name", "Other")
+        self.store.manifest_edits["D:/b/x.csv"] = other.to_dict()
+        # Each sheet still finds its own by its path ...
+        self.assertEqual(ManifestEdits.layer_key(self.store, self.OLD), self.OLD)
+        read = ManifestEdits.read(self.store, "D:/b/x.csv")
+        self.assertEqual(read.step_record("A01"), {"name": "Other"})
+        # ... and a third of that name takes neither.
+        self.assertIsNone(ManifestEdits.layer_key(self.store, self.NEW))
+        self.assertFalse(ManifestEdits.read(self.store, self.NEW).has_edits)
+
+    def test_another_file_name_and_the_scene_layer_match_only_themselves(self):
+        self.assertIsNone(ManifestEdits.layer_key(self.store, "O:/docs/y.csv"))
+        self.assertIsNone(ManifestEdits.layer_key(self.store, ""))
+        self.assertIsNone(ManifestEdits.layer_key(None, self.OLD))
+        self.store.manifest_edits[""] = ManifestEdits().to_dict()
+        self.assertEqual(ManifestEdits.layer_key(self.store, ""), "")
+
+    def test_the_sheets_options_live_beside_its_edits_and_move_with_them(self):
+        """Maintainer 2026-10-12: a sheet's mapping template and options are
+        the scene's, per sheet, found and re-keyed as its edits are; a sheet
+        the scene keeps none for has ``None`` (the user's options seed it)."""
+        self.assertIsNone(ManifestEdits.sheet_options(self.store, self.OLD))
+        upper = {"object_case": "upper"}
+        self.assertTrue(
+            ManifestEdits.set_sheet_options(self.store, self.OLD, "default", upper)
+        )
+        self.assertFalse(
+            ManifestEdits.set_sheet_options(self.store, self.OLD, "default", upper),
+            "unchanged: nothing written",
+        )
+        self.assertEqual(
+            ManifestEdits.sheet_options(self.store, self.NEW),
+            {"template": "default", "values": upper},
+            "a moved sheet keeps them",
+        )
+        edits = ManifestEdits.read(self.store, self.NEW)
+        edits.set_step("A02", "hidden", True)
+        edits.write(self.store, self.NEW)
+        self.assertEqual(list(self.store.manifest_options), [self.NEW])
+        self.assertIsNone(ManifestEdits.sheet_options(self.store, "O:/docs/y.csv"))
+
+    def test_a_sheet_read_from_a_url_matches_only_its_own_url(self):
+        """Two shared sheets' export links end alike: no file-name match."""
+        one = "https://docs.google.com/spreadsheets/d/AAA/export?format=csv"
+        two = "https://docs.google.com/spreadsheets/d/BBB/export?format=csv"
+        self.store.manifest_edits[one] = ManifestEdits().to_dict()
+        self.assertEqual(ManifestEdits.layer_key(self.store, one), one)
+        self.assertIsNone(ManifestEdits.layer_key(self.store, two))
+        self.assertIsNone(ManifestEdits.layer_key(self.store, "C:/x/export?format=csv"))
+
+    def test_a_save_re_keys_the_layer_and_its_tags_to_the_new_path(self):
+        edits = ManifestEdits.read(self.store, self.NEW)
+        edits.set_step("A02", "hidden", True)
+        self.assertTrue(edits.write(self.store, self.NEW))
+        self.assertEqual(list(self.store.manifest_edits), [self.NEW])
+        self.assertEqual(self.store.manifest_tags, {self.NEW: {"A01": "tag3"}})
+        self.assertEqual(
+            ManifestEdits.read(self.store, self.NEW).to_dict(), edits.to_dict()
+        )
+
+    def test_an_unchanged_save_writes_nothing_and_an_emptied_layer_drops(self):
+        edits = ManifestEdits.read(self.store, self.OLD)
+        self.assertFalse(edits.write(self.store, self.OLD))
+        edits.clear()
+        self.assertTrue(edits.write(self.store, self.OLD))
+        self.assertNotIn(self.OLD, self.store.manifest_edits)
+        self.assertFalse(ManifestEdits().write(self.store, "O:/docs/y.csv"))
+
+
 class TestRebuildThroughEdits(unittest.TestCase):
     """What a build does with edited steps: the shot follows the edits, and
     turning them off (the sheet as-is) puts it back."""
