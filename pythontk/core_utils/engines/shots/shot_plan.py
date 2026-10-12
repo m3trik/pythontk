@@ -24,6 +24,7 @@ models the topology, :mod:`shot_plan` resolves transformations, and
 
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -67,6 +68,30 @@ class _ShotPlannerInternal(object):
     def _overlaps(a_lo: float, a_hi: float, b_lo: float, b_hi: float) -> bool:
         return a_lo < b_hi and b_lo < a_hi
 
+    #: How near two window ends count as one frame: the writers' own padding
+    #: (mayatk ``_ENVELOPE_SLOP``, blendertk ``_SLOP``), so a key the one
+    #: lands is a key the other reads.
+    _TOUCH = 1.0e-3
+
+    @staticmethod
+    def _closed_touch(j, j_new_lo: float, j_new_hi: float, i) -> bool:
+        """True when *j*'s destination window only TOUCHES *i*'s current one,
+        at an end both windows hold CLOSED -- a key *j* lands there is one
+        *i*'s window then moves a second time.
+
+        Measured 2026-10-11 (SOL gap-0 acceptance): deleting an empty shot
+        rippled the rest back 200 frames; one shot's closing sample (its end
+        held closed: flush with the next shot) landed exactly on the old start
+        of the shot ahead of it (closed: no longer flush behind), and that
+        shot, moved second, carried the key on -- 400 frames in all, a door
+        pose arriving at frame 0.  :meth:`_overlaps` reads touching intervals
+        as disjoint, which is right only while one of the two ends is open.
+        """
+        t = _ShotPlannerInternal._TOUCH
+        if j.env_hi_closed and not i.env_lo_open and abs(j_new_hi - i.env_start) <= t:
+            return True
+        return not j.env_lo_open and i.env_hi_closed and abs(j_new_lo - i.env_end) <= t
+
     @staticmethod
     def _plan_sequence(moves: Dict[int, ShotMove]) -> tuple:
         """Topo-sort shot_ids so each shot moves before any shot whose new
@@ -99,7 +124,7 @@ class _ShotPlannerInternal(object):
                 j_new_hi = j.env_end + j.delta
                 if _ShotPlannerInternal._overlaps(
                     j_new_lo, j_new_hi, i.env_start, i.env_end
-                ):
+                ) or _ShotPlannerInternal._closed_touch(j, j_new_lo, j_new_hi, i):
                     outgoing[i.shot_id].append(j.shot_id)
                     incoming[j.shot_id] += 1
 
@@ -406,6 +431,7 @@ class ShotPlanner(_ShotPlannerInternal):
         store: ShotStore,
         plan: MovePlan,
         eps: float = _EPS,
+        pending: Optional[Dict[int, Tuple[Optional[float], Optional[float]]]] = None,
     ) -> List[Tuple[int, int, float, float]]:
         """Shared samples this plan pulls apart.
 
@@ -427,23 +453,59 @@ class ShotPlanner(_ShotPlannerInternal):
 
         Shots absent from the plan are treated as stationary.
 
+        *pending* is the caller's FINAL word on bounds the plan alone does
+        not know: an edit that ripples its neighbours BEFORE it writes its own
+        grown bound (Move to Shot making room for what it is about to land)
+        opens a gap here that its next write closes.  Judged on the plan
+        alone that is a split -- and a keyless seam pinned on it is a key the
+        landing then has to fight (``test_expansion_past_the_boundary_ripples
+        _but_never_double_moves``).  A pending bound wins over the plan's own
+        destination for that side, so only a gap that is still open once the
+        caller is done is reported.
+
         Parameters:
             store: Store holding the pre-move layout.
             plan: The resolved plan about to be applied.
             eps: Float tolerance for contiguity and gap tests.
+            pending: ``{shot_id: (start, end)}`` -- the bounds those shots
+                will have once the caller is done; ``None`` on a side leaves
+                that side to the plan.  ``None`` (the default): the plan's
+                destinations are final.
 
         Returns:
             ``[(preceding_id, following_id, boundary_frame, new_start), ...]``
+            -- *new_start* is where the following shot opens once the caller
+            is done.
         """
         shots = store.sorted_shots()
+        pending = pending or {}
         out: List[Tuple[int, int, float, float]] = []
         for i in range(len(shots) - 1):
             prev, nxt = shots[i], shots[i + 1]
             if abs(nxt.start - prev.end) > eps:
                 continue  # not sharing a sample to begin with
             prev_mv, next_mv = plan.moves.get(prev.shot_id), plan.moves.get(nxt.shot_id)
+            if (
+                prev_mv is None
+                and next_mv is None
+                and not (prev.shot_id in pending or nxt.shot_id in pending)
+            ):
+                # Neither moves in THIS plan, and the caller names neither: it
+                # splits nothing.  A seam the enclosing edit opens LATER is
+                # still reported here (*pending*): a segment crossing it to a
+                # key this plan moves is re-timed by this plan -- a slide
+                # rippling downstream moves the shots after the pivot first,
+                # in a plan of their own (2026-10-11, a production door ramp
+                # through 30 flush shots, 0.003 off in each).
+                continue
             new_prev_end = prev_mv.new_end if prev_mv else prev.end
             new_next_start = next_mv.new_start if next_mv else nxt.start
+            final_prev_end = (pending.get(prev.shot_id) or (None, None))[1]
+            final_next_start = (pending.get(nxt.shot_id) or (None, None))[0]
+            if final_prev_end is not None:
+                new_prev_end = final_prev_end
+            if final_next_start is not None:
+                new_next_start = final_next_start
             if new_next_start - new_prev_end > eps:
                 out.append(
                     (
@@ -454,6 +516,52 @@ class ShotPlanner(_ShotPlannerInternal):
                     )
                 )
         return out
+
+    @staticmethod
+    def keyless_seam(
+        times: Iterable[float],
+        boundary: float,
+        eps: float = 1.0e-3,
+    ) -> bool:
+        """Whether a curve keyed at *times* runs through a shared *boundary*
+        with no key on it.
+
+        The seam a split has to pin.  Two flush shots share the segment that
+        crosses their seam when no key sits on it, so pulling the following
+        shot away re-times that segment: the preceding shot's last key gains
+        a moved neighbour, its derived tangent re-derives, and the shot plays
+        differently from its first frame (measured 2026-10-07: keys 0/40/100
+        under A [0, 50] and B [50, 100], B moved 10 frames -- A 1.21 off, B
+        1.10).  A shape-preserving key ON the seam -- the preceding shot's own
+        evaluated pose there -- ends that sharing: it is the preceding shot's
+        last key, so the hold rule carries its pose across the gap, and the
+        following shot opens on a copy of it, as it would on a keyed seam.
+
+        True when the curve has no key within *eps* of *boundary*, one
+        before it and one after it -- wherever they are.  A preceding shot
+        that keys none of the segment still PLAYS it: measured 2026-10-11 on
+        a production assembly, a door ramp keyed at 1061 and 3230 runs
+        through 30 flush shots, and a band move at 2116 re-timed it in every
+        one of them while this rule still asked for a key in the shot before
+        the seam.
+
+        Parameters:
+            times: The curve's key times, any order.
+            boundary: The seam frame the split opens.
+            eps: Frames within which a key counts as ON the seam.
+
+        Returns:
+            ``True`` when the seam has to be pinned on this curve.
+        """
+        before = after = False
+        for t in times:
+            if abs(t - boundary) <= eps:
+                return False  # keyed: the shared sample itself splits
+            if t < boundary:
+                before = True
+            else:
+                after = True
+        return before and after
 
     @staticmethod
     def key_collisions(
@@ -497,14 +605,24 @@ class ShotPlanner(_ShotPlannerInternal):
                     break
             landings.append((float(t) + delta, float(t), abs(delta) > _EPS))
 
+        # Landings arrive sorted, so the groups are created in destination
+        # order and the first one within *eps* is found by bisection: the
+        # linear scan it replaces was quadratic in the keys, and a baked
+        # curve (a key per frame) made one slide on a production assembly
+        # spend 12 s here (2026-10-11).
         groups: List[Tuple[float, List[float], List[float]]] = []
+        dsts: List[float] = []
         for dest, src, moving in sorted(landings):
-            for dst, movers, still in groups:
-                if abs(dst - dest) <= eps:
+            i = bisect.bisect_left(dsts, dest - eps)
+            while i < len(dsts) and dsts[i] <= dest + eps:
+                if abs(dsts[i] - dest) <= eps:
+                    _dst, movers, still = groups[i]
                     (movers if moving else still).append(src)
                     break
+                i += 1
             else:
                 groups.append((dest, [src] if moving else [], [] if moving else [src]))
+                dsts.append(dest)
         return [g for g in groups if len(g[1]) + len(g[2]) > 1 and g[1]]
 
     @staticmethod
@@ -513,6 +631,7 @@ class ShotPlanner(_ShotPlannerInternal):
         gap: float,
         start_frame: float,
         respect_locks: bool = True,
+        seam_gaps: Optional[Dict[int, float]] = None,
     ) -> MovePlan:
         """Build a plan that lays shots out sequentially with uniform gaps.
 
@@ -524,6 +643,10 @@ class ShotPlanner(_ShotPlannerInternal):
 
         The locks themselves are untouched either way: an override is one
         operation ignoring them, not a way to quietly unlock a gap.
+
+        *seam_gaps* is ``{shot_id: frames}``, a floor on the gap BEFORE that
+        shot: the frame a closing seam keeps where its two poses differ
+        (``ShotSequencer._close_flush_seams``, maintainer 2026-10-11).
         """
         shots = store.sorted_shots()
         if not shots:
@@ -556,9 +679,48 @@ class ShotPlanner(_ShotPlannerInternal):
                 env_hi_closed=hi_closed,
             )
             effective_gap = locked_widths.get(i, gap)
+            if seam_gaps and i + 1 < len(shots):
+                effective_gap = max(
+                    effective_gap, seam_gaps.get(shots[i + 1].shot_id, 0.0)
+                )
             cursor = new_end + effective_gap
 
         return _ShotPlannerInternal._finalize_plan(moves)
+
+    @staticmethod
+    def closing_seams(
+        store: ShotStore,
+        bounds: Dict[int, Tuple[float, float]],
+        eps: float = 1.0e-3,
+    ) -> List[Tuple[int, int]]:
+        """The seams an edit CLOSES: flush once *bounds* apply, apart now.
+
+        Only these can bring two different poses onto one frame -- a seam
+        already flush shares its one sample, and one the edit keeps apart
+        shares none -- so they are the seams the gap-0 closing rule decides
+        (``ShotSequencer._close_flush_seams``).
+
+        Parameters:
+            store: Store holding the current layout.
+            bounds: ``{shot_id: (start, end)}`` for the shots the edit
+                moves or resizes; every other shot stays where it is.  A
+                :class:`MovePlan`'s are its moves' new bounds.
+            eps: Frames within which two bounds touch.
+
+        Returns:
+            ``[(prev_id, next_id), ...]`` in the new timeline order.
+        """
+        now = {s.shot_id: (s.start, s.end) for s in store.shots}
+        new = {sid: bounds.get(sid, b) for sid, b in now.items()}
+        order = sorted(store.shots, key=lambda s: new[s.shot_id])
+        out: List[Tuple[int, int]] = []
+        for a, b in zip(order, order[1:]):
+            if abs(new[b.shot_id][0] - new[a.shot_id][1]) > eps:
+                continue  # apart once the edit is done
+            if abs(now[b.shot_id][0] - now[a.shot_id][1]) <= eps:
+                continue  # flush already: one shared sample, nothing meets
+            out.append((a.shot_id, b.shot_id))
+        return out
 
     @staticmethod
     def plan_gap_retimes(store: ShotStore, plan: MovePlan) -> List[GapRetime]:
@@ -779,7 +941,10 @@ class ShotPlanner(_ShotPlannerInternal):
         cap matters when the caller's bound sits INSIDE that reach.  Like the
         downstream carry it trims the GAP, never the shot it moves: a bound on
         or before that shot's own end (a key dragged onto its keyed end, or
-        into it) leaves it whole, closing sample included.
+        into it) leaves it whole, closing sample included.  A bound PAST the
+        pivot's start (a head shrink, the frames before it given up) widens
+        the window to it the same way, as the downstream carry's opens back
+        to a bound inside the pivot's span: what the pivot gave up rides.
         """
         shots = store.sorted_shots()
         if not shots or abs(delta) < _EPS:
@@ -815,7 +980,11 @@ class ShotPlanner(_ShotPlannerInternal):
             )
         if carry_gap and last_id is not None:
             mv = moves[last_id]
-            if mv.old_end + _EPS < before_frame < mv.env_end - _EPS:
+            if mv.old_end + _EPS < before_frame and (
+                before_frame < mv.env_end - _EPS
+                # past the pivot's start: only the pivot gave those frames up
+                or (pivot_idx is not None and before_frame > mv.env_end + _EPS)
+            ):
                 mv.env_end, mv.env_hi_closed = before_frame, False
 
         return _ShotPlannerInternal._finalize_plan(moves)

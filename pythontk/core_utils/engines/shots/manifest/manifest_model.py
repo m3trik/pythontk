@@ -98,10 +98,36 @@ class _ManifestModelInternal(object):
 
         Exclusions and post-processing are the caller's; each step records
         its asset cell's ``(row, column)`` so a column can be written back.
+        With ``col_map.layouts`` the rows are read once per layout and the
+        one reading the most steps is kept (the first on a tie); only its
+        warnings are logged.
         """
+        candidates = [col_map]
+        if col_map.layouts:
+            base = {k: v for k, v in col_map.to_dict().items() if k != "layouts"}
+            candidates = [
+                ColumnMap.from_dict({**base, **layout}) for layout in col_map.layouts
+            ]
+        best, best_notes = None, []
+        for candidate in candidates:
+            notes: List[str] = []
+            steps = _ManifestModelInternal._parse_layout(rows, candidate, source, notes)
+            if best is None or len(steps) > len(best):
+                best, best_notes = steps, notes
+        for note in best_notes:
+            log.warning(note)
+        return best
+
+    @staticmethod
+    def _parse_layout(
+        rows: List[List[str]], col_map: "ColumnMap", source: str, notes: List[str]
+    ) -> List["BuilderStep"]:
+        """:meth:`_parse_rows` for one layout (``col_map.layouts`` unread),
+        its warnings appended to *notes* rather than logged."""
         cols: Optional[_ResolvedColumns] = None
         steps: List[BuilderStep] = []
         seen_ids: set = set()
+        unread: List[str] = []  # step-ID cells no pattern took, a few
         current_section = ""
         current_section_title = ""
         current_step: Optional[BuilderStep] = None
@@ -215,6 +241,8 @@ class _ManifestModelInternal(object):
                 else ""
             )
             step_match = _first(step_res, step_cell) if step_cell else None
+            if step_cell and not step_match and len(unread) < 3:
+                unread.append(step_cell)
             description = (
                 _ManifestModelInternal._strip_cell(row[cols.description])
                 if len(row) > cols.description
@@ -243,7 +271,7 @@ class _ManifestModelInternal(object):
                 # store accepts it and every later lookup agrees.
                 step_id = StrUtils.to_legal_name(_group(step_match, 1))
                 if step_id in seen_ids:
-                    log.warning("Duplicate step_id '%s' — skipping.", step_id)
+                    notes.append(f"Duplicate step_id '{step_id}' — skipping.")
                     current_step = None
                     continue
                 seen_ids.add(step_id)
@@ -303,11 +331,17 @@ class _ManifestModelInternal(object):
         # A missing header row used to fail silently: every data row was
         # skipped and the caller saw 0 steps with no explanation.
         if cols is None and rows:
-            log.warning(
-                "No header row found in '%s' — 0 steps parsed. Expected a "
-                "column named one of %s.",
-                source,
-                sorted(step_id_aliases),
+            notes.append(
+                f"No header row found in '{source}' — 0 steps parsed. Expected a "
+                f"column named one of {sorted(step_id_aliases)}."
+            )
+        elif cols is not None and not steps and unread:
+            # A header but no step: the sheet writes its IDs another way.
+            notes.append(
+                f"No step read from '{source}': no step-ID cell matches "
+                f"{list(col_map.step_pattern)} (e.g. "
+                f"{', '.join(repr(c) for c in unread)}) -- the template reads "
+                "another layout of step IDs."
             )
         for step in steps:
             if step.step_id not in assets_spoken:
@@ -842,6 +876,18 @@ class StepStatus:
     #: as it is (``ShotManifest.edited_by_hand``; off when the build was
     #: asked to rebuild edited shots).
     edited: bool = False
+    #: What a Build rewrites on the shot that no object status shows, in
+    #: :attr:`UPDATES` order: ``"name"`` (the step was renamed),
+    #: ``"description"``, ``"objects"`` (one the last build listed, the step
+    #: no longer does) -- a Local Edit's, or the doc's.
+    updates: List[str] = field(default_factory=list)
+
+    #: What a Build does for each of :attr:`updates`, as a panel says it.
+    UPDATES = {
+        "name": "renames its shot",
+        "description": "rewrites its description",
+        "objects": "takes out the objects the step no longer lists",
+    }
 
     @property
     def status(self) -> str:
@@ -901,12 +947,12 @@ class StepStatus:
     @property
     def needs_build(self) -> bool:
         """Whether a Build would change this step: its shot is not built, an
-        object is one a Build fixes (:attr:`BUILD_FIXES`), or the shot holds
-        keys of behaviors the doc dropped.  Never for a locked or a kept
-        (edited) step: Build leaves both as they are."""
+        object is one a Build fixes (:attr:`BUILD_FIXES`), the shot holds
+        keys of behaviors the doc dropped, or it has :attr:`updates`.  Never
+        for a locked or a kept (edited) step: Build leaves both as they are."""
         if self.locked or self.edited:
             return False
-        if not self.built or self.dropped_behaviors:
+        if not self.built or self.dropped_behaviors or self.updates:
             return True
         return any(o.status in self.BUILD_FIXES for o in self.objects)
 
@@ -948,12 +994,16 @@ class ShotPairing:
         how: ``{step_id: "binding" | "name" | "order"}`` -- how it paired.
         orphans: Shots no step pairs with ("not in the doc"), timeline order.
         timeline: Every shot the pairing read, in timeline order.
+        links: ``{shot_id: step_id}`` per orphan that belongs with a step
+            without being its shot -- one split off it
+            (``ShotStore.step_links``); never a pairing.
     """
 
     shots: Dict[str, Any] = field(default_factory=dict)
     how: Dict[str, str] = field(default_factory=dict)
     orphans: List[Any] = field(default_factory=list)
     timeline: List[Any] = field(default_factory=list)
+    links: Dict[int, str] = field(default_factory=dict)
 
     def rows(
         self,
@@ -1135,6 +1185,17 @@ class ColumnMap(SchemaSpec):
         example=[r"(?i)^SECTION\s+([A-Z0-9]+)\s*:\s*(.*)", "^(INTRO)$"],
         default=(r"(?i)^SECTION\s+([A-Z0-9]+)\s*:\s*(.*)",),
         validate=_ManifestModelInternal.validate_patterns,
+    )
+    layouts: Tuple[Dict[str, Any], ...] = SchemaSpec.spec_field(
+        help=(
+            "Alternative layouts tried on the same sheet, each a dict of these "
+            "settings over the rest (`{}` is the rest as they are): the sheet "
+            "is read with each and the one reading the most steps is kept, the "
+            "first on a tie -- for sheets that write their step IDs "
+            "differently (`A01.)` or `A01`)."
+        ),
+        example=[{}, {"step_pattern": [r"^([A-Z]+_?\d+)$"]}],
+        default=(),
     )
 
     def to_dict(self) -> Dict[str, Any]:

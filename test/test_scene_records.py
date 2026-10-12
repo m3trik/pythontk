@@ -438,7 +438,7 @@ class TestSnapshot(SceneRecordsCase):
         verifier). Added: 2026-10-09"""
         self.assertTrue(SR.LIGHTMAPS.export_scoped)
         self.assertTrue(SR.SHADOWS.export_scoped)
-        self.assertFalse(SR.SHOTS.export_scoped)
+        self.assertTrue(SR.SHOTS.export_scoped)  # its members (2026-10-11)
         producers = {SR.LIGHTMAPS: _scoped_lightmaps, SR.SHOTS: _shots}
         snap = ExportSnapshot.assemble(producers, ExportContext(scope=("|ROOM",)))
         self.assertEqual(

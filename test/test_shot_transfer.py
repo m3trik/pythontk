@@ -133,6 +133,72 @@ class TestEncode(unittest.TestCase):
         section = ShotTransfer.encode(_store_state(), spell=_leaf)
         self.assertEqual(section["ledger"], {"steps": {}, "keys": {}, "authored": {}})
 
+    def test_a_step_claims_halves_stay_home(self):
+        """Ledger format 2's halves are the sending DCC's own numbers (a Maya
+        angle, a Blender handle): the claim crosses as format 1."""
+        state = _store_state()
+        led = ShotStore.from_dict(state).edit_ledger
+        led.release_step("pCube1_rotateY", 48.0)
+        led.record_step(
+            "pCube1_rotateY",
+            48.0,
+            "auto",
+            "fixed",
+            2.0,
+            in_half=[5, 1],
+            out_half=[7, 1],
+        )
+        state["edit_ledger"] = led.to_dict()
+        section = ShotTransfer.encode(state, spell=_leaf, curve_ref=_maya_curve_ref)
+        self.assertEqual(
+            section["ledger"]["steps"]["pCube1"]["rotateY"],
+            [[48.0, "auto", "fixed", 2.0]],
+        )
+
+    def test_a_curve_several_objects_share_crosses_for_each(self):
+        """A Blender linked duplicate's curve is one ledger key that two
+        objects play (curve identity, ledger format 2): ``curve_ref`` names
+        both, and the carrier -- one curve per object -- gets the claims on
+        each.  Before, a ref was one pair, and the sharer was left out."""
+        refs = dict(_MAYA_CURVES)
+        refs["pCube1_translateX"] = [
+            ("|grp|pCube1", "translateX"),
+            ("|pSphere1", "translateX"),
+        ]
+        section = ShotTransfer.encode(
+            _store_state(), spell=_leaf, curve_ref=refs.get, objects=["|pSphere1"]
+        )
+        self.assertEqual(
+            section["ledger"]["keys"]["pSphere1"]["translateX"],
+            [[48.0, 0, "end"], [60.0, 1, "start"]],
+        )
+        self.assertNotIn("pCube1", section["ledger"]["keys"])
+
+    def test_a_ref_naming_no_object_leaves_its_claims_behind(self):
+        """A ``(None, label)`` answer -- one pair, its object unnamed -- is a
+        curve the far side cannot find, as a ``None`` answer is.  Read as a
+        list of pairs, it raised a TypeError and no section was written."""
+        refs = dict(_MAYA_CURVES)
+        refs["pCube1_translateX"] = (None, "translateX")
+        refs["pCube1_rotateY"] = ("", "rotateY")
+        section = ShotTransfer.encode(_store_state(), spell=_leaf, curve_ref=refs.get)
+        self.assertNotIn("translateX", section["ledger"]["keys"].get("pCube1", {}))
+        self.assertNotIn("pCube1", section["ledger"]["steps"])
+        self.assertEqual(
+            section["ledger"]["keys"]["pSphere1"]["translateZ"], [[48.0, 0, "end"]]
+        )
+
+    def test_the_scenes_member_ids_stay_home(self):
+        """``member_ids`` are the sending scene's node ids (Maya UUIDs), keyed
+        by its own spelling of every member, whatever *objects* scopes: like a
+        step claim's halves, they mean nothing on the far side."""
+        state = _store_state()
+        state["member_ids"] = {"|grp|pCube1": "u1", "|pSphere1": "u2"}
+        section = ShotTransfer.encode(
+            state, spell=_leaf, curve_ref=_maya_curve_ref, objects=["pCube1"]
+        )
+        self.assertNotIn("member_ids", section["store"])
+
     def test_encode_does_not_mutate_the_state(self):
         state = _store_state()
         before = ShotStore.from_dict(state).to_dict()
@@ -178,6 +244,30 @@ class TestDecode(unittest.TestCase):
         self.assertEqual(led.step_times("pCube1_rotateY"), [48.0])
         self.assertEqual(led.key_times("pSphere1_translateZ"), [48.0])
         self.assertEqual(led.key_times("orphan_curve"), [])
+
+    def test_objects_sharing_a_curve_here_land_its_claims_once(self):
+        """Two arrivals whose curves are one here (a Blender linked
+        duplicate, a Maya ``duplicate -ic``) both bring the claims: once on
+        the curve, not doubled."""
+        section = ShotTransfer.encode(
+            _store_state(), spell=_leaf, curve_ref=_maya_curve_ref
+        )
+        section["ledger"]["keys"]["pSphere1"]["translateX"] = [
+            [48.0, 0, "end"],
+            [60.0, 1, "start"],
+        ]
+        decoded = ShotTransfer.decode(
+            section,
+            resolve=lambda leaf: leaf if leaf in ("pCube1", "pSphere1") else None,
+            curve_key=lambda node, label: (
+                "shared|location|0" if label == "translateX" else None
+            ),
+            scene_fps=24.0,
+        )
+        self.assertEqual(
+            decoded["edit_ledger"]["keys"]["shared|location|0"],
+            [[48.0, 0, "end"], [60.0, 1, "start"]],
+        )
 
     def test_blender_side_keys_and_frame_offset(self):
         decoded = ShotTransfer.decode(
@@ -648,6 +738,30 @@ class TestAuthoredClaims(unittest.TestCase):
         self.assertNotEqual(new_id, 0)
         self.assertEqual(len(led.authored(owner=new_id)), 2)
         self.assertEqual(led.authored(owner=0), [])
+
+    def test_merge_renumbers_the_shot_a_tools_marker_names(self):
+        """A Build's marker names its shot as a claim names its owner: merged
+        under a fresh id, it must name the new one -- or a rebuild here takes
+        out, and Assess misreads, the markers of whichever shot holds the old
+        number."""
+        existing = ShotStore()
+        existing.define_shot("Mine", 100.0, 200.0)
+        incoming = ShotStore()
+        incoming.define_shot("In", 0.0, 48.0)
+        tag = {"owner": "shot_manifest", "behavior": "fade_in", "objects": ["lid"]}
+        incoming.markers = [
+            {"time": 0.0, "note": "Fade In: lid", "data": dict(tag, shot_id=0)},
+            {"time": 5.0, "note": "gone", "data": dict(tag, shot_id=9)},
+            {"time": 9.0, "note": "the animator's"},
+        ]
+        id_map = {}
+        merged = ShotTransfer.merge(
+            existing.to_dict(), incoming.to_dict(), id_map=id_map
+        )
+        shot_ids = [(m.get("data") or {}).get("shot_id") for m in merged["markers"]]
+        self.assertEqual(shot_ids, [id_map[0], None, None])
+        self.assertNotEqual(id_map[0], 0)
+        self.assertEqual(incoming.markers[0]["data"]["shot_id"], 0, "input untouched")
 
     def test_a_claim_no_incoming_shot_owns_arrives_owned_by_none(self):
         """Bug: a merged claim whose owner was no incoming shot -- a removed

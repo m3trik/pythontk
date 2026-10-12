@@ -388,6 +388,20 @@ class TestPlanRipple(_ShotTest):
         inside = ShotPlanner.plan_ripple_upstream(store, 2, 5, -15, carry_gap=True)
         self.assertEqual(inside.moves[1].env_end, 20, "into the shot: still whole")
 
+    def test_carry_gap_upstream_takes_what_a_head_shrink_gave_up(self):
+        """The downstream carry's mirror: a bound PAST the pivot's start (its
+        head shrunk, the shot before flush and following it on) widens the
+        window to that bound, so the frames the pivot gave up ride."""
+        store = _store([ShotBlock(1, "P", 0, 10, []), ShotBlock(2, "A", 10, 30, [])])
+        plan = ShotPlanner.plan_ripple_upstream(store, 2, 14, 4, carry_gap=True)
+        self.assertEqual(
+            (plan.moves[1].env_end, plan.moves[1].env_hi_closed), (14, False)
+        )
+        plain = ShotPlanner.plan_ripple_upstream(store, 2, 14, 4)
+        self.assertEqual(
+            (plain.moves[1].env_end, plain.moves[1].env_hi_closed), (10, True)
+        )
+
     def test_a_bound_dragged_into_the_neighbour_still_ripples_it(self):
         """A key dragged INSIDE the next shot grows the pivot past that shot's
         start; the neighbour is downstream by ORDER and must still move, and it
@@ -429,6 +443,52 @@ class TestPlanRipple(_ShotTest):
         plan = ShotPlanner.plan_ripple_downstream(store, 1, 10, 0)
         self.assertEqual(plan.moves, {})
         self.assertEqual(plan.sequence, [])
+
+
+class TestAClosedEndLandingOnAClosedStartMovesOnce(_ShotTest):
+    """Found 2026-10-11 by the SOL gap-0 acceptance: deleting an EMPTY shot
+    moved a key two shots later TWICE.  The ripple's windows only TOUCHED
+    (D's new ``[70, 100]`` against C's old ``[100, 120)``), which the order
+    read as no overlap -- but both ends are CLOSED there (D's flush with the
+    shot after it, C's no longer flush with the shot before), so D's closing
+    sample landed on 100 and C's window, moved after it, swept it on to 50:
+    on the production assembly a door's -95 pose arrived 200 frames early and
+    played from frame 0."""
+
+    def _plan(self):
+        # A [0,50]  (B [50,100] deleted)  C [100,120] D [120,150] E [150,200]
+        store = _store(
+            [
+                ShotBlock(0, "A", 0, 50, []),
+                ShotBlock(2, "C", 100, 120, []),
+                ShotBlock(3, "D", 120, 150, []),
+                ShotBlock(4, "E", 150, 200, []),
+            ]
+        )
+        return store, ShotPlanner.plan_ripple_downstream(store, -1, 100.0, -50.0)
+
+    def test_the_shot_whose_window_it_lands_in_moves_first(self):
+        _store_, plan = self._plan()
+        order = plan.sequence + plan.parked
+        self.assertIn(2, order)
+        self.assertIn(3, order)
+        if 3 in plan.sequence and 2 in plan.sequence:
+            self.assertLess(plan.sequence.index(2), plan.sequence.index(3), order)
+
+    def test_every_key_moves_exactly_once(self):
+        store, plan = self._plan()
+        keys = {110.0: "c", 130.0: "d", 150.0: "d|e seam", 170.0: "e"}
+
+        def move_keys(_objs, lo, hi, delta, over=False, lo_open=False, hi_closed=False):
+            for t in sorted(keys):
+                if ShotPlanner.in_window(t, lo, hi, lo_open, hi_closed, 1e-3):
+                    keys[t + delta] = keys.pop(t)
+
+        ShotApply.apply(plan, store, move_keys=move_keys)
+        self.assertEqual(
+            sorted(keys.items()),
+            [(60.0, "c"), (80.0, "d"), (100.0, "d|e seam"), (120.0, "e")],
+        )
 
 
 class TestShotMove(_ShotTest):
@@ -1182,6 +1242,23 @@ class TestShotStoreSerialisation(_ShotTest):
         # A restored store must serialise back to the identical dict.
         self.assertEqual(restored.to_dict(), data)
 
+    def test_a_new_store_defaults_to_the_production_gap(self):
+        """Maintainer 2026-10-11: a NEW store defaults to a gap of 10 (the
+        production spacing); a gap of 0 shared a seam frame between shots."""
+        self.assertEqual(ShotStore.DEFAULT_GAP, 10.0)
+        self.assertEqual(ShotStore().gap, 10.0)
+        self.assertEqual(ShotStore().to_dict()["gap"], 10.0)
+
+    def test_a_saved_scene_keeps_its_gap(self):
+        """Existing scenes keep their saved gap -- 0 included -- and a payload
+        written before the gap was saved reads as the old default, 0."""
+        data = _store([]).to_dict()
+        for saved in (0.0, 4.0, 10.0):
+            data["gap"] = saved
+            self.assertEqual(ShotStore.from_dict(data).gap, saved)
+        del data["gap"]
+        self.assertEqual(ShotStore.from_dict(data).gap, 0.0)
+
     def test_manifest_edits_read_tolerantly(self):
         """A scene saved before the field, or holding a malformed layer,
         loads with what is readable."""
@@ -1205,6 +1282,28 @@ class TestShotStoreSerialisation(_ShotTest):
         }
         self.assertEqual(
             ShotStore.from_dict(data).manifest_tags, {"ok.csv": {"A": "tag2"}}
+        )
+
+    def test_manifest_options_round_trip_and_read_tolerantly(self):
+        """How the scene reads each sheet (2026-10-12): kept with the store,
+        absent from an older scene, a malformed record dropped."""
+        store = _store([])
+        store.manifest_options = {
+            "x.csv": {"template": "default", "values": {"object_case": "upper"}}
+        }
+        data = store.to_dict()
+        self.assertEqual(
+            ShotStore.from_dict(data).manifest_options, store.manifest_options
+        )
+        del data["manifest_options"]
+        self.assertEqual(ShotStore.from_dict(data).manifest_options, {})
+        data["manifest_options"] = {
+            "a.csv": {"template": 3, "values": "x"},
+            "b.csv": "garbage",
+        }
+        self.assertEqual(
+            ShotStore.from_dict(data).manifest_options,
+            {"a.csv": {"template": None, "values": {}}},
         )
 
     def test_to_export_view_shape(self):
@@ -1912,6 +2011,195 @@ class TestExportViewRefresh(_ShotTest):
         self.assertEqual(len(store.published), 2)
         self.assertEqual(store.published[0]["shot_metadata"]["shots"], [])
         self.assertEqual(len(store.published[1]["shot_metadata"]["shots"]), 1)
+
+
+class TestASplitOffShotIsSectioned(_ShotTest):
+    """Bug: a shot split off a step's shot exported no section -- the split
+    gave it a name and a description and nothing relating it to its step --
+    so Unity's ``ShotMetadataController.section`` was null for 8 of
+    SOL_REPLACE_ASSEMBLY's 28 clips (A01_2, A03_2, B06_2 ...).
+    Fixed: 2026-10-11 -- a non-binding step link (``ShotStore.step_links``):
+    the split writes it; a tail split before that is linked by its
+    ``<step>_<n>`` name, at read time."""
+
+    @staticmethod
+    def _sections(store):
+        view = store.to_export_view()["shot_metadata"]["shots"]
+        return {e["clip"]: e.get("section") for e in view}
+
+    def _sol(self):
+        """SOL's shape: built heads renamed ``<step>_1``, unbound tails."""
+        store = _store([])
+        meta = lambda step, sec: {"step": step, "section": sec}  # noqa: E731
+        store.define_shot("A01_1", 0, 111, metadata=meta("A01", "A"))
+        store.define_shot("A01_2", 121, 231)
+        store.define_shot("A02", 241, 321, metadata=meta("A02", "A"))
+        store.define_shot("B06_1", 731, 871, metadata=meta("B06", "B"))
+        store.define_shot("B06_2", 881, 941)
+        store.define_shot("B06_2_2", 951, 961)
+        store.define_shot("Extra_2", 1000, 1010)
+        return store
+
+    def test_an_old_tail_takes_its_steps_section_by_its_name(self):
+        self.assertEqual(
+            self._sections(self._sol()),
+            {
+                "A01_1": "A",
+                "A01_2": "A",
+                "A02": "A",
+                "B06_1": "B",
+                "B06_2": "B",
+                "B06_2_2": "B",  # split again: one ``_<n>`` at a time
+                "Extra_2": None,  # no step of that name is bound
+            },
+        )
+
+    def test_the_link_is_read_never_written(self):
+        store = self._sol()
+        before = store.to_dict()
+        store._dirty = False
+        links = store.step_links()
+        self.assertEqual(
+            sorted(links.values()), ["A01", "B06", "B06"], "bound shots are not listed"
+        )
+        self.assertEqual(store.to_dict(), before)
+        self.assertFalse(store._dirty)
+
+    def test_a_written_link_wins_over_the_name_and_a_binding_over_both(self):
+        store = self._sol()
+        tail = store.shot_by_name("A01_2")
+        store.update_shot(tail.shot_id, metadata={store.STEP_LINK: "B06"})
+        self.assertEqual(self._sections(store)["A01_2"], "B")
+        store.update_shot(tail.shot_id, metadata={"step": "A01b"})
+        self.assertIsNone(self._sections(store)["A01_2"], "its own step: no section")
+        self.assertNotIn(tail.shot_id, store.step_links())
+
+
+class TestAScopedExportListsWhatItCarries(_ShotTest):
+    """Bug: the shot record never read ``ExportContext.scope``, so a selected
+    or visible-only export listed shot members its file leaves out.
+    Fixed: 2026-10-11 -- ``SceneRecords.SHOTS`` is export-scoped: each clip
+    names the members the write carries; every take ships."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = _store([])
+        self.store.define_shot("A", 0, 10, objects=["|set|door", "|tmp|old"])
+        self.store.define_shot("B", 10, 20, objects=["|tmp|old"])
+
+    def _objects(self, ctx):
+        (record,) = self.store.export_records(ctx)
+        return {s["clip"]: s["objects"] for s in record.payload["shots"]}
+
+    def test_the_clips_name_only_the_export_sets_members(self):
+        from pythontk.core_utils.engines.scene_export.export_snapshot import (
+            ExportContext,
+        )
+
+        self.assertTrue(SceneRecords.SHOTS.export_scoped)
+        self.assertEqual(
+            self._objects(ExportContext(scope=("|set",))), {"A": ["door"], "B": []}
+        )
+        self.assertEqual(
+            self._objects(ExportContext()), {"A": ["door", "old"], "B": ["old"]}
+        )
+
+    def test_a_failing_lookup_lists_every_member_rather_than_none(self):
+        from pythontk.core_utils.engines.scene_export.export_snapshot import (
+            ExportContext,
+        )
+
+        def boom(*_a):
+            raise RuntimeError("scene lookup down")
+
+        self.store._export_set_members = boom
+        with self.assertLogs(shot_model._log, "WARNING"):
+            got = self._objects(ExportContext(scope=("|set",)))
+        self.assertEqual(got, {"A": ["door", "old"], "B": ["old"]})
+
+
+class _IdStore(ShotStore):
+    """A DCC stand-in whose scene is :attr:`scene` ``{node id: name now}``:
+    the two id hooks a DCC store supplies (Maya: node UUIDs)."""
+
+    scene: dict = {}
+
+    def _member_ids(self, names):
+        by_name = {name: uid for uid, name in self.scene.items()}
+        return {n: by_name[n] for n in names if n in by_name}
+
+    def _current_names(self, names):
+        now = set(self.scene.values())
+        return {
+            n: self.scene[self.member_ids[n]]
+            for n in names
+            if n not in now and self.member_ids.get(n) in self.scene
+        }
+
+
+class TestRenamedMembersByTheirSavedId(_ShotTest):
+    """Bug: members are stored by name, so a HOLD shot -- nothing keyed in
+    its frames -- whose member was renamed with the store not told read as
+    stale and its take left the export.
+    Fixed: 2026-10-11 -- each held name's node id is saved with the store
+    (``member_ids``, additive) and the export names a renamed member as it
+    is now (``_current_names``); the store is not changed."""
+
+    def test_a_save_keeps_each_id_and_the_export_ships_the_name_now(self):
+        store = _IdStore()
+        store.scene = {"u1": "door", "u2": "lid"}
+        store.define_shot("A", 0, 10, objects=["door", "lid"])
+        self.assertEqual(store.to_dict()["member_ids"], {"door": "u1", "lid": "u2"})
+        store.scene = {"u1": "door_v2", "u2": "lid"}  # renamed behind its back
+        saved = store.to_dict()
+        self.assertEqual(saved["member_ids"], {"door": "u1", "lid": "u2"})
+        view = store.to_export_view()["shot_metadata"]["shots"][0]["objects"]
+        self.assertEqual(sorted(view), ["door_v2", "lid"])
+        self.assertEqual(store.shot_by_name("A").objects, ["door", "lid"])
+        self.assertEqual(_IdStore.from_dict(saved).member_ids, saved["member_ids"])
+
+    def test_a_name_no_longer_held_drops_its_id(self):
+        store = _IdStore()
+        store.scene = {"u1": "door"}
+        shot = store.define_shot("A", 0, 10, objects=["door"])
+        store.to_dict()
+        store.update_shot(shot.shot_id, objects=[])
+        self.assertEqual(store.to_dict()["member_ids"], {})
+
+    def test_a_payload_without_ids_reads_and_a_malformed_one_is_dropped(self):
+        data = ShotStore().to_dict()
+        del data["member_ids"]
+        self.assertEqual(ShotStore.from_dict(data).member_ids, {})
+        data["member_ids"] = {"a": "u", "b": 3, "c": ""}
+        self.assertEqual(ShotStore.from_dict(data).member_ids, {"a": "u"})
+        data["member_ids"] = ["junk"]
+        self.assertEqual(ShotStore.from_dict(data).member_ids, {})
+
+
+class TestTransientEdit(_ShotTest):
+    """``ShotStore.transient_edit``: the bracket an export or a bridge send
+    holds, so the Shot Sequencer's keying refresh credits none of its key
+    edits to a shot (both DCC listeners read :meth:`in_transient_edit`).
+    Added: 2026-10-11"""
+
+    def test_nested_brackets_hold_until_the_outermost_closes(self):
+        self.assertFalse(ShotStore.in_transient_edit())
+        with ShotStore.transient_edit():
+            with ShotStore.transient_edit():
+                self.assertTrue(ShotStore.in_transient_edit())
+            self.assertTrue(ShotStore.in_transient_edit())
+        self.assertFalse(ShotStore.in_transient_edit())
+
+    def test_a_raising_body_releases_it_and_every_subclass_reads_one_count(self):
+        class _DccStore(ShotStore):
+            pass
+
+        with self.assertRaises(RuntimeError):
+            with _DccStore.transient_edit():
+                self.assertTrue(ShotStore.in_transient_edit())
+                raise RuntimeError("the write failed")
+        self.assertFalse(_DccStore.in_transient_edit())
+        self.assertEqual(ShotStore._transient_depth, 0)
 
 
 class _SceneStore(ShotStore):
@@ -2811,6 +3099,105 @@ class TestEditLedgerStepIdentity(unittest.TestCase):
         self.assertEqual(led.release_step("c", 40.0), ("auto", "auto"))
 
 
+class TestEditLedgerFormat2(unittest.TestCase):
+    """Ledger v2 (maintainer 2026-10-11): one versioned format, older ledgers
+    loading as today.  A step claim carries the halves its hold touched --
+    the key's IN half the hold froze and its OUT half before the step -- and
+    knows its key by value + that in-half, not by the in side's type (a
+    Blender paste copies the easing: BACKLOG 2026-10-10)."""
+
+    def _ledger(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_step(
+            "c", 40.0, "auto", "fixed", 6.0, in_half=[12.5, 1.0], out_half=[-3.0, 2.5]
+        )
+        return led
+
+    def test_a_step_claim_keeps_its_halves_through_a_save(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        data = self._ledger().to_dict()
+        self.assertEqual(data["version"], ShotEditLedger.FORMAT_VERSION)
+        led = ShotEditLedger.from_dict(data)
+        claim = led.claimed_step("c", 40.0)
+        self.assertEqual(claim, ("auto", "fixed", 6.0), "unpacks as before")
+        self.assertEqual((claim.in_half, claim.out_half), ([12.5, 1.0], [-3.0, 2.5]))
+        self.assertEqual(led.source_version, ShotEditLedger.FORMAT_VERSION)
+
+    def test_a_format_1_payload_loads_as_before(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger.from_dict({"steps": {"c": [[40.0, "auto", "auto", 6.0]]}})
+        self.assertEqual(led.source_version, 1)
+        claim = led.claimed_step("c", 40.0)
+        self.assertEqual(claim, ("auto", "auto", 6.0))
+        self.assertIsNone(claim.in_half)
+        self.assertTrue(led.is_same_key(claim, "auto", 7.5), "the format-1 rule")
+
+    def test_a_format_2_claim_knows_its_key_by_value_and_in_half(self):
+        led = self._ledger()
+        claim = led.claimed_step("c", 40.0)
+        self.assertTrue(led.is_same_key(claim, "fixed", 6.0, in_half=[12.5, 1.0]))
+        self.assertFalse(
+            led.is_same_key(claim, "auto", 7.5, in_half=[12.5, 1.0]),
+            "same in side, another value: a paste (the type says nothing)",
+        )
+        self.assertFalse(
+            led.is_same_key(claim, "fixed", 6.0, in_half=[20.0, 1.0]),
+            "same value, another slope: the animator's",
+        )
+        self.assertTrue(
+            led.is_same_key(claim, "fixed", 6.0), "no half to compare: the value"
+        )
+
+    def test_an_empty_ledger_writes_nothing(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        self.assertEqual(ShotEditLedger().to_dict(), {})
+
+    def test_a_new_clock_drops_the_halves(self):
+        """The halves are slopes on the clock they were read on."""
+        led = self._ledger()
+        led.retime(1.0, offset=10.0)
+        self.assertEqual(led.claimed_step("c", 50.0).in_half, [12.5, 1.0])
+        led.retime(1.25)
+        claim = led.claimed_step("c", 62.5)
+        self.assertEqual(claim, ("auto", "fixed", 6.0))
+        self.assertIsNone(claim.in_half)
+
+
+class TestEditLedgerStays(unittest.TestCase):
+    """A split's seam pin is claimed ``stays`` (BACKLOG 2026-10-07): when its
+    bound moves it is disowned in place instead of following."""
+
+    def test_the_mark_round_trips_and_older_claims_carry_none(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_key("c", 50.0, 0, "end", stays=True)
+        led.record_key("c", 60.0, 1, "start")
+        back = ShotEditLedger.from_dict(led.to_dict())
+        self.assertTrue(back.key_stays("c", 50.0))
+        self.assertFalse(back.key_stays("c", 60.0))
+        self.assertEqual(back.key_records("c"), [(50.0, 0, "end"), (60.0, 1, "start")])
+        self.assertEqual(
+            led.to_dict()["keys"]["c"],
+            [[50.0, 0, "end", True], [60.0, 1, "start"]],
+            "an unmarked claim keeps its three-field record",
+        )
+
+    def test_the_mark_travels_with_its_key(self):
+        from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
+
+        led = ShotEditLedger()
+        led.record_key("c", 50.0, 0, "end", stays=True)
+        led.remap("c", [(50.0, 55.0)])
+        self.assertTrue(led.key_stays("c", 55.0))
+        self.assertFalse(led.key_stays("c", 50.0))
+
+
 class TestBoundaryLedger(unittest.TestCase):
     """The store-scoped boundary-snapshot ledger.
 
@@ -3057,6 +3444,100 @@ class TestShotsEdited(unittest.TestCase):
         self.assertEqual(self._edited(), [])
 
 
+class TestToolMarkers(unittest.TestCase):
+    """A tool's timeline markers (the manifest's marked behaviors): tagged
+    with their owner, written through ``set_markers`` (which tells the
+    sequencer), and undone with the edit that placed them -- a hand's markers
+    are never part of a restore point."""
+
+    MARK = {"time": 10.0, "note": "Fade In: door", "data": {"owner": "tool"}}
+    HAND = {"time": 20.0, "note": "the animator's"}
+
+    def setUp(self):
+        self.store = ShotStore()
+        self.events = []
+        self.store.add_listener(self.events.append)
+
+    def _changed(self):
+        return [e for e in self.events if isinstance(e, shot_model.MarkersChanged)]
+
+    def test_owner(self):
+        self.assertEqual(ShotStore.marker_owner(self.MARK), "tool")
+        self.assertEqual(ShotStore.marker_owner(self.HAND), "")
+        self.assertEqual(ShotStore.marker_owner({"data": None}), "")
+
+    def test_set_markers_announces_a_change_only(self):
+        self.assertTrue(self.store.set_markers([self.MARK]))
+        self.assertFalse(self.store.set_markers([dict(self.MARK)]))
+        self.assertEqual(len(self._changed()), 1)
+        self.assertIsNot(self.store.markers[0], self.MARK, "copied in")
+
+    def test_undo_takes_out_a_tools_markers_and_keeps_a_hands(self):
+        with self.store.scene_edit("build"):
+            self.store.set_markers([self.MARK])
+        self.store.markers.append(dict(self.HAND))  # placed after, by hand
+        self.events.clear()
+        self.assertTrue(self.store.restore_boundary_snapshot())
+        self.assertEqual(self.store.markers, [self.HAND])
+        # One redraw, with the shots: the markers' change rides the batch.
+        self.assertEqual(self._changed(), [])
+        self.assertEqual([type(e) for e in self.events], [shot_model.BatchComplete])
+        self.assertTrue(self.store.redo_boundary_snapshot())
+        self.assertEqual(self.store.markers, [self.HAND, self.MARK])
+
+    def test_a_marker_only_edit_is_an_edit(self):
+        with self.store.scene_edit("build"):
+            self.store.set_markers([self.MARK])
+        self.assertEqual(
+            [e.label for e in self.events if isinstance(e, shot_model.ShotsEdited)],
+            ["build"],
+        )
+
+
+class TestSystemMembers(unittest.TestCase):
+    """``add_system_members``: members the shot system adds on its own are
+    tagged (``SYSTEM_MEMBERS``) so a tool comparing a shot with what it made
+    reads past them (BACKLOG 2026-10-10)."""
+
+    def setUp(self):
+        self.store = ShotStore()
+        self.shot = self.store.define_shot("A", 0, 50, objects=["|grp|door"])
+
+    def test_adds_tags_and_keeps_every_member(self):
+        added = self.store.add_system_members(
+            self.shot.shot_id, ["|rig|cube", "|grp|door"]
+        )
+        self.assertEqual(added, ["|rig|cube"])
+        self.assertEqual(self.shot.objects, ["|grp|door", "|rig|cube"])
+        self.assertEqual(self.shot.metadata[ShotStore.SYSTEM_MEMBERS], ["cube"])
+        self.assertEqual(self.store.system_members(self.shot), {"cube"})
+
+    def test_nothing_new_changes_nothing(self):
+        events = []
+        self.store.add_listener(events.append)
+        self.assertEqual(
+            self.store.add_system_members(self.shot.shot_id, ["|grp|door"]), []
+        )
+        self.assertEqual(events, [])
+        self.assertNotIn(ShotStore.SYSTEM_MEMBERS, self.shot.metadata)
+
+    def test_a_member_that_leaves_takes_its_tag(self):
+        self.store.add_system_members(self.shot.shot_id, ["|rig|cube"])
+        self.store.update_shot(self.shot.shot_id, objects=["|grp|door"])
+        self.assertNotIn(ShotStore.SYSTEM_MEMBERS, self.shot.metadata)
+        self.store.update_shot(self.shot.shot_id, objects=["|grp|door", "|rig|cube"])
+        self.assertEqual(self.store.system_members(self.shot), set())
+
+    def test_the_tag_rides_the_restore_point(self):
+        self.store.push_boundary_snapshot()
+        self.store.add_system_members(self.shot.shot_id, ["|rig|cube"])
+        self.store.restore_boundary_snapshot()
+        self.assertEqual(self.shot.objects, ["|grp|door"])
+        self.assertNotIn(ShotStore.SYSTEM_MEMBERS, self.shot.metadata)
+        self.store.redo_boundary_snapshot()
+        self.assertEqual(self.store.system_members(self.shot), {"cube"})
+
+
 class TestBoundaryLedgerTags(unittest.TestCase):
     """Restore points carry an opaque DCC tag.
 
@@ -3210,9 +3691,175 @@ class TestDiscardRestoresTheRedoBranch(unittest.TestCase):
     def test_discard_on_an_empty_ledger_is_harmless(self):
         store = ShotStore()
         store.define_shot("A", 0, 50)
-        store.discard_boundary_snapshot()
+        self.assertFalse(store.discard_boundary_snapshot())
         self.assertFalse(store.has_boundary_snapshot())
         self.assertFalse(store.has_boundary_snapshot(redo=True))
+
+    def test_a_second_discard_drops_nothing(self):
+        """One discard per push (BACKLOG 2026-10-05, maintainer 2026-10-10).
+
+        mayatk's ``scene_edit`` drops the point of an edit that changed
+        nothing, and the caller then discards "its" no-op point as before: a
+        second pop took the restore point of the edit BEFORE it, so undoing
+        that edit left its shot state behind."""
+        store = ShotStore()
+        store.define_shot("A", 0, 50)
+        store.push_boundary_snapshot(tag=(True, "real"))
+        store.update_shot(0, end=40)
+        store.push_boundary_snapshot(tag=(False, "noop"))
+        self.assertTrue(store.discard_boundary_snapshot())
+        self.assertFalse(store.discard_boundary_snapshot())
+        self.assertEqual(store.peek_boundary_tag(), (True, "real"))
+        self.assertTrue(store.restore_boundary_snapshot())
+        self.assertEqual(store.shot_by_id(0).end, 50.0)
+
+    def test_no_discard_after_the_point_was_applied(self):
+        store = ShotStore()
+        store.define_shot("A", 0, 50)
+        store.push_boundary_snapshot()
+        store.update_shot(0, end=40)
+        store.push_boundary_snapshot()
+        store.update_shot(0, end=30)
+        store.restore_boundary_snapshot()
+        self.assertFalse(store.discard_boundary_snapshot())
+        self.assertEqual(len(store._boundary_undo), 1)
+
+    def test_a_capped_push_is_still_discardable_once(self):
+        """At the ledger cap a push drops the OLDEST point, so a depth count
+        cannot tell a discardable push from a spent one; the per-push token
+        can."""
+        store = ShotStore()
+        store.define_shot("A", 0, 50)
+        for _ in range(store._BOUNDARY_LEDGER_CAP):
+            store.push_boundary_snapshot()
+        store.push_boundary_snapshot(tag="newest")
+        self.assertTrue(store.discard_boundary_snapshot())
+        self.assertFalse(store.discard_boundary_snapshot())
+        self.assertEqual(len(store._boundary_undo), store._BOUNDARY_LEDGER_CAP - 1)
+
+
+class _QueueStore(ShotStore):
+    """A store whose "native queue" is a list of markers, as a DCC's is a
+    chunk name (mayatk) or an edit serial (blendertk): ``undone`` names the
+    step the last undo moved, which crosses the point tagged with it."""
+
+    undone = None
+    installs = 0
+    removals = 0
+
+    def _native_step_crossed(self, redo=False, first=True):
+        if not self.has_boundary_snapshot(redo=redo):
+            return False
+        return self.peek_boundary_tag(redo=redo) == self.undone
+
+    @classmethod
+    def _install_native_undo_sync(cls):
+        cls.installs += 1
+
+    @classmethod
+    def _remove_native_undo_sync(cls):
+        cls.removals += 1
+
+
+class TestFollowNativeStep(unittest.TestCase):
+    """The STORE follows the DCC's undo (BACKLOG 2026-10-05 / 2026-10-07):
+    with only a Sequencer listening, an edit made with no Sequencer this
+    session was undone in its keys and kept in its shots and claims."""
+
+    def setUp(self):
+        _QueueStore.clear_active()
+        _QueueStore.installs = _QueueStore.removals = 0
+        self.store = _QueueStore()
+        self.store.define_shot("A", 0, 50)
+        self.heard = []
+        ShotStore.add_native_step_listener(self.heard.append)
+        self.addCleanup(ShotStore.remove_native_step_listener, self.heard.append)
+        self.addCleanup(_QueueStore.clear_active)
+
+    def _edit(self, marker, end):
+        self.store.push_boundary_snapshot(tag=marker)
+        self.store.update_shot(0, end=end)
+
+    def test_the_active_store_follows_an_undo_of_its_own_edit(self):
+        _QueueStore.set_active(self.store)
+        self._edit("chunk_1", 40)
+        self.store.undone = "chunk_1"
+        _QueueStore._on_native_step()
+        self.assertEqual(self.store.shot_by_id(0).end, 50.0)
+        self.assertEqual(
+            [(e.redo, e.applied) for e in self.heard], [(False, 1)], self.heard
+        )
+        _QueueStore._on_native_step(redo=True)
+        self.assertEqual(self.store.shot_by_id(0).end, 40.0)
+        self.assertEqual(self.heard[-1].applied, 1)
+
+    def test_somebody_elses_undo_applies_nothing_and_is_still_heard(self):
+        _QueueStore.set_active(self.store)
+        self._edit("chunk_1", 40)
+        self.store.undone = "unrelated"
+        _QueueStore._on_native_step()
+        self.assertEqual(self.store.shot_by_id(0).end, 40.0)
+        self.assertEqual([e.applied for e in self.heard], [0])
+
+    def test_a_jump_applies_every_point_it_crossed_newest_first(self):
+        class _Jump(_QueueStore):
+            def _native_step_crossed(self, redo=False, first=True):
+                return self.has_boundary_snapshot(redo=redo)
+
+        store = _Jump()
+        store.define_shot("A", 0, 50)
+        for end in (40, 30):
+            store.push_boundary_snapshot()
+            store.update_shot(0, end=end)
+        self.assertEqual(store.follow_native_step(), 2)
+        self.assertEqual(store.shot_by_id(0).end, 50.0)
+        self.assertEqual(store.follow_native_step(redo=True), 2)
+        self.assertEqual(store.shot_by_id(0).end, 30.0)
+
+    def test_held_sync_follows_nothing(self):
+        _QueueStore.set_active(self.store)
+        self._edit("chunk_1", 40)
+        self.store.undone = "chunk_1"
+        with ShotStore.native_undo_sync_held():
+            _QueueStore._on_native_step()
+        self.assertEqual(self.store.shot_by_id(0).end, 40.0)
+        self.assertEqual(self.heard, [])
+
+    def test_no_active_store_applies_nothing(self):
+        self._edit("chunk_1", 40)
+        self.store.undone = "chunk_1"
+        _QueueStore._on_native_step()  # self.store was never made active
+        self.assertEqual(self.store.shot_by_id(0).end, 40.0)
+        self.assertEqual([e.applied for e in self.heard], [0])
+
+    def test_events_raised_while_following_say_so(self):
+        _QueueStore.set_active(self.store)
+        self._edit("chunk_1", 40)
+        self.store.undone = "chunk_1"
+        during = []
+        self.store.add_listener(
+            lambda e: during.append(
+                (type(e).__name__, self.store.following_native_step)
+            )
+        )
+        _QueueStore._on_native_step()
+        self.assertEqual(during, [("BatchComplete", True)])
+        self.assertFalse(self.store.following_native_step)
+
+    def test_active_and_set_active_install_and_clear_active_removes(self):
+        _QueueStore.set_active(self.store)
+        _QueueStore.active()
+        self.assertEqual(_QueueStore.installs, 2)
+        _QueueStore.clear_active()
+        self.assertEqual(_QueueStore.removals, 1)
+
+    def test_the_pure_store_follows_nothing(self):
+        store = ShotStore()
+        store.define_shot("A", 0, 50)
+        store.push_boundary_snapshot()
+        store.update_shot(0, end=40)
+        self.assertEqual(store.follow_native_step(), 0)
+        self.assertEqual(store.shot_by_id(0).end, 40.0)
 
 
 class TestObjectsToAdopt(unittest.TestCase):
@@ -3389,6 +4036,120 @@ class TestBoundarySplits(unittest.TestCase):
         self.assertNotIn(0, plan.moves, "the pivot is excluded by construction")
         self.assertEqual(ShotPlanner.boundary_splits(st, plan), [(0, 1, 40.0, 55.0)])
 
+    def test_a_pending_bound_closes_a_transient_split(self):
+        """BACKLOG 2026-10-07: Move to Shot ripples the neighbour BEFORE it
+        writes its own grown bound, so the plan alone opens 40 -> 45 for a
+        moment.  The caller's final end closes it: no split is reported, and
+        no keyless seam is pinned in the landing's way."""
+        st = self._store((0, 40), (40, 80))
+        plan = ShotPlanner.plan_ripple_downstream(st, 0, 45.0, 5.0)
+        self.assertEqual(ShotPlanner.boundary_splits(st, plan), [(0, 1, 40.0, 45.0)])
+        self.assertEqual(
+            ShotPlanner.boundary_splits(st, plan, pending={0: (0.0, 45.0)}), []
+        )
+
+    def test_a_pending_side_wins_over_the_plan_and_none_defers_to_it(self):
+        st = self._store((0, 40), (40, 80))
+        plan = ShotPlanner.plan_ripple_downstream(st, 0, 40.0, 15.0)
+        self.assertEqual(
+            ShotPlanner.boundary_splits(st, plan, pending={1: (50.0, None)}),
+            [(0, 1, 40.0, 50.0)],
+            "a gap still open once the caller is done, where the caller leaves it",
+        )
+        self.assertEqual(
+            ShotPlanner.boundary_splits(st, plan, pending={0: (None, None)}),
+            [(0, 1, 40.0, 55.0)],
+        )
+
+    def test_a_seam_the_edit_opens_later_is_reported_before_its_first_plan(self):
+        """A move of R rippling downstream moves S FIRST, in a plan of its
+        own, and only then R: the seam Q|R the edit opens is touched by
+        neither shot in that first plan, yet a segment crossing it to a key
+        in S is re-timed by it.  Found 2026-10-11 by the SOL_REPLACE_ASSEMBLY
+        acceptance (a door ramp through 30 flush shots, 0.003 off in each):
+        the pin came at the second plan, onto the already re-timed ramp."""
+        st = self._store((0, 50), (50, 100), (100, 150), (150, 200))
+        plan = ShotPlanner.plan_ripple_downstream(st, 2, 150.0, 7.0)
+        self.assertEqual(sorted(plan.moves), [3], "the ripple moves S alone")
+        pending = {2: (107.0, 157.0), 3: (157.0, 207.0)}
+        self.assertEqual(
+            ShotPlanner.boundary_splits(st, plan, pending=pending),
+            [(1, 2, 100.0, 107.0)],
+        )
+
+
+class TestAClosingSeamStaysOneFrameApartWhereItsPosesDiffer(unittest.TestCase):
+    """The maintainer's rule (2026-10-11) for every op that closes a seam to
+    gap 0: flush where the two poses agree, exactly one frame apart where
+    they differ -- never refused, never re-timing a shot.  The planner lays
+    the frame; which seams differ is the DCC's answer."""
+
+    def _store(self, *pairs):
+        st = ShotStore()
+        st.shots = [
+            ShotBlock(i, chr(65 + i), lo, hi, []) for i, (lo, hi) in enumerate(pairs)
+        ]
+        return st
+
+    @staticmethod
+    def _bounds(st, plan):
+        return [
+            (plan.moves[s.shot_id].new_start, plan.moves[s.shot_id].new_end)
+            for s in st.sorted_shots()
+        ]
+
+    def test_a_widened_seam_gets_one_frame_and_the_rest_close_flush(self):
+        st = self._store((0, 50), (60, 100), (110, 150))
+        plan = ShotPlanner.plan_respace(st, 0.0, 0.0, seam_gaps={1: 1.0})
+        self.assertEqual(self._bounds(st, plan), [(0, 50), (51, 91), (91, 131)])
+
+    def test_a_seam_gap_never_narrows_a_wider_gap(self):
+        st = self._store((0, 50), (60, 100))
+        plan = ShotPlanner.plan_respace(st, 10.0, 0.0, seam_gaps={1: 1.0})
+        self.assertEqual(self._bounds(st, plan), [(0, 50), (60, 100)])
+
+    @staticmethod
+    def _new(plan):
+        return {sid: (m.new_start, m.new_end) for sid, m in plan.moves.items()}
+
+    def test_only_the_seams_an_edit_closes_are_named(self):
+        """Only a seam going from apart to flush can bring two poses onto one
+        frame: one already flush shares its one sample, one left apart none."""
+        st = self._store((0, 50), (60, 100), (110, 150), (150, 170))
+        plan = ShotPlanner.plan_respace(st, 0.0, 0.0, seam_gaps={2: 1.0})
+        self.assertEqual(ShotPlanner.closing_seams(st, self._new(plan)), [(0, 1)])
+        # A ripple: (1, 2) closes; (2, 3) was flush and moves as one.
+        ripple = ShotPlanner.plan_ripple_downstream(st, -1, 105.0, -10.0)
+        self.assertEqual(ShotPlanner.closing_seams(st, self._new(ripple)), [(1, 2)])
+
+    def test_bounds_name_only_what_moves(self):
+        """An edge edit's plan is the one shot's new bounds."""
+        st = self._store((0, 50), (60, 100))
+        self.assertEqual(ShotPlanner.closing_seams(st, {0: (0, 60)}), [(0, 1)])
+        self.assertEqual(ShotPlanner.closing_seams(st, {0: (0, 59)}), [])
+        self.assertEqual(ShotPlanner.closing_seams(st, {1: (50, 90)}), [(0, 1)])
+
+
+class TestKeylessSeam(unittest.TestCase):
+    """The seam a split has to pin (BACKLOG 2026-10-07): no key ON it, a key
+    before it, and one after it."""
+
+    def test_a_curve_crossing_the_seam_keyless(self):
+        self.assertTrue(ShotPlanner.keyless_seam([0, 40, 100], 50))
+
+    def test_a_key_on_the_seam_is_the_shared_sample_instead(self):
+        self.assertFalse(ShotPlanner.keyless_seam([0, 40, 50.0004, 100], 50))
+
+    def test_a_curve_the_preceding_shot_only_interpolates_is_a_seam_too(self):
+        """Keyed only shots before it, the preceding shot still PLAYS that
+        segment.  Found 2026-10-11 by the SOL_REPLACE_ASSEMBLY acceptance: a
+        door ramp keyed at 1061 and 3230 runs through 30 flush shots, and a
+        band move at 2116 re-timed it in every one of them (up to 0.003)."""
+        self.assertTrue(ShotPlanner.keyless_seam([-30, 100], 50))
+
+    def test_the_curve_must_cross_the_seam(self):
+        self.assertFalse(ShotPlanner.keyless_seam([0, 40], 50))
+
 
 class TestKeyCollisions(unittest.TestCase):
     """Collapsing a gap converges two samples on one frame.
@@ -3396,6 +4157,47 @@ class TestKeyCollisions(unittest.TestCase):
     Maya neither refuses nor overwrites there — it stacks a duplicate a
     fraction of a frame away — so the caller has to know beforehand.
     """
+
+    def test_grouping_matches_a_linear_scan_on_dense_curves(self):
+        """The grouping bisects (a baked curve's linear scan cost a production
+        slide 12 s, 2026-10-11); it must group exactly as the scan did."""
+        import random
+
+        def scan(windows, times, eps=1.0e-3):
+            landings = []
+            for t in times:
+                delta = 0.0
+                for lo, hi, lo_open, hi_closed, d in windows:
+                    if ShotPlanner.in_window(t, lo, hi, lo_open, hi_closed, eps):
+                        delta = d
+                        break
+                landings.append((float(t) + delta, float(t), abs(delta) > 1e-6))
+            groups = []
+            for dest, src, moving in sorted(landings):
+                for dst, movers, still in groups:
+                    if abs(dst - dest) <= eps:
+                        (movers if moving else still).append(src)
+                        break
+                else:
+                    groups.append(
+                        (dest, [src] if moving else [], [] if moving else [src])
+                    )
+            return [g for g in groups if len(g[1]) + len(g[2]) > 1 and g[1]]
+
+        rng = random.Random(20261011)
+        for _ in range(200):
+            times = sorted(
+                {round(rng.uniform(0, 300) * 4) / 4 for _ in range(rng.randint(2, 80))}
+            )
+            windows, lo = [], 0.0
+            for _w in range(rng.randint(1, 4)):
+                hi = lo + rng.choice((25.0, 40.0, 50.0))
+                d = rng.choice((-10.0, -5.0, 0.0, 5.0, 10.0, -0.0005))
+                windows.append((lo, hi, rng.random() < 0.5, rng.random() < 0.5, d))
+                lo = hi + rng.choice((0.0, 5.0, 10.0))
+            self.assertEqual(
+                ShotPlanner.key_collisions(windows, times), scan(windows, times)
+            )
 
     def test_a_mover_landing_on_a_stationary_key_is_reported(self):
         windows = [(50.0, 90.0, False, False, -10.0)]  # B collapses onto A

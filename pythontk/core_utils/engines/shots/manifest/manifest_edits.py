@@ -9,18 +9,21 @@ under and the name the sheet spells -- so re-parsing the sheet and applying the
 same edits always gives the same steps, showing the sheet as-is is a matter of
 not applying them, and applying them again restores every one.  Pure data:
 plain values in and out (:meth:`ManifestEdits.to_dict`); the panel keeps one
-layer per source on the scene's ``ShotStore.manifest_edits``.
+layer per source on the scene's ``ShotStore.manifest_edits``, found by
+:meth:`ManifestEdits.layer_key` -- the sheet's path, else its file name.
 """
 
 from __future__ import annotations
 
 import copy
+import os
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from pythontk.core_utils.engines.shots.manifest.manifest_model import (
     BuilderObject,
     BuilderStep,
 )
+from pythontk.net_utils.remote_file import RemoteFile
 
 __all__ = ["ManifestEdits"]
 
@@ -79,6 +82,32 @@ class _ManifestEditsInternal(object):
         if isinstance(value, (list, tuple)) and isinstance(sheet, (list, tuple)):
             return list(value) == list(sheet)
         return value == sheet
+
+    @staticmethod
+    def _path_form(path: str) -> str:
+        """*path* as two spellings of one file compare: either separator, and
+        this platform's case rule (``os.path.normcase``)."""
+        path = str(path).replace("\\", "/")
+        return os.path.normcase(os.path.normpath(path)) if path else ""
+
+    @staticmethod
+    def _file_name(path: str) -> str:
+        """*path*'s file name, whichever separator it was written with, as
+        :meth:`_path_form` compares it."""
+        return os.path.normcase(str(path).replace("\\", "/").rsplit("/", 1)[-1])
+
+    #: The store's per-sheet layers, keyed alike and re-keyed together.
+    _LAYERS = ("manifest_edits", "manifest_tags", "manifest_options")
+
+    @classmethod
+    def _layer_keys(cls, store: Any) -> List[str]:
+        """Every source *store* keeps a Shot Manifest layer for -- edits,
+        colour tags or the options it is read with -- in the order first
+        saved."""
+        keys: List[str] = []
+        for layers in cls._LAYERS:
+            keys += [k for k in getattr(store, layers, None) or {} if k not in keys]
+        return keys
 
 
 class ManifestEdits(_ManifestEditsInternal):
@@ -161,6 +190,153 @@ class ManifestEdits(_ManifestEditsInternal):
                     }
                 )
         return edits
+
+    # ---- the scene's layers --------------------------------------------------
+
+    @classmethod
+    def layer_key(cls, store: Any, source: str) -> Optional[str]:
+        """The key *source*'s Shot Manifest layers -- these edits and its
+        colour tags (``ManifestTags``) -- are saved under on *store*, or
+        ``None`` when it keeps none.
+
+        The sheet's path first (spelled either way: separators, and this
+        platform's case rule); else the ONE layer saved under a sheet of the
+        same file name -- a sheet moved, or opened through another mount,
+        keeps its edits (maintainer 2026-10-11).  Two layers of that name are
+        two sheets: neither is taken, so same-named sheets never share edits.
+        The scene's own shots (``""``) and a sheet read from a URL match only
+        themselves: a URL names its sheet whole, and two shared sheets'
+        export links end alike (``export?format=csv``).
+
+        Parameters:
+            store: A ``ShotStore`` (``manifest_edits`` / ``manifest_tags``),
+                or ``None`` (no store: no layer).
+            source: The sheet's path, or ``""`` for the scene's own shots.
+
+        Returns:
+            The saved key, as saved; ``None`` when nothing matches.
+        """
+        if store is None:
+            return None
+        keys = cls._layer_keys(store)
+        source = str(source or "")
+        if source in keys:
+            return source
+        if not source or RemoteFile.is_url(source):
+            return None
+        files = [k for k in keys if k and not RemoteFile.is_url(k)]
+        form = cls._path_form(source)
+        same = [k for k in files if cls._path_form(k) == form]
+        if same:
+            return same[0]
+        name = cls._file_name(source)
+        named = [k for k in files if cls._file_name(k) == name]
+        return named[0] if len(named) == 1 else None
+
+    @classmethod
+    def same_sheet(cls, a: str, b: str) -> bool:
+        """Whether paths *a* and *b* name one sheet, as :meth:`layer_key`
+        finds a lone layer: the same path in either spelling, else -- two
+        files -- the same file name.  A URL is one sheet only with itself."""
+        a, b = str(a or ""), str(b or "")
+        if not a or not b or RemoteFile.is_url(a) or RemoteFile.is_url(b):
+            return a == b
+        if cls._path_form(a) == cls._path_form(b):
+            return True
+        return cls._file_name(a) == cls._file_name(b)
+
+    @classmethod
+    def adopt_layers(cls, store: Any, source: str) -> bool:
+        """Move the layers :meth:`layer_key` finds for *source* under
+        *source* itself -- edits and tags together, so a source keeps one
+        key.  What a save does first: a moved sheet's layer is re-keyed to
+        where it is now, and is found there by its exact path from then on.
+
+        Returns:
+            Whether anything moved (*store* is then marked dirty).
+        """
+        key = cls.layer_key(store, source)
+        if key is None or key == source:
+            return False
+        for name in cls._LAYERS:
+            layers = getattr(store, name, None)
+            if layers is not None and key in layers:
+                layers[source] = layers.pop(key)
+        store.mark_dirty()
+        return True
+
+    @classmethod
+    def sheet_options(cls, store: Any, source: str) -> Optional[Dict[str, Any]]:
+        """How the scene reads sheet *source*: ``{"template": name or None,
+        "values": {option: value}}`` -- the mapping template and its option
+        values, kept with the scene beside the sheet's edits (found as they
+        are, :meth:`layer_key`); ``None`` for a sheet the scene keeps none
+        for, which the user's own options then seed (maintainer 2026-10-12).
+
+        Returns:
+            A copy of the record, or ``None``.
+        """
+        key = cls.layer_key(store, source)
+        record = (getattr(store, "manifest_options", None) or {}).get(key)
+        if key is None or not isinstance(record, dict):
+            return None
+        return {
+            "template": record.get("template"),
+            "values": dict(record.get("values") or {}),
+        }
+
+    @classmethod
+    def set_sheet_options(
+        cls,
+        store: Any,
+        source: str,
+        template: Optional[str],
+        values: Optional[Dict[str, Any]],
+    ) -> bool:
+        """Keep *template* and its option *values* as how the scene reads
+        sheet *source* -- re-keyed to *source* first (:meth:`adopt_layers`).
+
+        What a Build, an option change and a saved Local Edit record: a
+        sheet's object names, and so its edits' keys, depend on how it was
+        read (SOL_REPLACE_ASSEMBLY was built with Object Case = upper; read
+        As written, every built object and all 5 edits went missing).
+
+        Returns:
+            Whether *store* changed (it is then marked dirty).
+        """
+        moved = cls.adopt_layers(store, source)
+        record = {"template": template or None, "values": dict(values or {})}
+        if store.manifest_options.get(source) == record:
+            return moved
+        store.manifest_options[source] = record
+        store.mark_dirty()
+        return True
+
+    @classmethod
+    def read(cls, store: Any, source: str) -> "ManifestEdits":
+        """*source*'s edits saved on *store* (:meth:`layer_key`); empty when
+        none are, or *store* is ``None``."""
+        key = cls.layer_key(store, source)
+        return cls.from_dict(store.manifest_edits.get(key) if key is not None else None)
+
+    def write(self, store: Any, source: str) -> bool:
+        """Save these edits on *store* as *source*'s layer -- re-keyed there
+        first (:meth:`adopt_layers`) -- or drop the layer once nothing is
+        edited.
+
+        Returns:
+            Whether *store* changed (it is then marked dirty).
+        """
+        moved = self.adopt_layers(store, source)
+        if self.has_edits:
+            data = self.to_dict()
+            if store.manifest_edits.get(source) == data:
+                return moved
+            store.manifest_edits[source] = data
+        elif store.manifest_edits.pop(source, None) is None:
+            return moved  # nothing saved, nothing to drop
+        store.mark_dirty()
+        return True
 
     # ---- queries -----------------------------------------------------------
 

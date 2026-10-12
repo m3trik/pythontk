@@ -224,7 +224,9 @@ class UpstreamPatch:
             def patched(*args, **kwargs):
                 return replacement(original, *args, **kwargs)
 
-            swapped = staticmethod(patched) if isinstance(raw, staticmethod) else patched
+            swapped = (
+                staticmethod(patched) if isinstance(raw, staticmethod) else patched
+            )
 
         setattr(owner, attribute, swapped)
         try:

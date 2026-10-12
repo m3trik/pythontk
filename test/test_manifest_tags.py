@@ -133,6 +133,26 @@ class TestUserTags(unittest.TestCase):
         self.assertEqual(ManifestTags.read(self.store, "a.csv"), {"A01": "tag1"})
         self.assertEqual(ManifestTags.read(None, "a.csv"), {})
 
+    def test_a_moved_sheet_keeps_its_tags_and_a_pick_re_keys_them(self):
+        """Bug: tags were found by the sheet's exact path, so a moved sheet
+        showed none.  Found as the Local Edits are
+        (``ManifestEdits.layer_key``); a pick re-keys tags and edits together.
+        Fixed: 2026-10-11"""
+        ManifestTags.assign(self.store, "O:/a/x.csv", ["A01"], "tag1")
+        self.store.manifest_edits["O:/a/x.csv"] = {"steps": {"A01": {"name": "N"}}}
+        self.assertEqual(ManifestTags.read(self.store, "C:/b/x.csv"), {"A01": "tag1"})
+        self.assertTrue(ManifestTags.assign(self.store, "C:/b/x.csv", ["A02"], "tag2"))
+        self.assertEqual(list(self.store.manifest_tags), ["C:/b/x.csv"])
+        self.assertEqual(list(self.store.manifest_edits), ["C:/b/x.csv"])
+        self.assertEqual(
+            ManifestTags.read(self.store, "C:/b/x.csv"), {"A01": "tag1", "A02": "tag2"}
+        )
+        # Two sheets of that name keep layers: neither is found from a third
+        # path, and each keeps its own.
+        self.store.manifest_tags["D:/c/x.csv"] = {"B01": "tag4"}
+        self.assertEqual(ManifestTags.read(self.store, "E:/d/x.csv"), {})
+        self.assertEqual(ManifestTags.read(self.store, "D:/c/x.csv"), {"B01": "tag4"})
+
 
 if __name__ == "__main__":
     unittest.main()

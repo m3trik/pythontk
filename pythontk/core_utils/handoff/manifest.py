@@ -159,6 +159,12 @@ class HandoffManifest(_HandoffManifestInternal):
     #: Baked show / hide the carrier drops (FBX carries the curve; Blender's
     #: importer discards it).
     VISIBILITY = "visibility"
+    #: ``{node: {channel: [frames]}}`` -- the keys whose out side is a step
+    #: (Maya ``step``, Blender ``CONSTANT``), *channel* a transform family
+    #: (``translate`` / ``rotate`` / ``scale``) or a custom attribute.  FBX
+    #: carries the key, but Blender's importer makes every key LINEAR, so a
+    #: hold arrived as a ramp to the next key.
+    STEPPED_KEYS = "stepped_keys"
     #: The source's lights as data, rebuilt natively on the far side.
     LIGHTS = "lights"
     #: The source's world / environment record (HDRI, sky dome).
@@ -211,6 +217,7 @@ class HandoffManifest(_HandoffManifestInternal):
         TRANSFORMS,
         INSTANCES,
         VISIBILITY,
+        STEPPED_KEYS,
         LIGHTS,
         WORLD,
         SKINS,

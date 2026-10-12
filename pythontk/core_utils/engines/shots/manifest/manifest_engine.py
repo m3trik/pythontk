@@ -20,7 +20,17 @@ Mirrors the :class:`ShotStore` hook pattern: the pure core never imports
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Collection,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Set,
+    Tuple,
+)
 
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
 from pythontk.core_utils.engines.shots.manifest.manifest_model import (
@@ -117,6 +127,20 @@ class ShotManifest(_ShotManifestInternal):
             the remaining steps and shots in timeline order).
     """
 
+    #: The owner tag on the timeline markers a build places
+    #: (``ShotStore.marker_owner``): how it finds its own again.
+    MARKER_OWNER = "shot_manifest"
+    #: How a marked behavior's marker looks: set apart from a hand's (the
+    #: sequencer's default triangle), and fixed -- the next build puts a
+    #: moved one back.
+    MARKER_LOOK = {
+        "color": "#6FB1E0",
+        "draggable": False,
+        "style": "diamond",
+        "line_style": "dotted",
+        "opacity": 1.0,
+    }
+
     #: Metadata keys the manifest writes on a shot (:meth:`_step_metadata`);
     #: a build replaces these and the doc's pass-through columns, and keeps
     #: every other key it finds.
@@ -130,6 +154,7 @@ class ShotManifest(_ShotManifestInternal):
         match: str = "name",
         rebuild_edited: bool = False,
         disabled_behaviors: Iterable[str] = (),
+        marked_behaviors: Iterable[str] = (),
     ):
         """
         Parameters:
@@ -141,11 +166,17 @@ class ShotManifest(_ShotManifestInternal):
             disabled_behaviors: Behavior names turned off: a build neither keys
                 nor releases them and Assess does not report them; the keys
                 they have stay.
+            marked_behaviors: Behavior names a build marks instead of keying:
+                a timeline marker where each would be keyed
+                (:meth:`place_markers`), which Assess checks for.  Like a
+                turned-off behavior it is neither keyed nor released.  A name
+                also turned off is off.
         """
         self.store = store
         self.match = match
         self.rebuild_edited = bool(rebuild_edited)
         self.disabled_behaviors = frozenset(disabled_behaviors)
+        self.marked_behaviors = frozenset(marked_behaviors) - self.disabled_behaviors
         self._fps_cache: Optional[float] = None
         # Per-cycle caches (cleared at the top of update()/assess()):
         # transform → standard-attr curves, and per-curve key data.
@@ -203,6 +234,11 @@ class ShotManifest(_ShotManifestInternal):
     def recipe(self):
         """The scene's :class:`~pythontk.EffectRecipe` -- the store's."""
         return self.store.effect_recipe
+
+    @property
+    def unkeyed_behaviors(self) -> frozenset:
+        """The behavior names a build does not key: turned off or marked."""
+        return self.disabled_behaviors | self.marked_behaviors
 
     def _stamp(self, behavior: str) -> str:
         """The recipe stamp *behavior*'s keys carry: the fingerprint of the
@@ -429,7 +465,8 @@ class ShotManifest(_ShotManifestInternal):
                 object in each shot's range.
 
         Returns:
-            ``(actions, behavior_result, assessment)`` tuple.
+            ``(actions, behavior_result, assessment)`` tuple; the behavior
+            result's ``"marked"`` lists what :meth:`place_markers` marked.
         """
         if apply_behaviors:
             # Before any shot moves: a clip keyed by a build that did not claim
@@ -449,6 +486,7 @@ class ShotManifest(_ShotManifestInternal):
             self.release_dropped(steps)
             behavior_result = self.apply_behaviors()
             self._record_authored(behavior_result)
+            behavior_result["marked"] = self.place_markers()
 
         # Rewire managed audio nodes so the sequencer/timeline reflects any
         # key changes authored above.  Idempotent.
@@ -510,8 +548,11 @@ class ShotManifest(_ShotManifestInternal):
         inserted step shifts nothing); then the shot of the step's ID -- or of
         its :attr:`~BuilderStep.shot_name`, when it was renamed -- unless that
         shot is bound to another step; then, with ``match="name_then_order"``,
-        the remaining steps and shots in doc and timeline order.  A shot
-        nothing pairs with is an orphan -- reported, never removed by a build.
+        the remaining steps and shots in doc and timeline order -- a shot
+        split off a step's shot left out.  A shot nothing pairs with is an
+        orphan -- reported, never removed by a build -- and one split off a
+        step's shot is linked to that step (``ShotPairing.links``,
+        ``ShotStore.step_links``) without pairing.
         """
         shots = self.store.sorted_shots()
         by_binding: Dict[str, Any] = {}
@@ -542,12 +583,24 @@ class ShotManifest(_ShotManifestInternal):
                 if (shot.metadata or {}).get("step") not in (None, sid):
                     continue  # bound to another step
                 take(sid, shot, "name")
+        # Where a shot nothing pairs with belongs: a tail split off a step's
+        # shot is in that step's section -- a link, never a pairing.
+        links = self.store.step_links()
         if self.match == "name_then_order":
+            # A linked shot is its step's tail, not another step's shot: the
+            # order pass passes it by (maintainer 2026-10-12).
             todo = [sid for sid in ids if sid not in pairing.shots]
-            free = [shot for shot in shots if shot.shot_id not in used]
+            free = [
+                shot
+                for shot in shots
+                if shot.shot_id not in used and shot.shot_id not in links
+            ]
             for sid, shot in zip(todo, free):
                 take(sid, shot, "order")
         pairing.orphans = [shot for shot in shots if shot.shot_id not in used]
+        pairing.links = {
+            s.shot_id: links[s.shot_id] for s in pairing.orphans if s.shot_id in links
+        }
         return pairing
 
     def bind(self, shot, step_id: Optional[str]) -> None:
@@ -648,15 +701,16 @@ class ShotManifest(_ShotManifestInternal):
         than leaving it to play at its old place too.  Returns how many keys
         were adopted.
         """
+        from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
+
         led = self.store.edit_ledger
         n = 0
         for shot in self._behavior_shots():
             for entry in (shot.metadata or {}).get("behaviors", ()):
                 name, behavior = entry.get("name", ""), entry.get("behavior", "")
-                if behavior in self.disabled_behaviors:
+                if behavior in self.unkeyed_behaviors:
                     continue
-                is_audio = entry.get("kind") == "audio" or entry.get("source_path")
-                if not (name and behavior and is_audio):
+                if not (name and behavior and Behaviors.is_audio_entry(entry)):
                     continue
                 if led.authored(owner=shot.shot_id, obj=name, behavior=behavior):
                     continue
@@ -704,7 +758,7 @@ class ShotManifest(_ShotManifestInternal):
         from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
 
         listed = list(obj.behaviors or [])
-        off = self.disabled_behaviors
+        off = self.unkeyed_behaviors
         behaviors = [b for b in listed if b not in off]
         claimed = {
             b
@@ -725,7 +779,7 @@ class ShotManifest(_ShotManifestInternal):
         # it: the Apply re-keys exactly what the doc lists now.
         for behavior in sorted(claimed | set(behaviors)):
             self.release_authored(shot.shot_id, obj.name, behavior)
-        # Anchors over the whole list: a behavior turned off keeps its place.
+        # Anchors over the whole list: a behavior not keyed keeps its place.
         anchors = Behaviors.anchor_overrides(listed)
         for behavior, anchor in zip(listed, anchors):
             if behavior in off:
@@ -784,6 +838,135 @@ class ShotManifest(_ShotManifestInternal):
         if n:
             self.store.mark_dirty()
         return n
+
+    # ---- behavior markers ------------------------------------------------
+
+    def _mark_frame(self, shot, behavior: str, anchor: Any = None) -> Optional[float]:
+        """The frame *behavior* is marked at on *shot*: where its keys would
+        start (:meth:`Behaviors.key_window`); ``None`` for one keying nothing."""
+        from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
+
+        window = Behaviors.key_window(
+            behavior, shot.start, shot.end, anchor, self.recipe
+        )
+        return None if window is None else window[0]
+
+    def _is_mark(self, marker: Dict[str, Any], shot_ids: Collection[int]) -> bool:
+        """Whether *marker* is one this manifest placed on one of *shot_ids*."""
+        return (
+            ShotStore.marker_owner(marker) == self.MARKER_OWNER
+            and marker["data"].get("shot_id") in shot_ids
+        )
+
+    def planned_markers(self, shots: Optional[list] = None) -> List[Dict[str, Any]]:
+        """The markers a build places for :attr:`marked_behaviors`: per shot,
+        one per behavior and frame -- where its keys would start, each object
+        placed as a build places it (:meth:`Behaviors.anchor_overrides`) --
+        naming the objects it marks.
+
+        Parameters:
+            shots: The shots to mark; default the ones a build reaches
+                (:meth:`_behavior_shots`).  A zero-length shot gets none, as
+                it gets no keys.
+        """
+        from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
+
+        marked = self.marked_behaviors
+        if not marked:
+            return []
+        out: List[Dict[str, Any]] = []
+        for shot in self._behavior_shots() if shots is None else shots:
+            if abs(shot.end - shot.start) < 1e-6:
+                continue
+            entries = [
+                e
+                for e in (shot.metadata or {}).get("behaviors", ())
+                if e.get("name") and e.get("behavior")
+            ]
+            groups: Dict[Tuple[float, str], List[str]] = {}
+            # Placed as the build places them (Behaviors.entry_anchors).
+            for entry, anchor in zip(entries, Behaviors.entry_anchors(entries)):
+                name, behavior = entry["name"], entry["behavior"]
+                if behavior not in marked:
+                    continue
+                frame = self._mark_frame(shot, behavior, anchor)
+                if frame is None:
+                    continue
+                names = groups.setdefault((frame, behavior), [])
+                if name not in names:
+                    names.append(name)
+            for (frame, behavior), names in sorted(groups.items()):
+                out.append(
+                    dict(
+                        self.MARKER_LOOK,
+                        time=frame,
+                        note=f"{Behaviors.label(behavior)}: {', '.join(names)}",
+                        data={
+                            "owner": self.MARKER_OWNER,
+                            "shot_id": shot.shot_id,
+                            "behavior": behavior,
+                            "objects": names,
+                        },
+                    )
+                )
+        return out
+
+    def place_markers(self) -> List[Dict[str, Any]]:
+        """Mark where the :attr:`marked_behaviors` would be keyed, on the
+        shots a build reaches (:meth:`_behavior_shots`).
+
+        This manifest's markers on those shots go first -- all but a
+        turned-off behavior's, which a build leaves as it leaves its keys --
+        then :meth:`planned_markers` are placed: a behavior keyed again,
+        dropped from the doc or moved with its shot loses its old marker.  A
+        hand's markers, and those on the shots a build keeps, are never
+        touched.
+
+        Returns:
+            One ``{object, behavior, shot, shot_id, time}`` record per object
+            marked.
+        """
+        shots = self._behavior_shots()
+        ids = {s.shot_id for s in shots}
+        off = self.disabled_behaviors
+        planned = self.planned_markers(shots)
+        self.store.set_markers(
+            [
+                m
+                for m in self.store.markers
+                if not (self._is_mark(m, ids) and m["data"].get("behavior") not in off)
+            ]
+            + planned
+        )
+        names = {s.shot_id: s.name for s in shots}
+        return [
+            {
+                "object": name,
+                "behavior": m["data"]["behavior"],
+                "shot": names[m["data"]["shot_id"]],
+                "shot_id": m["data"]["shot_id"],
+                "time": m["time"],
+            }
+            for m in planned
+            for name in m["data"]["objects"]
+        ]
+
+    def _marker_placed(self, shot, obj: str, behavior: str, anchor: Any = None) -> bool:
+        """Whether *behavior*'s marker naming *obj* is on *shot* where a build
+        places it (:meth:`planned_markers`): Assess's check of a marked
+        behavior.  A zero-length shot has nothing to mark."""
+        if abs(shot.end - shot.start) < 1e-6:
+            return True
+        frame = self._mark_frame(shot, behavior, anchor)
+        if frame is None:
+            return False
+        return any(
+            self._is_mark(m, (shot.shot_id,))
+            and m["data"].get("behavior") == behavior
+            and obj in (m["data"].get("objects") or ())
+            and abs(float(m.get("time", 0.0)) - frame) < 0.5
+            for m in self.store.markers
+        )
 
     def _compute_plan(
         self,
@@ -971,12 +1154,7 @@ class ShotManifest(_ShotManifestInternal):
                 o.name: sorted(o.behaviors) for o in step.objects if o.kind != "audio"
             }
             csv_objs = set(csv_obj_map)
-            raw_csv = existing.metadata.get("csv_objects", existing.objects)
-            old_csv_objs = set(
-                (e["name"] if isinstance(e, dict) else e)
-                for e in raw_csv
-                if not (isinstance(e, dict) and e.get("kind") == "audio")
-            )
+            old_csv_objs, old_audio = self._recorded_doc(existing)
             # Doc names vs stored (long, namespaced) members: one identity rule.
             csv_keys = {key(n) for n in csv_objs}
             old_keys = {key(n) for n in old_csv_objs}
@@ -1016,11 +1194,6 @@ class ShotManifest(_ShotManifestInternal):
                 if key(n) not in member_keys and self._resolve_object(n)[1] == "found"
             }
 
-            old_audio = {
-                e["name"]
-                for e in raw_csv
-                if isinstance(e, dict) and e.get("kind") == "audio"
-            }
             audio_changed = new_audio != old_audio
             renamed = self._new_name(existing, step) is not None
 
@@ -1103,6 +1276,14 @@ class ShotManifest(_ShotManifestInternal):
         """Whether *shot* was edited since a build last left it: renamed,
         resized, its members or its description changed.
 
+        A member the shot system added on its own is no hand's edit
+        (``ShotStore.SYSTEM_MEMBERS``: the sequencer filling an empty shot
+        when it shows it, an object keyed in the active shot).  Read as one,
+        opening a built step with no -- or missing -- objects in the Shot
+        Sequencer made the shot "edited", and every later Build kept it, doc
+        changes and all (BACKLOG 2026-10-10).  A member a hand adds or
+        removes still counts.
+
         A shot a build made before this record existed reads as unedited,
         save a rename (the name has had its record longer).
         """
@@ -1111,7 +1292,16 @@ class ShotManifest(_ShotManifestInternal):
         if built_name is not None and shot.name != built_name:
             return True
         record = meta.get(self.BUILT)
-        return record is not None and record != self._build_record(shot)
+        if record is None:
+            return False
+        current = self._build_record(shot)
+        tagged = set(meta.get(ShotStore.SYSTEM_MEMBERS) or ())
+        if tagged:
+            built = set(record.get("members") or ())
+            current["members"] = [
+                k for k in current["members"] if k not in tagged or k in built
+            ]
+        return record != current
 
     def _kept(self, shot) -> bool:
         """Whether a build leaves *shot* as it is: locked, or edited by hand
@@ -1417,6 +1607,7 @@ class ShotManifest(_ShotManifestInternal):
             resolve = self._resolve_object
 
         off = self.disabled_behaviors
+        marked = self.marked_behaviors
         results: List[StepStatus] = []
         for step in steps:
             shot = pairing.shots.get(step.step_id)
@@ -1458,7 +1649,11 @@ class ShotManifest(_ShotManifestInternal):
                             b
                             for b in obj.behaviors
                             if b not in off
-                            and not verify_fn(obj.name, b, shot.start, shot.end)
+                            and not (
+                                self._marker_placed(shot, obj.name, b)
+                                if b in marked
+                                else verify_fn(obj.name, b, shot.start, shot.end)
+                            )
                         ]
                         status = "missing_behavior" if broken else "valid"
                     else:
@@ -1496,6 +1691,10 @@ class ShotManifest(_ShotManifestInternal):
                     for b, anchor in zip(obj.behaviors, anchors):
                         if b in unknown or b in off:
                             continue
+                        if b in marked:
+                            if not self._marker_placed(shot, obj.name, b, anchor):
+                                failed.append(b)
+                            continue
                         try:
                             ok = verify_fn(
                                 node,
@@ -1517,6 +1716,7 @@ class ShotManifest(_ShotManifestInternal):
                         if b not in failed
                         and b not in unknown
                         and b not in off
+                        and b not in marked
                         and self.is_stale(shot.shot_id, obj.name, b)
                     ]
                     # Over keys the animator owns, Build's guard leaves a
@@ -1525,7 +1725,8 @@ class ShotManifest(_ShotManifestInternal):
                     conflicts = [
                         b
                         for b in failed + stale
-                        if self.unowned_keys(node, b, shot.start, shot.end)
+                        if b not in marked
+                        and self.unowned_keys(node, b, shot.start, shot.end)
                     ]
                     stale = [b for b in stale if b not in conflicts]
                     if unknown:
@@ -1581,7 +1782,7 @@ class ShotManifest(_ShotManifestInternal):
             shrinkable = 0.0
             if built and shot is not None:
                 content_end = self._compute_content_end(
-                    step, shot, obj_statuses, self.recipe, self._resolve_fps()
+                    step, shot, obj_statuses, self.recipe
                 )
                 if content_end < shot.end:
                     shrinkable = shot.end - content_end
@@ -1595,9 +1796,42 @@ class ShotManifest(_ShotManifestInternal):
                     shrinkable_frames=shrinkable,
                     dropped_behaviors=[list(pair) for pair in dropped],
                     edited=edited,
+                    updates=self._updates(shot, step) if built and not edited else [],
                 )
             )
         return results
+
+    def _updates(self, shot, step: BuilderStep) -> List[str]:
+        """What a build rewrites on *shot*, *step*'s, that no object status
+        shows (``StepStatus.updates``): a new name the store takes
+        (:meth:`_new_name`), a new description, an object or audio clip the
+        last build recorded and the step no longer lists."""
+        updates = []
+        name = self._new_name(shot, step)
+        if name is not None and not self.store.name_error(name, shot.shot_id):
+            updates.append("name")
+        if (shot.description or "") != (step.display_text or ""):
+            updates.append("description")
+        if "csv_objects" in (shot.metadata or {}):
+            key = ShotStore.member_key
+            objs, audio = self._recorded_doc(shot)
+            listed = {key(o.name) for o in step.objects if o.kind != "audio"}
+            clips = {o.name for o in step.objects if o.kind == "audio"}
+            if any(key(n) not in listed for n in objs) or audio != clips:
+                updates.append("objects")
+        return updates
+
+    @staticmethod
+    def _recorded_doc(shot) -> Tuple[Set[str], Set[str]]:
+        """``(objects, audio)``: the doc's names the last build recorded on
+        *shot* (``csv_objects``), its members when no build did."""
+        objs, audio = set(), set()
+        for entry in (shot.metadata or {}).get("csv_objects", shot.objects):
+            if isinstance(entry, dict) and entry.get("kind") == "audio":
+                audio.add(entry["name"])
+            else:
+                objs.add(entry["name"] if isinstance(entry, dict) else entry)
+        return objs, audio
 
     @staticmethod
     def _compute_content_end(
@@ -1605,35 +1839,23 @@ class ShotManifest(_ShotManifestInternal):
         scene,
         obj_statuses: List[ObjectStatus],
         recipe=None,
-        fps: Optional[float] = None,
     ) -> float:
-        """Return the latest frame used by content in this step (an effect's
-        length is the *recipe*'s, at *fps*)."""
+        """Return the latest frame used by content in this step: each
+        behavior's last key where the build puts it -- an object's point
+        behaviors spread over the range (:meth:`Behaviors.anchor_overrides`,
+        the one placement rule) and each placed by
+        :meth:`Behaviors.key_window` (an effect by the *recipe*)."""
         from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
 
         latest = scene.start  # at minimum, content starts at scene start
         for obj, obj_st in zip(step.objects, obj_statuses):
-            for beh in obj.behaviors:
-                try:
-                    tmpl = Behaviors.keyed(beh, recipe, fps)
-                except FileNotFoundError:
-                    continue
-                for _attr, attr_def in tmpl.get("attributes", {}).items():
-                    for phase in ("in", "out"):
-                        block = attr_def.get(phase)
-                        if not block:
-                            continue
-                        anchor = block.get(
-                            "anchor", "start" if phase == "in" else "end"
-                        )
-                        offset = block.get("offset", 0)
-                        dur = block.get("duration", 0)
-                        if anchor == "end":
-                            end_t = scene.end - offset
-                        else:
-                            end_t = scene.start + offset + dur
-                        if end_t > latest:
-                            latest = end_t
+            names = list(obj.behaviors)
+            for beh, anchor in zip(names, Behaviors.anchor_overrides(names)):
+                window = Behaviors.key_window(
+                    beh, scene.start, scene.end, anchor, recipe
+                )
+                if window is not None and window[1] > latest:
+                    latest = window[1]
             if obj_st.key_range:
                 if obj_st.key_range[1] > latest:
                     latest = obj_st.key_range[1]

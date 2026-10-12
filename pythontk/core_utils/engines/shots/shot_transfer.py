@@ -18,8 +18,9 @@ What is DCC-specific is injected, never known here:
   holds -- the same spelling the manifest's other sections use, so the
   consumer resolves every section through one matcher;
 * what a ledger curve key names (``curve_ref``): a Maya claim is keyed by
-  animCurve node, a Blender one by ``object|data_path|index`` -- both resolve
-  to an ``(object, channel label)`` pair, the label in mayatk's
+  animCurve node, a Blender one by ``action|slot|data_path|index`` -- both
+  resolve to an ``(object, channel label)`` pair, or one per object for a
+  curve several share (a Blender linked duplicate), the label in mayatk's
   ``translateX`` vocabulary that blendertk's sequencer already speaks;
 * how the receiving scene finds an object (``resolve``) and a curve
   (``curve_key``), and whether a key really sits where a claim says
@@ -38,7 +39,17 @@ decoded result as it reads a saved scene.
 """
 
 from copy import deepcopy
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 
 from pythontk.core_utils.engines.shots.shot_ledger import NO_OWNER, ShotEditLedger
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
@@ -47,8 +58,9 @@ __all__ = ["ShotTransfer"]
 
 #: ``name -> carrier spelling`` (producer side).
 Spell = Callable[[str], str]
-#: ``ledger curve key -> (object name, channel label)`` or ``None`` (producer side).
-CurveRef = Callable[[str], Optional[Tuple[str, str]]]
+#: ``ledger curve key -> (object name, channel label)`` (or a list of them,
+#: one per object sharing the curve) or ``None`` (producer side).
+CurveRef = Callable[[str], Union[None, Tuple[str, str], Sequence[Tuple[str, str]]]]
 #: ``carrier spelling -> live object name`` or ``None`` (consumer side).
 Resolve = Callable[[str], Optional[str]]
 #: ``(object name, channel label) -> ledger curve key`` or ``None`` (consumer side).
@@ -71,6 +83,20 @@ class _ShotTransferInternal(object):
     #: Per-shot metadata that names scene objects.
     _CSV_OBJECTS = "csv_objects"
     _OBJECT_STATUS = "object_status"
+
+    @staticmethod
+    def _marker_onto(
+        marker: Dict[str, Any], local_ids: Dict[int, int]
+    ) -> Dict[str, Any]:
+        """*marker* with the shot its tool's tag names (``data["shot_id"]``:
+        the Shot Manifest's) renumbered as that shot was; a shot no incoming
+        one is arrives naming none, so the tool never takes it for one here.
+        """
+        marker = deepcopy(marker)
+        data = marker.get("data")
+        if isinstance(data, dict) and data.get("shot_id") is not None:
+            data["shot_id"] = local_ids.get(int(data["shot_id"]))
+        return marker
 
     @staticmethod
     def _unique(names: Iterable[str]) -> List[str]:
@@ -238,9 +264,12 @@ class ShotTransfer(_ShotTransferInternal):
         Parameters:
             state: The store's dict form.
             spell: How a scene name is spelled on the carrier (default: as is).
-            curve_ref: Maps a ledger curve key to ``(object, channel label)``;
-                a ``None`` answer (or no callable) leaves that curve's claims
-                behind -- the claim is about a key the far side cannot find.
+            curve_ref: Maps a ledger curve key to ``(object, channel label)``,
+                or to a list of them for a curve several objects play (a
+                Blender linked duplicate: each sharer's carrier curve takes
+                the claims); a ``None`` or empty answer (or no callable)
+                leaves that curve's claims behind -- the claim is about a key
+                the far side cannot find.
             objects: The exported set, in the producer's own naming.  When
                 given, membership, hidden / pinned lists, ledger claims and
                 channels are scoped to it (compared through *spell*, so long
@@ -271,7 +300,10 @@ class ShotTransfer(_ShotTransferInternal):
 
         store: Dict[str, Any] = {}
         for key, value in state.items():
-            if key == "edit_ledger":
+            # The ledger crosses as its own section.  The scene's node ids
+            # (``member_ids``: Maya UUIDs, by its own spelling of every
+            # member) stay home, as a step claim's halves do.
+            if key in ("edit_ledger", "member_ids"):
                 continue
             store[key] = deepcopy(value)
         store["shots"] = [
@@ -294,16 +326,23 @@ class ShotTransfer(_ShotTransferInternal):
             canon = ShotEditLedger.from_dict(state.get("edit_ledger")).to_dict()
             for reg in cls._REGISTERS:
                 for curve, records in (canon.get(reg) or {}).items():
-                    ref = curve_ref(curve)
-                    if not ref:
-                        continue
-                    obj, label = ref
-                    if not obj or not label or not keep(obj):
-                        continue
-                    by_label = ledger[reg].setdefault(spell(str(obj)), {})
-                    by_label.setdefault(str(label), []).extend(
-                        [list(r) for r in records]
-                    )
+                    refs = curve_ref(curve)
+                    if refs and not isinstance(refs[0], (list, tuple)):
+                        refs = [refs]  # one pair (its object maybe unnamed)
+                    for ref in refs or ():
+                        obj, label = ref
+                        if not obj or not label or not keep(obj):
+                            continue
+                        by_label = ledger[reg].setdefault(spell(str(obj)), {})
+                        # A step claim's halves (ledger format 2) are the
+                        # sending DCC's own numbers -- a Maya angle, a Blender
+                        # handle -- so they stay home: it crosses as format 1.
+                        by_label.setdefault(str(label), []).extend(
+                            [
+                                list(r[:4]) if reg == "steps" else list(r)
+                                for r in records
+                            ]
+                        )
         section: Dict[str, Any] = {
             "version": cls.VERSION,
             "store": store,
@@ -466,10 +505,14 @@ class ShotTransfer(_ShotTransferInternal):
                         retimed = cls._retime(records, ratio, offset)
                         if key_exists is not None:
                             retimed = [r for r in retimed if key_exists(key, r[0])]
-                        if retimed:
-                            ledger.setdefault(reg, {}).setdefault(key, []).extend(
-                                retimed
-                            )
+                        if not retimed:
+                            continue
+                        # Objects sharing one curve here (a linked duplicate,
+                        # a ``duplicate -ic``) each bring its claims: once.
+                        have = ledger.setdefault(reg, {}).setdefault(key, [])
+                        for rec in retimed:
+                            if not any(abs(rec[0] - h[0]) <= 1e-6 for h in have):
+                                have.append(rec)
         # Through the ledger so records are canonical and sorted, as a save is.
         store["edit_ledger"] = ShotEditLedger.from_dict(ledger).to_dict()
         return store
@@ -490,8 +533,9 @@ class ShotTransfer(_ShotTransferInternal):
         its own settings and clock and gains the incoming shots after its last
         one under fresh ids: memberships, hidden / pinned lists, markers,
         locked gaps and ledger claims come along, with every shot id (a locked
-        gap's pair, a claim's owner) remapped to the id the shot was given --
-        a claim no incoming shot owns arrives owned by none --
+        gap's pair, a claim's owner, the shot a tool's marker names) remapped
+        to the id the shot was given -- a claim no incoming shot owns arrives
+        owned by none --
         and every time rescaled onto the scene's clock when the two stores'
         ``scene_fps`` differ -- the DCC lands the other scene's keys at the
         same seconds, so its shots must land there too.
@@ -552,7 +596,7 @@ class ShotTransfer(_ShotTransferInternal):
                 list(out.get(key) or []) + list(incoming.get(key) or [])
             )
         out["markers"] = list(out.get("markers") or []) + [
-            dict(m) for m in incoming.get("markers") or []
+            cls._marker_onto(m, local_ids) for m in incoming.get("markers") or []
         ]
         gaps = [list(pair) for pair in out.get("locked_gaps") or []]
         for left, right in incoming.get("locked_gaps") or []:

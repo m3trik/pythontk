@@ -90,9 +90,12 @@ class MoveFileTest(BaseTestCase):
         existing = os.path.join(self.dst_dir, "a.txt")
         with open(existing, "w") as f:
             f.write("old")
-        with mock.patch(
-            "os.replace", side_effect=OSError(errno.EXDEV, "cross-device link")
-        ), mock.patch("shutil.move", side_effect=OSError(28, "No space left")):
+        with (
+            mock.patch(
+                "os.replace", side_effect=OSError(errno.EXDEV, "cross-device link")
+            ),
+            mock.patch("shutil.move", side_effect=OSError(28, "No space left")),
+        ):
             with self.assertRaises(OSError):
                 FileUtils.move_file(src, self.dst_dir, overwrite=True)
         with open(existing) as f:
@@ -170,8 +173,9 @@ class MoveFileTest(BaseTestCase):
             swaps.append((source, target))
             real_replace(source, target)
 
-        with mock.patch("shutil.move", side_effect=capped), mock.patch.object(
-            FileUtils, "replace_file", side_effect=recorded
+        with (
+            mock.patch("shutil.move", side_effect=capped),
+            mock.patch.object(FileUtils, "replace_file", side_effect=recorded),
         ):
             FileUtils.move_file(src, self.dst_dir, overwrite=True)
         with open(existing) as f:
@@ -248,11 +252,12 @@ class MoveFileTest(BaseTestCase):
             os.remove(os.path.join(path, "a.txt"))
             raise PermissionError(13, "held open")
 
-        with mock.patch("os.rename", side_effect=cross_volume), mock.patch(
-            "os.replace", side_effect=cross_volume
-        ), mock.patch(
-            "shutil.rmtree", side_effect=partial_rmtree
-        ), self.assertLogs("pythontk.file_utils._file_utils", "ERROR") as logs:
+        with (
+            mock.patch("os.rename", side_effect=cross_volume),
+            mock.patch("os.replace", side_effect=cross_volume),
+            mock.patch("shutil.rmtree", side_effect=partial_rmtree),
+            self.assertLogs("pythontk.file_utils._file_utils", "ERROR") as logs,
+        ):
             with self.assertRaises(PermissionError):
                 FileUtils.move_file(src, self.dst_dir, overwrite=True)
         stages = [n for n in os.listdir(self.dst_dir) if n.endswith(".moving")]

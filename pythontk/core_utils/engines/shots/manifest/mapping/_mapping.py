@@ -51,7 +51,7 @@ import json
 import logging
 import re as _re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from pythontk import TemplateSet
 
@@ -517,10 +517,20 @@ class Mapping(_MappingInternal):
                 for part in reversed(str(opt["field"]).split(".")):
                     patch = {part: patch}
             elif spec["kind"] == "choice":
-                choice = opt.get("choices", {}).get(value)
+                choices = opt.get("choices", {})
+                choice = choices.get(value)
                 if choice is None:
-                    choice = opt.get("choices", {}).get(spec["default"], {})
-                patch = choice.get("set", {})
+                    choice = choices.get(spec["default"], {})
+                if "try" in choice:
+                    # Each named choice's column patch is a layout the parse
+                    # tries on the sheet (``ColumnMap.layouts``).
+                    layouts = [
+                        choices[name].get("set", {}).get("columns", {})
+                        for name in choice["try"]
+                    ]
+                    patch = {"columns": {"layouts": layouts}}
+                else:
+                    patch = choice.get("set", {})
             else:
                 patch = opt.get("set", {}) if bool(value) else opt.get("unset", {})
             result = UserConfig.deep_merge(result, patch)
@@ -554,6 +564,80 @@ class Mapping(_MappingInternal):
         mapping = Mapping.apply_options(mapping, options)
         col_map, post = _MappingInternal._build_pipeline(mapping)
         return ManifestModel.parse_csv(csv_path, columns=col_map, post_process=post)
+
+    @staticmethod
+    def infer_options(
+        csv_path: str,
+        mapping: Dict[str, Any],
+        built: Dict[str, Iterable[str]],
+        values: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """The option values *csv_path* reads as a build from it recorded.
+
+        For a scene that read the sheet before its options were kept with it
+        (``ManifestEdits.sheet_options``): its shots recorded what each step
+        listed (``csv_objects``), so the options are the ones that read that
+        back.  SOL_REPLACE_ASSEMBLY was built with Object Case = upper: read
+        As written, 1 of its 20 built steps lists what the build recorded;
+        upper reads 16.  A coordinate search from *values*: each option tries
+        each of its values and keeps one that reads more of *built*, until a
+        pass gains nothing -- so a tie keeps *values*.
+
+        Parameters:
+            csv_path: The sheet (a path or URL).
+            mapping: The template (``load_mapping``), options block included.
+            built: ``{step_id: [object name, ...]}`` -- what the build recorded.
+            values: Where the search starts (the user's options); each option
+                left out starts at its default.
+
+        Returns:
+            ``{option: value}`` for every option of *mapping*; *values* as they
+            were when *built* is empty or nothing reads it better.
+        """
+        specs = Mapping.option_specs(mapping)
+        best = {s["key"]: (values or {}).get(s["key"], s["default"]) for s in specs}
+        target = {(str(sid), str(n)) for sid, names in built.items() for n in names}
+        if not target:
+            return best
+        scores: Dict[str, int] = {}
+
+        # A trial that reads nothing is expected here: the parser's warning
+        # for it would read as a problem with the sheet.
+        parser_log = logging.getLogger(ManifestModel.__module__)
+
+        def score(vals: Dict[str, Any]) -> int:
+            key = json.dumps(vals, sort_keys=True, default=str)
+            if key not in scores:
+                was = parser_log.disabled
+                parser_log.disabled = True
+                try:
+                    steps = Mapping.resolve(csv_path, mapping=mapping, options=vals)
+                except Exception:  # a value the sheet cannot be read with
+                    scores[key] = -1
+                else:
+                    read = {(s.step_id, o.name) for s in steps for o in s.objects}
+                    scores[key] = len(target & read)
+                finally:
+                    parser_log.disabled = was
+            return scores[key]
+
+        best_score = score(best)
+        improved = True
+        while improved:
+            improved = False
+            for spec in specs:
+                if spec["kind"] == "choice":
+                    candidates = [value for _label, value, _tip in spec["choices"]]
+                else:
+                    candidates = [False, True]
+                for value in candidates:
+                    if value == best[spec["key"]]:
+                        continue
+                    trial = dict(best, **{spec["key"]: value})
+                    trial_score = score(trial)
+                    if trial_score > best_score:
+                        best, best_score, improved = trial, trial_score, True
+        return best
 
 
 # ---------------------------------------------------------------------------

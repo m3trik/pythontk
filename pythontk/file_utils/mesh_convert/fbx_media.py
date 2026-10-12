@@ -9,7 +9,9 @@ the edits a hand-off pipeline needs on its scratch copy: replacing the
 resolution (:meth:`FbxMedia.downsize`), and the grayscale ones FBX2glTF would
 pack as white (:meth:`FbxMedia.expand_grayscale`) -- dropping animation
 takes the converter would bake for nothing (:meth:`FbxMedia.drop_takes`),
-dropping the apparatus of a baked rig (:meth:`FbxMedia.drop_apparatus`), and
+merging the takes an importer would otherwise play only one of into one
+(:meth:`FbxMedia.merge_takes`), dropping the apparatus of a baked rig
+(:meth:`FbxMedia.drop_apparatus`), and
 embedding the files the scene records name by file name -- the lightmaps, the
 reflection probe, the shadow maps -- so a deliverable needs nothing beside it
 (:meth:`FbxMedia.embed_dependencies`). Everything else is copied byte for
@@ -46,6 +48,7 @@ import logging
 import mmap
 import os
 import struct
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import (
@@ -63,7 +66,7 @@ from typing import (
 
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils._file_utils import FileUtils
-from pythontk.file_utils.mesh_convert.fbx_file import FBX_MAGIC
+from pythontk.file_utils.mesh_convert.fbx_file import FBX_MAGIC, FbxFile
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +111,15 @@ class _FbxMediaInternal:
     GRAYSCALE_MODES = ("1", "L", "LA", "I;16", "I;16B", "I;16L")
 
     _FOOTER_TAIL = 4 + 4 + 120 + 16  # zeros, version, zeros, magic
+
+    #: The objects an animation take owns, owner first: a stack holds layers,
+    #: a layer holds curve nodes, a curve node holds curves.
+    TAKE_CHAIN = (
+        b"AnimationStack",
+        b"AnimationLayer",
+        b"AnimationCurveNode",
+        b"AnimationCurve",
+    )
 
     @staticmethod
     def _header_fmt(wide: bool) -> Tuple[str, int]:
@@ -651,6 +663,417 @@ class _FbxMediaInternal:
         cls._promote(part, target)
         return report
 
+    # ---- takes ------------------------------------------------------------
+
+    @classmethod
+    def _head_string(cls, record: _Record) -> Optional[str]:
+        """*record*'s first property as text, when it is a string."""
+        head = cls._scalars(record)
+        if head and isinstance(head[0], bytes):
+            return head[0].decode("utf-8", "replace")
+        return None
+
+    @staticmethod
+    def _decoded(record: _Record) -> List[Any]:
+        """Every property of *record*, decoded (arrays as lists).
+
+        Raises:
+            ValueError: A property that does not decode -- a cut payload or a
+                broken zlib stream -- as ``FbxFile.load`` says it.
+        """
+        stream = io.BytesIO(bytes(record.payload))
+        try:
+            return [
+                FbxFile._read_property(stream, True) for _ in range(record.prop_count)
+            ]
+        except (struct.error, zlib.error) as error:
+            raise ValueError(
+                f"Corrupt FBX record {bytes(record.name)!r}: {error}"
+            ) from error
+
+    @classmethod
+    def _stacks(cls, sections: Mapping[bytes, _Record]) -> Dict[int, str]:
+        """``{uid: take name}`` of every ``AnimationStack``, in file order."""
+        stacks: Dict[int, str] = {}
+        objects = sections.get(b"Objects")
+        for record in objects.children if objects is not None else ():
+            if record.name != b"AnimationStack":
+                continue
+            head = cls._scalars(record)
+            if len(head) > 1 and isinstance(head[0], int):
+                stacks[head[0]] = FbxFile._display_name(head[1]) or ""
+        return stacks
+
+    @classmethod
+    def _drop_stacks(
+        cls, sections: Mapping[bytes, _Record], stacks: Mapping[int, str]
+    ) -> Dict[str, Any]:
+        """Remove the ``AnimationStack`` objects *stacks* names, and everything
+        only they own -- :meth:`FbxMedia.drop_takes` on a parsed file.
+
+        Returns:
+            ``{"takes", "objects", "connections"}`` as ``drop_takes`` reports.
+        """
+        objects = sections[b"Objects"]
+        alive = {
+            name for uid, name in cls._stacks(sections).items() if uid not in stacks
+        }
+        kind_of: Dict[int, bytes] = {}
+        id_of_record: Dict[int, int] = {}
+        for record in objects.children:
+            if record.name not in cls.TAKE_CHAIN:
+                continue
+            head = cls._scalars(record)
+            if not head or not isinstance(head[0], int):
+                continue
+            kind_of[head[0]] = record.name
+            id_of_record[id(record)] = head[0]
+
+        connections = sections.get(b"Connections")
+        rows = [
+            (record, cls._scalars(record))
+            for record in (connections.children if connections else [])
+        ]
+        parents: Dict[int, List[int]] = {}
+        for _record, row in rows:
+            if len(row) >= 3 and row[1] in kind_of:
+                parents.setdefault(row[1], []).append(row[2])
+
+        # Owner-first, so every owner's verdict is settled before its
+        # members are judged.
+        dropped = set(stacks)
+        for level in range(1, len(cls.TAKE_CHAIN)):
+            owner, member = cls.TAKE_CHAIN[level - 1], cls.TAKE_CHAIN[level]
+            for oid, kind in kind_of.items():
+                if kind != member:
+                    continue
+                owners = [p for p in parents.get(oid, ()) if kind_of.get(p) == owner]
+                if owners and all(p in dropped for p in owners):
+                    dropped.add(oid)
+
+        removed: Dict[bytes, int] = {}
+        survivors = []
+        for record in objects.children:
+            oid = id_of_record.get(id(record))
+            if oid in dropped:
+                removed[record.name] = removed.get(record.name, 0) + 1
+            else:
+                survivors.append(record)
+        objects.children = survivors
+
+        report: Dict[str, Any] = {"takes": list(stacks.values()), "objects": {}}
+        report["connections"] = 0
+        if connections is not None:
+            connections.children = [
+                record
+                for record, row in rows
+                if not (len(row) >= 3 and (row[1] in dropped or row[2] in dropped))
+            ]
+            report["connections"] = len(rows) - len(connections.children)
+
+        # A Takes entry is a name: it goes with the last stack of that name.
+        gone = set(stacks.values()) - alive
+        takes = sections.get(b"Takes")
+        if takes is not None:
+            takes.children = [
+                child
+                for child in takes.children
+                if not (child.name == b"Take" and cls._head_string(child) in gone)
+            ]
+            left = [cls._head_string(c) for c in takes.children if c.name == b"Take"]
+            for child in takes.children:
+                if child.name == b"Current" and cls._head_string(child) in gone:
+                    if left:
+                        child.replaced = cls._pack_string(left[0].encode("utf-8"))
+
+        definitions = sections.get(b"Definitions")
+        if definitions is not None:
+            total = 0
+            for object_type in definitions.children:
+                if object_type.name != b"ObjectType":
+                    continue
+                head = cls._scalars(object_type)
+                count = removed.get(head[0], 0) if head else 0
+                if count:
+                    cls._shift_count(object_type, -count)
+                    total += count
+            if total:
+                cls._shift_count(definitions, -total)
+        report["objects"] = {k.decode(): v for k, v in removed.items()}
+        return report
+
+    @classmethod
+    def _take_rows(
+        cls, objects: _Record, connections: Optional[_Record]
+    ) -> Tuple[List[Tuple[str, int, str, Any]], List[Tuple[str, Any, Any, Any]]]:
+        """``(rows, links)`` for :meth:`FbxFile._build_take_model`: each object
+        (an ``AnimationCurve`` with its key arrays decoded) and each
+        connection of a parsed file."""
+        wanted = {name.encode("ascii") for name in FbxFile.CURVE_ARRAYS}
+        rows = []
+        for record in objects.children:
+            head = cls._scalars(record)
+            if not head or not isinstance(head[0], int):
+                continue
+            arrays = None
+            if record.name == b"AnimationCurve":
+                arrays = {
+                    child.name.decode("ascii"): cls._decoded(child)[0]
+                    for child in record.children
+                    if child.name in wanted and child.prop_count
+                }
+            display = FbxFile._display_name(head[1]) if len(head) > 1 else None
+            rows.append(
+                (record.name.decode("ascii", "replace"), head[0], display or "", arrays)
+            )
+        links = []
+        for record in connections.children if connections is not None else ():
+            row = cls._scalars(record)
+            if len(row) < 3:
+                continue
+            kind = (
+                row[0].decode("ascii", "replace")
+                if isinstance(row[0], bytes)
+                else str(row[0])
+            )
+            prop = (
+                row[3].decode("utf-8", "replace")
+                if len(row) > 3 and isinstance(row[3], bytes)
+                else None
+            )
+            links.append((kind, row[1], row[2], prop))
+        return rows, links
+
+    @classmethod
+    def _takes_settings(
+        cls, sections: Mapping[bytes, _Record]
+    ) -> Tuple[Optional[str], Optional[float]]:
+        """``(current take, frames per second)`` a parsed file declares."""
+        current = None
+        for child in getattr(sections.get(b"Takes"), "children", ()):
+            if child.name == b"Current":
+                current = cls._head_string(child) or None
+        found: Dict[bytes, Any] = {}
+        for child in getattr(sections.get(b"GlobalSettings"), "children", ()):
+            if child.name != b"Properties70":
+                continue
+            for prop in child.children:
+                values = cls._decoded(prop)
+                if len(values) >= 5 and values[0] in (b"TimeMode", b"CustomFrameRate"):
+                    found[values[0]] = values[4]
+        fps = FbxFile._frame_rate(found.get(b"TimeMode"), found.get(b"CustomFrameRate"))
+        return current, fps
+
+    @staticmethod
+    def _pack_array(code: str, values: Sequence[Any]) -> bytes:
+        """An FBX array property, encoded as :class:`FbxWriter` writes one."""
+        from pythontk.file_utils.mesh_convert._fbx_writer import FbxWriter
+
+        buf = bytearray()
+        FbxWriter._write_property(buf, FbxWriter.array(code, values))
+        return bytes(buf)
+
+    @classmethod
+    def _write_curve(
+        cls,
+        record: _Record,
+        times: Sequence[int],
+        values: Sequence[float],
+        flags: Sequence[int],
+        data: Sequence[Tuple[float, ...]],
+        counts: Sequence[int],
+        hlen: int,
+    ) -> None:
+        """Replace an ``AnimationCurve``'s keys and attribute runs (*flags*,
+        *data* and *counts* per run). Each array keeps the element type the
+        file stored it in."""
+        arrays = {
+            b"KeyTime": ("l", list(times)),
+            b"KeyValueFloat": ("f", list(values)),
+            b"KeyAttrFlags": ("i", list(flags)),
+            b"KeyAttrDataFloat": ("f", [x for d in data for x in d]),
+            b"KeyAttrRefCount": ("i", list(counts)),
+        }
+        for child in record.children:
+            if child.name in arrays:
+                code, items = arrays.pop(child.name)
+                stored = bytes(child.payload[:1]).decode("ascii", "replace")
+                if stored and stored in "fdli":
+                    code = stored
+                child.replaced = cls._pack_array(code, items)
+        for tag, (code, items) in arrays.items():  # a curve that lacked one
+            record.children.append(
+                cls._new_record(tag, [cls._pack_array(code, items)], (), hlen)
+            )
+
+    @classmethod
+    def _connection(
+        cls, child: int, parent: int, prop: Optional[str], hlen: int
+    ) -> _Record:
+        """A ``C`` record: ``OO`` child under parent, ``OP`` onto *prop*."""
+        props = [
+            cls._pack_string(b"OO" if prop is None else b"OP"),
+            cls._pack_long(child),
+            cls._pack_long(parent),
+        ]
+        if prop is not None:
+            props.append(cls._pack_string(prop.encode("utf-8")))
+        return cls._new_record(b"C", props, (), hlen)
+
+    @staticmethod
+    def _find_properties(record: _Record) -> Optional[_Record]:
+        """*record*'s ``Properties70`` child, or ``None``."""
+        return next((c for c in record.children if c.name == b"Properties70"), None)
+
+    @classmethod
+    def _properties(cls, record: _Record, hlen: int) -> _Record:
+        """*record*'s ``Properties70`` child, added when it has none."""
+        block = cls._find_properties(record)
+        if block is None:
+            block = _Record(b"Properties70", 0, b"", [], b"\0" * (hlen + 1))
+            if not record.children and not record.tail:
+                record.tail = b"\0" * (hlen + 1)  # a leaf gains a closing NULL
+            record.children.append(block)
+        return block
+
+    @classmethod
+    def _declare_component(
+        cls, node: _Record, donor: Optional[_Record], component: str, hlen: int
+    ) -> None:
+        """Give curve node *node* the ``P`` row for *component* when it has
+        none: the *donor* node's (the curve's former node), else a zero."""
+        wanted = component.encode("utf-8")
+        block = cls._properties(node, hlen)
+        if any(cls._scalars(p)[:1] == [wanted] for p in block.children):
+            return
+        source_block = cls._find_properties(donor) if donor is not None else None
+        for source in source_block.children if source_block is not None else ():
+            if cls._scalars(source)[:1] == [wanted]:
+                block.children.append(
+                    _Record(source.name, source.prop_count, bytes(source.payload))
+                )
+                return
+        s = cls._pack_string
+        block.children.append(
+            cls._new_record(
+                b"P",
+                [
+                    s(wanted),
+                    s(b"Number"),
+                    s(b""),
+                    s(b"A"),
+                    b"D" + struct.pack("<d", 0.0),
+                ],
+                (),
+                hlen,
+            )
+        )
+
+    @classmethod
+    def _set_times(cls, record: _Record, times: Mapping[bytes, int], hlen: int) -> None:
+        """Set the ``KTime`` rows *times* names on *record*'s
+        ``Properties70``, adding any it lacks."""
+        block = cls._properties(record, hlen)
+        pending = dict(times)
+        s = cls._pack_string
+        for prop in block.children:
+            head = cls._scalars(prop)
+            if len(head) >= 4 and head[0] in pending:
+                value = pending.pop(head[0])
+                prop.replaced = b"".join(s(h) for h in head[:4]) + cls._pack_long(value)
+                prop.prop_count = 5
+        for key, value in pending.items():
+            block.children.append(
+                cls._new_record(
+                    b"P",
+                    [s(key), s(b"KTime"), s(b"Time"), s(b""), cls._pack_long(value)],
+                    (),
+                    hlen,
+                )
+            )
+
+    @classmethod
+    def _rename_object(cls, record: _Record, old: str, new: str, kind: bytes) -> None:
+        """Name the object *record* -- ``(uid, "<name>\\0\\x01<kind>", subclass)``
+        -- *new*, when it is named *old*."""
+        head = cls._scalars(record)
+        if new == old or len(head) < 3 or record.prop_count != 3:
+            return
+        if FbxFile._display_name(head[1]) != old:
+            return
+        label = new.encode("utf-8") + b"\x00\x01" + kind
+        record.replaced = (
+            cls._pack_long(head[0])
+            + cls._pack_string(label)
+            + cls._pack_string(head[2])
+        )
+
+    @classmethod
+    def _rename_take(
+        cls,
+        sections: Mapping[bytes, _Record],
+        stack: _Record,
+        old: str,
+        new: str,
+        span: Sequence[int],
+        hlen: int,
+    ) -> None:
+        """Name the take on *stack* *new* everywhere the file names it -- the
+        stack, its ``Takes`` entry (file name and times, set to *span*'s
+        extent) and ``Takes/Current``."""
+        s = cls._pack_string
+        cls._rename_object(stack, old, new, b"AnimStack")
+        takes = sections.get(b"Takes")
+        if takes is None:
+            return
+        if not takes.children and not takes.tail:
+            takes.tail = b"\0" * (hlen + 1)  # it gains a child below
+        times = []
+        if span:
+            times = [cls._pack_long(min(span)), cls._pack_long(max(span))]
+        entry = next(
+            (
+                c
+                for c in takes.children
+                if c.name == b"Take" and cls._head_string(c) == old
+            ),
+            None,
+        )
+        if entry is None:
+            entry = cls._new_record(b"Take", [s(b"")], [], hlen)
+            takes.children.append(entry)
+        entry.replaced = s(new.encode("utf-8"))
+        fields = {
+            b"FileName": [s(new.replace(" ", "_").encode("utf-8") + b".tak")],
+            **({b"LocalTime": times, b"ReferenceTime": times} if times else {}),
+        }
+        for child in entry.children:
+            if child.name in fields:
+                props = fields.pop(child.name)
+                child.replaced, child.prop_count = b"".join(props), len(props)
+        if fields and not entry.children and not entry.tail:
+            entry.tail = b"\0" * (hlen + 1)
+        for tag, props in fields.items():
+            entry.children.append(cls._new_record(tag, props, (), hlen))
+        current = next((c for c in takes.children if c.name == b"Current"), None)
+        if current is None:
+            current = cls._new_record(b"Current", [s(b"")], (), hlen)
+            takes.children.insert(0, current)
+        current.replaced = s(new.encode("utf-8"))
+
+    @classmethod
+    def _stack_times(cls, record: _Record) -> List[int]:
+        """The ``KTime`` values of a stack's ``Properties70``."""
+        found = []
+        for child in record.children:
+            if child.name != b"Properties70":
+                continue
+            for prop in child.children:
+                head = cls._scalars(prop)
+                if len(head) >= 5 and head[1] == b"KTime" and isinstance(head[4], int):
+                    found.append(head[4])
+        return found
+
 
 class FbxMedia(_FbxMediaInternal):
     """Read and rewrite the media a binary FBX embeds."""
@@ -1128,15 +1551,6 @@ class FbxMedia(_FbxMediaInternal):
                 written[name] = path
         return written
 
-    #: The objects an animation take owns, owner first: a stack holds layers,
-    #: a layer holds curve nodes, a curve node holds curves.
-    TAKE_CHAIN = (
-        b"AnimationStack",
-        b"AnimationLayer",
-        b"AnimationCurveNode",
-        b"AnimationCurve",
-    )
-
     @classmethod
     def drop_takes(
         cls, src: str, dst: Optional[str] = None, *, names: Iterable[str]
@@ -1183,104 +1597,314 @@ class FbxMedia(_FbxMediaInternal):
         ):
             version, roots, footer_id, magic = cls._load(buf)
             sections = {record.name: record for record in roots}
+            if sections.get(b"Objects") is None:
+                return report
+            stacks = {
+                uid: name
+                for uid, name in cls._stacks(sections).items()
+                if name in wanted
+            }
+            if not stacks:
+                return report
+            report = cls._drop_stacks(sections, stacks)
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        cls._promote(part, target)
+        return report
+
+    #: The name :meth:`merge_takes` gives the one take it leaves: the take an
+    #: unsplit export carries, so an importer meets the plain one-take file
+    #: the merge has made of it (Blender names each action ``<object>|Take
+    #: 001``, as for any Maya file).
+    MERGED_TAKE = "Take 001"
+
+    @classmethod
+    def merge_takes(
+        cls,
+        src: str,
+        dst: Optional[str] = None,
+        *,
+        takes: Optional[Iterable[str]] = None,
+        name: Optional[str] = MERGED_TAKE,
+        tolerance: float = 1e-4,
+        keep: Iterable[str] = (),
+    ) -> Dict[str, Any]:
+        """Rewrite the file's animation as ONE take: the union of *takes*.
+
+        The import half of :meth:`FbxFile.take_layout`. No DCC merges takes on
+        import, and none can be made to: Maya plays the one take
+        ``FBXImportSetTake`` names (sequential merge imports REPLACE a curve,
+        and a per-take namespace import pasted back lost 63 of 1735 channels
+        on a production file), Blender assigns each object the first stack's
+        action. So the file is made a one-take file first, and imported once.
+
+        Every key of every merged take stays at its stored time with its
+        stored value, flags and slopes; a time two takes both key (a gap-0
+        seam) is kept once. Each channel lands on the kept take's curve -- the
+        file's current take when it is merged, else the first merged take --
+        and a channel, curve node or layer only a later take has is re-wired
+        onto the kept take's layer (curve node, stack). The kept stack's
+        ``LocalStart`` / ``LocalStop`` (and ``Reference*``) and its ``Takes``
+        entry widen to the union, it becomes ``Takes/Current``, and every
+        other stack goes with everything only it owns (:meth:`drop_takes`).
+        Geometry, materials and media are copied byte for byte. Between two
+        takes' keys -- frames no take keys -- the curve interpolates as the
+        earlier take's last key says. Known limit: a tangent Maya computes on
+        import (spline, clamped, auto) at a take boundary is computed with
+        the other take's key as its neighbour, so sub-frame playback beside
+        the boundary can differ from the take alone; keys, and a per-frame
+        bake's whole frames, do not.
+
+        A single-take or covered file needs no merge (``take_layout`` says
+        so); merging one take only renames it -- its layer too, where the
+        layer bears the take's name (Blender names each layer after its take,
+        and its importer names an action ``<object>|<take>|<layer>`` once the
+        two differ).
+
+        *keep* leaves takes in the file whole, each its own stack beside the
+        merged one: the ``stash`` of a layout, so ONE import carries both what
+        plays and the alternatives an importer parks (Blender's makes an
+        action per stack and object -- a second import of the same objects
+        could only duplicate them).
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+            takes: Take names to merge, in any order; ``None`` merges the
+                layout's ``live`` takes.
+            name: The merged take's name; ``None`` keeps the kept take's own.
+            tolerance: As :meth:`FbxFile.take_layout` judges agreement.
+            keep: Take names left as they are -- not merged, not dropped. None
+                of them may be merged, be named *name*, or share an animation
+                object (curve, curve node, layer) with a merged take.
+
+        Returns:
+            ``{"path", "take", "takes", "dropped", "channels", "keys",
+            "seams", "rewired", "objects", "connections"}`` -- the file
+            written, the merged take's name, the takes merged and the takes
+            left out (file order; every stack but the kept one and *keep*'s
+            goes), the channels written, their keys in all,
+            the keys a shared time collapsed, the connections added to re-wire
+            what only a dropped take held, ``{record name: count}`` removed
+            and the connections removed. With nothing to merge the file is not
+            written at all (``path`` ``None``).
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit (a
+                cut or corrupt record included), a named take is not in it,
+                two of *takes* disagree -- the message names both takes, the
+                channel and the frame -- or a *keep* take is merged, named
+                *name* or shares an animation object with a merged take.
+            OSError: The merged file could not be written or put in place.
+        """
+        report: Dict[str, Any] = {
+            "path": None,
+            "take": None,
+            "takes": [],
+            "dropped": [],
+            "channels": 0,
+            "keys": 0,
+            "seams": 0,
+            "rewired": 0,
+            "objects": {},
+            "connections": 0,
+        }
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            sections = {record.name: record for record in roots}
             objects = sections.get(b"Objects")
             if objects is None:
                 return report
-
-            kind_of: Dict[int, bytes] = {}
-            id_of_record: Dict[int, int] = {}
-            stacks: Dict[int, str] = {}
-            for record in objects.children:
-                if record.name not in cls.TAKE_CHAIN:
-                    continue
-                head = cls._scalars(record)
-                if not head or not isinstance(head[0], int):
-                    continue
-                kind_of[head[0]] = record.name
-                id_of_record[id(record)] = head[0]
-                if record.name == b"AnimationStack" and len(head) > 1:
-                    display = cls._display(head[1])
-                    if display in wanted:
-                        stacks[head[0]] = display
-            if not stacks:
-                return report
-
             connections = sections.get(b"Connections")
-            rows = [
-                (record, cls._scalars(record))
-                for record in (connections.children if connections else [])
-            ]
-            parents: Dict[int, List[int]] = {}
-            for _record, row in rows:
-                if len(row) >= 3 and row[1] in kind_of:
-                    parents.setdefault(row[1], []).append(row[2])
-
-            # Owner-first, so every owner's verdict is settled before its
-            # members are judged.
-            dropped = set(stacks)
-            for level in range(1, len(cls.TAKE_CHAIN)):
-                owner, member = cls.TAKE_CHAIN[level - 1], cls.TAKE_CHAIN[level]
-                for oid, kind in kind_of.items():
-                    if kind != member:
-                        continue
-                    owners = [
-                        p for p in parents.get(oid, ()) if kind_of.get(p) == owner
-                    ]
-                    if owners and all(p in dropped for p in owners):
-                        dropped.add(oid)
-
-            removed: Dict[bytes, int] = {}
-            survivors = []
-            for record in objects.children:
-                oid = id_of_record.get(id(record))
-                if oid in dropped:
-                    removed[record.name] = removed.get(record.name, 0) + 1
-                else:
-                    survivors.append(record)
-            objects.children = survivors
-
-            if connections is not None:
-                connections.children = [
-                    record
-                    for record, row in rows
-                    if not (len(row) >= 3 and (row[1] in dropped or row[2] in dropped))
-                ]
-                report["connections"] = len(rows) - len(connections.children)
-
-            takes = sections.get(b"Takes")
-            if takes is not None:
-                takes.children = [
-                    child
-                    for child in takes.children
-                    if not (
-                        child.name == b"Take" and cls._first_string(child) in wanted
+            if connections is None:  # nothing is wired, so nothing is keyed
+                return report
+            hlen = cls._header_fmt(version >= 7500)[1]
+            model = FbxFile._build_take_model(*cls._take_rows(objects, connections))
+            current, fps = cls._takes_settings(sections)
+            known = [take["name"] for take in model["takes"]]
+            parked = [str(take) for take in keep]
+            if takes is None:
+                wanted = FbxFile._layout(model, current, tolerance, fps)["live"]
+                named = list(parked)
+            else:
+                wanted = [str(take) for take in takes]
+                named = wanted + parked
+            missing = [take for take in named if take not in known]
+            if missing:
+                raise ValueError(
+                    f"FBX {src!r} has no take {', '.join(map(repr, missing))}; "
+                    f"it has {', '.join(map(repr, known)) or 'none'}"
+                )
+            both = [take for take in parked if take in wanted]
+            if both:
+                raise ValueError(
+                    f"FBX takes {', '.join(map(repr, both))} cannot be both merged "
+                    "and kept"
+                )
+            chosen = [take for take in model["takes"] if take["name"] in wanted]
+            if not chosen:
+                return report
+            for i, take in enumerate(chosen[1:], 1):
+                reason = FbxFile._first_conflict(
+                    take, chosen[:i], model["labels"], tolerance, fps
+                )
+                if reason is not None:
+                    raise ValueError(
+                        f"FBX takes cannot merge: {reason} -- merge only takes "
+                        "that agree (FbxFile.take_layout()['live'])"
                     )
-                ]
-                left = [
-                    cls._first_string(c) for c in takes.children if c.name == b"Take"
-                ]
-                for child in takes.children:
-                    if child.name == b"Current" and cls._first_string(child) in wanted:
-                        if left:
-                            child.replaced = cls._pack_string(left[0].encode("utf-8"))
+            kept = next((t for t in chosen if t["name"] == current), chosen[0])
+            final = name or kept["name"]
+            if final in parked:
+                raise ValueError(
+                    f"FBX merged take name {final!r} is a kept take's; pass another "
+                    "name"
+                )
 
-            definitions = sections.get(b"Definitions")
-            if definitions is not None:
-                total = 0
-                for object_type in definitions.children:
-                    if object_type.name != b"ObjectType":
-                        continue
-                    head = cls._scalars(object_type)
-                    count = removed.get(head[0], 0) if head else 0
-                    if count:
-                        cls._shift_count(object_type, -count)
-                        total += count
-                if total:
-                    cls._shift_count(definitions, -total)
+            def owned(take: Mapping[str, Any]) -> set:
+                """The animation objects *take* reaches: layers, nodes, curves."""
+                found = set(take["layers"]) | set(take["nodes"].values())
+                for channel in take["channels"].values():
+                    found.update((channel["node"], channel["id"]))
+                return found
 
-            report["takes"] = list(stacks.values())
-            report["objects"] = {k.decode(): v for k, v in removed.items()}
+            held = [t for t in model["takes"] if t["name"] in parked]
+            if held:
+                # A kept take sharing an object with a merged one would be
+                # rewritten by the merge (a curve's keys, a node's components).
+                merging = set().union(*(owned(t) for t in chosen))
+                for take in held:
+                    if owned(take) & merging:
+                        raise ValueError(
+                            f"FBX take {take['name']!r} shares animation objects "
+                            "with a merged take; it cannot be kept beside the merge"
+                        )
+
+            records: Dict[int, _Record] = {}
+            for record in objects.children:
+                head = cls._scalars(record)
+                if head and isinstance(head[0], int):
+                    records[head[0]] = record
+            components: Dict[int, Dict[str, int]] = {}
+            for take in model["takes"]:
+                for key, channel in take["channels"].items():
+                    components.setdefault(channel["node"], {}).setdefault(
+                        key[2], channel["id"]
+                    )
+            layers = list(kept["layers"])
+            nodes = dict(kept["nodes"])
+
+            def wire(child: int, parent: int, prop: Optional[str] = None) -> None:
+                connections.children.append(cls._connection(child, parent, prop, hlen))
+                report["rewired"] += 1
+
+            order: Dict[Tuple[Any, ...], None] = {}
+            for take in chosen:
+                order.update(dict.fromkeys(take["channels"]))
+            first = last = None
+            for key in order:
+                target, prop, component, index = key
+                sources = [take for take in chosen if key in take["channels"]]
+                while len(layers) <= index:  # a layer the kept take lacks
+                    donor = next(t for t in chosen if len(t["layers"]) > len(layers))
+                    layer = donor["layers"][len(layers)]
+                    wire(layer, kept["stack"])
+                    layers.append(layer)
+                    for (t, p, i), node in donor["nodes"].items():
+                        if i == len(layers) - 1:
+                            nodes.setdefault((t, p, i), node)
+                node = nodes.get((target, prop, index))
+                if node is None:  # a property the kept take does not animate
+                    node = sources[0]["channels"][key]["node"]
+                    wire(node, layers[index])
+                    nodes[(target, prop, index)] = node
+                curve_id = components.setdefault(node, {}).get(component)
+                if curve_id is None:  # a component the kept node lacks
+                    donor = sources[0]["channels"][key]
+                    curve_id = donor["id"]
+                    wire(curve_id, node, component)
+                    components[node][component] = curve_id
+                    cls._declare_component(
+                        records[node], records.get(donor["node"]), component, hlen
+                    )
+                curves = [take["channels"][key]["curve"] for take in sources]
+                times, values, *runs, seams = FbxFile._union_curves(curves)
+                report["channels"] += 1
+                report["keys"] += len(times)
+                report["seams"] += seams
+                if times:
+                    first = times[0] if first is None else min(first, times[0])
+                    last = times[-1] if last is None else max(last, times[-1])
+                stored = next(
+                    (
+                        t["channels"][key]["curve"]
+                        for t in sources
+                        if t["channels"][key]["id"] == curve_id
+                    ),
+                    None,
+                )
+                unchanged = stored is not None and (
+                    stored.times,
+                    stored.values,
+                    stored.flags,
+                    stored.data,
+                    [
+                        b - a
+                        for a, b in zip(stored.starts, stored.starts[1:] + [len(times)])
+                    ],
+                ) == (times, values, *runs)
+                if not unchanged:
+                    cls._write_curve(records[curve_id], times, values, *runs, hlen)
+
+            # The union's span: every merged stack's declared times, every key.
+            span = [
+                t for take in chosen for t in cls._stack_times(records[take["stack"]])
+            ]
+            span += [t for t in (first, last) if t is not None]
+            if span:
+                lo, hi = min(span), max(span)
+                cls._set_times(
+                    records[kept["stack"]],
+                    {
+                        b"LocalStart": lo,
+                        b"LocalStop": hi,
+                        b"ReferenceStart": lo,
+                        b"ReferenceStop": hi,
+                    },
+                    hlen,
+                )
+
+            stacks = {
+                take["stack"]: take["name"]
+                for take in model["takes"]
+                if take is not kept and take["name"] not in parked
+            }
+            dropped = cls._drop_stacks(sections, stacks) if stacks else {}
+            cls._rename_take(
+                sections, records[kept["stack"]], kept["name"], final, span, hlen
+            )
+            for layer in kept["layers"]:  # a layer named after its take (Blender)
+                if layer in records:
+                    cls._rename_object(
+                        records[layer], kept["name"], final, b"AnimLayer"
+                    )
+
+            report.update(
+                take=final,
+                takes=[take["name"] for take in chosen],
+                dropped=[
+                    t["name"]
+                    for t in model["takes"]
+                    if t not in chosen and t["name"] not in parked
+                ],
+                objects=dropped.get("objects", {}),
+                connections=dropped.get("connections", 0),
+            )
             target = dst or src
+            report["path"] = target
             part = cls._write_part(target, version, roots, footer_id, magic)
         cls._promote(part, target)
         return report
@@ -1492,7 +2116,7 @@ class FbxMedia(_FbxMediaInternal):
                 classes[oid] = head[2]
             if record.name == b"Model":
                 label = head[1] if len(head) > 1 and isinstance(head[1], bytes) else b""
-                names[oid] = cls._display(label)
+                names[oid] = FbxFile._display_name(label) or ""
                 records[oid] = record
         rows = [
             (record, cls._scalars(record))
@@ -1673,20 +2297,6 @@ class FbxMedia(_FbxMediaInternal):
             return
         pose.children = [child for child in pose.children if child not in gone]
         cls._shift_count(pose, -len(gone), b"NbPoseNodes")
-
-    @staticmethod
-    def _display(raw: bytes) -> str:
-        """The human half of an ``name\\x00\\x01Class`` object name."""
-        return bytes(raw).split(b"\x00\x01", 1)[0].decode("utf-8", "replace")
-
-    @classmethod
-    def _first_string(cls, record: _Record) -> Optional[str]:
-        head = cls._scalars(record)
-        return (
-            head[0].decode("utf-8", "replace")
-            if head and isinstance(head[0], bytes)
-            else None
-        )
 
     @classmethod
     def rewrite(cls, src: str, dst: str) -> None:

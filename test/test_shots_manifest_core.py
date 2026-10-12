@@ -748,6 +748,111 @@ class TestSequenceDocMapping(unittest.TestCase):
         # Still ``A01.)`` / bare caps: this layout's IDs are not steps to it.
         self.assertEqual(self._resolve("classic"), [])
 
+    def test_auto_reads_it_as_numbered_and_is_the_default(self):
+        """Which layout a sheet is written in is the sheet's, not the user's:
+        a per-user choice left on ``classic`` by the last sheet read none of
+        this one (2026-10-11, a production doc read as 0 steps)."""
+        numbered = [s.step_id for s in self._resolve("numbered")]
+        self.assertEqual([s.step_id for s in self._resolve("auto")], numbered)
+        path = _write_csv(self.CSV)
+        try:
+            unset = mapping_mod.Mapping.resolve(path, name="default")
+        finally:
+            os.remove(path)
+        self.assertEqual([s.step_id for s in unset], numbered)
+        self.assertEqual(unset[0].section, "INTRO")  # the layout's sections too
+
+    def test_infer_options_reads_back_what_a_build_recorded(self):
+        """A scene built before it kept its sheet's options: its shots'
+        ``csv_objects`` say how the sheet was read (SOL_REPLACE_ASSEMBLY:
+        Object Case = upper), and the user's empty options read it otherwise.
+        Added: 2026-10-12"""
+        template = mapping_mod.Mapping.load_mapping("default")
+        path = _write_csv(self.CSV)
+        try:
+            built = {"IN_02": ["DESTINATION_CIRCLE"], "B03_5": ["solenoid_geo"]}
+            got = mapping_mod.Mapping.infer_options(path, template, built, {})
+            self.assertEqual(got["object_case"], "upper")
+            mine = {"step_ids": "numbered", "color_by": "section"}
+            nothing = mapping_mod.Mapping.infer_options(path, template, {}, mine)
+            self.assertEqual(
+                {k: nothing[k] for k in mine}, mine, "no build: the user's own"
+            )
+            as_written = {"IN_02": ["Destination_circle"]}
+            kept = mapping_mod.Mapping.infer_options(path, template, as_written, {})
+            self.assertEqual(kept["object_case"], "keep", "a tie keeps the start")
+        finally:
+            os.remove(path)
+
+    def test_auto_keeps_a_classic_sheet_classic(self):
+        csv = (
+            "SECTION X: OPENING SETUP\n"
+            "Step,Step Contents,Asset Names,Voice Support\n"
+            "SETUP,Room appears,,\n"
+            "SECTION A: AILERON\n"
+            "Step,Step Contents,Asset Names,Voice Support\n"
+            "A01.),Aileron fades in,wing_L,Welcome\n"
+            "A02.),Rudder appears,rudder,\n"
+        )
+        path = _write_csv(csv)
+        try:
+            steps = mapping_mod.Mapping.resolve(path, name="default")
+        finally:
+            os.remove(path)
+        self.assertEqual([s.step_id for s in steps], ["A01", "A02"])  # SETUP excluded
+        self.assertEqual(steps[0].section_title, "AILERON")
+
+
+class TestColumnMapLayouts(unittest.TestCase):
+    """``ColumnMap.layouts``: alternative row grammars tried on one read of the
+    sheet; the one reading the most steps wins, the first on a tie."""
+
+    CSV = (
+        "Step,Step Contents,Asset Names\n"
+        "A01.),Door fades in,door\n"
+        "B2,Lid fades in,lid\n"
+        "B3,Lid fades out,lid\n"
+    )
+    CLASSIC = {}
+    NUMBERED = {"step_pattern": [r"^([A-Z]\d+)$"]}
+
+    def _parse(self, *layouts):
+        path = _write_csv(self.CSV)
+        try:
+            return ManifestModel.parse_csv(
+                path, columns=ColumnMap.from_dict({"layouts": list(layouts)})
+            )
+        finally:
+            os.remove(path)
+
+    def test_the_layout_reading_the_most_steps_wins(self):
+        steps = self._parse(self.CLASSIC, self.NUMBERED)
+        self.assertEqual([s.step_id for s in steps], ["B2", "B3"])
+
+    def test_a_tie_keeps_the_first(self):
+        only_a = {"step_pattern": [r"^(A\d+)\.\)"]}
+        steps = self._parse(only_a, {"step_pattern": [r"^(B2)$"]})
+        self.assertEqual([s.step_id for s in steps], ["A01"])
+
+    def test_round_trips_through_a_dict(self):
+        cm = ColumnMap.from_dict({"layouts": [self.CLASSIC, self.NUMBERED]})
+        self.assertEqual(ColumnMap.from_dict(cm.to_dict()), cm)
+
+    def test_a_header_with_no_step_rows_says_why(self):
+        path = _write_csv(self.CSV)
+        try:
+            with self.assertLogs(
+                "pythontk.core_utils.engines.shots.manifest.manifest_model",
+                level="WARNING",
+            ) as logs:
+                steps = ManifestModel.parse_csv(
+                    path, columns=ColumnMap(step_pattern=(r"^(Z\d+)$",))
+                )
+        finally:
+            os.remove(path)
+        self.assertEqual(steps, [])
+        self.assertIn("'A01.)'", "\n".join(logs.output))
+
 
 class TestTemplateOptions(unittest.TestCase):
     """A template's ``options``: UI-ready specs, applied as patches merged over
@@ -831,6 +936,30 @@ class TestTemplateOptions(unittest.TestCase):
         self.assertIn("'slider'", errors)
         self.assertIn("not a choice", errors)
         self.assertIn("sets 'options'", errors)
+
+    def test_a_try_choice_tries_the_named_choices_column_layouts(self):
+        template = json.loads(json.dumps(self.TEMPLATE))
+        template["options"]["ids"]["choices"]["auto"] = {"try": ["a", "b"]}
+        self.assertFalse(mapping_mod.MappingSpec.validate(template).errors)
+        eff = mapping_mod.Mapping.apply_options(template, {"ids": "auto"})
+        self.assertEqual(
+            eff["columns"]["layouts"], [{}, {"step_pattern": ["^(B\\d+)$"]}]
+        )
+        self.assertNotIn("step_pattern", eff["columns"])  # the base is the template's
+
+    def test_a_bad_try_is_a_schema_error(self):
+        template = json.loads(json.dumps(self.TEMPLATE))
+        choices = template["options"]["ids"]["choices"]
+        choices["auto"] = {"try": ["a", "gone"]}
+        choices["loop"] = {"try": ["auto"]}
+        choices["both"] = {"try": ["a"], "set": {}}
+        choices["c"] = {"set": {"match": "name_then_order"}}
+        choices["wide"] = {"try": ["c"]}
+        errors = " | ".join(mapping_mod.MappingSpec.validate(template).errors)
+        self.assertIn("'gone'", errors)
+        self.assertIn("'loop'", errors)
+        self.assertIn("'both'", errors)
+        self.assertIn("'wide'", errors)
 
 
 class TestAutoFillAssets(unittest.TestCase):
@@ -1085,6 +1214,61 @@ class TestBehaviors(unittest.TestCase):
         )
         # A name no template answers keeps its own (its apply records the failure).
         self.assertEqual(overrides(["no_such_behavior", "fade_out"]), [None, None])
+
+    def test_entry_anchors_place_a_shots_entries_as_the_build_does(self):
+        """Audio clips start the shot; each object's other behaviors spread
+        over its own non-audio list, whatever lies between them."""
+        entries = [
+            {"name": "door", "behavior": "fade_in"},
+            {"name": "vo", "behavior": "set_clip", "kind": "audio"},
+            {"name": "door", "behavior": "fade_out"},
+            {"name": "lamp", "behavior": "fade_in"},
+            {"name": "vo2", "behavior": "set_clip", "source_path": "a.wav"},
+        ]
+        self.assertEqual(
+            [beh.Behaviors.is_audio_entry(e) for e in entries],
+            [False, True, False, False, True],
+        )
+        self.assertEqual(
+            beh.Behaviors.entry_anchors(entries), [0.0, None, 1.0, None, None]
+        )
+
+    def test_anchored_is_the_one_anchor_precedence(self):
+        """Override, then the block's own anchor, then its phase's end."""
+        anchored = beh.Behaviors.anchored
+        block = {"duration": 5, "values": [0, 1]}
+        self.assertEqual(anchored(block, "in")["anchor"], "start")
+        self.assertEqual(anchored(block, "out")["anchor"], "end")
+        own = dict(block, anchor=0.25)
+        self.assertEqual(anchored(own, "out")["anchor"], 0.25)
+        self.assertEqual(anchored(own, "out", anchor_override=1.0)["anchor"], 1.0)
+        self.assertNotIn("anchor", block, "the block itself is never written")
+
+    def test_key_window_is_where_the_keys_would_fall(self):
+        """Where an applier puts a behavior's keys, without keying: an effect
+        at the recipe's window (the effect writer's own placement), an audio
+        clip at the start, a template's own blocks by their anchors."""
+        recipe = EffectRecipe(fade_frames=10.0)
+        window = beh.Behaviors.key_window
+        self.assertEqual(window("fade_in", 100, 300, recipe=recipe), (100.0, 110.0))
+        self.assertEqual(window("fade_out", 100, 300, recipe=recipe), (290.0, 300.0))
+        self.assertEqual(
+            window("fade_in", 100, 300, anchor_override=0.5, recipe=recipe),
+            recipe.window("fade_in", 100, 300, "start", 0.5),
+        )
+        self.assertEqual(window("highlight", 100, 300, recipe=recipe), (100.0, 300.0))
+        self.assertEqual(window("set_clip", 100, 300, recipe=recipe), (100.0, 100.0))
+        own = {
+            "attributes": {
+                "visibility": {
+                    "in": {"duration": 4, "values": [0, 1]},
+                    "out": {"duration": 6, "values": [1, 0]},
+                }
+            }
+        }
+        self.assertEqual(window(own, 100, 300), (100.0, 300.0))
+        self.assertEqual(window(own, 100, 300, anchor_override="start"), (100.0, 106.0))
+        self.assertIsNone(window("no_such_behavior", 100, 300))
 
     def test_a_highlight_beside_a_fade_keeps_its_ramps_apart(self):
         """What a host keys for a highlight beside a fade: the pulse over the
@@ -1665,6 +1849,38 @@ class TestShotPairing(_EngineCase):
         mani.bind(self.store.shot_by_name("Tail"), None)
         self.assertNotIn("A01b", mani.pair(steps).shots)
 
+    def test_a_split_off_shot_is_linked_to_its_step_never_paired(self):
+        """Bug: a shot split off a step's shot had no relation to that step,
+        so nothing could say which section it was in (Unity read a null
+        section for 8 of SOL_REPLACE_ASSEMBLY's 28 clips).  The split's link
+        -- or, for a tail split before it wrote one, its ``<step>_<n>`` name
+        -- now links it; it stays an orphan, the step's shot unchanged.
+        Fixed: 2026-10-11"""
+        steps, pairing = self._split_scene()
+        a01_2 = self.store.shot_by_name("A01_2").shot_id
+        self.assertEqual(pairing.links, {a01_2: "A01"})
+        self.assertEqual(pairing.shots["A01"].name, "A01_1")
+        self.assertIn(a01_2, [s.shot_id for s in pairing.orphans])
+        self.store.update_shot(a01_2, metadata={"step_link": "A02"})
+        self.assertEqual(ShotManifest(self.store).pair(steps).links, {a01_2: "A02"})
+
+    def test_order_pairing_passes_a_split_off_shot_by(self):
+        """Bug: with ``match="name_then_order"`` a tail split off a step's
+        shot was taken, in timeline order, as the shot of the next unbuilt
+        step (A01b), where it is its own step's tail.
+        Fixed: 2026-10-12 (maintainer) -- linked shots are left out of the
+        order pass; the others pair in order as before."""
+        steps, _ = self._split_scene()
+        pairing = ShotManifest(self.store, match="name_then_order").pair(steps)
+        self.assertEqual(
+            {sid: shot.name for sid, shot in pairing.shots.items()},
+            {"IN_01": "Lead", "A01": "A01_1", "A01b": "Tail", "A02": "A02"},
+        )
+        self.assertEqual(pairing.how["A01b"], "order")
+        a01_2 = self.store.shot_by_name("A01_2").shot_id
+        self.assertEqual(pairing.links, {a01_2: "A01"})
+        self.assertEqual([s.name for s in pairing.orphans], ["A01_2"])
+
     def test_build_writes_the_binding_so_order_no_longer_matters(self):
         self.store.define_shot("Step_1", 1, 10)
         mani = ShotManifest(self.store, match="name_then_order")
@@ -2072,6 +2288,54 @@ class TestEditedShotsAreKept(_EngineCase):
         self.assertFalse(status.edited)
         self.assertTrue(status.needs_build)
 
+    # -- the shot system's own member additions (BACKLOG 2026-10-10) ---------
+    # The sequencer fills an empty shot's members when it shows it, and adds
+    # an object keyed in the active shot: read as a hand edit, every later
+    # Build kept that shot, doc changes and all.  Maintainer 2026-10-11: tag
+    # them so the check skips them; a hand's add or remove still counts.
+
+    def test_a_member_the_system_added_is_no_edit(self):
+        step, shot = self._built("door")
+        self.store.add_system_members(shot.shot_id, ["keyed_cube"])
+        self.assertFalse(ShotManifest(self.store).edited_by_hand(shot))
+        step.objects.append(BuilderObject("lamp"))
+        self.assertEqual(self._rebuild(step), {"A01": "patched"})
+
+    def test_a_step_with_missing_objects_filled_by_the_sequencer_is_no_edit(self):
+        """The doc's objects are not in the scene; the sequencer fills the
+        shot with what is keyed in it, keeping the doc's names inert."""
+        step, shot = self._built("ghost_a", "ghost_b")
+        self.store.add_system_members(shot.shot_id, ["found_1", "found_2"])
+        shot = self.store.shot_by_name("A01")
+        self.assertEqual(len(shot.objects), 4, shot.objects)
+        self.assertFalse(ShotManifest(self.store).edited_by_hand(shot))
+
+    def test_a_member_a_hand_adds_beside_system_ones_is_an_edit(self):
+        step, shot = self._built("door")
+        self.store.add_system_members(shot.shot_id, ["keyed_cube"])
+        shot = self.store.shot_by_name("A01")
+        self.store.update_shot(shot.shot_id, objects=shot.objects + ["hand_cube"])
+        self.assertTrue(ShotManifest(self.store).edited_by_hand(shot))
+        self.assertEqual(self._rebuild(step), {"A01": "kept"})
+
+    def test_a_built_member_a_hand_removes_is_an_edit_with_system_ones_there(self):
+        step, shot = self._built("door", "window")
+        self.store.add_system_members(shot.shot_id, ["keyed_cube"])
+        shot = self.store.shot_by_name("A01")
+        kept = [n for n in shot.objects if not n.endswith("window")]
+        self.store.update_shot(shot.shot_id, objects=kept)
+        self.assertTrue(ShotManifest(self.store).edited_by_hand(shot))
+
+    def test_a_system_member_a_hand_removes_and_adds_back_is_the_hands(self):
+        step, shot = self._built("door")
+        self.store.add_system_members(shot.shot_id, ["keyed_cube"])
+        shot = self.store.shot_by_name("A01")
+        door = [n for n in shot.objects if n.endswith("door")]
+        self.store.update_shot(shot.shot_id, objects=door)
+        self.assertFalse(ShotManifest(self.store).edited_by_hand(shot), "back as built")
+        self.store.update_shot(shot.shot_id, objects=door + ["keyed_cube"])
+        self.assertTrue(ShotManifest(self.store).edited_by_hand(shot))
+
     def test_a_kept_shot_gets_no_behavior_pass(self):
         step, shot = self._built("door")
         self.store.define_shot("B01", 200, 250, metadata={"step": "B01"})
@@ -2082,6 +2346,71 @@ class TestEditedShotsAreKept(_EngineCase):
             "door_op", 2.0, shot.shot_id, "fade_in", "door"
         )
         self.assertEqual(ShotManifest(self.store)._dropped_pairs([step]), [])
+
+
+class TestAssessSeesWhatBuildRewrites(_EngineCase):
+    """``StepStatus.updates``: what a Build rewrites on a built shot that no
+    object status shows -- a step's Local Edits rename or re-description, an
+    object the last build listed that the step no longer does.
+
+    Bug: Assess judged only the objects, so after a Local Edit renamed a
+    built step an Assess left Build disabled, and the rename was never built.
+    Fixed: 2026-10-11"""
+
+    def _built(self, *objs):
+        step = self._step("A01", *objs)
+        step.description = "the doc's text"
+        ShotManifest(self.store).update([step], initial_shot_length=50)
+        return step, self.store.shot_by_name("A01")
+
+    def _status(self, step):
+        (status,) = ShotManifest(self.store).assess([step])
+        return status
+
+    def _rebuild(self, step):
+        ShotManifest(self.store).update([step], remove_missing=False)
+
+    def test_a_fresh_build_leaves_nothing_to_rewrite(self):
+        step, _shot = self._built("door", "window")
+        status = self._status(step)
+        self.assertEqual(status.updates, [])
+        self.assertFalse(status.needs_build)
+
+    def test_a_renamed_step_needs_its_shot_renamed(self):
+        step, _shot = self._built("door")
+        step.name = "Intro"
+        status = self._status(step)
+        self.assertEqual(status.updates, ["name"])
+        self.assertTrue(status.needs_build)
+        self._rebuild(step)
+        self.assertEqual([s.name for s in self.store.shots], ["Intro"])
+        self.assertEqual(self._status(step).updates, [])
+
+    def test_a_new_description_is_rewritten(self):
+        step, _shot = self._built("door")
+        step.description = "the edited text"
+        self.assertEqual(self._status(step).updates, ["description"])
+        self._rebuild(step)
+        self.assertEqual(self._status(step).updates, [])
+
+    def test_an_object_the_step_no_longer_lists_is_taken_out(self):
+        step, _shot = self._built("door", "window")
+        del step.objects[1]  # hidden, or moved to another step
+        self.assertEqual(self._status(step).updates, ["objects"])
+        self._rebuild(step)
+        self.assertEqual(self._status(step).updates, [])
+
+    def test_a_rename_the_store_refuses_is_not_pending(self):
+        step, _shot = self._built("door")
+        self.store.define_shot("Intro", 200, 250)
+        step.name = "Intro"
+        self.assertEqual(self._status(step).updates, [])
+
+    def test_a_kept_shot_has_nothing_pending(self):
+        step, shot = self._built("door")
+        self.store.update_shot(shot.shot_id, description="the artist's note")
+        step.name = "Intro"
+        self.assertEqual(self._status(step).updates, [])
 
 
 class TestDisabledBehaviors(_EngineCase):
@@ -2138,6 +2467,109 @@ class TestDisabledBehaviors(_EngineCase):
         self.assertEqual(applied, ["fade_out"])
         self.assertEqual(released, [], "fade_in's keys stay")
         self.assertEqual(led.authored(owner=shot.shot_id), [("door_op", 2.0)])
+
+
+class TestMarkedBehaviors(_EngineCase):
+    """A behavior type set to Marker is not keyed: Build drops a timeline
+    marker where its keys would go, and Assess checks for that marker
+    (2026-10-11: "a third option ... of adding a marker in the sequencer
+    instead of keying or simply ignoring all together")."""
+
+    def _built_step(self, behaviors=None):
+        behaviors = behaviors or {"door": ["fade_in", "fade_out"], "lamp": ["fade_in"]}
+        step = self._step("A01", *behaviors, behaviors=behaviors)
+        ShotManifest(self.store).update([step], initial_shot_length=50)
+        return step, self.store.shot_by_name("A01")
+
+    def _marks(self):
+        return [
+            m
+            for m in self.store.markers
+            if ShotStore.marker_owner(m) == "shot_manifest"
+        ]
+
+    def test_a_marked_behavior_is_not_keyed(self):
+        mani = ShotManifest(
+            self.store, disabled_behaviors={"highlight"}, marked_behaviors={"fade_in"}
+        )
+        self.assertEqual(mani.unkeyed_behaviors, {"fade_in", "highlight"})
+        both = ShotManifest(
+            self.store, disabled_behaviors={"fade_in"}, marked_behaviors={"fade_in"}
+        )
+        self.assertEqual(both.marked_behaviors, frozenset(), "off wins")
+
+    def test_build_marks_one_frame_per_behavior_naming_its_objects(self):
+        _step, shot = self._built_step()
+        records = ShotManifest(
+            self.store, marked_behaviors={"fade_in", "fade_out"}
+        ).place_markers()
+        fade = self.store.effect_recipe.fade_frames
+        got = [(m["time"], m["note"], m["data"]["objects"]) for m in self._marks()]
+        self.assertEqual(
+            got,
+            [
+                (shot.start, "Fade In: door, lamp", ["door", "lamp"]),
+                (shot.end - fade, "Fade Out: door", ["door"]),
+            ],
+        )
+        (first, _second) = self._marks()
+        self.assertEqual(first["data"]["shot_id"], shot.shot_id)
+        self.assertFalse(first["draggable"], "the next build would put it back")
+        self.assertEqual(
+            sorted((r["object"], r["behavior"]) for r in records),
+            [("door", "fade_in"), ("door", "fade_out"), ("lamp", "fade_in")],
+        )
+
+    def test_a_rebuild_moves_its_markers_and_never_a_hands(self):
+        _step, shot = self._built_step()
+        self.store.markers.append({"time": 3.0, "note": "the animator's"})
+        ShotManifest(self.store, marked_behaviors={"fade_in"}).place_markers()
+        self.store.update_shot(shot.shot_id, start=101, end=151)
+        ShotManifest(self.store, marked_behaviors={"fade_in"}).place_markers()
+        self.assertEqual([m["time"] for m in self._marks()], [101.0])
+        # Keyed again: its marker goes.
+        ShotManifest(self.store).place_markers()
+        self.assertEqual(self._marks(), [])
+        self.assertEqual(self.store.markers, [{"time": 3.0, "note": "the animator's"}])
+
+    def test_a_turned_off_behavior_keeps_its_marker(self):
+        self._built_step()
+        ShotManifest(self.store, marked_behaviors={"fade_in"}).place_markers()
+        ShotManifest(self.store, disabled_behaviors={"fade_in"}).place_markers()
+        self.assertEqual(len(self._marks()), 1)
+
+    def test_a_kept_shot_keeps_its_markers(self):
+        _step, shot = self._built_step()
+        ShotManifest(self.store, marked_behaviors={"fade_in"}).place_markers()
+        self.store.update_shot(shot.shot_id, description="the artist's note")
+        ShotManifest(self.store).place_markers()
+        self.assertEqual(len(self._marks()), 1, "a build leaves a kept shot alone")
+
+    def test_assess_checks_the_marker_not_the_keys(self):
+        step, shot = self._built_step()
+        mani = ShotManifest(self.store, marked_behaviors={"fade_in", "fade_out"})
+
+        def no_keys(*_args, **_kwargs):
+            return False
+
+        (status,) = mani.assess([step], verify_fn=no_keys)
+        self.assertEqual(status.objects[0].status, "missing_behavior")
+        self.assertTrue(status.needs_build, "Build places the missing markers")
+        mani.place_markers()
+        (status,) = mani.assess([step], verify_fn=no_keys)
+        self.assertEqual([o.status for o in status.objects], ["valid", "valid"])
+        self.assertFalse(status.needs_build)
+        # A marker the shot moved away from is missing where the build puts it.
+        self.store.update_shot(shot.shot_id, start=101, end=151)
+        (status,) = mani.assess([step], verify_fn=no_keys)
+        self.assertEqual(status.objects[1].broken_behaviors, ["fade_in"])
+
+    def test_sync_reports_what_it_marked(self):
+        step = self._step("A01", "door", behaviors={"door": ["fade_in"]})
+        mani = ShotManifest(self.store, marked_behaviors={"fade_in"})
+        _actions, result, _assessment = mani.sync([step], initial_shot_length=50)
+        self.assertEqual([r["object"] for r in result["marked"]], ["door"])
+        self.assertEqual(len(self._marks()), 1)
 
 
 class TestFillFromPairs(_EngineCase):
@@ -2881,6 +3313,33 @@ class TestRecipeOwnership(unittest.TestCase):
             tmpl = beh.Behaviors.load_behavior(name)
             self.assertTrue(BehaviorSpec.validate(tmpl).ok, name)
             self.assertIsNotNone(beh.Behaviors.effect_of(tmpl), name)
+
+
+class TestContentEndPlacesLikeTheBuild(unittest.TestCase):
+    """Assess's unused tail (``StepStatus.shrinkable_frames``) is measured where
+    the build keys: an object's point behaviors spread over the range
+    (``Behaviors.anchor_overrides``, the one placement rule). Two fade-ins key
+    the second at the shot's END; sized as if both sat at the start, the tail
+    read as unused -- shrinkable over the very frames the keys are on
+    (2026-10-12)."""
+
+    def test_a_spread_point_behavior_ends_the_content_where_it_is_keyed(self):
+        from types import SimpleNamespace
+
+        names = ["fade_in", "fade_in"]
+        step = BuilderStep("A01", "A", "t", "", [BuilderObject("g", behaviors=names)])
+        status = [ObjectStatus("g", True, "valid", behaviors=list(names))]
+        scene = SimpleNamespace(start=0.0, end=100.0)
+        recipe = EffectRecipe()
+
+        end = ShotManifest._compute_content_end(step, scene, status, recipe)
+
+        last = max(
+            beh.Behaviors.key_window(name, 0.0, 100.0, anchor, recipe)[1]
+            for name, anchor in zip(names, beh.Behaviors.anchor_overrides(names))
+        )
+        self.assertEqual(last, 100.0)  # the second fade-in keys at the end
+        self.assertEqual(end, last)
 
 
 if __name__ == "__main__":

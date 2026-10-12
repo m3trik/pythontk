@@ -9,6 +9,7 @@ renders, and the plain/rich decision is a port of ``Qt.mightBeRichText``, so
 headless code builds the same tooltips a panel shows. uitk's
 ``TooltipPresenter`` is the Qt side that displays them.
 """
+
 import html as _html
 import re
 

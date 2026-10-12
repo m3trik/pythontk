@@ -65,7 +65,9 @@ __all__ = [
     "SettingsChanged",
     "BatchComplete",
     "ShotsEdited",
+    "MarkersChanged",
     "StoreInvalidated",
+    "NativeStepFollowed",
     "ScenePersistence",
     "ShotEditLedger",
 ]
@@ -282,6 +284,15 @@ class ShotsEdited(StoreEvent):
 
 
 @dataclass(frozen=True)
+class MarkersChanged(StoreEvent):
+    """:meth:`ShotStore.set_markers` changed the timeline markers -- a tool's
+    write (the manifest's Build), not a marker edit the sequencer made itself.
+    """
+
+    name: ClassVar[str] = "markers_changed"
+
+
+@dataclass(frozen=True)
 class StoreInvalidated(StoreEvent):
     """The active store was discarded (scene change / new scene).
 
@@ -291,6 +302,24 @@ class StoreInvalidated(StoreEvent):
     """
 
     name: ClassVar[str] = "store_invalidated"
+
+
+@dataclass(frozen=True)
+class NativeStepFollowed(StoreEvent):
+    """The DCC's own undo (or redo, *redo*) ran and the active *store*
+    followed it (:meth:`ShotStore.follow_native_step`), putting back *applied*
+    restore points -- none when the step was somebody else's (*store* is
+    ``None`` when no store was active).
+
+    Fired on the class-level listeners of
+    :meth:`ShotStore.add_native_step_listener`, after the store's own events:
+    the one word a panel needs to redraw after a Ctrl+Z made anywhere.
+    """
+
+    name: ClassVar[str] = "native_step_followed"
+    redo: bool = False
+    applied: int = 0
+    store: Any = field(default=None, compare=False)
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +440,12 @@ class ShotStore(_ShotStoreInternal):
     _active: Optional["ShotStore"] = None
     _persistence: Optional[ScenePersistence] = None
     _invalidation_listeners: ClassVar[List[Callable[["StoreInvalidated"], None]]] = []
+    # Class-level, like the invalidation listeners: they outlive a store swap.
+    _native_step_listeners: ClassVar[List[Callable[["NativeStepFollowed"], None]]] = []
+    # Depth of :meth:`native_undo_sync_held` blocks.  Held on THIS class, not
+    # per subclass: a process has one native undo queue, whichever store
+    # class listens to it.
+    _native_sync_hold: ClassVar[int] = 0
     # Directory for the cross-scene prefs JSON. ``None`` → pythontk's user-config
     # root (see :meth:`_prefs_path`); tests point it at a temp dir so they never
     # touch the user's real config. A DCC adapter that wants its own store (e.g.
@@ -432,6 +467,13 @@ class ShotStore(_ShotStoreInternal):
     DEFAULT_INITIAL_SHOT_LENGTH: float = 200.0
     DEFAULT_FIT_MODE: str = "extend_only"
     DEFAULT_SNAP_WHOLE_FRAMES: bool = True
+    #: The gap a NEW store starts with: the production spacing, so a new or
+    #: split-off shot does not share its seam frame with its neighbour
+    #: (maintainer 2026-10-11).  A saved scene keeps the gap it saved.
+    DEFAULT_GAP: float = 10.0
+    #: The gap a saved payload without one reads as -- the default it was
+    #: written under, so an old scene loads exactly as it did.
+    LEGACY_GAP: float = 0.0
 
     def __init__(
         self,
@@ -441,7 +483,7 @@ class ShotStore(_ShotStoreInternal):
         self.hidden_objects: set = set()
         self.pinned_objects: set = set()
         self.markers: List[Dict[str, Any]] = []
-        self.gap: float = 0.0
+        self.gap: float = self.DEFAULT_GAP
         self.detection_threshold: float = 5.0
         self.detection_mode: str = "auto"  # "auto", "all", "skip_zero", "zero_as_end"
         # Shot construction policy (applies to any caller that builds shots —
@@ -479,6 +521,17 @@ class ShotStore(_ShotStoreInternal):
         # source, keyed as ``manifest_edits``: how the user organises the
         # table, never an edit (``ManifestTags``).
         self.manifest_tags: Dict[str, Dict[str, str]] = {}
+        # How the scene reads each sheet, keyed as ``manifest_edits``:
+        # ``{"template": name, "values": {option: value}}`` -- the mapping
+        # template and its options travel with the scene, so a reopen reads
+        # the sheet the way it was built (``ManifestEdits.sheet_options``).
+        self.manifest_options: Dict[str, Dict[str, Any]] = {}
+        # A stable id per name the store holds an object by (Maya: the node
+        # UUID), captured as it is saved (:meth:`_capture_member_ids`) -- what
+        # finds a member a rename the store was not told of left behind
+        # (:meth:`_current_names`).  Additive: a reader that does not know
+        # the key reads the names as before.
+        self.member_ids: Dict[str, str] = {}
         # Export-view projection (opt-in).  When True, every save publishes the
         # FBX-takes + Unity-metadata channels via the ``publish_export_view``
         # hook so any DCC export can carry them.  Off by default.
@@ -498,8 +551,12 @@ class ShotStore(_ShotStoreInternal):
         self._boundary_redo: List[tuple] = []
         # Redo branch cleared by the newest push, held so a discard can put
         # it back (see :meth:`discard_boundary_snapshot`).  None = nothing to
-        # restore; anything that consumes the redo branch invalidates it.
+        # restore; anything that consumes the redo branch invalidates it --
+        # and so does a discard: not None means "the newest push may still be
+        # discarded", which keeps a discard to one per push.
         self._boundary_redo_stash: Optional[List[tuple]] = None
+        # True while follow_native_step applies restore points.
+        self._following_native: bool = False
 
     # ---- boundary-snapshot ledger ----------------------------------------
     #
@@ -574,6 +631,11 @@ class ShotStore(_ShotStoreInternal):
             # redo to the new one) rather than to whatever survives the
             # restore.
             "active": self._active_shot_id,
+            # The markers a tool placed (a Build's), so undoing the build
+            # takes them out with its keys.  A hand's markers stay out of it:
+            # no marker edit pushes a restore point, so an undo would drop
+            # every one placed since.
+            "owned_markers": [dict(m) for m in self.markers if self.marker_owner(m)],
         }
 
     # ---- pairing with the DCC's own undo queue ---------------------------
@@ -617,7 +679,7 @@ class ShotStore(_ShotStoreInternal):
             return False
         return self._boundary_undo[-1][0] != self._restore_point()
 
-    def discard_boundary_snapshot(self) -> None:
+    def discard_boundary_snapshot(self) -> bool:
         """Drop the most recent restore point without applying it.
 
         For an edit that pushed up front and then turned out to be a no-op:
@@ -626,12 +688,25 @@ class ShotStore(_ShotStoreInternal):
 
         The push also cleared the redo branch — correct for a real edit, but
         a no-op must not cost the user their redo — so this puts it back.
+
+        At most once per push: a second discard, or one after the point was
+        applied or the ledger cleared, drops nothing.  A DCC's
+        :meth:`scene_edit` drops its own point when the edit changed nothing
+        at all, and the caller that then discards "its" no-op point would
+        otherwise drop the restore point of the edit before it -- the undo of
+        THAT edit then left its shot state behind.
+
+        Returns:
+            Whether a restore point was dropped.
         """
-        if self._boundary_undo:
+        if self._boundary_redo_stash is None:
+            return False
+        dropped = bool(self._boundary_undo)
+        if dropped:
             self._boundary_undo.pop()
-        if self._boundary_redo_stash is not None:
-            self._boundary_redo = self._boundary_redo_stash
-            self._boundary_redo_stash = None
+        self._boundary_redo = self._boundary_redo_stash
+        self._boundary_redo_stash = None
+        return dropped
 
     def restore_boundary_snapshot(self) -> bool:
         """Apply the most recent restore point (the undo direction).
@@ -681,12 +756,18 @@ class ShotStore(_ShotStoreInternal):
         """Put back a :meth:`_restore_point`: the ledger, the shots, then the
         active shot."""
         self.edit_ledger = ShotEditLedger.from_dict(state.get("ledger"))
+        owned = state.get("owned_markers")
         locks = state.get("locked_gaps")
         has_active = "active" in state
         active = state.get("active")
         state = state["shots"]
         snap_ids = {rec["shot_id"] for rec in state}
         with self.batch_update():
+            if owned is not None:
+                # In the batch: one redraw with the shots, never one before.
+                self.set_markers(
+                    [m for m in self.markers if not self.marker_owner(m)] + owned
+                )
             for shot in list(self.shots):
                 if shot.shot_id not in snap_ids:
                     self.remove_shot(shot.shot_id)
@@ -729,6 +810,146 @@ class ShotStore(_ShotStoreInternal):
                     self.mark_dirty()
             if has_active and (active is None or self.shot_by_id(active)):
                 self.set_active_shot(active)
+
+    # ---- following the DCC's own undo --------------------------------------
+    #
+    # The DCC's undo puts the scene's keys back; the restore points put back
+    # what only the store holds.  So the STORE follows every native undo and
+    # redo -- one listener per store class, installed by :meth:`active` -- and
+    # Ctrl+Z restores the shot state whichever panel is open, or none.  When
+    # only a panel listened, an edit made with no Sequencer this session (a
+    # Shots-window resize, a key edit's claims, a manifest Build) was undone in
+    # its keys and kept in its shots.  A panel redraws off
+    # :meth:`add_native_step_listener`.
+
+    def _native_step_crossed(self, redo: bool = False, first: bool = True) -> bool:
+        """Whether the native undo (or redo) that just ran passed over the edit
+        of the restore point next in that direction (overridable hook).
+
+        Pure default: ``False`` -- the pure model has no native queue.  The DCC
+        stores read the pairing their :meth:`scene_edit` tagged the point with
+        (mayatk: the undo chunk's name; blendertk: an edit serial).  *first*:
+        no point has been applied for this step yet -- an untagged point (a
+        legacy push) counts as crossed for the first one only.
+        """
+        return False
+
+    def follow_native_step(self, redo: bool = False) -> int:
+        """Apply every restore point the DCC's own undo (or redo) that just
+        ran passed over: newest first for an undo, oldest first for a redo --
+        the order the stacks hold them.  One step crosses one edit; an undo
+        history jump can cross several.
+
+        The store's events fire as for any restore, inside one batch;
+        :attr:`following_native_step` is ``True`` while they do.
+
+        Parameters:
+            redo: Follow a redo instead of an undo.
+
+        Returns:
+            The number of restore points applied (0: the step was not a shot
+            edit's).
+        """
+        apply = self.redo_boundary_snapshot if redo else self.restore_boundary_snapshot
+        applied = 0
+        self._following_native = True
+        try:
+            with self.batch_update():
+                while self._native_step_crossed(redo, first=applied == 0):
+                    if not apply():
+                        break
+                    applied += 1
+        finally:
+            self._following_native = False
+        return applied
+
+    @property
+    def following_native_step(self) -> bool:
+        """``True`` while :meth:`follow_native_step` applies restore points.
+
+        A panel that redraws once on :class:`NativeStepFollowed` skips the store
+        events raised meanwhile rather than redraw for them too.
+        """
+        return self._following_native
+
+    @classmethod
+    def _on_native_step(cls, redo: bool = False) -> None:
+        """What the DCC's undo / redo listener runs: the active store follows
+        the step (:meth:`follow_native_step`), then every native-step listener
+        hears of it -- also when nothing was applied, so a panel can redraw
+        after any undo.  Nothing at all while :meth:`native_undo_sync_held`.
+        """
+        if ShotStore._native_sync_hold:
+            return
+        store = cls._active
+        applied = 0
+        if store is not None:
+            try:
+                applied = store.follow_native_step(redo)
+            except Exception:
+                _log.warning(
+                    "shot store: native %s not followed",
+                    "redo" if redo else "undo",
+                    exc_info=True,
+                )
+        event = NativeStepFollowed(redo=redo, applied=applied, store=store)
+        for cb in list(ShotStore._native_step_listeners):
+            try:
+                cb(event)
+            except Exception:
+                _log.warning("native-step listener failed", exc_info=True)
+
+    @classmethod
+    @contextmanager
+    def native_undo_sync_held(cls):
+        """Hold the store's native undo sync for the block.
+
+        For a caller that steps the DCC's undo queue itself AND applies the
+        restore points it decided on (the Maya Sequencer's Undo / Redo
+        buttons, which step past bookkeeping entries first): the store must
+        not follow those steps a second time.  Process-wide, and nests.
+        """
+        ShotStore._native_sync_hold += 1
+        try:
+            yield
+        finally:
+            ShotStore._native_sync_hold -= 1
+
+    @classmethod
+    def add_native_step_listener(
+        cls, callback: Callable[["NativeStepFollowed"], None]
+    ) -> None:
+        """Register *callback* for every native undo / redo the store followed
+        (:class:`NativeStepFollowed`).  Class-level: it survives store swaps,
+        as :meth:`add_invalidation_listener` does."""
+        if callback not in ShotStore._native_step_listeners:
+            ShotStore._native_step_listeners.append(callback)
+
+    @classmethod
+    def remove_native_step_listener(
+        cls, callback: Callable[["NativeStepFollowed"], None]
+    ) -> None:
+        """Remove a callback :meth:`add_native_step_listener` registered."""
+        try:
+            ShotStore._native_step_listeners.remove(callback)
+        except ValueError:
+            pass
+
+    @classmethod
+    def _install_native_undo_sync(cls) -> None:
+        """Subscribe this store class to the DCC's undo and redo (overridable
+        hook): each runs :meth:`_on_native_step`.
+
+        Pure default: nothing -- no native queue.  :meth:`active` and
+        :meth:`set_active` call it every time, so an override must be cheap
+        and idempotent; :meth:`clear_active` tears it down
+        (:meth:`_remove_native_undo_sync`).
+        """
+
+    @classmethod
+    def _remove_native_undo_sync(cls) -> None:
+        """Tear down what :meth:`_install_native_undo_sync` subscribed
+        (overridable hook; pure default: nothing)."""
 
     # ---- scene hooks (overridable; pure defaults) ------------------------
 
@@ -1060,7 +1281,8 @@ class ShotStore(_ShotStoreInternal):
 
         Event types: :class:`ShotDefined`, :class:`ShotUpdated`,
         :class:`ShotRemoved`, :class:`ActiveShotChanged`,
-        :class:`SettingsChanged`, :class:`BatchComplete`.
+        :class:`SettingsChanged`, :class:`BatchComplete`,
+        :class:`ShotsEdited`, :class:`MarkersChanged`.
         """
         if callback not in self._listeners:
             self._listeners.append(callback)
@@ -1107,6 +1329,37 @@ class ShotStore(_ShotStoreInternal):
                 # that don't notify (pin/hide/gap-lock) would otherwise
                 # leave the dirty store unscheduled for save.
                 self._flush_dirty()
+
+    # ---- markers -----------------------------------------------------------
+
+    @staticmethod
+    def marker_owner(marker: Dict[str, Any]) -> str:
+        """The tool that placed *marker* (its ``data["owner"]``), ``""`` for
+        one placed by hand.
+
+        A tool tags the markers it places so it can find them again -- to
+        move them or take them out -- and leave everyone else's alone.
+        """
+        data = marker.get("data") if isinstance(marker, dict) else None
+        return str((data or {}).get("owner") or "")
+
+    def set_markers(self, markers: Iterable[Dict[str, Any]]) -> bool:
+        """Replace the timeline markers; on a change, mark the store dirty
+        and emit :class:`MarkersChanged` so a sequencer showing them redraws.
+
+        For a tool writing markers: the sequencer's own marker edits start in
+        its widget and write :attr:`markers` directly.
+
+        Returns:
+            Whether the markers changed.
+        """
+        markers = [dict(m) for m in markers]
+        if markers == self.markers:
+            return False
+        self.markers = markers
+        self.mark_dirty()
+        self._notify(MarkersChanged())
+        return True
 
     # ---- gap locking -----------------------------------------------------
 
@@ -1177,17 +1430,24 @@ class ShotStore(_ShotStoreInternal):
             else:
                 cls._active = cls()
                 cls._active._restore_user_prefs()
+        # The active store follows the DCC's own undo and redo -- whichever
+        # panel is open, or none (see follow_native_step).
+        cls._install_native_undo_sync()
         return cls._active
 
     @classmethod
     def set_active(cls, store: "ShotStore") -> None:
-        """Replace the active store instance."""
+        """Replace the active store instance (which follows the DCC's undo
+        from then on, as :meth:`active`'s does)."""
         cls._active = store
+        cls._install_native_undo_sync()
 
     @classmethod
     def clear_active(cls) -> None:
-        """Reset the active store and persistence backend."""
+        """Reset the active store and persistence backend, and stop following
+        the DCC's undo (:meth:`active` subscribes again)."""
         cls._active = None
+        cls._remove_native_undo_sync()
         if cls._persistence is not None:
             # Tear down the backend's scene callbacks — dropping the
             # reference alone leaks them, and a leaked before-save
@@ -1729,9 +1989,66 @@ class ShotStore(_ShotStoreInternal):
             shot.locked = locked
         if metadata is not None:
             shot.metadata = dict(metadata)
+        if objects is not None:
+            self._prune_system_members(shot)
         self._notify(ShotUpdated(shot=shot))
         self.mark_dirty()
         return shot
+
+    #: Shot metadata naming the members the shot system added on its own
+    #: (:meth:`add_system_members`), by :meth:`member_key`: an empty shot's
+    #: members filled in when the sequencer shows it, an object keyed in the
+    #: active shot.  A tool comparing a shot's members with what it made -- the
+    #: manifest's ``edited_by_hand`` -- reads past them: a member a hand added
+    #: or removed is an edit, one the system filled in is not.
+    SYSTEM_MEMBERS = "system_members"
+
+    def add_system_members(self, shot_id: int, names: Iterable[str]) -> List[str]:
+        """Add *names* to a shot's members as the shot system's own additions
+        (:attr:`SYSTEM_MEMBERS`), keeping every member it has -- one the scene
+        no longer resolves too (inert; reconciliation re-points, never drops).
+
+        Parameters:
+            shot_id: The shot to add to.
+            names: The members to add; ones already members are skipped.
+
+        Returns:
+            The names added, sorted (none: nothing changed, no event).
+        """
+        shot = self.shot_by_id(shot_id)
+        if shot is None:
+            return []
+        added = sorted({str(n) for n in names} - set(shot.objects))
+        if not added:
+            return []
+        meta = dict(shot.metadata or {})
+        tagged = set(meta.get(self.SYSTEM_MEMBERS) or ())
+        meta[self.SYSTEM_MEMBERS] = sorted(tagged | {self.member_key(n) for n in added})
+        self.update_shot(shot_id, objects=list(shot.objects) + added, metadata=meta)
+        return added
+
+    def system_members(self, shot: ShotBlock) -> set:
+        """The :meth:`member_key` of every member of *shot* the shot system
+        added (:meth:`add_system_members`) that the shot still holds."""
+        tagged = (shot.metadata or {}).get(self.SYSTEM_MEMBERS) or ()
+        keys = {self.member_key(n) for n in shot.objects}
+        return {k for k in tagged if k in keys}
+
+    def _prune_system_members(self, shot: ShotBlock) -> None:
+        """Drop the :attr:`SYSTEM_MEMBERS` of members *shot* no longer holds:
+        one a hand removes and adds back is the hand's."""
+        tagged = (shot.metadata or {}).get(self.SYSTEM_MEMBERS)
+        if not tagged:
+            return
+        kept = sorted(self.system_members(shot))
+        if kept == sorted(tagged):
+            return
+        meta = dict(shot.metadata)
+        if kept:
+            meta[self.SYSTEM_MEMBERS] = kept
+        else:
+            meta.pop(self.SYSTEM_MEMBERS)
+        shot.metadata = meta
 
     def remove_shot(self, shot_id: int) -> bool:
         """Remove a shot by ID.  Returns ``True`` if found.
@@ -1989,10 +2306,18 @@ class ShotStore(_ShotStoreInternal):
             "source_csv": self.source_csv,
             "manifest_edits": dict(self.manifest_edits),
             "manifest_tags": {k: dict(v) for k, v in self.manifest_tags.items()},
+            "manifest_options": {
+                k: {
+                    "template": v.get("template"),
+                    "values": dict(v.get("values") or {}),
+                }
+                for k, v in self.manifest_options.items()
+            },
             "auto_publish_export": self.auto_publish_export,
             "clip_name_strategy": self.clip_name_strategy,
             "edit_ledger": self.edit_ledger.to_dict(),
             "effect_recipe": self.effect_recipe.to_dict(),
+            "member_ids": self._capture_member_ids(),
         }
 
     def stale_shots(self) -> List[ShotBlock]:
@@ -2219,6 +2544,58 @@ class ShotStore(_ShotStoreInternal):
         """
         return self._export_view(strategy)
 
+    #: Metadata key of a shot's STEP LINK: the doc step a shot split off a
+    #: step's shot belongs with (``ShotSequencer.split_shot`` writes it).
+    #: Non-binding -- the step's shot is the one ``metadata["step"]`` binds,
+    #: and a step has one -- so the link only says where the shot belongs:
+    #: the export gives it the step's section, the manifest shows it there
+    #: (:meth:`step_links`).
+    STEP_LINK = "step_link"
+
+    def step_links(self) -> Dict[int, str]:
+        """``{shot_id: step_id}``: the doc step each shot no step is bound to
+        belongs with.  Read only -- asking writes nothing.
+
+        A shot bound to a step (``metadata["step"]``) is that step's own and
+        is not listed.  Any other shot is linked by the link the split wrote
+        (:attr:`STEP_LINK`), or -- a tail split before the split wrote one --
+        by its name: the split names a tail ``<name>_2`` (numbered on, when
+        taken), so ``<step>_<n>`` where ``<step>`` is a step some shot is
+        bound to links it there, one ``_<n>`` stripped at a time (a tail
+        split again, ``A01_2_2``, finds ``A01``).  Derived on every read,
+        never stamped on the scene, so opening a scene changes nothing
+        (maintainer 2026-10-11; SOL_REPLACE_ASSEMBLY's 8 tails, A01_2 ...
+        E02_2, carry no link).
+
+        Returns:
+            ``{shot_id: step_id}`` for every linked shot.
+        """
+        shots = self.sorted_shots()
+        bound = {
+            str((s.metadata or {}).get("step"))
+            for s in shots
+            if (s.metadata or {}).get("step")
+        }
+        links: Dict[int, str] = {}
+        for shot in shots:
+            meta = shot.metadata or {}
+            if meta.get("step"):
+                continue
+            link = meta.get(self.STEP_LINK)
+            if not link:
+                name = str(shot.name)
+                while True:
+                    head, sep, n = name.rpartition("_")
+                    if not (sep and head and n.isdigit()):
+                        break
+                    if head in bound:
+                        link = head
+                        break
+                    name = head
+            if link:
+                links[shot.shot_id] = str(link)
+        return links
+
     def _export_view(
         self,
         strategy: str,
@@ -2231,9 +2608,26 @@ class ShotStore(_ShotStoreInternal):
         Every shot is NAMED before any is left out: the ``sequence`` strategy
         numbers clips by position, and leaving one out first would renumber
         every clip after it.
+
+        A shot's section is its own (a build writes it), else that of the
+        shot bound to the step it is linked to (:meth:`step_links`): a shot
+        split off a step's shot is in that step's section.
         """
         stale = set(stale)
         sorted_s = self.sorted_shots()
+        links = self.step_links()
+        step_sections = {}
+        for shot in sorted_s:
+            meta = shot.metadata or {}
+            if meta.get("step") and meta.get("section"):
+                step_sections.setdefault(str(meta["step"]), meta["section"])
+        # A member renamed behind the store's back ships by its node's name
+        # now (:meth:`_current_names`); the store is not changed.
+        try:
+            current = self._current_names({o for s in sorted_s for o in s.objects})
+        except Exception:  # a DCC lookup; the record must still be produced
+            _log.debug("Shots: renamed members not looked up.", exc_info=True)
+            current = {}
         specs = ShotStore.resolve_clip_specs(sorted_s, strategy=strategy)
         # The store refuses a name the carrier would respell, so a respelling
         # here is a name held from before that rule.  Said, never silent.
@@ -2263,8 +2657,10 @@ class ShotStore(_ShotStoreInternal):
             if present is not None:
                 members = [o for o in members if o in present]
             # Always present, even empty: Unity's ShotRecord reads it as an array.
-            entry["objects"] = [ShotStore.leaf_name(o) for o in members]
-            section = (shot.metadata or {}).get("section")
+            entry["objects"] = [ShotStore.leaf_name(current.get(o, o)) for o in members]
+            section = (shot.metadata or {}).get("section") or step_sections.get(
+                links.get(shot.shot_id)
+            )
             if section:
                 entry["section"] = section
             shots_meta.append(entry)
@@ -2275,6 +2671,54 @@ class ShotStore(_ShotStoreInternal):
                 "shots": shots_meta,
             },
         }
+
+    def _export_set_members(self, names: Iterable[str], scope: Iterable[str]) -> set:
+        """Which member *names* an export of *scope* carries (overridable hook).
+
+        *scope* is ``ExportContext.scope``: the export set's roots, as the
+        host spells its nodes; a member is carried when it IS a root or sits
+        under one.  Pure default: DAG-path spelling (``"|grp|obj"`` sits
+        under ``"|grp"``), and a bare name is its own root.  DCC stores
+        override to resolve both sides in the scene (a short Maya name, a
+        Blender parent).
+        """
+        roots = [str(r) for r in scope]
+        return {
+            n for n in names if any(n == r or str(n).startswith(r + "|") for r in roots)
+        }
+
+    def _member_ids(self, names: Iterable[str]) -> Dict[str, str]:
+        """``{name: stable id}`` for each of *names* that names ONE node now
+        (overridable hook; Maya: its node UUID).  Pure default: none -- the
+        pure model has no scene to give an id."""
+        return {}
+
+    def _capture_member_ids(self) -> Dict[str, str]:
+        """:attr:`member_ids` brought up to date for :meth:`to_dict`: every
+        name the store holds an object by keeps an id -- the one its node has
+        now (:meth:`_member_ids`), else the one saved for it (a name a rename
+        left behind: the id is what finds the node again).  Names the store
+        no longer holds are dropped.  Never raises: a failing lookup keeps
+        the ids saved."""
+        held = self.held_names()
+        ids = {name: uid for name, uid in self.member_ids.items() if name in held}
+        try:
+            ids.update(self._member_ids(sorted(held)))
+        except Exception:  # a DCC lookup; the save must go on
+            _log.debug("Shots: member ids not refreshed.", exc_info=True)
+        self.member_ids = ids
+        return dict(ids)
+
+    def _current_names(self, names: Iterable[str]) -> Dict[str, str]:
+        """``{name: current name}`` for each of *names* no object answers to
+        any more but whose node is found another way -- a rename the store
+        was not told of (overridable hook; read-only, the store is not
+        changed).  Maya finds the node by its saved UUID
+        (:attr:`member_ids`), Blender by the rename it follows.  Pure default:
+        none.  A HOLD shot -- nothing keyed in its frames -- is live only
+        through its members, so without this a renamed member made it stale
+        and its take left the export (2026-09-26)."""
+        return {}
 
     #: Key on the shot record under which the exporter's Animation Clips mode
     #: is declared (``full`` / ``shots`` / ``both``).  The clips carry their
@@ -2302,12 +2746,31 @@ class ShotStore(_ShotStoreInternal):
         publishing without one, in the log; a store whose every shot is stale
         yields ``None`` like an empty one.
 
+        Scoped to the export set too (``SceneRecords.SHOTS`` is
+        ``export_scoped``): with ``ctx.scope`` each shot lists only the
+        members the write carries (:meth:`_export_set_members`) -- a selected
+        or visible-only export no longer names nodes its file leaves out.
+        Every take still ships: a shot is a span of time, and the frames are
+        the file's whatever it carries.  The scene keeps its whole record
+        (``ExportSnapshot.restore_scene_wide``).
+
         Returns:
             ``[shot record]``, or ``None`` for an empty or wholly stale store.
         """
         if not self.shots:
             return None
         stale, present = self._scene_scope()
+        if ctx is not None and ctx.scope is not None:
+            listed = {o for s in self.shots for o in s.objects}
+            held = listed if present is None else listed & present
+            try:
+                present = self._export_set_members(held, ctx.scope)
+            except Exception:  # a DCC lookup; the record must still be produced
+                _log.warning(
+                    "Shots: could not narrow the shot members to the export set; "
+                    "every member the scene holds is listed.",
+                    exc_info=True,
+                )
         view = self._export_view(
             strategy or self.clip_name_strategy, stale=stale, present=present
         )
@@ -2343,6 +2806,37 @@ class ShotStore(_ShotStoreInternal):
         """
         store = cls.active()
         return store.export_records(ctx) if store is not None else None
+
+    #: How many :meth:`transient_edit` brackets are open in this process --
+    #: on ``ShotStore`` itself, so every DCC subclass reads the one count.
+    _transient_depth: int = 0
+
+    @staticmethod
+    @contextmanager
+    def transient_edit():
+        """Bracket a batch that edits the scene and puts it back -- an
+        export's bake, snap and tie, a bridge send's staged proxies: none of
+        its key edits is the user's, so a shot listener credits none of them
+        to a shot (:meth:`in_transient_edit`).
+
+        Measured 2026-10-05 (blendertk, a Unity bridge send): the send's
+        Action burst banked every animated object, and the Shot Sequencer's
+        keying refresh added a non-member keyed in the active shot's frames
+        to its members -- after the send had restored the scene.  Re-entrant;
+        held while any bracket is open, released if the body raises.
+        """
+        ShotStore._transient_depth += 1
+        try:
+            yield
+        finally:
+            ShotStore._transient_depth = max(ShotStore._transient_depth - 1, 0)
+
+    @staticmethod
+    def in_transient_edit() -> bool:
+        """Whether a :meth:`transient_edit` bracket is open: a listener that
+        follows the user's key edits (a Shot Sequencer's keying refresh)
+        ignores the edits made inside one."""
+        return ShotStore._transient_depth > 0
 
     @classmethod
     def refresh_export_view(cls) -> None:
@@ -2436,7 +2930,7 @@ class ShotStore(_ShotStoreInternal):
         store.hidden_objects = set(hidden)
         store.pinned_objects = set(pinned)
         store.markers = data.get("markers", [])
-        store.gap = float(data.get("gap", 0.0))
+        store.gap = float(data.get("gap", cls.LEGACY_GAP))
         store.detection_threshold = float(data.get("detection_threshold", 5.0))
         # Migrate legacy use_selected_keys + key_filter_mode if present
         dm = data.get("detection_mode")
@@ -2481,6 +2975,25 @@ class ShotStore(_ShotStoreInternal):
             }
             for source, layer in (tags.items() if isinstance(tags, dict) else ())
             if isinstance(layer, dict)
+        }
+        options = data.get("manifest_options")
+        store.manifest_options = {
+            str(source): {
+                "template": rec.get("template")
+                if isinstance(rec.get("template"), str)
+                else None,
+                "values": dict(rec["values"])
+                if isinstance(rec.get("values"), dict)
+                else {},
+            }
+            for source, rec in (options.items() if isinstance(options, dict) else ())
+            if isinstance(rec, dict)
+        }
+        ids = data.get("member_ids")
+        store.member_ids = {
+            str(name): uid
+            for name, uid in (ids.items() if isinstance(ids, dict) else ())
+            if isinstance(uid, str) and uid
         }
         store.auto_publish_export = bool(data.get("auto_publish_export", False))
         strat = data.get("clip_name_strategy")

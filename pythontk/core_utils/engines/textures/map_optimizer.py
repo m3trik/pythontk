@@ -40,6 +40,7 @@ except ImportError as e:
     Image = None  # type: ignore
 
 # From this package:
+from pythontk.core_utils.deprecation import Deprecation
 from pythontk.core_utils.help_mixin import HelpMixin
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.img_utils._img_utils import ImgUtils
@@ -1013,6 +1014,15 @@ class MapOptimizer(HelpMixin):
             None,
         )
 
+    @Deprecation.parameter(
+        "check_existing",
+        remove_in="0.15.0",
+        since="2026-10-11",
+        reason="It reused an output on its mtime alone, so a copy written under "
+        "other settings, or from another file of the same name, shipped stale. "
+        "MapOptimizer.stage_maps reuses an encode on the source's identity and "
+        "the settings instead.",
+    )
     @classmethod
     def optimize_map(
         cls,
@@ -1052,7 +1062,9 @@ class MapOptimizer(HelpMixin):
             suffix_opt (str, optional): Suffix to append to the optimized file (None = overwrite).
             old_files_folder (str, optional): Name of the folder to store old files.
             optimize_bit_depth (bool): Adjusts bit depth to match the map type.
-            check_existing (bool): If True, returns existing optimized file if it exists and is newer.
+            check_existing (bool): Deprecated (stop passing it): if True,
+                returns an existing output when it is newer than the source --
+                on mtime alone, whatever settings or source wrote it.
             map_type (str, optional): The type of map (e.g., "Normal", "MaskMap") to enforce specific modes.
             allow_palette (bool): If True, palette (P) inputs may be preserved
                 when the target mode is RGB/RGBA. Default False (strict) — this
@@ -1450,6 +1462,36 @@ class MapOptimizer(HelpMixin):
     RECOMPRESSIBLE_FORMATS = ("png",)
     RECOMPRESS_MIN_SAVING = 0.05
 
+    #: Bump when :meth:`optimize_map` writes different bytes for a request
+    #: :meth:`assess` predicts unchanged (an encoder or writer change), so
+    #: every map :meth:`stage_maps` cached is encoded again. The package and
+    #: Pillow versions ride the key too, so a release needs no bump.
+    CACHE_VERSION = 1
+    #: The :class:`TempArtifacts` prefix of :meth:`stage_maps`' encode cache: a
+    #: detached store, age-swept (7 days) like every other.
+    _CACHE_PREFIX = "map_optimizer_cache"
+    #: A slot holding this file (the encode's byte count) records a re-encode
+    #: that saved too little to ship, so the trial encode is not repeated.
+    _KEPT_MARKER = ".kept"
+    #: The :meth:`assess` prediction fields that, with the source's bytes,
+    #: decide what an encode writes -- a size rule's EFFECT on one map, so a
+    #: changed ceiling re-encodes only the maps it reaches.
+    _OUTCOME_FIELDS = (
+        "width",
+        "height",
+        "mode",
+        "ext",
+        "path",
+        "quality",
+        "compression",
+        "uastc_rdo",
+    )
+    #: The size rules a *clamp* carries (:meth:`resolve_size_clamp`): they
+    #: enter the key only as their effect (:attr:`_OUTCOME_FIELDS`). Every
+    #: other option enters as given -- one the prediction cannot see (a KTX2
+    #: encode's RDO dictionary) still changes the bytes.
+    _SIZE_RULES = ("max_size", "force_pot", "enforce_budget", "pot_mode")
+
     @classmethod
     def is_recompressible(cls, path: str) -> bool:
         """Is *path* in a container a plain re-encode can shrink
@@ -1539,12 +1581,28 @@ class MapOptimizer(HelpMixin):
            folders -- the second+ claimant of a name stages into an ``altN``
            subdirectory; in write-back mode (which writes beside the source
            by design) a collision skips the loser outright, unmodified.
-        3. **Encode** in parallel (:meth:`optimize_maps`), then **verify**
-           each write in claim order: a durable staged file reused from an
-           earlier run (``check_existing``) is re-judged against THIS run's
-           pass and re-encoded when stale; a re-encode that saved less than
-           :attr:`RECOMPRESS_MIN_SAVING` is discarded (unless the file existed
-           before this run) and the source ships as it is.
+        3. **Encode** in parallel (:meth:`optimize_maps`) what the cache does
+           not hold, then **verify** each in claim order: a re-encode that
+           saved less than :attr:`RECOMPRESS_MIN_SAVING` is discarded and the
+           source ships as it is.
+
+        A staged pass reuses an encode only through its cache, keyed on the
+        source file's identity (path, mtime, size) and what this pass will
+        make of it -- the template, the container, :meth:`assess`'s prediction
+        of the exact request (so a size ceiling counts only where it changes
+        the map), :attr:`CACHE_VERSION` and the package and Pillow versions. A
+        repaint, another file of the same name or a changed ceiling is a new
+        key, and every other export of the same map encodes nothing. Each
+        encode lands in a scratch dir and is promoted into its slot -- a
+        ``TempArtifacts("map_optimizer_cache")`` directory holding the file
+        under its real name (a manifest classifies a map by its name) -- by
+        one rename, so a slot is empty or complete; a "kept" verdict is a
+        marker in the slot, so a re-encode that saves too little is tried
+        once. The staging dir gets a hard link to the slot when it is a
+        throwaway (*temp_staging*), else a real copy: a deliverable owns its
+        bytes, and an edit to a linked one would write into the cache. Old
+        slots go with the store's 7-day age sweep. Write-back never caches:
+        it writes over the source, which is the cache's key.
 
         Parameters:
             sources: ``{key: entry}`` where each entry has ``"path"`` (the
@@ -1566,8 +1624,9 @@ class MapOptimizer(HelpMixin):
                 is pending, so a pass with nothing to stage creates no
                 directory (an exporter's ``_texture_staging_dir``).
             temp_staging: The staging dir is a throwaway (the deliverable
-                carries its own copies): nothing is reused from it, so every
-                map is encoded fresh. Ignored when *staging_dir* is a callable.
+                carries its own copies), so a staged map is a hard link to its
+                cache slot rather than a copy. Ignored when *staging_dir* is a
+                callable.
             write_back: Write over the scene's own files, archiving each
                 original under *old_files_folder* beside it.
             recompress: Re-encode already-optimal maps in a recompressible
@@ -1583,17 +1642,19 @@ class MapOptimizer(HelpMixin):
 
         Returns:
             dict: ``sources`` / ``pending`` / ``reencodes`` (counts judged),
-            ``optimized`` / ``kept`` / ``failed`` (outcomes), ``bytes_before``
-            / ``bytes_after`` (over the optimized maps), ``staging_dir`` /
+            ``optimized`` / ``kept`` / ``failed`` (outcomes), ``cached`` (the
+            outcomes served from the cache, no encode), ``bytes_before`` /
+            ``bytes_after`` (over the optimized maps), ``staging_dir`` /
             ``temp_staging`` (where the copies went) and ``results`` -- one
             record per pending source, in judged order: ``key``, ``entry``
             (the caller's), ``path``, ``written`` (the file to point consumers
             at, None unless ``status`` is ``"optimized"``), ``size_before``,
-            ``size_after``, ``recompress`` (a re-encode candidate),
-            ``status`` (``"optimized"`` -- point the consumers at ``written``;
-            ``"kept"`` -- the source ships; ``"failed"`` -- the source ships,
-            ``error`` says why; ``"collision"`` -- the source ships, another
-            source claimed its name) and ``error``.
+            ``size_after``, ``recompress`` (a re-encode candidate), ``cached``
+            (no encode ran), ``status`` (``"optimized"`` -- point the
+            consumers at ``written``; ``"kept"`` -- the source ships;
+            ``"failed"`` -- the source ships, ``error`` says why;
+            ``"collision"`` -- the source ships, another source claimed its
+            name) and ``error``.
 
         Raises:
             ValueError: No *staging_dir* for a staged (non-write-back) pass.
@@ -1607,6 +1668,7 @@ class MapOptimizer(HelpMixin):
             "optimized": 0,
             "kept": 0,
             "failed": 0,
+            "cached": 0,
             "bytes_before": 0,
             "bytes_after": 0,
             "staging_dir": None if callable(staging_dir) else staging_dir,
@@ -1670,6 +1732,7 @@ class MapOptimizer(HelpMixin):
                 "size_before": os.path.getsize(src) if os.path.isfile(src) else 0,
                 "size_after": 0,
                 "recompress": is_recompress,
+                "cached": False,
                 "status": "failed",
                 "error": None,
             }
@@ -1703,70 +1766,48 @@ class MapOptimizer(HelpMixin):
                 "output_type": verdict.get("output_type"),
                 **clamp,
             }
+            job = {"record": record, "request": request, "out_dir": out_dir}
             if write_back:
                 request["old_files_folder"] = old_files_folder
-            else:
-                request.update(output_dir=out_dir, check_existing=not temp_staging)
-            jobs.append(
-                {
-                    "record": record,
-                    "request": request,
-                    # A durable staged file from an earlier export may be what
-                    # that export's FBX references: never delete one.
-                    "existed": os.path.exists(os.path.join(out_dir, predicted_name)),
-                }
-            )
+                # A file already at the output name (the source itself, or an
+                # earlier in-place output) is the user's: never delete one.
+                job["existed"] = os.path.exists(os.path.join(out_dir, predicted_name))
+            jobs.append(job)
 
-        # Phase 3: the encodes (files only), then verify each in claim order.
-        results = cls.optimize_maps([job["request"] for job in jobs], workers=workers)
-        for job, (written, error) in zip(jobs, results):
+        # Phase 3: the encodes (files only), then settle each in claim order.
+        outcomes = (
+            cls._encode_in_place(jobs, workers)
+            if write_back
+            else cls._encode_staged(jobs, temp_staging, workers)
+        )
+        for job, outcome in zip(jobs, outcomes):
             record = job["record"]
-            src, size_before = record["path"], record["size_before"]
-            if error is None and not write_back and not temp_staging:
-                # check_existing keys reuse on mtime alone, so a staged file
-                # from an earlier run under DIFFERENT settings (another
-                # template, or none) is "newer than the source" and gets
-                # reused while still needing work — the task would report
-                # success and its paired check would name the residual with
-                # no UI way out. Re-judge the reused file against THIS pass.
-                try:
-                    stale = assess(written)
-                    if stale and stale["needed"]:
-                        written = cls.optimize_map(
-                            **dict(job["request"], check_existing=False)
-                        )
-                except Exception as e:  # noqa: BLE001 — per-map fallback
-                    error = e
-            if error is not None:
-                record["error"] = error
+            record["cached"] = outcome.get("cached", False)
+            report["cached"] += record["cached"]
+            if outcome["status"] == "failed":
+                record["error"] = outcome["error"]
                 report["failed"] += 1
                 log.warning(
-                    f"Texture optimization failed for {os.path.basename(src)} "
-                    f"— the original ships instead: {error}"
+                    f"Texture optimization failed for "
+                    f"{os.path.basename(record['path'])} — the original ships "
+                    f"instead: {outcome['error']}"
                 )
                 continue
-
-            size_after = os.path.getsize(written) if os.path.isfile(written) else 0
-            record["size_after"] = size_after
-            if record["recompress"] and size_after > size_before * (
-                1 - cls.RECOMPRESS_MIN_SAVING
-            ):
-                # Too little saved to ship a second copy of the same pixels:
-                # the source ships, and a copy this run wrote goes.
+            record["size_after"] = outcome["size_after"]
+            if outcome["status"] == "kept":
                 record["status"] = "kept"
                 report["kept"] += 1
-                if not job["existed"]:
-                    try:
-                        os.remove(written)
-                    except OSError:
-                        pass
                 continue
-
-            record["status"], record["written"] = "optimized", written
+            record["status"], record["written"] = "optimized", outcome["written"]
             report["optimized"] += 1
-            report["bytes_before"] += size_before
-            report["bytes_after"] += size_after
+            report["bytes_before"] += record["size_before"]
+            report["bytes_after"] += outcome["size_after"]
 
+        if report["cached"]:
+            log.info(
+                f"{report['cached']} of them came from the optimized-map cache "
+                "(same source file, same settings): not encoded again."
+            )
         if report["kept"]:
             log.info(
                 f"{report['kept']} re-encode(s) saved under "
@@ -1778,6 +1819,248 @@ class MapOptimizer(HelpMixin):
                 f"{report['failed']} texture(s) could not be optimized and ship as-is."
             )
         return report
+
+    @classmethod
+    def _saved_too_little(cls, record: Dict[str, Any], size_after: int) -> bool:
+        """Is *record* a re-encode candidate whose encode is not worth shipping?"""
+        return record["recompress"] and size_after > record["size_before"] * (
+            1 - cls.RECOMPRESS_MIN_SAVING
+        )
+
+    @classmethod
+    def _encode_in_place(
+        cls, jobs: List[Dict[str, Any]], workers: Optional[int]
+    ) -> List[Dict[str, Any]]:
+        """:meth:`stage_maps`' write-back encodes: over the sources, uncached."""
+        outcomes = []
+        results = cls.optimize_maps([job["request"] for job in jobs], workers=workers)
+        for job, (written, error) in zip(jobs, results):
+            if error is not None:
+                outcomes.append({"status": "failed", "error": error})
+                continue
+            size_after = os.path.getsize(written) if os.path.isfile(written) else 0
+            if cls._saved_too_little(job["record"], size_after):
+                # Too little saved to ship a second copy of the same pixels:
+                # the source ships, and a copy this run wrote goes.
+                if not job["existed"]:
+                    try:
+                        os.remove(written)
+                    except OSError:
+                        pass
+                outcomes.append({"status": "kept", "size_after": size_after})
+                continue
+            outcomes.append(
+                {"status": "optimized", "written": written, "size_after": size_after}
+            )
+        return outcomes
+
+    @classmethod
+    def _encode_staged(
+        cls,
+        jobs: List[Dict[str, Any]],
+        temp_staging: bool,
+        workers: Optional[int],
+    ) -> List[Dict[str, Any]]:
+        """:meth:`stage_maps`' staged encodes, through the cache.
+
+        A job whose slot holds an encode (or a "kept" verdict) costs no encode;
+        the rest encode in parallel into scratch dirs and are promoted into
+        their slots. Every optimized map is then placed in its staging dir
+        under the name its encode wrote.
+        """
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        cache = TempArtifacts(cls._CACHE_PREFIX)
+        outcomes: List[Optional[Dict[str, Any]]] = []
+        slots: List[Optional[str]] = []
+        with TempArtifacts("map_optimizer_encode", policy="scoped") as scratch:
+            misses = []
+            for index, job in enumerate(jobs):
+                key = cls._stage_key(job["request"], job["record"]["recompress"])
+                slot = cache.dir_path(name=key, create=False) if key else None
+                slots.append(slot)
+                outcomes.append(cls._cached(slot))
+                if outcomes[index] is None:
+                    job["request"]["output_dir"] = scratch.dir_path()
+                    misses.append(index)
+
+            results = cls.optimize_maps(
+                [jobs[index]["request"] for index in misses], workers=workers
+            )
+            for index, (written, error) in zip(misses, results):
+                if error is not None:
+                    outcomes[index] = {"status": "failed", "error": error}
+                    continue
+                size_after = os.path.getsize(written) if os.path.isfile(written) else 0
+                if cls._saved_too_little(jobs[index]["record"], size_after):
+                    # Remembered, so the trial encode is not repeated; the
+                    # encode itself goes with the scratch.
+                    cls._remember_kept(slots[index], size_after)
+                    outcomes[index] = {"status": "kept", "size_after": size_after}
+                    continue
+                outcomes[index] = {
+                    "status": "optimized",
+                    "file": cls._promote(written, slots[index]),
+                    "size_after": size_after,
+                }
+
+            # Placed inside the scratch scope: an encode the cache could not
+            # take still lives there.
+            for job, outcome in zip(jobs, outcomes):
+                if outcome["status"] != "optimized":
+                    continue
+                target = os.path.join(job["out_dir"], os.path.basename(outcome["file"]))
+                try:
+                    outcome["written"] = cls._place(
+                        outcome["file"], target, link=temp_staging
+                    )
+                except OSError as e:
+                    outcome.update(status="failed", error=e)
+        return outcomes
+
+    @classmethod
+    def _stage_key(cls, request: Mapping[str, Any], recompress: bool) -> Optional[str]:
+        """The cache key of one staged encode, or None to encode it uncached.
+
+        The source's identity (path, mtime, size) plus everything that decides
+        the bytes written: every option asked for but the size rules
+        (:attr:`_SIZE_RULES`), and :meth:`assess`'s prediction of THIS
+        request -- the dry-run twin, read from the header alone -- so a size
+        rule enters as its effect on this map, never as its raw value. :attr:`CACHE_VERSION` and the package and
+        Pillow versions cover what a prediction cannot see (the encoder).
+        """
+        from pythontk import __version__
+        from pythontk.file_utils.temp_artifacts import CachedArtifact
+
+        src = request["texture_path"]
+        options = {
+            name: value
+            for name, value in request.items()
+            if name not in ("texture_path", "output_dir")
+        }
+        try:
+            import PIL
+
+            # Header only: ``assess`` reads size, mode and info from the image
+            # it is given, where its own open decodes every pixel.
+            with ImgUtils.allow_large_images(), Image.open(src) as header:
+                prediction = cls.assess(src, image=header, **options)
+            if prediction.get("error"):
+                return None
+            predicted = prediction["predicted"]
+            return CachedArtifact.key(
+                cls.CACHE_VERSION,
+                __version__,
+                PIL.__version__,
+                sorted(
+                    (name, value)
+                    for name, value in options.items()
+                    if name not in cls._SIZE_RULES
+                ),
+                [(name, predicted.get(name)) for name in cls._OUTCOME_FIELDS],
+                recompress,
+                files=[src],
+            )
+        except Exception:  # noqa: BLE001 -- unreadable here = encoded uncached
+            return None
+
+    @classmethod
+    def _cached(cls, slot: Optional[str]) -> Optional[Dict[str, Any]]:
+        """What a cache slot holds: a "kept" verdict, an encode, or None.
+
+        A slot read is touched (its directory, never the encode): the age
+        sweep reads the newest of the two, so a map in use stays cached
+        rather than being encoded again a week after it first was."""
+        if not slot:
+            return None
+        try:
+            os.utime(slot)
+        except OSError:
+            return None  # no slot: nothing cached
+        try:
+            with open(os.path.join(slot, cls._KEPT_MARKER), encoding="utf-8") as f:
+                return {"status": "kept", "size_after": int(f.read()), "cached": True}
+        except (OSError, ValueError):
+            pass
+        try:
+            with os.scandir(slot) as entries:
+                for entry in entries:
+                    # Dot names are the marker and atomic-write temps.
+                    if entry.name.startswith(".") or not entry.is_file():
+                        continue
+                    size = entry.stat().st_size
+                    if size:
+                        return {
+                            "status": "optimized",
+                            "file": entry.path,
+                            "size_after": size,
+                            "cached": True,
+                        }
+        except OSError:
+            pass
+        return None
+
+    @staticmethod
+    def _promote(written: str, slot: Optional[str]) -> str:
+        """Move a finished encode into its slot by one rename; return where it is.
+
+        The rename is :class:`CachedArtifact`'s promotion (scratch and cache
+        share the temp volume), so a slot is only ever empty or complete. A
+        slot that refuses it leaves the encode in scratch, shipped uncached.
+        """
+        if not slot:
+            return written
+        cached = os.path.join(slot, os.path.basename(written))
+        try:
+            os.makedirs(slot, exist_ok=True)
+            FileUtils.replace_file(written, cached)
+        except OSError:
+            return written
+        return cached
+
+    @classmethod
+    def _remember_kept(cls, slot: Optional[str], size_after: int) -> None:
+        """Mark *slot* "kept" (best effort: unmarked, the trial runs again)."""
+        if not slot:
+            return
+        try:
+            os.makedirs(slot, exist_ok=True)
+            FileUtils.atomic_write_text(
+                os.path.join(slot, cls._KEPT_MARKER), str(size_after)
+            )
+        except OSError:
+            pass
+
+    @staticmethod
+    def _place(cached: str, target: str, link: bool) -> str:
+        """Put *cached* at *target* atomically; return *target*.
+
+        A hard link when *link* (a throwaway stage), else -- or where a link
+        cannot reach (another volume) -- a copy carrying the cached file's
+        mtime. A deliverable owns its bytes: an edit to a linked one would
+        write into the cache. A target already holding this file (same size,
+        same mtime: a link to it, or its copy) is left as it is.
+        """
+        import shutil
+
+        try:
+            have, want = os.stat(target), os.stat(cached)
+            if (have.st_size, have.st_mtime_ns) == (want.st_size, want.st_mtime_ns):
+                return target
+        except OSError:
+            pass
+
+        def write(part: str) -> None:
+            if link:
+                try:
+                    os.link(cached, part)
+                    return
+                except OSError:
+                    pass
+            shutil.copy2(cached, part)
+
+        os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+        return FileUtils.atomic_write(target, write)
 
     @classmethod
     def assess(
