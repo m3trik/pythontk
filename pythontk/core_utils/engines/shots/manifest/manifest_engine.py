@@ -44,6 +44,7 @@ from pythontk.core_utils.engines.shots.manifest.manifest_model import (
     DEFAULT_INITIAL_SHOT_LENGTH,
     FitMode,
     ObjectStatus,
+    PlannedInsert,
     PlannedShot,
     ShotPairing,
     StepStatus,
@@ -112,7 +113,8 @@ class ShotManifest(_ShotManifestInternal):
     :meth:`_discover_scene_objects`, :meth:`rewire_audio`,
     :meth:`apply_behaviors`, :meth:`_object_exists`, :meth:`_verify_behavior`,
     :meth:`_keyframe_range`, :meth:`_audio_exists`,
-    :meth:`_audio_grow_duration`, :meth:`_placed_clip_keys`), each with a pure
+    :meth:`_audio_grow_duration`, :meth:`_placed_clip_keys`,
+    :meth:`_sequencer`), each with a pure
     default; the DCC toolkits subclass this and override them.
 
     The scene's :class:`~pythontk.EffectRecipe` (``store.effect_recipe``) is
@@ -258,6 +260,18 @@ class ShotManifest(_ShotManifestInternal):
         :func:`_audio_placeholder_dur`.
         """
         return None
+
+    def _sequencer(self):
+        """The ``ShotSequencer`` over :attr:`store` that :meth:`insert_planned`
+        inserts through (hook).
+
+        Pure default: pythontk's, which moves shot bounds only.  DCC
+        subclasses return their own, so the keys and audio of the shots an
+        insert ripples move with them.
+        """
+        from pythontk.core_utils.engines.shots.shot_sequencer import ShotSequencer
+
+        return ShotSequencer(store=self.store)
 
     def _resolve_names_keep_missing(self, names: List[str]) -> List[str]:
         """Resolve object names, keeping the caller's form for missing ones.
@@ -629,6 +643,274 @@ class ShotManifest(_ShotManifestInternal):
             else:
                 meta.pop("step", None)
             self.store.update_shot(other.shot_id, metadata=meta)
+
+    # ---- inserting into a built timeline -----------------------------------
+
+    def _new_shot_duration(
+        self, step: BuilderStep, initial_shot_length: float, fit_mode: FitMode
+    ) -> float:
+        """The length a build gives *step*'s new shot when no range is given:
+        an audio step with no resolvable source takes a placeholder that
+        grows once the clip loads; any other step takes *fit_mode* /
+        *initial_shot_length* (:meth:`resolve_duration`)."""
+        placeholder = _ShotManifestInternal._audio_placeholder_dur(
+            step, measure_audio=self._measure_audio
+        )
+        if placeholder is not None:
+            return placeholder
+        dur, _beh, _aud = ShotManifest.resolve_duration(
+            step,
+            initial_shot_length,
+            fit_mode,
+            self._resolve_fps(),
+            measure_audio=self._measure_audio,
+            recipe=self.recipe,
+        )
+        return dur
+
+    def plan_insertions(
+        self,
+        steps: List[BuilderStep],
+        typed: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
+        fit_mode: FitMode = DEFAULT_FIT_MODE,
+        initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH,
+    ) -> List[PlannedInsert]:
+        """Where each step with no shot goes on a built timeline: in sheet
+        order, rippling every later shot.
+
+        A new shot follows its previous step's shot and the shots after that
+        no step pairs with (the step's split tails, shots the doc does not
+        list); a step before every built one takes the timeline's head.  A
+        step with a typed range is no insert: a Build gives it its shot at
+        that range, in the timeline's current frames, so it is a row of the
+        timeline there -- moved by the inserts before it, as a shot is
+        (:meth:`ride_inserts`) -- and the next new step follows it.  Each
+        insert is placed by :meth:`_sequencer`'s ``insert_placement`` -- the
+        rule its ``insert_shot`` places by -- on the timeline the earlier
+        inserts leave, so the plan's bounds are the ones
+        :meth:`insert_planned`'s inserts leave.  Nothing is changed here: a
+        caller can say what will move before it does.
+
+        Parameters:
+            steps: The steps to build, in sheet order.
+            typed: ``{step_id: (start, end)}``, the ranges typed for steps
+                with no shot, in the timeline's current frames (an end of
+                ``None``: zero-length at the start).  Those steps are not
+                inserted; a range for a step with a shot, or not in *steps*,
+                is ignored.
+            fit_mode: How a new shot is sized (:meth:`resolve_duration`).
+            initial_shot_length: A new shot's length before fitting.
+
+        Returns:
+            One :class:`PlannedInsert` per step to insert, in sheet order, its
+            bounds where it lands once every insert is in; none when no step
+            has a shot -- a first build places every step itself.  A step
+            whose name the store refuses (``ShotStore.name_error``) is left
+            out for the build to report.
+        """
+        pairing = self.pair(steps)
+        if not pairing.shots:
+            return []
+        store = self.store
+        seq = self._sequencer()
+        paired = {shot.shot_id for shot in pairing.shots.values()}
+        taken = {shot.name.lower() for shot in store.sorted_shots()}
+        # The timeline as the inserts will leave it, rows [key, start, end,
+        # shot, at, rank]: key ("shot", shot_id), ("typed", step_id) or
+        # ("insert", step_id); shot None but for an existing one; at the
+        # current start of a row that is there now (a shot, a typed range),
+        # else None.  Kept in the store's order -- by start, a tie by rank,
+        # the order the shots were made in -- so each index is the one the
+        # store gives the shot when the inserts are made.
+        made_rank = len(store.shots)
+        line = [
+            [("shot", s.shot_id), s.start, s.end, s, s.start, n]
+            for n, s in enumerate(store.shots)
+        ]
+        ids = {step.step_id for step in steps}
+        for sid, (lo, hi) in (typed or {}).items():
+            if sid in ids and sid not in pairing.shots and lo is not None:
+                hi = lo if hi is None else hi
+                line.append([("typed", sid), lo, hi, None, lo, float("inf")])
+        line.sort(key=lambda row: (row[1], row[5]))
+
+        def row_of(key) -> int:
+            return next(i for i, row in enumerate(line) if row[0] == key)
+
+        plans: List[PlannedInsert] = []
+        by_step: Dict[str, PlannedInsert] = {}
+        anchor = None  # the key of the row the next insert follows (None: the head)
+        for step in steps:
+            shot = pairing.shots.get(step.step_id)
+            if shot is not None:
+                at = row_of(("shot", shot.shot_id))
+                while (
+                    at + 1 < len(line)
+                    and line[at + 1][0][0] == "shot"
+                    and line[at + 1][0][1] not in paired
+                ):
+                    at += 1
+                anchor = line[at][0]
+                continue
+            if any(row[0] == ("typed", step.step_id) for row in line):
+                anchor = ("typed", step.step_id)  # its shot is made at its range
+                continue
+            name = step.shot_name
+            if name.lower() in taken or store.name_error(name):
+                continue
+            taken.add(name.lower())
+            dur = self._new_shot_duration(step, initial_shot_length, fit_mode)
+            idx = 0 if anchor is None else row_of(anchor) + 1
+            start, end, push, moved = seq.insert_placement(
+                idx,
+                dur,
+                gap=store.gap,
+                line=[(r[1], r[2], r[3], r[0][0] != "typed") for r in line],
+            )
+            fixed = [line[i][4] for i in moved if line[i][4] is not None]
+            # What it goes after when it is made: the rows before it now,
+            # nearest first, back to an existing shot.
+            follows = []
+            for prev in reversed(line[:idx]):
+                follows.append(prev[0])
+                if prev[0][0] == "shot":
+                    break
+            for i in moved:
+                line[i][1] = store.snap(line[i][1] + push)
+                line[i][2] = store.snap(line[i][2] + push)
+            plan = PlannedInsert(
+                step=step,
+                start=start,
+                end=end,
+                duration=dur,
+                follows=tuple(follows),
+                pivot=min(fixed) if fixed else None,
+                push=push,
+            )
+            plans.append(plan)
+            by_step[step.step_id] = plan
+            line.insert(
+                idx, [("insert", step.step_id), start, end, None, None, made_rank]
+            )
+            made_rank += 1
+            line.sort(key=lambda row: (row[1], row[5]))
+            anchor = ("insert", step.step_id)
+        # Each where it lands once every insert is in (a later one placed
+        # before it moved it).
+        for row in line:
+            if row[0][0] == "insert":
+                plan = by_step[row[0][1]]
+                plan.start, plan.end = row[1], row[2]
+        return plans
+
+    def insert_planned(
+        self,
+        plans: List[PlannedInsert],
+        typed: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None,
+    ) -> Dict[str, str]:
+        """Insert :meth:`plan_insertions`' shots, each bound to its step and
+        recorded as a build's (the step's metadata and :attr:`BUILD_NAME`,
+        as a first build writes them).
+
+        Each goes through :meth:`_sequencer`'s ``insert_shot``: the shots
+        after it -- with their keys and audio, on a DCC host -- move out of
+        its way.  Each goes after the nearest shot before it on the plan's
+        timeline that exists by then (``PlannedInsert.follows``), so any of a
+        plan's inserts, given in sheet order, go where the plan put them; one
+        that directly follows a typed range starts after where that range
+        lands, as the inserts made so far move it (:meth:`ride_inserts`).
+        Wrap the call in ``store.scene_edit`` for one undo step.
+
+        Parameters:
+            plans: Inserts from :meth:`plan_insertions` (all, or some of
+                them), in sheet order.
+            typed: The typed ranges the plan was made with
+                (:meth:`plan_insertions`' *typed*); without them an insert
+                after a typed range follows the shot before it.
+
+        Returns:
+            ``{step_id: "created" | "refused"}``; a refused insert (the store
+            would not take its name, or the shot it follows is gone) moves
+            nothing.
+        """
+        seq = self._sequencer()
+        made_ids: Dict[str, int] = {}  # step id -> the shot its insert made
+        made: List[PlannedInsert] = []
+        actions: Dict[str, str] = {}
+        for plan in plans:
+            step = plan.step
+            after, start = None, None
+            for kind, key in plan.follows:
+                if kind == "shot":
+                    after = key
+                    break
+                if kind == "insert":
+                    if key in made_ids:
+                        after = made_ids[key]
+                        break
+                    continue  # not made: what comes before it
+                if start is None and typed and typed.get(key):
+                    lo, hi = self.ride_inserts({key: typed[key]}, made)[key]
+                    if lo is not None:
+                        start = (lo if hi is None else hi) + self.store.gap
+            try:
+                block = seq.insert_shot(
+                    name=step.shot_name,
+                    duration=plan.duration,
+                    after_shot_id=after,
+                    at_position=1 if after is None else None,  # the head
+                    description=step.display_text or "",
+                    start=start,
+                )
+            except ValueError as exc:
+                log.warning("Step %s not built: %s", step.shot_name, exc)
+                actions[step.step_id] = "refused"
+                continue
+            # One write binds it (the metadata names its step) and records it
+            # as built; bind() then frees any other shot claiming the step.
+            meta = {**(block.metadata or {}), **self._built_metadata(step)}
+            self.store.update_shot(block.shot_id, metadata=meta)
+            self.bind(block, step.step_id)
+            made_ids[step.step_id] = block.shot_id
+            made.append(plan)
+            actions[step.step_id] = "created"
+        return actions
+
+    @staticmethod
+    def ride_inserts(
+        ranges: Dict[str, Tuple[Optional[float], Optional[float]]],
+        plans: List[PlannedInsert],
+    ) -> Dict[str, Tuple[Optional[float], Optional[float]]]:
+        """*ranges* where they stand once *plans*' inserts are in.
+
+        A range typed in the timeline's current frames is content like any
+        other: one starting at or after an insert's pivot
+        (``PlannedInsert.pivot``) moves by its push, insert by insert
+        (maintainer 2026-10-12).
+
+        Parameters:
+            ranges: ``{key: (start, end)}`` in the timeline's current frames;
+                an end may be ``None`` (a start alone), a start ``None`` (no
+                place), which stays.
+            plans: :meth:`plan_insertions`' inserts.
+
+        Returns:
+            A new dict of the moved ranges; *ranges* is left as it is.
+        """
+        moved: Dict[str, Tuple[Optional[float], Optional[float]]] = {}
+        for key, (start, end) in ranges.items():
+            push = 0.0
+            if start is not None:
+                push = sum(
+                    p.push
+                    for p in plans
+                    if p.pivot is not None and start >= p.pivot - 1e-6
+                )
+            if not push:
+                moved[key] = (start, end)
+                continue
+            moved[key] = (start + push, None if end is None else end + push)
+        return moved
 
     # ---- behavior-key ownership (the ledger's ``authored`` register) -------
 
@@ -1063,23 +1345,9 @@ class ShotManifest(_ShotManifestInternal):
                         )
                         dur = max(rng[1] - rng[0], _content_dur)
                     else:
-                        # Audio steps with no resolvable source get a
-                        # small placeholder so the shot grows once the
-                        # clip loads.
-                        placeholder = _ShotManifestInternal._audio_placeholder_dur(
-                            step, measure_audio=self._measure_audio
+                        dur = self._new_shot_duration(
+                            step, initial_shot_length, fit_mode
                         )
-                        if placeholder is not None:
-                            dur = placeholder
-                        else:
-                            dur, _beh, _aud = ShotManifest.resolve_duration(
-                                step,
-                                initial_shot_length,
-                                fit_mode,
-                                fps,
-                                measure_audio=self._measure_audio,
-                                recipe=self.recipe,
-                            )
                     end = start + dur
 
                 scene_objs = [o for o in step.objects if o.kind != "audio"]
@@ -1303,6 +1571,19 @@ class ShotManifest(_ShotManifestInternal):
             ]
         return record != current
 
+    def _built_metadata(
+        self, step: BuilderStep, meta: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """What a build writes on a shot it makes for *step*: the step's
+        metadata (*meta*, else :meth:`_step_metadata` with the step's
+        pass-through columns) and the name it gives the shot
+        (:attr:`BUILD_NAME`) -- a first build's and an insert's alike."""
+        if meta is None:
+            meta = self._step_metadata(
+                step, pass_through=getattr(step, "_pass_through", None)
+            )
+        return {**meta, self.BUILD_NAME: step.shot_name}
+
     def _kept(self, shot) -> bool:
         """Whether a build leaves *shot* as it is: locked, or edited by hand
         and not asked to rebuild edited shots (2026-10-07: "make sure that
@@ -1403,10 +1684,7 @@ class ShotManifest(_ShotManifestInternal):
                         start=ps.start,
                         end=ps.end,
                         objects=obj_names,
-                        metadata={
-                            **ps.metadata,
-                            self.BUILD_NAME: ps.step.shot_name,
-                        },
+                        metadata=self._built_metadata(ps.step, ps.metadata),
                         description=ps.description,
                     )
                     for n in obj_names:

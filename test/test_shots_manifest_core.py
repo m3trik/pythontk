@@ -40,6 +40,7 @@ from pythontk.core_utils.engines.shots.manifest import range_resolver as rr
 from pythontk.core_utils.engines.shots.manifest.manifest_engine import ShotManifest
 from pythontk.core_utils.engines.shots.effect_recipe import EffectRecipe
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
+from pythontk.core_utils.engines.shots.shot_sequencer import ShotSequencer
 from pythontk.core_utils.schema_spec import SchemaError
 
 
@@ -878,6 +879,56 @@ class TestTemplateOptions(unittest.TestCase):
         },
     }
 
+    def test_an_option_names_the_section_a_ui_groups_it_under(self):
+        """A UI lists a template's options under titled sections, each named
+        by its options; a section a file does not name is ``""``."""
+        template = {
+            "options": {
+                "ids": {"kind": "bool", "section": "Sheet"},
+                "fill": {"kind": "bool"},
+            }
+        }
+        specs = mapping_mod.Mapping.option_specs(template)
+        self.assertEqual([s["section"] for s in specs], ["Sheet", ""])
+        # A template read without validation can carry a null: still "".
+        unvalidated = {"options": {"ids": {"kind": "bool", "section": None}}}
+        self.assertEqual(
+            mapping_mod.Mapping.option_specs(unvalidated)[0]["section"], ""
+        )
+        res = mapping_mod.MappingSpec.validate(
+            {"options": {"ids": {"kind": "bool", "section": 3}}}
+        )
+        self.assertFalse(res.ok)
+        self.assertTrue(any("section" in e for e in res.errors), res.errors)
+
+    def test_the_shipped_template_groups_every_option(self):
+        """Grouped wherever the file puts them: a section's options are
+        listed together, the sections in first-appearance order."""
+        default = mapping_mod.Mapping.load_mapping("default")
+        grouped = mapping_mod.Mapping.option_sections(default)
+        self.assertEqual(
+            [(title, [s["key"] for s in specs]) for title, specs in grouped],
+            [
+                ("Sheet", ["step_ids", "behaviors", "audio", "color_by"]),
+                (
+                    "Objects",
+                    [
+                        "objects",
+                        "object_case",
+                        "object_name_rule",
+                        "fill_missing_assets",
+                    ],
+                ),
+                ("Shots", ["match"]),
+            ],
+        )
+        untitled = {
+            "options": {"a": {"kind": "bool"}, "b": {"kind": "bool", "section": "X"}}
+        }
+        self.assertEqual(
+            [t for t, _s in mapping_mod.Mapping.option_sections(untitled)], ["", "X"]
+        )
+
     def test_specs_are_shaped_for_a_widget_factory(self):
         specs = mapping_mod.Mapping.option_specs(self.TEMPLATE)
         self.assertEqual(
@@ -888,6 +939,7 @@ class TestTemplateOptions(unittest.TestCase):
                     "kind": "choice",
                     "label": "Step IDs",
                     "tooltip": "",
+                    "section": "",
                     "choices": [("A", "a", ""), ("B", "b", "bee")],
                     "default": "a",
                 },
@@ -896,6 +948,7 @@ class TestTemplateOptions(unittest.TestCase):
                     "kind": "bool",
                     "label": "fill",
                     "tooltip": "",
+                    "section": "",
                     "default": False,
                 },
             ],
@@ -1501,6 +1554,30 @@ class TestStatusRollup(unittest.TestCase):
         self.assertEqual(st.status, "edited")
         self.assertFalse(st.needs_build)
         self.assertIn("edited", StepStatus.HELP)
+
+    def test_the_rollup_names_the_worst_severity_first(self):
+        """A step is named after its worst object at the severity a panel
+        shows it at (``SHOT_STATUS_LEVELS``, the DCC panels' ``worst()``).
+
+        Bug: ``behavior_conflict`` (an error) ranked below
+        ``ambiguous_object`` and ``not_in_shot`` (warnings): a step holding
+        both was named by the warning while its icon showed the error.
+        Fixed: 2026-10-12
+        """
+        from pythontk.core_utils.engines.shots.shot_model import SHOT_STATUS_LEVELS
+
+        severity = ("valid", "locked", "info", "warn", "error").index
+        ranks = [severity(SHOT_STATUS_LEVELS[s]) for s in StepStatus.ROLLUP]
+        self.assertEqual(ranks, sorted(ranks, reverse=True), StepStatus.ROLLUP)
+        st = StepStatus(
+            step_id="A01",
+            built=True,
+            objects=[
+                ObjectStatus("a", True, "ambiguous_object"),
+                ObjectStatus("b", True, "behavior_conflict"),
+            ],
+        )
+        self.assertEqual(st.status, "behavior_conflict")
 
 
 class TestManifestEngine(unittest.TestCase):
@@ -3340,6 +3417,363 @@ class TestContentEndPlacesLikeTheBuild(unittest.TestCase):
         )
         self.assertEqual(last, 100.0)  # the second fade-in keys at the end
         self.assertEqual(end, last)
+
+
+class TestInsertInSheetOrder(unittest.TestCase):
+    """``plan_insertions`` / ``insert_planned``: on a built timeline a step
+    with no shot gets one in sheet order -- after its previous step's shot and
+    that shot's split tails -- and every later shot moves out of its way.
+
+    Bug: Build with Hide Missing Shots off laid the unbuilt steps' shots over
+    the built ones -- zero-length, overlapping, out of sheet order (SOL:
+    37 new shots, dozens of overlaps, 9 zero-length).
+    Fixed: 2026-10-12
+    """
+
+    def setUp(self):
+        self.store = ShotStore()
+        self.store.gap = 10.0
+        self.store.define_shot("A01", 0, 100)
+        self.store.define_shot("A01_2", 110, 150)  # split off A01: no step's
+        self.store.define_shot("A03", 160, 260)
+        self.mani = ShotManifest(self.store)
+        self.steps = [self._step(s) for s in ("A00", "A01", "A02", "A03", "A04")]
+
+    @staticmethod
+    def _step(sid):
+        return BuilderStep(sid, "A", "t", "", [BuilderObject(f"{sid}_geo")])
+
+    def _layout(self):
+        return [(s.name, s.start, s.end) for s in self.store.sorted_shots()]
+
+    def test_new_shots_go_in_sheet_order_and_later_shots_ripple(self):
+        plans = self.mani.plan_insertions(self.steps, initial_shot_length=50)
+        self.assertEqual([p.step.step_id for p in plans], ["A00", "A02", "A04"])
+        projected = [(p.step.step_id, p.start, p.end) for p in plans]
+        actions = self.mani.insert_planned(plans)
+        self.assertEqual(actions, dict.fromkeys(("A00", "A02", "A04"), "created"))
+        self.assertEqual(
+            self._layout(),
+            [
+                ("A00", 0, 50),
+                ("A01", 60, 160),
+                ("A01_2", 170, 210),  # a split tail stays with its step
+                ("A02", 220, 270),
+                ("A03", 280, 380),
+                ("A04", 390, 440),
+            ],
+        )
+        got = {name: (start, end) for name, start, end in self._layout()}
+        for sid, start, end in projected:  # the plan is what the inserts do
+            self.assertEqual(got[sid], (start, end), sid)
+        self.assertEqual(
+            set(self.mani.pair(self.steps).shots), {s.step_id for s in self.steps}
+        )
+
+    def test_a_name_the_store_refuses_is_not_planned(self):
+        """``a00`` is A00's clip ignoring case: A00 is left for the build to
+        report as refused, and the next step still takes the head."""
+        self.store.define_shot("a00", 900, 950)
+        steps = [self._step("A00"), self._step("A00b"), self._step("A01")]
+        plans = self.mani.plan_insertions(steps, initial_shot_length=50)
+        self.assertEqual([p.step.step_id for p in plans], ["A00b"])
+        self.assertEqual(self.mani.insert_planned(plans), {"A00b": "created"})
+        self.assertEqual(self._layout()[0], ("A00b", 0, 50))
+
+    def test_a_typed_step_is_not_inserted(self):
+        """A step with a typed range goes there: it is no insert."""
+        plans = self.mani.plan_insertions(
+            self.steps, typed={"A02": (900.0, 950.0)}, initial_shot_length=50
+        )
+        self.assertEqual([p.step.step_id for p in plans], ["A00", "A04"])
+
+    def test_a_step_after_a_typed_one_follows_where_that_one_lands(self):
+        """A typed step will have its shot at its range -- moved with the
+        shots the inserts move -- so the next new step follows it there.
+
+        Bug: X, after P typed past the last shot, appended after the last
+        SHOT: projected at (570, 620), over P's (570, 610); Build made both.
+        Fixed: 2026-10-13
+        """
+        store = ShotStore()
+        store.gap = 10.0
+        for name, start, end in (("Q", 1, 100), ("R", 200, 300), ("S", 400, 500)):
+            store.define_shot(name, start, end)
+        mani = ShotManifest(store)
+        steps = [self._step(s) for s in ("Q", "N", "R", "S", "P", "X")]
+        typed = {"P": (510.0, 550.0)}
+        plans = mani.plan_insertions(steps, typed=typed, initial_shot_length=50)
+        self.assertEqual(
+            [(p.step.step_id, p.start, p.end) for p in plans],
+            [("N", 110, 160), ("X", 620, 670)],
+        )
+        self.assertEqual(plans[1].after_step_id, "P", "it follows P's shot")
+        ridden = ShotManifest.ride_inserts(typed, plans)
+        self.assertEqual(ridden, {"P": (570, 610)})
+        mani.insert_planned(plans, typed=typed)
+        shots = {sid: (s.start, s.end) for sid, s in mani.pair(steps).shots.items()}
+        ranges = rr.RangeResolver.incremental_ranges(steps, shots, user_ranges=ridden)
+        mani.sync(
+            steps, ranges=ranges, remove_missing=False, zero_duration_fallback=True
+        )
+        self.assertEqual(
+            [(s.name, s.start, s.end) for s in store.sorted_shots()],
+            [
+                ("Q", 1, 100),
+                ("N", 110, 160),
+                ("R", 260, 360),
+                ("S", 460, 560),
+                ("P", 570, 610),
+                ("X", 620, 670),
+            ],
+        )
+
+    def test_a_typed_step_between_shots_is_followed_and_ridden(self):
+        """A typed range between two shots: the step after it is inserted
+        there, moving the next shot -- and the typed range rides an earlier
+        insert like the shots after it."""
+        store = ShotStore()
+        store.gap = 10.0
+        store.define_shot("Q", 1, 100)
+        store.define_shot("S", 400, 500)
+        mani = ShotManifest(store)
+        steps = [self._step(s) for s in ("Q", "N", "P", "X", "S")]
+        typed = {"P": (200.0, 250.0)}
+        plans = mani.plan_insertions(steps, typed=typed, initial_shot_length=50)
+        # N after Q pushes P and S 60; X after P (310, 360) pushes S 60 more.
+        self.assertEqual(
+            [(p.step.step_id, p.start, p.end, p.push) for p in plans],
+            [("N", 110, 160, 60), ("X", 320, 370, 60)],
+        )
+        self.assertEqual(ShotManifest.ride_inserts(typed, plans), {"P": (260, 310)})
+        mani.insert_planned(plans, typed=typed)
+        got = {s.name: (s.start, s.end) for s in store.sorted_shots()}
+        self.assertEqual(
+            got, {"Q": (1, 100), "N": (110, 160), "X": (320, 370), "S": (520, 620)}
+        )
+
+    def test_an_unbuilt_timeline_plans_nothing(self):
+        """A first build places every step itself."""
+        self.assertEqual(ShotManifest(ShotStore()).plan_insertions(self.steps), [])
+
+    def test_an_inserted_shot_carries_what_a_first_build_writes(self):
+        """The name a build gave it, and the step's metadata: a hand's rename
+        of an inserted shot is an edit, as it is of any built one.
+
+        Bug: ``insert_planned`` bound the step and wrote nothing else, so
+        ``edited_by_hand`` (Keep All Edits, the Edits status) never saw an
+        inserted shot renamed by hand.
+        Fixed: 2026-10-12
+        """
+        store = ShotStore()
+        store.gap = 10.0
+        mani = ShotManifest(store)
+        a01, a02, a03 = (self._step(s) for s in ("A01", "A02", "A03"))
+        mani.sync([a01, a03], initial_shot_length=100)  # the first build
+        plans = mani.plan_insertions([a01, a02, a03], initial_shot_length=50)
+        self.assertEqual([p.step.step_id for p in plans], ["A02"])
+        mani.insert_planned(plans)
+        mani.sync([a01, a02, a03], remove_missing=False, zero_duration_fallback=True)
+        first, inserted = store.shot_by_name("A01"), store.shot_by_name("A02")
+        self.assertEqual(set(inserted.metadata), set(first.metadata))
+        self.assertEqual(inserted.metadata[ShotManifest.BUILD_NAME], "A02")
+        self.assertEqual(inserted.metadata["step"], "A02")
+        self.assertFalse(mani.edited_by_hand(inserted))
+        store.update_shot(first.shot_id, name="A01_hand")
+        store.update_shot(inserted.shot_id, name="A02_hand")
+        self.assertTrue(mani.edited_by_hand(store.shot_by_id(first.shot_id)))
+        self.assertTrue(mani.edited_by_hand(store.shot_by_id(inserted.shot_id)))
+
+    def test_content_trailing_a_moved_last_shot_moves_with_it(self):
+        """A step appended after the last shot clears that shot's trailing
+        content where the earlier inserts left it.
+
+        Bug: the plan took the larger of the moved end and the content's
+        unmoved extent: with 30 frames trailing each shot, A04 was planned at
+        (280, 330) and landed at (310, 360).
+        Fixed: 2026-10-12
+        """
+        store = ShotStore()
+        store.gap = 10.0
+        store.define_shot("A01", 0, 100)
+        store.define_shot("A03", 110, 210)
+        mani = _TrailingManifest(store)
+        steps = [self._step(s) for s in ("A01", "A02", "A03", "A04")]
+        plans = mani.plan_insertions(steps, initial_shot_length=50)
+        planned = {p.step.step_id: (p.start, p.end) for p in plans}
+        self.assertEqual(planned, {"A02": (110, 160), "A04": (310, 360)})
+        mani.insert_planned(plans)
+        got = {s.name: (s.start, s.end) for s in store.sorted_shots()}
+        for sid, bounds in planned.items():
+            self.assertEqual(got[sid], bounds, sid)
+
+    def test_a_shot_sharing_the_insert_point_keeps_its_place(self):
+        """The shots an insert moves are those after it in the timeline's
+        order, not every shot starting at its frame.
+
+        Bug: a zero-length shot Z on A03's start frame moved with A03, so A02,
+        planned after Z, landed before it: A01, A02, Z, A03.
+        Fixed: 2026-10-12
+        """
+        store = ShotStore()
+        store.gap = 10.0
+        store.define_shot("A01", 0, 100)
+        store.define_shot("Z", 110, 110)  # no step's
+        store.define_shot("A03", 110, 210)
+        mani = ShotManifest(store)
+        steps = [self._step(s) for s in ("A01", "A02", "A03")]
+        plans = mani.plan_insertions(steps, initial_shot_length=50)
+        self.assertEqual([(p.start, p.end) for p in plans], [(120, 170)])
+        mani.insert_planned(plans)
+        layout = [(s.name, s.start, s.end) for s in store.sorted_shots()]
+        self.assertEqual(
+            layout,
+            [("A01", 0, 100), ("Z", 110, 110), ("A02", 120, 170), ("A03", 170, 270)],
+        )
+
+    def test_part_of_a_plan_keeps_its_place_in_the_sheet(self):
+        """``insert_planned`` given some of a plan's inserts puts each where
+        the plan says, after the shot its chain follows -- never at the head.
+
+        Bug: an insert following one left out took the timeline's head.
+        Fixed: 2026-10-12
+        """
+        steps = [self._step(s) for s in ("A01", "B01", "B02", "B03", "A03")]
+        plans = self.mani.plan_insertions(steps, initial_shot_length=50)
+        self.assertEqual([p.step.step_id for p in plans], ["B01", "B02", "B03"])
+        self.assertEqual(
+            [p.after_step_id for p in plans], [None, "B01", "B02"], "the chain"
+        )
+        self.assertEqual(
+            self.mani.insert_planned(plans[1:]),
+            dict.fromkeys(("B02", "B03"), "created"),
+        )
+        names = [name for name, _start, _end in self._layout()]
+        self.assertEqual(names, ["A01", "A01_2", "B02", "B03", "A03"])
+
+    def test_every_plan_is_where_its_shot_lands(self):
+        """A step inserted before an earlier insert (the timeline holds its
+        shots out of sheet order) moves that one: each plan says where its
+        shot ends up once every insert is in."""
+        store = ShotStore()
+        store.gap = 10.0
+        store.define_shot("S3", 0, 100)
+        store.define_shot("S1", 110, 210)
+        mani = ShotManifest(store)
+        steps = [self._step(s) for s in ("S1", "S2", "S3", "S4")]
+        plans = mani.plan_insertions(steps, initial_shot_length=50)
+        planned = {p.step.step_id: (p.start, p.end) for p in plans}
+        mani.insert_planned(plans)
+        got = {s.name: (s.start, s.end) for s in store.sorted_shots()}
+        self.assertEqual(planned, {"S2": got["S2"], "S4": got["S4"]})
+        self.assertEqual(got["S2"], (280, 330))
+
+    def test_a_typed_range_rides_the_inserts_before_it(self):
+        """A range typed for an unbuilt step is in the timeline's current
+        frames, so it moves with every shot an earlier insert pushes
+        (maintainer 2026-10-12).
+
+        Bug: the typed A04 (220, 270) was placed as typed, over A03, which
+        A02's insert had pushed to [170, 270].
+        Fixed: 2026-10-12
+        """
+        store = ShotStore()
+        store.gap = 10.0
+        store.define_shot("A01", 0, 100)
+        store.define_shot("A03", 110, 210)
+        mani = ShotManifest(store)
+        steps = [self._step(s) for s in ("A01", "A02", "A03", "A04")]
+        typed = {"A04": (220.0, 270.0)}
+        plans = mani.plan_insertions(steps, typed=typed, initial_shot_length=50)
+        self.assertEqual([(p.pivot, p.push) for p in plans], [(110, 60)])
+        ridden = ShotManifest.ride_inserts(typed, plans)
+        self.assertEqual(ridden, {"A04": (280, 330)})
+        self.assertEqual(typed, {"A04": (220.0, 270.0)}, "the input is left")
+        mani.insert_planned(plans)
+        shots = {sid: (s.start, s.end) for sid, s in mani.pair(steps).shots.items()}
+        ranges = rr.RangeResolver.incremental_ranges(steps, shots, user_ranges=ridden)
+        mani.sync(
+            steps, ranges=ranges, remove_missing=False, zero_duration_fallback=True
+        )
+        layout = [(s.name, s.start, s.end) for s in store.sorted_shots()]
+        self.assertEqual(
+            layout,
+            [("A01", 0, 100), ("A02", 110, 160), ("A03", 170, 270), ("A04", 280, 330)],
+        )
+
+
+class _TrailingSequencer(ShotSequencer):
+    """A bounds-only sequencer whose shots that had content (*keyed*: their
+    ids) trail it 30 frames past their end; a new shot has none."""
+
+    def __init__(self, keyed, **kwargs):
+        super().__init__(**kwargs)
+        self.keyed = keyed
+
+    def _trailing_content_extent(self, shot) -> float:
+        return shot.end + (30 if shot.shot_id in self.keyed else 0)
+
+
+class _TrailingManifest(ShotManifest):
+    """A manifest over :class:`_TrailingSequencer`: the shots its store holds
+    now carry the content."""
+
+    def __init__(self, store, **kwargs):
+        super().__init__(store, **kwargs)
+        self.keyed = {shot.shot_id for shot in store.shots}
+
+    def _sequencer(self):
+        return _TrailingSequencer(self.keyed, store=self.store)
+
+
+class TestInsertPlanMatchesTheInserts(unittest.TestCase):
+    """``plan_insertions`` and ``ShotSequencer.insert_shot`` place a shot by
+    one rule (``ShotSequencer.insert_placement``): on any timeline -- shots
+    out of sheet order, zero-length shots, shots sharing a start (overlapping
+    ones moved by the frame rule), content trailing past a shot's end, typed
+    ranges the inserts follow and move -- every plan is where its insert
+    lands, and a typed range where ``ride_inserts`` says."""
+
+    def _step(self, sid):
+        return BuilderStep(sid, "A", "t", "", [BuilderObject(f"{sid}_geo")])
+
+    def test_on_random_timelines(self):
+        import random
+
+        rng = random.Random(20261012)
+        for case in range(150):
+            store = ShotStore()
+            store.gap = rng.choice((0.0, 5.0, 10.0))
+            frame, names = 0.0, []
+            for i in range(rng.randint(1, 6)):
+                length = rng.choice((0.0, 20.0, 50.0))
+                store.define_shot(f"S{i}", frame, frame + length)
+                names.append(f"S{i}")
+                if rng.random() < 0.2:
+                    continue  # the next shares this start: an overlap tie
+                frame += length + rng.choice((0.0, 0.0, 10.0))
+            rng.shuffle(names)
+            sheet, typed = [], {}
+            for i, name in enumerate(names):
+                if rng.random() < 0.8:  # some shots no step pairs with
+                    sheet.append(name)
+                for j in range(rng.randint(0, 2)):
+                    sid = f"N{i}_{j}"
+                    sheet.append(sid)
+                    if rng.random() < 0.25:  # off the shots' frames: no tie
+                        at = rng.randrange(0, int(frame) + 60, 10) + 3.0
+                        typed[sid] = (at, at + rng.choice((0.0, 15.0)))
+            steps = [self._step(sid) for sid in sheet]
+            cls = _TrailingManifest if rng.random() < 0.5 else ShotManifest
+            mani = cls(store)
+            plans = mani.plan_insertions(steps, typed=typed, initial_shot_length=40)
+            planned = {p.step.step_id: (p.start, p.end) for p in plans}
+            order_before = [s.name for s in store.sorted_shots()]
+            mani.insert_planned(plans, typed=typed)
+            got = {s.name: (s.start, s.end) for s in store.sorted_shots()}
+            with self.subTest(case=case, sheet=sheet, typed=typed, before=order_before):
+                for sid, bounds in planned.items():
+                    self.assertEqual(got[sid], bounds, sid)
 
 
 if __name__ == "__main__":

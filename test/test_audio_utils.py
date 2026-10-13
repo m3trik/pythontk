@@ -612,5 +612,44 @@ class TestBuildAudioMap(BaseTestCase):
         self.assertEqual(result, {})
 
 
+class TestMemoDuration(BaseTestCase):
+    """``AudioUtils.memo_duration``: a host's clip-length reader runs once per
+    file as it is on disk -- a table resolves its ranges several times a
+    redraw, and each read opened a WAV on a synced drive -- and again once the
+    file is replaced (2026-10-13)."""
+
+    def setUp(self):
+        import pythontk as ptk
+
+        self.tmp = ptk.TempArtifacts("ptk_memo_duration", policy="scoped")
+        self.addCleanup(self.tmp.cleanup)
+        self.path = self.tmp.path(".wav")
+        self.reads = []
+
+    def probe(self, path, fps):
+        self.reads.append(path)
+        with wave.open(path, "rb") as wf:
+            return wf.getnframes() / wf.getframerate() * fps, path
+
+    def test_a_file_is_read_once_until_it_changes(self):
+        _write_wav(self.path, [0] * 4410, sample_rate=4410)  # 1 s
+        self.assertEqual(AudioUtils.memo_duration(self.path, 24, self.probe)[0], 24)
+        self.assertEqual(AudioUtils.memo_duration(self.path, 24, self.probe)[0], 24)
+        self.assertEqual(len(self.reads), 1, "read once")
+        self.assertEqual(AudioUtils.memo_duration(self.path, 30, self.probe)[0], 30)
+        self.assertEqual(len(self.reads), 2, "another frame rate reads again")
+        _write_wav(self.path, [0] * 8820, sample_rate=4410)  # replaced: 2 s
+        self.assertEqual(AudioUtils.memo_duration(self.path, 24, self.probe)[0], 48)
+        self.assertEqual(len(self.reads), 3, "a replaced file reads again")
+
+    def test_no_reading_and_no_file_are_never_kept(self):
+        empty = lambda path, fps: (self.reads.append(path) or 0.0, path)  # noqa: E731
+        _write_wav(self.path, [0] * 10, sample_rate=4410)
+        for _ in range(2):
+            AudioUtils.memo_duration(self.path, 24, empty)
+            AudioUtils.memo_duration(self.path + ".gone", 24, empty)
+        self.assertEqual(len(self.reads), 4)
+
+
 if __name__ == "__main__":
     unittest.main()

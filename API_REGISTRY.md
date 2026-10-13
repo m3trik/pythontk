@@ -191,6 +191,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 
 - **[`class AudioUtils(HelpMixin)`](pythontk/pythontk/audio_utils/_audio_utils.py#L14)** — Utility helpers for portable audio-file preparation.
   - `AudioUtils.resolve_ffmpeg(cls, required: bool = True, auto_install: bool = False) -> Optional[str]` *(class)* — Resolve the ffmpeg executable from PATH or a managed install.
+  - `AudioUtils.memo_duration(cls, file_path: str, fps: float, probe: Callable[[str, float], Tuple[float, str]]) -> Tuple[float, str]` *(class)* — *probe* -- a host's reader of a clip's length -- read once per file
   - `AudioUtils.is_playable_extension(cls, file_path: str) -> bool` *(class)* — Return True if extension is already timeline-playable.
   - `AudioUtils.is_supported_source_extension(cls, file_path: str) -> bool` *(class)* — Return True if extension is accepted as conversion source.
   - `AudioUtils.ensure_playable_path(cls, audio_path: str, cache_dir: Optional[str] = None) -> str` *(class)* — Return a playable audio path, converting with ffmpeg if required.
@@ -909,7 +910,7 @@ The Shot Manifest's edit layer: a user's changes to a build sheet, kept
   - `ManifestEdits.object_record(self, home: str, sheet_name: str) -> Dict[str, Any]` — The edited fields of the object the sheet lists as *sheet_name*
   - `ManifestEdits.is_added(self, step_id: str) -> bool` — Whether *step_id* is a step this layer added (not the sheet's).
   - `ManifestEdits.hidden_steps(self) -> List[str]` — The IDs of the hidden steps, in the order they were hidden.
-  - `ManifestEdits.hidden_objects(self, step_id: str) -> List[Tuple[str, str]]` — ``[(home, sheet_name)]`` of the hidden objects that sit in
+  - `ManifestEdits.hidden_objects(self, step_id: Optional[str] = None) -> List[Tuple[str, str]]` — The hidden objects that sit in *step_id* -- listed there, or moved
   - `ManifestEdits.anchor(step: BuilderStep, obj: BuilderObject) -> Tuple[str, str]` *(static)* — ``(home, sheet_name)`` -- the key an edit to *obj*, shown in
   - `ManifestEdits.name_taken(steps: Iterable[BuilderStep], name: str, step_id: Optional[str] = None) -> Optional[str]` *(static)* — The ID of the step other than *step_id* whose shot is already
   - `ManifestEdits.stale(self, steps: Iterable[BuilderStep]) -> List[str]` — Each edit the sheet's *steps* no longer give a place to, described.
@@ -928,7 +929,7 @@ The Shot Manifest's edit layer: a user's changes to a build sheet, kept
 
 Shot Manifest engine — pure planning/orchestration core with scene hooks.
 
-- **[`class ShotManifest(_ShotManifestInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_engine.py#L102)** — Creates shot store entries from parsed steps and applies behaviors.
+- **[`class ShotManifest(_ShotManifestInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_engine.py#L103)** — Creates shot store entries from parsed steps and applies behaviors.
   - `ShotManifest.recipe(self)` *(property)* — The scene's :class:`~pythontk.EffectRecipe` -- the store's.
   - `ShotManifest.unkeyed_behaviors(self) -> frozenset` *(property)* — The behavior names a build does not key: turned off or marked.
   - `ShotManifest.rewire_audio(self, tracks: Optional[List[str]] = None) -> Dict[str, List[str]]` — Reconcile managed audio nodes with keyed track state (hook).
@@ -937,6 +938,9 @@ Shot Manifest engine — pure planning/orchestration core with scene hooks.
   - `ShotManifest.update(self, steps: List[BuilderStep], ranges: Optional[Dict[str, Tuple[float, float]]] = None, remove_missing: bool = True, zero_duration_fallback: bool = False, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH) -> Dict[str, str]` — Sync parsed steps to the ShotStore (data only, no behaviors).
   - `ShotManifest.pair(self, steps: List[BuilderStep]) -> ShotPairing` — Which shot each step is -- the one place a step finds its shot.
   - `ShotManifest.bind(self, shot, step_id: Optional[str]) -> None` — Make *shot* step *step_id*'s shot -- the binding :meth:`pair`
+  - `ShotManifest.plan_insertions(self, steps: List[BuilderStep], typed: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None, fit_mode: FitMode = DEFAULT_FIT_MODE, initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH) -> List[PlannedInsert]` — Where each step with no shot goes on a built timeline: in sheet
+  - `ShotManifest.insert_planned(self, plans: List[PlannedInsert], typed: Optional[Dict[str, Tuple[Optional[float], Optional[float]]]] = None) -> Dict[str, str]` — Insert :meth:`plan_insertions`' shots, each bound to its step and
+  - `ShotManifest.ride_inserts(ranges: Dict[str, Tuple[Optional[float], Optional[float]]], plans: List[PlannedInsert]) -> Dict[str, Tuple[Optional[float], Optional[float]]]` *(static)* — *ranges* where they stand once *plans*' inserts are in.
   - `ShotManifest.unowned_keys(self, obj: str, behavior: str, start: float, end: float) -> List[Tuple[str, float]]` — Keys on *behavior*'s channels of *obj* in ``[start, end]`` that the
   - `ShotManifest.release_authored(self, shot_id: int, obj: str, behavior: str) -> int` — Delete the keys *behavior* wrote on *obj* for shot *shot_id* and drop
   - `ShotManifest.release_dropped(self, steps: List[BuilderStep]) -> int` — Delete the keys of behaviors a step's doc no longer lists.
@@ -971,10 +975,10 @@ The Shot Manifest as a table to hand on: a spreadsheet for the sheet's
 
 Pure Shot Manifest data model + CSV parser.
 
-- [`DEFAULT_INITIAL_SHOT_LENGTH`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L825) — constant
-- [`DEFAULT_FIT_MODE`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L826) — constant
-- [`AUDIO_PLACEHOLDER_DURATION`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L832) — constant
-- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L444)** — The shot manifest's data model and CSV parser.
+- [`DEFAULT_INITIAL_SHOT_LENGTH`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L868) — constant
+- [`DEFAULT_FIT_MODE`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L869) — constant
+- [`AUDIO_PLACEHOLDER_DURATION`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L875) — constant
+- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L445)** — The shot manifest's data model and CSV parser.
   - `ManifestModel.describe_read_failure(cls, path: str, exc: OSError) -> str` *(class)* — Explain a CSV that exists but cannot be read, without over-committing.
   - `ManifestModel.detect_behaviors(text: str) -> List[str]` *(static)* — Return behavior names inferred from descriptive *text*.
   - `ManifestModel.asset_column(source: str, fills: Dict[str, List[str]], columns: Optional['ColumnMap'] = None) -> List[str]` *(static)* **DEPRECATED (remove in 0.14.0)** — The source sheet's asset column, row for row, with *fills* written
@@ -982,23 +986,26 @@ Pure Shot Manifest data model + CSV parser.
   - `ManifestModel.parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]` *(static)* — Parse a structured CSV into a list of :class:`BuilderStep`.
   - `ManifestModel.prose_name(subject: str, case: str, rule: str) -> str` *(static)* — The object name a doc's prose *subject* stands for: *case*
   - `ManifestModel.validate_patterns(value: Any) -> List[str]` *(static)* — Validate a row-grammar field: a list of regexes that compile.
-- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L620)** — One asset within a step.
-- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L639)** — One step (= one future sequencer shot).
+- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L621)** — One asset within a step.
+- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L640)** — One step (= one future sequencer shot).
   - `BuilderStep.shot_name(self) -> str` *(property)* — The name this step's shot carries: :attr:`name`, else the step ID.
   - `BuilderStep.display_text(self) -> str` *(property)* — Text shown in the tree Description column.
   - `BuilderStep.from_detection(cls, candidates: List[Dict]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert detection candidates to BuilderSteps + pre-filled ranges.
   - `BuilderStep.from_shots(cls, shots: List[Any]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert existing store shots back into BuilderSteps + their ranges.
-- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L802)** — Immutable build instruction computed before any store mutation.
-- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L841)** — Assessment result for one object within a step.
-- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L863)** — Assessment result for one step.
+- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L803)** — Immutable build instruction computed before any store mutation.
+- **[`class PlannedInsert`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L823)** — Where a step with no shot goes on a built timeline
+  - `PlannedInsert.after_shot_id(self) -> Optional[int]` *(property)* — The existing shot it goes after (``None``: before every one).
+  - `PlannedInsert.after_step_id(self) -> Optional[str]` *(property)* — The step whose new shot it directly follows -- another insert, or
+- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L884)** — Assessment result for one object within a step.
+- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L906)** — Assessment result for one step.
   - `StepStatus.status(self) -> str` *(property)* — Worst-of-children rollup.
   - `StepStatus.needs_build(self) -> bool` *(property)* — Whether a Build would change this step: its shot is not built, an
   - `StepStatus.missing_count(self) -> int` *(property)*
   - `StepStatus.total_count(self) -> int` *(property)*
   - `StepStatus.find_object(results: List['StepStatus'], name: str, step_id: Optional[str] = None) -> Optional[ObjectStatus]` *(static)* — The first assessed :class:`ObjectStatus` named *name* in *results*.
-- **[`class ShotPairing`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L989)** — Which shot each step is -- :meth:`ShotManifest.pair`'s answer.
+- **[`class ShotPairing`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L1035)** — Which shot each step is -- :meth:`ShotManifest.pair`'s answer.
   - `ShotPairing.rows(self, steps: List['BuilderStep'], hide_missing: bool = False, orphans: bool = True, keep: Iterable[str] = ()) -> List[Tuple[Optional['BuilderStep'], Optional[Any]]]` — The manifest's rows: ``(step, shot)`` per step in doc order --
-- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L1077)** — Maps logical fields to CSV header names (case-insensitive), plus the
+- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L1123)** — Maps logical fields to CSV header names (case-insensitive), plus the
   - `ColumnMap.to_dict(self) -> Dict[str, Any]` — Serialise to a JSON-safe dict (tuples → lists).
   - `ColumnMap.from_dict(cls, data: Dict[str, Any]) -> 'ColumnMap'` *(class)* — Reconstruct from a dict produced by :meth:`to_dict`.
 
@@ -1025,6 +1032,7 @@ CSV mapping resolver — interprets JSON mapping files.
   - `Mapping.retired(name: str) -> Optional[Tuple[str, Dict[str, Any]]]` *(static)* — ``(replacement, option values)`` for a retired template, else ``None``.
   - `Mapping.load_mapping(name: str, directory: Optional[str] = None) -> Dict[str, Any]` *(static)* — Read a mapping JSON by *name*, validate it, and return the parsed dict.
   - `Mapping.option_specs(mapping: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]` *(static)* — The settings *mapping* exposes, one plain dict each, in file order.
+  - `Mapping.option_sections(mapping: Optional[Dict[str, Any]]) -> List[Tuple[str, List[Dict[str, Any]]]]` *(static)* — *mapping*'s option specs (:meth:`option_specs`) grouped by their
   - `Mapping.apply_options(mapping: Optional[Dict[str, Any]], values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]` *(static)* — The effective template: *mapping* with each option's patch merged in.
   - `Mapping.resolve(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None, options: Optional[Dict[str, Any]] = None) -> List[BuilderStep]` *(static)* — Parse a CSV through a mapping and return fully resolved steps.
   - `Mapping.infer_options(csv_path: str, mapping: Dict[str, Any], built: Dict[str, Iterable[str]], values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]` *(static)* — The option values *csv_path* reads as a build from it recorded.
@@ -1037,7 +1045,7 @@ Schema for a CSV *mapping* file, defined as a dataclass.
 
 - [`AUDIO_METHODS`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L42) — constant
 - **[`class AudioMethod`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L30)** — Descriptor for one ``audio_resolve`` strategy (drives validate/docs).
-- **[`class MappingSpec(SchemaSpec, _MappingSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L233)** — Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``).
+- **[`class MappingSpec(SchemaSpec, _MappingSpecInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/mapping/_spec.py#L235)** — Schema for one CSV-mapping file (see ``MAPPING_FORMAT.md``).
   - `MappingSpec.format_markdown(cls) -> str` *(class)* — Generate the full ``MAPPING_FORMAT.md`` reference from the schema SSoT.
   - `MappingSpec.validate_audio_resolve(value: Any) -> List[str]` *(static)* — Validate the polymorphic ``audio_resolve`` block.
   - `MappingSpec.field_choices(path: str) -> Optional[Tuple[Any, ...]]` *(static)* — The allowed values of the schema field at dotted *path*
@@ -1131,25 +1139,26 @@ Ledger of the edits the shot system authors on a scene's animation.
 
 DCC-agnostic shot data model and persistent store.
 
-- [`CLIP_NAME_STRATEGIES`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L195) — constant
-- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L82)** — Interface for saving / loading ShotStore data.
+- [`SHOT_STATUS_LEVELS`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L98) — constant
+- [`CLIP_NAME_STRATEGIES`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L199) — constant
+- **[`class ScenePersistence(Protocol)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L83)** — Interface for saving / loading ShotStore data.
   - `ScenePersistence.save(self, data: Dict[str, Any]) -> None`
   - `ScenePersistence.load(self) -> Optional[Dict[str, Any]]`
-- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L127)** — Represents a single shot (contiguous animation range).
+- **[`class ShotBlock`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L131)** — Represents a single shot (contiguous animation range).
   - `ShotBlock.duration(self) -> float` *(property)*
   - `ShotBlock.classify_objects(self) -> Dict[str, str]` — Return ``{obj_name: status_key}`` using stored metadata.
-- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L207)** — Base class for typed :class:`ShotStore` events.
-- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L219)** — A new shot was created and added to the store.
-- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L227)** — An existing shot's fields were modified.
-- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L235)** — A shot was removed from the store.
-- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L243)** — The active (selected) shot changed.
-- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L258)** — Detection-relevant settings were modified.
-- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L265)** — A :meth:`ShotStore.batch_update` context has exited.
-- **[`class ShotsEdited(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L272)** — A :meth:`ShotStore.scene_edit` -- one step of the scene's undo --
-- **[`class MarkersChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L287)** — :meth:`ShotStore.set_markers` changed the timeline markers -- a tool's
-- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L296)** — The active store was discarded (scene change / new scene).
-- **[`class NativeStepFollowed(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L308)** — The DCC's own undo (or redo, *redo*) ran and the active *store*
-- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L424)** — Central store for shot data with pluggable persistence.
+- **[`class StoreEvent`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L211)** — Base class for typed :class:`ShotStore` events.
+- **[`class ShotDefined(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L223)** — A new shot was created and added to the store.
+- **[`class ShotUpdated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L231)** — An existing shot's fields were modified.
+- **[`class ShotRemoved(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L239)** — A shot was removed from the store.
+- **[`class ActiveShotChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L247)** — The active (selected) shot changed.
+- **[`class SettingsChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L262)** — Detection-relevant settings were modified.
+- **[`class BatchComplete(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L269)** — A :meth:`ShotStore.batch_update` context has exited.
+- **[`class ShotsEdited(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L276)** — A :meth:`ShotStore.scene_edit` -- one step of the scene's undo --
+- **[`class MarkersChanged(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L291)** — :meth:`ShotStore.set_markers` changed the timeline markers -- a tool's
+- **[`class StoreInvalidated(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L300)** — The active store was discarded (scene change / new scene).
+- **[`class NativeStepFollowed(StoreEvent)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L312)** — The DCC's own undo (or redo, *redo*) ran and the active *store*
+- **[`class ShotStore(_ShotStoreInternal)`](pythontk/pythontk/core_utils/engines/shots/shot_model.py#L428)** — Central store for shot data with pluggable persistence.
   - `ShotStore.snapshot_bounds(self) -> list` — Return the current shot state for the boundary ledger.
   - `ShotStore.push_boundary_snapshot(self, tag: Any = None) -> None` — Record the current bounds as an undo restore point.
   - `ShotStore.tag_boundary_snapshot(self, tag: Any) -> bool` — Attach *tag* to the newest restore point.
@@ -1335,7 +1344,8 @@ Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
   - `ShotSequencer.set_shot_start(self, shot_id: int, new_start: float, ripple: bool = True) -> None` — Move a shot to a new start time.
   - `ShotSequencer.move_shot_to_position(self, shot_id: int, target_pos: int) -> None` — Move a shot to a new 1-based position in the timeline order.
   - `ShotSequencer.new_shot(self, after_shot_id: Optional[int] = None, at_position: Optional[int] = None) -> ShotBlock` — Make a new, empty shot -- what every panel's New Shot button makes.
-  - `ShotSequencer.insert_shot(self, name: str, duration: float, after_shot_id: Optional[int] = None, at_position: Optional[int] = None, gap: Optional[float] = None, objects: Optional[List[str]] = None, description: str = '') -> ShotBlock` — Create a shot BETWEEN existing shots, pushing later ones downstream.
+  - `ShotSequencer.insert_placement(self, index: int, duration: float, gap: Optional[float] = None, line: Optional[List[tuple]] = None, start: Optional[float] = None) -> Tuple[float, float, float, Tuple[int, ...]]` — Where a shot inserted at *index* lands, and which rows it moves
+  - `ShotSequencer.insert_shot(self, name: str, duration: float, after_shot_id: Optional[int] = None, at_position: Optional[int] = None, gap: Optional[float] = None, objects: Optional[List[str]] = None, description: str = '', start: Optional[float] = None) -> ShotBlock` — Create a shot BETWEEN existing shots, pushing later ones downstream.
   - `ShotSequencer.delete_shot(self, shot_id: int, delete_contents: bool = True, close_gap: bool = True) -> Dict[str, Any]` — Remove a shot — by default with its keys, and closing up behind it.
   - `ShotSequencer.merge_shots(self, shot_ids: List[int], name: Optional[str] = None) -> ShotBlock` — Fuse two or more shots into one spanning all of them.
   - `ShotSequencer.split_shot(self, shot_id: int, at_frame: float, name: Optional[str] = None, gap: float = 0.0) -> ShotBlock` — Cut a shot in two at *at_frame*, leaving its content where it is.

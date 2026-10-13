@@ -6,7 +6,7 @@ import os
 import struct
 import subprocess
 import wave as _wave
-from typing import Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from pythontk.core_utils.help_mixin import HelpMixin
 
@@ -49,6 +49,58 @@ class AudioUtils(HelpMixin):
         from pythontk.vid_utils._vid_utils import VidUtils
 
         return VidUtils.resolve_ffmpeg(required=required, auto_install=auto_install)
+
+    #: :meth:`memo_duration`'s readings: ``(path, mtime_ns, size, fps)`` ->
+    #: the probe's ``(frames, resolved_path)``.
+    _durations: Dict[tuple, Tuple[float, str]] = {}
+    #: How many readings it keeps before starting over.
+    _DURATIONS_CAP = 4096
+
+    @classmethod
+    def memo_duration(
+        cls,
+        file_path: str,
+        fps: float,
+        probe: Callable[[str, float], Tuple[float, str]],
+    ) -> Tuple[float, str]:
+        """*probe* -- a host's reader of a clip's length -- read once per file
+        as it is on disk.
+
+        Kept by the file's resolved path, modification time and size, and by
+        *fps*: a file replaced or rewritten reads again, an unchanged one is
+        not re-read (a caller that sizes shots from their clips asks per table
+        resolve, and each read opened a WAV on a synced drive).  A file that
+        cannot be stat'ed, or a reading of no length (a source not converted
+        yet), is never kept.
+
+        Parameters:
+            file_path: The clip's source.
+            fps: The frame rate *probe* counts in.
+            probe: ``(file_path, fps) -> (frames, resolved_path)``, the host's
+                reader (mayatk's ``AudioUtils.audio_duration_frames``).
+
+        Returns:
+            *probe*'s ``(frames, resolved_path)`` for the file as it is now.
+        """
+        try:
+            stat = os.stat(file_path)
+        except (OSError, TypeError, ValueError):
+            return probe(file_path, fps)
+        key = (
+            os.path.normcase(os.path.abspath(file_path)),
+            stat.st_mtime_ns,
+            stat.st_size,
+            float(fps),
+        )
+        hit = cls._durations.get(key)
+        if hit is not None:
+            return hit
+        result = probe(file_path, fps)
+        if result and result[0] and result[0] > 0:
+            if len(cls._durations) >= cls._DURATIONS_CAP:
+                cls._durations.clear()
+            cls._durations[key] = result
+        return result
 
     @classmethod
     def is_playable_extension(cls, file_path: str) -> bool:

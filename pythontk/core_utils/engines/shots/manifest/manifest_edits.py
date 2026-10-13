@@ -373,14 +373,23 @@ class ManifestEdits(_ManifestEditsInternal):
         """The IDs of the hidden steps, in the order they were hidden."""
         return [sid for sid, record in self.steps.items() if record.get("hidden")]
 
-    def hidden_objects(self, step_id: str) -> List[Tuple[str, str]]:
-        """``[(home, sheet_name)]`` of the hidden objects that sit in
-        *step_id* -- listed there, or moved there."""
+    def hidden_objects(self, step_id: Optional[str] = None) -> List[Tuple[str, str]]:
+        """The hidden objects that sit in *step_id* -- listed there, or moved
+        there -- or, with ``None``, every hidden object.
+
+        Parameters:
+            step_id: The step to list them of; ``None`` lists them all.
+
+        Returns:
+            ``[(home, sheet_name)]``: the key each is recorded under (the step
+            the sheet lists it in, by the name the sheet spells -- :meth:`anchor`).
+        """
         return [
             (home, name)
             for home, records in self.objects.items()
             for name, record in records.items()
-            if record.get("hidden") and record.get("step", home) == step_id
+            if record.get("hidden")
+            and (step_id is None or record.get("step", home) == step_id)
         ]
 
     @staticmethod

@@ -451,7 +451,8 @@ class Mapping(_MappingInternal):
 
         Shaped for a UI widget factory (uitk's ``AttributeSpec`` reads these
         names): ``key``, ``kind`` (``bool`` | ``choice``), ``label``,
-        ``tooltip``, ``default``, and for a choice ``choices`` as
+        ``tooltip``, ``section`` (the title a UI groups it under; ``""``:
+        none), ``default``, and for a choice ``choices`` as
         ``[(label, value, tooltip), ...]`` -- a ``field`` choice offers that
         schema field's allowed values (labelled from ``choices`` where given,
         else spelled out), so the list can never drift from what the field
@@ -465,6 +466,7 @@ class Mapping(_MappingInternal):
                 "kind": kind,
                 "label": opt.get("label", key),
                 "tooltip": opt.get("tooltip", ""),
+                "section": opt.get("section") or "",
             }
             if kind == "choice":
                 authored = opt.get("choices") or {}
@@ -484,6 +486,31 @@ class Mapping(_MappingInternal):
                 spec["default"] = bool(opt.get("default", False))
             specs.append(spec)
         return specs
+
+    @staticmethod
+    def option_sections(
+        mapping: Optional[Dict[str, Any]],
+    ) -> List[Tuple[str, List[Dict[str, Any]]]]:
+        """*mapping*'s option specs (:meth:`option_specs`) grouped by their
+        ``section``, as ``[(title, [spec, ...]), ...]``: the sections in the
+        order their first option appears, each section's options in file
+        order -- a UI lists them under one title each, wherever the file puts
+        them.  Options naming no section come first, under ``""``.
+
+        Parameters:
+            mapping: A mapping template (its ``options`` block is read); ``None``
+                or one without options has none.
+
+        Returns:
+            ``[(title, [spec, ...]), ...]``, each spec as :meth:`option_specs`
+            shapes it; ``[]`` when the template has no options.
+        """
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for spec in Mapping.option_specs(mapping):
+            groups.setdefault(spec["section"], []).append(spec)
+        untitled = groups.pop("", None)
+        sections = list(groups.items())
+        return ([("", untitled)] if untitled else []) + sections
 
     @staticmethod
     def apply_options(

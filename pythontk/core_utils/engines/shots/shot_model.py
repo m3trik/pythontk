@@ -55,6 +55,7 @@ _BOUND_TOL = 1e-3
 
 __all__ = [
     "SHOT_PALETTE",
+    "SHOT_STATUS_LEVELS",
     "ShotBlock",
     "ShotStore",
     "StoreEvent",
@@ -91,29 +92,32 @@ class ScenePersistence(Protocol):
 # Shared shot palette (single source of truth for both UIs)
 # ---------------------------------------------------------------------------
 
+#: The severity each shot status is shown at -- a level of
+#: ``Palette.status()`` (valid, locked, info, warn, error) -- so a UI can
+#: mark it by shape as well as colour.  ``SHOT_PALETTE`` colours by it.
+SHOT_STATUS_LEVELS: Dict[str, str] = {
+    "csv_object": "valid",  # expected — no color
+    "scene_discovered": "info",  # found in scene, not in CSV
+    "missing_object": "error",  # referenced but missing
+    "missing_behavior": "warn",  # expected behaviour keys absent
+    "stale_behavior": "info",  # keyed under an older effect recipe
+    "user_animated": "info",  # custom user animation detected
+    "additional": "warn",  # unexpected scene objects
+    "collision": "error",  # timing overlap
+    "missing_shot": "info",  # shot not yet built
+    "not_in_shot": "warn",  # in the scene, not a member of its shot
+    "ambiguous_object": "warn",  # the doc name matches several nodes
+    "behavior_conflict": "error",  # animator keys where a behavior keys
+    "unknown_behavior": "warn",  # no behavior template by that name
+    "not_in_doc": "info",  # a shot no doc step pairs with
+    "no_objects": "info",  # the doc lists no objects for the step
+    "edited": "locked",  # edited by hand since its build: Build keeps it
+}
+
 try:
     from pythontk import Palette
 
-    SHOT_PALETTE = Palette.status().alias(
-        {
-            "csv_object": "valid",  # expected — no color
-            "scene_discovered": "info",  # found in scene, not in CSV
-            "missing_object": "error",  # referenced but missing
-            "missing_behavior": "warn",  # expected behaviour keys absent
-            "stale_behavior": "info",  # keyed under an older effect recipe
-            "user_animated": "info",  # custom user animation detected
-            "additional": "warn",  # unexpected scene objects
-            "collision": "error",  # timing overlap
-            "missing_shot": "info",  # shot not yet built
-            "not_in_shot": "warn",  # in the scene, not a member of its shot
-            "ambiguous_object": "warn",  # the doc name matches several nodes
-            "behavior_conflict": "error",  # animator keys where a behavior keys
-            "unknown_behavior": "warn",  # no behavior template by that name
-            "not_in_doc": "info",  # a shot no doc step pairs with
-            "no_objects": "info",  # the doc lists no objects for the step
-            "edited": "locked",  # edited by hand since its build: Build keeps it
-        }
-    )
+    SHOT_PALETTE = Palette.status().alias(SHOT_STATUS_LEVELS)
 except ImportError:
     SHOT_PALETTE = {}  # type: ignore[assignment]
 

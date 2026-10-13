@@ -106,6 +106,16 @@ class TestApply(unittest.TestCase):
         self.assertEqual(edits.hidden_objects("B01"), [("A01", "door")])
         self.assertEqual(_names(edits.apply(_sheet()))["B01"], ["solenoid"])
 
+    def test_every_hidden_object_wherever_it_sits(self):
+        """The panel's Show > Hidden Objects shows them all at once."""
+        edits = ManifestEdits()
+        edits.set_object("A01", "door", "step", "B01")
+        edits.set_object("A01", "door", "hidden", True)
+        edits.set_object("A02", "latch", "hidden", True)
+        self.assertEqual(
+            sorted(edits.hidden_objects()), [("A01", "door"), ("A02", "latch")]
+        )
+
     def test_behaviors_edit_records_the_sheets(self):
         edits = ManifestEdits()
         edits.set_object("A01", "door", "behaviors", ["fade_out"], sheet=["fade_in"])

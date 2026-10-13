@@ -3460,6 +3460,93 @@ class ShotSequencer(_ShotSequencerHooks):
             at_position=at_position,
         )
 
+    def insert_placement(
+        self,
+        index: int,
+        duration: float,
+        gap: Optional[float] = None,
+        line: Optional[List[tuple]] = None,
+        start: Optional[float] = None,
+    ) -> Tuple[float, float, float, Tuple[int, ...]]:
+        """Where a shot inserted at *index* lands, and which rows it moves
+        how far -- the one placement rule of :meth:`insert_shot`, read before
+        anything moves (``ShotManifest.plan_insertions`` plans with it).
+
+        The new shot opens *gap* after the shot before it; before every shot
+        it takes the timeline's head frame; appended after the last one it
+        also clears that shot's trailing content (fade tails past its end,
+        trailing audio: :meth:`_trailing_content_extent`, the +INF-envelope
+        content every ripple elsewhere protects).  The rows after it move by
+        the push, the new shot's length plus *gap*: by position -- every row
+        from *index* on -- when the shot before it ends at or before the next
+        one's start, so a zero-length shot on the next one's start frame
+        stays before the insert; by frame -- every row starting at or after
+        the next shot's start -- when the two overlap, so overlapping shots
+        sharing a start move together, each with its keys.
+
+        A row may stand for something that is no shot yet when the insert is
+        made (a range a plan will give a shot): it moves with the rows after
+        the insert, and a new shot right after it starts *gap* after its end,
+        but the shots alone decide the rest -- the head, the last shot and
+        its trailing content, the rule the shots move by.
+
+        Parameters:
+            index: The 0-based position the new shot takes; ``len(line)``
+                appends it.
+            duration: Its length in frames.
+            gap: Frames after the row before it (default: the store's).
+            line: The timeline to insert into, as ``(start, end, shot)`` rows
+                in order -- default the store's shots -- or ``(start, end,
+                shot, is_shot)``, *is_shot* ``False`` for a row that is no
+                shot yet.  A row's bounds may be where a planned ripple moves
+                it: its shot (``None`` for one not built yet) is read only for
+                the content trailing its end, which moves with it.
+            start: Where the new shot starts instead, for a caller that knows
+                of content the store does not hold (a shot a plan gives a
+                range); the rows move all the same.
+
+        Returns:
+            ``(start, end, push, moved)``: the new shot's bounds, how far the
+            rows it moves move (``0.0`` when nothing follows it), and the
+            indices of those rows in *line*.
+        """
+        store = self.store
+        gap = store.gap if gap is None else gap
+        if line is None:
+            line = [(s.start, s.end, s) for s in self.sorted_shots()]
+        rows = [(r[0], r[1], r[2], r[3] if len(r) > 3 else True) for r in line]
+        index = max(0, min(int(index), len(rows)))
+        shots = [i for i, row in enumerate(rows) if row[3]]
+        prev = max((i for i in shots if i < index), default=None)
+        nxt = min((i for i in shots if i >= index), default=None)
+        if start is not None:
+            start = store.snap(start)
+        elif index and not rows[index - 1][3]:  # right after a row no shot yet
+            start = store.snap(rows[index - 1][1] + gap)
+        elif prev is None:
+            # Before every shot: keep the timeline's head frame and push the
+            # whole sequence out of the way.
+            start = rows[nxt][0] if nxt is not None else store.snap(1.0)
+        elif nxt is None:
+            _prev_start, prev_end, shot, _is = rows[prev]
+            tail = prev_end
+            if shot is not None:  # its content, where the row's ripple takes it
+                moved = prev_end - shot.end  # 0.0 for the shot where it is
+                tail = max(prev_end, self._trailing_content_extent(shot) + moved)
+            start = store.snap(tail + gap)
+        else:
+            start = store.snap(rows[prev][1] + gap)
+        end = store.snap(start + duration)
+        push = (end - start) + gap
+        if index >= len(rows) or abs(push) < _EPS:
+            return start, end, (0.0 if index >= len(rows) else push), ()
+        if nxt is None or prev is None or rows[prev][1] <= rows[nxt][0]:
+            moved = tuple(range(index, len(rows)))
+        else:  # the frame rule: what ``plan_ripple_downstream`` moves by frame
+            frame = rows[nxt][0]
+            moved = tuple(i for i, row in enumerate(rows) if not row[0] < frame)
+        return start, end, push, moved
+
     def insert_shot(
         self,
         name: str,
@@ -3469,14 +3556,15 @@ class ShotSequencer(_ShotSequencerHooks):
         gap: Optional[float] = None,
         objects: Optional[List[str]] = None,
         description: str = "",
+        start: Optional[float] = None,
     ) -> ShotBlock:
         """Create a shot BETWEEN existing shots, pushing later ones downstream.
 
         Appending was the only way to add a shot, so making room in the
         middle meant hand-rippling every following shot.  This opens the
-        space first — every shot at or after the insertion point (and its
-        keyframes and audio) moves by ``duration + gap`` — then defines the
-        new shot in the hole.
+        space first -- the shots after the insertion point (and their
+        keyframes and audio) move by ``duration + gap``
+        (:meth:`insert_placement`) -- then defines the new shot in the hole.
 
         Parameters:
             name: Human-readable label.
@@ -3493,6 +3581,11 @@ class ShotSequencer(_ShotSequencerHooks):
                 and the gap falls after the new shot instead.
             objects: Object names to seed the shot with.
             description: Optional description.
+            start: Where the new shot starts instead of where the placement
+                rule puts it -- for a caller that knows of content the store
+                does not hold (``ShotManifest.insert_planned``: a shot a
+                plan gives a typed range).  The shots after it still move by
+                its length plus *gap*.
 
         Returns:
             The newly created :class:`ShotBlock`.
@@ -3518,36 +3611,22 @@ class ShotSequencer(_ShotSequencerHooks):
         else:
             insert_idx = len(shots)
 
-        if not shots:
-            start = self.store.snap(1.0)
-        elif insert_idx == 0:
-            # Before everything: keep the timeline's existing head frame and
-            # push the whole sequence out of the way.
-            start = shots[0].start
-        elif insert_idx == len(shots):
-            # Appending after the LAST shot: its trailing envelope content
-            # (fade tails past .end, trailing audio — the +INF-envelope
-            # content every ripple elsewhere protects) must not be built
-            # over.
-            prev = shots[-1]
-            start = self.store.snap(
-                max(prev.end, self._trailing_content_extent(prev)) + gap
-            )
-        else:
-            start = self.store.snap(shots[insert_idx - 1].end + gap)
-
-        new_end = self.store.snap(start + duration)
+        start, new_end, push, moved = self.insert_placement(
+            insert_idx, duration, gap=gap, start=start
+        )
 
         # Open the hole before the shot exists, so the ripple can't pick up
-        # the new shot as one of the shots it should move.  A pivot id no
-        # shot owns means "shift everything at or after the frame".
-        if insert_idx < len(shots):
-            delta = (new_end - start) + gap
-            if abs(delta) > _EPS:
-                plan = ShotPlanner.plan_ripple_downstream(
-                    self.store, -1, shots[insert_idx].start, delta
-                )
-                self._apply_plan(plan)
+        # the new shot as one of the shots it should move.  By position, the
+        # shot before the insert is the pivot (at the head every shot is at or
+        # after the first one's frame); by frame, no shot is exempt (pivot -1):
+        # each moves the shots insert_placement says.
+        if moved:
+            by_position = moved == tuple(range(insert_idx, len(shots)))
+            pivot = shots[insert_idx - 1].shot_id if by_position and insert_idx else -1
+            plan = ShotPlanner.plan_ripple_downstream(
+                self.store, pivot, shots[insert_idx].start, push
+            )
+            self._apply_plan(plan)
 
         block = self.define_shot(
             name=name,

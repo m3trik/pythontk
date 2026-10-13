@@ -171,6 +171,7 @@ DEFAULT_INCLUDE = {
         "StoreInvalidated",
         "NativeStepFollowed",
         "SHOT_PALETTE",
+        "SHOT_STATUS_LEVELS",
     ],
     # The shot system's record of what IT wrote on scene curves, so those
     # writes can be released when the boundary that caused them moves.
@@ -249,6 +250,7 @@ DEFAULT_INCLUDE = {
         "BuilderStep",
         "BuilderObject",
         "PlannedShot",
+        "PlannedInsert",
         "ObjectStatus",
         "StepStatus",
         "ShotPairing",
