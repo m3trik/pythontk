@@ -489,6 +489,132 @@ class TestResolvePlayablePath(BaseTestCase):
         self.assertNotIn("\\", result)
 
 
+class TestPlayableCache(BaseTestCase):
+    """Where a transcode is cached, and that a failed one never poisons it.
+
+    The cache was ``<source dir>/_audio_cache/``: a folder written into the
+    user's own audio folder. A transcode a saved scene references now goes to
+    its project's ``cache/audio`` (``Workspace.cache_dir``), anything else to
+    the per-user cache (``UserConfig.cache_dir``). And ffmpeg wrote straight to
+    the cache name, so a failed run left a partial ``<stem>_<md5>.wav`` that the
+    next call returned as the conversion.
+    """
+
+    def setUp(self):
+        from unittest import mock
+
+        from pythontk.core_utils.user_config import UserConfig
+
+        self.tmpdir = tempfile.mkdtemp(prefix="audio_cache_")
+        self.addCleanup(shutil.rmtree, self.tmpdir, True)
+        self.user_cache = os.path.join(self.tmpdir, "user_cache")
+        for patcher in (
+            mock.patch.dict(
+                os.environ, {UserConfig.CACHE_ROOT_ENV_VAR: self.user_cache}
+            ),
+            mock.patch.object(AudioUtils, "resolve_ffmpeg", return_value="ffmpeg"),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.calls = []
+
+    def _source(self, *parts):
+        path = os.path.join(self.tmpdir, *parts)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(b"ID3 not really an mp3")
+        return path
+
+    def _ffmpeg(self, ok=True):
+        """A stand-in ffmpeg writing its last argument: a whole WAV, or (failed)
+        the header-only partial a killed run leaves."""
+        import subprocess
+        from unittest import mock
+
+        def run(cmd, **kwargs):
+            self.calls.append(list(cmd))
+            out = cmd[-1]
+            if ok:
+                _write_wav(out, [100] * 10)
+            else:
+                with open(out, "wb") as fh:
+                    fh.write(b"RIFF\xff\xff\xff\xffWAVEfmt ")
+            return subprocess.CompletedProcess(cmd, 0 if ok else 1, "", "boom")
+
+        return mock.patch(
+            "pythontk.audio_utils._audio_utils.subprocess.run", side_effect=run
+        )
+
+    @staticmethod
+    def _norm(path):
+        return os.path.normcase(os.path.normpath(path))
+
+    def test_a_source_in_a_project_caches_in_its_cache_audio_folder(self):
+        from pythontk.file_utils.workspace import Workspace
+
+        project = Workspace.create(os.path.join(self.tmpdir, "proj"), create_dirs=False)
+        src = self._source("proj", "sound", "vo.mp3")
+        folder = os.path.join(project.root, "cache", "audio")
+        self.assertEqual(self._norm(AudioUtils.cache_dir_for(src)), self._norm(folder))
+        with self._ffmpeg():
+            out = AudioUtils.ensure_playable_path(src)
+        self.assertEqual(self._norm(os.path.dirname(out)), self._norm(folder))
+        self.assertEqual(os.listdir(os.path.dirname(src)), ["vo.mp3"])
+
+    def test_a_source_in_no_project_caches_in_the_user_cache(self):
+        src = self._source("loose", "vo.mp3")
+        folder = os.path.join(self.user_cache, "audio")
+        self.assertEqual(self._norm(AudioUtils.cache_dir_for(src)), self._norm(folder))
+        with self._ffmpeg():
+            out = AudioUtils.resolve_playable_path(src)
+        self.assertEqual(self._norm(os.path.dirname(out)), self._norm(folder))
+        self.assertEqual(os.listdir(os.path.dirname(src)), ["vo.mp3"])
+
+    def test_a_failed_conversion_leaves_nothing_the_next_call_returns(self):
+        src = self._source("loose", "vo.mp3")
+        with self._ffmpeg(ok=False), self.assertRaises(RuntimeError):
+            AudioUtils.ensure_playable_path(src)
+        folder = AudioUtils.cache_dir_for(src)
+        self.assertEqual(os.listdir(folder), [], "the partial was left behind")
+        with self._ffmpeg():
+            out = AudioUtils.ensure_playable_path(src)
+        self.assertEqual(len(self.calls), 2, "the partial was served as the cache")
+        _read_wav_samples(out)
+
+    def test_a_partial_left_in_the_cache_is_converted_again(self):
+        src = self._source("loose", "vo.mp3")
+        with self._ffmpeg():
+            out = AudioUtils.ensure_playable_path(src)
+        with open(out, "wb") as fh:  # an interrupted run of an older version
+            fh.write(b"RIFF\xff\xff\xff\xffWAVEfmt ")
+        with self._ffmpeg():
+            again = AudioUtils.ensure_playable_path(src)
+        self.assertEqual(again, out)
+        self.assertEqual(len(self.calls), 2)
+        _read_wav_samples(again)
+
+    def test_a_complete_cached_wav_is_reused(self):
+        src = self._source("loose", "vo.mp3")
+        with self._ffmpeg():
+            first = AudioUtils.ensure_playable_path(src)
+            second = AudioUtils.ensure_playable_path(src)
+        self.assertEqual(first, second)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_a_cached_transcode_needs_no_ffmpeg(self):
+        """The cache hit is checked before ffmpeg is looked up: a machine
+        without ffmpeg still plays a transcode a saved scene references."""
+        from unittest import mock
+
+        src = self._source("loose", "vo.mp3")
+        with self._ffmpeg():
+            first = AudioUtils.ensure_playable_path(src)
+        with mock.patch.object(
+            AudioUtils, "resolve_ffmpeg", side_effect=FileNotFoundError("no ffmpeg")
+        ):
+            self.assertEqual(AudioUtils.ensure_playable_path(src), first)
+
+
 class TestBuildAudioMapFromFiles(BaseTestCase):
     """Tests for AudioUtils.build_audio_map_from_files."""
 

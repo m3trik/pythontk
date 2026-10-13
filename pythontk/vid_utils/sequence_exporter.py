@@ -40,6 +40,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 from pythontk.core_utils.cancel_scope import CancelScope
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.file_utils._file_utils import FileUtils
+from pythontk.file_utils.temp_artifacts import TempArtifacts
 from pythontk.vid_utils._vid_utils import VidUtils
 
 
@@ -355,15 +356,6 @@ class SequenceEncoder(LoggingMixin):
             except OSError as exc:
                 self.logger.warning(f"Could not remove frame {frame!r}: {exc}")
 
-    def _remove_capture(self, directory: str, prefix: str, image_format: str) -> None:
-        """Delete a capture's frames (and the dir when it ends up empty)."""
-        self._remove_frames(directory, prefix, image_format)
-        try:
-            if os.path.isdir(directory) and not os.listdir(directory):
-                os.rmdir(directory)
-        except OSError:
-            pass
-
     def _resolve_audio(
         self,
         audio: Union[bool, str],
@@ -633,9 +625,10 @@ class SequenceExporter(SequenceEncoder):
 
         The source is captured once per required image format; every
         ``encode`` target reuses the lossless PNG capture. When no
-        ``png_sequence`` target is requested, the intermediate frames live in
-        ``<output_dir>/<name>_png_tmp`` and are deleted afterward unless
-        ``keep_frames`` is True.
+        ``png_sequence`` target is requested, the intermediate frames live in a
+        scoped temp store (``TempArtifacts``), never the output folder, and are
+        deleted afterward; ``keep_frames=True`` makes them an output instead,
+        kept in ``<output_dir>/<name>_png_tmp``.
 
         Outputs: ``<dir>/<name>.<ext>`` for movies and the still;
         ``<dir>/<name>_<fmt>/`` for sequences. Per-target failures are captured
@@ -714,7 +707,18 @@ class SequenceExporter(SequenceEncoder):
             step += 1
 
         captures: Dict[str, CaptureResult] = {}
-        tmp_png_dir = FileUtils.format_path(os.path.join(output_dir, f"{name}_png_tmp"))
+        # The encodes' own PNG capture is scratch: in a scoped temp store, never
+        # the deliverable folder -- unless the caller asked to keep the frames,
+        # which makes them an output like any other. No such capture, no folder.
+        scratch = None
+        tmp_png_dir = None
+        if needs_tmp_png and keep_frames:
+            tmp_png_dir = FileUtils.format_path(
+                os.path.join(output_dir, f"{name}_png_tmp")
+            )
+        elif needs_tmp_png:
+            scratch = TempArtifacts.scoped("sequence_frames")
+            tmp_png_dir = FileUtils.format_path(scratch.dir_path())
 
         try:
             for fmt in plan_formats:
@@ -795,8 +799,8 @@ class SequenceExporter(SequenceEncoder):
             # By disk scan, never the CaptureResult: a capture that raised
             # part-way (an interrupted playblast) has no result yet leaves its
             # frames behind -- an mp4 request must not end as a folder of PNGs.
-            if not keep_frames and needs_tmp_png:
-                self._remove_capture(tmp_png_dir, name, "png")
+            if scratch is not None:
+                scratch.cleanup()
 
         if progress_callback:
             progress_callback(total_steps, total_steps, "Done")

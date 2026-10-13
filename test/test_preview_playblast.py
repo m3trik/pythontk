@@ -165,6 +165,26 @@ class PlayblastRoutesTestCase(unittest.TestCase):
         self.assertEqual(Path(report["output"]).parent, self.root)
         self.assertTrue(report["in_serve_root"])
 
+    def test_a_folder_that_takes_no_file_leaves_the_movie_in_the_serve_root(self):
+        """A deliverable on a read-only share: the movie is encoded where it
+        can always be written, then delivered beside the deliverable; where
+        that folder takes no file, the page's download is the copy."""
+        from pythontk.file_utils._file_utils import FileUtils
+
+        source = self._publish()
+        token = self._begin(frames=1)["token"]
+        self._frame(token, 0)
+        with unittest.mock.patch.object(
+            FileUtils,
+            "deliver_file",
+            side_effect=lambda staged, destination: (staged, "a read-only share"),
+        ):
+            report = self._json("finish", {"token": token})
+        self.assertEqual(Path(report["output"]).parent, self.root)
+        self.assertTrue(report["in_serve_root"])
+        self.assertTrue(Path(report["output"]).is_file())
+        self.assertEqual(sorted(p.name for p in source.parent.iterdir()), ["cube.glb"])
+
     def test_a_finished_recording_is_downloadable_as_an_attachment(self):
         self._publish()
         token = self._begin(frames=1)["token"]

@@ -63,6 +63,10 @@ class UserConfig:
     #: package reaches it through the root (``ptk.UserConfig.CONFIG_ROOT_ENV_VAR``)
     #: instead of this module's path.
     CONFIG_ROOT_ENV_VAR: str = CONFIG_ROOT_ENV_VAR
+    #: Env var that redirects the per-user CACHE root (:meth:`cache_dir`)
+    #: wholesale; :meth:`TestSandbox.temp <pythontk.TestSandbox.temp>` points it
+    #: into its throwaway root.
+    CACHE_ROOT_ENV_VAR: str = "PYTHONTK_CACHE_ROOT"
 
     @staticmethod
     def path_for(name: str, package: str) -> Path:
@@ -217,31 +221,36 @@ class UserConfig:
         return value
 
     #: The XDG base-directory defaults, under the home folder.
-    _XDG_DEFAULTS = {"config": (".config",), "data": (".local", "share")}
+    _XDG_DEFAULTS = {
+        "config": (".config",),
+        "data": (".local", "share"),
+        "cache": (".cache",),
+    }
 
     @staticmethod
     def xdg_home(kind: str = "config") -> str:
-        """An XDG base directory: ``$XDG_CONFIG_HOME`` / ``$XDG_DATA_HOME`` when it
-        holds an absolute path, else the spec's default (``~/.config`` /
-        ``~/.local/share``).
+        """An XDG base directory: ``$XDG_CONFIG_HOME`` / ``$XDG_DATA_HOME`` /
+        ``$XDG_CACHE_HOME`` when it holds an absolute path, else the spec's
+        default (``~/.config`` / ``~/.local/share`` / ``~/.cache``).
 
         The spec calls a relative value invalid, and Qt ignores one; used as
         given, the directory moved with the working directory. It is the
         freedesktop rule -- whether it applies on this OS is the caller's call.
 
         Parameters:
-            kind (str): ``"config"`` or ``"data"``.
+            kind (str): ``"config"``, ``"data"`` or ``"cache"``.
 
         Returns:
             str: An absolute directory path (not created).
 
         Raises:
-            ValueError: *kind* is neither.
+            ValueError: *kind* is none of those.
         """
         try:
             default = UserConfig._XDG_DEFAULTS[kind]
         except KeyError:
-            raise ValueError(f"kind is 'config' or 'data', not {kind!r}") from None
+            kinds = ", ".join(repr(k) for k in UserConfig._XDG_DEFAULTS)
+            raise ValueError(f"kind is one of {kinds}, not {kind!r}") from None
         base = os.environ.get(f"XDG_{kind.upper()}_HOME", "")
         if os.path.isabs(base):
             return base
@@ -280,3 +289,52 @@ class UserConfig:
             base = UserConfig.xdg_home("config")
         root = Path(base) / _ECOSYSTEM_WRAPPER
         return root if root.is_absolute() else root.absolute()
+
+    #: The ecosystem's folder in the OS cache dir.
+    _CACHE_WRAPPER = "pythontk"
+
+    @staticmethod
+    def cache_dir(*parts: str, create: bool = False) -> Path:
+        """A folder in the per-user CACHE root: durable, regenerable, never temp.
+
+        For a cache that belongs to no project and must outlive a reboot and a
+        temp-folder cleanup -- a downloaded tool, a transcoded clip whose source
+        sits in no workspace. Temp payloads go to :class:`TempArtifacts
+        <pythontk.TempArtifacts>`; a cache a saved scene references goes to its
+        project (:meth:`Workspace.cache_dir <pythontk.Workspace.cache_dir>`).
+        Resolved as :meth:`user_config_root` is, without Qt:
+
+        * ``$PYTHONTK_CACHE_ROOT`` (:attr:`CACHE_ROOT_ENV_VAR`) when set, as given
+        * Windows: ``%LOCALAPPDATA%/pythontk/cache``
+        * macOS:   ``~/Library/Caches/pythontk``
+        * Linux:   ``$XDG_CACHE_HOME/pythontk`` (else ``~/.cache/pythontk``)
+
+        Parameters:
+            *parts: Sub-folders under the root, e.g. ``("audio",)``; none = the
+                root itself.
+            create: Create the folder (asking alone creates nothing).
+
+        Returns:
+            Path: The folder (absolute).
+        """
+        override = os.environ.get(UserConfig.CACHE_ROOT_ENV_VAR)
+        if override:
+            root = Path(UserConfig.expand(override))
+        else:
+            system = platform.system().lower()
+            wrapper = UserConfig._CACHE_WRAPPER
+            if system == "windows":
+                base = os.environ.get("LOCALAPPDATA") or os.path.join(
+                    os.path.expanduser("~"), "AppData", "Local"
+                )
+                root = Path(base) / wrapper / "cache"
+            elif system == "darwin":
+                root = Path(os.path.expanduser("~"), "Library", "Caches", wrapper)
+            else:
+                root = Path(UserConfig.xdg_home("cache")) / wrapper
+        if not root.is_absolute():
+            root = root.absolute()
+        folder = root.joinpath(*parts)
+        if create:
+            folder.mkdir(parents=True, exist_ok=True)
+        return folder

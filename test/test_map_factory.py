@@ -1386,6 +1386,79 @@ class TestMapFactoryImageInputRegressions(unittest.TestCase):
         )
         self.assertIsInstance(result, Image.Image)
 
+    def _in_scratch_cwd(self):
+        """Run the rest of the test with the process cwd in a fresh folder;
+        returns it. Nothing a converter writes may land there unasked."""
+        store = ptk.TempArtifacts.scoped("map_factory_cwd")
+        self.addCleanup(store.cleanup)
+        cwd = store.dir_path()
+        self.addCleanup(os.chdir, os.getcwd())  # LIFO: back out before removal
+        os.chdir(cwd)
+        return cwd
+
+    def test_a_bump_image_with_no_path_names_no_folder_to_write(self):
+        """A PIL bump map with save=True wrote ``bump_map_Normal_OpenGL.png``
+        into whatever folder the process happened to be in."""
+        from PIL import Image
+
+        cwd = self._in_scratch_cwd()
+        with self.assertRaises(ValueError):
+            MapFactory.convert_bump_to_normal(Image.new("L", (8, 8), 128))
+        self.assertEqual(os.listdir(cwd), [])
+
+    def test_a_relative_normal_map_converts_beside_itself_not_at_the_drive_root(self):
+        """``f"{output_dir}/{name}"`` with the empty folder of a bare file name
+        made ``/name...``: the DRIVE root."""
+        cwd = self._in_scratch_cwd()
+        ImgUtils.save_image(
+            ImgUtils.create_image("RGB", (8, 8), (128, 128, 255)),
+            os.path.join(cwd, "mat_Normal_DirectX.png"),
+        )
+        out = MapFactory.convert_normal_map_format(
+            "mat_Normal_DirectX.png", target_format="opengl"
+        )
+        self.assertEqual(
+            os.path.normcase(os.path.dirname(out)), os.path.normcase(cwd), out
+        )
+        self.assertTrue(os.path.isfile(out))
+
+    def test_spec_gloss_writes_into_the_output_dir_it_was_given(self):
+        from PIL import Image
+
+        maps = os.path.join(self.test_dir, "maps")
+        out_dir = os.path.join(self.test_dir, "converted")
+        os.makedirs(maps)
+        os.makedirs(out_dir)
+        spec = os.path.join(maps, "mat_Specular.png")
+        gloss = os.path.join(maps, "mat_Glossiness.png")
+        Image.new("RGB", (8, 8), (128, 128, 128)).save(spec)
+        Image.new("L", (8, 8), 128).save(gloss)
+        written = MapFactory.convert_spec_gloss_to_pbr(
+            spec, gloss, output_dir=out_dir, write_files=True
+        )
+        for path in written:
+            self.assertEqual(
+                os.path.normcase(os.path.dirname(path)), os.path.normcase(out_dir)
+            )
+            self.assertTrue(os.path.isfile(path), path)
+        self.assertEqual(
+            sorted(os.listdir(maps)), ["mat_Glossiness.png", "mat_Specular.png"]
+        )
+
+    def test_a_dry_run_creates_no_output_folder(self):
+        out_dir = os.path.join(self.test_dir, "not_yet")
+        context = TextureProcessor(
+            inventory={},
+            config={"dry_run": True},
+            output_dir=out_dir,
+            base_name="test",
+            ext="png",
+            conversion_registry=ConversionRegistry(),
+            logger=None,
+        )
+        context.save_map(ImgUtils.create_image("L", (8, 8), 128), "Roughness")
+        self.assertFalse(os.path.exists(out_dir))
+
 
 class TestOpenPBRSet(unittest.TestCase):
     """An OpenPBR texture set survives the factory whole.

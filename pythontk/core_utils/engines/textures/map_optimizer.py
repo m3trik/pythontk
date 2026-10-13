@@ -29,6 +29,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    TYPE_CHECKING,
     Tuple,
     Union,
 )
@@ -43,6 +44,9 @@ except ImportError as e:
 from pythontk.core_utils.deprecation import Deprecation
 from pythontk.core_utils.help_mixin import HelpMixin
 from pythontk.file_utils._file_utils import FileUtils
+
+if TYPE_CHECKING:  # the store is imported where it is used
+    from pythontk.file_utils.temp_artifacts import CachedArtifact, TempArtifacts
 from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.core_utils.engines.textures.map_factory import MapFactory
 from pythontk.core_utils.engines.textures.map_registry import MapRegistry
@@ -1467,9 +1471,9 @@ class MapOptimizer(HelpMixin):
     #: every map :meth:`stage_maps` cached is encoded again. The package and
     #: Pillow versions ride the key too, so a release needs no bump.
     CACHE_VERSION = 1
-    #: The :class:`TempArtifacts` prefix of :meth:`stage_maps`' encode cache: a
-    #: detached store, age-swept (7 days) like every other.
-    _CACHE_PREFIX = "map_optimizer_cache"
+    #: The :class:`CachedArtifact` name of :meth:`stage_maps`' encode cache
+    #: (its slots: ``map_optimizer_cache_<key>/``), age-swept (7 days).
+    _CACHE_NAME = "map_optimizer"
     #: A slot holding this file (the encode's byte count) records a re-encode
     #: that saved too little to ship, so the trial encode is not repeated.
     _KEPT_MARKER = ".kept"
@@ -1594,11 +1598,11 @@ class MapOptimizer(HelpMixin):
         repaint, another file of the same name or a changed ceiling is a new
         key, and every other export of the same map encodes nothing. Each
         encode lands in a scratch dir and is promoted into its slot -- a
-        ``TempArtifacts("map_optimizer_cache")`` directory holding the file
-        under its real name (a manifest classifies a map by its name) -- by
-        one rename, so a slot is empty or complete; a "kept" verdict is a
-        marker in the slot, so a re-encode that saves too little is tried
-        once. The staging dir gets a hard link to the slot when it is a
+        ``CachedArtifact("map_optimizer", directory=True)`` slot holding the
+        file under its real name (a manifest classifies a map by its name) -- by
+        one rename (a directory-slot :class:`CachedArtifact`), so a slot is
+        empty or complete; a "kept" verdict is a slot holding only a marker,
+        so a re-encode that saves too little is tried once. The staging dir gets a hard link to the slot when it is a
         throwaway (*temp_staging*), else a real copy: a deliverable owns its
         bytes, and an edit to a linked one would write into the cache. Old
         slots go with the store's 7-day age sweep. Write-back never caches:
@@ -1870,16 +1874,15 @@ class MapOptimizer(HelpMixin):
         """
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
-        cache = TempArtifacts(cls._CACHE_PREFIX)
+        cache = cls._encode_cache()
         outcomes: List[Optional[Dict[str, Any]]] = []
-        slots: List[Optional[str]] = []
-        with TempArtifacts("map_optimizer_encode", policy="scoped") as scratch:
+        keys: List[Optional[str]] = []
+        with TempArtifacts.scoped("map_optimizer_encode") as scratch:
             misses = []
             for index, job in enumerate(jobs):
                 key = cls._stage_key(job["request"], job["record"]["recompress"])
-                slot = cache.dir_path(name=key, create=False) if key else None
-                slots.append(slot)
-                outcomes.append(cls._cached(slot))
+                keys.append(key)
+                outcomes.append(cls._cached(cache, key))
                 if outcomes[index] is None:
                     job["request"]["output_dir"] = scratch.dir_path()
                     misses.append(index)
@@ -1895,12 +1898,17 @@ class MapOptimizer(HelpMixin):
                 if cls._saved_too_little(jobs[index]["record"], size_after):
                     # Remembered, so the trial encode is not repeated; the
                     # encode itself goes with the scratch.
-                    cls._remember_kept(slots[index], size_after)
+                    cls._remember_kept(cache, keys[index], scratch, size_after)
                     outcomes[index] = {"status": "kept", "size_after": size_after}
                     continue
                 outcomes[index] = {
                     "status": "optimized",
-                    "file": cls._promote(written, slots[index]),
+                    "file": cls._promote(
+                        cache,
+                        keys[index],
+                        written,
+                        jobs[index]["request"]["output_dir"],
+                    ),
                     "size_after": size_after,
                 }
 
@@ -1965,17 +1973,27 @@ class MapOptimizer(HelpMixin):
             return None
 
     @classmethod
-    def _cached(cls, slot: Optional[str]) -> Optional[Dict[str, Any]]:
-        """What a cache slot holds: a "kept" verdict, an encode, or None.
+    def _encode_cache(cls) -> "CachedArtifact":
+        """:meth:`stage_maps`' encode cache: one directory slot per key,
+        holding the encode under its real name (a manifest classifies a map by
+        its name) or only a "kept" verdict marker."""
+        from pythontk.file_utils.temp_artifacts import CachedArtifact
+
+        return CachedArtifact(cls._CACHE_NAME, directory=True)
+
+    @classmethod
+    def _cached(
+        cls, cache: "CachedArtifact", key: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        """What *key*'s slot holds: a "kept" verdict, an encode, or None.
 
         A slot read is touched (its directory, never the encode): the age
         sweep reads the newest of the two, so a map in use stays cached
         rather than being encoded again a week after it first was."""
-        if not slot:
+        if not key:
             return None
-        try:
-            os.utime(slot)
-        except OSError:
+        slot = cache.peek(key)
+        if slot is None or not cache.touch(key):
             return None  # no slot: nothing cached
         try:
             with open(os.path.join(slot, cls._KEPT_MARKER), encoding="utf-8") as f:
@@ -2001,33 +2019,47 @@ class MapOptimizer(HelpMixin):
         return None
 
     @staticmethod
-    def _promote(written: str, slot: Optional[str]) -> str:
-        """Move a finished encode into its slot by one rename; return where it is.
+    def _promote(
+        cache: "CachedArtifact", key: Optional[str], written: str, scratch_dir: str
+    ) -> str:
+        """Move a finished encode's scratch folder into its slot by one rename
+        (:meth:`CachedArtifact.promote`); return where the encode is now.
 
-        The rename is :class:`CachedArtifact`'s promotion (scratch and cache
-        share the temp volume), so a slot is only ever empty or complete. A
-        slot that refuses it leaves the encode in scratch, shipped uncached.
+        Only an encode inside the job's own scratch folder is promoted -- the
+        folder moves whole. A slot that refuses it leaves the encode in
+        scratch, shipped uncached.
         """
-        if not slot:
+
+        def same(a: str, b: str) -> bool:
+            return os.path.normcase(os.path.abspath(a)) == os.path.normcase(
+                os.path.abspath(b)
+            )
+
+        if not key or not same(os.path.dirname(written), scratch_dir):
             return written
-        cached = os.path.join(slot, os.path.basename(written))
         try:
-            os.makedirs(slot, exist_ok=True)
-            FileUtils.replace_file(written, cached)
+            slot = cache.promote(key, scratch_dir)
         except OSError:
             return written
-        return cached
+        return os.path.join(slot, os.path.basename(written))
 
     @classmethod
-    def _remember_kept(cls, slot: Optional[str], size_after: int) -> None:
-        """Mark *slot* "kept" (best effort: unmarked, the trial runs again)."""
-        if not slot:
+    def _remember_kept(
+        cls,
+        cache: "CachedArtifact",
+        key: Optional[str],
+        scratch: "TempArtifacts",
+        size_after: int,
+    ) -> None:
+        """Fill *key*'s slot with a "kept" verdict (best effort: unmarked, the
+        trial runs again) -- a folder holding only the marker, promoted whole."""
+        if not key:
             return
         try:
-            os.makedirs(slot, exist_ok=True)
-            FileUtils.atomic_write_text(
-                os.path.join(slot, cls._KEPT_MARKER), str(size_after)
-            )
+            verdict = scratch.dir_path()
+            with open(os.path.join(verdict, cls._KEPT_MARKER), "w") as fh:
+                fh.write(str(size_after))
+            cache.promote(key, verdict)
         except OSError:
             pass
 

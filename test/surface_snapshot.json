@@ -1975,6 +1975,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.file_utils.bake_cache",
+    "name": "BakeCache",
+    "qualname": "BakeCache",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.math_utils.noise",
     "name": "BandLimitedNoise",
     "qualname": "BandLimitedNoise",
@@ -3350,6 +3357,13 @@
     "module": "pythontk.core_utils.engines.scene_export.scene_exporter",
     "name": "SceneExporterBase",
     "qualname": "SceneExporterBase",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.scene_notes",
+    "name": "SceneNotes",
+    "qualname": "SceneNotes",
     "tier": "root"
   },
   {

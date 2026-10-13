@@ -72,12 +72,54 @@ class UserConfigRootTest(unittest.TestCase):
             ("data", ""): os.path.join(home, ".local", "share"),
             ("data", "relshare"): os.path.join(home, ".local", "share"),
             ("data", self.tmp): self.tmp,
+            ("cache", ""): os.path.join(home, ".cache"),
+            ("cache", "relcache"): os.path.join(home, ".cache"),
+            ("cache", self.tmp): self.tmp,
         }
         for (kind, value), expected in cases.items():
             with patch.dict(os.environ, {f"XDG_{kind.upper()}_HOME": value}):
                 self.assertEqual(UserConfig.xdg_home(kind), expected, (kind, value))
         with self.assertRaises(ValueError):
-            UserConfig.xdg_home("cache")
+            UserConfig.xdg_home("bogus")
+
+    def test_the_cache_root_is_the_oss_own_cache_dir(self):
+        """Regenerable caches outside any project (a transcoded clip, a
+        downloaded tool) are durable per user, never temp: the OS's cache dir,
+        resolved as the config root is."""
+        from unittest.mock import patch
+
+        home = os.path.expanduser("~")
+        with patch.dict(os.environ):
+            os.environ.pop(UserConfig.CACHE_ROOT_ENV_VAR, None)
+            with patch("platform.system", return_value="Windows"):
+                with patch.dict(os.environ, {"LOCALAPPDATA": self.tmp}):
+                    self.assertEqual(
+                        UserConfig.cache_dir(), Path(self.tmp, "pythontk", "cache")
+                    )
+            with patch("platform.system", return_value="Darwin"):
+                self.assertEqual(
+                    UserConfig.cache_dir(), Path(home, "Library", "Caches", "pythontk")
+                )
+            with patch("platform.system", return_value="Linux"):
+                with patch.dict(os.environ, {"XDG_CACHE_HOME": self.tmp}):
+                    self.assertEqual(UserConfig.cache_dir(), Path(self.tmp, "pythontk"))
+                with patch.dict(os.environ, {"XDG_CACHE_HOME": "relcache"}):
+                    self.assertEqual(
+                        UserConfig.cache_dir(), Path(home, ".cache", "pythontk")
+                    )
+
+    def test_the_cache_env_var_moves_it_and_parts_name_a_folder(self):
+        from unittest.mock import patch
+
+        target = os.path.join(self.tmp, "cache root")
+        with patch.dict(os.environ, {UserConfig.CACHE_ROOT_ENV_VAR: target}):
+            self.assertEqual(
+                UserConfig.cache_dir("audio", "x"), Path(target, "audio", "x")
+            )
+            self.assertFalse(os.path.exists(target), "asking creates nothing")
+            made = UserConfig.cache_dir("tools", create=True)
+        self.assertTrue(made.is_dir())
+        self.assertEqual(made, Path(target, "tools"))
 
 
 class UserConfigResolveTest(unittest.TestCase):

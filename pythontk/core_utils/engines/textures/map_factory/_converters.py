@@ -24,7 +24,6 @@ except ImportError:
 from pythontk.img_utils._img_utils import ImgUtils
 from pythontk.file_utils._file_utils import FileUtils
 from .conversions import ConversionRegistry
-from .processor import DEFAULT_EXTENSION
 
 
 class _MapConverterInternal:
@@ -421,7 +420,9 @@ class _MapConverterInternal:
             return inverted_image
 
         if output_path is None:
-            output_dir = FileUtils.format_path(file, "path")
+            # Beside the source, absolute: a bare file name has an empty folder,
+            # and "{folder}/{name}" made that the drive root.
+            output_dir = os.path.dirname(os.path.abspath(file))
             name = FileUtils.format_path(file, "name")
             ext = FileUtils.format_path(file, "ext")
 
@@ -438,7 +439,7 @@ class _MapConverterInternal:
 
                 name = name.removesuffix(typ)
 
-            output_path = f"{output_dir}/{name}{new_suffix}.{ext}"
+            output_path = os.path.join(output_dir, f"{name}{new_suffix}.{ext}")
 
         output_path = os.path.abspath(output_path)
         ImgUtils.save_image(inverted_image, output_path, **kwargs)
@@ -552,11 +553,13 @@ class _MapConverterInternal:
 
         # Generate output path if not provided
         if output_path is None:
-            if isinstance(bump_map, str):
-                base_path = bump_map
-            else:
-                # If PIL Image was passed, create generic output name
-                base_path = f"bump_map.{DEFAULT_EXTENSION}"
+            if not isinstance(bump_map, (str, os.PathLike)):
+                # Never a name relative to the process's current directory.
+                raise ValueError(
+                    "convert_bump_to_normal(save=True) of an in-memory bump image "
+                    "has no folder to write beside: pass output_path, or save=False."
+                )
+            base_path = os.fspath(bump_map)
 
             format_suffix = (
                 "DirectX" if output_format.lower() == "directx" else "OpenGL"
@@ -642,17 +645,6 @@ class _MapConverterInternal:
         if not write_files:
             return base_color, metallic, roughness
 
-        if output_dir is None:
-            output_dir = (
-                os.path.dirname(specular_map)
-                if isinstance(specular_map, str)
-                else os.getcwd()
-            )
-        elif not os.path.isdir(output_dir):
-            raise ValueError(
-                f"The specified output directory '{output_dir}' is not valid."
-            )
-
         # Output filenames are derived from the specular_map path; a PIL Image
         # has no path, so fail clearly here instead of raising an obscure
         # TypeError from resolve_texture_filename's assert_pathlike below.
@@ -662,17 +654,24 @@ class _MapConverterInternal:
                 "specular_map to derive output filenames; pass path inputs, or "
                 "call with write_files=False to receive Image objects."
             )
+        if output_dir is None:
+            output_dir = os.path.dirname(os.path.abspath(specular_map))
+        elif not os.path.isdir(output_dir):
+            raise ValueError(
+                f"The specified output directory '{output_dir}' is not valid."
+            )
+
+        def named(map_type: str) -> str:
+            """The specular map's name for *map_type*, in *output_dir*."""
+            spelled = cls.resolve_texture_filename(
+                specular_map, map_type, ext=output_type
+            )
+            return os.path.join(output_dir, os.path.basename(spelled))
 
         base_color_type = "Albedo" if convert_diffuse_to_albedo else "Base_Color"
-        base_color_file = cls.resolve_texture_filename(
-            specular_map, base_color_type, ext=output_type
-        )
-        metallic_file = cls.resolve_texture_filename(
-            specular_map, "Metallic", ext=output_type
-        )
-        roughness_file = cls.resolve_texture_filename(
-            specular_map, "Roughness", ext=output_type
-        )
+        base_color_file = named(base_color_type)
+        metallic_file = named("Metallic")
+        roughness_file = named("Roughness")
 
         ImgUtils.save_image(base_color, base_color_file)
         ImgUtils.save_image(metallic, metallic_file)

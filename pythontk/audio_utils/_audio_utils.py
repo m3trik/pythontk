@@ -113,6 +113,52 @@ class AudioUtils(HelpMixin):
         return os.path.splitext(file_path)[1].lower() in cls.SOURCE_EXTENSIONS
 
     @classmethod
+    def cache_dir_for(cls, audio_path: str, create: bool = False) -> str:
+        """Where a playable transcode of *audio_path* is cached -- the one place
+        that decides it.
+
+        A source inside a marked project caches in that project's
+        ``cache/audio`` (:meth:`Workspace.cache_dir <pythontk.Workspace.cache_dir>`):
+        the scene that plays the clip references the transcode, so it travels
+        with the project. Any other source caches in the per-user cache
+        (:meth:`UserConfig.cache_dir <pythontk.UserConfig.cache_dir>`). Never a
+        folder written beside the source.
+
+        Parameters:
+            audio_path: The source audio file.
+            create: Create the folder.
+
+        Returns:
+            The cache folder, forward slashes.
+        """
+        from pythontk.core_utils.user_config import UserConfig
+        from pythontk.file_utils.workspace import Workspace
+
+        project = Workspace.find_containing(audio_path)
+        if project is not None:
+            folder = project.cache_dir("audio", create=create)
+        else:
+            folder = str(UserConfig.cache_dir("audio", create=create))
+        return folder.replace("\\", "/")
+
+    @staticmethod
+    def _is_complete_wav(path: str) -> bool:
+        """Whether *path* is a whole WAV file: its RIFF header's size field
+        matches the file, which a writer fills in only once it has finished
+        (ffmpeg writes a placeholder first and patches it at the end)."""
+        try:
+            size = os.path.getsize(path)
+            with open(path, "rb") as fh:
+                head = fh.read(12)
+        except OSError:
+            return False
+        if size < 44 or head[8:12] != b"WAVE":
+            return False
+        if head[:4] in (b"RF64", b"BW64"):  # 64-bit sizes live in a ds64 chunk
+            return True
+        return head[:4] == b"RIFF" and int.from_bytes(head[4:8], "little") + 8 == size
+
+    @classmethod
     def ensure_playable_path(
         cls,
         audio_path: str,
@@ -120,16 +166,24 @@ class AudioUtils(HelpMixin):
     ) -> str:
         """Return a playable audio path, converting with ffmpeg if required.
 
+        The transcode is written whole, then moved into its cache name
+        (:meth:`FileUtils.atomic_write <pythontk.FileUtils.atomic_write>`), and
+        a cached file is reused only when it is a complete WAV: a failed or
+        interrupted run never leaves a file the next call would return.
+
         Parameters:
             audio_path: Source audio file path.
-            cache_dir: Optional cache directory for converted WAV output.
+            cache_dir: Cache directory for the converted WAV; default
+                :meth:`cache_dir_for` (the source's project, else the per-user
+                cache).
 
         Returns:
             Playable file path (original or converted WAV).
 
         Raises:
             ValueError: Unsupported file extension.
-            FileNotFoundError: Missing source file or ffmpeg.
+            FileNotFoundError: Missing source file, or ffmpeg when no complete
+                transcode is cached.
             RuntimeError: ffmpeg conversion failed.
         """
         source = os.path.normpath(audio_path).replace("\\", "/")
@@ -143,12 +197,9 @@ class AudioUtils(HelpMixin):
         if ext not in cls.SOURCE_EXTENSIONS:
             raise ValueError(f"Unsupported audio extension '{ext}': {source}")
 
-        ffmpeg_cmd = cls.resolve_ffmpeg(required=True)
-
         if cache_dir is None:
-            cache_dir = os.path.join(os.path.dirname(source), "_audio_cache")
+            cache_dir = cls.cache_dir_for(source)
         cache_dir = os.path.normpath(cache_dir).replace("\\", "/")
-        os.makedirs(cache_dir, exist_ok=True)
 
         stat = os.stat(source)
         token = f"{source}|{stat.st_mtime_ns}|{stat.st_size}"
@@ -156,37 +207,44 @@ class AudioUtils(HelpMixin):
         stem = os.path.splitext(os.path.basename(source))[0]
         output = os.path.join(cache_dir, f"{stem}_{digest}.wav").replace("\\", "/")
 
-        if os.path.isfile(output):
-            return output
+        if cls._is_complete_wav(output):
+            return output  # a cached transcode plays without ffmpeg
 
+        ffmpeg_cmd = cls.resolve_ffmpeg(required=True)
+        os.makedirs(cache_dir, exist_ok=True)
         creation_flags = 0
         if os.name == "nt":
             creation_flags = subprocess.CREATE_NO_WINDOW
 
-        cmd = [
-            ffmpeg_cmd,
-            "-y",
-            "-i",
-            source,
-            "-vn",
-            "-acodec",
-            "pcm_s16le",
-            output,
-        ]
+        def transcode(part: str) -> None:
+            # -f: the part's extension is not ``.wav``, so name the muxer.
+            cmd = [
+                ffmpeg_cmd,
+                "-y",
+                "-i",
+                source,
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-f",
+                "wav",
+                part,
+            ]
+            completed = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                creationflags=creation_flags,
+            )
+            if completed.returncode != 0 or not cls._is_complete_wav(part):
+                stderr = (completed.stderr or "").strip().splitlines()
+                tail = stderr[-1] if stderr else "unknown ffmpeg error"
+                raise RuntimeError(f"ffmpeg conversion failed for '{source}': {tail}")
 
-        completed = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-            creationflags=creation_flags,
-        )
+        from pythontk.file_utils._file_utils import FileUtils
 
-        if completed.returncode != 0 or not os.path.isfile(output):
-            stderr = (completed.stderr or "").strip().splitlines()
-            tail = stderr[-1] if stderr else "unknown ffmpeg error"
-            raise RuntimeError(f"ffmpeg conversion failed for '{source}': {tail}")
-
+        FileUtils.atomic_write(output, transcode)
         return output
 
     @classmethod
@@ -327,18 +385,15 @@ class AudioUtils(HelpMixin):
 
         Parameters:
             audio_path: Source audio file path.
-            cache_dir: Cache directory for converted files.  Defaults to
-                ``_audio_cache`` next to the source file.
+            cache_dir: Cache directory for converted files; default
+                :meth:`cache_dir_for` (the source's project, else the per-user
+                cache).
             logger: Optional logger with ``warning``/``debug`` methods.
 
         Returns:
             Resolved playable path, or ``None`` on error.
         """
         source = audio_path.replace("\\", "/")
-        if cache_dir is None:
-            cache_dir = os.path.join(os.path.dirname(source), "_audio_cache").replace(
-                "\\", "/"
-            )
 
         try:
             resolved = cls.ensure_playable_path(source, cache_dir=cache_dir)
@@ -364,9 +419,9 @@ class AudioUtils(HelpMixin):
             search_dir: Root directory to scan.
             extensions: Accepted source extensions.  Defaults to
                 ``SOURCE_EXTENSIONS``.
-            cache_dir: Cache directory for converted files.  When
-                ``None`` a ``_audio_cache`` folder is created next to
-                each source file.
+            cache_dir: Cache directory for converted files; default
+                :meth:`cache_dir_for` per source (its project, else the
+                per-user cache).
             logger: Optional logger with ``warning``/``debug`` methods.
 
         Returns:

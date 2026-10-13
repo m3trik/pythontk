@@ -359,6 +359,179 @@ class WorkspaceDiscoveryTest(unittest.TestCase):
         self.assertEqual(Workspace.find(os.path.join(self.tmp, "nope")), [])
 
 
+class WorkspaceForSceneTest(unittest.TestCase):
+    """``Workspace.for_scene``: the ONE project-root rule both DCCs resolve a
+    scene's files by (mayatk's scene-project rule, blendertk's pin-aware one).
+
+    Nearest marked ancestor of the scene; else the session root when it holds
+    the scene; else the scene's own folder. An unsaved scene has the session
+    root's workspace, or none -- never a temp-dir fallback.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="ptk_ws_scene_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _file(self, *parts):
+        path = os.path.join(self.tmp, *parts)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("")
+        return path
+
+    def _root(self, scene, session=None):
+        ws = Workspace.for_scene(scene, session_root=session)
+        return None if ws is None else os.path.normcase(ws.root)
+
+    def _norm(self, *parts):
+        return os.path.normcase(os.path.normpath(os.path.join(self.tmp, *parts)))
+
+    def test_the_scenes_marked_project_wins(self):
+        self._file("proj", WORKSPACE_MARKER)
+        scene = self._file("proj", "scenes", "a.ma")
+        elsewhere = os.path.join(self.tmp, "elsewhere")
+        os.makedirs(elsewhere)
+        self.assertEqual(self._root(scene), self._norm("proj"))
+        self.assertEqual(self._root(scene, elsewhere), self._norm("proj"))
+
+    def test_a_marked_project_under_the_session_root_wins_over_it(self):
+        """A pin on a folder of several projects must not open the others'."""
+        self._file("pin", "sub", WORKSPACE_MARKER)
+        scene = self._file("pin", "sub", "scenes", "a.blend")
+        self.assertEqual(
+            self._root(scene, os.path.join(self.tmp, "pin")), self._norm("pin", "sub")
+        )
+
+    def test_a_marked_project_above_the_session_root_wins_over_it(self):
+        self._file("proj", WORKSPACE_MARKER)
+        scene = self._file("proj", "pin", "a.blend")
+        self.assertEqual(
+            self._root(scene, os.path.join(self.tmp, "proj", "pin")),
+            self._norm("proj"),
+        )
+
+    def test_an_unmarked_scene_inside_the_session_root_is_the_roots(self):
+        scene = self._file("pin", "shots", "a.blend")
+        self.assertEqual(
+            self._root(scene, os.path.join(self.tmp, "pin")), self._norm("pin")
+        )
+
+    def test_an_unmarked_scene_outside_it_is_its_own_folders(self):
+        scene = self._file("loose", "a.blend")
+        pin = os.path.join(self.tmp, "pin")
+        os.makedirs(pin)
+        self.assertEqual(self._root(scene, pin), self._norm("loose"))
+        self.assertEqual(self._root(scene), self._norm("loose"))
+
+    def test_an_unsaved_scene_has_the_session_roots_workspace_or_none(self):
+        pin = os.path.join(self.tmp, "pin")
+        os.makedirs(pin)
+        self.assertEqual(self._root(None, pin), self._norm("pin"))
+        self.assertEqual(self._root("", pin), self._norm("pin"))
+        self.assertIsNone(self._root(None))
+        self.assertIsNone(self._root(None, os.path.join(self.tmp, "gone")))
+
+    def test_a_scene_in_a_missing_folder_has_none(self):
+        self.assertIsNone(self._root(os.path.join(self.tmp, "gone", "a.blend")))
+
+    def test_the_marked_projects_rules_come_with_it(self):
+        Workspace.create(os.path.join(self.tmp, "proj"), {"scene": "shots"}, False)
+        scene = self._file("proj", "shots", "a.ma")
+        ws = Workspace.for_scene(scene)
+        self.assertTrue(ws.is_marked)
+        self.assertEqual(ws.rules["scene"], "shots")
+
+
+class WorkspaceProjectStructureTest(unittest.TestCase):
+    """The permanent-file tree mayatk and blendertk share, through rules:
+    Maya-aligned names, so a Maya project stays a normal Maya project and a
+    Blender project gets the same tree. Asking writes nothing."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="ptk_ws_tree_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _at(self, ws, *parts):
+        return os.path.normpath(os.path.join(ws.root, *parts))
+
+    def test_cache_dir_reads_the_kinds_rule_else_cache_kind(self):
+        marked = Workspace.create(os.path.join(self.tmp, "proj"), create_dirs=False)
+        self.assertEqual(marked.cache_dir("alembic"), self._at(marked, "cache/alembic"))
+        self.assertEqual(marked.cache_dir("bake"), self._at(marked, "cache/bake"))
+        custom = Workspace(self.tmp, {"bakeCache": "data/bakes"})
+        self.assertEqual(custom.cache_dir("bake"), self._at(custom, "data/bakes"))
+
+    def test_the_media_and_export_folders_are_maya_named(self):
+        ws = Workspace(self.tmp)  # unmarked: the defaults
+        self.assertEqual(ws.movie_dir(), self._at(ws, "movies"))
+        self.assertEqual(ws.images_dir(), self._at(ws, "images"))
+        self.assertEqual(ws.export_dir(), self._at(ws, "data"))
+        ruled = Workspace(
+            self.tmp, {"movie": "mov", "images": "renders", "FBX export": "out"}
+        )
+        self.assertEqual(ruled.movie_dir(), self._at(ruled, "mov"))
+        self.assertEqual(ruled.images_dir(), self._at(ruled, "renders"))
+        self.assertEqual(ruled.export_dir(), self._at(ruled, "out"))
+
+    def test_one_texture_default_for_both_dccs_and_textures_still_matches(self):
+        ws = Workspace(self.tmp)
+        self.assertEqual(ws.source_images_dir, self._at(ws, "sourceimages"))
+        os.makedirs(os.path.join(self.tmp, "textures"))
+        self.assertEqual(ws.source_images_dir, self._at(ws, "textures"))
+
+    def test_backup_dir_is_mayas_incremental_save_folder(self):
+        scene = os.path.join(self.tmp, "scenes", "shot.ma")
+        self.assertEqual(
+            Workspace.backup_dir(scene),
+            os.path.normpath(
+                os.path.join(self.tmp, "scenes", "incrementalSave", "shot.ma")
+            ),
+        )
+
+    def test_asking_creates_nothing_and_create_true_makes_the_folder(self):
+        ws = Workspace(self.tmp)
+        scene = os.path.join(self.tmp, "scenes", "shot.ma")
+        asked = [
+            ws.cache_dir("bake"),
+            ws.movie_dir(),
+            ws.images_dir(),
+            ws.export_dir(),
+            Workspace.backup_dir(scene),
+        ]
+        self.assertEqual(os.listdir(self.tmp), [], "an accessor wrote into the project")
+        made = [
+            ws.cache_dir("bake", create=True),
+            ws.movie_dir(create=True),
+            ws.images_dir(create=True),
+            ws.export_dir(create=True),
+            Workspace.backup_dir(scene, create=True),
+        ]
+        self.assertEqual(made, asked)
+        for path in made:
+            self.assertTrue(os.path.isdir(path), path)
+
+    def test_relative_spells_a_path_from_the_root_and_absolute_reads_it_back(self):
+        ws = Workspace(self.tmp)
+        inside = os.path.join(self.tmp, "cache", "bake", "a.ma")
+        self.assertEqual(ws.relative(inside), "cache/bake/a.ma")
+        self.assertEqual(ws.relative(self.tmp), ".")
+        outside = os.path.join(os.path.dirname(self.tmp), "elsewhere", "b.ma")
+        spelled = ws.relative(outside)
+        self.assertEqual(spelled, os.path.normpath(outside).replace(os.sep, "/"))
+        self.assertTrue(os.path.isabs(spelled), "never a ../ chain out of the project")
+        for path in (inside, outside):
+            self.assertEqual(
+                os.path.normcase(os.path.normpath(ws.absolute(ws.relative(path)))),
+                os.path.normcase(os.path.normpath(path)),
+            )
+        self.assertEqual(ws.relative(""), "")
+        self.assertEqual(ws.absolute(""), "")
+
+
 class WorkspaceTemplatesTest(unittest.TestCase):
     """The shared, unnamespaced named-rule-set store both DCC adapters read."""
 

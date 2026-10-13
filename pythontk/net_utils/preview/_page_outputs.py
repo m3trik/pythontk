@@ -6,8 +6,10 @@ The page records a clip through the ``playblast`` routes (the recorder,
 :class:`~pythontk.net_utils.preview.playblast.PreviewPlayblast`, is built on
 first use) and posts a still to ``snapshot``. Both land by one placement rule
 (:meth:`_page_output`): beside the published deliverable when it is still on
-disk and writable, else in the serve root, from which the page downloads it.
-Every name is composed here, never taken from the page.
+disk and its folder takes the file, else in the serve root, from which the page
+downloads it. Whether the folder takes it is found by writing it -- never a
+probe file in the user's folder. Every name is composed here, never taken from
+the page.
 
 One job of :class:`~pythontk.PreviewServer`, composed in ``server.py``; its
 methods reach the rest of the server through ``self``.
@@ -15,7 +17,6 @@ methods reach the rest of the server through ``self``.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import quote
@@ -112,10 +113,22 @@ class _PageOutputsMixin:
         output_dir, base = self._page_output()
         name = self.playblast.clip_name(token)
         stem = f"{base}_{name}" if base and base not in name else name
+        # Encoded where it can always be written -- the frames go with the
+        # encode, so a refused folder cannot be retried -- then delivered.
         report = self.playblast.finish(
-            token, output_dir=str(output_dir), target=target, stem=stem
+            token, output_dir=str(self.root), target=target, stem=stem
         )
         path = Path(report["output"])
+        if output_dir != self.root:
+            placed, reason = FileUtils.deliver_file(
+                str(path), str(output_dir / path.name)
+            )
+            if Path(placed) == path:
+                self._fell_back(output_dir, reason)
+            else:
+                path.unlink(missing_ok=True)
+                path = Path(placed)
+            report["output"] = str(path)
         with self._lock:
             self._recordings[token] = path
             # Bounded: the map only exists so a download can follow a finish,
@@ -192,24 +205,35 @@ class _PageOutputsMixin:
 
         directory, base = self._page_output()
         stem = f"{base}_view" if base else "view"
-        with self._snapshot_lock:
-            path = Path(
-                FileUtils.next_version_path(
-                    str(directory / f"{stem}{extension}"),
-                    format="{stem}_{n:03d}{ext}",
+
+        def write(folder: Path) -> Path:
+            with self._snapshot_lock:
+                path = Path(
+                    FileUtils.next_version_path(
+                        str(folder / f"{stem}{extension}"),
+                        format="{stem}_{n:03d}{ext}",
+                    )
                 )
-            )
-            # Whole, then moved into place: the serve root is being read by a
-            # page, and beside a deliverable the folder is the user's -- which
-            # is also why a failed write takes its partial file with it.
-            part = path.with_name(path.name + ".part")
-            try:
-                part.write_bytes(data)
-                FileUtils.replace_file(part, path)
-            except OSError:
-                part.unlink(missing_ok=True)
+                # Whole, then moved into place: the serve root is being read
+                # by a page, and beside a deliverable the folder is the user's
+                # -- which is also why a failed write takes its partial with it.
+                part = path.with_name(path.name + ".part")
+                try:
+                    part.write_bytes(data)
+                    FileUtils.replace_file(part, path)
+                except OSError:
+                    part.unlink(missing_ok=True)
+                    raise
+            return path
+
+        try:
+            path = write(directory)
+        except OSError as e:
+            if directory == self.root:
                 raise
-        in_serve_root = directory == self.root
+            self._fell_back(directory, e)
+            path = write(self.root)
+        in_serve_root = path.parent == self.root
         self.logger.info("Image written to %s", path)
         return {
             "output": str(path),
@@ -226,7 +250,9 @@ class _PageOutputsMixin:
         still alike -- so the two cannot disagree about where "beside the
         deliverable" is: the directory is
         :meth:`PreviewPlayblast.resolve_output_dir`'s answer, and *base* the
-        name a file there is labelled with.
+        name a file there is labelled with. It is where a write is tried
+        first; a folder that refuses the write sends it to the serve root
+        (:meth:`_fell_back`).
 
         *base* is the SOURCE's stem, not the served asset's: the asset is
         republished under a stable ``scene.glb`` so a page can keep one URL
@@ -245,26 +271,18 @@ class _PageOutputsMixin:
         # publish: its stem is a random tag, and outputs named after it
         # restarted their numbering under a new unreadable prefix every push.
         stem = source.stem if source is not None and directory != self.root else ""
-        if directory != self.root and not self._writable(directory):
-            # A deliverable on a read-only share: its outputs still belong to
-            # the page, and the serve root is where the page can collect them.
-            self.logger.warning(
-                "%s is not writable; page output goes to the preview's own "
-                "folder instead, from which the page downloads it.",
-                directory,
-            )
-            directory = self.root
         return directory, StrUtils.to_legal_name(stem)
 
-    @staticmethod
-    def _writable(directory: Path) -> bool:
-        """Whether a file can be created in *directory* -- found by trying.
+    def _fell_back(self, directory: Path, reason: Any) -> None:
+        """Say that a page output meant for *directory* went to the serve root.
 
-        ``os.access`` answers from mode bits alone, and on Windows says yes to
-        a read-only share or a denying ACL; the probe is self-cleaning.
-        """
-        try:
-            with tempfile.NamedTemporaryFile(dir=directory):
-                return True
-        except OSError:
-            return False
+        A deliverable on a read-only share: its outputs still belong to the
+        page, and the serve root is where the page can collect them. Found by
+        the write itself (``os.access`` answers from mode bits alone, and on
+        Windows says yes to a read-only share or a denying ACL)."""
+        self.logger.warning(
+            "%s took no file (%s); page output goes to the preview's own "
+            "folder instead, from which the page downloads it.",
+            directory,
+            reason,
+        )

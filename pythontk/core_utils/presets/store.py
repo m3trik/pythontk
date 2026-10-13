@@ -649,6 +649,16 @@ class PresetStore(_PresetStoreInternal):
             base = self._builtin_dir
         else:
             raise ValueError(f"tier must be 'user' or 'builtin'; got {tier!r}")
+        # A file named *name* as it is wins: list() reports each file's own
+        # stem, and a stem the sanitizer would rewrite ("glTF 2.0") must still
+        # resolve to that file. Path separators never pass through, and the
+        # file must sit IN the store: on Windows ``base / "D:evil.json"`` is
+        # the D: drive's current folder.
+        name = str(name)
+        if name and not any(sep in name for sep in ("/", "\\", os.sep)):
+            exact = base / f"{name}{self._ext}"
+            if exact.parent == base and exact.is_file():
+                return exact
         return base / f"{PresetStore.sanitize_preset_name(name)}{self._ext}"
 
     # ------------------------------------------------------------------ io

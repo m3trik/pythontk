@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.14.1"
+__version__ = "0.15.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -77,6 +77,12 @@ DEFAULT_INCLUDE = {
         "Workspace",
         "WorkspaceTemplates",
     ],
+    # Per-scene notes kept with the project: one file both DCCs' Reference
+    # Manager panels read and write.
+    "file_utils.scene_notes": ["SceneNotes"],
+    # A project's bakes of foreign scenes: one slot per source, the record
+    # inside each bake (host-read), purged by reference -- both DCC bridges.
+    "file_utils.bake_cache": ["BakeCache"],
     "iter_utils._iter_utils": "*",
     "math_utils._math_utils": "*",
     "math_utils.progression": "ProgressionCurves",

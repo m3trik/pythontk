@@ -337,11 +337,23 @@ class RegionMaskPackerTest(unittest.TestCase):
         p.add_group("right", RIGHT_HALF)
         self.assertEqual(p.validate(), [])
 
-    def test_write_outputs_mask_and_manifest(self):
+    def test_write_writes_only_the_mask_by_default(self):
+        """The ``<mask>.json`` sidecar beside the mask was read by nothing
+        in production: both DCCs publish the manifest through the scene
+        records and the export metadata. A file nobody reads, written into
+        the user's texture folder, is litter."""
         p = RegionMaskPacker(resolution=64)
         p.add_group("a", LEFT_HALF)
         mask_path = os.path.join(self.tmp, "prop_EMask.png")
         manifest = p.write(mask_path)
+        self.assertEqual(os.listdir(self.tmp), ["prop_EMask.png"])
+        self.assertEqual(manifest.mask, "prop_EMask.png")
+
+    def test_write_outputs_mask_and_manifest(self):
+        p = RegionMaskPacker(resolution=64)
+        p.add_group("a", LEFT_HALF)
+        mask_path = os.path.join(self.tmp, "prop_EMask.png")
+        manifest = p.write(mask_path, write_manifest=True)
         self.assertTrue(os.path.isfile(mask_path))
         manifest_path = os.path.join(self.tmp, "prop_EMask.json")
         self.assertTrue(os.path.isfile(manifest_path))

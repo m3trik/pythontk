@@ -74,6 +74,11 @@ class _TestSandboxInternal:
     #: Names the root for a child, which nests its own inside it rather than
     #: re-deriving it from :attr:`_TEMP_ENV` (see :meth:`TestSandbox.temp`).
     _ROOT_ENV = "PYTHONTK_TEST_TEMP_ROOT"
+    #: The ecosystem temp root (``TempArtifacts.ROOT_ENV_VAR``) and per-user
+    #: cache root (``UserConfig.CACHE_ROOT_ENV_VAR``), both pointed into the root.
+    _STORE_ENV = ("PYTHONTK_TEMP_ROOT", "PYTHONTK_CACHE_ROOT")
+    #: The per-user cache's folder in the root.
+    _CACHE_FOLDER = "user_cache"
     #: The root's ``TempArtifacts`` prefix; a session store, so its tag names its owner.
     _ROOT_PREFIX = "ptk_test_sandbox"
 
@@ -199,7 +204,7 @@ class _TestSandboxInternal:
     @classmethod
     def _temp_snapshot(cls) -> Tuple[Optional[str], Dict[str, Optional[str]]]:
         """What :meth:`TestSandbox.temp` changes, read before it does."""
-        names = cls._TEMP_ENV + (cls._ROOT_ENV,)
+        names = cls._TEMP_ENV + (cls._ROOT_ENV,) + cls._STORE_ENV
         return tempfile.tempdir, {name: os.environ.get(name) for name in names}
 
     @classmethod
@@ -267,15 +272,21 @@ class TestSandbox(_TestSandboxInternal):
         the root for the rest of the process, and ``TMPDIR``/``TEMP``/``TMP``
         point there so a child process (mayapy, Blender, FBX2glTF) inherits the
         same -- a waited one: a detached app outlives the root, so it is
-        launched with the host's (:meth:`host_environ`). The root goes at
+        launched with the host's (:meth:`host_environ`). The root IS the
+        ecosystem temp root (``$PYTHONTK_TEMP_ROOT``, :meth:`TempArtifacts.root`),
+        so a store in this process or in a Python child lands in it however
+        that child's ``tempfile`` resolves, and the per-user cache root
+        (``$PYTHONTK_CACHE_ROOT``, :meth:`UserConfig.cache_dir`) is a folder in
+        it, so a test's regenerable cache never reaches the developer's. A test
+        that steers stores into a folder of its own patches
+        ``$PYTHONTK_TEMP_ROOT``, not ``tempfile.tempdir``. The root goes at
         interpreter exit, or at
         :meth:`ProcessExit.hard_exit`, which skips it. A root that outlives its
         owner -- the process was killed, or a file in it was still held when
         it exited -- goes at the next activation, which reclaims every root
         whose owner has exited (a session store's tag names its owner, see
         :class:`TempArtifacts`), so the worst case is one stale directory
-        until the next run. Prefix sweeps inside a run still work: they scan
-        whatever ``gettempdir()`` answers.
+        until the next run.
 
         Those variables are not enough for a Python child: a fresh
         interpreter derives its temp dir from them by probing each with a
@@ -294,15 +305,28 @@ class TestSandbox(_TestSandboxInternal):
             return state["temp_dir"]
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
-        # Top level: allocated in the REAL temp dir, before the redirect, so
-        # the sweep of prior killed runs looks where they landed. In a child:
+        # Top level: allocated in the REAL temp root, before the redirect, so
+        # the sweep of prior killed runs looks where they landed -- FLAT in it,
+        # a root of roots rather than a store folder: every level of nesting
+        # is paid again by every path a suite builds inside it, and a mayatk
+        # chunk's records ran past Windows' 260 one level deeper. In a child:
         # inside the parent's root, by name.
         parent = os.environ.get(cls._ROOT_ENV) or None
+        if parent is None:
+            parent = TempArtifacts.root()
+            legacy = tempfile.gettempdir()
+            if os.path.normcase(os.path.abspath(legacy)) != os.path.normcase(parent):
+                # For one release (TempArtifacts._LEGACY_SWEEP_REMOVE_IN): the
+                # roots the pre-root layout left flat in the system temp dir.
+                TempArtifacts(
+                    cls._ROOT_PREFIX, policy="session", dir=legacy
+                ).sweep_stale()
         store = TempArtifacts(cls._ROOT_PREFIX, policy="session", dir=parent)
         root = store.dir_path()
         tempfile.tempdir = root
-        for name in cls._TEMP_ENV + (cls._ROOT_ENV,):
+        for name in cls._TEMP_ENV + (cls._ROOT_ENV, cls._STORE_ENV[0]):
             cls._redirect_env(name, root)
+        cls._redirect_env(cls._STORE_ENV[1], os.path.join(root, cls._CACHE_FOLDER))
         state["temp_store"] = store
         state["temp_dir"] = root
         return root

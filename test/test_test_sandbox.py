@@ -19,6 +19,7 @@ import webbrowser
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from pythontk.core_utils.test_sandbox import TestSandbox
+from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.temp_artifacts import TempArtifacts
 
 URL = "http://127.0.0.1:1/"
@@ -82,11 +83,12 @@ class TestSandboxTestCase(unittest.TestCase):
         root = TestSandbox.temp()
         self.assertTrue(os.path.isdir(root))
         self.assertEqual(tempfile.gettempdir(), root)
-        for name in ("TMPDIR", "TEMP", "TMP"):
+        for name in ("TMPDIR", "TEMP", "TMP", TempArtifacts.ROOT_ENV_VAR):
             self.assertEqual(os.environ[name], root)
-        # Every default-dir store lands inside it...
+        # It IS the temp root: every default-dir store lands inside it...
+        self.assertEqual(TempArtifacts.root(), root)
         store = TempArtifacts("sandbox_probe", policy="scoped")
-        self.assertEqual(os.path.dirname(store.path()), root)
+        self.assertTrue(FileUtils.is_under(store.path(), root, inclusive=False))
         store.cleanup()
         # ...and so does a child process's.
         child = subprocess.check_output(
@@ -94,6 +96,45 @@ class TestSandboxTestCase(unittest.TestCase):
             text=True,
         ).strip()
         self.assertEqual(os.path.normcase(child), os.path.normcase(root))
+
+    def test_a_top_level_root_sits_flat_in_the_temp_root(self):
+        """A root of roots, not a store folder: every level of nesting is paid
+        again by every path a suite builds inside it, and a mayatk chunk's
+        scene-data records ran past Windows' 260 under
+        ``ptk/ptk_test_sandbox/ptk_test_sandbox_<tag>/`` (measured)."""
+        store = TempArtifacts("flat_probe", policy="scoped")
+        self.addCleanup(store.cleanup)
+        home = store.dir_path()
+        env = TestSandbox.host_environ() or dict(os.environ)
+        for name in ("TMPDIR", "TEMP", "TMP", TestSandbox._ROOT_ENV):
+            env.pop(name, None)
+        env.update(TEMP=home, TMP=home, PYTHONTK_TEMP_ROOT=home)
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        code = "\n".join(
+            [
+                "import sys",
+                f"sys.path.insert(0, {repo!r})",
+                "from pythontk.core_utils.test_sandbox import TestSandbox",
+                "print(TestSandbox.temp())",
+            ]
+        )
+        out = subprocess.check_output(
+            [sys.executable, "-c", code], text=True, env=env
+        ).splitlines()[-1]
+        self.assertEqual(os.path.normcase(os.path.dirname(out)), os.path.normcase(home))
+        self.assertTrue(
+            os.path.basename(out).startswith(TestSandbox._ROOT_PREFIX + "_"), out
+        )
+
+    def test_the_user_cache_is_inside_the_root_too(self):
+        """A regenerable cache a test writes (a transcoded clip, a downloaded
+        tool) lands in the developer's own cache root unless redirected."""
+        from pythontk.core_utils.user_config import UserConfig
+
+        root = TestSandbox.temp()
+        self.assertTrue(
+            FileUtils.is_under(str(UserConfig.cache_dir("probe")), root, False)
+        )
 
     def test_a_child_sandbox_nests_inside_the_root_even_when_the_probe_fails(self):
         """A child's own root goes INSIDE the parent's, named, never re-derived.
@@ -136,9 +177,10 @@ class TestSandboxTestCase(unittest.TestCase):
 
     def test_the_trash_is_the_scratch_folders_not_the_machines(self):
         """A re-bake sets superseded maps aside through ``move_to_trash``: under
-        the sandbox that is "no trash here", so they go beside themselves into
-        ``_superseded`` inside the temp root -- never into the developer's
-        Recycle Bin, which a mayatk run filled with 11 scratch maps."""
+        the sandbox that is "no trash here", so they go into the
+        ``superseded`` temp store inside the sandbox's root -- never into the
+        developer's Recycle Bin, which a mayatk run filled with 11 scratch
+        maps."""
         from pythontk.file_utils._file_utils import FileUtils
         from pythontk.file_utils.file_dependencies import FileDependencies
 
@@ -151,11 +193,15 @@ class TestSandboxTestCase(unittest.TestCase):
         where = FileDependencies.set_aside(path)
         self.assertEqual(TestSandbox.trashed[before:], [os.path.abspath(path)])
         del TestSandbox.trashed[before:]
-        self.assertEqual(
-            os.path.normcase(os.path.abspath(where)),
-            os.path.normcase(
-                os.path.join(os.path.dirname(path), "_superseded", "old_Lightmap.exr")
+        store_root = os.path.join(
+            TempArtifacts.root(), FileDependencies.SUPERSEDED_STORE
+        )
+        self.assertEqual(os.path.basename(where), "old_Lightmap.exr")
+        self.assertTrue(
+            os.path.normcase(os.path.abspath(where)).startswith(
+                os.path.normcase(os.path.abspath(store_root))
             ),
+            where,
         )
         with self.assertRaises(FileNotFoundError):
             FileUtils.move_to_trash(path)  # the real refusals still stand
@@ -245,7 +291,9 @@ class ActivatedTest(unittest.TestCase):
             "        [id(FileUtils.__dict__[n]) for n in ('move_to_trash', 'can_trash')],",
             "        tempfile.tempdir,",
             "        {{n: os.environ.get(n) for n in ('TMPDIR', 'TEMP', 'TMP',",
-            "                                       TestSandbox._ROOT_ENV)}},",
+            "                                       TestSandbox._ROOT_ENV,",
+            "                                       'PYTHONTK_TEMP_ROOT',",
+            "                                       'PYTHONTK_CACHE_ROOT')}},",
             "    ]",
             "def refused():",
             "    try:",

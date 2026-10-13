@@ -29,6 +29,7 @@ from pythontk import (
     OutputSpec,
     OutputTemplate,
     OutputTemplates,
+    TempArtifacts,
 )
 from pythontk.core_utils.engines.textures.map_factory import MapFactory
 from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer, Op
@@ -679,18 +680,21 @@ class TestStageMaps(_TextureFixture):
 
     def setUp(self):
         super().setUp()
-        # The encode cache is a TempArtifacts store in the system temp dir:
-        # each test gets its own, removed with test_dir.
+        # The encode cache is a CachedArtifact under the ecosystem temp root:
+        # each test gets its own root, removed with test_dir.
         self.temp_root = os.path.join(self.test_dir, "tmp")
         os.makedirs(self.temp_root)
-        patcher = mock.patch.object(tempfile, "tempdir", self.temp_root)
+        patcher = mock.patch.dict(
+            os.environ, {TempArtifacts.ROOT_ENV_VAR: self.temp_root}
+        )
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def _slots(self):
         """``{file name: path}`` of every encode the cache holds."""
         found = {}
-        for slot in glob.glob(os.path.join(self.temp_root, "map_optimizer_cache_*")):
+        cache_dir = MapOptimizer._encode_cache().cache_dir
+        for slot in glob.glob(os.path.join(cache_dir, "map_optimizer_cache_*")):
             for name in os.listdir(slot):
                 if not name.startswith("."):
                     found[name] = os.path.join(slot, name)
@@ -1040,6 +1044,30 @@ class TestStageMaps(_TextureFixture):
         self.assertEqual(ImgUtils.get_image_size(by_key["big"]["written"]), (64, 64))
         self.assertEqual(ImgUtils.get_image_size(by_key["mid"]["written"]), (64, 64))
         self.assertTrue(by_key["small"]["cached"])
+
+    def test_the_cache_is_the_shared_directory_slot_store(self):
+        """The encode cache hand-rolled CachedArtifact's slot model -- its own
+        promote, read and touch over a TempArtifacts store. It is a
+        directory-slot CachedArtifact now: one naming, sweep and promotion
+        rule, and a slot arrives whole by one rename (an encode, or a "kept"
+        verdict)."""
+        from pythontk import CachedArtifact
+
+        cache = MapOptimizer._encode_cache()
+        self.assertIsInstance(cache, CachedArtifact)
+        self.assertTrue(cache.directory)
+        encoded = self._bloated("slot_BaseColor.png")
+        kept = self._compact("kept_BaseColor.png")
+        report = self._stage({"a": encoded, "b": kept}, "run1")
+        statuses = {r["key"]: r["status"] for r in report["results"]}
+        self.assertEqual(statuses, {"a": "optimized", "b": "kept"})
+        slots = sorted(os.listdir(cache.cache_dir))
+        slots = [s for s in slots if not s.startswith(".")]
+        self.assertEqual(len(slots), 2, slots)
+        contents = sorted(
+            tuple(sorted(os.listdir(os.path.join(cache.cache_dir, s)))) for s in slots
+        )
+        self.assertEqual(contents, [(".kept",), ("slot_BaseColor.png",)])
 
     def test_a_cache_hit_keeps_its_slot_from_the_age_sweep(self):
         """Review 2026-10-12: a hit never refreshed its slot, so a map shipped

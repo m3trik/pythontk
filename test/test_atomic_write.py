@@ -75,6 +75,45 @@ class AtomicWriteText(unittest.TestCase):
             self.assertEqual(f.read(), "new")
         self.assertEqual(len(calls), 3)
 
+    def test_a_stale_temp_a_killed_write_left_is_swept_by_a_later_write(self):
+        """The hand-rolled ``.<uuid>.tmp`` a process killed mid-write left
+        beside its target was never removed by anything. The temp is now an
+        ``atomic_write`` store entry: a later write into the folder sweeps it
+        once stale (and never a fresh one, which may be a live write)."""
+        import time
+
+        stale = os.path.join(self.dir, ".atomic_deadbeef.part")
+        fresh = os.path.join(self.dir, ".atomic_cafe.part")
+        for path in (stale, fresh):
+            with open(path, "w") as f:
+                f.write("half")
+        past = time.time() - 30 * 86400
+        os.utime(stale, (past, past))
+        FileUtils.atomic_write_text(self.path, "x")
+        self.assertFalse(os.path.exists(stale))
+        self.assertTrue(os.path.exists(fresh))
+
+    def test_the_temp_is_hidden_and_no_longer_than_a_short_name(self):
+        """The temp sits beside the target, so its NAME spends the target
+        folder's path budget: ``atomic_write_<tag>.part`` ran 43 characters
+        where the old ``.<hex>.tmp`` ran 18, and a record 258 characters deep
+        failed past Windows' 260 (a scene-data record in a test sandbox,
+        measured). A dot name also keeps it out of every listing that skips
+        dot files (presets, cache slots), as the old temp was."""
+        seen = []
+        real = FileUtils.replace_file
+
+        def spy(src, dst):
+            seen.append(src)
+            return real(src, dst)
+
+        with patch.object(FileUtils, "replace_file", side_effect=spy):
+            FileUtils.atomic_write_text(self.path, "x")
+        (part,) = seen
+        name = os.path.basename(part)
+        self.assertTrue(name.startswith("."), name)
+        self.assertLessEqual(len(name), 25, name)
+
     def test_creates_target_when_absent(self):
         path = os.path.join(self.dir, "new.txt")
         self.assertFalse(os.path.exists(path))

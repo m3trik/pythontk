@@ -87,7 +87,15 @@ class _FbxFileInternal:
     #: On a constant key: the segment takes the NEXT key's value (step-next).
     _CONSTANT_NEXT = 0x100
     _TANGENT_AUTO, _TANGENT_TCB, _TANGENT_USER = 0x100, 0x200, 0x400
+    #: With :attr:`_TANGENT_USER`: the key's two sides carry their own slopes.
+    _TANGENT_BREAK = 0x800
     _CLAMP, _CLAMP_PROGRESSIVE = 0x1000, 0x4000
+    _TIME_INDEPENDENT = 0x2000
+    #: The tangent-mode bits a computed key carries (:meth:`_computed`),
+    #: cleared where its slopes are written out (:meth:`_keep_own_tangents`).
+    _COMPUTED_BITS = (
+        _TANGENT_AUTO | _TANGENT_TCB | _CLAMP | _TIME_INDEPENDENT | _CLAMP_PROGRESSIVE
+    )
     _WEIGHTED_RIGHT, _WEIGHTED_NEXT_LEFT = 0x01000000, 0x02000000
     #: A tangent weight is a 16-bit fraction of this (``0.3333`` = 3333).
     _WEIGHT_DIVIDER = 9999.0
@@ -737,6 +745,12 @@ class _FbxFileInternal:
         decides the interpolation -- a constant last key holds its pose until
         the next take starts.
 
+        A key whose slopes the importer computes from its neighbours (Maya's
+        spline, clamped and auto) and whose neighbours the union changed -- a
+        take's last key and the next take's first, ends alone and inner keys
+        merged -- is written with the slopes it plays in its own curve
+        (:meth:`_keep_own_tangents`), so each take plays its own segments.
+
         Curves that follow one another (a Shots Only file: each take its own
         window, at most a shared seam frame between two) are joined run by
         run; overlapping ones key by key.
@@ -770,6 +784,10 @@ class _FbxFileInternal:
         data: List[Tuple[float, ...]] = []
         counts: List[int] = []
         seams = 0
+        # Per key: the (curve, index) its left side and its right side come
+        # from -- one key, but a seam's left is the dropped key's.
+        sources: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
+        seamed: Optional[Tuple[int, int]] = None
 
         def run(f: int, d: Tuple[float, ...], count: int, join: bool) -> None:
             if not count:
@@ -789,6 +807,10 @@ class _FbxFileInternal:
             seams += 1 if seam else 0
             times.extend(curve.times[:keep])
             values.extend(curve.values[:keep])
+            sources.extend(((o, i), (o, i)) for i in range(keep))
+            if seamed is not None and keep:
+                sources[len(sources) - keep] = (seamed, (o, 0))
+            seamed = (o, len(curve.times) - 1) if seam else None
             gap = nxt is not None and not seam
             ends = curve.starts[1:] + [len(curve.times)]
             first = True
@@ -801,6 +823,12 @@ class _FbxFileInternal:
             if gap:
                 f, d = cls._junction(*cls._key_attr(curve, keep - 1), nxt, 0, curves)
                 run(f, d, 1, True)
+        keyed_flags = [f for f, n in zip(flags, counts) for _ in range(n)]
+        keyed_data = [d for d, n in zip(data, counts) for _ in range(n)]
+        if cls._keep_own_tangents(
+            curves, sources, times, values, keyed_flags, keyed_data
+        ):
+            return (times, values, *cls._attr_runs(keyed_flags, keyed_data), seams)
         return times, values, flags, data, counts, seams
 
     @classmethod
@@ -816,6 +844,7 @@ class _FbxFileInternal:
             for i, t in enumerate(curve.times)
         )
         picked: List[Tuple[int, int]] = []
+        groups: List[List[Tuple[int, int]]] = []
         seams = 0
         at = 0
         while at < len(entries):
@@ -830,9 +859,21 @@ class _FbxFileInternal:
                     (group[0][1], group[0][2]),
                 )
             )
+            groups.append([(o, i) for _t, o, i in group])
             at = stop
         times = [curves[o].times[i] for o, i in picked]
         values = [curves[o].values[i] for o, i in picked]
+        # A key's left side: the picked key's own, else that of a key at its
+        # time whose curve runs on from the key before it (a seam's left).
+        sources = []
+        for p, (pick, group) in enumerate(zip(picked, groups)):
+            left = pick
+            if p and not cls._follows_on(curves, pick, times[p - 1]):
+                left = next(
+                    (k for k in group if cls._follows_on(curves, k, times[p - 1])),
+                    pick,
+                )
+            sources.append((left, pick))
         flags: List[int] = []
         data: List[Tuple[float, ...]] = []
         for p, (o, i) in enumerate(picked):
@@ -846,7 +887,81 @@ class _FbxFileInternal:
                 )
             flags.append(key_flags)
             data.append(key_data)
+        cls._keep_own_tangents(curves, sources, times, values, flags, data)
         return (times, values, *cls._attr_runs(flags, data), seams)
+
+    @staticmethod
+    def _follows_on(
+        curves: Sequence[_FbxCurve], key: Tuple[int, int], prev: int
+    ) -> bool:
+        """True when *key* ``(curve, index)``'s own previous key sits at *prev*."""
+        order, index = key
+        return index > 0 and curves[order].times[index - 1] == prev
+
+    @classmethod
+    def _keep_own_tangents(
+        cls,
+        curves: Sequence[_FbxCurve],
+        sources: Sequence[Tuple[Tuple[int, int], Tuple[int, int]]],
+        times: Sequence[int],
+        values: Sequence[float],
+        flags: List[int],
+        data: List[Tuple[float, ...]],
+    ) -> bool:
+        """Write out the slopes of every computed key a union moved; True when
+        any was.
+
+        *flags* / *data* are the union's per-key attributes, edited in place;
+        *sources* names each key's left and right ``(curve, index)``. A key
+        the importer computes (:meth:`_computed`) is solved from its
+        neighbours, so where the union gave it others -- a take's end key
+        gains the next take's first as one -- it would play another tangent
+        than in its own curve. Such a key becomes a user tangent carrying the
+        slopes it plays there: the right one as its ``RightSlope``, the left
+        as the previous key's ``NextLeftSlope``, broken where the two differ
+        (a seam whose sides come from two takes). A key the importer reads as
+        stored is left alone, and so is a computed key whose neighbours are
+        its own.
+        """
+        moved = False
+        last = len(times) - 1
+
+        def same(curve: _FbxCurve, own: int, merged: int) -> bool:
+            inside = 0 <= own < len(curve.times)
+            if inside != (0 <= merged <= last):
+                return False
+            return not inside or (
+                curve.times[own] == times[merged]
+                and curve.values[own] == values[merged]
+            )
+
+        for p, (left, right) in enumerate(sources):
+            curve_in, curve_out = curves[left[0]], curves[right[0]]
+            if not (
+                cls._computed(cls._key_attr(curve_in, left[1])[0])
+                or cls._computed(cls._key_attr(curve_out, right[1])[0])
+            ):
+                continue
+            if (
+                left == right
+                and same(curve_in, left[1] - 1, p - 1)
+                and same(curve_out, right[1] + 1, p + 1)
+            ):
+                continue
+            moved = True
+            slope_in = cls._in_slope(curve_in, left[1])
+            slope_out = cls._out_slope(curve_out, right[1])
+            f, d = flags[p], data[p]
+            if (f & cls._INTERPOLATION) == cls._CUBIC:
+                broken = struct.pack("<f", slope_in) != struct.pack("<f", slope_out)
+                f &= ~(cls._COMPUTED_BITS | cls._TANGENT_BREAK)
+                f |= cls._TANGENT_USER | (cls._TANGENT_BREAK if broken else 0)
+                d = (slope_out, d[1], d[2], d[3])
+            flags[p], data[p] = f, d
+            if p:
+                before = data[p - 1]
+                data[p - 1] = (before[0], slope_in, before[2], before[3])
+        return moved
 
     @classmethod
     def _junction(

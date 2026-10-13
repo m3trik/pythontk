@@ -233,6 +233,41 @@ class SequenceExporterTestCase(unittest.TestCase):
         self.exporter.export(self.out, targets=["mp4"], range_mode="playback")
         self.assertFalse(os.path.exists(os.path.join(self.out, "fake_png_tmp")))
 
+    def test_intermediate_frames_never_land_in_the_deliverable_folder(self):
+        """An mp4 request staged its PNG capture as ``<output>/<name>_png_tmp``:
+        a scratch folder inside the user's deliverable folder, synced and seen
+        there for the length of the capture, and left behind by a killed run."""
+        results = self.exporter.export(self.out, targets=["mp4"], range_mode="playback")
+        self.assertTrue(results[0].ok)
+        capture_dir = os.path.normcase(
+            os.path.abspath(self.exporter.captures[0]["dir"])
+        )
+        self.assertFalse(
+            capture_dir.startswith(os.path.normcase(os.path.abspath(self.out))),
+            capture_dir,
+        )
+        self.assertFalse(os.path.exists(capture_dir), "the scratch capture was kept")
+        self.assertEqual(os.listdir(self.out), ["fake.mp4"])
+
+    def test_no_scratch_folder_without_an_intermediate_capture(self):
+        """A plan whose encodes ride a requested png sequence, or that has no
+        encode at all, captures nothing to scratch: no store folder is made."""
+        real = TempArtifacts.scoped
+        made = []
+
+        def scoped(prefix, **kw):
+            made.append(prefix)
+            return real(prefix, **kw)
+
+        with unittest.mock.patch.object(
+            TempArtifacts, "scoped", side_effect=scoped
+        ):
+            self.exporter.export(
+                self.out, targets=["mp4", "png_sequence"], range_mode="playback"
+            )
+            self.exporter.export(self.out, targets=["jpg_sequence"], range_mode="playback")
+        self.assertNotIn("sequence_frames", made)
+
     def test_keep_frames_leaves_the_intermediate_capture(self):
         self.exporter.export(
             self.out, targets=["mp4"], range_mode="playback", keep_frames=True

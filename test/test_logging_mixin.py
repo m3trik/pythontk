@@ -172,6 +172,28 @@ class LoggerExtTest(BaseTestCase):
 
         self.assertGreater(len(self.logger.handlers), initial_count)
 
+    def test_a_file_handler_with_no_name_never_writes_into_the_cwd(self):
+        """The default ``logfile.log`` landed in whatever folder the process
+        was in -- a DCC's install dir, a user's project."""
+        import logging as _logging
+
+        from pythontk.core_utils.user_config import UserConfig
+
+        logger = _logging.getLogger("ptk_test_default_log_file")
+        LoggerExt.patch(logger)
+        self.addCleanup(lambda: [h.close() for h in logger.handlers])
+        self.addCleanup(logger.handlers.clear)
+        logger.add_file_handler()
+        (handler,) = [h for h in logger.handlers if isinstance(h, _logging.FileHandler)]
+        target = os.path.normcase(handler.baseFilename)
+        logs = os.path.normcase(str(UserConfig.cache_dir("logs")))
+        self.assertEqual(
+            target, os.path.join(logs, "ptk_test_default_log_file.log"), target
+        )
+        self.assertNotEqual(
+            os.path.dirname(target), os.path.normcase(os.getcwd()), target
+        )
+
     def test_add_file_handler(self):
         """Test adding file handler."""
         LoggerExt.patch(self.logger)

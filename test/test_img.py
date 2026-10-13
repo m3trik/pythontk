@@ -1575,6 +1575,29 @@ class OpenExrFlagTest(unittest.TestCase):
         )
 
 
+class ExtractChannelsCwdTest(unittest.TestCase):
+    """An in-memory image has no folder: saving its channels with no
+    ``output_dir`` wrote them into the process's current directory."""
+
+    def test_an_image_with_no_output_dir_is_refused_and_nothing_lands_in_the_cwd(self):
+        store = TempArtifacts.scoped("extract_cwd")
+        self.addCleanup(store.cleanup)
+        cwd = store.dir_path()
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(cwd)
+        image = Image.new("RGBA", (4, 4), (10, 20, 30, 40))
+        with self.assertRaises(ValueError):
+            ImgUtils.extract_channels(image, {"R": {"suffix": "_R"}}, save=True)
+        self.assertEqual(os.listdir(cwd), [])
+        # Unsaved, or with a folder named, it works as before.
+        self.assertIn("R", ImgUtils.extract_channels(image, {"R": {}}, save=False))
+        out = os.path.join(cwd, "out")
+        got = ImgUtils.extract_channels(
+            image, {"R": {"suffix": "_R"}}, output_dir=out, save=True
+        )
+        self.assertTrue(os.path.isfile(got["R"]))
+
+
 @unittest.skipUnless(HAS_CV2, "cv2 not available")
 class Cv2PathIoTest(unittest.TestCase):
     """OpenCV file IO under a path OpenCV cannot open by itself.
@@ -1703,7 +1726,11 @@ class Cv2PathIoTest(unittest.TestCase):
         first.__enter__()
         short = os.environ["TEMP"]
         self.assertTrue(short.isascii(), "TEMP spelled in ASCII")
-        self.assertTrue(os.path.samefile(short, temp))
+        # A folder of the ecosystem temp root, where a stale sweep reclaims
+        # what a crashed codec leaves -- not the system temp dir itself.
+        self.assertTrue(
+            FileUtils.is_under(short, TempArtifacts.root(), inclusive=False), short
+        )
         self.assertEqual(os.environ["TMP"], short)
         second.__enter__()
         first.__exit__(None, None, None)

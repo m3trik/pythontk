@@ -151,7 +151,12 @@ class ScriptRunner(_ScriptRunnerInternal):
             script_suffix / script_prefix: Naming for the temp script file.
             cwd / env: Forwarded to the child process. Either way the child's env also
                 carries the script path in :attr:`pythontk.AppLauncher.PYTHON_ARGV_VAR`,
-                for an app whose *launch_args* must not name it.
+                for an app whose *launch_args* must not name it. With no *cwd* the
+                child runs in a scratch folder of the run's own temp store, removed
+                with the script on success (kept with it on failure), never the
+                caller's working directory, where a DCC's droppings
+                (``mayaDiskCache_*``) would land: name *artifact* and any path the
+                script reads absolutely.
             on_output: Stream the child's output while it runs instead of only
                 collecting it at exit (:meth:`pythontk.AppLauncher.run`): called with
                 each line as it arrives and with ``None`` on quiet ticks; return
@@ -194,6 +199,8 @@ class ScriptRunner(_ScriptRunnerInternal):
 
         tmp = TempArtifacts(script_prefix, policy="scoped")
         script_path = tmp.path(extension=script_suffix)
+        if cwd is None:
+            cwd = tmp.dir_path()
         with open(script_path, "w", encoding="utf-8") as fh:
             fh.write(script_text)
 

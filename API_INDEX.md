@@ -7,7 +7,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
-  - methods: resolve_ffmpeg, memo_duration, is_playable_extension, is_supported_source_extension, ensure_playable_path, build_composite_wav, resolve_playable_path, build_audio_map, build_audio_map_from_file_map, build_audio_map_from_files, trim_silence, compute_waveform_envelope
+  - methods: resolve_ffmpeg, memo_duration, is_playable_extension, is_supported_source_extension, cache_dir_for, ensure_playable_path, build_composite_wav, resolve_playable_path, build_audio_map, build_audio_map_from_file_map, build_audio_map_from_files, trim_silence, compute_waveform_envelope
 
 ### `core_utils/_core_utils.py`
 - `class CoreUtils(HelpMixin)`
@@ -606,7 +606,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/user_config.py` — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - constants: CONFIG_ROOT_ENV_VAR
 - `class UserConfig`
-  - methods: path_for, load_file, save_file, resolve, deep_merge, expand, xdg_home, user_config_root
+  - methods: path_for, load_file, save_file, resolve, deep_merge, expand, xdg_home, user_config_root, cache_dir
 
 ### `core_utils/x11.py` — A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys,
 - `class X11(_X11Internal)`
@@ -616,9 +616,13 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class FileUtils(HelpMixin)`
   - methods: is_valid, is_cloud_placeholder, is_under, is_same_file, has_same_content, is_rooted_path, resolve_output_dir, relativize_output_dir, portable_path, rebase_portable_path, resolve_portable_path, path_length_limit, exceeds_path_length, free_space, is_locked, locking_processes, describe_lock, format_bytes, format_bytes_delta, create_dir, next_version_path, next_version_number, unique_path, get_dir_contents, open_explorer, get_file_contents, write_to_file, read_json, write_json, replace_file, atomic_write_text, atomic_write, deliver_file, copy_file, move_file, move_to_trash, can_trash, trash_name, reveal_in_file_manager, get_file_info, format_path, convert_to_relative_path, remap_file_paths, append_path, get_object_path, canonical_module_path, get_classes_from_path
 
+### `file_utils/bake_cache.py` — A project's files baked from other files: one slot per source, kept with
+- `class BakeCache(LoggingMixin)`
+  - methods: prefix, name_pattern, is_bake, cache_dir, store, slot_key, slot, source_key, current, spell_source, record, source_of, write, rehome, referenced_keys, purge
+
 ### `file_utils/file_dependencies.py` — File dependencies -- files a record names by *name*, found where they are NOW.
 - `class FileDependencies(LoggingMixin)`
-  - methods: claims, remove_superseded, set_aside, written_here, find_files, walk, resolve, search_dirs, copy_files, relocate
+  - methods: claims, remove_superseded, set_aside, written_here, find_files, walk, resolve, search_dirs, copy_files, relocate, reference_bytes, scan_references, open_decompressed
 
 ### `file_utils/file_naming.py` — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - `class RenamePlan(LoggingMixin)`
@@ -705,11 +709,15 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class Metadata(MetadataInternal)`
   - methods: get, set
 
+### `file_utils/scene_notes.py` — Per-scene notes kept with the project -- one file per project, any host.
+- `class SceneNotes(LoggingMixin)`
+  - methods: store_path, get, set, move, remove, import_notes
+
 ### `file_utils/temp_artifacts.py` — Prefix-scoped temp artifacts with an explicit lifetime policy.
 - `class TempArtifacts(LoggingMixin)`
-  - methods: path, dir_path, register, release, cleanup, sweep_stale
+  - methods: scoped, root, contains, path, dir_path, register, keep, release, cleanup, sweep_stale, sweep_all
 - `class CachedArtifact(LoggingMixin)`
-  - methods: key, get
+  - methods: key, cache_dir, slot, peek, touch, get, promote
 - `class ScratchTwins(LoggingMixin)`
   - methods: path_for, create, is_twin, discard, discard_except
 
@@ -735,7 +743,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `file_utils/workspace.py` — Shared project-workspace model + ``workspace.mel`` codec.
 - constants: WORKSPACE_MARKER, DEFAULT_FILE_RULES, RULE_NICE_NAMES, SCENE_RULES
 - `class Workspace(_WorkspaceInternal)`
-  - methods: marker_path, is_marked, load, save, create, promote, resolve, resolve_dir, scene_dir, source_images_dir, find, find_containing, for_path, parse_workspace_mel, write_workspace_mel
+  - methods: marker_path, is_marked, load, save, create, promote, resolve, resolve_dir, scene_dir, source_images_dir, cache_dir, movie_dir, images_dir, export_dir, backup_dir, relative, absolute, find, find_containing, for_path, for_scene, parse_workspace_mel, write_workspace_mel
 - `class WorkspaceTemplates(object)`
   - methods: store, list, rules, rules_from, save, delete
 
