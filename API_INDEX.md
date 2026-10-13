@@ -7,7 +7,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
-  - methods: resolve_ffmpeg, is_playable_extension, is_supported_source_extension, ensure_playable_path, build_composite_wav, resolve_playable_path, build_audio_map, build_audio_map_from_file_map, build_audio_map_from_files, trim_silence, compute_waveform_envelope
+  - methods: resolve_ffmpeg, memo_duration, is_playable_extension, is_supported_source_extension, ensure_playable_path, build_composite_wav, resolve_playable_path, build_audio_map, build_audio_map_from_file_map, build_audio_map_from_files, trim_silence, compute_waveform_envelope
 
 ### `core_utils/_core_utils.py`
 - `class CoreUtils(HelpMixin)`
@@ -192,7 +192,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/shots/manifest/manifest_engine.py` — Shot Manifest engine — pure planning/orchestration core with scene hooks.
 - `class ShotManifest(_ShotManifestInternal)`
-  - methods: recipe, unkeyed_behaviors, rewire_audio, apply_behaviors, sync, update, pair, bind, unowned_keys, release_authored, release_dropped, adopt_placed_clips, is_stale, reapply_object, planned_markers, place_markers, edited_by_hand, fill_missing_assets, assess, from_csv, resolve_duration
+  - methods: recipe, unkeyed_behaviors, rewire_audio, apply_behaviors, sync, update, pair, bind, plan_insertions, insert_planned, ride_inserts, unowned_keys, release_authored, release_dropped, adopt_placed_clips, is_stale, reapply_object, planned_markers, place_markers, edited_by_hand, fill_missing_assets, assess, from_csv, resolve_duration
 
 ### `core_utils/engines/shots/manifest/manifest_export.py` — The Shot Manifest as a table to hand on: a spreadsheet for the sheet's
 - `class ManifestExport(_ManifestExportInternal)`
@@ -206,6 +206,8 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class BuilderStep`
   - methods: shot_name, display_text, from_detection, from_shots
 - `class PlannedShot`
+- `class PlannedInsert`
+  - methods: after_shot_id, after_step_id
 - `class ObjectStatus`
 - `class StepStatus`
   - methods: status, needs_build, missing_count, total_count, find_object
@@ -221,7 +223,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/shots/manifest/mapping/_mapping.py` — CSV mapping resolver — interprets JSON mapping files.
 - constants: DEFAULT_DIR
 - `class Mapping(_MappingInternal)`
-  - methods: templates, seed_user_folder, discover, retired, load_mapping, option_specs, apply_options, resolve, infer_options, choice_values
+  - methods: templates, seed_user_folder, discover, retired, load_mapping, option_specs, option_sections, apply_options, resolve, infer_options, choice_values
 
 ### `core_utils/engines/shots/manifest/mapping/_spec.py` — Schema for a CSV *mapping* file, defined as a dataclass.
 - constants: AUDIO_METHODS
@@ -249,7 +251,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: step_count, key_count, curves, record_step, claimed_step, is_same_key, owns_step, release_step, step_times, stepped_curves, record_key, owns_key, key_stays, release_key, release, key_times, key_records, keyed_curves, disown_shot, disown_absent, record_authored, owns_authored, owns_any, release_authored, authored, authored_curves, authored_stamps, authored_pairs, shift, remap, retime, forget_curve, rename_curve, to_dict, from_dict
 
 ### `core_utils/engines/shots/shot_model.py` — DCC-agnostic shot data model and persistent store.
-- constants: CLIP_NAME_STRATEGIES
+- constants: SHOT_STATUS_LEVELS, CLIP_NAME_STRATEGIES
 - `class ScenePersistence(Protocol)`
   - methods: save, load
 - `class ShotBlock`
@@ -285,7 +287,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/shots/shot_sequencer.py` — Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
 - `class ShotSequencer(_ShotSequencerHooks)`
-  - methods: pending_bounds, shots, hidden_objects, markers, is_object_hidden, set_object_hidden, sorted_shots, describe_key_selection, paste_pairs, shot_by_id, shot_by_name, ledger, define_shot, detect_next_shot, collect_shot_sequences, sequence_separation, move_sequences_to_shot, copy_sequences_to_shot, fit_shot_to_content, trim_shot_to_content, extend_shot_to_fit, move_object_keys, move_stepped_keys, move_object_in_shot, move_shot, slide_shot, ripple_downstream, ripple_upstream, reconcile_system_edits, expand_shot, resize_object, set_shot_duration, resize_shot, resize_shot_bounds, set_shot_edge, set_shot_start, move_shot_to_position, new_shot, insert_shot, delete_shot, merge_shots, split_shot, add_shot_space, respace, apply_gap, to_dict, from_dict, collect_object_segments, move_attribute_keys, copy_attribute_keys, scale_shot_keys, scale_object_keys, detect_shots
+  - methods: pending_bounds, shots, hidden_objects, markers, is_object_hidden, set_object_hidden, sorted_shots, describe_key_selection, paste_pairs, shot_by_id, shot_by_name, ledger, define_shot, detect_next_shot, collect_shot_sequences, sequence_separation, move_sequences_to_shot, copy_sequences_to_shot, fit_shot_to_content, trim_shot_to_content, extend_shot_to_fit, move_object_keys, move_stepped_keys, move_object_in_shot, move_shot, slide_shot, ripple_downstream, ripple_upstream, reconcile_system_edits, expand_shot, resize_object, set_shot_duration, resize_shot, resize_shot_bounds, set_shot_edge, set_shot_start, move_shot_to_position, new_shot, insert_placement, insert_shot, delete_shot, merge_shots, split_shot, add_shot_space, respace, apply_gap, to_dict, from_dict, collect_object_segments, move_attribute_keys, copy_attribute_keys, scale_shot_keys, scale_object_keys, detect_shots
 
 ### `core_utils/engines/shots/shot_transfer.py` — Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
 - `class ShotTransfer(_ShotTransferInternal)`

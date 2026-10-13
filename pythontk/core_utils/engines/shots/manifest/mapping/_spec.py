@@ -145,6 +145,8 @@ class _MappingSpecInternal(object):
             if not isinstance(opt, dict):
                 errs.append(f"{key!r} must be a mapping")
                 continue
+            if not isinstance(opt.get("section", ""), str):
+                errs.append(f"{key!r}: its section must be a title (a string)")
             kind = opt.get("kind")
             if kind == "bool":
                 if "default" in opt and not isinstance(opt["default"], bool):
@@ -281,7 +283,8 @@ class MappingSpec(SchemaSpec, _MappingSpecInternal):
         help=(
             "Settings the template exposes in the UI, each a partial template "
             "merged over it: `{key: {kind: bool|choice, label, tooltip, "
-            "default, set, unset, choices: {value: {label, tooltip, set}}}}`; "
+            "section, default, set, unset, choices: {value: {label, tooltip, "
+            "set}}}}` -- `section` the title a UI lists it under; "
             "a choice may `try` other choices instead of `set`ting anything "
             "(`{try: [classic, numbered]}`): their `columns` patches become "
             "`columns.layouts`, read the sheet each way and keep the one "

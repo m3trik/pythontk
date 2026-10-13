@@ -175,6 +175,71 @@ class TestTopology(_SequencerTest):
             ("A", 1, 10), ("Shot_4", 20, 40), ("B", 45, 60), ("C", 65, 80)
         )
 
+    def test_insert_moves_the_shots_after_it_by_position(self):
+        """A zero-length shot on the next shot's start frame stays before the
+        shot inserted after it.
+
+        Bug: the push took every shot starting at the next shot's frame, so
+        Z moved past N: A, N, Z, B.
+        Fixed: 2026-10-12
+        """
+        store = self.seq.store
+        for name in "BC":
+            store.remove_shot(self.sid(name))
+        store.define_shot("Z", 15, 15)
+        store.define_shot("B", 15, 30)
+        self.seq.insert_shot("N", 5, after_shot_id=self.sid("Z"))
+        self.assertBounds(("A", 1, 10), ("Z", 15, 15), ("N", 25, 30), ("B", 30, 45))
+
+    def test_overlapping_shots_sharing_a_start_move_together(self):
+        """Two overlapping shots on one start frame move together, the shot
+        before the insert with its keys, as the frame rule always moved them.
+
+        Bug: moved by position, B1 stayed while its keys -- in the window B2
+        owns, B1's own one empty -- went with B2: keys left their shot.
+        Fixed: 2026-10-13
+        """
+        store = self.seq.store
+        for name in "BC":
+            store.remove_shot(self.sid(name))
+        store.define_shot("B1", 15, 30)
+        store.define_shot("B2", 15, 40)
+        moved = []
+
+        def apply_plan(plan, retime_gaps=False):
+            moved.extend(sid for sid in plan.sequence)
+            ShotSequencer._apply_plan(self.seq, plan, retime_gaps)
+
+        self.seq._apply_plan = apply_plan
+        self.seq.insert_shot("N", 5, after_shot_id=self.sid("B1"))
+        self.assertIn(self.sid("B1"), moved, "B1 and its keys move")
+        self.assertBounds(("A", 1, 10), ("B1", 30, 45), ("B2", 30, 55), ("N", 40, 45))
+
+    def test_insert_placement_is_where_insert_shot_puts_it(self):
+        """The one placement rule, read before anything moves: the new
+        shot's bounds and how far the shots from its position on move."""
+        self.assertEqual(self.seq.insert_placement(1, 5), (20, 25, 15, (1, 2)))
+        self.assertEqual(self.seq.insert_placement(0, 4, gap=2), (1, 5, 6, (0, 1, 2)))
+        self.assertEqual(self.seq.insert_placement(3, 6), (60, 66, 0.0, ()))
+        # A timeline as a plan has it: rows moved by a planned ripple.
+        c = self.seq.shot_by_name("C")
+        line = [(1, 10, None), (100, 115, c)]
+        self.assertEqual(
+            self.seq.insert_placement(2, 6, line=line), (125, 131, 0.0, ())
+        )
+        # A start the caller knows (content the store does not hold).
+        self.assertEqual(
+            self.seq.insert_placement(1, 5, start=12), (12, 17, 15, (1, 2))
+        )
+
+    def test_insert_at_a_start_the_caller_knows(self):
+        """``start`` places the new shot where the caller says; the shots
+        after it still move by its length plus the gap."""
+        self.seq.insert_shot("N", 5, after_shot_id=self.sid("A"), start=12)
+        self.assertBounds(("A", 1, 10), ("N", 12, 17), ("B", 30, 45), ("C", 50, 65))
+        self.seq.insert_shot("T", 6, start=90)  # appended: nothing moves
+        self.assertEqual(self.bounds()[-1], ("T", 90, 96))
+
     def test_insert_refuses_a_taken_name_before_anything_moves(self):
         with self.assertRaisesRegex(ValueError, "another shot is named 'B'"):
             self.seq.insert_shot("B", 6, after_shot_id=self.sid("A"))

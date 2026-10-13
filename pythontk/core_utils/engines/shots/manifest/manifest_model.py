@@ -30,6 +30,7 @@ __all__ = [
     "BuilderObject",
     "BuilderStep",
     "PlannedShot",
+    "PlannedInsert",
     "ObjectStatus",
     "StepStatus",
     "ColumnMap",
@@ -818,6 +819,48 @@ class PlannedShot:
     ripple_delta: float = 0.0  # shift applied to later shots
 
 
+@dataclass
+class PlannedInsert:
+    """Where a step with no shot goes on a built timeline
+    (``ShotManifest.plan_insertions``).
+
+    *start* / *end* are its bounds once every insert of the plan is in.  It
+    moves the shots after it *push* frames later; *pivot* is the current
+    start of the first existing shot -- or typed range -- it moves (``None``:
+    it moves none): a range typed in the timeline's current frames from there
+    on moves with them (``ShotManifest.ride_inserts``).
+
+    *follows* is what comes before it on the timeline, nearest first, back to
+    the existing shot it goes after: ``("insert", step_id)`` -- another
+    insert of the plan --, ``("typed", step_id)`` -- a step whose shot a
+    Build makes at its typed range -- and ``("shot", shot_id)`` last, absent
+    when it goes before every existing shot.  ``insert_planned`` reads it to
+    put the shot where the plan does with any of the plan's inserts made.
+    """
+
+    step: BuilderStep
+    start: float
+    end: float
+    duration: float
+    follows: Tuple[Tuple[str, Any], ...] = ()
+    pivot: Optional[float] = None
+    push: float = 0.0
+
+    @property
+    def after_shot_id(self) -> Optional[int]:
+        """The existing shot it goes after (``None``: before every one)."""
+        kind, key = self.follows[-1] if self.follows else (None, None)
+        return key if kind == "shot" else None
+
+    @property
+    def after_step_id(self) -> Optional[str]:
+        """The step whose new shot it directly follows -- another insert, or
+        a step with a typed range -- or ``None`` when it directly follows
+        :attr:`after_shot_id` (or the head)."""
+        kind, key = self.follows[0] if self.follows else (None, None)
+        return key if kind in ("insert", "typed") else None
+
+
 FitMode = Literal["extend_only", "fit_contents"]
 
 # Defaults live on ShotStore (single source of truth for shot-construction
@@ -925,15 +968,18 @@ class StepStatus:
         "no_objects": "The doc lists no objects for this step.",
         "not_in_doc": "No doc step pairs with this shot -- Build never removes it; right-click to remove it yourself.",
         "locked": "Locked: user-finalized, never modified by Build.",
-        "edited": "Edited by hand since its last Build -- Build leaves it as it is; turn on Rebuild Edited Shots (header menu) to rebuild it from the doc.",
+        "edited": "Edited by hand since its last Build -- Build leaves it as it is; set Edits to Rebuild Hand-Edited Shots (header menu) to rebuild it from the doc.",
     }
 
-    #: Object statuses that name the step, worst first.
+    #: Object statuses that name the step, worst first: by the severity a
+    #: panel shows each at (``SHOT_STATUS_LEVELS``: errors, warnings, then
+    #: notes), so the status a step is named by is the one its row's icon
+    #: shows.
     ROLLUP = (
         "missing_object",
+        "behavior_conflict",
         "ambiguous_object",
         "not_in_shot",
-        "behavior_conflict",
         "unknown_behavior",
         "missing_behavior",
         "stale_behavior",

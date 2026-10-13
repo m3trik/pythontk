@@ -919,6 +919,23 @@ class TestMemberIdentity(_ShotTest):
         ):
             self.assertIn(key, SHOT_PALETTE, key)
 
+    def test_every_status_names_its_severity(self):
+        """A UI marks a status by its severity (a glyph, an icon), not only
+        by its colour: SHOT_STATUS_LEVELS names the level each status is
+        coloured as."""
+        from pythontk import Palette
+        from pythontk.core_utils.engines.shots.shot_model import (
+            SHOT_PALETTE,
+            SHOT_STATUS_LEVELS,
+        )
+
+        levels = Palette.status()
+        for status, level in SHOT_STATUS_LEVELS.items():
+            self.assertIn(level, levels, status)
+            self.assertEqual(SHOT_PALETTE[status], levels[level], status)
+        for level in levels:
+            self.assertEqual(SHOT_STATUS_LEVELS.get(level, level), level)
+
 
 # ===========================================================================
 # ShotStore — CRUD / observer / gap-lock / snap / compute_gap / (de)serialise

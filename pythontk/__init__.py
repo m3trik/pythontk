@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.14.0"
+__version__ = "0.14.1"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -171,6 +171,7 @@ DEFAULT_INCLUDE = {
         "StoreInvalidated",
         "NativeStepFollowed",
         "SHOT_PALETTE",
+        "SHOT_STATUS_LEVELS",
     ],
     # The shot system's record of what IT wrote on scene curves, so those
     # writes can be released when the boundary that caused them moves.
@@ -249,6 +250,7 @@ DEFAULT_INCLUDE = {
         "BuilderStep",
         "BuilderObject",
         "PlannedShot",
+        "PlannedInsert",
         "ObjectStatus",
         "StepStatus",
         "ShotPairing",

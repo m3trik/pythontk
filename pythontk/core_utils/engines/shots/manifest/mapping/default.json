@@ -20,6 +20,7 @@
     "options": {
         "step_ids": {
             "kind": "choice",
+            "section": "Sheet",
             "label": "Step IDs",
             "tooltip": "How the sheet writes its step IDs and section rows.",
             "default": "auto",
@@ -48,6 +49,7 @@
         },
         "behaviors": {
             "kind": "choice",
+            "section": "Sheet",
             "label": "Behaviors",
             "tooltip": "Where each row's behaviors come from.",
             "default": "description",
@@ -71,6 +73,7 @@
         },
         "objects": {
             "kind": "choice",
+            "section": "Objects",
             "label": "Objects",
             "tooltip": "Where each step's objects come from.",
             "default": "column_else_description",
@@ -89,6 +92,7 @@
         },
         "object_case": {
             "kind": "choice",
+            "section": "Objects",
             "label": "Object Case",
             "tooltip": "Case of the object names read from the description (StrUtils.set_case).",
             "field": "columns.object_case",
@@ -97,6 +101,7 @@
         },
         "object_name_rule": {
             "kind": "choice",
+            "section": "Objects",
             "label": "Object Names",
             "tooltip": "How the object names read from the description are made legal (StrUtils.apply_name_rule).",
             "field": "columns.object_name_rule",
@@ -110,6 +115,7 @@
         },
         "match": {
             "kind": "choice",
+            "section": "Shots",
             "label": "Match Shots",
             "tooltip": "How a step finds its shot in the scene. A build records the pairing on the shot, so later doc edits never shift it.",
             "default": "name",
@@ -128,6 +134,7 @@
         },
         "audio": {
             "kind": "choice",
+            "section": "Sheet",
             "label": "Audio",
             "tooltip": "Whether each step's voice text names an audio clip to key.",
             "default": "text",
@@ -149,6 +156,7 @@
         },
         "fill_missing_assets": {
             "kind": "bool",
+            "section": "Objects",
             "label": "Auto-fill Missing Assets",
             "tooltip": "Steps the sheet lists no assets for take what their paired shot holds: its members and what animates in its range (no shot, no names -- Build first). Export (beside Assess) writes them out with the rest of the manifest.",
             "default": false,
@@ -156,6 +164,7 @@
         },
         "color_by": {
             "kind": "choice",
+            "section": "Sheet",
             "label": "Row Colors",
             "tooltip": "Color the step rows automatically. A color you pick for a row (right-click a step) shows over it.",
             "field": "color_by",
