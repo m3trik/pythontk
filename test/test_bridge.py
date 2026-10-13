@@ -736,14 +736,19 @@ class RunScratchTest(unittest.TestCase):
         b.logger.setLevel("CRITICAL")  # keep the suite output clean
         return b
 
-    def test_detached_run_reuses_one_named_folder_and_never_deletes(self):
+    def test_detached_run_gets_its_own_folder_and_never_deletes(self):
+        """Per send, never one shared fixed folder: a second send (or a second
+        host) rewrote the files a launched app was still reading. The age
+        sweep bounds the generations. Changed: 2026-10-13"""
         br, req = self._bridge("detached"), HandoffRequest()
         first = br._scratch_dir(req, "handoff")
         self.assertTrue(os.path.isdir(first))
-        self.addCleanup(shutil.rmtree, first, True)
-        # A fixed name is what keeps a never-deleted folder from growing a
-        # generation per send.
-        self.assertEqual(br._scratch_dir(HandoffRequest(), "handoff"), first)
+        self.addCleanup(shutil.rmtree, os.path.dirname(first), True)
+        self.assertEqual(br._scratch_dir(req, "handoff"), first, "one per run")
+        other = br._scratch_dir(HandoffRequest(), "handoff")
+        self.addCleanup(shutil.rmtree, os.path.dirname(other), True)
+        self.assertNotEqual(other, first)
+        self.assertEqual(os.path.basename(other), "handoff")
         br._discard_scratch(req, {})
         self.assertTrue(os.path.isdir(first), "a detached hand-off must outlive us")
 
@@ -973,7 +978,7 @@ class HandoffSaveAsTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, root, True)
         if not (app_handoff.AppLauncher._short_name(str(where)) or "").isascii():
             self.skipTest("no 8.3 short names on this volume")
-        with mock.patch.object(tempfile, "tempdir", str(where)):
+        with mock.patch.dict(os.environ, {"PYTHONTK_TEMP_ROOT": str(where)}):
             result = self._bridge().save_as(str(where / "asset.stub"))
         self.assertIsNotNone(result)
         body = self.runs[0]["script"]

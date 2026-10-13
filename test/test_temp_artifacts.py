@@ -118,10 +118,12 @@ class TestAllocation(TempArtifactsBase):
         self.assertEqual(a, b)
         self.assertEqual(os.path.basename(a), "pfx_script.lua")
 
-    def test_default_dir_is_system_temp(self):
+    def test_default_dir_is_the_stores_own_folder_under_the_root(self):
         # Assert on .dir rather than allocating: path() on an unsandboxed
         # instance would run a live sweep in the user's real temp dir.
-        self.assertEqual(TempArtifacts("pfx").dir, tempfile.gettempdir())
+        self.assertEqual(
+            TempArtifacts("pfx").dir, os.path.join(TempArtifacts.root(), "pfx")
+        )
 
     def test_default_extension_is_generic(self):
         ta = TempArtifacts("pfx", dir=self.dir)
@@ -887,6 +889,445 @@ class TestScratchTwins(TempArtifactsBase):
             os.path.join(self.dir, "proj", "new.ma")
         )  # a later store's first allocation sweeps
         self.assertFalse(os.path.exists(os.path.dirname(old)))
+
+
+def _norm(path):
+    return os.path.normcase(os.path.normpath(os.path.abspath(path)))
+
+
+def _age_tree(path, days):
+    """Backdate *path* and everything under it by *days*."""
+    past = time.time() - days * 86400
+    for parent, dirs, files in os.walk(path):
+        for name in dirs + files:
+            os.utime(os.path.join(parent, name), (past, past))
+    os.utime(path, (past, past))
+
+
+class _RootedBase(TempArtifactsBase):
+    """A store with no ``dir`` lives under the temp ROOT: point it here.
+
+    ``PYTHONTK_TEMP_ROOT`` names the root; the system temp dir (where the
+    pre-root flat entries live) is pointed at a folder of its own, so the
+    one-release legacy sweep scans only what a test put there.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.root = os.path.join(self.dir, "root")
+        self.legacy = os.path.join(self.dir, "legacy")
+        os.makedirs(self.legacy)
+        for patcher in (
+            mock.patch.dict(os.environ, {TempArtifacts.ROOT_ENV_VAR: self.root}),
+            mock.patch.object(tempfile, "tempdir", self.legacy),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+
+class TestRoot(TempArtifactsBase):
+    """ONE temp root: every store with no ``dir`` lives under it."""
+
+    def test_the_env_var_names_the_root_created_on_demand(self):
+        target = os.path.join(self.dir, "named root")
+        with mock.patch.dict(os.environ, {TempArtifacts.ROOT_ENV_VAR: target}):
+            self.assertEqual(_norm(TempArtifacts.root()), _norm(target))
+        self.assertTrue(os.path.isdir(target))
+
+    def test_without_it_the_root_is_one_folder_in_the_system_temp_dir(self):
+        with (
+            mock.patch.dict(os.environ),
+            mock.patch.object(tempfile, "tempdir", self.dir),
+        ):
+            os.environ.pop(TempArtifacts.ROOT_ENV_VAR, None)
+            self.assertEqual(
+                _norm(TempArtifacts.root()), _norm(os.path.join(self.dir, "ptk"))
+            )
+
+    @unittest.skipUnless(os.name == "nt", "the ANSI code page is Windows'")
+    def test_the_root_is_spelled_so_an_ansi_program_can_open_it(self):
+        """Maya opens files through the ANSI code page: a root under a folder
+        it cannot spell must reach every store in its 8.3 form."""
+        from pythontk.core_utils.app_launcher import AppLauncher
+
+        odd = os.path.join(self.dir, "Zoë ★")
+        os.makedirs(odd)
+        if not (AppLauncher._short_name(odd) or "").isascii():
+            self.skipTest("no 8.3 short names on this volume")
+        target = os.path.join(odd, "root")
+        with mock.patch.dict(os.environ, {TempArtifacts.ROOT_ENV_VAR: target}):
+            root = TempArtifacts.root()
+        self.assertTrue(AppLauncher._ansi_encodable(root), ascii(root))
+        self.assertTrue(os.path.samefile(root, target))
+
+
+class TestStoreFolders(_RootedBase):
+    """Each store owns ``<root>/<prefix>/``: one store's sweep can never reach
+    another's entries -- a prefix that extends another (``glb_pipeline`` /
+    ``glb_pipeline_media``, a cache's ``<name>`` / ``<name>_cache``) was swept
+    by the shorter one's age, so a cache's own ``max_age_days`` never held."""
+
+    def test_a_default_store_owns_one_folder_under_the_root(self):
+        store = TempArtifacts("pfx", policy="scoped")
+        path = store.path(extension=".fbx")
+        folder = os.path.join(self.root, "pfx")
+        self.assertEqual(_norm(store.dir), _norm(folder))
+        self.assertEqual(_norm(os.path.dirname(path)), _norm(folder))
+        self.assertTrue(os.path.basename(path).startswith("pfx_"))
+        self.assertTrue(os.path.isdir(folder), "the caller writes straight into it")
+
+    def test_a_longer_prefix_is_another_store_entirely(self):
+        media = TempArtifacts("glb_pipeline_media", max_age_days=30).dir_path()
+        _age_tree(media, 10)  # inside ITS age, past the shorter prefix's
+        TempArtifacts("glb_pipeline", max_age_days=7).path()
+        self.assertTrue(os.path.isdir(media), "swept by another store's age")
+
+    def test_a_caches_own_max_age_is_authoritative(self):
+        cache = CachedArtifact("ca", extension=".out", max_age_days=30)
+        got = cache.get("k1", lambda out: self.touch(out))
+        got.scratch.cleanup()
+        self.age(got.path, 10)
+        TempArtifacts("ca", max_age_days=7).path()  # the scratch prefix
+        self.assertTrue(os.path.isfile(got.path))
+
+    def test_the_store_folder_records_the_age_its_owner_declared(self):
+        import json
+
+        TempArtifacts("declared", max_age_days=3).path()
+        TempArtifacts("forever", max_age_days=None).path()
+        for prefix, age in (("declared", 3), ("forever", None)):
+            marker = os.path.join(self.root, prefix, TempArtifacts.STORE_MARKER)
+            with open(marker, encoding="utf-8") as fh:
+                self.assertEqual(json.load(fh)["max_age_days"], age, prefix)
+
+    def test_the_marker_keeps_the_longest_age_any_alias_declared(self):
+        """Last writer won: a store spelled with a shorter default (an alias,
+        a caller that forgot ``max_age_days``) re-declared the folder and the
+        daily ``sweep_all`` aged out the longer-lived cache by it. ``None``
+        (never aged) is the longest."""
+        import json
+
+        def declared(prefix):
+            marker = os.path.join(self.root, prefix, TempArtifacts.STORE_MARKER)
+            with open(marker, encoding="utf-8") as fh:
+                return json.load(fh)["max_age_days"]
+
+        for prefix, ages, want in (
+            ("alias_long", (30, 7), 30),
+            ("alias_grow", (7, 30), 30),
+            ("alias_none", (None, 7), None),
+            ("alias_none_late", (7, None), None),
+        ):
+            for age in ages:
+                TempArtifacts(prefix, max_age_days=age).path()
+            self.assertEqual(declared(prefix), want, prefix)
+            TempArtifacts._markers.clear()  # a new process reads the file
+            TempArtifacts(prefix, max_age_days=1).path()
+            self.assertEqual(declared(prefix), want, f"{prefix}, next process")
+
+    def test_max_age_none_is_never_age_swept(self):
+        store = TempArtifacts("keepers", max_age_days=None)
+        old = store.dir_path()
+        _age_tree(old, 3650)
+        TempArtifacts("keepers", max_age_days=None).sweep_stale()
+        TempArtifacts.sweep_all()
+        self.assertTrue(os.path.isdir(old))
+
+    def test_allocation_never_rescans_the_system_temp_dir(self):
+        """Store construction is per call all over the ecosystem; each first
+        allocation scanned the whole system temp dir (24,500 entries on one
+        workstation). The one-release legacy sweep reads it once a process."""
+        scanned = []
+        real = os.scandir
+
+        def spy(path=".", *args, **kwargs):
+            scanned.append(_norm(os.fspath(path)))
+            return real(path, *args, **kwargs)
+
+        with mock.patch("os.scandir", side_effect=spy):
+            for _ in range(3):
+                TempArtifacts("cheap", policy="scoped").path()
+        self.assertLessEqual(scanned.count(_norm(self.legacy)), 1, scanned)
+
+
+class TestLegacyFlatSweep(_RootedBase):
+    """For one release a store's first sweep also reclaims what the pre-root
+    layout left in the system temp dir (``<temp>/<prefix>_*``), by its own age."""
+
+    def test_stale_legacy_entries_go_and_fresh_ones_stay(self):
+        old = self.touch(os.path.join(self.legacy, "legacy_pfx_deadbeef.fbx"))
+        self.age(old, 30)
+        fresh = self.touch(os.path.join(self.legacy, "legacy_pfx_cafe.fbx"))
+        other = self.touch(os.path.join(self.legacy, "other_deadbeef.fbx"))
+        self.age(other, 30)
+        TempArtifacts("legacy_pfx", max_age_days=7).path()
+        self.assertFalse(os.path.exists(old))
+        self.assertTrue(os.path.exists(fresh), "a fresh payload may still be read")
+        self.assertTrue(os.path.exists(other), "another prefix's")
+
+    def test_a_store_folder_sitting_in_the_temp_dir_is_never_a_legacy_entry(self):
+        # A root that IS the system temp dir (PYTHONTK_TEMP_ROOT pointed at it)
+        # holds every store folder beside the flat leftovers.
+        folder = os.path.join(self.legacy, "legacy_pfx_media")
+        os.makedirs(folder)
+        self.touch(os.path.join(folder, TempArtifacts.STORE_MARKER), b"{}")
+        _age_tree(folder, 30)
+        TempArtifacts("legacy_pfx", max_age_days=7).path()
+        self.assertTrue(os.path.isdir(folder))
+
+    def test_the_legacy_flat_sweep_is_retired_on_schedule(self):
+        from pythontk import __version__
+        from pythontk.core_utils.deprecation import Deprecation
+
+        self.assertFalse(
+            Deprecation.window_expired(
+                TempArtifacts._LEGACY_SWEEP_REMOVE_IN,
+                __version__,
+                TempArtifacts._LEGACY_SWEEP_SINCE,
+            ),
+            "the one-release migration window is over: delete "
+            "TempArtifacts._sweep_legacy, the legacy sweep in TestSandbox.temp, "
+            "the system temp dir in TempArtifacts.contains and this test",
+        )
+
+    def test_contains_reads_the_root_and_the_legacy_temp_dir(self):
+        """One spelling of "a path TempArtifacts holds" for a host: the root,
+        and for the legacy window the system temp dir its flat layout used (a
+        scratch twin minted before the root). Was ``_in_temp`` in both DCCs."""
+        inside = os.path.join(TempArtifacts.root(), "pfx", "twin.ma")
+        flat = self.touch(os.path.join(self.legacy, "pfx_deadbeef.ma"))
+        outside = os.path.join(self.dir, "proj", "scenes", "hero.ma")
+        self.assertTrue(TempArtifacts.contains(inside))
+        self.assertTrue(TempArtifacts.contains(TempArtifacts.root()))
+        self.assertTrue(TempArtifacts.contains(flat))
+        self.assertFalse(TempArtifacts.contains(outside))
+        self.assertFalse(TempArtifacts.contains(self.root + "_sibling"))
+        self.assertFalse(TempArtifacts.contains(""))
+        self.assertFalse(TempArtifacts.contains("bad\x00path"))
+
+
+class TestUniqueTags(TempArtifactsBase):
+    """Two processes in one clock tick never mint one path.
+
+    The tag was the allocation clock alone, and Python 3.11's clock on Windows
+    ticks every ~15 ms: two processes allocating at once got the same path,
+    and ``dir_path`` (``makedirs(exist_ok=True)``) silently shared the folder.
+    """
+
+    FROZEN = 1_700_000_000_000_000_000
+
+    def test_two_processes_in_one_clock_tick_get_distinct_paths(self):
+        with mock.patch.object(TempArtifacts, "_next_tag_ns", return_value=self.FROZEN):
+            a = TempArtifacts("pfx", dir=self.dir).path()
+            with mock.patch("os.getpid", return_value=os.getpid() + 1):
+                b = TempArtifacts("pfx", dir=self.dir).path()
+        self.assertNotEqual(a, b)
+
+    def test_a_reused_process_id_in_one_tick_still_gets_a_fresh_path(self):
+        with mock.patch.object(TempArtifacts, "_next_tag_ns", return_value=self.FROZEN):
+            paths = {TempArtifacts("pfx", dir=self.dir).path() for _ in range(8)}
+        self.assertGreater(len(paths), 1, "no random part")
+
+    def test_dir_path_never_shares_a_directory_that_already_exists(self):
+        taken = os.path.join(self.dir, "pfx_taken")
+        os.makedirs(taken)
+        store = TempArtifacts("pfx", dir=self.dir, policy="scoped")
+        with mock.patch.object(
+            TempArtifacts, "_mint_tag", side_effect=["taken", "free"]
+        ):
+            got = store.dir_path()
+        self.assertEqual(os.path.basename(got), "pfx_free")
+        store.cleanup()
+        self.assertTrue(os.path.isdir(taken), "the other owner's folder was taken")
+
+
+class TestKeepAndScoped(TempArtifactsBase):
+    def test_keep_disowns_a_path_so_scope_exit_leaves_it(self):
+        with TempArtifacts("pfx", dir=self.dir, policy="scoped") as store:
+            kept = store.dir_path()
+            gone = store.dir_path()
+            self.assertTrue(store.keep(kept))
+            self.assertFalse(store.keep(os.path.join(self.dir, "not_ours")))
+        self.assertTrue(os.path.isdir(kept), "the stage holds the only copy")
+        self.assertFalse(os.path.exists(gone))
+
+    def test_scoped_spells_the_scoped_policy(self):
+        with TempArtifacts.scoped("pfx", dir=self.dir) as store:
+            self.assertEqual(store.policy, "scoped")
+            path = self.touch(store.path())
+        self.assertFalse(os.path.exists(path))
+
+    def test_a_sweep_interval_spares_a_folder_a_rescan(self):
+        """``atomic_write`` builds one store per write into the TARGET's folder:
+        a batch of sidecars saved into one folder scanned it once per file."""
+        first = self.touch(os.path.join(self.dir, "pfx_first.part"))
+        self.age(first, 30)
+        TempArtifacts("pfx", dir=self.dir, sweep_interval=600).path()
+        self.assertFalse(os.path.exists(first))
+        second = self.touch(os.path.join(self.dir, "pfx_second.part"))
+        self.age(second, 30)
+        TempArtifacts("pfx", dir=self.dir, sweep_interval=600).path()
+        self.assertTrue(os.path.exists(second), "rescanned within the interval")
+        TempArtifacts("pfx", dir=self.dir).path()
+        self.assertFalse(os.path.exists(second))
+
+
+class TestSweepAll(_RootedBase):
+    """A prefix that never allocates again is swept by no one but this."""
+
+    def _store_entry(self, prefix, max_age_days, days):
+        entry = TempArtifacts(prefix, max_age_days=max_age_days).dir_path()
+        self.touch(os.path.join(entry, "f.txt"))
+        _age_tree(entry, days)
+        return entry
+
+    def test_an_orphaned_prefix_goes_by_the_age_its_owner_declared(self):
+        orphan = self._store_entry("orphan", 1, days=2)
+        young = self._store_entry("young", 30, days=10)
+        forever = self._store_entry("forever", None, days=3650)
+        removed = TempArtifacts.sweep_all()
+        self.assertEqual([_norm(p) for p in removed], [_norm(orphan)])
+        self.assertTrue(os.path.isdir(young))
+        self.assertTrue(os.path.isdir(forever))
+
+    def test_an_unreadable_declaration_is_read_conservatively(self):
+        store = TempArtifacts("garbled", max_age_days=1)
+        fresh, stale = store.dir_path(), store.dir_path()
+        _age_tree(fresh, 10)
+        _age_tree(stale, TempArtifacts.UNKNOWN_MAX_AGE_DAYS + 5)
+        with open(
+            os.path.join(self.root, "garbled", TempArtifacts.STORE_MARKER), "w"
+        ) as fh:
+            fh.write("not json")
+        TempArtifacts.sweep_all()
+        self.assertTrue(os.path.isdir(fresh), "inside the conservative default")
+        self.assertFalse(os.path.exists(stale))
+
+    def test_a_folder_that_is_no_store_is_never_touched(self):
+        foreign = os.path.join(self.root, "someone", "someone_else")
+        os.makedirs(foreign)
+        _age_tree(os.path.dirname(foreign), 3650)
+        TempArtifacts.sweep_all()
+        self.assertTrue(os.path.isdir(foreign))
+
+    def test_it_runs_on_its_own_about_once_a_day(self):
+        first = os.path.join(self.root, "abandoned")
+        os.makedirs(first)
+        with open(os.path.join(first, TempArtifacts.STORE_MARKER), "w") as fh:
+            fh.write('{"max_age_days": 1}')
+        entry = os.path.join(first, "abandoned_1")
+        os.makedirs(entry)
+        _age_tree(entry, 5)
+        TempArtifacts("active", policy="scoped").path()
+        self.assertFalse(os.path.exists(entry), "the first allocation sweeps")
+        os.makedirs(entry)
+        _age_tree(entry, 5)
+        TempArtifacts("active2", policy="scoped").path()
+        self.assertTrue(os.path.isdir(entry), "swept again within the day")
+
+
+class TestCachedArtifactSlots(_RootedBase):
+    """The cache's slot model, public: what a key maps to, whether it holds a
+    complete entry, and refreshing its age -- what mayatk rebuilt by hand
+    from the private naming (``_bake_slot`` / ``_touch_bake``)."""
+
+    def produce(self, out):
+        self.touch(out, b"artifact")
+
+    def test_slot_names_a_keys_path_and_creates_nothing(self):
+        project = os.path.join(self.dir, "project", "cache", "bake")
+        cache = CachedArtifact("bk", extension=".ma", dir=project)
+        slot = cache.slot("abc")
+        self.assertEqual(_norm(os.path.dirname(slot)), _norm(project))
+        self.assertEqual(os.path.basename(slot), "bk_cache_abc.ma")
+        self.assertIsNone(cache.peek("abc"))
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "project")))
+
+    def test_the_spelling_mayatk_rebuilt_by_hand_still_names_the_slot(self):
+        by_hand = TempArtifacts("bk_cache", policy="detached").path(
+            extension=".ma", name="abc"
+        )
+        self.assertEqual(
+            _norm(CachedArtifact("bk", extension=".ma").slot("abc")), _norm(by_hand)
+        )
+
+    def test_peek_answers_only_for_a_complete_entry(self):
+        cache = CachedArtifact("pk", extension=".out")
+        self.assertIsNone(cache.peek("k"))
+        os.makedirs(cache.cache_dir, exist_ok=True)
+        self.touch(cache.slot("k"), b"")
+        self.assertIsNone(cache.peek("k"), "an empty file is no entry")
+        got = cache.get("k", self.produce)
+        self.assertEqual(cache.peek("k"), got.path)
+
+    def test_touch_refreshes_an_entry_and_its_sidecars(self):
+        cache = CachedArtifact("tc", extension=".ma")
+        got = cache.get("k", self.produce)
+        side = self.touch(got.path + ".src.json")
+        for path in (got.path, side):
+            self.age(path, 5)
+        self.assertTrue(cache.touch("k", sidecars=(".src.json",)))
+        for path in (got.path, side):
+            self.assertGreater(os.path.getmtime(path), time.time() - 60, path)
+        self.assertFalse(cache.touch("missing"))
+
+    def test_a_hit_refreshes_the_entrys_age(self):
+        """A hit writes nothing, so a bake in daily use went at its age."""
+        cache = CachedArtifact("hit", extension=".ma")
+        got = cache.get("k", self.produce)
+        self.age(got.path, 5)
+        self.assertTrue(cache.get("k", self.produce).hit)
+        self.assertGreater(os.path.getmtime(got.path), time.time() - 60)
+
+    def test_scratch_is_always_in_the_temp_root_never_the_cache_dir(self):
+        project = os.path.join(self.dir, "project")
+        cache = CachedArtifact("pc", extension=".ma", dir=project, max_age_days=None)
+        seen = []
+        got = cache.get("k", lambda out: (seen.append(out), self.produce(out)))
+        got.scratch.cleanup()
+        self.assertTrue(_norm(seen[0]).startswith(_norm(self.root) + os.sep))
+        self.assertEqual(os.listdir(project), [os.path.basename(got.path)])
+
+    def test_a_project_resident_cache_is_never_age_swept(self):
+        project = os.path.join(self.dir, "project")
+        got = CachedArtifact("pc", extension=".ma", dir=project, max_age_days=None).get(
+            "k", self.produce
+        )
+        self.age(got.path, 3650)
+        again = CachedArtifact(
+            "pc", extension=".ma", dir=project, max_age_days=None
+        ).get("k", self.produce)
+        self.assertTrue(again.hit, "a referenced bake is never stale")
+
+    def test_a_directory_slot_is_produced_whole_then_reused(self):
+        cache = CachedArtifact("cd", directory=True)
+        calls = []
+
+        def produce(folder):
+            calls.append(folder)
+            self.touch(os.path.join(folder, "map_BaseColor.png"))
+
+        got = cache.get("k", produce)
+        self.assertEqual(_norm(got.path), _norm(cache.slot("k")))
+        self.assertTrue(os.path.isfile(os.path.join(got.path, "map_BaseColor.png")))
+        self.assertTrue(cache.get("k", produce).hit)
+        self.assertEqual(len(calls), 1)
+
+    def test_promote_moves_a_finished_artifact_into_its_slot(self):
+        files = CachedArtifact("pf", extension=".out")
+        made = self.touch(os.path.join(self.dir, "made.out"), b"one")
+        slot = files.promote("k", made)
+        self.assertFalse(os.path.exists(made))
+        with open(slot, "rb") as fh:
+            self.assertEqual(fh.read(), b"one")
+
+        folders = CachedArtifact("pd", directory=True)
+        for name in ("a.png", "b.png"):
+            made = os.path.join(self.dir, f"made_{name}")
+            os.makedirs(made)
+            self.touch(os.path.join(made, name))
+            slot = folders.promote("k", made)
+        self.assertEqual(os.listdir(slot), ["b.png"], "a slot is replaced whole")
 
 
 if __name__ == "__main__":

@@ -104,6 +104,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/user_config.py`](#core_utils--user_config) — Qt-free, zero-dependency user-config resolution for the ecosystem.
 - [`core_utils/x11.py`](#core_utils--x11) — A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys,
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
+- [`file_utils/bake_cache.py`](#file_utils--bake_cache) — A project's files baked from other files: one slot per source, kept with
 - [`file_utils/file_dependencies.py`](#file_utils--file_dependencies) — File dependencies -- files a record names by *name*, found where they are NOW.
 - [`file_utils/file_naming.py`](#file_utils--file_naming) — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - [`file_utils/mesh_convert/_fbx2gltf.py`](#file_utils--mesh_convert--_fbx2gltf) — The FBX2glTF CLI driver behind :meth:`MeshConvert.fbx_to_glb`, and the
@@ -123,6 +124,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`file_utils/mesh_convert/glb/tangents.py`](#file_utils--mesh_convert--glb--tangents) — Repair a GLB's shipped tangents against the UVs they describe.
 - [`file_utils/mesh_ops.py`](#file_utils--mesh_ops) — File-level mesh processing via PyMeshLab (optional dependency).
 - [`file_utils/metadata.py`](#file_utils--metadata)
+- [`file_utils/scene_notes.py`](#file_utils--scene_notes) — Per-scene notes kept with the project -- one file per project, any host.
 - [`file_utils/temp_artifacts.py`](#file_utils--temp_artifacts) — Prefix-scoped temp artifacts with an explicit lifetime policy.
 - [`file_utils/tiled_path.py`](#file_utils--tiled_path) — Tile / frame tokens in a file path -- the one vocabulary every host reads.
 - [`file_utils/usd.py`](#file_utils--usd) — Zero-dependency USD (OpenUSD) file utilities.
@@ -194,6 +196,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
   - `AudioUtils.memo_duration(cls, file_path: str, fps: float, probe: Callable[[str, float], Tuple[float, str]]) -> Tuple[float, str]` *(class)* — *probe* -- a host's reader of a clip's length -- read once per file
   - `AudioUtils.is_playable_extension(cls, file_path: str) -> bool` *(class)* — Return True if extension is already timeline-playable.
   - `AudioUtils.is_supported_source_extension(cls, file_path: str) -> bool` *(class)* — Return True if extension is accepted as conversion source.
+  - `AudioUtils.cache_dir_for(cls, audio_path: str, create: bool = False) -> str` *(class)* — Where a playable transcode of *audio_path* is cached -- the one place
   - `AudioUtils.ensure_playable_path(cls, audio_path: str, cache_dir: Optional[str] = None) -> str` *(class)* — Return a playable audio path, converting with ffmpeg if required.
   - `AudioUtils.build_composite_wav(cls, events: list, audio_map: dict, fps: float, output_path: str, logger=None) -> Optional[str]` *(class)* — Mix source WAV clips into one composite WAV.
   - `AudioUtils.resolve_playable_path(cls, audio_path: str, cache_dir: Optional[str] = None, logger=None) -> Optional[str]` *(class)* — Return a playable path, converting to WAV when required.
@@ -1565,8 +1568,8 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
 
 Plan, assess, and apply map (texture) optimizations.
 
-- **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L147)** — One operation in an optimization plan.
-- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L160)** — Plan, assess, and apply map (texture) optimizations.
+- **[`class Op`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L151)** — One operation in an optimization plan.
+- **[`class MapOptimizer(HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/map_optimizer.py#L164)** — Plan, assess, and apply map (texture) optimizations.
   - `MapOptimizer.resolve_size_clamp(cls, max_size: Any, template: Optional[str] = None, logger: Optional[Any] = None) -> Dict[str, Any]` *(class)* — Turn a user-facing "max size" mode into :meth:`assess` / :meth:`optimize_map` kwargs.
   - `MapOptimizer.describe_size_clamp(cls, max_size: Any, template: Optional[str] = None, logger: Optional[Any] = None) -> str` *(class)* — Human-readable form of :meth:`resolve_size_clamp`, for log lines.
   - `MapOptimizer.plan(cls, image: 'Image.Image', max_size: Optional[int] = None, force_pot: bool = False, optimize_bit_depth: bool = True, map_type_key: Optional[str] = None, allow_palette: bool = False, pot_mode: str = 'nearest', output_profile: Optional[str] = None, output_type: Optional[str] = None) -> List[Op]` *(class)* — Return the ordered list of operations :meth:`apply` would run.
@@ -1700,7 +1703,7 @@ Region-mask engine — named face-group masks that gate texture regions at runti
   - `RegionMaskPacker.add_group(self, name: str, uv_triangles, *, slot: Optional[int] = None, default: float = 1.0, attr: Optional[str] = None) -> RegionGroup` — Register a group and its UV coverage.
   - `RegionMaskPacker.validate(self) -> List[str]` — Non-fatal authoring warnings (hard errors raise in ``add_group``).
   - `RegionMaskPacker.rasterize(self) -> 'np.ndarray'` — Fill each group's slot channel;
-  - `RegionMaskPacker.write(self, mask_path: str, manifest_path: Optional[str] = None, uv_channel: int = 0) -> RegionMaskManifest` — Save the packed mask texture and its manifest sidecar.
+  - `RegionMaskPacker.write(self, mask_path: str, manifest_path: Optional[str] = None, uv_channel: int = 0, write_manifest: bool = False) -> RegionMaskManifest` — Save the packed mask texture;
   - `RegionMaskPacker.preview(self, emissive, weights: Optional[Dict[str, float]] = None) -> 'Image.Image'` — Preview which texels glow for a given weight combination.
 
 <a id="core_utils--execution_monitor--_execution_monitor"></a>
@@ -1780,17 +1783,17 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
   - `HandoffBridge.import_roots(*packages: str) -> List[str]` *(static)* — ``sys.path`` entries that make *packages* importable in a launched child app.
   - `HandoffBridge.child_sys_path(entries: Optional[Sequence[str]] = None) -> List[str]` *(static)* — The parent's importable set, minus what belongs to the parent's OWN Python.
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L814)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L843)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L813)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L842)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L998)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
+- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L997)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
   - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1152)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1151)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
   - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1235)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1234)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
   - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app work on them, and re-ingest the result.
@@ -1848,8 +1851,8 @@ Run a script in an external app, block until it exits, and collect an artifact.
 - **[`class ScriptRunner(_ScriptRunnerInternal)`](pythontk/pythontk/core_utils/handoff/script_run.py#L68)** — Run a script in an external app, block, and collect its artifact.
   - `ScriptRunner.failure_summary(output: str) -> Optional[str]` *(static)* — The child's own last word on why it failed, as one line -- or ``None``.
   - `ScriptRunner.run_script_to_artifact(app_exe: str, script_text: str, *, artifact: str, launch_args: Optional[Callable[[str], Sequence[str]]] = None, timeout: Optional[float] = 600, script_suffix: str = '.py', script_prefix: str = 'script_run', cwd: Optional[str] = None, env: Optional[dict] = None, expect: str = CREATED, on_output: Optional[Callable[[Optional[str]], Optional[bool]]] = None) -> ScriptRunResult` *(static)* — Run *script_text* in *app_exe*, wait, and return the verified *artifact*.
-- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/handoff/script_run.py#L275)** — What a successful :func:`run_script_to_artifact` returns.
-- **[`class ProgressRelay`](pythontk/pythontk/core_utils/handoff/script_run.py#L290)** — One progress callback fed by staged work: child-script markers and in-process steps.
+- **[`class ScriptRunResult`](pythontk/pythontk/core_utils/handoff/script_run.py#L282)** — What a successful :func:`run_script_to_artifact` returns.
+- **[`class ProgressRelay`](pythontk/pythontk/core_utils/handoff/script_run.py#L297)** — One progress callback fed by staged work: child-script markers and in-process steps.
   - `ProgressRelay.line(cls, step: int, steps: int, text: str = '') -> str` *(class)* — The marker line a child prints for *step* of *steps*.
   - `ProgressRelay.parse(cls, line: Optional[str]) -> Optional[Tuple[int, int, str]]` *(class)* — ``(step, steps, text)`` from a marker anywhere in *line*, else ``None``.
   - `ProgressRelay.value(self) -> int` *(property)* — The bar position last reported.
@@ -2012,10 +2015,10 @@ Monospace text layout: display widths, wrapping, box and table geometry.
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin/logger_ext.py#L1255)** — A generic logging handler that writes logs to any widget supporting
+- **[`class DefaultTextLogHandler(logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin/logger_ext.py#L1281)** — A generic logging handler that writes logs to any widget supporting
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class RingBufferHandler(logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin/logger_ext.py#L1316)** — In-memory capped ring buffer of log records.
+- **[`class RingBufferHandler(logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin/logger_ext.py#L1342)** — In-memory capped ring buffer of log records.
   - `RingBufferHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `RingBufferHandler.clear(self) -> None`
   - `RingBufferHandler.format_records(self, formatter: internal_logging.Formatter = None) -> str` — Render buffered records to a single plain-text string.
@@ -2431,7 +2434,7 @@ A discoverable, user-extensible collection of schema-validated template files.
 
 Process-level test isolation -- keep a test run off the developer's machine.
 
-- **[`class TestSandbox(_TestSandboxInternal)`](pythontk/pythontk/core_utils/test_sandbox.py#L223)** — Keep this process's side effects off the developer's machine.
+- **[`class TestSandbox(_TestSandboxInternal)`](pythontk/pythontk/core_utils/test_sandbox.py#L228)** — Keep this process's side effects off the developer's machine.
   - `TestSandbox.browser(cls) -> None` *(class)* — Refuse every ``webbrowser`` launch for the rest of the process.
   - `TestSandbox.temp(cls) -> str` *(class)* — Route the process's temp dir into one throwaway root;
   - `TestSandbox.trash(cls) -> None` *(class)* — Keep :meth:`FileUtils.move_to_trash` off the machine's trash for the
@@ -2469,8 +2472,9 @@ Qt-free, zero-dependency user-config resolution for the ecosystem.
   - `UserConfig.resolve(cls, name: str, *, package: str, env: Optional[str] = None, default: Optional[Mapping[str, Any]] = None, path: Optional[Union[str, os.PathLike]] = None) -> dict` *(class)* — Resolve config *name* for *package*, deep-merged over *default*.
   - `UserConfig.deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict` *(static)* — Recursively merge *override* into a copy of *base* (override wins).
   - `UserConfig.expand(value: Any) -> Any` *(static)* — Expand ``~`` and ``${VAR}`` / ``$VAR`` / ``%VAR%`` in string values.
-  - `UserConfig.xdg_home(kind: str = 'config') -> str` *(static)* — An XDG base directory: ``$XDG_CONFIG_HOME`` / ``$XDG_DATA_HOME`` when it
+  - `UserConfig.xdg_home(kind: str = 'config') -> str` *(static)* — An XDG base directory: ``$XDG_CONFIG_HOME`` / ``$XDG_DATA_HOME`` /
   - `UserConfig.user_config_root() -> Path` *(static)* — The ecosystem per-user config directory, resolved **without Qt**.
+  - `UserConfig.cache_dir(*parts: str, create: bool = False) -> Path` *(static)* — A folder in the per-user CACHE root: durable, regenerable, never temp.
 
 <a id="core_utils--x11"></a>
 ### `core_utils/x11.py`
@@ -2540,12 +2544,35 @@ A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys,
   - `FileUtils.canonical_module_path(filepath)` *(static)* — The dotted module path a .py file has by its location on disk.
   - `FileUtils.get_classes_from_path(cls, path, returned_type=['classname', 'filepath'], inc=[], exc=[], top_level_only=True, force_tuples=False)` *(class)* — Scan the specified directory or Python file and retrieve class information from each file.
 
+<a id="file_utils--bake_cache"></a>
+### `file_utils/bake_cache.py`
+
+A project's files baked from other files: one slot per source, kept with
+
+- **[`class BakeCache(LoggingMixin)`](pythontk/pythontk/file_utils/bake_cache.py#L35)** — One kind of bake in a project's cache tree;
+  - `BakeCache.prefix(self) -> str` *(property)* — What every file of this store is named with: ``<name>_cache_``.
+  - `BakeCache.name_pattern(self) -> Pattern[str]` *(property)* — A file name of this store -- a bake or anything named for it (a
+  - `BakeCache.is_bake(self, path: str) -> bool` — Whether *path* is named as one of this store's files.
+  - `BakeCache.cache_dir(self, project: str, create: bool = False) -> str` — Where *project*'s bakes live (absolute;
+  - `BakeCache.store(self, project: str, create: bool = False) -> CachedArtifact` — *project*'s slots, as a never-aged :class:`CachedArtifact` (one per
+  - `BakeCache.slot_key(src: str, project: str) -> str` *(static)* — The slot name of *src*'s bake: ``<stem>_<hash8>``, the hash over its
+  - `BakeCache.slot(self, src: str, project: str) -> str` — Where *project*'s bake of *src* lives -- there or not.
+  - `BakeCache.source_key(src: str, *parts: Any, companions: Iterable[str] = ()) -> str` *(static)* — The content key of a bake of *src* as it is now: *parts* (the bake
+  - `BakeCache.current(self, src: str, project: str, key: str) -> Optional[str]` — *project*'s bake of *src* when it holds the source version *key*
+  - `BakeCache.spell_source(self, src: str, project: str) -> str` — *src* as a bake records it: relative to the bakes' folder when it is
+  - `BakeCache.record(self, src: str, project: str, key: Optional[str] = None) -> Dict[str, str]` — The record a bake of *src* carries: its source and, given, its key.
+  - `BakeCache.source_of(self, baked_path: str) -> Optional[str]` — The source *baked_path* was baked from (absolute), or None if it is
+  - `BakeCache.write(self, src: str, project: str, produce: Callable[[str, Dict[str, str]], Any], key: Optional[str] = None) -> str` — Bake *src* into its slot: ``produce(out, record)`` writes the bake,
+  - `BakeCache.rehome(self, baked_path: str, project: str, produce: Callable[[str, str, Dict[str, str]], Any]) -> Optional[str]` — The project bake standing in for *baked_path*, a bake that lives
+  - `BakeCache.referenced_keys(self, project: str, extensions: Iterable[str], live: Iterable[str] = ()) -> Optional[Set[str]]` — The slot keys any file of *extensions* under *project* names (read
+  - `BakeCache.purge(self, project: str, extensions: Iterable[str], live: Iterable[str] = (), dry_run: bool = False) -> List[str]` — Remove the bakes in *project*'s cache that nothing references, with
+
 <a id="file_utils--file_dependencies"></a>
 ### `file_utils/file_dependencies.py`
 
 File dependencies -- files a record names by *name*, found where they are NOW.
 
-- **[`class FileDependencies(LoggingMixin)`](pythontk/pythontk/file_utils/file_dependencies.py#L48)** — The rules over files that records name by name;
+- **[`class FileDependencies(LoggingMixin)`](pythontk/pythontk/file_utils/file_dependencies.py#L58)** — The rules over files that records name by name;
   - `FileDependencies.claims(refs: Iterable[Sequence[str]]) -> Dict[str, FrozenSet[str]]` *(static)* — ``{file name: owners}`` -- which owners read which file name.
   - `FileDependencies.remove_superseded(cls, before: Iterable[str], after: Iterable[Sequence[Any]]) -> List[str]` *(class)* — Set aside the files of *before* that nothing in *after* reads;
   - `FileDependencies.set_aside(cls, path: str) -> str` *(class)* — Take the file *path* out of its folder without destroying it.
@@ -2553,9 +2580,12 @@ File dependencies -- files a record names by *name*, found where they are NOW.
   - `FileDependencies.find_files(names: Iterable[str], root: str) -> List[str]` *(static)* — Every file under *root*, recursively, whose name is one of *names*.
   - `FileDependencies.walk(cls, root: str) -> Iterator[Tuple[str, List[str], List[str]]]` *(class)* — ``os.walk(root)``, top-down, that never enters a folder of stale
   - `FileDependencies.resolve(cls, refs: Iterable[Sequence[str]], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, resolve_hint: Optional[Callable[[str, str], str]] = None) -> List[Dict[str, Any]]` *(class)* — Every file *refs* name, resolved on disk NOW;
-  - `FileDependencies.search_dirs(deps: Iterable[Dict[str, Any]], then: Iterable[str] = ()) -> List[str]` *(static)* — The folders a consumer that joins names should try, in priority order.
+  - `FileDependencies.search_dirs(cls, deps: Iterable[Dict[str, Any]], then: Iterable[str] = ()) -> List[str]` *(class)* — The folders a consumer that joins names should try, in priority order.
   - `FileDependencies.copy_files(cls, sources: Iterable[str], dest_dir: str, mode: str = 'copy') -> List[Tuple[str, str]]` *(class)* — Copy (or, ``mode="move"``, move) *sources* into *dest_dir*, without clobbering.
   - `FileDependencies.relocate(cls, deps: Sequence[Dict[str, Any]], dest_dir: str, source_dir: str = '', mode: str = 'copy', dry_run: bool = False, find_files: Optional[Callable[[List[str], str], List[str]]] = None, copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None) -> Dict[str, Any]` *(class)* — Gather *deps*' files into *dest_dir*.
+  - `FileDependencies.reference_bytes(cls, path: str) -> Optional[bytes]` *(class)* — The bytes of the file at *path* that can name the files it
+  - `FileDependencies.scan_references(cls, root: str, pattern: Union[bytes, Pattern[bytes]], extensions: Iterable[str], skip: Iterable[str] = ()) -> Optional[Set[str]]` *(class)* — What the files under *root* name: every match of *pattern* (its
+  - `FileDependencies.open_decompressed(path: str) -> Optional[BinaryIO]` *(static)* — *path* as a readable binary stream of its uncompressed bytes.
 
 <a id="file_utils--file_naming"></a>
 ### `file_utils/file_naming.py`
@@ -2712,7 +2742,7 @@ Deliverable verification for exported FBX / GLB pairs.
 Zero-dependency binary-FBX reader: header, node records, objects, takes.
 
 - [`FBX_MAGIC`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L48) — constant
-- **[`class FbxFile(_FbxFileInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L896)** — A parsed binary FBX, held read-only.
+- **[`class FbxFile(_FbxFileInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_file.py#L1011)** — A parsed binary FBX, held read-only.
   - `FbxFile.load(cls, path: str, decode_arrays: Union[bool, Collection[str]] = False, raw_payloads: bool = True, span_arrays: Collection[str] = ()) -> 'FbxFile'` *(class)* — Parse *path*.
   - `FbxFile.is_fbx(path: str) -> bool` *(static)* — True when *path* starts with the binary-FBX magic.
   - `FbxFile.section(self, name: str) -> Optional[Dict[str, Any]]` — Top-level record *name* (``"Objects"``, ``"Connections"`` …).
@@ -2731,7 +2761,7 @@ Zero-dependency binary-FBX reader: header, node records, objects, takes.
 
 Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 
-- **[`class FbxMedia(_FbxMediaInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_media.py#L1078)** — Read and rewrite the media a binary FBX embeds.
+- **[`class FbxMedia(_FbxMediaInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_media.py#L1089)** — Read and rewrite the media a binary FBX embeds.
   - `FbxMedia.embedded(cls, path: str) -> List[Dict[str, Any]]` *(class)* — Every embedded image: ``{"name", "format", "size", "bytes"}``.
   - `FbxMedia.downsize(cls, src: str, dst: Optional[str] = None, *, max_size: int, exempt: Iterable[str] = (), png_compress_level: int = 1, jpeg_quality: int = 90, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Resize every embedded PNG/JPEG whose longest edge exceeds *max_size*.
   - `FbxMedia.expand_grayscale(cls, src: str, dst: Optional[str] = None, *, png_compress_level: int = 1, jpeg_quality: int = 95, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Re-encode every embedded grayscale PNG/JPEG with colour channels.
@@ -2898,22 +2928,45 @@ File-level mesh processing via PyMeshLab (optional dependency).
   - `Metadata.get(cls, file_path: Any, *keys: str, mode: str = 'metadata') -> Any` *(class)* — Unified get method for metadata and tags.
   - `Metadata.set(cls, file_path: Any, mode: str = 'metadata', **kwargs) -> None` *(class)* — Unified set method for metadata and tags.
 
+<a id="file_utils--scene_notes"></a>
+### `file_utils/scene_notes.py`
+
+Per-scene notes kept with the project -- one file per project, any host.
+
+- **[`class SceneNotes(LoggingMixin)`](pythontk/pythontk/file_utils/scene_notes.py#L24)** — Per-scene notes, kept with the PROJECT: one
+  - `SceneNotes.store_path(self, scene: str) -> Optional[str]` — The notes file of *scene*'s project, there or not;
+  - `SceneNotes.get(self, scene: str) -> str` — *scene*'s note, ``""`` without one (a legacy sidecar's is imported).
+  - `SceneNotes.set(self, scene: str, text: str) -> None` — Store *text* as *scene*'s note;
+  - `SceneNotes.move(self, old: str, new: str) -> None` — Carry *old*'s note to *new* (a renamed scene).
+  - `SceneNotes.remove(self, scene: str) -> None` — Forget *scene*'s note (a deleted scene).
+  - `SceneNotes.import_notes(self, notes: Mapping[str, str]) -> Dict[str, str]` — Move notes a host kept elsewhere -- ``{scene path: text}``, its panel
+
 <a id="file_utils--temp_artifacts"></a>
 ### `file_utils/temp_artifacts.py`
 
 Prefix-scoped temp artifacts with an explicit lifetime policy.
 
-- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L50)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files/dirs in one directory.
+- **[`class TempArtifacts(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L78)** — Allocate and lifecycle-manage ``<prefix>_*`` temp files/dirs.
+  - `TempArtifacts.scoped(cls, prefix: str, **kwargs: Any) -> 'TempArtifacts'` *(class)* — A ``"scoped"`` store: ``TempArtifacts(prefix, policy="scoped", ...)``.
+  - `TempArtifacts.root(cls) -> str` *(class)* — The ONE temp root every store with no ``dir`` lives under, created.
+  - `TempArtifacts.contains(cls, path: str) -> bool` *(class)* — Whether *path* is scratch this primitive holds: under :meth:`root`
   - `TempArtifacts.path(self, extension: str = '.tmp', name: Optional[str] = None) -> str` — Return a tracked ``<prefix>_<tag><extension>`` path in :attr:`dir`.
   - `TempArtifacts.dir_path(self, name: Optional[str] = None, create: bool = True) -> str` — Return a tracked ``<prefix>_<tag>/`` DIRECTORY path in :attr:`dir`.
   - `TempArtifacts.register(self, path: str) -> str` — Adopt *path* (e.g.
+  - `TempArtifacts.keep(self, path: str) -> bool` — Disown *path*: :meth:`cleanup` and the scope exit leave it.
   - `TempArtifacts.release(self, path: str) -> bool` — Delete ONE tracked *path* now, whatever the policy;
   - `TempArtifacts.cleanup(self, force: bool = False) -> List[str]` — Remove tracked files per the policy;
-  - `TempArtifacts.sweep_stale(self) -> List[str]` — Best-effort delete of ``<prefix>_*`` files in :attr:`dir` older than
-- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L409)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
+  - `TempArtifacts.sweep_stale(self) -> List[str]` — Best-effort delete of this store's stale ``<prefix>_*`` entries in
+  - `TempArtifacts.sweep_all(cls, root: Optional[str] = None) -> List[str]` *(class)* — Sweep every store folder under the root by the age its owner declared.
+- **[`class CachedArtifact(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L859)** — Produce-once / reuse-forever artifact behind a content-addressed cache slot.
   - `CachedArtifact.key(*parts: Any, files: Sequence[str] = (), length: int = 16) -> str` *(static)* — A deterministic tag over *parts* and the identity of each path in *files*.
+  - `CachedArtifact.cache_dir(self) -> str` *(property)* — The folder the slots live in (nothing is created by asking).
+  - `CachedArtifact.slot(self, key: str) -> str` — The path *key*'s entry lives at -- there or not;
+  - `CachedArtifact.peek(self, key: str) -> Optional[str]` — *key*'s entry when the slot holds a complete one, else None.
+  - `CachedArtifact.touch(self, key: str, sidecars: Sequence[str] = ()) -> bool` — Mark *key*'s entry in use: its age starts again.
   - `CachedArtifact.get(self, key: str, produce: Callable[[str], Any], *, sidecars: Sequence[str] = (), use_cache: bool = True) -> 'CachedArtifact.Result'` — The artifact for *key*, produced by ``produce(out_path)`` on a miss.
-- **[`class ScratchTwins(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L551)** — Per-source scratch twins of foreign files, discarded only while untouched.
+  - `CachedArtifact.promote(self, key: str, produced: str, *, sidecars: Sequence[str] = ()) -> str` — Move a finished artifact into *key*'s slot;
+- **[`class ScratchTwins(LoggingMixin)`](pythontk/pythontk/file_utils/temp_artifacts.py#L1176)** — Per-source scratch twins of foreign files, discarded only while untouched.
   - `ScratchTwins.path_for(self, source: str) -> str` — The deterministic twin path for *source* (nothing is created).
   - `ScratchTwins.create(self, source: str, payload: str) -> str` — Copy *payload* to *source*'s twin path, stamp it, and return the path.
   - `ScratchTwins.is_twin(self, path: str) -> bool` — True if *path* is a twin this store created and still tracks.
@@ -2987,11 +3040,11 @@ Automatic UV unwrapping via external CLI engines (OBJ in -> OBJ out).
 
 Shared project-workspace model + ``workspace.mel`` codec.
 
-- [`WORKSPACE_MARKER`](pythontk/pythontk/file_utils/workspace.py#L41) — constant
-- [`DEFAULT_FILE_RULES`](pythontk/pythontk/file_utils/workspace.py#L47) — constant
-- [`RULE_NICE_NAMES`](pythontk/pythontk/file_utils/workspace.py#L69) — constant
-- [`SCENE_RULES`](pythontk/pythontk/file_utils/workspace.py#L110) — constant
-- **[`class Workspace(_WorkspaceInternal)`](pythontk/pythontk/file_utils/workspace.py#L134)** — A project workspace: root directory + named file rules.
+- [`WORKSPACE_MARKER`](pythontk/pythontk/file_utils/workspace.py#L45) — constant
+- [`DEFAULT_FILE_RULES`](pythontk/pythontk/file_utils/workspace.py#L51) — constant
+- [`RULE_NICE_NAMES`](pythontk/pythontk/file_utils/workspace.py#L73) — constant
+- [`SCENE_RULES`](pythontk/pythontk/file_utils/workspace.py#L114) — constant
+- **[`class Workspace(_WorkspaceInternal)`](pythontk/pythontk/file_utils/workspace.py#L145)** — A project workspace: root directory + named file rules.
   - `Workspace.marker_path(self) -> str` *(property)*
   - `Workspace.is_marked(self) -> bool` *(property)*
   - `Workspace.load(cls, root: str) -> 'Workspace'` *(class)* — The workspace at *root* — rules parsed from its marker when present,
@@ -3002,12 +3055,20 @@ Shared project-workspace model + ``workspace.mel`` codec.
   - `Workspace.resolve_dir(self, rule_names: Sequence[str], conventions: Sequence[str] = (), default: Optional[str] = None) -> Optional[str]` — Semantic directory lookup: rule → first *existing* conventional
   - `Workspace.scene_dir(self) -> str` *(property)* — Where scene files live (rule ``scene``/``mayaAscii``/``mayaBinary``,
   - `Workspace.source_images_dir(self) -> str` *(property)* — Where textures live (rule ``sourceImages``, an existing
+  - `Workspace.cache_dir(self, kind: str, create: bool = False) -> str` — Where a project-resident cache of *kind* lives: the rule
+  - `Workspace.movie_dir(self, create: bool = False) -> str` — Where movies go (rule ``movie``, else ``movies/``).
+  - `Workspace.images_dir(self, create: bool = False) -> str` — Where rendered images go (rule ``images``, else ``images/``).
+  - `Workspace.export_dir(self, create: bool = False) -> str` — Where exported deliverables go (Maya's ``FBX export`` rule, then
+  - `Workspace.backup_dir(scene_path: str, create: bool = False) -> str` *(static)* — Where backups of *scene_path* go: Maya's own incremental-save folder,
+  - `Workspace.relative(self, path: str) -> str` — *path* spelled for storing: relative to the root (POSIX separators)
+  - `Workspace.absolute(self, stored: str) -> str` — The absolute path a :meth:`relative` spelling names: joined to the
   - `Workspace.find(cls, root_dir: str, recursive: bool = False, scene_exts: Sequence[str] = (), require_marker: bool = False) -> List['Workspace']` *(class)* — Workspaces under *root_dir* (the root itself included).
   - `Workspace.find_containing(cls, path: str) -> Optional['Workspace']` *(class)* — The nearest marked workspace containing *path* (file or directory),
   - `Workspace.for_path(cls, path: str) -> Optional['Workspace']` *(class)* — The workspace *path* belongs to: the nearest marked ancestor
+  - `Workspace.for_scene(cls, scene_path: Optional[str], session_root: Optional[str] = None) -> Optional['Workspace']` *(class)* — The project a scene's files belong to -- the ONE rule both DCCs use.
   - `Workspace.parse_workspace_mel(source: str) -> Dict[str, str]` *(static)* — File rules from a ``workspace.mel`` — *source* is a path or the file's text.
   - `Workspace.write_workspace_mel(path: str, rules: Dict[str, str], preserve: bool = True, remove: Sequence[str] = ()) -> bool` *(static)* — Write / merge file *rules* into the ``workspace.mel`` at *path*.
-- **[`class WorkspaceTemplates(object)`](pythontk/pythontk/file_utils/workspace.py#L526)** — Named file-rule sets — the persistent answer to *how a NEW project is built*.
+- **[`class WorkspaceTemplates(object)`](pythontk/pythontk/file_utils/workspace.py#L688)** — Named file-rule sets — the persistent answer to *how a NEW project is built*.
   - `WorkspaceTemplates.store(cls) -> Any` *(class)* — The backing :class:`pythontk.PresetStore`.
   - `WorkspaceTemplates.list(cls) -> List[str]` *(class)* — Saved template names.
   - `WorkspaceTemplates.rules(cls, name: Optional[str] = None) -> Dict[str, str]` *(class)* — File rules of the *name*d template — default: the active (last-saved)
@@ -3955,16 +4016,16 @@ Extract still frames from a video file via OpenCV.
 
 Image-sequence capture planning and encoding, with no idea what drew the frames.
 
-- **[`class ExportTarget`](pythontk/pythontk/vid_utils/sequence_exporter.py#L47)** — One entry in an exporter's target registry.
-- **[`class CaptureResult`](pythontk/pythontk/vid_utils/sequence_exporter.py#L75)** — A captured image sequence on disk.
+- **[`class ExportTarget`](pythontk/pythontk/vid_utils/sequence_exporter.py#L48)** — One entry in an exporter's target registry.
+- **[`class CaptureResult`](pythontk/pythontk/vid_utils/sequence_exporter.py#L76)** — A captured image sequence on disk.
   - `CaptureResult.pattern(self) -> str` *(property)* — printf-style pattern for the sequence (ffmpeg input).
-- **[`class ExportResult`](pythontk/pythontk/vid_utils/sequence_exporter.py#L99)** — Outcome of one export target.
+- **[`class ExportResult`](pythontk/pythontk/vid_utils/sequence_exporter.py#L100)** — Outcome of one export target.
   - `ExportResult.ok(self) -> bool` *(property)*
-- **[`class SequenceEncoder(LoggingMixin)`](pythontk/pythontk/vid_utils/sequence_exporter.py#L112)** — Encode a numbered image sequence to a movie, and clean up after it.
+- **[`class SequenceEncoder(LoggingMixin)`](pythontk/pythontk/vid_utils/sequence_exporter.py#L113)** — Encode a numbered image sequence to a movie, and clean up after it.
   - `SequenceEncoder.sequence_fps(self) -> float` — Frame rate of the frames this producer captures.
   - `SequenceEncoder.sequence_name(self) -> str` — Default basename for an output this producer writes.
   - `SequenceEncoder.encode_sequence(self, capture: Union[CaptureResult, str], output_filepath: str, fps: Optional[float] = None, audio: Optional[Union[bool, str]] = None, quality: Optional[int] = None, **ffmpeg_options: Any) -> str` — Encode a captured image sequence to a movie via ffmpeg.
-- **[`class SequenceExporter(SequenceEncoder)`](pythontk/pythontk/vid_utils/sequence_exporter.py#L394)** — Plan and run several outputs off ONE capture of a producer's frames.
+- **[`class SequenceExporter(SequenceEncoder)`](pythontk/pythontk/vid_utils/sequence_exporter.py#L386)** — Plan and run several outputs off ONE capture of a producer's frames.
   - `SequenceExporter.available_targets(cls) -> List[Tuple[str, str]]` *(class)* — (name, label) pairs in registry order — for building UI pickers.
   - `SequenceExporter.resolve_frame_range(cls, mode: str = 'custom', start: Optional[int] = None, end: Optional[int] = None) -> Tuple[int, int]` *(class)* — Resolve a frame range from a mode, with explicit overrides.
   - `SequenceExporter.capture_sequence(self, directory: str, prefix: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Optional[str] = None, image_format: str = 'png', **overrides: Any) -> CaptureResult` — Capture the frame range as a numbered image sequence.

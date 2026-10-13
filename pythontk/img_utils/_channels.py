@@ -247,17 +247,23 @@ class _ImgChannelInternal:
         img = cls.ensure_image(image_path)
 
         # Determine output directory and base name
+        has_path = isinstance(image_path, (str, os.PathLike))
         if base_name is None:
-            if isinstance(image_path, str):
-                base_name = cls.get_base_texture_name(image_path)
+            if has_path:
+                base_name = cls.get_base_texture_name(os.fspath(image_path))
             else:
                 base_name = "texture"
 
         if output_dir is None:
-            if isinstance(image_path, str):
-                output_dir = os.path.dirname(image_path)
-            else:
-                output_dir = os.getcwd()
+            if has_path:
+                output_dir = os.path.dirname(os.fspath(image_path))
+            elif save:
+                # Never the process's current directory: it is whatever folder
+                # the host happened to be in (a DCC's install dir, a project).
+                raise ValueError(
+                    "extract_channels(save=True) of an in-memory image has no "
+                    "folder to write beside: pass output_dir, or save=False."
+                )
 
         if save and output_dir:
             os.makedirs(output_dir, exist_ok=True)

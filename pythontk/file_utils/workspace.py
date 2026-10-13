@@ -20,8 +20,12 @@ adapters). Three composable primitives:
   place, unrecognized MEL (comments, variables, hand-written lines) survives
   verbatim, and an unchanged file is never rewritten.
 - :class:`Workspace` — the model: root + rules, semantic directory resolution
-  (rule → existing conventional folder → default), load/save/create, and
-  discovery (:meth:`Workspace.find`, :meth:`Workspace.find_containing`).
+  (rule → existing conventional folder → default), load/save/create,
+  discovery (:meth:`Workspace.find`, :meth:`Workspace.find_containing`,
+  :meth:`Workspace.for_scene` -- the one scene-to-project rule both DCCs
+  share), and the permanent-file tree both DCCs write into
+  (:meth:`Workspace.cache_dir`, ``movie_dir``, ``images_dir``,
+  ``export_dir``, ``backup_dir``, ``relative`` / ``absolute``).
 - :class:`WorkspaceTemplates` — named rule sets: the persistent answer to
   "how is a *new* project built?", shared by every DCC adapter.
 
@@ -121,6 +125,13 @@ _RULE_LINE_RE = re.compile(
 
 class _WorkspaceInternal(object):
     """Internal helpers for Workspace."""
+
+    @staticmethod
+    def _ensure(folder: str, create: bool) -> str:
+        """*folder*, made first when *create*."""
+        if create:
+            os.makedirs(folder, exist_ok=True)
+        return folder
 
     @staticmethod
     def _unescape(s: str) -> str:
@@ -309,6 +320,108 @@ class Workspace(_WorkspaceInternal):
             ("sourceImages",), ("sourceimages", "textures"), default="sourceimages"
         )
 
+    # ------------------------------------------------------- project structure
+    # The permanent-file tree mayatk and blendertk share. Every folder resolves
+    # through the rules (never a name hard-coded at a call site), under Maya's
+    # own rule names, so a Maya project stays a normal Maya project and a
+    # Blender project gets the same tree. Asking writes nothing; ``create=True``
+    # makes the folder the caller is about to write into.
+
+    def cache_dir(self, kind: str, create: bool = False) -> str:
+        """Where a project-resident cache of *kind* lives: the rule
+        ``<kind>Cache`` when present (Maya's own ``alembicCache``, a studio's
+        ``bakeCache``), else ``cache/<kind>`` (Maya's ``cache/alembic``,
+        ``cache/nCache`` shape).
+
+        For results a saved scene REFERENCES -- a bake, a transcoded clip --
+        which must travel with the project; a regenerable cache no scene names
+        belongs in :meth:`UserConfig.cache_dir <pythontk.UserConfig.cache_dir>`,
+        scratch in :class:`TempArtifacts <pythontk.TempArtifacts>`.
+
+        Parameters:
+            kind: The cache's kind, e.g. ``"bake"``, ``"audio"``.
+            create: Create the folder.
+
+        Returns:
+            The folder (absolute).
+        """
+        return self._ensure(
+            self.resolve_dir((f"{kind}Cache",), default=f"cache/{kind}"), create
+        )
+
+    def movie_dir(self, create: bool = False) -> str:
+        """Where movies go (rule ``movie``, else ``movies/``)."""
+        return self._ensure(self.resolve_dir(("movie",), default="movies"), create)
+
+    def images_dir(self, create: bool = False) -> str:
+        """Where rendered images go (rule ``images``, else ``images/``)."""
+        return self._ensure(self.resolve_dir(("images",), default="images"), create)
+
+    def export_dir(self, create: bool = False) -> str:
+        """Where exported deliverables go (Maya's ``FBX export`` rule, then
+        ``FBX``, else ``data/``)."""
+        return self._ensure(
+            self.resolve_dir(("FBX export", "FBX"), default="data"), create
+        )
+
+    @staticmethod
+    def backup_dir(scene_path: str, create: bool = False) -> str:
+        """Where backups of *scene_path* go: Maya's own incremental-save folder,
+        ``<scene dir>/incrementalSave/<scene file name>/``.
+
+        Beside the scene rather than under a rule: it is where Maya's
+        ``Increment & Save`` keeps them, so both DCCs' backups of one scene
+        meet in one place.
+
+        Parameters:
+            scene_path: The scene file.
+            create: Create the folder.
+
+        Returns:
+            The folder (absolute).
+        """
+        scene = os.path.abspath(scene_path)
+        folder = os.path.join(
+            os.path.dirname(scene), "incrementalSave", os.path.basename(scene)
+        )
+        return _WorkspaceInternal._ensure(os.path.normpath(folder), create)
+
+    def relative(self, path: str) -> str:
+        """*path* spelled for storing: relative to the root (POSIX separators)
+        when inside the project, else the absolute path as it is.
+
+        A record that names a project file this way survives the project being
+        moved or mounted elsewhere; one outside it is kept absolute rather than
+        as a ``../`` chain, which would name a different file once the project
+        moved without its neighbours. Read back by :meth:`absolute`.
+
+        Parameters:
+            path: An absolute path (a relative one is returned as given).
+
+        Returns:
+            The spelling to store (``""`` for an empty *path*).
+        """
+        if not path:
+            return ""
+        path = os.fspath(path)
+        if not os.path.isabs(path):
+            return path.replace("\\", "/")
+        from pythontk.file_utils._file_utils import FileUtils
+
+        norm = os.path.normpath(path)
+        if FileUtils.is_under(norm, self.root):
+            return FileUtils.portable_path(norm, self.root)
+        return norm.replace("\\", "/")
+
+    def absolute(self, stored: str) -> str:
+        """The absolute path a :meth:`relative` spelling names: joined to the
+        root when relative, as it is when absolute (``""`` for an empty one)."""
+        if not stored:
+            return ""
+        from pythontk.file_utils._file_utils import FileUtils
+
+        return os.path.normpath(FileUtils.resolve_portable_path(stored, self.root))
+
     # --------------------------------------------------------------- discovery
     @staticmethod
     def _holds_scene(directory: str, exts: tuple) -> bool:
@@ -427,6 +540,55 @@ class Workspace(_WorkspaceInternal):
             return ws
         d = path if os.path.isdir(path) else os.path.dirname(os.path.abspath(path))
         return cls.load(d) if os.path.isdir(d) else None
+
+    @classmethod
+    def for_scene(
+        cls, scene_path: Optional[str], session_root: Optional[str] = None
+    ) -> Optional["Workspace"]:
+        """The project a scene's files belong to -- the ONE rule both DCCs use.
+
+        Where every permanent file a tool writes for a scene goes (a bake, a
+        cache, a backup), and the boundary it keeps when it renames or retires
+        files. First match wins:
+
+        1. The scene's nearest MARKED ancestor (a ``workspace.mel`` in its
+           folder or above) -- even with a session root set, below it or above
+           it: a pin on a folder of several projects must not open the others'
+           folders, and a project's own marker names it more exactly than a pin.
+        2. Else *session_root* (Maya's active project, Blender's pinned
+           workspace), when it contains the scene.
+        3. Else the scene's own folder, as an unmarked workspace.
+
+        An unsaved scene (no path) has the session root's workspace, loaded as
+        given, or None without one. None too when the folder resolved does not
+        exist. Never a temp-dir fallback: a caller with None has nowhere
+        permanent to write, and says so. A scratch copy standing in for a
+        scene (a Reference Manager's twin) is resolved by passing the scene it
+        stands in for.
+
+        Parameters:
+            scene_path: The scene file; empty or None while unsaved.
+            session_root: The session's current project root, if any.
+
+        Returns:
+            The workspace, or None.
+        """
+        session = os.path.abspath(session_root) if session_root else None
+        if session is not None and not os.path.isdir(session):
+            session = None
+        if not scene_path:
+            return cls.load(session) if session else None
+        scene = os.path.abspath(os.fspath(scene_path))
+        marked = cls.find_containing(scene)
+        if marked is not None:
+            return marked
+        if session is not None:
+            from pythontk.file_utils._file_utils import FileUtils
+
+            if FileUtils.is_under(scene, session):
+                return cls.load(session)
+        folder = os.path.dirname(scene)
+        return cls.load(folder) if os.path.isdir(folder) else None
 
     @staticmethod
     def parse_workspace_mel(source: str) -> Dict[str, str]:

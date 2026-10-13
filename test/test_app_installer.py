@@ -67,9 +67,27 @@ class TestAppInstaller(unittest.TestCase):
         path = AppInstaller._resolve_location("local")
         self.assertTrue(path.endswith("bin"))
 
-    def test_resolve_location_temp(self):
-        path = AppInstaller._resolve_location("temp")
-        self.assertIn("pythontk_tools", path)
+    def test_resolve_location_cache_is_the_per_user_cache(self):
+        """A downloaded tool is durable: ``location="temp"`` put it in the
+        system temp dir, which the OS and every sweep clean, so it downloaded
+        again. Its home is the per-user cache (``UserConfig.cache_dir``)."""
+        from pythontk.core_utils.user_config import UserConfig
+
+        with patch.dict(os.environ, {UserConfig.CACHE_ROOT_ENV_VAR: self.tmp}):
+            os.environ.pop("PYTHONTK_TOOLS_DIR", None)
+            self.assertEqual(
+                AppInstaller._resolve_location("cache"),
+                os.path.join(self.tmp, "tools"),
+            )
+
+    def test_resolve_location_temp_is_a_retired_spelling_of_cache(self):
+        from pythontk.core_utils.user_config import UserConfig
+
+        with patch.dict(os.environ, {UserConfig.CACHE_ROOT_ENV_VAR: self.tmp}):
+            os.environ.pop("PYTHONTK_TOOLS_DIR", None)
+            with self.assertWarns(DeprecationWarning):
+                path = AppInstaller._resolve_location("temp")
+        self.assertEqual(path, os.path.join(self.tmp, "tools"))
 
     def test_resolve_location_env_override(self):
         custom = os.path.join(self.tmp, "custom_tools")

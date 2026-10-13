@@ -18,7 +18,11 @@ such a record ends up needing the same four answers:
 * which files a batch's owners stopped reading, now that nothing reads them
   -- set aside, never deleted (:meth:`FileDependencies.remove_superseded`,
   :meth:`FileDependencies.set_aside`);
-* how to gather the files into one folder (:meth:`FileDependencies.relocate`).
+* how to gather the files into one folder (:meth:`FileDependencies.relocate`);
+* which names the files under a folder still reference, read from their bytes
+  without the app that wrote them (:meth:`FileDependencies.scan_references`,
+  :meth:`FileDependencies.reference_bytes`) -- what a purge of derived files
+  (``BakeCache.purge``) keeps.
 
 They take plain values -- ``(owner, name, recorded folder)`` references -- and
 callables where a host does something its own way (how a stored folder resolves,
@@ -26,10 +30,13 @@ how a tree is searched, how a file is copied), so a DCC reads and writes its own
 records and hands the rules the data.
 """
 
+import errno
 import os
+import re
 import shutil
 from typing import (
     Any,
+    BinaryIO,
     Callable,
     Dict,
     FrozenSet,
@@ -37,8 +44,11 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Pattern,
     Sequence,
+    Set,
     Tuple,
+    Union,
 )
 
 from pythontk.core_utils.logging_mixin import LoggingMixin
@@ -62,10 +72,19 @@ class FileDependencies(LoggingMixin):
     FOUND_BY_HINT: str = "hint"
     FOUND_BY_SEARCH: str = "search"
 
-    #: The folder :meth:`set_aside` moves a file into, beside it, where its
-    #: volume keeps no trash. :meth:`find_files` never walks one: what was set
-    #: aside is out of circulation, as a file in the Recycle Bin is.
+    #: The folder :meth:`set_aside` used to move a file into, beside it, where
+    #: its volume keeps no trash (before 2026-10-13: now the
+    #: :attr:`SUPERSEDED_STORE`). :meth:`find_files` still never walks one: a
+    #: project may hold one from then, and what was set aside is out of
+    #: circulation, as a file in the Recycle Bin is.
     SUPERSEDED_DIR: str = "_superseded"
+
+    #: The ``TempArtifacts`` store :meth:`set_aside` moves a file into where its
+    #: volume keeps no trash, and the days it stays there to be restored.
+    SUPERSEDED_STORE: str = "superseded"
+    SUPERSEDED_DAYS: float = 30
+    #: Seconds within which a repeat set-aside skips re-sweeping the store.
+    _SUPERSEDED_SWEEP_INTERVAL: float = 600.0
 
     #: Folder names a search for files by name never enters (:meth:`walk`),
     #: compared without case: sync-client caches, the OS's trash and volume
@@ -151,8 +170,8 @@ class FileDependencies(LoggingMixin):
         ever goes (a relative one would resolve against the process CWD),
         never a folder.
 
-        Nothing is deleted: each file goes to the Recycle Bin, or beside
-        itself into a :attr:`SUPERSEDED_DIR` folder (:meth:`set_aside`). A
+        Nothing is deleted: each file goes to the Recycle Bin, or into the
+        :attr:`SUPERSEDED_STORE` temp store (:meth:`set_aside`). A
         host sees only its own scene's references, so a file another scene
         file still reads -- a Save As copy's source, a copy made in Explorer
         -- can look unread here; set aside, it is one restore away. A file
@@ -219,18 +238,27 @@ class FileDependencies(LoggingMixin):
 
         To the platform's trash (:meth:`FileUtils.move_to_trash`: the Recycle
         Bin), else -- a network share, a removable drive, a bin that would
-        delete it at once -- into a :attr:`SUPERSEDED_DIR` folder beside it,
-        under its own name or, when that is taken, the first free
-        ``<stem>_<k>``. Either way it keeps its content and is one restore
-        away, and neither place is searched again by name (:meth:`find_files`
-        skips the folder).
+        delete it at once -- under its own name into a fresh folder of the
+        :attr:`SUPERSEDED_STORE` temp store, kept :attr:`SUPERSEDED_DAYS`
+        days. Either way it keeps its content and is one restore away, and
+        neither place is in the project a search walks -- nothing is left
+        behind in the user's folders (a ``_superseded`` folder beside the maps
+        was, until 2026-10-13).
+
+        The file keeps its modification time, so the store's age clock starts
+        at its last WRITE, not the set-aside: "30 days" is pythontk's own
+        sweep guarantee (:class:`TempArtifacts`, the store's first allocation
+        in a process and the daily :meth:`TempArtifacts.sweep_all`), not the
+        Recycle Bin's or the OS temp cleaner's. Only a cross-device rename
+        (temp on another volume) falls back to a copy; a copy cut short is
+        removed with its folder.
 
         Parameters:
             path: The file to set aside.
 
         Returns:
             Where it is now: inside the trash (``""`` when Windows could not
-            say where), or the ``_superseded`` folder.
+            say where), or the temp store.
 
         Raises:
             FileNotFoundError: *path* does not exist.
@@ -239,25 +267,66 @@ class FileDependencies(LoggingMixin):
         trashed = FileUtils.move_to_trash(path)
         if trashed is not None:
             return trashed
-        folder = os.path.join(
-            os.path.dirname(os.path.abspath(path)), cls.SUPERSEDED_DIR
+        if not os.path.isfile(path):
+            raise FileNotFoundError(2, "No such file", path)
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        folder = TempArtifacts(
+            cls.SUPERSEDED_STORE,
+            max_age_days=cls.SUPERSEDED_DAYS,
+            # A batch builds one store per file: sweep the store once, not N
+            # times. The first set-aside in a process still sweeps it, and so
+            # does the daily ``sweep_all`` (its marker declares the 30 days).
+            sweep_interval=cls._SUPERSEDED_SWEEP_INTERVAL,
+        ).dir_path()
+        target = os.path.join(folder, os.path.basename(path))
+        try:
+            os.rename(path, target)  # same volume: a move, nothing copied
+        except OSError as e:
+            if not cls._cross_device(e):
+                cls._remove_empty_folder(folder)
+                raise  # held open, denied: the file is where it was
+            # Another volume (a share has no trash, temp is local): copy, then
+            # take the original away -- and when it is held open, take the
+            # copy back so the file is where it was, once.
+            try:
+                shutil.copy2(path, target)
+            except BaseException:
+                cls._discard_partial(target, folder)
+                raise
+            try:
+                os.remove(path)
+            except OSError:
+                cls._discard_partial(target, folder)
+                raise
+        cls.logger.info(
+            "No trash on %s's volume: set it aside in %s.",
+            os.path.basename(path),
+            folder,
         )
-        os.makedirs(folder, exist_ok=True)
-        stem, ext = os.path.splitext(os.path.basename(path))
-        for k in range(100000):
-            target = os.path.join(folder, f"{stem}_{k}{ext}" if k else f"{stem}{ext}")
-            if os.path.lexists(target):
-                continue
-            # A rename within the folder's volume; never onto a file (POSIX
-            # would replace it), hence the check just above.
-            os.rename(path, target)
-            cls.logger.info(
-                "No trash on %s's volume: set it aside in %s.",
-                os.path.basename(path),
-                folder,
-            )
-            return cls._spelled(target)
-        raise OSError(17, "No free name to set it aside under", folder)
+        return cls._spelled(target)
+
+    @staticmethod
+    def _cross_device(error: OSError) -> bool:
+        """Whether a rename failed only because its ends are on two volumes
+        (``EXDEV``; Windows' ``ERROR_NOT_SAME_DEVICE``, 17)."""
+        return error.errno == errno.EXDEV or getattr(error, "winerror", None) == 17
+
+    @classmethod
+    def _discard_partial(cls, target: str, folder: str) -> None:
+        """Remove a set-aside copy cut short, and its folder once empty."""
+        try:
+            os.remove(target)
+        except OSError:
+            pass
+        cls._remove_empty_folder(folder)
+
+    @staticmethod
+    def _remove_empty_folder(folder: str) -> None:
+        try:
+            os.rmdir(folder)  # only ever an empty one
+        except OSError:
+            pass
 
     @staticmethod
     def _identity(path: str) -> Optional[Tuple[int, int]]:
@@ -454,9 +523,9 @@ class FileDependencies(LoggingMixin):
                     )
         return list(deps.values())
 
-    @staticmethod
+    @classmethod
     def search_dirs(
-        deps: Iterable[Dict[str, Any]], then: Iterable[str] = ()
+        cls, deps: Iterable[Dict[str, Any]], then: Iterable[str] = ()
     ) -> List[str]:
         """The folders a consumer that joins names should try, in priority order.
 
@@ -468,6 +537,16 @@ class FileDependencies(LoggingMixin):
         file from an earlier run, and reaching it first bound a 17-day-old
         lightmap on a production room. Existing folders only, de-duplicated.
 
+        A folder that holds a file under a resolved dependency's name -- the
+        consumer's own join, so a case-folding file system folds the case as
+        it will -- without being that dependency's folder is a SHADOW, and is
+        moved after the dependency's folder whatever its reads: on a production
+        room the texture root (105 readers) held a 512 px atlas from an earlier
+        bake under the name a current 2048 px one carried in its own folder (46
+        readers), and the GLB shipped the stale map through the current rects.
+        Two folders that shadow each other cannot both lead: the read order
+        stands and the names no order can serve are warned.
+
         Parameters:
             deps: Dependency records (:meth:`resolve`).
             then: Folders to append, in order, after the resolved ones.
@@ -475,6 +554,7 @@ class FileDependencies(LoggingMixin):
         Returns:
             The folders, in the order a consumer should try them.
         """
+        deps = list(deps)
         named: Dict[str, int] = {}
         spelled: Dict[str, str] = {}
         for dep in deps:
@@ -484,19 +564,76 @@ class FileDependencies(LoggingMixin):
             key = os.path.normcase(os.path.abspath(folder))
             named[key] = named.get(key, 0) + max(1, len(dep.get("owners") or ()))
             spelled.setdefault(key, folder)
-        dirs = [
-            spelled[key]
-            for key, _n in sorted(named.items(), key=lambda kv: (-kv[1], kv[0]))
+        order = [
+            key for key, _n in sorted(named.items(), key=lambda kv: (-kv[1], kv[0]))
         ]
-        seen = set(named)
         for folder in then:
             if not folder or not os.path.isdir(folder):
                 continue
             key = os.path.normcase(os.path.abspath(folder))
-            if key not in seen:
-                seen.add(key)
-                dirs.append(folder)
-        return dirs
+            if key not in spelled:
+                spelled[key] = folder
+                order.append(key)
+        order = cls._unshadowed(order, spelled, deps)
+        return [spelled[key] for key in order]
+
+    @classmethod
+    def _unshadowed(
+        cls, order: List[str], spelled: Dict[str, str], deps: List[Dict[str, Any]]
+    ) -> List[str]:
+        """*order* (folder keys) with each dependency's folder ahead of its shadows.
+
+        A stable topological sort: the first folder in *order* with no
+        unplaced folder it must follow goes next. Where none is free (folders
+        shadowing each other) the first unplaced one goes anyway, and the names
+        that order cannot serve are warned once.
+        """
+        must_follow: Dict[str, set] = {key: set() for key in order}
+        shadows: List[Tuple[str, str, str]] = []  # (name, own folder, shadow)
+        # Each folder listed once, its names case-folded: a hit is then stated
+        # through the consumer's own join, which folds case only where the file
+        # system does -- not one stat per dependency per folder.
+        listings: Dict[str, Set[str]] = {}
+        for key in order:
+            try:
+                listings[key] = {n.casefold() for n in os.listdir(spelled[key])}
+            except OSError:
+                listings[key] = set()
+        for dep in deps:
+            path = dep.get("path")
+            if not path:
+                continue
+            own = os.path.normcase(os.path.abspath(os.path.dirname(path)))
+            if own not in must_follow:
+                continue
+            name = os.path.basename(path)
+            folded = name.casefold()
+            for key in order:
+                if key == own or folded not in listings[key]:
+                    continue
+                twin = os.path.join(spelled[key], name)
+                if os.path.isfile(twin) and not FileUtils.is_same_file(twin, path):
+                    must_follow[key].add(own)
+                    shadows.append((name, own, key))
+        if not shadows:
+            return order
+        placed: List[str] = []
+        left = list(order)
+        while left:
+            key = next((k for k in left if must_follow[k] <= set(placed)), left[0])
+            placed.append(key)
+            left.remove(key)
+        rank = {key: i for i, key in enumerate(placed)}
+        lost = sorted({name for name, own, key in shadows if rank[key] < rank[own]})
+        if lost:
+            cls.logger.warning(
+                "No folder order puts every file ahead of its same-named twins; "
+                "a consumer joining names onto this list binds the twin for: "
+                "%s (folders: %s)",
+                ", ".join(lost),
+                ", ".join(spelled[key] for key in placed),
+            )
+        return placed
 
     @classmethod
     def copy_files(
@@ -635,3 +772,237 @@ class FileDependencies(LoggingMixin):
             )
         ]
         return result
+
+    # ------------------------------------------------------------ references
+    #: How :meth:`reference_bytes` reads each file type, by extension: the
+    #: name of the reader method. A Maya ASCII scene names its references in
+    #: its header (the ``file -r`` lines precede the first ``createNode``); a
+    #: ``.blend`` is read decompressed. Any other type -- a Maya binary scene
+    #: among them -- is read whole. A host adds a type with one entry.
+    REFERENCE_READERS: Dict[str, str] = {
+        ".ma": "_header_bytes",
+        ".blend": "_decompressed_bytes",
+    }
+
+    @classmethod
+    def reference_bytes(cls, path: str) -> Optional[bytes]:
+        """The bytes of the file at *path* that can name the files it
+        references, read without the app that wrote it
+        (:attr:`REFERENCE_READERS`).
+
+        Parameters:
+            path: The file.
+
+        Returns:
+            The bytes, or None when they cannot be read (missing, truncated, a
+            zstd file with no decoder in this interpreter).
+        """
+        ext = os.path.splitext(str(path))[1].lower()
+        reader = getattr(cls, cls.REFERENCE_READERS.get(ext, "_whole_bytes"))
+        try:
+            return reader(path)
+        except (OSError, EOFError, ValueError, *_ZstdErrors.classes()):
+            return None
+
+    @classmethod
+    def scan_references(
+        cls,
+        root: str,
+        pattern: Union[bytes, Pattern[bytes]],
+        extensions: Iterable[str],
+        skip: Iterable[str] = (),
+    ) -> Optional[Set[str]]:
+        """What the files under *root* name: every match of *pattern* (its
+        first group, else the whole match) in the :meth:`reference_bytes` of
+        each file with one of *extensions* -- no file is opened in its app.
+
+        The question a purge of derived files asks (which of them does
+        nothing read any more), so a file that cannot be read stops the
+        answer: None, logged -- never a partial set a caller would delete by.
+        The walk is :meth:`walk`'s (no folder of stale copies is entered).
+
+        Parameters:
+            root: The folder to walk.
+            pattern: A bytes regular expression.
+            extensions: The file types to read (``".ma"``, ``".blend"``).
+            skip: Folders not entered (the derived files' own).
+
+        Returns:
+            The matches, decoded, or None.
+        """
+        regex = re.compile(pattern) if isinstance(pattern, bytes) else pattern
+        exts = {str(e).lower() for e in extensions}
+        skipped = {os.path.normcase(os.path.normpath(s)) for s in skip if s}
+        found: Set[str] = set()
+        for folder, dirs, files in cls.walk(root):
+            if os.path.normcase(os.path.normpath(folder)) in skipped:
+                dirs[:] = []
+                continue
+            for name in files:
+                if os.path.splitext(name)[1].lower() not in exts:
+                    continue
+                path = os.path.join(folder, name)
+                data = cls.reference_bytes(path)
+                if data is None:
+                    cls.logger.warning(
+                        "%s cannot be scanned for the files it references.", path
+                    )
+                    return None
+                for match in regex.finditer(data):
+                    hit = match.group(1) if regex.groups else match.group(0)
+                    found.add(hit.decode("utf-8", "replace"))
+        return found
+
+    @staticmethod
+    def open_decompressed(path: str) -> Optional[BinaryIO]:
+        """*path* as a readable binary stream of its uncompressed bytes.
+
+        By its magic: gzip through the stdlib; zstd through
+        ``compression.zstd`` (Python 3.14+), else the optional ``zstandard``
+        (Blender bundles it; that stream reads forward only), across frames;
+        anything else as it is.
+
+        Parameters:
+            path: The file.
+
+        Returns:
+            The stream (the caller closes it), or None for a zstd file with no
+            decoder in this interpreter. A zstd stream raises ``OSError`` for
+            a corrupt frame, as gzip's does (the decoders' own ``ZstdError``
+            is an ``Exception``, which a reader's ``except OSError`` misses).
+
+        Raises:
+            OSError: The file could not be opened.
+        """
+        import gzip
+
+        with open(path, "rb") as fh:
+            magic = fh.read(4)
+        if magic[:2] == b"\x1f\x8b":
+            return gzip.open(path, "rb")
+        if magic == b"\x28\xb5\x2f\xfd":
+            try:
+                from compression import zstd  # Python 3.14+
+            except ImportError:
+                pass
+            else:
+                return _ZstdErrors.as_os_errors(
+                    _ZstdErrors.call(zstd.open, path, "rb")
+                )
+            try:
+                import zstandard
+            except ImportError:
+                return None
+            raw = open(path, "rb")
+            try:
+                return _ZstdErrors.as_os_errors(
+                    _ZstdErrors.call(
+                        zstandard.ZstdDecompressor().stream_reader,
+                        raw,
+                        read_across_frames=True,
+                        closefd=True,
+                    )
+                )
+            except BaseException:
+                raw.close()
+                raise
+        return open(path, "rb")
+
+    @staticmethod
+    def _whole_bytes(path: str) -> bytes:
+        with open(path, "rb") as fh:
+            return fh.read()
+
+    @staticmethod
+    def _header_bytes(path: str) -> bytes:
+        """A Maya ASCII scene's lines before its first ``createNode``."""
+        chunks = []
+        with open(path, "rb") as fh:
+            for line in fh:
+                if line.startswith(b"createNode"):
+                    break
+                chunks.append(line)
+        return b"".join(chunks)
+
+    @classmethod
+    def _decompressed_bytes(cls, path: str) -> Optional[bytes]:
+        stream = cls.open_decompressed(path)
+        if stream is None:
+            return None
+        with stream:
+            return b"".join(iter(lambda: stream.read(1 << 20), b""))
+
+
+class _ZstdErrors:
+    """The zstd decoders' own error classes, read as ``OSError``.
+
+    ``compression.zstd.ZstdError`` and ``zstandard.ZstdError`` derive from
+    ``Exception``, so a corrupt frame escaped every ``except OSError`` a
+    reader of :meth:`FileDependencies.open_decompressed` wrote. Each class is
+    resolved only when its module imports.
+    """
+
+    @staticmethod
+    def classes() -> Tuple[type, ...]:
+        found = []
+        try:
+            from compression import zstd  # Python 3.14+
+        except ImportError:
+            pass
+        else:
+            found.append(getattr(zstd, "ZstdError", None))
+        try:
+            import zstandard
+        except ImportError:
+            pass
+        else:
+            found.append(getattr(zstandard, "ZstdError", None))
+        return tuple(c for c in found if isinstance(c, type))
+
+    @classmethod
+    def call(cls, fn: Callable, *args: Any, **kwargs: Any) -> Any:
+        """``fn(*args, **kwargs)``, a decoder error raised as ``OSError``."""
+        errors = cls.classes()
+        if not errors:
+            return fn(*args, **kwargs)
+        try:
+            return fn(*args, **kwargs)
+        except errors as e:
+            raise OSError(f"corrupt zstd data: {e}") from e
+
+    @classmethod
+    def as_os_errors(cls, stream: Any) -> Any:
+        """*stream*, its decoder errors raised as ``OSError``."""
+        errors = cls.classes()
+        return _OSErrorStream(stream, errors) if errors else stream
+
+
+class _OSErrorStream:
+    """A decompressing stream whose calls raise ``OSError`` for its decoder's
+    own errors; everything else passes through."""
+
+    def __init__(self, stream: Any, errors: Tuple[type, ...]):
+        self._stream = stream
+        self._errors = errors
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._stream, name)
+        if not callable(attr):
+            return attr
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return attr(*args, **kwargs)
+            except self._errors as e:
+                raise OSError(f"corrupt zstd data: {e}") from e
+
+        return call
+
+    def __enter__(self) -> "_OSErrorStream":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self._stream.close()
+
+    def __iter__(self) -> Iterator[bytes]:
+        return iter(self.readline, b"")

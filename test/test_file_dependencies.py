@@ -76,9 +76,9 @@ class TestRemoveSuperseded(_FilesCase):
     """What a re-bake may set aside: the files its owners read before, once
     nothing reads them. Every keep rule is a reader the move would strand.
 
-    Pinned to a volume with no trash, so each file goes beside itself into
-    ``_superseded`` in the scratch folder, not into this machine's Recycle
-    Bin (:class:`TestSetAside` covers the trash branch).
+    Pinned to a volume with no trash, so each file goes into the
+    ``superseded`` temp store (the run's sandbox root), not into this
+    machine's Recycle Bin (:class:`TestSetAside` covers the trash branch).
     """
 
     def setUp(self):
@@ -90,11 +90,17 @@ class TestRemoveSuperseded(_FilesCase):
         self.addCleanup(patcher.stop)
 
     def _aside(self, path):
-        return os.path.join(
-            os.path.dirname(path),
-            FileDependencies.SUPERSEDED_DIR,
-            os.path.basename(path),
+        import glob
+
+        found = glob.glob(
+            os.path.join(
+                ptk.TempArtifacts.root(),
+                FileDependencies.SUPERSEDED_STORE,
+                "*",
+                os.path.basename(path),
+            )
         )
+        return max(found, key=os.path.getmtime)
 
     def test_a_file_nothing_reads_is_set_aside_and_a_read_one_kept(self):
         old = self._file("old", "Crate_Lightmap.exr", data=b"old bake")
@@ -205,11 +211,13 @@ class TestRemoveSuperseded(_FilesCase):
 
 
 class TestSetAside(_FilesCase):
-    """Where a superseded file goes: the platform trash, else a ``_superseded``
-    folder beside it -- never a permanent delete (BACKLOG 2026-09-23, decided
-    2026-09-27: a scene cannot see another file's reads, so what it retires
-    must stay one restore away). The trash itself is pinned here; its backends
-    are ``FileUtils.move_to_trash``'s tests."""
+    """Where a superseded file goes: the platform trash, else the
+    ``superseded`` temp store (aged out after a month) -- never a permanent
+    delete (BACKLOG 2026-09-23, decided 2026-09-27: a scene cannot see another
+    file's reads, so what it retires must stay one restore away), and since
+    2026-10-13 never a ``_superseded`` folder left in the project either. The
+    trash itself is pinned here; its backends are ``FileUtils.move_to_trash``'s
+    tests."""
 
     def test_the_trash_takes_it_when_the_volume_has_one(self):
         path = self._file("maps", "Crate_Lightmap.exr")
@@ -231,7 +239,7 @@ class TestSetAside(_FilesCase):
             )
         )
 
-    def test_with_no_trash_it_goes_beside_itself_under_a_free_name(self):
+    def test_with_no_trash_it_goes_to_the_temp_store_under_its_name(self):
         first = self._file("maps", "Crate_Lightmap.exr", data=b"first")
         with unittest.mock.patch.object(
             ptk.FileUtils, "move_to_trash", return_value=None
@@ -239,9 +247,25 @@ class TestSetAside(_FilesCase):
             where = FileDependencies.set_aside(first)
             second = self._file("maps", "Crate_Lightmap.exr", data=b"second")
             again = FileDependencies.set_aside(second)
-        aside = os.path.join(self.tmp, "maps", FileDependencies.SUPERSEDED_DIR)
-        self.assertTrue(self._same(where, os.path.join(aside, "Crate_Lightmap.exr")))
-        self.assertTrue(self._same(again, os.path.join(aside, "Crate_Lightmap_1.exr")))
+        store = os.path.normcase(
+            os.path.realpath(
+                os.path.join(
+                    ptk.TempArtifacts.root(), FileDependencies.SUPERSEDED_STORE
+                )
+            )
+        )
+        for path in (where, again):
+            self.assertEqual(os.path.basename(path), "Crate_Lightmap.exr")
+            self.assertTrue(
+                os.path.normcase(os.path.realpath(path)).startswith(store), path
+            )
+        self.assertNotEqual(os.path.dirname(where), os.path.dirname(again))
+        self.assertFalse(
+            os.path.exists(
+                os.path.join(self.tmp, "maps", FileDependencies.SUPERSEDED_DIR)
+            ),
+            "a folder was left in the project",
+        )
         self.assertFalse(os.path.exists(first))
         for path, data in ((where, b"first"), (again, b"second")):
             with open(path, "rb") as fh:
@@ -257,6 +281,96 @@ class TestSetAside(_FilesCase):
             with self.assertRaises(PermissionError):
                 FileDependencies.set_aside(path)
         self.assertTrue(os.path.isfile(path))
+
+    def _rename_fails(self, path, error):
+        """``os.rename`` of *path* raising *error*; any other rename runs."""
+        real = os.rename
+
+        def rename(src, dst, *a, **kw):
+            if os.path.normcase(os.path.abspath(src)) == os.path.normcase(path):
+                raise error
+            return real(src, dst, *a, **kw)
+
+        return unittest.mock.patch("os.rename", side_effect=rename)
+
+    def test_another_volume_is_copied_then_the_original_removed(self):
+        import errno
+
+        path = self._file("maps", "Far_Lightmap.exr", data=b"far")
+        with unittest.mock.patch.object(
+            ptk.FileUtils, "move_to_trash", return_value=None
+        ), self._rename_fails(
+            os.path.normcase(path), OSError(errno.EXDEV, "cross-device", path)
+        ):
+            where = FileDependencies.set_aside(path)
+        self.assertFalse(os.path.exists(path))
+        with open(where, "rb") as fh:
+            self.assertEqual(fh.read(), b"far")
+
+    def test_a_rename_refused_for_another_reason_is_not_copied(self):
+        """Held open (or denied) is not "another volume": a copy then a remove
+        would only race the holder -- it raises, nothing duplicated."""
+        path = self._file("maps", "Held_Lightmap.exr")
+        copies = []
+        with unittest.mock.patch.object(
+            ptk.FileUtils, "move_to_trash", return_value=None
+        ), self._rename_fails(
+            os.path.normcase(path), PermissionError(13, "held open", path)
+        ), unittest.mock.patch(
+            "shutil.copy2", side_effect=lambda *a, **k: copies.append(a)
+        ):
+            with self.assertRaises(PermissionError):
+                FileDependencies.set_aside(path)
+        self.assertEqual(copies, [])
+        self.assertTrue(os.path.isfile(path))
+
+    def test_a_failed_copy_leaves_no_partial_file_behind(self):
+        import errno
+
+        path = self._file("maps", "Big_Lightmap.exr", data=b"big")
+        made = []
+
+        def partial(src, dst, *a, **k):
+            with open(dst, "wb") as fh:
+                fh.write(b"b")
+            made.append(dst)
+            raise OSError(errno.ENOSPC, "disk full", dst)
+
+        with unittest.mock.patch.object(
+            ptk.FileUtils, "move_to_trash", return_value=None
+        ), self._rename_fails(
+            os.path.normcase(path), OSError(errno.EXDEV, "cross-device", path)
+        ), unittest.mock.patch("shutil.copy2", side_effect=partial):
+            with self.assertRaises(OSError):
+                FileDependencies.set_aside(path)
+        self.assertTrue(os.path.isfile(path))
+        self.assertEqual(len(made), 1)
+        self.assertFalse(os.path.exists(made[0]), "a partial copy was left")
+        self.assertFalse(os.path.exists(os.path.dirname(made[0])))
+
+    def test_a_batch_sweeps_the_store_once_not_per_file(self):
+        """Each call is a fresh store; ``sweep_interval`` keeps N set-asides
+        from rescanning the store N times -- the first still sweeps it."""
+        real = ptk.TempArtifacts.sweep_stale
+        swept = []
+
+        def sweep(store):
+            if store.prefix == FileDependencies.SUPERSEDED_STORE:
+                swept.append(store)
+            return real(store)
+
+        paths = [self._file("maps", f"Lightmap_{i}.exr") for i in range(3)]
+        with unittest.mock.patch.object(
+            ptk.FileUtils, "move_to_trash", return_value=None
+        ), unittest.mock.patch.dict(
+            ptk.TempArtifacts._swept_at, clear=True
+        ), unittest.mock.patch.object(
+            ptk.TempArtifacts, "sweep_stale", autospec=True, side_effect=sweep
+        ):
+            for path in paths:
+                FileDependencies.set_aside(path)
+        self.assertEqual(len(swept), 1)
+        self.assertEqual(swept[0].max_age_days, FileDependencies.SUPERSEDED_DAYS)
 
     def test_a_walk_never_finds_a_file_set_aside(self):
         """It keeps its name: found by a walk, the stale map it replaced would
@@ -438,6 +552,81 @@ class TestSearchDirs(_FilesCase):
         for got, want in zip(dirs, (os.path.dirname(many), os.path.dirname(few), tex)):
             self.assertTrue(self._same(got, want), dirs)
 
+    def test_a_folder_holding_a_stale_twin_follows_the_maps_own_folder(self):
+        """A consumer joins each name onto the list and takes the first hit, so
+        a more-read folder holding a same-named leftover must not lead: on a
+        production room the texture root (105 readers) held a 512 px atlas
+        from an earlier bake under the name the current 2048 px one carried in
+        its own folder (46 readers), and the GLB shipped the stale map through
+        the current rects."""
+        root = self._dir("sourceimages")
+        self._file("sourceimages", "Cab.exr")
+        # The exact name, so the shadow is real on any file system (there it
+        # differed in case alone, which a case-folding one joins the same).
+        self._file("sourceimages", "Room_Lightmap.exr", data=b"old")
+        current = self._file("sourceimages", "Room", "Room_Lightmap.exr", data=b"new")
+        refs = [(f"|c{i}", "Cab.exr", root) for i in range(3)]
+        refs += [
+            (f"|r{i}", "Room_Lightmap.exr", os.path.dirname(current)) for i in range(2)
+        ]
+        deps = FileDependencies.resolve(refs)
+        dirs = FileDependencies.search_dirs(deps, then=[root])
+
+        def first_hit(name):
+            return next(
+                os.path.join(d, name)
+                for d in dirs
+                if os.path.isfile(os.path.join(d, name))
+            )
+
+        self.assertTrue(self._same(first_hit("Room_Lightmap.exr"), current), dirs)
+        self.assertTrue(self._same(first_hit("Cab.exr"), os.path.join(root, "Cab.exr")))
+
+    def test_twins_that_shadow_each_other_keep_the_read_order_and_warn(self):
+        """Two maps each shadowed by the other's folder cannot both be first:
+        no folder order serves them, so the most-read order stands and says so."""
+        a, b = self._dir("a"), self._dir("b")
+        self._file("a", "X.exr")
+        self._file("a", "Y.exr")
+        self._file("b", "X.exr")
+        self._file("b", "Y.exr")
+        refs = [("|x1", "X.exr", a), ("|x2", "X.exr", a), ("|y", "Y.exr", b)]
+        deps = FileDependencies.resolve(refs)
+        with self.assertLogs(FileDependencies.logger, level="WARNING") as logs:
+            dirs = FileDependencies.search_dirs(deps)
+        self.assertTrue(self._same(dirs[0], a) and self._same(dirs[1], b), dirs)
+        self.assertIn("Y.exr", "\n".join(logs.output))
+
+    def test_each_folder_is_listed_once_and_only_hits_are_stated(self):
+        """The shadow check lists every folder once; a stat per dependency per
+        folder made a large scene's texture set cost thousands of probes."""
+        maps = self._dir("maps")
+        refs = []
+        for i in range(20):
+            self._file("maps", f"M{i}.exr")
+            refs.append((f"|m{i}", f"M{i}.exr", maps))
+        self._file("other", "M3.exr", data=b"stale twin")
+        host = [self._dir("other"), self._dir("tex")]
+        deps = FileDependencies.resolve(refs)
+        listed, stated = [], []
+        real_list, real_isfile = os.listdir, os.path.isfile
+
+        def listdir(path="."):
+            listed.append(os.path.normcase(os.path.abspath(path)))
+            return real_list(path)
+
+        def isfile(path):
+            stated.append(path)
+            return real_isfile(path)
+
+        with unittest.mock.patch("os.listdir", side_effect=listdir), unittest.mock.patch(
+            "os.path.isfile", side_effect=isfile
+        ):
+            dirs = FileDependencies.search_dirs(deps, then=host)
+        self.assertEqual(len(listed), len(set(listed)), listed)
+        self.assertEqual([os.path.basename(p) for p in stated], ["M3.exr"])
+        self.assertTrue(self._same(dirs[0], maps), dirs)
+
 
 class TestRelocate(_FilesCase):
     def test_plan_then_copy_newest_wins(self):
@@ -618,6 +807,183 @@ class TestResolveHints(_FilesCase):
         dirs = FileDependencies.search_dirs(deps, then=[gone, tex])
         self.assertEqual(len(dirs), 1, dirs)
         self.assertTrue(self._same(dirs[0], tex))
+
+
+class TestReferenceBytes(_FilesCase):
+    """The part of a file that can name another, read without its app: a Maya
+    ASCII scene's header, a ``.blend`` decompressed, anything else whole --
+    the scan a purge of derived files reads (hoisted from the DCC bake
+    stores, 2026-10-13)."""
+
+    def test_a_maya_ascii_scene_is_read_up_to_its_first_node(self):
+        path = self._file(
+            "a.ma",
+            data=b'file -r "x.ma";\nrequires maya;\ncreateNode t;\nfile -r "y";\n',
+        )
+        self.assertEqual(
+            FileDependencies.reference_bytes(path),
+            b'file -r "x.ma";\nrequires maya;\n',
+        )
+
+    def test_any_other_file_is_read_whole(self):
+        path = self._file("a.mb", data=b"FOR4\x00createNode bake.ma")
+        self.assertEqual(
+            FileDependencies.reference_bytes(path), b"FOR4\x00createNode bake.ma"
+        )
+
+    def test_a_raw_blend_is_read_as_it_is(self):
+        path = self._file("a.blend", data=b"BLENDER-v300lib.blend")
+        self.assertEqual(
+            FileDependencies.reference_bytes(path), b"BLENDER-v300lib.blend"
+        )
+
+    def test_a_gzip_blend_is_decompressed(self):
+        import gzip
+
+        path = self._file("a.blend", data=gzip.compress(b"BLENDER-v279lib.blend"))
+        self.assertEqual(
+            FileDependencies.reference_bytes(path), b"BLENDER-v279lib.blend"
+        )
+
+    def test_a_zstd_file_with_no_decoder_here_is_unreadable(self):
+        path = self._file("a.blend", data=b"\x28\xb5\x2f\xfd" + b"\x00" * 8)
+        with unittest.mock.patch.dict(
+            "sys.modules", {"compression": None, "zstandard": None}
+        ):
+            self.assertIsNone(FileDependencies.open_decompressed(path))
+            self.assertIsNone(FileDependencies.reference_bytes(path))
+
+    def test_a_zstd_file_reads_through_the_optional_zstandard(self):
+        """``compression.zstd`` (Python 3.14+) first, else ``zstandard``
+        (Blender bundles it), across frames -- Blender writes one per block."""
+        import io
+        import types
+
+        seen = {}
+
+        class _Decompressor:
+            def stream_reader(self, source, read_across_frames=False, closefd=True):
+                seen["across"] = read_across_frames
+                source.close()
+                return io.BytesIO(b"BLENDER-v400lib.blend")
+
+        fake = types.SimpleNamespace(ZstdDecompressor=_Decompressor)
+        path = self._file("a.blend", data=b"\x28\xb5\x2f\xfd" + b"\x00" * 8)
+        with unittest.mock.patch.dict(
+            "sys.modules", {"compression": None, "zstandard": fake}
+        ):
+            self.assertEqual(
+                FileDependencies.reference_bytes(path), b"BLENDER-v400lib.blend"
+            )
+        self.assertTrue(seen["across"])
+
+    def test_a_missing_file_is_unreadable(self):
+        self.assertIsNone(
+            FileDependencies.reference_bytes(os.path.join(self.tmp, "gone.ma"))
+        )
+
+    @staticmethod
+    def _corrupt_decoders():
+        """Stub ``compression.zstd`` and ``zstandard`` whose streams fail as a
+        corrupt frame does: with the module's own ``ZstdError``, an
+        ``Exception`` -- not an ``OSError`` -- in both real decoders."""
+        import types
+
+        def failing(error):
+            class _Stream:
+                def read(self, *a):
+                    raise error("Unknown frame descriptor")
+
+                def close(self):
+                    pass
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    self.close()
+
+            return _Stream()
+
+        class StdError(Exception):
+            pass
+
+        class ZstandardError(Exception):
+            pass
+
+        class _Decompressor:
+            def stream_reader(self, source, **kw):
+                source.close()
+                return failing(ZstandardError)
+
+        std = types.SimpleNamespace(
+            ZstdError=StdError, open=lambda path, mode: failing(StdError)
+        )
+        return {
+            "stdlib": {"compression": types.SimpleNamespace(zstd=std)},
+            "zstandard": {
+                "compression": None,
+                "zstandard": types.SimpleNamespace(
+                    ZstdDecompressor=_Decompressor, ZstdError=ZstandardError
+                ),
+            },
+        }
+
+    def test_a_corrupt_zstd_file_is_unreadable_not_an_error(self):
+        path = self._file("a.blend", data=b"\x28\xb5\x2f\xfd" + b"\x00" * 8)
+        for decoder, modules in self._corrupt_decoders().items():
+            with self.subTest(decoder), unittest.mock.patch.dict(
+                "sys.modules", modules
+            ):
+                self.assertIsNone(FileDependencies.reference_bytes(path))
+                self.assertIsNone(
+                    FileDependencies.scan_references(self.tmp, rb"lib", [".blend"])
+                )
+                with FileDependencies.open_decompressed(path) as stream:
+                    with self.assertRaises(OSError):
+                        stream.read(16)
+
+
+class TestScanReferences(_FilesCase):
+    """Every name a pattern finds in the files under a folder -- what still
+    reads a derived file -- or None when one of them cannot be read."""
+
+    PATTERN = rb"bk_cache_([a-z0-9]+)\."
+
+    def test_matches_from_every_listed_type_are_gathered(self):
+        self._file("s", "a.ma", data=b'file -r "bk_cache_one.ma";\ncreateNode t;\n')
+        self._file("s", "deep", "b.mb", data=b"\x00bk_cache_two.ma\x00")
+        self._file("s", "c.txt", data=b"bk_cache_three.ma")
+        self.assertEqual(
+            FileDependencies.scan_references(self.tmp, self.PATTERN, (".ma", ".mb")),
+            {"one", "two"},
+        )
+
+    def test_a_skipped_folder_is_not_entered(self):
+        self._file("cache", "a.ma", data=b"bk_cache_one.ma")
+        self._file("cache", "deep", "b.ma", data=b"bk_cache_two.ma")
+        self._file("s", "c.ma", data=b"bk_cache_three.ma")
+        self.assertEqual(
+            FileDependencies.scan_references(
+                self.tmp, self.PATTERN, (".ma",), skip=[os.path.join(self.tmp, "cache")]
+            ),
+            {"three"},
+        )
+
+    def test_a_folder_of_stale_copies_is_not_entered(self):
+        self._file(".git", "a.ma", data=b"bk_cache_one.ma")
+        self.assertEqual(
+            FileDependencies.scan_references(self.tmp, self.PATTERN, (".ma",)), set()
+        )
+
+    def test_an_unreadable_file_answers_none(self):
+        self._file("s", "a.ma", data=b"bk_cache_one.ma")
+        with unittest.mock.patch.object(
+            FileDependencies, "reference_bytes", return_value=None
+        ):
+            self.assertIsNone(
+                FileDependencies.scan_references(self.tmp, self.PATTERN, (".ma",))
+            )
 
 
 if __name__ == "__main__":

@@ -103,6 +103,35 @@ class TestSuccess(ScriptRunBase):
         self.assertTrue(seen["path"].endswith(".py"))
 
 
+class TestWorkingDirectory(ScriptRunBase):
+    """A child given no ``cwd`` inherited the caller's, so what a DCC drops
+    in its working directory (``mayaDiskCache_*``) landed wherever the caller
+    happened to be. It runs in a scratch folder of the run's own store now,
+    removed with it; an explicit ``cwd`` still wins."""
+
+    def _cwd_script(self):
+        return f"import os\nopen({self.artifact!r}, 'w').write(os.getcwd())\n"
+
+    def _child_cwd(self):
+        with open(self.artifact) as fh:
+            return os.path.normcase(os.path.realpath(fh.read()))
+
+    def test_no_cwd_runs_the_child_in_a_scratch_folder_removed_with_the_run(self):
+        from pythontk import TempArtifacts
+
+        self.run_script(self._cwd_script())
+        child = self._child_cwd()
+        self.assertTrue(TempArtifacts.contains(child), child)
+        self.assertNotEqual(child, os.path.normcase(os.path.realpath(os.getcwd())))
+        self.assertFalse(os.path.exists(child), "the scratch cwd outlived the run")
+
+    def test_an_explicit_cwd_wins(self):
+        self.run_script(self._cwd_script(), cwd=self.dir)
+        self.assertEqual(
+            self._child_cwd(), os.path.normcase(os.path.realpath(self.dir))
+        )
+
+
 class TestFailure(ScriptRunBase):
     def test_missing_artifact_raises_with_output_tail(self):
         script = "print('MARKER-42'); raise SystemExit(1)\n"
@@ -338,8 +367,8 @@ class TestNonAsciiScriptDir(unittest.TestCase):
         os.makedirs(self.dir)
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.artifact = os.path.join(self.dir, "out.json")
-        # TempArtifacts' default root -- where the runner writes its script.
-        patcher = mock.patch.object(tempfile, "tempdir", self.dir)
+        # The temp root -- where the runner writes its script.
+        patcher = mock.patch.dict(os.environ, {"PYTHONTK_TEMP_ROOT": self.dir})
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -364,7 +393,9 @@ class TestNonAsciiScriptDir(unittest.TestCase):
             result = ScriptRunner.run_script_to_artifact(
                 "mayapy", "pass", artifact=self.artifact
             )
-        self.assertIn(self.WORD, result.script_path)
+        # Under the folder named WORD -- spelled 8.3 where the volume keeps
+        # short names (the root is ANSI-safe), so ask for its long form.
+        self.assertIn(self.WORD, os.path.realpath(result.script_path))
         self.assertTrue(all(arg.isascii() for arg in seen["args"]), seen["args"])
         carried = json.loads(seen["env"][AppLauncher.PYTHON_ARGV_VAR])
         self.assertEqual(carried, [result.script_path])

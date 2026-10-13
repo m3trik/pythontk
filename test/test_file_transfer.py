@@ -373,6 +373,29 @@ class CopyFileTest(BaseTestCase):
         with self.assertRaises(FileNotFoundError):
             FileUtils.copy_file(os.path.join(self.src_dir, "nope.txt"), self.dst_dir)
 
+    def test_a_failed_copy_leaves_the_existing_file_whole(self):
+        """The copy lands in a ``.part`` promoted by one replace
+        (``atomic_write``): removing the target first and copying onto its
+        name left nothing -- or a truncated file -- when the copy failed."""
+        from unittest import mock
+
+        src = self._src("a.txt", "new")
+        existing = os.path.join(self.dst_dir, "a.txt")
+        with open(existing, "w") as f:
+            f.write("old")
+
+        def partial(source, target, *a, **k):
+            with open(target, "w") as f:
+                f.write("ne")
+            raise OSError(28, "No space left on device", target)
+
+        with mock.patch("shutil.copy2", side_effect=partial):
+            with self.assertRaises(OSError):
+                FileUtils.copy_file(src, self.dst_dir, overwrite=True)
+        with open(existing) as f:
+            self.assertEqual(f.read(), "old")
+        self.assertEqual(os.listdir(self.dst_dir), ["a.txt"], "a .part was left")
+
 
 if __name__ == "__main__":
     unittest.main()

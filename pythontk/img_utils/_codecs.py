@@ -368,25 +368,36 @@ class _ImgCodecInternal:
 
     @staticmethod
     def _cv2_temp_short() -> str:
-        """The temp folder OpenCV stages through, spelled short (8.3) in ASCII.
+        """The folder OpenCV stages through for a block, spelled in ASCII.
 
-        ``""`` when there is nothing to do: not Windows, a folder already
-        ASCII, or a volume that keeps no short names. Asks what OpenCV asks
-        (``GetTempPath``: ``TMP``, then ``TEMP``), not Python's
-        ``tempfile``, whose cached answer can name another folder.
+        A folder of the ecosystem temp root (``TempArtifacts("cv2_temp")``),
+        its 8.3 form where a component needs one (``AppLauncher.ansi_safe_path``,
+        the one short-name helper): a scratch file a crashed codec leaves is
+        then swept like any other temp entry, never stranded in the system
+        temp dir. ``""`` when there is nothing to do: not Windows, a temp folder
+        OpenCV can already open, or no ASCII spelling (a volume that keeps no
+        short names). Asks what OpenCV asks (``GetTempPath``: ``TMP``, then
+        ``TEMP``), not Python's ``tempfile``, whose cached answer can name
+        another folder.
         """
         if os.name != "nt":
             return ""
         import ctypes
 
-        kernel32 = ctypes.windll.kernel32
         buffer = ctypes.create_unicode_buffer(32768)
-        if not kernel32.GetTempPathW(len(buffer), buffer):
+        if not ctypes.windll.kernel32.GetTempPathW(len(buffer), buffer):
             return ""
-        temp = buffer.value
-        if temp.isascii() or not kernel32.GetShortPathNameW(temp, buffer, len(buffer)):
+        if buffer.value.isascii():
             return ""
-        return buffer.value if buffer.value.isascii() else ""
+        from pythontk.core_utils.app_launcher import AppLauncher
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        try:
+            folder = TempArtifacts("cv2_temp").dir_path(name="scratch")
+        except OSError:
+            return ""
+        safe = os.fspath(AppLauncher.ansi_safe_path(folder, ascii_only=True))
+        return safe if safe.isascii() else ""
 
     @staticmethod
     @contextmanager

@@ -1017,9 +1017,11 @@ class ImgUtils(
         file in the temp folder, opened by a narrow (ANSI) path. Under a temp
         folder whose path is not ASCII -- a Windows user named Zoë -- every
         EXR encode and decode failed, and HDR too once the name held a
-        character the code page lacks (``★``). The folder's short (8.3)
-        spelling names it in ASCII where the volume keeps short names; ``TMP``
-        and ``TEMP`` carry it for the block. Blocks open at once -- nested, or
+        character the code page lacks (``★``). ``TMP`` and ``TEMP`` name a
+        folder of the ecosystem temp root (:meth:`TempArtifacts.root`) for the
+        block, spelled in ASCII (its 8.3 form where the volume keeps short
+        names), so what a crashed codec leaves is swept like any temp entry.
+        Blocks open at once -- nested, or
         on other threads -- share the one swap, undone when the last ends.
         Anywhere else (not Windows, an ASCII temp folder, a volume without
         short names) it changes nothing.
@@ -3314,7 +3316,8 @@ class ImgUtils(
                     - 'suffix' (str): Output filename suffix (e.g. '_AO').
                     - 'invert' (bool, optional): Whether to invert the result.
                     - 'default' (int, optional): Default value (0-255) if channel missing.
-            output_dir (str, optional): Output directory. If None, uses source directory.
+            output_dir (str, optional): Output directory. If None, uses source directory
+                (an in-memory image has none: pass one, or ``save=False``).
             base_name (str, optional): Base name for output files. If None, derived from image path.
             save (bool): Whether to save to disk. Defaults to True.
             **kwargs: Additional arguments for Image.save().
@@ -3324,6 +3327,10 @@ class ImgUtils(
         Returns:
             Dict[str, str | Image.Image]: Dictionary mapping source channel keys to
             the resulting file path (if save=True) or PIL Image object (if save=False).
+
+        Raises:
+            ValueError: An in-memory image to save with no ``output_dir`` (never
+                the process's current directory).
         """
         return super().extract_channels(
             image_path, channel_config, output_dir, base_name, save, **kwargs

@@ -594,8 +594,8 @@ class _Fbx2GltfMixin:
             # does on any volume on Windows, whose rename refuses an existing
             # file -- so a disk-full or I/O error part way through a
             # multi-hundred-MB GLB left the deliverable truncated.
-            FileUtils.atomic_write(
-                dst_abs, lambda part: shutil.copyfile(produced, part)
+            FileUtils.copy_file(
+                produced, os.path.dirname(dst_abs), os.path.basename(dst_abs)
             )
         finally:
             converted.cleanup()

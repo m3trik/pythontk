@@ -1314,15 +1314,14 @@ class FileUtils(HelpMixin):
     def atomic_write_text(filepath: str, content: str, encoding: str = "utf-8") -> None:
         """Write text to a file atomically.
 
-        Writes to a temporary file in the same directory, then renames to the
-        target. The rename is atomic on POSIX and Windows (Python 3.3+ via
-        os.replace), so readers either see the old file or the complete new
-        file — never a partial write. This matters for cloud-synced
-        directories and for any file other processes may read while we're
-        writing.
-
-        Leaves no temp file behind on success. On failure (write error), the
-        temp file is removed and the original is untouched.
+        :meth:`atomic_write` with a text writer: the text goes to a ``.part``
+        beside the target, flushed to disk, then renamed onto it. The rename
+        is atomic on POSIX and Windows, so readers either see the old file or
+        the complete new file — never a partial write. This matters for
+        cloud-synced directories and for any file other processes may read
+        while we're writing. A write that fails leaves the target untouched
+        and takes its ``.part`` with it; one a killed process left behind is
+        swept, once stale, by a later write into the same folder.
 
         The result has the mode any write would give it: an existing file keeps
         its own, a new one gets ``0o666`` less the umask. ``tempfile`` creates
@@ -1331,50 +1330,37 @@ class FileUtils(HelpMixin):
         it readable by its owner alone.
 
         Parameters:
-            filepath (str): Destination path.
+            filepath (str): Destination path; its directory must exist.
             content (str): Text to write.
             encoding (str): Text encoding (default "utf-8").
+
+        Raises:
+            OSError: The write or the promotion failed (target unchanged).
         """
         import stat
-        import uuid
 
         filepath = os.fspath(filepath)
-        target_dir = os.path.dirname(os.path.abspath(filepath)) or "."
 
-        # Beside the target so os.replace stays on one filesystem; the flags are
-        # tempfile's own (binary at the fd, so text mode translates once).
-        flags = (
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_EXCL
-            | getattr(os, "O_BINARY", 0)
-            | getattr(os, "O_NOINHERIT", 0)
-        )
-        while True:
-            tmp_name = os.path.join(target_dir, f".{uuid.uuid4().hex[:12]}.tmp")
-            try:
-                fd = os.open(tmp_name, flags, 0o666)
-                break
-            except FileExistsError:
-                continue
-        try:
-            with os.fdopen(fd, "w", encoding=encoding) as tmp:
+        def write(part: str) -> None:
+            # Text mode, as the writer always was: "\n" lands as os.linesep.
+            with open(part, "w", encoding=encoding) as tmp:
                 tmp.write(content)
                 tmp.flush()
                 os.fsync(tmp.fileno())
             if os.name == "posix":
                 try:
-                    os.chmod(tmp_name, stat.S_IMODE(os.stat(filepath).st_mode))
+                    os.chmod(part, stat.S_IMODE(os.stat(filepath).st_mode))
                 except FileNotFoundError:
                     pass  # a new file keeps the umask'd mode it was created with
-            FileUtils.replace_file(tmp_name, filepath)
-        except BaseException:
-            # Best-effort cleanup; original target is untouched.
-            try:
-                os.remove(tmp_name)
-            except OSError:
-                pass
-            raise
+
+        FileUtils.atomic_write(filepath, write)
+
+    #: Seconds between two sweeps of one folder's stale ``.part`` files by
+    #: :meth:`atomic_write` in one process.
+    _ATOMIC_SWEEP_INTERVAL = 600.0
+    #: :meth:`atomic_write`'s temp store prefix: a dot name, hidden on POSIX
+    #: and skipped by every listing that skips dot files (``.atomic_<hex>.part``).
+    _ATOMIC_PREFIX = ".atomic"
 
     @staticmethod
     def atomic_write(
@@ -1382,8 +1368,10 @@ class FileUtils(HelpMixin):
     ) -> str:
         """Produce *target* through *write*, so no reader meets a partial file.
 
-        *write* is handed a sibling ``.part`` path and leaves the whole file
-        there however it likes -- a stream, a copy, a subprocess. Beside the
+        *write* is handed a sibling ``.atomic_<hex>.part`` path (a short dot
+        name, so the temp never costs a deep target its path budget) and
+        leaves the whole file there however it likes -- a stream, a copy, a
+        subprocess. Beside the
         target, so the ``os.replace`` that promotes it is a rename within one
         volume, atomic on POSIX and Windows: a reader sees the previous file or
         the complete new one. A raise inside *write* (disk full is the realistic
@@ -1397,9 +1385,10 @@ class FileUtils(HelpMixin):
 
         The ``.part`` is a :class:`TempArtifacts` allocation, so one stranded by
         a process that dies mid-write is swept, once stale, by a later write
-        into the same directory. That sweep scans the directory on every call,
-        which is why small text keeps its own writer, :meth:`atomic_write_text`:
-        a batch of sidecars saved into one folder would rescan it per file.
+        into the same directory -- at most once every few minutes per folder
+        in a process (``sweep_interval``), so a batch of sidecars saved into
+        one folder does not rescan it per file. :meth:`atomic_write_text` is
+        this, for text.
 
         Parameters:
             target: The file to produce or replace; its directory must exist.
@@ -1416,15 +1405,22 @@ class FileUtils(HelpMixin):
             Whatever *write* raises, and ``OSError`` from the promotion --
             *target* unchanged either way.
         """
+        import secrets
+
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
         target = os.fspath(target)
         scratch = TempArtifacts(
-            "atomic_write",
+            FileUtils._ATOMIC_PREFIX,
             policy="scoped",
             dir=os.path.dirname(os.path.abspath(target)),
+            sweep_interval=FileUtils._ATOMIC_SWEEP_INTERVAL,
         )
-        part = scratch.path(extension=".part")
+        # A short random name, not the store's full tag: the part spends the
+        # TARGET folder's path budget, and a deep target must not fail on its
+        # temp alone (Windows' 260). 48 random bits between writers of one
+        # folder in one moment.
+        part = scratch.path(extension=".part", name=secrets.token_hex(6))
         try:
             write(part)
             if promote:
@@ -1460,7 +1456,9 @@ class FileUtils(HelpMixin):
         import shutil
 
         try:
-            cls.atomic_write(destination, lambda part: shutil.copyfile(staged, part))
+            cls.copy_file(
+                staged, os.path.dirname(destination), os.path.basename(destination)
+            )
             return destination, None
         except OSError as e:
             reason = cls.describe_lock(destination) or str(e)
@@ -1491,6 +1489,11 @@ class FileUtils(HelpMixin):
     ) -> str:
         """Copies a file to a specified folder, ensuring the folder exists.
 
+        Atomic (:meth:`atomic_write`): the copy goes to a ``.part`` beside the
+        target and replaces it in one move, so a failed copy (disk full, an
+        I/O error) leaves an existing target whole and no partial file under
+        its name. Data and metadata, as ``shutil.copy2``.
+
         Parameters:
             file_path (str): Path to the file to be copied.
             destination (str): Target directory.
@@ -1512,12 +1515,12 @@ class FileUtils(HelpMixin):
         file_name = new_name or os.path.basename(file_path)
         destination_path = os.path.join(destination, file_name)
 
-        if os.path.exists(destination_path):
-            if not overwrite:
-                raise FileExistsError(f"File already exists: {destination_path}")
-            os.remove(destination_path)
+        if not overwrite and os.path.exists(destination_path):
+            raise FileExistsError(f"File already exists: {destination_path}")
 
-        shutil.copy2(file_path, destination_path)
+        FileUtils.atomic_write(
+            destination_path, lambda part: shutil.copy2(file_path, part)
+        )
         return destination_path
 
     @classmethod

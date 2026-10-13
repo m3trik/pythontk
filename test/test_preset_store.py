@@ -106,6 +106,30 @@ class PresetStoreTest(unittest.TestCase):
             PresetStore.sanitize_preset_name("a/b:c") + ".json",
         )
 
+    def test_a_listed_file_whose_name_sanitizes_differently_still_loads(self):
+        """``list()`` returns each file's stem as it is, so ``path()`` must find
+        that file: a shipped ``glTF 2.0.json`` listed as ``glTF 2.0`` resolved
+        to ``glTF 2_0.json`` and read as missing. Added: 2026-10-13"""
+        self._write(self.builtin, "glTF 2.0", {"x": 2})
+        self.assertIn("glTF 2.0", self.store.list())
+        self.assertEqual(self.store.source("glTF 2.0"), "builtin")
+        self.assertEqual(self.store.load("glTF 2.0")["x"], 2)
+        self.assertEqual(self.store.path("glTF 2.0", "builtin").name, "glTF 2.0.json")
+        # A name with no such file still maps to its sanitized stem.
+        self.assertEqual(self.store.path("v1.2", "user").name, "v1_2.json")
+
+    @unittest.skipUnless(os.name == "nt", "a drive-relative name is Windows'")
+    def test_a_drive_relative_name_never_leaves_the_store(self):
+        """``base / "D:evil.json"`` is ``D:evil.json`` on Windows -- the drive's
+        current folder, not the store -- so an existing file there won the
+        "file named as it is" lookup. Pre-release review 2026-10-13."""
+        from unittest import mock
+
+        with mock.patch.object(Path, "is_file", return_value=True):
+            got = self.store.path("D:evil", "user")
+        self.assertEqual(got.parent, Path(self.user))
+        self.assertEqual(got.name, PresetStore.sanitize_preset_name("D:evil") + ".json")
+
     # --- active pointer ------------------------------------------------------
     def test_active_round_trips_and_clears(self):
         self.assertIsNone(self.store.active)  # unset by default

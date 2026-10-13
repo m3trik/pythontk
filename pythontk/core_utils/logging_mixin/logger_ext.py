@@ -408,6 +408,8 @@ class LoggerExt:
         logger: internal_logging.Logger, handler_type: str, **kwargs
     ) -> None:
         """Add a handler to the logger, skipping if an equivalent one exists."""
+        if handler_type == "file" and not kwargs.get("filename"):
+            kwargs["filename"] = LoggerExt._default_log_file(logger)
         # Deduplicate: check for an existing handler of the same type
         # targeting the same widget / file / stream.
         target_widget = kwargs.get("widget")
@@ -417,7 +419,7 @@ class LoggerExt:
                 if getattr(existing, "widget", None) is target_widget:
                     return  # already attached
             elif handler_type == "file":
-                target_file = os.path.abspath(kwargs.get("filename", "logfile.log"))
+                target_file = os.path.abspath(kwargs["filename"])
                 if (
                     isinstance(existing, internal_logging.FileHandler)
                     and getattr(existing, "baseFilename", None) == target_file
@@ -437,7 +439,7 @@ class LoggerExt:
             handler = internal_logging.StreamHandler(stream=target_stream)
         elif handler_type == "file":
             handler = internal_logging.FileHandler(
-                kwargs.get("filename", "logfile.log"), encoding=LoggerExt.FILE_ENCODING
+                kwargs["filename"], encoding=LoggerExt.FILE_ENCODING
             )
         elif handler_type == "text_widget":
             handler_cls = LoggerExt._get_text_handler(logger)
@@ -464,10 +466,34 @@ class LoggerExt:
             logger.addHandler(handler)
 
     @staticmethod
+    def _default_log_file(logger: internal_logging.Logger) -> str:
+        """Where a file handler named no file writes: ``<logger name>.log`` in
+        the per-user cache's ``logs`` folder (:meth:`UserConfig.cache_dir
+        <pythontk.UserConfig.cache_dir>`), never the process's current
+        directory -- whatever folder the host happened to be in. One file per
+        logger, appended across runs, so it outlives a temp cleanup to be
+        read; resolved in the kernel (``core_utils``), which imports nothing
+        above it."""
+        import re
+
+        from pythontk.core_utils.user_config import UserConfig
+
+        name = re.sub(r"[^\w.-]+", "_", logger.name or "").strip("._") or "log"
+        return os.path.join(UserConfig.cache_dir("logs", create=True), f"{name}.log")
+
+    @staticmethod
     def _add_file_handler(
-        self, filename: str = "logfile.log", level: int = internal_logging.WARNING
+        self,
+        filename: Optional[str] = None,
+        level: int = internal_logging.WARNING,
     ) -> None:
-        """Add a file handler to the logger."""
+        """Add a file handler to the logger.
+
+        Parameters:
+            filename: The log file; default ``<logger name>.log`` in a temp
+                store (:meth:`_default_log_file`), never the current directory.
+            level: The handler's level.
+        """
         LoggerExt._add_handler(
             self, handler_type="file", filename=filename, level=level
         )

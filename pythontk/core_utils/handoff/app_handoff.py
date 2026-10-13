@@ -593,14 +593,13 @@ class HandoffBridge(LoggingMixin):
         rather than leaking forever.
         """
         store = self._run_scratch(request)
-        if store.policy != "scoped":
-            # Nothing deletes these, so a FIXED name is what keeps the folder
-            # from growing a generation per send -- each run overwrites its own.
-            return store.dir_path(name=name)
-        # A scoped run deletes its own, so it takes a unique ROOT instead: two
-        # hosts running at once must not share -- or delete -- one directory.
-        # The readable names live inside it, so a root kept after a failure
-        # still says what the run staged.
+        # Every run takes a unique ROOT, whatever its policy: two hosts running
+        # at once must not share -- or delete -- one directory, and a detached
+        # send must not rewrite the files an app launched by the last one is
+        # still reading (one FIXED folder per bridge did). Nothing deletes a
+        # detached root; the store's age sweep bounds the generations. The
+        # readable names live inside it, so a root kept after a failure still
+        # says what the run staged.
         root = request.extras.get(self._SCRATCH_ROOT_KEY)
         if root is None:
             root = store.dir_path()

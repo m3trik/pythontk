@@ -306,13 +306,6 @@ class TextureProcessor:
         # Generate output path (same convention output_path_for exposes)
         output_path = self.output_path_for(suffix, ext)
 
-        # Ensure output directory exists
-        try:
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Error creating output directory: {e}")
-
         # Check for dry run
         if self.config.get("dry_run", False):
             details = []
@@ -365,6 +358,13 @@ class TextureProcessor:
                     extra={"preset": "highlight"},
                 )
             return output_path
+
+        # Ensure output directory exists -- past the dry run, which writes nothing.
+        try:
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Error creating output directory: {e}")
 
         # Check if we can skip (only for file-based inputs)
         force = self.config.get("force", False)

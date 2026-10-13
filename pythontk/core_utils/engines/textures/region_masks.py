@@ -691,17 +691,25 @@ class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal):
         mask_path: str,
         manifest_path: Optional[str] = None,
         uv_channel: int = 0,
+        write_manifest: bool = False,
     ) -> RegionMaskManifest:
-        """Save the packed mask texture and its manifest sidecar.
+        """Save the packed mask texture; return its manifest.
+
+        The manifest is returned, not written: a DCC publishes it through its
+        scene records and export metadata, and a ``.json`` beside the mask in
+        the user's texture folder was read by nothing. Ask for the file
+        explicitly when a consumer needs one (:meth:`RegionMaskManifest.load`
+        reads it).
 
         Parameters:
             mask_path: Output image path (extension selects the format).
-            manifest_path: Manifest JSON path; defaults to the mask path
-                with a ``.json`` extension.
+            manifest_path: Also write the manifest JSON here.
             uv_channel: Game-engine UV channel the mask is sampled with.
+            write_manifest: Also write the manifest JSON, beside the mask with
+                a ``.json`` extension unless *manifest_path* names the file.
 
         Returns:
-            The written :class:`RegionMaskManifest`.
+            The :class:`RegionMaskManifest`.
         """
         if Image is None:
             raise RuntimeError(
@@ -712,12 +720,14 @@ class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal):
         manifest = RegionMaskManifest.channels(
             self._groups, mask_path, self.resolution, uv_channel=uv_channel
         )
-        if manifest_path is None:
-            manifest_path = os.path.splitext(mask_path)[0] + ".json"
-        manifest.save(manifest_path)
+        written = [os.path.basename(mask_path)]
+        if write_manifest or manifest_path is not None:
+            if manifest_path is None:
+                manifest_path = os.path.splitext(mask_path)[0] + ".json"
+            manifest.save(manifest_path)
+            written.append(os.path.basename(manifest_path))
         self.logger.info(
-            f"Wrote {os.path.basename(mask_path)} + "
-            f"{os.path.basename(manifest_path)} "
+            f"Wrote {' + '.join(written)} "
             f"({len(self._groups)} group(s), {self.resolution}px)."
         )
         return manifest

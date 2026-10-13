@@ -1037,6 +1037,65 @@ class MergeTakesTestCase(unittest.TestCase):
                 FbxFile._evaluate_curve(curve, round(frame * FRAME)), frame * 0.5
             )
 
+    #: Maya's computed tangents as its exporter writes them: cubic keys whose
+    #: slopes the importer recomputes from the neighbouring keys.
+    COMPUTED = {
+        "spline": CUBIC | AUTO | TIME_INDEPENDENT,
+        "clamped": CUBIC | AUTO | TIME_INDEPENDENT | CLAMP,
+        "auto": CUBIC | AUTO | TIME_INDEPENDENT | CLAMP_PROGRESSIVE,
+    }
+
+    def test_each_take_plays_its_own_tangents_beside_a_boundary(self):
+        """Bug (review 2026-10-12): a take's last key and the next take's first
+        key are end keys alone, and merged each gained the other as its
+        neighbour, so the importer recomputed their tangents and every edge
+        segment changed shape -- auto tangents, take A at 7.5 played 8.19
+        alone and 6.32 merged.
+        Fixed: 2026-10-13 -- each key whose neighbours the merge changed is
+        written with the slopes it plays alone (a user tangent, broken where
+        its sides differ)."""
+        a = [(1, 0.0), (4, 6.0), (8, 2.0), (10, 9.0)]
+        b = [(14, 1.0), (17, 9.0), (20, 3.0)]
+        layouts = {"gap": (a, b), "seam": (a, [(10, 9.0)] + b)}
+        sampled = 0
+        for kind, flag in self.COMPUTED.items():
+            for layout, (keys_a, keys_b) in layouts.items():
+
+                def spec(keys):
+                    data = [(0.0, 0.0, packed_weights(), 0.0)] * len(keys)
+                    return {"keys": keys, "flags": [flag] * len(keys), "data": data}
+
+                src = self._src(
+                    {"A": {self.T: spec(keys_a)}, "B": {self.T: spec(keys_b)}}
+                )
+                out = os.path.join(self.dir, f"merged_{kind}_{layout}.fbx")
+                FbxMedia.merge_takes(src, out)
+                alone = {
+                    take["name"]: next(iter(take["channels"].values()))["curve"]
+                    for take in FbxFile.load(src)._take_model()["takes"]
+                }
+                # The key-by-key union (overlapping takes) settles alike.
+                self.assertEqual(
+                    FbxFile._union_curves([alone["A"], alone["B"]]),
+                    FbxFile._interleave_curves([alone["A"], alone["B"]]),
+                )
+                model = FbxFile.load(out)._take_model()
+                merged = next(iter(model["takes"][0]["channels"].values()))["curve"]
+                union = sorted({f for f, _v in keys_a + keys_b})
+                self.assertEqual(merged.times, [f * FRAME for f in union])
+                for take, keys in (("A", keys_a), ("B", keys_b)):
+                    first, last = keys[0][0], keys[-1][0]
+                    for step in range(int((last - first) * 4) + 1):
+                        ticks = round((first + step / 4) * FRAME)
+                        self.assertAlmostEqual(
+                            FbxFile._evaluate_curve(merged, ticks),
+                            FbxFile._evaluate_curve(alone[take], ticks),
+                            delta=1e-4,
+                            msg=(kind, layout, take, first + step / 4),
+                        )
+                        sampled += 1
+        self.assertGreater(sampled, 300)
+
     def test_disagreeing_takes_raise_naming_take_channel_and_frame(self):
         src = self._src(
             {
@@ -1550,28 +1609,39 @@ class DropApparatusTestCase(unittest.TestCase):
         self.assertFalse(os.path.exists(out))
 
 
-def build_carrier_fbx(path: str, channels, media=None, definitions=True) -> str:
+def build_carrier_fbx(
+    path: str, channels, media=None, definitions=True, others=None
+) -> str:
     """An FBX shaped like a Scene Exporter's: a mesh, a ``data_export`` carrier
     holding *channels* ``{record key: payload}`` as user properties, and the
     material media *media* ``{name: bytes}`` (each Video wired to a Texture).
-    *definitions* writes the ``Definitions`` counts the SDK writes."""
-    props = [
-        ("P", [key.encode(), b"KString", b"", b"U", json.dumps(value).encode()], [])
-        for key, value in channels.items()
+    *definitions* writes the ``Definitions`` counts the SDK writes. *others*
+    ``{carrier name: channels}`` are further carriers written AHEAD of the
+    scene's own (a module's ``NS:data_export``, a stray ``data_export1``)."""
+
+    def carrier(uid, name, held):
+        props = [
+            ("P", [k.encode(), b"KString", b"", b"U", json.dumps(v).encode()], [])
+            for k, v in held.items()
+        ]
+        label = name.encode() + b"\x00\x01Model"
+        return ("Model", [uid, label, b"Null"], [("Properties70", [], props)])
+
+    extra = [
+        carrier(2001 + i, name, held)
+        for i, (name, held) in enumerate((others or {}).items())
     ]
     objects = [
         ("Model", [1001, b"Crate\x00\x01Model", b"Mesh"], []),
-        (
-            "Model",
-            [1002, b"data_export\x00\x01Model", b"Null"],
-            [("Properties70", [], props)],
-        ),
+        *extra,
+        carrier(1002, "data_export", channels),
     ]
     media_objects, media_connections = _media_records(media or {})
     objects += media_objects
     connections = [
         ("C", [b"OO", 1001, 0], []),
         ("C", [b"OO", 1002, 0], []),
+        *(("C", [b"OO", record[1][0], 0], []) for record in extra),
     ] + media_connections
     roots = []
     if definitions:
@@ -1715,6 +1785,27 @@ class EmbedTestCase(unittest.TestCase):
             ["Room_Lightmap.exr", "Lamp_Lightmap.exr", "Room_Probe.exr"],
         )
         self.assertEqual(FbxMedia.dependencies(other), ["Old.exr"])
+
+    def test_the_scenes_own_carrier_names_a_file_before_any_other(self):
+        """Names compare without case, so the first carrier read spells a name
+        for all: a stray ``data_export1`` (an older manifest an import left)
+        written ahead of the scene's own named ``Room_LightMap.exr``, and the
+        embed resolved THAT spelling -- on a case-folding volume, the stale
+        same-named atlas the scene had stopped reading. The scene's own
+        carrier is read first, as the GLB applier reads it."""
+        stale = {
+            "version": 1,
+            "objects": [{"name": "Crate", "map": "ROOM_LIGHTMAP.exr"}],
+        }
+        path = build_carrier_fbx(
+            os.path.join(self.dir, "stray.fbx"),
+            {"lightmap_metadata": self.LIGHTMAPS},
+            others={"data_export1": {"lightmap_metadata": stale}},
+        )
+        self.assertEqual(
+            FbxMedia.dependencies(path),
+            ["Room_Lightmap.exr", "Lamp_Lightmap.exr", "Room_Probe.exr"],
+        )
 
     def test_embed_adds_each_file_as_media_named_by_its_file_name(self):
         out = os.path.join(self.dir, "out.fbx")

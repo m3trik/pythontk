@@ -463,14 +463,21 @@ class _FbxMediaInternal:
     def _channel_payloads(cls, roots: Iterable[_Record], key: str) -> Iterator[Any]:
         """Every Model's user property *key*, JSON-decoded -- one per carrier
         (a referenced module ships its own). A blank or malformed value is
-        skipped."""
+        skipped. The scene's own carrier (``data_export``) comes first, the
+        rest in file order -- the GLB applier's precedence
+        (``MeshConvert._data_export_carrier``): a caller that de-duplicates
+        names without case keeps the FIRST spelling, and a stray carrier's
+        stale one bound the stale file of that name."""
         wanted = key.encode("utf-8")
+        found: List[Tuple[bool, Any]] = []
         for root in roots:
             if root.name != b"Objects":
                 continue
             for record in root.children:
                 if record.name != b"Model":
                     continue
+                head = cls._scalars(record)
+                name = FbxFile._display_name(head[1]) if len(head) > 1 else None
                 for child in record.children:
                     if child.name != b"Properties70":
                         continue
@@ -482,9 +489,13 @@ class _FbxMediaInternal:
                         if not isinstance(value, bytes) or not value.strip():
                             continue
                         try:
-                            yield json.loads(value.decode("utf-8"))
+                            payload = json.loads(value.decode("utf-8"))
+                            found.append((name == "data_export", payload))
                         except (ValueError, UnicodeDecodeError):
                             continue
+        found.sort(key=lambda item: not item[0])  # stable: own first
+        for _own, payload in found:
+            yield payload
 
     @staticmethod
     def _field_values(payload: Any, path: Sequence[str]) -> Iterator[Any]:
@@ -1639,7 +1650,8 @@ class FbxMedia(_FbxMediaInternal):
         action. So the file is made a one-take file first, and imported once.
 
         Every key of every merged take stays at its stored time with its
-        stored value, flags and slopes; a time two takes both key (a gap-0
+        stored value, flags and slopes (a computed tangent beside a boundary
+        aside, below); a time two takes both key (a gap-0
         seam) is kept once. Each channel lands on the kept take's curve -- the
         file's current take when it is merged, else the first merged take --
         and a channel, curve node or layer only a later take has is re-wired
@@ -1649,11 +1661,12 @@ class FbxMedia(_FbxMediaInternal):
         other stack goes with everything only it owns (:meth:`drop_takes`).
         Geometry, materials and media are copied byte for byte. Between two
         takes' keys -- frames no take keys -- the curve interpolates as the
-        earlier take's last key says. Known limit: a tangent Maya computes on
-        import (spline, clamped, auto) at a take boundary is computed with
-        the other take's key as its neighbour, so sub-frame playback beside
-        the boundary can differ from the take alone; keys, and a per-frame
-        bake's whole frames, do not.
+        earlier take's last key says. A key whose tangent the importer
+        computes from its neighbours (Maya's spline, clamped, auto) and whose
+        neighbours the merge changed -- a take's end key, the next take's
+        first beside it -- is written as a user tangent carrying the slopes
+        it plays in its own take (broken at a seam whose sides differ), so
+        each take plays as it does alone, between frames too.
 
         A single-take or covered file needs no merge (``take_layout`` says
         so); merging one take only renames it -- its layer too, where the

@@ -705,10 +705,16 @@ class TestExecutionMonitor(BaseTestCase):
         ``execution_monitor_`` prefix namespace so a crash leftover (the
         watchdog killed us, so no ``finally`` ran) is reclaimed by the next
         run's stale sweep instead of leaking forever."""
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
         with tempfile.TemporaryDirectory() as td:
-            with patch("tempfile.gettempdir", return_value=td):
+            with patch.dict(os.environ, {TempArtifacts.ROOT_ENV_VAR: td}):
                 p = ExecutionMonitor._default_heartbeat_path("a/b:{c}\\d")
-                self.assertEqual(os.path.dirname(p), td)
+                # The store's own folder under the temp root.
+                self.assertEqual(
+                    os.path.normcase(os.path.dirname(p)),
+                    os.path.normcase(os.path.join(td, "execution_monitor")),
+                )
                 self.assertTrue(os.path.basename(p).startswith("execution_monitor_"), p)
                 self.assertIn(f"hb_{os.getpid()}.txt", p)
                 self.assertNotIn("/", os.path.basename(p))

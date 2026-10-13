@@ -3891,13 +3891,39 @@ class PreviewSnapshotTestCase(unittest.TestCase):
     def test_an_unwritable_deliverable_folder_falls_back_to_the_serve_root(self):
         """An External GLB on a read-only share: the still cannot sit beside
         it, so it goes where the page can collect it -- still named for it."""
-        self._publish()
-        with unittest.mock.patch.object(PreviewServer, "_writable", return_value=False):
+        source = self._publish()
+        real = Path.write_bytes
+
+        def refuse(path, data):
+            if path.parent == source.parent:
+                raise PermissionError(13, "a read-only share", str(path))
+            return real(path, data)
+
+        with unittest.mock.patch.object(Path, "write_bytes", refuse):
             report = self._post(_png())
         self.assertEqual(Path(report["output"]).parent, self.root)
         self.assertEqual(report["name"], "cube_view_001.png")
         self.assertTrue(report["in_serve_root"])
         self.assertEqual(report["url"], "cube_view_001.png")
+
+    def test_placing_a_still_writes_no_probe_into_the_users_folder(self):
+        """Whether the deliverable's folder takes a still was asked by creating
+        a throwaway temp file in it: a create and a delete in the user's own
+        folder, which a sync client picks up. Writing the still is the test."""
+        import tempfile as _tempfile
+
+        source = self._publish()
+        real = _tempfile.NamedTemporaryFile
+        probed = []
+
+        def spy(*args, **kwargs):
+            probed.append(kwargs.get("dir"))
+            return real(*args, **kwargs)
+
+        with unittest.mock.patch("tempfile.NamedTemporaryFile", side_effect=spy):
+            report = self._post(_png())
+        self.assertEqual(Path(report["output"]).parent, source.parent)
+        self.assertNotIn(source.parent, [Path(p) for p in probed if p])
 
     def test_a_failed_write_leaves_nothing_beside_the_deliverable(self):
         """The folder is the user's: a write that fails part way must not leave
