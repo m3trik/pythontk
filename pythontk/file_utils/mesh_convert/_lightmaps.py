@@ -104,17 +104,29 @@ class _LightmapsMixin:
         alone, a natively exported deliverable looked unlit to every reader but
         the viewer.
         """
+        found = cls._lightmap_web_slot(gltf)
+        return found[1] if found else None
+
+    @classmethod
+    def _lightmap_web_slot(
+        cls, gltf: dict
+    ) -> Optional[Tuple[dict, Dict[str, Any], bool]]:
+        """Where :meth:`_lightmap_web_manifest` finds the manifest, for a pass
+        that writes it back in place: ``(holder, manifest, as_string)`` -- the
+        extras dict holding it, the manifest parsed, and whether it is stored
+        as a JSON string -- or ``None``."""
         scenes = gltf.get("scenes") or []
         first = scenes[0] if scenes and isinstance(scenes[0], dict) else {}
         for holder in (first.get("extras"), gltf.get("extras")):
             raw = holder.get(cls.LIGHTMAP_WEB_KEY) if isinstance(holder, dict) else None
+            web = raw
             if isinstance(raw, str):
                 try:
-                    raw = json.loads(raw)
+                    web = json.loads(raw)
                 except ValueError:
                     continue  # the viewer keeps looking too
-            if isinstance(raw, dict):
-                return raw
+            if isinstance(web, dict):
+                return holder, web, isinstance(raw, str)
         return None
 
     @classmethod
@@ -721,8 +733,69 @@ class _LightmapsMixin:
         }
 
     @classmethod
+    def embed_glb_lightmap_probe(
+        cls,
+        glb: GlbTarget,
+        probe: Dict[str, Any],
+        search_dirs: Sequence[str],
+        hdr_codec: Any = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Embed a bake's reflection probe in a GLB that ships its lightmaps; its entry, or ``None``.
+
+        The native-export twin of what :meth:`apply_glb_lightmaps` does as it
+        binds: a host whose own exporter wrote the ``lightmap_web`` manifest
+        (blendertk's ``LightmapWebExport``) embeds the probe AFTER the export,
+        since the view it rides exists only once the file does. *probe* is the
+        bake manifest's ``probe`` record (``LightmapRecords.probe``); its file
+        is found by name in *search_dirs*, embedded whole and published as the
+        manifest's ``probe`` (:meth:`_embed_lightmap_probe`) wherever the file
+        keeps ``lightmap_web`` -- the first scene's extras, as a JSON string,
+        or the root's -- the place the viewer reads it from. A GLB with no
+        ``lightmap_web`` is left as found: nothing in it binds a lightmap, so
+        nothing would read a probe. One whose manifest carries a probe already
+        keeps it (idempotent).
+
+        Parameters:
+            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
+            probe: ``{"map", "position", "box", "unit_scale"}``.
+            search_dirs: Folders to find the probe's file in, in priority order.
+            hdr_codec: The host's HDR codec (see :meth:`apply_glb_lightmaps`);
+                its ``encode_hdr_radiance`` encodes the probe.
+
+        Returns:
+            The ``lightmap_web`` entry embedded, or ``None`` (logged when the
+            file has a manifest but the probe could not be embedded).
+        """
+        with cls.open_glb(glb) as edit:
+            # The viewer's order: the first scene's extras, then the root's.
+            found = cls._lightmap_web_slot(edit.gltf)
+            if found is None:
+                return None
+            holder, web, as_string = found
+            embedded = web.get("probe")
+            if isinstance(embedded, dict) and isinstance(
+                embedded.get("bufferView"), int
+            ):
+                # Embedded already (an export that runs it twice): a second
+                # copy would only orphan the first's bytes.
+                return embedded
+            entry = cls._embed_lightmap_probe(
+                edit, {"probe": probe}, list(search_dirs), hdr_codec=hdr_codec
+            )
+            if not entry:
+                return None
+            web["probe"] = entry
+            holder[cls.LIGHTMAP_WEB_KEY] = json.dumps(web) if as_string else web
+            edit.dirty = True
+            return entry
+
+    @classmethod
     def _embed_lightmap_probe(
-        cls, edit: GlbEdit, manifest: Dict[str, Any], dirs: Sequence[str]
+        cls,
+        edit: GlbEdit,
+        manifest: Dict[str, Any],
+        dirs: Sequence[str],
+        hdr_codec: Any = None,
     ) -> Optional[Dict[str, Any]]:
         """Embed the manifest's reflection probe; its ``lightmap_web`` entry, or ``None``.
 
@@ -739,7 +812,9 @@ class _LightmapsMixin:
         carries them in metres, the GLB's own space.
 
         A probe that cannot be found or read is warned and left out: the file
-        still ships its lightmaps, and a viewer lights it as before.
+        still ships its lightmaps, and a viewer lights it as before. The bytes
+        come from *hdr_codec*'s ``encode_hdr_radiance`` (default
+        :class:`ImgUtils`; see :meth:`apply_glb_lightmaps`).
         """
         probe = manifest.get("probe")
         if not isinstance(probe, dict) or not probe.get("map"):
@@ -777,8 +852,8 @@ class _LightmapsMixin:
         from pythontk.img_utils._img_utils import ImgUtils
 
         try:
-            raw = ImgUtils.encode_hdr_radiance(path)
-        except (ImportError, ValueError) as error:
+            raw = (hdr_codec or ImgUtils).encode_hdr_radiance(path)
+        except (ImportError, ValueError, OSError) as error:
             logger.warning("Reflection probe %r not encoded: %s", basename, error)
             return None
         views = cls._append_bin_views(edit, [raw])
@@ -808,6 +883,57 @@ class _LightmapsMixin:
         return entry
 
     @classmethod
+    def strip_glb_baked_lights(cls, glb: GlbTarget) -> List[str]:
+        """Drop every ``KHR_lights_punctual`` light from a lightmapped GLB.
+
+        A lightmap already holds every light in the scene -- the bake renders
+        all of them -- so a light that also ships is counted twice, and the
+        second time without a shadow: twelve bake spots reached a
+        moody room's GLB through a saved FBX preset with lights on, and the
+        floor under the table read 3x its baked value in WebXR (2026-10-16).
+        Self-feeding like the lightmap pass: a GLB with no ``lightmap_web``
+        manifest (wherever the viewer finds one, :meth:`_lightmap_web_manifest`)
+        keeps its lights, which are then its only lighting.
+
+        Returns:
+            The names of the nodes that carried a light, in file order.
+        """
+        with cls.open_glb(glb) as edit:
+            gltf = edit.gltf
+            if not cls._lightmap_web_manifest(gltf):
+                return []
+            key = "KHR_lights_punctual"
+            carried = []
+            for index, node in enumerate(gltf.get("nodes") or []):
+                extensions = node.get("extensions")
+                if isinstance(extensions, dict) and key in extensions:
+                    del extensions[key]
+                    if not extensions:
+                        del node["extensions"]
+                    carried.append(str(node.get("name") or index))
+            root = gltf.get("extensions")
+            declared = isinstance(root, dict) and key in root
+            if declared:
+                del root[key]
+                if not root:
+                    del gltf["extensions"]
+            for field in ("extensionsUsed", "extensionsRequired"):
+                if key in (gltf.get(field) or []):
+                    gltf[field] = [e for e in gltf[field] if e != key]
+                    if not gltf[field]:
+                        del gltf[field]
+            if not (carried or declared):
+                return []
+            edit.dirty = True
+            logger.info(
+                "Baked lights: %d light node(s) dropped from the lightmapped GLB "
+                "-- their light is already in the lightmaps (%s).",
+                len(carried),
+                ", ".join(carried[:8]) + (" ..." if len(carried) > 8 else ""),
+            )
+            return carried
+
+    @classmethod
     def apply_glb_lightmaps(
         cls,
         glb: GlbTarget,
@@ -815,6 +941,7 @@ class _LightmapsMixin:
         carrier: str = "occlusion",
         percentile: Optional[float] = None,
         replace_authored: bool = True,
+        hdr_codec: Any = None,
     ) -> List[Dict[str, Any]]:
         """Wire a host DCC's committed lightmaps into a GLB for the web viewer.
 
@@ -858,8 +985,9 @@ class _LightmapsMixin:
                 directory.
             carrier: ``"occlusion"`` (default) or ``"emissive"`` -- which material
                 slot carries the map (mirror of blendertk's ``CARRIERS``).
-            percentile: Encode divisor percentile
-                (default :attr:`ImgUtils.HDR_WEB_PERCENTILE`).
+            percentile: Divide each map by this percentile of its lit values
+                instead of its capped peak (see
+                :meth:`ImgUtils.encode_hdr_pixels_for_web`).
             replace_authored: Whether a map already sitting in the carrier slot
                 gives way to the lightmap. ``True`` (default) displaces it with
                 a warning -- a bake IS the deliverable, and its occlusion term
@@ -870,6 +998,15 @@ class _LightmapsMixin:
                 (:meth:`set_glb_metallic_roughness`, or FBX2glTF's converted
                 packing), whose R channel the bake already contains -- so it is
                 displaced silently regardless.
+            hdr_codec: What encodes the float images: an object with
+                :class:`ImgUtils`' two HDR encoders --
+                ``encode_hdr_for_web(path, percentile) -> (png_bytes, scalar)``
+                for each lightmap and ``encode_hdr_radiance(path) -> bytes``
+                for the probe. ``None`` is :class:`ImgUtils`, whose only
+                float-image codec is cv2; a host whose Python has none
+                (Blender's) hands its own image writer
+                (blendertk's ``LightmapWebExport``) -- without it every map
+                was warned "not encoded" and the GLB shipped unlit.
 
         **Per-instance atlas rects travel as glTF-standard ``KHR_texture_transform``.**
         A manifest record with a non-identity ``scaleOffset`` (an instance's patch of a
@@ -1053,7 +1190,9 @@ class _LightmapsMixin:
                 """*src* encoded for the web -- once per map."""
                 if src not in encodes:
                     try:
-                        encodes[src] = ImgUtils.encode_hdr_for_web(src, percentile)
+                        encodes[src] = (hdr_codec or ImgUtils).encode_hdr_for_web(
+                            src, percentile
+                        )
                     except (ImportError, ValueError) as error:
                         logger.warning(
                             "Lightmap %r not encoded: %s", os.path.basename(src), error
@@ -1424,8 +1563,17 @@ class _LightmapsMixin:
                     "encoding": "srgb",
                     "materials": web_materials,
                 }
-                probe = cls._embed_lightmap_probe(edit, manifest, dirs)
+                probe = cls._embed_lightmap_probe(
+                    edit, manifest, dirs, hdr_codec=hdr_codec
+                )
                 if probe:
+                    # The bake's lights reach the file as highlights drawn into
+                    # copies of the probe, never as lights (_highlights.py).
+                    highlights = cls._embed_highlight_probes(
+                        edit, probe, list(web_materials), manifest.get("lights")
+                    )
+                    if highlights:
+                        probe["highlights"] = highlights
                     web_manifest["probe"] = probe
                 edit.gltf.setdefault("extras", {})[cls.LIGHTMAP_WEB_KEY] = web_manifest
                 # The maps are in the file now, so the authoring-path hints that

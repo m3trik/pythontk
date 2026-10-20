@@ -34,12 +34,22 @@
 //     wall reflects where it stands rather than as if infinitely far. A probe
 //     with no box (an open scene) is read as distant. Diffuse irradiance is
 //     read along the normal unprojected, as runtimes do.
+//
+// And the bake's lights, as highlights. A light on the probe's box reflects
+// where it hangs; one hanging inside the room (over a bench) is read as if it
+// hung on the wall behind it, so the probe ships COPIES of itself for groups of
+// receivers, each with the lights drawn in where box projection shows them true
+// for that group (MeshConvert._embed_highlight_probes, `probe.highlights`). A
+// copy is the probe plus its layer, prefiltered like the probe, and its
+// materials read it as their own envMap -- one lookup, as every other material
+// reads the probe, so the highlights cost no shader work. The room's shell
+// reads the probe as captured.
 
 import * as THREE from 'three';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { materialsOf } from './model.js';
 import { LIGHTMAPS } from './records.js';
-import { onBeforeDraw, prefilter, readExtras } from './scene.js';
+import { onBeforeDraw, policy, prefilter, readExtras, renderer } from './scene.js';
 
 // Both edits land in three.js 0.169's `envmap_physical_pars_fragment` chunk, on
 // the two lines that turn a view-space direction into the world direction the
@@ -114,6 +124,12 @@ let facts = null;
 let boxed = false;
 let on = true;
 const patched = new Set();
+// The highlight copies while a probe is loaded: material name -> its copy's
+// prefiltered target, and the targets themselves. `copied` holds each
+// material's own envMap and level from before its copy went on.
+let copyOf = new Map();
+let copyTargets = [];
+const copied = new Map();
 // material -> its own onBeforeCompile and cache key from before the probe's
 // edit (undefined: none, the prototype's), what unpatchProbeShader restores.
 // Not on the material's userData, which three.js clones and serializes.
@@ -131,9 +147,16 @@ export function probeTarget() {
   return target;
 }
 
+// The highlight copies' prefiltered targets while a probe is loaded, on or
+// off -- GPU memory beside the probe's own (`viewer.environment.maps`).
+export function probeCopies() {
+  return copyTargets;
+}
+
 // What the loaded probe is, or null: `{on, width, height, bytes, bufferView,
-// position, box, decodeMs, prefilterMs}` -- `position` and `box` (`{min, max}`,
-// null when it is read as distant) in the file's metres.
+// position, box, copies, decodeMs, prefilterMs}` -- `position` and `box`
+// (`{min, max}`, null when it is read as distant) in the file's metres,
+// `copies` how many highlight copies it carries.
 export function probeState() {
   return facts ? { on, ...facts } : null;
 }
@@ -196,10 +219,37 @@ function applySwitch() {
       unpatchProbeShader(material);
     }
   }
+  syncProbeCopies();
   uniforms.probeBoxed.value = on && boxed ? 1 : 0;
   if (on && root) {
     root.updateMatrixWorld(true);
     uniforms.probeWorldToModel.value.copy(root.matrixWorld).invert();
+  }
+}
+
+// Each material a highlight copy names reads it as its own envMap while the
+// probe is up -- at the probe's level, as scene.environment plays the probe
+// (re-applied with the lighting policy: applyLighting) -- and its own envMap
+// again otherwise.
+export function syncProbeCopies() {
+  for (const material of patched) {
+    const copy = on ? copyOf.get(material.name) : null;
+    if (copy) {
+      if (!copied.has(material)) {
+        copied.set(material, { envMap: material.envMap, envMapIntensity: material.envMapIntensity });
+      }
+      if (material.envMap !== copy.texture) {
+        material.envMap = copy.texture;
+        material.needsUpdate = true;
+      }
+      material.envMapIntensity = policy.probeIntensity;
+    } else if (copied.has(material)) {
+      const own = copied.get(material);
+      material.envMap = own.envMap;
+      material.envMapIntensity = own.envMapIntensity;
+      copied.delete(material);
+      material.needsUpdate = true;
+    }
   }
 }
 
@@ -219,9 +269,14 @@ export function setProbeOn(state) {
 // back on the next applyLighting. The next probe starts on: each load shows
 // the deliverable as it ships.
 export function releaseProbe() {
+  on = false;
+  syncProbeCopies();
   for (const material of patched) unpatchProbeShader(material);
   patched.clear();
   if (target) target.dispose();
+  for (const copy of copyTargets) copy.dispose();
+  copyTargets = [];
+  copyOf = new Map();
   target = null;
   root = null;
   facts = null;
@@ -240,32 +295,50 @@ export function releaseProbe() {
 export async function loadProbe(gltf, issues = []) {
   const entry = readExtras(gltf, LIGHTMAPS.webKey)?.probe;
   if (!entry || !Number.isInteger(entry.bufferView)) return null;
+  const layers = (entry.highlights?.copies || []).filter((copy) => Number.isInteger(copy.bufferView));
+  // A probe with highlight copies is decoded at full float: each copy is the
+  // probe plus its layer, summed here before it is prefiltered.
+  const type = layers.length ? THREE.FloatType : THREE.HalfFloatType;
   const decoding = performance.now();
   let parsed;
   try {
     const bytes = await gltf.parser.getDependency('bufferView', entry.bufferView);
-    parsed = new RGBELoader().setDataType(THREE.HalfFloatType).parse(bytes);
+    parsed = new RGBELoader().setDataType(type).parse(bytes);
   } catch (error) {
     issues.push({ level: 'warning', text: `reflection probe not loaded: ${error.message || error}` });
     return null;
   }
+  const decoded = [];
+  for (const copy of layers) {
+    try {
+      const bytes = await gltf.parser.getDependency('bufferView', copy.bufferView);
+      decoded.push({ copy, image: new RGBELoader().setDataType(THREE.FloatType).parse(bytes) });
+    } catch (error) {
+      issues.push({ level: 'warning', text: `probe highlight copy not loaded: ${error.message || error}` });
+    }
+  }
   const prefiltering = performance.now();
-  const equirect = new THREE.DataTexture(
-    parsed.data, parsed.width, parsed.height, THREE.RGBAFormat, parsed.type);
-  equirect.mapping = THREE.EquirectangularReflectionMapping;
-  equirect.colorSpace = THREE.LinearSRGBColorSpace;
-  equirect.minFilter = THREE.LinearFilter;
-  equirect.magFilter = THREE.LinearFilter;
-  equirect.generateMipmaps = false;
-  // Radiance rows run top-down; three.js' equirect reads its first row as the
-  // nadir, as RGBELoader's own textures are flipped for.
-  equirect.flipY = true;
-  equirect.needsUpdate = true;
-  const prefiltered = prefilter((pmrem) => pmrem.fromEquirectangular(equirect));
-  equirect.dispose();
+  const prefiltered = prefilterEquirect(parsed.data, parsed.width, parsed.height, parsed.type);
+  const copies = [];
+  for (const { copy, image } of decoded) {
+    const data = addProbe(parsed, image);
+    if (!data) {
+      issues.push({
+        level: 'warning',
+        text: `probe highlight copy skipped: ${image.width} x ${image.height} cannot be built on the probe's ${parsed.width} x ${parsed.height} (it must divide it, at least ${MIN_COPY_WIDTH} wide)`,
+      });
+      continue;
+    }
+    copies.push({
+      prefiltered: prefilterEquirect(data, image.width, image.height, THREE.FloatType),
+      materials: copy.materials || [],
+      receivers: copy.receivers,
+    });
+  }
   const done = performance.now();
   return {
     prefiltered,
+    copies,
     position: entry.position,
     box: entry.box || null,
     width: parsed.width,
@@ -277,15 +350,84 @@ export async function loadProbe(gltf, issues = []) {
   };
 }
 
+// An equirect's pixels (rows top-down, RGBA) prefiltered as the environment.
+// 32-bit floats go up as half floats where the GPU cannot filter them
+// (OES_texture_float_linear, absent on many phone GPUs): sampled linearly
+// there, a float texture reads black, and the room and every highlight copy
+// reflected nothing. The prefilter renders into half floats either way.
+export function prefilterEquirect(data, width, height, type) {
+  if (type === THREE.FloatType && !renderer.extensions.has('OES_texture_float_linear')) {
+    const half = new Uint16Array(data.length);
+    for (let i = 0; i < data.length; i++) half[i] = THREE.DataUtils.toHalfFloat(data[i]);
+    data = half;
+    type = THREE.HalfFloatType;
+  }
+  const equirect = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, type);
+  equirect.mapping = THREE.EquirectangularReflectionMapping;
+  equirect.colorSpace = THREE.LinearSRGBColorSpace;
+  equirect.minFilter = THREE.LinearFilter;
+  equirect.magFilter = THREE.LinearFilter;
+  equirect.generateMipmaps = false;
+  // Radiance rows run top-down; three.js' equirect reads its first row as the
+  // nadir, as RGBELoader's own textures are flipped for.
+  equirect.flipY = true;
+  equirect.needsUpdate = true;
+  const prefiltered = prefilter((pmrem) => pmrem.fromEquirectangular(equirect));
+  equirect.dispose();
+  return prefiltered;
+}
+
+// The narrowest equirect three.js' PMREM prefilters: 64 texels is a 16-texel
+// cube face, its smallest level. A narrower one came back as no map at all, so
+// the copy's materials reflected the probe as captured and nothing said so.
+const MIN_COPY_WIDTH = 64;
+
+// A highlight copy's pixels: the probe (float RGBA, box-filtered down to the
+// layer's size by a whole factor) plus the layer; null when the sizes do not
+// divide or the layer is too narrow to prefilter (MIN_COPY_WIDTH).
+export function addProbe(probe, layer) {
+  const f = probe.width / layer.width;
+  if (layer.width < MIN_COPY_WIDTH) return null;
+  if (!Number.isInteger(f) || f < 1 || probe.height !== layer.height * f) return null;
+  const out = new Float32Array(layer.width * layer.height * 4);
+  const n = f * f;
+  for (let y = 0; y < layer.height; y++) {
+    for (let x = 0; x < layer.width; x++) {
+      const o = (y * layer.width + x) * 4;
+      for (let c = 0; c < 3; c++) {
+        let sum = 0;
+        for (let dy = 0; dy < f; dy++) {
+          const row = (y * f + dy) * probe.width;
+          for (let dx = 0; dx < f; dx++) sum += probe.data[(row + x * f + dx) * 4 + c];
+        }
+        out[o + c] = sum / n + layer.data[o + c];
+      }
+      out[o + 3] = 1;
+    }
+  }
+  return out;
+}
+
+// A loaded probe and its copies, freed without going up (a superseded load).
+export function disposeProbe(probe) {
+  probe.prefiltered.dispose();
+  for (const copy of probe.copies || []) copy.prefiltered.dispose();
+}
+
 // Put a loaded probe (loadProbe) up for the model `root`: its point and box
 // into the shared uniforms, and every standard material of the model patched
 // to read it.
 export function useProbe(probe, model) {
   releaseProbe();
-  const { prefiltered, ...rest } = probe;
+  const { prefiltered, copies = [], ...rest } = probe;
   target = prefiltered;
   root = model;
-  facts = rest;
+  facts = { ...rest, copies: copies.length };
+  copyTargets = copies.map((copy) => copy.prefiltered);
+  copyOf = new Map();
+  for (const copy of copies) {
+    for (const name of copy.materials) copyOf.set(name, copy.prefiltered);
+  }
   const [x, y, z] = probe.position;
   uniforms.probePosition.value.set(x, y, z);
   boxed = Boolean(probe.box);

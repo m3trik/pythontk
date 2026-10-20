@@ -7,6 +7,8 @@ package loads none of its modules.
 
 - :mod:`~pythontk.geo_utils.uv.pack` -- :class:`UvPack`: island packing via the
   optional ``xatlas`` engine.
+- :mod:`~pythontk.geo_utils.uv.combine` -- :class:`UvCombine`: several texture
+  sets' islands sized and packed into one atlas, stacks kept stacked.
 - :mod:`~pythontk.geo_utils.uv.budget` -- :class:`UvBudget`: how many maps, at
   what texel density, before anything packs.
 - :mod:`~pythontk.geo_utils.uv.transfer` -- :class:`UvTransfer`: texel remap

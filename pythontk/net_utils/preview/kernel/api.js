@@ -12,11 +12,13 @@ import { locomotion } from './locomotion.js';
 import { menuFor } from './menus.js';
 import { current, materialsOf, modelBounds } from './model.js';
 import { parts } from './parts.js';
+import { relight, renderLinear, restoreLighting } from './relight.js';
 import { rig } from './rig.js';
 import { camera, controls, pivot, policy, renderer, scene } from './scene.js';
 import { headset } from './session.js';
 import { specs } from './specs.js';
 import { setStatus } from './status.js';
+import { setRendering } from './ui.js';
 import { addPanel, windowFor } from './windows.js';
 
 //: The version of the `viewer` object below -- the kernel API every script is
@@ -89,6 +91,18 @@ export const viewer = {
   scene,
   renderer,
   camera,
+  /**
+   * Relighting the model in place (relight.js), for lighting work that tries a
+   * bake in seconds: `relight({maps, images, probe, highlights})` swaps the
+   * bake -- `maps` names each lightmapped material's image, `images` holds
+   * them as `{width, height, data}` linear RGBA half floats, `probe` an
+   * equirect the same way plus its `position` and `box`, `highlights` the
+   * probe's highlight layers the same way plus the `materials` each copy is
+   * for -- and returns how many materials took a map; `restore()` brings back
+   * the file's own bake; `renderLinear({camera, width, height})` reads a view
+   * as linear light (no tone map, no background), RGBA floats, rows bottom-up.
+   */
+  lighting: { relight, restore: restoreLighting, renderLinear },
   controls,
   pivot,
   setStatus,
@@ -194,6 +208,12 @@ export const viewer = {
   get clip() { return clipInfo(); },
   /** Whether the transport is playing. */
   get playing() { return playing; },
+  /**
+   * Stop (false) or restart (true) the frame loop: a page driven headless
+   * sleeps between requests -- idle, it still draws every frame. Explicit
+   * renders (`lighting.renderLinear`, `renderer.render`) work while it sleeps.
+   */
+  setRendering(on) { setRendering(!!on); },
   /** Play or pause the transport; returns the state it ended in. */
   setPlaying(state) {
     if (playing !== !!state) togglePlay();

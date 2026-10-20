@@ -667,6 +667,7 @@ class UvTransfer(HelpMixin):
         parts: Sequence[Dict[str, Any]],
         sources: Sequence[Dict[str, Any]],
         *,
+        per_material: bool = False,
         log: Optional[Callable[[str], None]] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """A run's outputs, ``{label: job}``, from what each target contributed.
@@ -689,6 +690,11 @@ class UvTransfer(HelpMixin):
                 ``members`` is the host's own, carried through untouched.
             sources: The run's source-material registry
                 (:meth:`transfer_materials`'s ``sources``), shared by every job.
+            per_material: A group competes only with its own material's: each
+                output is ONE material's, named after it (the set name(s) for
+                faces that wear nothing). An in-place re-bake keeps the
+                materials it re-uses apart this way, each with its own texture
+                set; one material under two set names still merges.
             log: Optional ``callable(str)``, told how the groups came out.
 
         Returns:
@@ -711,6 +717,7 @@ class UvTransfer(HelpMixin):
             return {}
         shared = Counter(material for material, _uv_set in groups)
         jobs: Dict[str, Dict[str, Any]] = {}
+        owner: Dict[str, Tuple[Optional[str], str]] = {}
         for (material, uv_set), group in groups.items():
             if material is None:
                 label = uv_set
@@ -725,7 +732,25 @@ class UvTransfer(HelpMixin):
                 "sources": sources,
                 "members": group["members"],
             }
+            owner[label] = (material, uv_set)
         name = "_".join(dict.fromkeys(uv_set for _material, uv_set in groups))
+        if per_material:
+            merged = {}
+            for material in dict.fromkeys(m for m, _s in owner.values()):
+                mine = {k: j for k, j in jobs.items() if owner[k][0] == material}
+                own = material or "_".join(dict.fromkeys(owner[k][1] for k in mine))
+                for label, job in cls.merge_layouts(mine, own).items():
+                    base, n = label, 0
+                    while label in merged:  # a material named like a set
+                        n += 1
+                        label = f"{base}_{n}"
+                    merged[label] = job
+            if log and len(jobs) > 1:
+                log(
+                    f"{len(jobs)} target material / UV set group(s) -> "
+                    f"{len(merged)} per-material output(s)"
+                )
+            return merged
         merged = cls.merge_layouts(jobs, name)
         if log and len(jobs) > 1:
             log(
@@ -878,6 +903,14 @@ class UvTransfer(HelpMixin):
                 source's texels as they load, for a map stored on a different
                 scale from the one this channel's output is read on (a
                 host-side gain the output's wiring will not reapply).
+                An optional ``"paths": {channel: [path, ...]}`` (or one path)
+                rewrites existing maps IN PLACE: that channel's image goes to
+                every listed file, in the format its extension names
+                (:meth:`save_map`), and nothing for it lands in *output_dir*.
+                Which files are safe to rewrite is the host's call
+                (:meth:`in_place_paths`; *avoid* does not apply to them); no
+                other output of the run is named onto one, and one file named
+                by two channels or jobs raises before anything is written.
             output_dir: Folder the PNGs are written into (created).
             channels: Channels to transfer; default = every channel any
                 contributing source has a MAP for (constants alone do not
@@ -907,15 +940,39 @@ class UvTransfer(HelpMixin):
             log: Optional ``callable(str)`` for progress lines.
 
         Returns:
-            ``{target material: {channel: written path}}``.
+            ``{target material: {channel: written path}}`` -- a channel
+            rewritten in place reports the first of its ``paths``.
         """
         from pythontk.file_utils._file_utils import FileUtils
 
         cls._require_numpy()
         say = log or (lambda m: None)
+        # Files named in place, per job and channel (a lone path is a list of
+        # one), checked before anything is written: two outputs rewriting one
+        # file would leave it holding whichever ran last.
+        in_place = {
+            t_mat: {
+                channel: list(
+                    dict.fromkeys([paths] if isinstance(paths, str) else paths)
+                )
+                for channel, paths in (job.get("paths") or {}).items()
+                if paths
+            }
+            for t_mat, job in jobs.items()
+        }
+        named: Dict[str, Tuple[str, str]] = {}
+        for t_mat, by_channel in in_place.items():
+            for channel, paths in by_channel.items():
+                for path in paths:
+                    k = cls._path_key(path)
+                    if named.setdefault(k, (t_mat, channel)) != (t_mat, channel):
+                        raise ValueError(
+                            f"{path} is named in place by both "
+                            f"{'/'.join(named[k])} and {t_mat}/{channel}"
+                        )
         os.makedirs(output_dir, exist_ok=True)
         taken: set = set()
-        avoid = tuple(avoid or ())
+        avoid = tuple(avoid or ()) + tuple(named)
         results: Dict[str, Dict[str, str]] = {}
         for t_mat, job in jobs.items():
             src_tris = np.asarray(job["src"], dtype=float).reshape(-1, 3, 2)
@@ -1055,6 +1112,13 @@ class UvTransfer(HelpMixin):
                         value_max=value_max,
                     )
                 img = cls.pad(img, cov, padding)
+                rewrite = in_place[t_mat].get(channel) or []
+                for path in rewrite:
+                    cls.save_map(path, img, value_max)
+                    say(f"  {channel}: {path} (in place)")
+                if rewrite:
+                    written[channel] = rewrite[0].replace("\\", "/")
+                    continue
                 stem = name_format.format(
                     material=cls._safe_name(t_mat),
                     channel=cls.CHANNEL_TOKENS.get(channel, channel),
@@ -1067,6 +1131,79 @@ class UvTransfer(HelpMixin):
                 say(f"  {channel}: {path}")
             results[t_mat] = written
         return results
+
+    @staticmethod
+    def _path_key(path: str) -> str:
+        """*path* as the filesystem compares it."""
+        return os.path.normcase(os.path.abspath(path))
+
+    @classmethod
+    def in_place_paths(
+        cls,
+        maps: Dict[str, Dict[str, str]],
+        *,
+        reads: Sequence[str] = (),
+        readers: Optional[Dict[str, Sequence[str]]] = None,
+        locked: Sequence[str] = (),
+    ) -> Tuple[Dict[str, List[str]], List[Tuple[str, str, str, str]]]:
+        """Which maps of a job's re-used materials it may rewrite in place.
+
+        The host half of an in-place re-bake (its job's ``paths``, see
+        :meth:`transfer_materials`) reduced to the files: a map is rewritten
+        only where nothing the run does not own would change with it.
+
+        Parameters:
+            maps: ``{material: {channel: path}}`` -- the maps each material
+                the job re-uses reads now.
+            reads: Files a source of the run reads: never rewritten (the
+                maps would be read back changed, and the source loses its look).
+            readers: ``{path: materials that read it}`` across the scene; a file
+                any material outside *maps* reads (a shared library texture)
+                is not rewritten.
+            locked: Files the host knows are not what renders (an image packed
+                into a .blend).
+
+        Returns:
+            ``(paths, refused)`` -- ``{channel: [files]}`` for the job, and
+            ``[(material, channel, path, why)]`` for each map left as it is
+            (that channel is written fresh instead).
+        """
+        key = cls._path_key
+        reads = {key(p) for p in reads}
+        locked = {key(p) for p in locked}
+        outside: Dict[str, set] = {}
+        for path, names in (readers or {}).items():
+            outside.setdefault(key(path), set()).update(names)
+        channels: Dict[str, set] = {}
+        for by_channel in maps.values():
+            for channel, path in by_channel.items():
+                channels.setdefault(key(path), set()).add(channel)
+        paths: Dict[str, List[str]] = {}
+        refused: List[Tuple[str, str, str, str]] = []
+        for material, by_channel in maps.items():
+            for channel, path in by_channel.items():
+                k = key(path)
+                ext = os.path.splitext(path)[1].lower()
+                others = sorted(outside.get(k, set()) - set(maps))
+                if k in reads:
+                    why = "this run's source reads it"
+                elif len(channels[k]) > 1:
+                    why = "it holds several channels"
+                elif ext not in cls.WRITABLE_EXTENSIONS:
+                    why = f"{ext or 'no extension'} is not written"
+                elif k in locked:
+                    why = "it is not the file that renders"
+                elif not (os.path.isfile(path) and os.access(path, os.W_OK)):
+                    why = "it is no writable file"
+                elif others:
+                    why = f"{others[0]} reads it too"
+                else:
+                    listed = paths.setdefault(channel, [])
+                    if k not in {key(p) for p in listed}:
+                        listed.append(path)
+                    continue
+                refused.append((material, channel, path, why))
+        return paths, refused
 
     # -------------------------------------------------------- correspondence
     #: World-space drift under which a part counts as standing where its slice
@@ -1802,21 +1939,48 @@ class UvTransfer(HelpMixin):
         arr = np.asarray(img, dtype=np.float32)
         return (arr[..., None] if arr.ndim == 2 else arr), 255.0
 
-    @staticmethod
-    def save_map(path: str, arr: "np.ndarray", value_max: float = 255.0) -> str:
-        """Write *arr* (in ``0..value_max``) as PNG -- 16-bit grey, else 8-bit."""
+    #: Extensions :meth:`save_map` writes, each in the format it names -- what
+    #: an existing map can be rewritten IN PLACE as (a host checks before it
+    #: names one; an EXR, a ``.tx`` or a UDIM token is written fresh instead).
+    WRITABLE_EXTENSIONS: Tuple[str, ...] = (
+        ".png",
+        ".tif",
+        ".tiff",
+        ".tga",
+        ".jpg",
+        ".jpeg",
+        ".bmp",
+    )
+
+    @classmethod
+    def save_map(cls, path: str, arr: "np.ndarray", value_max: float = 255.0) -> str:
+        """Write *arr* (in ``0..value_max``) in the format *path*'s extension names.
+
+        16-bit grey where the format holds it (PNG, TIFF), else 8-bit; the
+        alpha is dropped where the format has none (JPEG, BMP).
+
+        Raises:
+            ValueError: An extension outside :attr:`WRITABLE_EXTENSIONS`.
+        """
         from PIL import Image
 
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in cls.WRITABLE_EXTENSIONS:
+            raise ValueError(f"cannot write a {ext or 'extensionless'} map: {path}")
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         arr = np.clip(np.asarray(arr, dtype=np.float32), 0.0, value_max)
         if arr.ndim == 3 and arr.shape[2] == 1:
             arr = arr[..., 0]
+        if arr.ndim == 3 and arr.shape[2] == 4 and ext in (".jpg", ".jpeg", ".bmp"):
+            arr = arr[..., :3]
         if value_max > 255.0:
-            if arr.ndim == 2:
-                Image.fromarray(np.rint(arr).astype(np.uint16), mode="I;16").save(path)
+            if arr.ndim == 2 and ext in (".png", ".tif", ".tiff"):
+                # uint16 grey infers "I;16"; the mode= argument is gone in Pillow 13.
+                Image.fromarray(np.rint(arr).astype(np.uint16)).save(path)
                 return path
-            arr = arr / value_max * 255.0  # PIL has no 16-bit RGB PNG writer
-        Image.fromarray(np.rint(arr).astype(np.uint8)).save(path)
+            arr = arr / value_max * 255.0  # PIL has no 16-bit RGB writer
+        options = {"quality": 95} if ext in (".jpg", ".jpeg") else {}
+        Image.fromarray(np.rint(arr).astype(np.uint8)).save(path, **options)
         return path
 
     # ----------------------------------------------------------------- frames

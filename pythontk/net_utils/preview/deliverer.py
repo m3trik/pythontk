@@ -9,9 +9,9 @@ with the sidecar and the lightmaps, texture pass) -- and publishes the result
 to the :class:`~pythontk.PreviewServer` it owns. Nothing about the GLB's
 content is decided here: the preview shows what the export ships because the
 two are one chain, and its settings are the Scene Exporter's own GLB rows
-(:attr:`pythontk.ExportProfile.GLB_ROWS`) -- the texture pass and the lighting
-recipe -- resolved by the methods the exporters call
-(:meth:`pythontk.ExportRun.glb_texture_params`, :attr:`pythontk.ExportRun.rendering`).
+(:attr:`pythontk.ExportProfile.GLB_ROWS`) -- the texture pass -- resolved by
+the methods the exporters call (:meth:`pythontk.ExportRun.glb_texture_params`),
+and the lighting recipe ships as declared, as the export's does.
 What the deliverer decides for itself stops at where the scratch files live.
 
 A payload may carry the PARTS of one scene (:attr:`PreviewDeliverer.PARTS_KEY`)
@@ -65,7 +65,7 @@ class PreviewDeliverer(Deliverer):
         glb_options: The Scene Exporter's GLB rows for every push --
             ``{row key: combo value}`` keyed by :attr:`ExportProfile.GLB_ROWS`
             (the texture rows ``texture_file_type``, ``optimize_textures``,
-            ``secondary_max_size``, ``uastc_rdo``, and ``baked_reflections``),
+            ``secondary_max_size`` and ``uastc_rdo``),
             each value exactly as that row's combo holds it. An absent row is
             the Scene Exporter's default, so ``None`` -- the default -- builds
             the GLB an export with untouched rows ships (the web container,
@@ -376,7 +376,11 @@ class PreviewDeliverer(Deliverer):
             # Key present means the producer ran and found nothing; absent
             # means it was never asked (the producer attaches an envelope --
             # possibly with empty sections -- whenever the param is on).
-            bridge.logger.info(
+            # Debug: the result's ``sidecar_requested`` / ``sidecar`` carry
+            # it, and ``PreviewBridge.sidecar_summary`` is the reported line
+            # -- this one repeated it, and said it for file pushes, which
+            # never carry a sidecar.
+            bridge.logger.debug(
                 "No scene sidecar %s.",
                 "produced for this export"
                 if "scene_sidecar" in extras
@@ -514,6 +518,13 @@ class PreviewDeliverer(Deliverer):
                 # keep being called into a closed window.
                 progress=request.get("progress"),
                 logger=bridge.logger,
+                # The host's own float-image codec (PreviewBridge.hdr_codec):
+                # the build runs in the host's process, and Blender's has no cv2.
+                hdr_codec=(
+                    bridge.hdr_codec()
+                    if callable(getattr(bridge, "hdr_codec", None))
+                    else None
+                ),
             )
         except (OSError, RuntimeError, ValueError) as error:
             # Nothing consumed the payload, so it stays on disk as evidence.

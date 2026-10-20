@@ -2439,6 +2439,7 @@ class ImgUtils(
         image: "np.ndarray",
         pairs: "np.ndarray",
         iterations: int = 64,
+        hold: Optional["np.ndarray"] = None,
     ) -> "np.ndarray":
         """Make each pair of atlas positions read one value: a seam between two cells.
 
@@ -2460,12 +2461,76 @@ class ImgUtils(
                 ``i`` centred at ``i`` (``x = u * W - 0.5``,
                 ``y = (1 - v) * H - 0.5``), that must read the same value.
             iterations: Solver iterations.
+            hold: ``(H, W)`` bool -- texels that never change: read, never
+                written. A pair's free side then moves the WHOLE way to meet
+                a held one (a side partly held moves its free taps only), and
+                a pair held on both sides is left as it is. What a write back
+                into an existing atlas holds: the cells other objects read
+                stay exactly as they were, and the re-baked cell meets them.
+                ``None`` holds nothing: both sides meet halfway.
 
         Returns:
             The stitched copy (same dtype; an integer one rounded and
             saturated at its range).
+
+        Raises:
+            ValueError: *hold* is not the image's ``(H, W)``.
         """
-        return _ImgAtlasInternal.stitch_seams(image, pairs, iterations)
+        return _ImgAtlasInternal.stitch_seams(image, pairs, iterations, hold)
+
+    @staticmethod
+    def atlas_seam_pairs(
+        edges: Sequence[Optional["np.ndarray"]],
+        rects: Sequence[Sequence[float]],
+        size: Union[int, Tuple[int, int]],
+        tolerance: float = 1e-4,
+        coplanar: float = 0.99,
+    ) -> "np.ndarray":
+        """The atlas positions where two members sample one 3D point of an edge they share.
+
+        The correspondence :meth:`stitch_seams` takes. Atlas members that meet
+        at a 3D edge in one plane -- a wall's grid of panels, a floor's tiles,
+        instances of one -- are separate cells, so the edge is read twice, once
+        through each member's own UVs and rect. Every open edge of one member
+        that runs along an open edge of another is matched: collinear (both of
+        one's endpoints within the tolerance of the other's line), overlapping
+        by more than it, their faces facing the same way within *coplanar* (a
+        wall meeting a floor shares an edge but not its light) and lying on
+        OPPOSITE sides of the edge (a decal along a panel's border is not its
+        neighbour). Each match is sampled twice per atlas texel along the
+        overlap, on the finer side, each sample the same 3D point read through
+        both members; a T-junction (one long edge against two short ones)
+        matches piecewise. Edges are compared in x-sorted blocks against only
+        the edges whose bounds meet the block's, so a large group costs its
+        neighbourhoods, not every pair.
+
+        Parameters:
+            edges: Per member, its OPEN mesh edges as ``(E, 16)`` rows
+                ``p0(3) p1(3) uv0(2) uv1(2) normal(3) inward(3)``: the world-space
+                ends, the member's own lightmap UV at each end, its face's normal
+                and a vector from the edge into the face, in the face's plane
+                (neither need be unit length). ``None`` or empty for a member
+                with none.
+            rects: Per member, its published ``(scale_u, scale_v, offset_u,
+                offset_v)`` rect -- where the engine reads its UVs in the atlas.
+            size: Atlas size in texels: ``int`` (square) or ``(width, height)``.
+            tolerance: How close two edges must lie to be one, as a fraction of
+                the members' extent -- and never more than a thousandth of the
+                median edge length, so float noise in an instance's transform
+                passes and a strip standing ~1 cm in front of a wall's edge does
+                not.
+            coplanar: The least cosine between two matched faces' normals.
+
+        Returns:
+            ``(N, 4)`` float ``(xa, ya, xb, yb)`` pixel positions in
+            :meth:`stitch_seams`' convention; empty when nothing is shared.
+
+        Raises:
+            ValueError: *edges* and *rects* differ in length.
+        """
+        return _ImgAtlasInternal.atlas_seam_pairs(
+            edges, rects, size, tolerance, coplanar
+        )
 
     @classmethod
     def assemble_atlas(
@@ -2475,6 +2540,7 @@ class ImgUtils(
         size: Union[int, Tuple[int, int]],
         *,
         background: float = 0.0,
+        canvas: Optional["np.ndarray"] = None,
     ) -> "np.ndarray":
         """Composite per-item images into one atlas at normalized ``scaleOffset`` rects.
 
@@ -2496,11 +2562,24 @@ class ImgUtils(
             rects: One ``(sx, sy, ox, oy)`` per image -- same order and length.
             size: Atlas pixel size -- ``int`` for square, or ``(width, height)``.
             background: Fill for any uncovered atlas texels (default 0).
+            canvas: An existing atlas to place onto instead of a *background*
+                fill -- a write back into cells of a map already shipped.
+                Every texel no rect covers keeps its value exactly; the canvas
+                itself is never modified. Its ``(H, W)`` must be *size*; its
+                channels and dtype are the atlas's. With a canvas, *images*
+                may be empty (a copy comes back).
 
         Returns:
-            The atlas as an HxWxC (or HxW) array, dtype matching ``images[0]``.
+            The atlas as an HxWxC (or HxW) array, dtype matching ``images[0]``
+            (the *canvas*'s, when given).
+
+        Raises:
+            ValueError: *images* and *rects* differ in length, there is
+                neither an image nor a canvas, or the canvas is another size.
         """
-        return super().assemble_atlas(images, rects, size, background=background)
+        return super().assemble_atlas(
+            images, rects, size, background=background, canvas=canvas
+        )
 
     @staticmethod
     def radial_gradient(
@@ -2857,6 +2936,37 @@ class ImgUtils(
         return _ImgColorSpaceInternal.kelvin_to_linear_rgb(kelvin, normalize)
 
     @classmethod
+    def kelvin_tint(cls, kelvin: Optional[float]) -> Tuple[float, float, float]:
+        """A light's colour at *kelvin*: linear Rec.709 with unit luminance.
+
+        Unit luminance keeps level and hue apart: changing a light's colour
+        temperature changes its colour, never how much light it gives (where
+        :meth:`kelvin_to_linear_rgb` normalises the brightest channel to 1, a
+        warm light there gives less light than a neutral one of the same
+        intensity).
+
+        Parameters:
+            kelvin: Colour temperature; ``None`` or 0 is white.
+
+        Returns:
+            ``(r, g, b)`` linear floats whose :meth:`luminance` is 1.
+        """
+        return super().kelvin_tint(kelvin)
+
+    @classmethod
+    def luminance(cls, linear) -> "np.ndarray":
+        """Relative luminance of linear Rec.709 light (ITU-R BT.709 weights).
+
+        Parameters:
+            linear: Linear RGB values, any shape ending in 3 or more channels
+                (the first three are read).
+
+        Returns:
+            float64, the input's shape without its channel axis.
+        """
+        return super().luminance(linear)
+
+    @classmethod
     def convert_rgb_to_hsv(cls, image):
         """Convert an RGB image to HSV mode.
 
@@ -3035,6 +3145,101 @@ class ImgUtils(
         return super().linear_to_srgb(data)
 
     @classmethod
+    def tonemap(
+        cls, linear, operator: str = "aces_filmic", exposure: float = 1.0
+    ) -> "np.ndarray":
+        """Scene-linear light -> display-linear 0..1, as a viewer's tone map computes it.
+
+        The result is linear display light, before the transfer function: pass
+        it through :meth:`linear_to_srgb` for the encoded value a screen shows.
+
+        Parameters:
+            linear: Scene-linear Rec.709 values, any shape ending in 3 channels.
+            operator: ``"aces_filmic"`` -- three.js ``ACESFilmicToneMapping``,
+                the WebXR viewer's (Stephen Hill's fit of the ACES RRT + ODT,
+                with three.js's ``/ 0.6`` exposure bias); ``"linear"`` -- a
+                clip, no curve.
+            exposure: Multiplies the input first (the renderer's
+                ``toneMappingExposure``).
+
+        Returns:
+            float32 array of the input's shape, clipped to 0..1.
+
+        Raises:
+            ValueError: an unknown *operator*.
+        """
+        return super().tonemap(linear, operator, exposure)
+
+    @classmethod
+    def linear_to_oklab(cls, linear) -> "np.ndarray":
+        """Linear sRGB -> OKLab (L lightness 0..1, a green-red, b blue-yellow).
+
+        Bjorn Ottosson's perceptual space: distances and hue angles track what
+        the eye sees, which is what a comparison of two renders' colour wants.
+        Chroma is ``hypot(a, b)``, hue ``atan2(b, a)``.
+
+        Parameters:
+            linear: Linear sRGB values, any shape ending in 3 channels.
+
+        Returns:
+            float32 array of the input's shape.
+        """
+        return super().linear_to_oklab(linear)
+
+    @classmethod
+    def resample_area(cls, array, size) -> "np.ndarray":
+        """Resize float data by exact area averaging (a box filter by overlap).
+
+        Each output cell is the overlap-weighted mean of the input cells it
+        covers, so the image mean is kept and nothing rings: the right
+        reduction for linear light (average the light, then display it).
+        Meant for shrinking; enlarging repeats cells.
+
+        Parameters:
+            array: HxW or HxWxC numeric array (any channel count).
+            size: ``(width, height)`` of the result.
+
+        Returns:
+            float32 array ``(height, width[, C])``.
+        """
+        return super().resample_area(array, size)
+
+    @classmethod
+    def sample_bilinear(cls, array, px, py) -> "np.ndarray":
+        """*array* sampled at fractional pixel coordinates, bilinearly, edges clamped.
+
+        Coordinates are pixel CENTRES: ``(0, 0)`` reads the first pixel exactly,
+        ``(0.5, 0)`` halfway to its right neighbour.
+
+        Parameters:
+            array: HxW or HxWxC numeric array.
+            px, py: Same-shaped arrays of x (column) and y (row) coordinates.
+
+        Returns:
+            The samples, *px*'s shape (plus C for a channelled array).
+        """
+        return super().sample_bilinear(array, px, py)
+
+    @classmethod
+    def warp_quad(cls, array, corners, size, supersample=None) -> "np.ndarray":
+        """Resample a quadrilateral of an image onto a rectangle (perspective rectify).
+
+        Parameters:
+            array: HxW or HxWxC numeric array.
+            corners: The quad's corners -- top-left, top-right, bottom-right,
+                bottom-left -- as ``(x, y)`` in pixel-edge coordinates ((0, 0) is
+                the top-left corner of the top-left pixel).
+            size: ``(width, height)`` of the result.
+            supersample: Samples per output cell along each axis, averaged;
+                ``None`` takes about one per input pixel the quad covers, so a
+                large quad shrinks without aliasing.
+
+        Returns:
+            float32 array ``(height, width[, C])``; bilinear, edges clamped.
+        """
+        return super().warp_quad(array, corners, size, supersample)
+
+    @classmethod
     def convert_scene_linear(
         cls, image, src, dst="scene-linear Rec.709-sRGB", bgr=False
     ):
@@ -3095,35 +3300,69 @@ class ImgUtils(
         """
         return super().quantize_8bit(unit)
 
-    #: Percentile used to normalize an HDR image for 8-bit web encoding. High enough
-    #: that only genuine light sources clip, low enough that one hot texel cannot
-    #: crush the whole map. Shared contract with blendertk's ``encode_for_web``
-    #: (bpy-I/O twin -- Blender ships no cv2); both test suites pin the same golden
-    #: values so the implementations cannot drift.
+    #: The floor of an HDR image's 8-bit web divisor, as a percentile of its lit
+    #: values: the divisor is the image's peak, never below this percentile and
+    #: never above :attr:`HDR_WEB_HEADROOM` times it. blendertk's
+    #: ``encode_for_web`` encodes through the same :meth:`encode_hdr_pixels_for_web`
+    #: (Blender ships no cv2, so only the file I/O is its own).
     HDR_WEB_PERCENTILE = 99.5
+
+    #: How far above :attr:`HDR_WEB_PERCENTILE` an HDR image's web divisor may
+    #: reach for its peak. A lit pool keeps its highlight exactly; one wild texel
+    #: (a firefly) cannot stretch the divisor and coarsen every mid-tone -- at 4x
+    #: the mid-tones keep about 2.5 screen codes per lightmap code, dithered
+    #: (measured on production rooms, 2026-10-17).
+    HDR_WEB_HEADROOM = 4.0
+
+    @classmethod
+    def encode_hdr_pixels_for_web(cls, rgb, percentile=None):
+        """Encode linear HDR pixels as 8-bit sRGB codes for the web, and their scalar.
+
+        The divisor is the pixels' peak, held between :attr:`HDR_WEB_PERCENTILE`
+        of their lit values and :attr:`HDR_WEB_HEADROOM` times that: a lit pool
+        keeps its highlight exactly, and one wild texel cannot stretch the
+        divisor and coarsen every mid-tone. Measured on production rooms,
+        dividing by the percentile itself clipped the backsplash and floor
+        pools flat (58-68 screen codes off); the peak brings every highlight
+        within 2 codes and the PNGs come out 1-11% smaller. A texel still past
+        full scale is scaled down whole, so its hue survives. The scalar is
+        returned so a viewer multiplies it back (the ``lightmap_web``
+        manifest's per-material ``intensity``: decoded sRGB times the scalar).
+
+        The 8-bit step is stochastic rounding (:meth:`quantize_8bit`): unbiased,
+        so a smooth wall keeps its gradient instead of terracing into contour
+        bands. Non-finite texels (a renderer's fireflies) encode as 0.
+
+        The pixel half of :meth:`encode_hdr_for_web`, for a host that reads and
+        writes images itself (Blender has no cv2).
+
+        Parameters:
+            rgb: ``(..., 3)`` linear float pixels, channels last (an ``(H, W, 3)``
+                image or a flat ``(N, 3)`` buffer; extra channels are dropped).
+                The channels are treated alike, so BGR works as well as RGB.
+            percentile: Divide by this percentile of the lit values instead
+                (the encode before 2026-10-17). Default: the peak, as above.
+
+        Returns:
+            ``(codes, scalar)`` -- uint8 ``(..., 3)``, and the value to multiply
+            the decoded colour by to recover linear intensity.
+        """
+        return super().encode_hdr_pixels_for_web(rgb, percentile)
 
     @classmethod
     def encode_hdr_for_web(cls, path, percentile=None):
         """Encode a linear-float HDR image (EXR/HDR) as sRGB PNG bytes for the web.
 
-        The divisor is the *percentile* of the image's nonzero values, so the useful
-        range fills the 8-bit encoding and only genuine light sources clip; the scalar
-        is returned so a viewer can multiply it back and recover linear intensity
-        (the ``lightmap_web`` manifest's per-material ``intensity``).
+        The pixels go through :meth:`encode_hdr_pixels_for_web` (the divisor,
+        the clip, the dither); this reads and writes them with cv2.
 
         Reads with :meth:`cv2_read` (any path), NOT :meth:`load_image` -- that path
         clips to 0-1 and quantizes to 8-bit (its docstring says so), which would
-        destroy exactly the range this normalization exists to keep. The divide
-        happens BEFORE :meth:`linear_to_srgb`, which clips.
-
-        The 8-bit step is stochastic rounding (a fixed seed, one draw per texel
-        for all its channels): unbiased, so a smooth wall keeps its gradient
-        instead of terracing into contour bands, with at most half a code of
-        colourless grain; a value already on a code encodes exactly.
+        destroy exactly the range this normalization exists to keep.
 
         Parameters:
             path: An EXR/HDR file (any float image cv2 can read works).
-            percentile: Normalization percentile. Default :attr:`HDR_WEB_PERCENTILE`.
+            percentile: See :meth:`encode_hdr_pixels_for_web` (default: the peak).
 
         Returns:
             ``(png_bytes, scalar)`` -- multiply the decoded colour by ``scalar`` to
@@ -3159,6 +3398,26 @@ class ImgUtils(
             ValueError: the file could not be read or encoded.
         """
         return super().encode_hdr_radiance(path)
+
+    @classmethod
+    def encode_hdr_radiance_pixels(cls, rgb) -> bytes:
+        """Encode linear-float RGB pixels as Radiance ``.hdr`` bytes.
+
+        The in-memory form of :meth:`encode_hdr_radiance`, for an image a
+        process made rather than read (a reflection probe's highlight layer).
+
+        Parameters:
+            rgb: ``(height, width, 3)`` (or ``(height, width)``) linear floats,
+                RGB, rows top-down.
+
+        Returns:
+            The Radiance file's bytes.
+
+        Raises:
+            ImportError: cv2 unavailable (its Radiance codec writes the bytes).
+            ValueError: the pixels could not be encoded.
+        """
+        return super().encode_hdr_radiance_pixels(rgb)
 
     @classmethod
     def generate_mipmaps(cls, image: Union[str, Image.Image]) -> List[Image.Image]:

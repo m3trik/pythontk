@@ -1,7 +1,8 @@
 import argparse
 import getpass
 import os
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 # Connection defaults are resolved at CALL time, in this order: an explicit
 # argument, then the environment, then a neutral fallback. Machine identity (a
@@ -60,6 +61,59 @@ class CLI(_CLIInternal):
         Create a standard ArgumentParser.
         """
         return argparse.ArgumentParser(description=description)
+
+    #: One argument of a command: ``(flags, add_argument keywords)`` -- ``"--out"``,
+    #: ``("-o", "--out")`` or a positional name.
+    Argument = Tuple[Union[str, Sequence[str]], Mapping[str, Any]]
+
+    @dataclass(frozen=True)
+    class Command:
+        """One subcommand: its help line, its handler and its arguments.
+
+        Parameters:
+            help: The line ``--help`` lists it with.
+            run: Called with the parsed arguments; its return is the exit code
+                (``None`` is 0).
+            arguments: ``(flags, add_argument keywords)`` pairs, in order.
+        """
+
+        help: str
+        run: Callable[[argparse.Namespace], Optional[int]]
+        arguments: Sequence["CLI.Argument"] = ()
+
+    @classmethod
+    def dispatch(
+        cls,
+        description: str,
+        commands: Mapping[str, "CLI.Command"],
+        argv: Optional[Sequence[str]] = None,
+        common: Sequence["CLI.Argument"] = (),
+    ) -> int:
+        """Parse *argv* against a table of subcommands and run the one named.
+
+        A command line is data: a new subcommand is one more entry, never one
+        more branch in a dispatcher.
+
+        Parameters:
+            description: The program's ``--help`` line.
+            commands: ``{name: Command}``, listed in this order.
+            argv: The arguments (default: ``sys.argv[1:]``).
+            common: Arguments every subcommand takes, before its own.
+
+        Returns:
+            The command's exit code.
+        """
+        parser = cls.get_parser(description)
+        sub = parser.add_subparsers(dest="command", required=True)
+        for name, command in commands.items():
+            p = sub.add_parser(name, help=command.help)
+            for flags, options in tuple(common) + tuple(command.arguments):
+                p.add_argument(
+                    *([flags] if isinstance(flags, str) else flags), **options
+                )
+        args = parser.parse_args(argv)
+        code = commands[args.command].run(args)
+        return 0 if code is None else int(code)
 
     @staticmethod
     def add_connection_args(

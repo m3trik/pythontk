@@ -723,18 +723,9 @@ class WorkspaceTemplates(object):
     @classmethod
     def _migrate_legacy(cls, store):
         """One-time copy of per-package template dirs into the shared store."""
-        import shutil
-
-        if store.user_dir.exists():
-            return
-        for package in cls._LEGACY_PACKAGES:
-            legacy = store.user_dir.parent / package / cls.STORE_NAME
-            if legacy.is_dir():
-                try:
-                    shutil.copytree(legacy, store.user_dir)
-                except OSError:
-                    pass
-                return
+        store.adopt(
+            *(store.user_dir.parent / p / cls.STORE_NAME for p in cls._LEGACY_PACKAGES)
+        )
 
     @classmethod
     def list(cls) -> List[str]:

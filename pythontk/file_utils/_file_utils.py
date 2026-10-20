@@ -593,7 +593,8 @@ class FileUtils(HelpMixin):
         The message every caller of :meth:`is_locked` would otherwise assemble
         by hand, so the wording of this failure stays the same wherever it is
         reported. Falsy when the file can be replaced, so it doubles as the
-        test.
+        test. A file that does not exist yet is free here;
+        :meth:`describe_unwritable` also asks the folder that will take it.
 
         Parameters:
             filepath (str): Path to probe (environment variables expanded).
@@ -601,16 +602,65 @@ class FileUtils(HelpMixin):
         Returns:
             str: e.g. ``"in use by Google Chrome (PID 8421)"``, or
                 ``"in use by another process"`` when the holder cannot be
-                named. Empty string when the file is not locked.
+                named, or ``"read-only"`` when the file's own flag refuses the
+                write (a version-control checkout's) -- closing a program
+                would not free it. Empty string when the file is not locked.
         """
         if not cls.is_locked(filepath):
             return ""
+        if not os.access(os.path.expandvars(filepath), os.W_OK):
+            return "read-only"
         holders = cls.locking_processes(filepath)
         return (
             f"in use by {', '.join(holders)}"
             if holders
             else "in use by another process"
         )
+
+    @classmethod
+    def describe_unwritable(cls, filepath: str) -> str:
+        """Why writing *filepath* would fail, or "" when nothing says it would.
+
+        :meth:`describe_lock` answers for the file itself (held open, or
+        read-only); a file that does not exist yet reads as free there, yet it
+        still needs a folder that takes a new file. That is proven by creating
+        and removing a uniquely named probe file in it, because ``os.access``
+        cannot answer: on Windows it reads the read-only attribute alone, so a
+        folder whose ACL denies this user passes it. A folder that does not
+        exist yet is made at the write inside its nearest existing ancestor,
+        so that ancestor is the one probed (nothing is created on the way).
+
+        Parameters:
+            filepath (str): The file a write will create or replace
+                (environment variables expanded).
+
+        Returns:
+            str: :meth:`describe_lock`'s sentence when the file is held or
+                read-only; ``"the folder is not writable: <reason>"`` when its
+                folder refuses a new file; empty otherwise, so it doubles as
+                the test.
+        """
+        why = cls.describe_lock(filepath)
+        if why:
+            return why
+        folder = os.path.dirname(os.path.abspath(os.path.expandvars(filepath)))
+        while not os.path.isdir(folder):
+            parent = os.path.dirname(folder)
+            if parent == folder:  # nothing on the path exists: no folder to ask
+                return ""
+            folder = parent
+        import uuid
+
+        probe = os.path.join(folder, f".write_probe_{uuid.uuid4().hex}.tmp")
+        try:
+            os.close(os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        except OSError as error:
+            return f"the folder is not writable: {error.strerror or error}"
+        try:
+            os.remove(probe)
+        except OSError:
+            pass  # a folder that takes a file it will not give back still takes it
+        return ""
 
     @staticmethod
     def format_bytes(size_bytes, unknown: str = "(unknown)") -> str:

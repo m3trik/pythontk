@@ -189,13 +189,60 @@ class TestRunConfig(unittest.TestCase):
         self.assertIs(tasks["optimize_textures"], True)
         self.assertIs(tasks["check_texture_optimization"], True)
 
-    def test_override_drops_every_check_but_keeps_the_tasks(self):
+    def test_override_drops_every_check_but_the_preconditions(self):
         config = ExportProfile.run_config(
-            self._values(), TASKS, CHECKS, override_checks=True
+            self._values(texture_optimize=True), TASKS, CHECKS, override_checks=True
         )
         self.assertNotIn("check_default_materials", config["tasks"])
         self.assertNotIn("check_path_length", config["tasks"])
+        self.assertNotIn("check_texture_optimization", config["tasks"])
         self.assertTrue(config["tasks"]["export_data_node"])
+        for check in ExportProfile.ALWAYS_CHECKS:
+            self.assertIs(config["tasks"][check], True)
+
+    def test_the_writability_check_runs_with_no_row(self):
+        """A destination held open fails the write whatever the panel says, and
+        finding out first costs milliseconds, so no row asks."""
+        self.assertIn("check_output_writable", ExportProfile.ALWAYS_CHECKS)
+        tasks = ExportProfile.run_config(self._values(), TASKS, CHECKS)["tasks"]
+        self.assertIs(tasks["check_output_writable"], True)
+
+    # The fix rows the DCC panels offer, each standing in for its check.
+    FIXES = {
+        "conform_shape_names": {"widget_type": "QCheckBox"},
+        "reassign_duplicate_materials": {"widget_type": "QCheckBox"},
+        "flatten_sheared_chains": {"widget_type": "QCheckBox"},
+        "snap_keys_to_frame": {"widget_type": "QCheckBox"},
+        "tie_all_keyframes": {"widget_type": "QCheckBox"},
+    }
+
+    def test_a_fix_arms_the_check_that_verifies_it(self):
+        """What the fix could not repair still stops the export."""
+        values = dict.fromkeys(self.FIXES, True)
+        tasks = ExportProfile.run_config(values, self.FIXES, {})["tasks"]
+        for fix in self.FIXES:
+            with self.subTest(fix=fix):
+                self.assertIs(tasks[ExportProfile.VERIFYING_CHECKS[fix]], True)
+
+    def test_a_fix_left_off_takes_its_concern_with_it(self):
+        values = dict.fromkeys(self.FIXES, False)
+        tasks = ExportProfile.run_config(values, self.FIXES, {})["tasks"]
+        for fix in self.FIXES:
+            with self.subTest(fix=fix):
+                self.assertNotIn(ExportProfile.VERIFYING_CHECKS[fix], tasks)
+
+    def test_a_panel_still_offering_the_check_keeps_its_say(self):
+        """An older DCC package builds the check row too; its unticked box wins."""
+        checks = {"check_untied_keyframes": {"widget_type": "QCheckBox"}}
+        values = {"tie_all_keyframes": True, "check_untied_keyframes": False}
+        tasks = ExportProfile.run_config(values, self.FIXES, checks)["tasks"]
+        self.assertTrue(tasks["tie_all_keyframes"])
+        self.assertNotIn("check_untied_keyframes", tasks)
+
+    def test_every_verifying_check_is_scheduled_after_its_fix(self):
+        for fix, check in ExportProfile.VERIFYING_CHECKS.items():
+            with self.subTest(fix=fix):
+                self.assertIn(fix, ExportProfile.CHECK_DEPENDENCIES[check])
 
     def test_ignore_groups_is_wrapped_with_its_match_mode(self):
         tasks = ExportProfile.run_config(
@@ -783,8 +830,8 @@ class TestGlbTextureParams(unittest.TestCase):
 
 class TestGlbOnlyProducer(unittest.TestCase):
     """A producer that makes the GLB and nothing else -- the WebXR preview --
-    offers the Scene Exporter's GLB rows (the texture pass and the lighting
-    recipe) and resolves them identically. Added: 2026-09-21
+    offers the Scene Exporter's GLB rows (the texture pass) and resolves them
+    identically. Added: 2026-09-21
     """
 
     #: The Scene Exporter panel's GLB rows, as a task table.
@@ -805,10 +852,6 @@ class TestGlbOnlyProducer(unittest.TestCase):
         "uastc_rdo": {
             "widget_type": "ComboBox",
             "add": ExportProfile.UASTC_RDO_OPTIONS,
-        },
-        "baked_reflections": {
-            "widget_type": "ComboBox",
-            "add": ExportProfile.BAKED_REFLECTIONS_OPTIONS,
         },
     }
 
@@ -834,8 +877,8 @@ class TestGlbOnlyProducer(unittest.TestCase):
 
     def test_every_offered_setting_resolves_as_the_export_does(self):
         """The whole point: the same rows make the same texture pass and publish
-        the same lighting recipe. Every entry the preview offers, row by row,
-        against the exporter's own chain."""
+        the same lighting recipe (the recipe's own, from both). Every entry the
+        preview offers, row by row, against the exporter's own chain."""
         options = ExportProfile.glb_options()
         for row, table in options.items():
             for label, value in table.items():
@@ -848,7 +891,6 @@ class TestGlbOnlyProducer(unittest.TestCase):
             "optimize_textures": 4096,
             "secondary_max_size": 1024,
             "uastc_rdo": 1.0,
-            "baked_reflections": "half",
         }
         self.assertEqual(self._previewed(combined), self._exported(combined))
 
@@ -879,15 +921,10 @@ class TestGlbOnlyProducer(unittest.TestCase):
             options["secondary_max_size"], ExportProfile.SECONDARY_MAX_SIZE_OPTIONS
         )
         self.assertEqual(options["uastc_rdo"], ExportProfile.UASTC_RDO_OPTIONS)
-        self.assertEqual(
-            options["baked_reflections"], ExportProfile.BAKED_REFLECTIONS_OPTIONS
-        )
         for row in ExportProfile.GLB_TEXTURE_ROWS:
             self.assertFalse(
                 list(options[row].values())[0], f"{row}: index 0 is the off state"
             )
-        # Off is a real choice there, not "unset", so it is a TOKEN.
-        self.assertEqual(list(options["baked_reflections"].values())[0], "off")
 
     def test_the_optimize_combo_is_taken_apart_in_one_place(self):
         self.assertEqual(ExportProfile.optimize_textures_tasks(0), {})
@@ -908,16 +945,13 @@ class TestGlbOnlyProducer(unittest.TestCase):
         self.assertEqual(self._previewed({}), self._exported({}))
 
     def test_the_rows_start_where_the_exporter_starts_them(self):
-        """What a mirroring panel defaults each row to: the off state, and the
-        recipe's own level for Baked Reflections -- so an untouched mirror
-        builds the texture pass and publishes the recipe an absent row does."""
+        """What a mirroring panel defaults each row to: the off state -- so an
+        untouched mirror builds the texture pass and publishes the recipe an
+        absent row does."""
         from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
         defaults = ExportProfile.glb_defaults()
         self.assertEqual(list(defaults), list(ExportProfile.GLB_ROWS))
-        self.assertEqual(
-            defaults["baked_reflections"], ExportProfile.baked_reflections_default()
-        )
         (untouched, chosen), (absent, none) = (
             self._previewed(defaults),
             self._previewed({}),
@@ -940,76 +974,51 @@ class TestGlbOnlyProducer(unittest.TestCase):
 
 
 class TestBakedReflections(unittest.TestCase):
-    """The Baked Reflections row: how strongly a lightmapped material reflects
-    the viewer's environment, published in the deliverable's lighting recipe.
+    """The Baked Reflections row, retired 2026-10-19 (removed in 0.17.0).
 
-    At full strength the studio environment's reflections lifted the darkest
-    baked machine surfaces of a production room from 0.06 to 0.22 of display
-    (a quarter: 0.11). The level is the EXPORT's choice, so a deliverable
-    handed on alone still carries the look it was approved in; the WebXR
-    preview mirrors the row. Added: 2026-09-21
+    It set how strongly a lightmapped material reflects the viewer's studio.
+    Its default, the lighting recipe's own level, was already the right answer
+    (each texel's reflection is scaled by its own bake, and a deliverable that
+    carries its reflection probe reflects that whole), so no panel offers it:
+    the deliverable publishes the recipe unchanged. Added: 2026-09-21
     """
 
-    def test_every_token_is_a_level_and_the_default_is_the_recipes_own(self):
+    def test_no_row_decides_the_lighting_any_more(self):
+        self.assertEqual(ExportProfile.GLB_LIGHTING_ROWS, {})
+        self.assertNotIn("baked_reflections", ExportProfile.GLB_ROWS)
+        self.assertNotIn("baked_reflections", ExportProfile.glb_options())
+        self.assertNotIn("baked_reflections", ExportProfile.glb_defaults())
+
+    def test_an_older_panels_row_is_dropped_with_a_note(self):
+        """A DCC package from before the retirement still sends its row; the
+        deliverable publishes the recipe whatever it says, and the log says so."""
         from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
-        self.assertEqual(
-            list(ExportProfile.BAKED_REFLECTIONS_OPTIONS.values()),
-            list(ExportRun.BAKED_REFLECTION_LEVELS),
-        )
-        default = ExportProfile.baked_reflections_default()
-        self.assertEqual(
-            ExportRun.BAKED_REFLECTION_LEVELS[default],
-            MeshConvert.RENDERING_POLICY["lightmappedMaterials"]["envMapIntensity"],
-        )
+        for value in ("off", "half", 0.4):
+            with self.subTest(value=value):
+                run, tasks, notes = ExportRun.from_tasks({"baked_reflections": value})
+                self.assertIsNone(run.baked_reflections)
+                self.assertEqual(run.rendering, {})
+                self.assertEqual(
+                    MeshConvert.rendering_policy(run.rendering),
+                    MeshConvert.RENDERING_POLICY,
+                )
+                self.assertNotIn("baked_reflections", tasks)
+                self.assertEqual([level for level, _ in notes], ["info"])
+                self.assertIn("Baked Reflections", notes[0][1])
+        _run, _tasks, notes = ExportRun.from_tasks({})
+        self.assertEqual(notes, [])
 
-    def test_off_survives_the_export_button(self):
-        """REGRESSION guard: the export button drops a falsy row as unset, and
-        an Off stored as 0.0 would have shipped the default level instead."""
-        rows = {
-            "baked_reflections": {
-                "widget_type": "ComboBox",
-                "add": ExportProfile.BAKED_REFLECTIONS_OPTIONS,
-            }
-        }
-        tasks = ExportProfile.run_config({"baked_reflections": "off"}, rows, {})[
-            "tasks"
-        ]
-        run = ExportRun.from_tasks(tasks)[0]
-        self.assertEqual(run.baked_reflections, 0.0)
-        self.assertEqual(
-            run.rendering, {"lightmappedMaterials": {"envMapIntensity": 0.0}}
-        )
-
-    def test_an_untouched_row_publishes_the_recipe_unchanged(self):
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-
-        run = ExportRun.from_tasks({})[0]
-        self.assertIsNone(run.baked_reflections)
-        self.assertEqual(run.rendering, {})
-        self.assertEqual(
-            MeshConvert.rendering_policy(run.rendering), MeshConvert.RENDERING_POLICY
-        )
-
-    def test_a_number_is_a_level_and_anything_else_is_said(self):
-        self.assertEqual(
-            ExportRun.from_tasks({"baked_reflections": 0.4})[0].baked_reflections, 0.4
-        )
-        self.assertEqual(
-            ExportRun.from_tasks({"baked_reflections": -1})[0].baked_reflections, 0.0
-        )
-        run, _tasks, notes = ExportRun.from_tasks({"baked_reflections": "bright"})
-        self.assertIsNone(run.baked_reflections)
-        self.assertEqual([level for level, _ in notes], ["warning"])
-        self.assertIn("bright", notes[0][1])
-
-    def test_the_level_reaches_both_carriers(self):
-        """One decision, two deliverables: the GLB's envelope and the FBX's
-        handoff record publish the same recipe from it."""
+    def test_a_caller_setting_the_level_is_told_and_still_published(self):
+        """The field warns until its removal and, until then, still reaches both
+        carriers: the GLB's envelope and the FBX's handoff record."""
         from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
         from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
-        run = ExportRun.from_tasks({"baked_reflections": "half"})[0]
+        with self.assertWarns(DeprecationWarning) as retired:
+            run = ExportRun(baked_reflections=0.5)
+        self.assertIn("baked_reflections", str(retired.warning))
+        self.assertIn("0.17.0", str(retired.warning))
         envelope = MeshConvert.build_scene_sidecar(
             {}, source={"application": "test"}, rendering=run.rendering
         )
@@ -1019,6 +1028,154 @@ class TestBakedReflections(unittest.TestCase):
         for recipe in (envelope["handoff"]["rendering"], block["rendering"]):
             self.assertEqual(recipe["lightmappedMaterials"]["envMapIntensity"], 0.5)
             self.assertEqual(recipe["lightmappedMaterials"]["envMapTerms"], "specular")
+
+    def test_the_retired_tables_still_answer_an_older_panel(self):
+        """An older mayatk / blendertk builds the row from these at import."""
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        with self.assertWarns(DeprecationWarning):
+            options = ExportProfile.BAKED_REFLECTIONS_OPTIONS
+        with self.assertWarns(DeprecationWarning):
+            levels = ExportRun.BAKED_REFLECTION_LEVELS
+        self.assertEqual(list(options.values()), list(levels))
+        with self.assertWarns(DeprecationWarning):
+            default = ExportProfile.baked_reflections_default()
+        self.assertEqual(
+            levels[default],
+            MeshConvert.RENDERING_POLICY["lightmappedMaterials"]["envMapIntensity"],
+        )
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(ExportRun.baked_reflection_level("half"), 0.5)
+
+    def test_reading_a_retired_table_warns_and_returns_it_unchanged(self):
+        """REGRESSION (2026-10-19): both tables said "removed in 0.17.0" in a
+        comment and warned no one who read them, from the class or an
+        instance."""
+        tables = {
+            "BAKED_REFLECTIONS_OPTIONS": (
+                ExportProfile,
+                {
+                    "Off (Pure Bake)": "off",
+                    "Quarter": "quarter",
+                    "Half": "half",
+                    "Full": "full",
+                },
+            ),
+            "BAKED_REFLECTION_LEVELS": (
+                ExportRun,
+                {"off": 0.0, "quarter": 0.25, "half": 0.5, "full": 1.0},
+            ),
+        }
+        for name, (owner, value) in tables.items():
+            for reader in (owner, owner()):
+                with self.subTest(name=name, reader=reader):
+                    with self.assertWarns(DeprecationWarning) as caught:
+                        read = getattr(reader, name)
+                    self.assertEqual(read, value)
+                    self.assertIn(f"{owner.__name__}.{name}", str(caught.warning))
+                    self.assertIn("0.17.0", str(caught.warning))
+
+    def test_the_rules_that_still_read_the_tables_do_not_warn(self):
+        """The retired-row note reads them for an older preset; a notice the
+        caller cannot act on is noise."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            notes = ExportProfile._retired_row_notes(
+                {"baked_reflections": "Quarter"}, {}, {}
+            )
+        self.assertEqual([str(w.message) for w in caught], [])
+        self.assertIn("Quarter", notes[0][1])
+
+
+class TestRetiredPresetRows(unittest.TestCase):
+    """A preset a released panel saved still names the rows retired
+    2026-10-19, and a load skips a key no widget takes -- so a preset that
+    asked for one of them would stop getting it with nothing said.
+    REGRESSION (2026-10-19): the released default (Snap Keys To Frame off,
+    Check For Floating Point Keys on) loaded with the check silently gone, and
+    a user preset's Baked Reflections "Quarter" silently shipped Full.
+    """
+
+    #: The fix rows a panel offers, as their definitions spell them.
+    FIXES = {
+        "conform_shape_names": {"widget_type": "QCheckBox", "setText": "Fix Names"},
+        "snap_keys_to_frame": {"widget_type": "QCheckBox", "setText": "Snap Keys"},
+        "tie_all_keyframes": {"widget_type": "QCheckBox", "setText": "Tie Keys"},
+    }
+
+    def notes(self, stored, tasks=None, checks=None):
+        return ExportProfile._retired_row_notes(
+            stored, self.FIXES if tasks is None else tasks, checks or {}
+        )
+
+    def test_a_check_its_fix_leaves_off_is_said_lost(self):
+        notes = self.notes(
+            {"snap_keys_to_frame": False, "check_floating_point_keys": True}
+        )
+        self.assertEqual([level for level, _ in notes], ["warning"])
+        self.assertIn("Floating Point Keys", notes[0][1])
+        self.assertIn("Snap Keys", notes[0][1])
+
+    def test_a_pair_that_agrees_says_nothing(self):
+        for on in (True, False):
+            with self.subTest(on=on):
+                stored = {"tie_all_keyframes": on, "check_untied_keyframes": on}
+                self.assertEqual(self.notes(stored), [])
+
+    def test_a_fix_whose_check_was_off_is_now_checked(self):
+        notes = self.notes({"tie_all_keyframes": True, "check_untied_keyframes": False})
+        self.assertEqual([level for level, _ in notes], ["info"])
+        self.assertIn("Untied Keyframes", notes[0][1])
+
+    def test_a_row_the_panel_still_offers_or_never_had_is_not_retired(self):
+        stored = {"tie_all_keyframes": False, "check_untied_keyframes": True}
+        offered = {"check_untied_keyframes": {"widget_type": "QCheckBox"}}
+        self.assertEqual(self.notes(stored, checks=offered), [])
+        # blendertk has no Fix Mangled Names: its check was never armed there.
+        stored = {"conform_shape_names": False, "check_mangled_names": True}
+        self.assertEqual(self.notes(stored, tasks={}), [])
+
+    def test_a_baked_reflections_level_other_than_the_recipes_is_said_dropped(self):
+        notes = self.notes({"baked_reflections": "Quarter"})
+        self.assertEqual([level for level, _ in notes], ["info"])
+        self.assertIn("Quarter", notes[0][1])
+        # The recipe's own level (Full) is what ships anyway: nothing to say.
+        self.assertEqual(self.notes({"baked_reflections": "Full"}), [])
+        self.assertEqual(self.notes({"baked_reflections": "full"}), [])
+
+    def test_a_writability_check_turned_off_is_said_to_run(self):
+        notes = self.notes({"check_output_writable": False})
+        self.assertEqual([level for level, _ in notes], ["info"])
+        self.assertEqual(self.notes({"check_output_writable": True}), [])
+
+    def test_a_current_preset_says_nothing(self):
+        self.assertEqual(self.notes({}), [])
+        self.assertEqual(self.notes({"tie_all_keyframes": True}), [])
+
+    def test_the_retired_keys_are_the_rows_the_notes_speak_for(self):
+        """What a panel's saved state drops once said (2026-10-19): a check
+        whose fix the panel offers and whose own row it does not, the Baked
+        Reflections row, and the writability check -- each only while the
+        panel does not build it."""
+        self.assertEqual(
+            ExportProfile._retired_row_keys(self.FIXES, {}),
+            (
+                "check_mangled_names",
+                "check_floating_point_keys",
+                "check_untied_keyframes",
+                "baked_reflections",
+                "check_output_writable",
+            ),
+        )
+        offered = {"check_untied_keyframes": {}, "check_output_writable": {}}
+        self.assertEqual(
+            ExportProfile._retired_row_keys(
+                {**self.FIXES, "baked_reflections": {}}, offered
+            ),
+            ("check_mangled_names", "check_floating_point_keys"),
+        )
 
 
 class TestRunTables(unittest.TestCase):

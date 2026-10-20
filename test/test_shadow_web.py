@@ -148,20 +148,35 @@ def _pointer_animation(material: int) -> dict:
     }
 
 
-def _write_glb(path, *, nodes, materials, images, textures, animations=None):
+def _write_glb(
+    path, *, nodes, materials, images, textures, animations=None, z_up=False
+):
     """A minimal but VALID binary glTF around one shared unit quad.
 
     The quad is the DCC's plane as the FBX hop delivers it: 1 x 1 in local X/Z
     at y = 0, centred on its pivot, UVs in glTF's top-left convention with
     v = 0 on the -Z (near) edge -- the PNG's top row is the light-side edge.
-    Every mesh node references mesh index = its own material index, one mesh
-    per material, so a per-material fade has one representative mesh.
+    *z_up* writes Blender's instead, as a push measured it: the quad in local
+    X/Y at z = 0 (its exporter turns only the ROOT nodes upright and never the
+    mesh data), its near edge -Y. Every mesh node references mesh index = its
+    own material index, one mesh per material, so a per-material fade has one
+    representative mesh. A node named in another's ``children`` is not a root.
     """
-    positions = struct.pack(
-        "<12f", -0.5, 0, 0.5, 0.5, 0, 0.5, -0.5, 0, -0.5, 0.5, 0, -0.5
-    )
-    uvs = struct.pack("<8f", 0, 1, 1, 1, 0, 0, 1, 0)
-    indices = struct.pack("<6H", 0, 1, 2, 1, 3, 2)
+    if z_up:
+        positions = struct.pack(
+            "<12f", 0.5, 0.5, 0, -0.5, 0.5, 0, -0.5, -0.5, 0, 0.5, -0.5, 0
+        )
+        uvs = struct.pack("<8f", 1, 0, 0, 0, 0, 1, 1, 1)
+        indices = struct.pack("<6H", 0, 1, 2, 0, 2, 3)
+        bounds = ([-0.5, -0.5, 0], [0.5, 0.5, 0])
+    else:
+        positions = struct.pack(
+            "<12f", -0.5, 0, 0.5, 0.5, 0, 0.5, -0.5, 0, -0.5, 0.5, 0, -0.5
+        )
+        uvs = struct.pack("<8f", 0, 1, 1, 1, 0, 0, 1, 0)
+        indices = struct.pack("<6H", 0, 1, 2, 1, 3, 2)
+        bounds = ([-0.5, 0, -0.5], [0.5, 0, 0.5])
+    children = {c for node in nodes for c in node.get("children", [])}
     times = struct.pack("<3f", 0.0, 1.0, 2.0)
     alphas = struct.pack("<12f", 1, 1, 1, 1, 1, 1, 1, 0.5, 1, 1, 1, 0)
     chunks = [positions, uvs, indices, times, alphas]
@@ -174,7 +189,7 @@ def _write_glb(path, *, nodes, materials, images, textures, animations=None):
     gltf = {
         "asset": {"version": "2.0"},
         "scene": 0,
-        "scenes": [{"nodes": list(range(len(nodes)))}],
+        "scenes": [{"nodes": [i for i in range(len(nodes)) if i not in children]}],
         "nodes": nodes,
         "meshes": [
             {
@@ -200,8 +215,8 @@ def _write_glb(path, *, nodes, materials, images, textures, animations=None):
                 "componentType": 5126,
                 "count": 4,
                 "type": "VEC3",
-                "min": [-0.5, 0, -0.5],
-                "max": [0.5, 0, 0.5],
+                "min": bounds[0],
+                "max": bounds[1],
             },
             {"bufferView": 1, "componentType": 5126, "count": 4, "type": "VEC2"},
             {"bufferView": 2, "componentType": 5123, "count": 6, "type": "SCALAR"},
@@ -1002,6 +1017,12 @@ export default function probe(viewer) {
       else local.copy(inv).multiply(plane.node.matrixWorld);
       const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3();
       local.decompose(p, q, s);
+      // The quad's vertices as drawn, in MODEL space, in the file's order.
+      const position = (plane.batch ? plane.batch.mesh : plane.mesh).geometry.getAttribute('position');
+      const corners = [];
+      for (let i = 0; i < position.count; i += 1) {
+        corners.push(new THREE.Vector3().fromBufferAttribute(position, i).applyMatrix4(local).toArray());
+      }
       const material = plane.batch ? plane.batch.mesh.material : plane.mesh.material;
       const u = material.uniforms || {};
       const horizon = u.uHorizonMap ? u.uHorizonMap.value : null;
@@ -1012,6 +1033,7 @@ export default function probe(viewer) {
         position: [p.x, p.y, p.z],
         yaw: new THREE.Euler().setFromQuaternion(q, 'YXZ').y,
         scale: [s.x, s.y, s.z],
+        corners,
         instanced: !!plane.batch,
         batchCount: plane.batch ? plane.batch.mesh.count : 0,
         hidden: !plane.mesh.visible,
@@ -1160,6 +1182,7 @@ class TestShadowRigLive(unittest.TestCase):
         textures=None,
         animations=None,
         search_dirs=(),
+        z_up=False,
     ):
         path = self.temp.path(extension=".glb")
         _write_glb(
@@ -1170,6 +1193,7 @@ class TestShadowRigLive(unittest.TestCase):
             or [{"name": "shadow_atlas", "uri": _data_uri(_silhouette_png())}],
             textures=textures or [{"source": 0, "sampler": 0}],
             animations=animations,
+            z_up=z_up,
         )
         manifest = MeshConvert.apply_glb_shadows(path, search_dirs=list(search_dirs))
         self.assertIsNotNone(manifest, "the fixture itself must bind")
@@ -1300,7 +1324,13 @@ class TestShadowRigLive(unittest.TestCase):
 
     # -------------------------------------------------------- pole fixture
     def _pole_fixture(
-        self, source_node, *, mirror=False, source_size=0.0, source_angle=0.0
+        self,
+        source_node,
+        *,
+        mirror=False,
+        source_size=0.0,
+        source_angle=0.0,
+        z_up=False,
     ):
         """``(hmap, glb)`` -- the post's map on disk (baked: the very bytes the
         page will sample), the map decoding them, and a GLB whose one horizon
@@ -1309,8 +1339,11 @@ class TestShadowRigLive(unittest.TestCase):
         *source_node* is the light's glTF node: a ``translation`` for a
         positional source, a ``rotation`` for a directional one. *mirror*
         bakes the post at ``(x, -z)``: a Blender frame, whose ``b`` arrives as
-        -Z. The source's size (a diameter) or angle (radians) goes into the
-        record as the shim reads it.
+        -Z. *z_up* lays the file out as a Blender push delivers it: the quad
+        in its local X/Y and the plane and the contact each in a Z-up frame
+        turned upright (-90 deg about X), so the record's frame -- written in
+        the file's axes -- is NOT the contact node's own. The source's size (a
+        diameter) or angle (radians) goes into the record as the shim reads it.
         """
         _, _, _, pole = _pole_geometry_frame()
         pole = (pole[0], -pole[1]) if mirror else pole
@@ -1328,16 +1361,29 @@ class TestShadowRigLive(unittest.TestCase):
             source_angle=source_angle,
             horizon=_horizon_block(hmap, frame_b=(0, 0, -1) if mirror else (0, 0, 1)),
         )
+        upright = _quat((1, 0, 0), -90.0)
+        if z_up:
+            plane = {
+                "name": "Box_horizon_plane",
+                "mesh": 0,
+                "rotation": upright,
+                "scale": [14.0, 14.0, 1.0],
+            }
+            contact = {"name": "Box_contact_loc", "rotation": upright}
+        else:
+            plane = {"name": "Box_horizon_plane", "mesh": 0, "scale": [14.0, 1.0, 14.0]}
+            contact = {"name": "Box_contact_loc"}
         glb = self._glb(
             None,
             nodes=[
-                {"name": "Box_horizon_plane", "mesh": 0, "scale": [14.0, 1.0, 14.0]},
+                plane,
                 source_node,
-                {"name": "Box_contact_loc"},
+                contact,
                 _data_export_node(_payload([record])),
             ],
             materials=[_plane_material("Box_horizon_MAT")],
             search_dirs=[maps],
+            z_up=z_up,
         )
         return hmap, glb
 
@@ -1918,6 +1964,20 @@ class TestShadowRigLive(unittest.TestCase):
         ``(x, -z)``) and the reference is fed frame-mapped points, exactly
         as the shader maps world points through A and B.
         """
+        self._assert_blender_frame_tracks_reference(z_up=False)
+
+    def test_a_z_up_contact_reads_its_frame_in_the_files_axes(self):
+        """A Blender push delivers the contact in its own Z-up frame: the FBX
+        exporter turns only the ROOT nodes upright, so a contact's local +Y is
+        the file's -Z and its +Z the file's up (measured on blendertk pushes,
+        a contact at the root and under one alike). The record's frame is
+        written in the file's axes, so the shim reads a Z-up contact's frame
+        through the turn back (+90 deg about X) -- told from the plane's quad,
+        which lies in its local X/Y. Before: the frame's up was the contact's
+        +Y, lying flat along -Z, and ``b`` pointed straight down."""
+        self._assert_blender_frame_tracks_reference(z_up=True)
+
+    def _assert_blender_frame_tracks_reference(self, z_up):
         azimuth, _, _, _ = _pole_geometry_frame()
         # World bearing of the light, and the pole's WORLD position; in the
         # (X, -Z) frame the map coords are (x, -z) for both.
@@ -1927,6 +1987,7 @@ class TestShadowRigLive(unittest.TestCase):
             {"name": "shadow_source", "translation": source},
             mirror=True,
             source_size=POLE_SOURCE_SIZE,
+            z_up=z_up,
         )
         frame_light = [source[0], source[1], -source[2]]
 
@@ -1942,6 +2003,98 @@ class TestShadowRigLive(unittest.TestCase):
         self.assertGreater(int((expected > 0.5).sum()), 4)
         found = self._load(glb, action=HORIZON_SAMPLES_JS, points=points)
         self._assert_tracks_reference(found, expected, points)
+
+    @staticmethod
+    def _blender_corners(source, contact, canvas, radius, height, ground=0.0):
+        """The Z-up quad's corners, in the file's order and axes, where
+        blendertk's drivers put them -- derived in BLENDER's frame, apart from
+        the page: ``ShadowProjection.model`` with up = Z, the quad's local +X
+        across the bearing (``w = (u[1], -u[0])``) and +Y along it, lifted
+        GROUND_OFFSET; then the exporter's turn, ``(x, y, z) -> (x, z, -y)``.
+        """
+        model = ptk.ShadowProjection.model(
+            (contact[0], -contact[2], contact[1]),
+            light=(source[0], -source[2], source[1]),
+            ground=ground,
+            radius=radius,
+            height=height,
+            up=2,
+            max_stretch=6.0,
+        )
+        (cx, cy), along, across = model.placement(canvas)
+        ux, uy = model.bearing
+        wx, wy = model.across
+        corners = []
+        for vx, vy in ((0.5, 0.5), (-0.5, 0.5), (-0.5, -0.5), (0.5, -0.5)):
+            x = cx + vx * across * wx + vy * along * ux
+            y = cy + vx * across * wy + vy * along * uy
+            corners.append([x, ground + 0.01, -y])
+        return corners
+
+    def test_a_z_up_quad_lies_flat_where_the_blender_drivers_put_it(self):
+        """A Blender push delivers its shadow quad in the quad's local X/Y
+        (normal +Z) -- Blender's exporter turns the ROOT nodes upright and
+        never the mesh data -- where the shim's yaw-only placement assumed a
+        Y-up (Maya) quad in local X/Z. Measured on blendertk pushes (a plane
+        under its rig group, deeper, and at the root): every following plane
+        stood on edge, its model-space height the quad's own size. The quad
+        now lies flat on the corners the Blender drivers give it, the canvas
+        read across the right side of the bearing (the canvas is lopsided):
+        once on its own mesh, once as an instanced batch."""
+        canvas = [-0.3, 1.1, -0.55, 0.35]
+        upright = _quat((1, 0, 0), -90.0)
+        expected = self._blender_corners(self.SOURCE, self.CONTACT, canvas, 0.6, 1.2)
+        for names in (["Box_shadow"], ["Box_shadow", "Crate_shadow"]):
+            count = len(names)
+            nodes = [
+                {
+                    "name": "rig_shadow_grp",
+                    "rotation": upright,
+                    "children": list(range(1, count + 1)),
+                }
+            ]
+            nodes += [
+                {
+                    "name": name,
+                    "mesh": i,
+                    "translation": [0.4, -0.3, 0.0],
+                    "rotation": _quat((0, 0, 1), 25.0),
+                    "scale": [1.5, 2.0, 1.0],
+                }
+                for i, name in enumerate(names)
+            ]
+            nodes += [
+                {"name": "shadow_source", "translation": self.SOURCE},
+                {
+                    "name": "Box_contact_loc",
+                    "translation": self.CONTACT,
+                    "rotation": upright,
+                },
+                _data_export_node(
+                    _payload(
+                        [
+                            _record(name, radius=0.6, height=1.2, canvas=canvas)
+                            for name in names
+                        ]
+                    )
+                ),
+            ]
+            glb = self._glb(
+                None,
+                nodes=nodes,
+                materials=[_plane_material(f"{name}_MAT") for name in names],
+                z_up=True,
+            )
+            found = self._load(glb)
+            self.assertEqual(len(found["before"]), count)
+            for plane in found["before"]:
+                self.assertTrue(plane["follow"], plane)
+                self.assertEqual(plane["instanced"], count > 1, plane)
+                for got, want in zip(plane["corners"], expected):
+                    for axis in range(3):
+                        self.assertAlmostEqual(
+                            got[axis], want[axis], places=5, msg=(names, plane)
+                        )
 
 
 #: Every ``shadow_projection`` golden case through the feature's model port,

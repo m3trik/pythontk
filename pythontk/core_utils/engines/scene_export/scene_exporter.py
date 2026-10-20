@@ -9,7 +9,8 @@ the naming tokens a scene spells.  What they share is here: the logging
 setup, the run's ``(current, total, message)`` progress stream, the task
 pipeline run with its per-check override decision, the export button's
 contract (:meth:`SceneExporterBase.run_config_from_values` over
-:class:`~pythontk.ExportProfile`), and the export folder / log file plumbing.
+:class:`~pythontk.ExportProfile`), the export folder, and the run log -- one
+file per scene in the per-user cache (:class:`~pythontk.RunLog`).
 
 Hooks (override in the DCC subclass; defaults describe no scene):
 
@@ -33,23 +34,19 @@ Hooks (override in the DCC subclass; defaults describe no scene):
 import html
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional
+import re
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import pythontk as ptk
-from pythontk.core_utils.logging_mixin import (
-    LoggerExt,
-    LoggingMixin,
-    StripHtmlFormatter,
-)
+from pythontk.core_utils.logging_mixin import LoggingMixin, RunLog
 
 
 class SceneExporterBase(LoggingMixin):
     """The DCC-free half of a Scene Exporter: progress, consent, run config.
 
     Subclass per host and set :attr:`TASK_MANAGER_CLASS`; see the module
-    docstring for the hooks.  The ``export_dir`` / ``hide_log_file`` /
-    ``export_path`` attributes the log-file helpers read are stamped by the
-    host's ``perform_export``.
+    docstring for the hooks.  The ``export_dir`` / ``export_path`` attributes
+    the run-log helpers read are stamped by the host's ``perform_export``.
     """
 
     #: The host's task/check pipeline class (a ``ptk.TaskFactory`` subclass),
@@ -102,10 +99,38 @@ class SceneExporterBase(LoggingMixin):
             self.logger.addHandler(log_handler)
 
     def _setup_file_logging(self) -> None:
-        """Setup file logging."""
-        log_file_path = self.generate_log_file_path(self.export_path)
-        self.logger.info(f"Generating log file path: {log_file_path}")
-        self.setup_file_logging(log_file_path)
+        """Open this scene's run log for the run in flight.
+
+        Appends to :meth:`log_file_path` -- the SCENE's log, whatever the
+        Output Filename resolves to -- after trimming it to its newest runs and
+        sweeping the folder's stale logs (:class:`~pythontk.RunLog`), and first
+        clears the per-export logs earlier versions left beside the
+        deliverables in this export folder (:meth:`_remove_legacy_logs`).
+        The host's ``perform_export`` calls it once the export path is known,
+        and :meth:`_close_file_logging` on every exit. A log that cannot open
+        (an unwritable cache, a full disk, a header that cannot encode) is
+        warned about, never the reason an export stops: the panel shows the
+        run either way.
+        """
+        self._remove_legacy_logs()
+        path = self.log_file_path()
+        RunLog.sweep(os.path.dirname(path), keep=[path])
+        RunLog.trim(path)
+        scene = self._saved_scene_path() or "(unsaved)"
+        # The files the run's format ships (the run is adopted before the log
+        # opens): a GLB-only export's path names its temp FBX, not the GLB.
+        output_format = getattr(
+            getattr(self.task_manager, "run", None), "output_format", None
+        )
+        stem = os.path.splitext(self.export_path)[0]
+        shipped = self.OUTPUT_EXTENSIONS.get(output_format) or ()
+        output = ", ".join(stem + ext for ext in shipped) or self.export_path
+        try:
+            self.setup_file_logging(
+                path, header=f"Scene Exporter | scene: {scene} | output: {output}"
+            )
+        except (OSError, ValueError) as error:  # UnicodeError is a ValueError
+            self.logger.warning(f"The run log could not be opened ({error}): {path}")
 
     def _saved_scene_path(self) -> str:
         """Scene hook: the open scene's saved path, ``""`` while it is unsaved
@@ -513,6 +538,165 @@ class SceneExporterBase(LoggingMixin):
             config["tasks"]["output_format"] = output_format
         return config
 
+    def _note_retired_preset_rows(
+        self, name: str, stored: Optional[Dict[str, Any]]
+    ) -> None:
+        """Log what preset *name* asked of a row that has since retired.
+
+        Both panels call this when a preset is picked: the load skips a key no
+        widget takes, so a preset saved before a row retired would otherwise
+        stop doing what it asked without a word
+        (:meth:`pythontk.ExportProfile._retired_row_notes`).
+
+        Parameters:
+            name: The preset's name, as its combo shows it.
+            stored: Its ``{objectName: value}`` (``PresetManager.read``);
+                ``None`` when it cannot be read.
+        """
+        if not name or not stored:
+            return
+        tasks_def, checks_def = self._definition_tables()
+        for level, message in ptk.ExportProfile._retired_row_notes(
+            stored, tasks_def, checks_def
+        ):
+            getattr(self.logger, level)(f"Preset '{name}': {message}")
+
+    @staticmethod
+    def _saved_widget_values(store: Any, names: Iterable[str]) -> Dict[str, Any]:
+        """``{objectName: value}`` a panel's settings store holds for *names*.
+
+        The switchboard saves each widget under ``<objectName>/<signal>``
+        (uitk's ``StateManager``), so a row is found by its key's first
+        segment, whatever signal saved it.
+
+        Parameters:
+            store: The panel's settings store (``keys()`` / ``value(key)``).
+            names: The objectNames to read.
+        """
+        wanted = set(names)
+        found: Dict[str, Any] = {}
+        for key in store.keys():
+            name = str(key).split("/", 1)[0]
+            if name in wanted and name not in found:
+                found[name] = store.value(key)
+        return found
+
+    def _note_retired_panel_state(self, store: Any) -> None:
+        """Say once what the panel's saved state asked of a row since retired.
+
+        The state a panel saves outlives a row it no longer builds: a restore
+        skips a key no widget takes, so a user whose saved state ran a check
+        through its own row -- beside its fix row off -- would lose the check
+        with nothing said (:meth:`_note_retired_preset_rows` says the same for
+        a preset). Both panels call this when they open, with their window's
+        settings store; the notes are
+        :meth:`pythontk.ExportProfile._retired_row_notes`, read off the
+        retired rows' saved values and the live fix rows' (saved, or their
+        definition's default). The retired rows' keys are then removed
+        through the same store, so the notes are said once.
+
+        Parameters:
+            store: The panel's settings store -- ``keys()``, ``value(key)``,
+                ``remove(key)`` and optionally ``sync()``, as uitk's
+                ``SettingsManager`` (the window's ``ui.settings``) has.
+        """
+        try:
+            profile = ptk.ExportProfile
+            tasks_def, checks_def = self._definition_tables()
+            retired = profile._retired_row_keys(tasks_def, checks_def)
+            fixes = {
+                profile.widget_key(task, tasks_def[task]): tasks_def[task]
+                for task in profile.VERIFYING_CHECKS
+                if task in tasks_def
+            }
+            saved = self._saved_widget_values(store, (*retired, *fixes))
+            orphaned = [key for key in retired if key in saved]
+            if not orphaned:
+                return
+            # A fix row with no saved value opens at its definition's default.
+            stored = {
+                key: spec["setChecked"]
+                for key, spec in fixes.items()
+                if "setChecked" in spec
+            }
+            stored.update(saved)
+            for level, message in profile._retired_row_notes(
+                stored, tasks_def, checks_def
+            ):
+                getattr(self.logger, level)(f"The panel's saved state: {message}")
+            for key in orphaned:
+                store.remove(key)
+            sync = getattr(store, "sync", None)
+            if callable(sync):
+                sync()
+        except Exception as e:  # noqa: BLE001 -- a notice never blocks the panel
+            self.logger.debug(f"Retired-row state not read: {e}")
+
+    #: The objectName the retired RegEx field saved its value under.
+    _RETIRED_REGEX_ROW = "txt002"
+
+    def _migrate_legacy_regex(
+        self, store: Any, name_row: str, save: Callable[[str], Any]
+    ) -> Optional[str]:
+        """Fold the retired RegEx field's saved value into the Output Filename, once.
+
+        The field is retired: the regex is an inline modifier on the name token
+        now (``{scene:PATTERN->REPLACEMENT}``). Its saved value outlives its
+        widget, so the user's naming rule would quietly stop applying. Both
+        panels call this when they open -- BEFORE the switchboard restores their
+        widgets: the Output Filename's saved pattern and the RegEx field's saved
+        value (:meth:`_saved_widget_values`) fold through the SAME call the
+        export makes (:meth:`pythontk.ExportProfile.fold_legacy_naming`), and
+        *save* stores the result as the Output Filename's value, so the restore
+        that follows shows it. (Set on the widget instead, the fold was
+        overwritten by that restore.) The retired key goes only once the fold
+        is stored -- so this runs once and never loses the rule; a blank one
+        just goes.
+
+        Parameters:
+            store: The panel's settings store -- ``keys()``, ``value(key)``,
+                ``remove(key)`` and optionally ``sync()``.
+            name_row: The Output Filename's objectName.
+            save: Stores a pattern as the Output Filename's value -- the
+                panel's ``ui.state.save(widget, value)``, which keys it the way
+                the restore reads it.
+
+        Returns:
+            The folded pattern; ``None`` when nothing was folded.
+        """
+        retired = self._RETIRED_REGEX_ROW
+        try:
+            saved = self._saved_widget_values(store, (name_row, retired))
+            if retired not in saved:
+                return None
+            regex = str(saved[retired] or "")
+            folded = None
+            if regex.strip():
+                folded = ptk.ExportProfile.fold_legacy_naming(
+                    str(saved.get(name_row) or ""), name_regex=regex
+                )
+                save(folded)
+                stored = self._saved_widget_values(store, (name_row,)).get(name_row)
+                if stored != folded:
+                    self.logger.debug(
+                        "The retired RegEx field's fold was not stored; it is "
+                        "kept for the next open."
+                    )
+                    return None
+            store.remove(retired)
+            sync = getattr(store, "sync", None)
+            if callable(sync):
+                sync()
+            if folded:
+                self.logger.info(
+                    "The Output Filename's RegEx field is retired: its pattern "
+                    f"is now part of the name itself &mdash; {folded!r}."
+                )
+            return folded
+        except Exception as e:  # noqa: BLE001 -- a migration never blocks the panel
+            self.logger.debug(f"Retired RegEx field not migrated: {e}")
+            return None
+
     # ------------------------------------------------------------------
     # Output naming and the export folder
     # ------------------------------------------------------------------
@@ -540,54 +724,164 @@ class SceneExporterBase(LoggingMixin):
         return os.path.dirname(scene_path) if scene_path else ""
 
     # ------------------------------------------------------------------
-    # The run's log file
+    # The run's log
     # ------------------------------------------------------------------
 
-    def generate_log_file_path(self, export_path: str) -> str:
-        """Generate the log file path based on the export path.
+    #: Where every scene's run log lives, under the per-user cache
+    #: (``UserConfig.cache_dir``): one ``RunLog`` file per scene, shared by
+    #: both DCCs -- never beside the deliverable, where one per export piled
+    #: up in every delivery folder (2026-10-13).
+    LOG_FOLDER: Tuple[str, ...] = ("logs", "scene_exporter")
 
-        ``hide_log_file`` off Windows means a dot-prefixed name, which is what
-        hidden is there; on Windows :meth:`setup_file_logging` sets the
-        hidden attribute instead.
+    #: The first line of a log an earlier version wrote beside a deliverable:
+    #: a record in ``RunLog.FORMAT``, or a box (a quiet level logs only the
+    #: closing banner). :meth:`_remove_legacy_logs` deletes nothing else.
+    _LEGACY_LOG_START = re.compile(
+        r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} - [A-Z]+ - |[\u2500-\u257f])"
+    )
+
+    def log_file_path(self) -> str:
+        """This scene's run log: ``<scene>_<hash>.log`` in :attr:`LOG_FOLDER`.
+
+        Keyed by the saved scene's path (:meth:`RunLog.file_name
+        <pythontk.RunLog.file_name>`), so every export of a scene appends to
+        one file whatever its Output Filename resolves to, two same-named
+        scenes keep apart, and an unsaved scene logs to ``untitled.log``.
         """
-        base_name = os.path.splitext(os.path.basename(export_path))[0]
-        prefix = "." if self.hide_log_file and os.name != "nt" else ""
-        return os.path.join(self.export_dir, f"{prefix}{base_name}.log")
+        folder = ptk.UserConfig.cache_dir(*self.LOG_FOLDER)
+        return os.path.join(str(folder), RunLog.file_name(self._saved_scene_path()))
 
-    def setup_file_logging(self, log_file_path: str):
-        """Setup file logging to log actions during export.
+    @ptk.Deprecation.symbol(
+        "SceneExporterBase.log_file_path",
+        remove_in="0.17.0",
+        since="2026-10-14",
+        reason="The run log is keyed by the scene, not the export file.",
+    )
+    def generate_log_file_path(self, export_path: Optional[str] = None) -> str:
+        """Retired: the run log is the scene's (:meth:`log_file_path`), so
+        *export_path* no longer names it."""
+        return self.log_file_path()
+
+    def setup_file_logging(self, log_file_path: str, header: Optional[str] = None):
+        """Tee :attr:`logger` into *log_file_path* for the run in flight.
 
         On :attr:`logger` -- the one the exporter and its task manager both
         log through. It sat on a bare logger named after the class, which
         nothing logs to, so every run's ``.log`` was empty (2026-10-09).
-        UTF-8 and plain text, as every pythontk log file: in the locale's code
-        page the run's closing banner -- box glyphs, a check mark -- raised on
-        write, so a clean run at the ERROR level left the file empty
-        (2026-10-10); without the strip its markup and links landed as tags.
+        UTF-8 and plain text (:meth:`RunLog.attach <pythontk.RunLog.attach>`):
+        in the locale's code page the run's closing banner -- box glyphs, a
+        check mark -- raised on write, so a clean run at the ERROR level left
+        the file empty (2026-10-10); without the strip its markup and links
+        landed as tags. Appends, the run opening on *header*, and records
+        every level down to DEBUG whatever the panel shows (``capture``): the
+        panel tells the run's story, the file keeps the detail to diagnose it.
         """
         self.close_file_handlers()  # a run that never closed its own
-        file_handler = logging.FileHandler(
-            log_file_path, encoding=LoggerExt.FILE_ENCODING
+        self.file_handler = RunLog.attach(
+            self.logger, log_file_path, header=header, capture=logging.DEBUG
         )
-        file_handler.setFormatter(
-            StripHtmlFormatter("%(asctime)s - %(levelname)s - %(message)s")
-        )
-        self.file_handler = file_handler
-        self.logger.addHandler(file_handler)
         self.logger.debug(f"File logging setup complete. Log file: {log_file_path}")
 
-        if self.hide_log_file and os.name == "nt":
-            import ctypes
+    def _glb_created(self, path: str) -> None:
+        """Say the run's GLB landed at *path*, and keep it for the run's last
+        line: :meth:`_close_file_logging` links it to the WebXR preview."""
+        self._shipped_glb = path
+        self.logger.success(f"GLB created: {path}")
 
-            ctypes.windll.kernel32.SetFileAttributesW(log_file_path, 2)
+    def _close_file_logging(self, succeeded: bool) -> None:
+        """Close the run's log on how the run ended, and link it in the panel.
 
-    def close_file_handlers(self):
+        The footer reaches the file at every level, so a run that failed at a
+        quiet one still says so; the links go to the handlers that remain
+        (the panel, the console) once the file's is gone: the log, then one
+        closing line of what to do with the result -- the folder a successful
+        run delivered into (``action://open``) and the GLB the run shipped
+        (:meth:`_glb_created`) as an ``action://preview`` link the host's
+        dispatcher opens in the WebXR preview. The host's ``perform_export``
+        calls it on every exit.
+        """
+        glb, self._shipped_glb = getattr(self, "_shipped_glb", None), None
+        handler = getattr(self, "file_handler", None)
+        if handler is not None:
+            if getattr(self, "_export_cancelled", False):
+                outcome = "Export cancelled"
+            else:
+                outcome = "Export succeeded" if succeeded else "Export failed"
+            self.close_file_handlers(footer=outcome)
+            path = handler.baseFilename
+            link = self.logger.log_link(path, "open", path=path)
+            self.logger.log_raw(f"Log: {link}")
+        links = []
+        folder = os.path.dirname(getattr(self, "export_path", None) or "")
+        if succeeded and folder:
+            links.append(
+                self.logger.log_link("Open containing folder", "open", path=folder)
+            )
+        if glb:
+            name = os.path.basename(glb)
+            links.append(
+                self.logger.log_link(f"Open {name} in WebXR", "preview", path=glb)
+            )
+        if links:
+            self.logger.log_raw(" · ".join(links))
+
+    def close_file_handlers(self, footer: Optional[str] = None):
         """Close and remove the handler :meth:`setup_file_logging` added; a
-        caller's own handlers on the same logger are left alone."""
+        caller's own handlers on the same logger are left alone. *footer*,
+        when given, closes the run in the file (:meth:`RunLog.detach
+        <pythontk.RunLog.detach>`)."""
         handler = getattr(self, "file_handler", None)
         if handler is None:
             return
         self.file_handler = None
-        self.logger.removeHandler(handler)
-        handler.close()
+        RunLog.detach(self.logger, handler, footer=footer)
         self.logger.debug("File handler closed and removed.")
+
+    def _remove_legacy_logs(self) -> List[str]:
+        """Delete the per-export logs earlier versions left in the export folder.
+
+        Each export used to write ``<export name>.log`` (``.<name>.log`` when
+        hidden off Windows) beside its deliverable, and nothing removed one.
+        A log goes only when it is the exporter's own: a deliverable of its
+        name sits beside it, and it is empty (the 2026-10-09 wrong-logger
+        runs) or opens on the exporter's record or banner
+        (:attr:`_LEGACY_LOG_START`). Best-effort, per file.
+
+        Returns:
+            list: The paths removed.
+        """
+        folder = getattr(self, "export_dir", None)
+        if not folder or not os.path.isdir(folder):
+            return []
+        extensions = {
+            ext for exts in ptk.ExportProfile.OUTPUT_EXTENSIONS.values() for ext in exts
+        }
+        names = os.listdir(folder)
+        shipped = {
+            os.path.splitext(n)[0].casefold()
+            for n in names
+            if os.path.splitext(n)[1].lower() in extensions
+        }
+        removed = []
+        for name in names:
+            stem, ext = os.path.splitext(name)
+            if ext.lower() != RunLog.EXTENSION:
+                continue
+            if stem.lstrip(".").casefold() not in shipped:
+                continue
+            path = os.path.join(folder, name)
+            try:
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    first = next((ln for ln in fh if ln.strip()), "")
+                if first and not self._LEGACY_LOG_START.match(first):
+                    continue
+                os.remove(path)
+                removed.append(path)
+            except OSError:
+                continue
+        if removed:
+            self.logger.info(
+                f"Removed {len(removed)} old export log(s) from {folder}: the "
+                "run log is one file per scene now."
+            )
+        return removed

@@ -853,29 +853,53 @@ class ShotPlanner(_ShotPlannerInternal):
         """Build a plan that moves ``shot_id`` to 1-based timeline position ``target_pos``.
 
         The shot is lifted from its current slot and re-inserted at ``target_pos``
-        (clamped to ``[1, n]``); the whole set is then laid out sequentially from the
-        earliest current start, each shot preserving its duration.  Inter-shot gaps
-        use ``gap``, except a gap that is *locked* **and** whose two shots were already
-        adjacent keeps its current width.  Because a reorder makes one shot's move
-        cross others', the resulting ``moves`` almost always form a collision cycle —
-        :func:`_finalize_plan` resolves that into the park / ordered / land structure
-        that the DCC applier executes, so no bespoke park/land loop is needed.
+        (clamped to ``[1, n]``), and the new order is laid out by :meth:`plan_order`.
+        Returns an empty plan when there are fewer than two shots, the id is
+        unknown, or the position is unchanged.
+        """
+        ids = [s.shot_id for s in store.sorted_shots()]
+        if len(ids) < 2 or shot_id not in ids:
+            return MovePlan()
+        ids.remove(shot_id)
+        ids.insert(max(0, min(int(target_pos) - 1, len(ids))), shot_id)
+        return ShotPlanner.plan_order(store, ids, gap)
+
+    @staticmethod
+    def plan_order(store: ShotStore, order: List[int], gap: float) -> MovePlan:
+        """Build a plan that lays the shots out in ``order`` (shot ids, first to last).
+
+        The whole set is laid out sequentially from the earliest current start, each
+        shot preserving its duration.  Inter-shot gaps use ``gap``, except a gap that
+        is *locked* **and** whose two shots were already adjacent keeps its current
+        width.  Because a reorder makes one shot's move cross others', the resulting
+        ``moves`` almost always form a collision cycle -- :func:`_finalize_plan`
+        resolves that into the park / ordered / land structure that the DCC applier
+        executes, so no bespoke park/land loop is needed.
 
         Envelopes describe each shot's *current* (pre-move) owned key window, so the
         executor reads keys from where they are now and lands them at the reordered
-        positions.  Returns an empty plan when there are fewer than two shots, the id
-        is unknown, or the position is unchanged.
+        positions.
+
+        Parameters:
+            store: The shots to lay out.
+            order: Every shot id of *store*, each once, in the new timeline order.
+            gap: Frames between neighbours whose gap is not a kept lock.
+
+        Returns:
+            The plan; empty when *order* is the current order or there are fewer
+            than two shots.
+
+        Raises:
+            ValueError: *order* is not a permutation of the store's shot ids.
         """
         shots = store.sorted_shots()
-        if len(shots) < 2:
-            return MovePlan()
         ids = [s.shot_id for s in shots]
-        if shot_id not in ids:
-            return MovePlan()
-
-        cur_idx = ids.index(shot_id)
-        target_idx = max(0, min(int(target_pos) - 1, len(shots) - 1))
-        if target_idx == cur_idx:
+        order = list(order)
+        if sorted(order) != sorted(ids):
+            raise ValueError(
+                f"Order {order} is not a permutation of the shot ids {ids}"
+            )
+        if len(shots) < 2 or order == ids:
             return MovePlan()
 
         # Current owned key windows + adjacency widths, captured before any move.
@@ -890,9 +914,8 @@ class ShotPlanner(_ShotPlannerInternal):
             for i in range(len(shots) - 1)
         }
 
-        new_order = list(shots)
-        moving = new_order.pop(cur_idx)
-        new_order.insert(target_idx, moving)
+        by_id = {s.shot_id: s for s in shots}
+        new_order = [by_id[i] for i in order]
 
         moves: Dict[int, ShotMove] = {}
         cursor = shots[0].start

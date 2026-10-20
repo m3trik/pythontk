@@ -11,6 +11,7 @@ asset.
 
 import base64
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -467,7 +468,7 @@ class PreviewServerTestCase(unittest.TestCase):
         # over a canvas that is still blank restores the exact lie above.
         self.assertIn("if (contextLost)", page)
 
-    def test_the_manifest_says_whether_an_xr_runtime_is_installed(self):
+    def test_the_manifest_names_the_active_xr_runtime(self):
         """ "Connect a headset" is a dead end for someone who already did.
 
         The page sees only that `immersive-vr` is unsupported, so it asked for
@@ -477,9 +478,36 @@ class PreviewServerTestCase(unittest.TestCase):
         installed OpenXR runtime from none -- the same value the browser reads
         to find one -- so the manifest carries it and the page can say "start
         Link" instead of "connect a headset".
+
+        A NAME rather than a yes/no, because the browser loads a runtime once
+        and never re-reads the registry: measured 2026-10-18, Virtual Desktop
+        was the active runtime while Edge's XR service, started the day
+        before, still held Oculus's -- unsupported however long the page
+        polled, while a fresh Edge answered supported at once. Only a name lets
+        the page see the runtime change under it (test_preview_viewer_live).
         """
+        runtime = self.assets / "vendor_openxr.json"
+        cases = {
+            "named": ('{"runtime": {"name": " Vendor XR ", "library_path": "x.dll"}}', "Vendor XR"),
+            # Another vendor's file: any shape it has, the answer is SOME name.
+            "unnamed": ('{"runtime": {"library_path": "x.dll"}}', "vendor_openxr"),
+            "not a string": ('{"runtime": {"name": 5}}', "vendor_openxr"),
+            "wrong shape": ('{"runtime": "x.dll"}', "vendor_openxr"),
+            "not json": ("not json", "vendor_openxr"),
+            "bom": ('﻿{"runtime": {"name": "Vendor XR"}}', "Vendor XR"),
+        }
         self._serve()
-        self.assertIsInstance(self.server.manifest()["xrRuntime"], bool)
+        with unittest.mock.patch.object(
+            PreviewServer, "_xr_runtime", classmethod(lambda cls: str(runtime))
+        ):
+            for case, (text, expected) in cases.items():
+                runtime.write_text(text, encoding="utf-8")
+                with self.subTest(case=case):
+                    self.assertEqual(self.server.manifest()["xrRuntime"], expected)
+        with unittest.mock.patch.object(
+            PreviewServer, "_xr_runtime", classmethod(lambda cls: None)
+        ):
+            self.assertIs(self.server.manifest()["xrRuntime"], False)
         page = _served_page(self.root)
         self.assertIn("manifest.xrRuntime", page)
         # The distinction is the whole point: a runtime present but nothing
@@ -527,7 +555,18 @@ class PreviewServerTestCase(unittest.TestCase):
             "policy.environmentIntensity;",
             page,
         )
-        self.assertNotIn("material.envMapIntensity", page)
+        # No material's level is dimmed: the one material level the page
+        # writes is a probe highlight copy's, played at the probe's own level
+        # (three r163+ plays a material's own envMap at its envMapIntensity),
+        # and its restore when the copy comes off.
+        writes = re.findall(r"material\.envMapIntensity = [^;]+;", page)
+        self.assertEqual(
+            sorted(writes),
+            [
+                "material.envMapIntensity = own.envMapIntensity;",
+                "material.envMapIntensity = policy.probeIntensity;",
+            ],
+        )
         self.assertNotIn("material.envMap = scene.environment", page)
         self.assertNotIn("lightToggle", page)
         self.assertNotIn("bakeOnly", page)
@@ -945,7 +984,7 @@ class PreviewServerTestCase(unittest.TestCase):
         self.assertIn("new THREE.AnimationMixer(gltf.scene)", page)
         # Driven from the frame loop, and BEFORE the script hook, so a module
         # subscribing to 'frame' sees this frame's pose rather than the last.
-        loop = page[page.index("renderer.setAnimationLoop") :]
+        loop = page[page.index("function drawFrame(") :]  # the frame loop's body
         self.assertLess(loop.index("advance(delta)"), loop.index("emit('frame'"))
         advance = page[page.index("export function advance(delta)") :]
         self.assertIn("mixer.update(delta)", advance[: advance.index("\n}\n")])
@@ -1972,11 +2011,12 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self._push(scripts=[])
         self.assertEqual(self.server.scripts, ())
 
-    def test_a_push_publishes_the_lighting_recipe_its_rows_chose(self):
-        """The Baked Reflections row reaches the GLB as the export's does: the
-        deliverer resolves it in its preflight, and the host's envelope
+    def test_a_push_publishes_the_lighting_recipe_whatever_a_retired_row_says(self):
+        """The lighting recipe reaches the GLB as the export's does: the
+        deliverer resolves the run in its preflight, and the host's envelope
         publishes it -- an input to the envelope, never patched on afterwards.
-        A push's own row outranks the deliverer's, as every row does."""
+        The Baked Reflections row retired 2026-10-19, so an older panel's
+        choice, the deliverer's or a push's own, publishes the recipe's level."""
         from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
 
         bridge = _StubPreviewBridge()
@@ -1999,8 +2039,9 @@ class PreviewDelivererTestCase(unittest.TestCase):
             pushed = seen["sidecar"]["handoff"]["rendering"]["lightmappedMaterials"]
             bridge.push()
             default = seen["sidecar"]["handoff"]["rendering"]["lightmappedMaterials"]
-        self.assertEqual(pushed["envMapIntensity"], 0.0)
-        self.assertEqual(default["envMapIntensity"], 1.0)
+        recipe = MeshConvert.RENDERING_POLICY["lightmappedMaterials"]["envMapIntensity"]
+        self.assertEqual(pushed["envMapIntensity"], recipe)
+        self.assertEqual(default["envMapIntensity"], recipe)
 
     def test_the_glb_is_built_by_the_pipeline_the_exporters_run(self):
         """One chain for the preview and the deliverable.
@@ -2034,6 +2075,8 @@ class PreviewDelivererTestCase(unittest.TestCase):
             }
 
         self.bridge.lightmap_search_dirs = lambda: ["D:/maps"]
+        codec = object()
+        self.bridge.hdr_codec = lambda: codec
         self.bridge.deliverer = PreviewDeliverer(
             server=self.server,
             open_browser=False,
@@ -2053,6 +2096,9 @@ class PreviewDelivererTestCase(unittest.TestCase):
 
         self.assertEqual(seen["sidecar"], envelope)
         self.assertEqual(seen["lightmap_dirs"], ["D:/maps"])
+        # The bridge's own float-image codec reaches the build (a Blender push
+        # shipped unlit without one: no cv2 there). Added: 2026-10-17
+        self.assertIs(seen["hdr_codec"], codec)
         self.assertEqual(
             seen["texture_params"],
             # Optimize Textures untouched is OFF: every map keeps its size.
@@ -3126,23 +3172,22 @@ class SetGlbEmissiveTestCase(unittest.TestCase):
             bytes(_bin[start : start + view["byteLength"]]).startswith(b"\x89PNG")
         )
 
-    def test_zero_factor_never_blacks_out_an_emissive_map(self):
-        """glTF emission is factor x texture — a 0 factor silently kills the map.
-
-        The DCC readers now omit a material whose emission weight is 0, so this
-        pins the writer's half: a texture with an explicit all-zero colour must
-        not be written as a black-multiplied map.
+    def test_a_zero_factor_switches_the_emission_off_and_embeds_nothing(self):
+        """A zero colour is the DCC saying the material emits nothing (Maya's
+        reader sends it for a mapped emissive at weight 0): the emission is
+        switched off -- factor 0, no map -- rather than left to the converter,
+        which glows a mapped emissive at 1.0. Nothing is embedded for it.
         """
         self._write_glb({"materials": [{"name": "m"}]})
         records = MeshConvert.set_glb_emissive(
             str(self.glb), {"m": {"texture": self._png(), "color": (0, 0, 0)}}
         )
-        self.assertEqual(records, [])
+        self.assertEqual([r["factor"] for r in records], [[0.0, 0.0, 0.0]])
         gltf, _rest, _bin = self._read_back()
         mat = gltf["materials"][0]
         self.assertNotIn("emissiveTexture", mat)
-        self.assertNotIn("emissiveFactor", mat)
-        # Skipped before embedding — no orphaned image left in the file.
+        self.assertEqual(mat["emissiveFactor"], [0.0, 0.0, 0.0])
+        # Decided before embedding — no orphaned image left in the file.
         self.assertNotIn("images", gltf)
 
     def test_unknown_material_name_is_ignored(self):
@@ -3303,6 +3348,27 @@ class PublishFileTestCase(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             self.bridge.publish_file(self._glb("authored.gltf"), open_browser=False)
         self.assertIn(".glb", str(caught.exception))
+
+    def test_preview_file_publishes_and_names_the_page(self):
+        """The Scene Exporter's closing ``Open … in WebXR`` link. The tab is
+        the deliverer's call, so one built not to open any opens none.
+        Added: 2026-10-14"""
+        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        glb = self._glb()
+        with self.assertLogs("preview_file_test", "INFO") as logs:
+            ok = self.bridge.preview_file(glb, logging.getLogger("preview_file_test"))
+        self.assertTrue(ok)
+        self.assertIn(self.server.url, logs.output[0])
+        self.assertIn(glb.name, logs.output[0])
+        self.assertEqual(self.server.manifest()["version"], 1)
+
+    def test_preview_file_says_why_rather_than_raising(self):
+        """A click on a stale link (the GLB moved since the run) warns."""
+        gone = Path(self.temp.dir_path()) / "gone.glb"
+        with self.assertLogs("preview_file_test", "WARNING") as logs:
+            ok = self.bridge.preview_file(gone, logging.getLogger("preview_file_test"))
+        self.assertFalse(ok)
+        self.assertIn("gone.glb", logs.output[0])
 
     def test_a_bridge_that_cannot_publish_says_so(self):
         """Both shapes: no deliverer at all, and one that is not a preview
@@ -4775,6 +4841,77 @@ class PreviewShareTestCase(unittest.TestCase):
         self.assertEqual(
             answered["error"], "the link answered, but not with this share"
         )
+
+    def _ping_https(self, public=True, addresses=("203.0.113.7",), raises=None):
+        """A ping of an https share, its requests recorded rather than sent:
+        ``(ping, [(url, address, verify), ...])``."""
+        import json
+
+        asked = []
+        body = json.dumps({"guest": True, "version": self.server.version}).encode()
+
+        def ask(url, timeout, address, verify):
+            asked.append((url, address, verify))
+            if raises is not None and verify:
+                raise raises
+            return 200, body
+
+        info = {"tunnel_url": "https://share.example.test/", "public": public}
+        found = list(addresses) if addresses is not None else None
+        resolve = unittest.mock.patch(
+            "pythontk.net_utils._net_utils.NetUtils.public_addresses",
+            return_value=found,
+        )
+        with (
+            unittest.mock.patch.object(PreviewServer, "share_info", return_value=info),
+            unittest.mock.patch.object(PreviewServer, "_ask_share", side_effect=ask),
+            resolve,
+        ):
+            return self.server.ping_share(attempts=1), asked
+
+    def test_a_ping_takes_the_route_a_guest_takes(self):
+        """Reported: Test Link said a Tailscale link did not answer while
+        guests opened it -- and a pass would have proved nothing either: on a
+        tailnet machine MagicDNS answers the ts.net name with the tailnet
+        address, never the public ingress a guest reaches. The name is
+        resolved by public DNS and that address is asked."""
+        ping, asked = self._ping_https()
+        self.assertTrue(ping["ok"], ping)
+        self.assertEqual((ping["route"], ping["verified"]), ("public", True))
+        self.assertEqual(
+            asked, [("https://share.example.test/manifest.json", "203.0.113.7", True)]
+        )
+
+    def test_a_name_public_dns_lacks_is_unreachable_and_never_asked(self):
+        """No stranger's browser can find it, whatever this machine resolves."""
+        ping, asked = self._ping_https(addresses=())
+        self.assertFalse(ping["ok"])
+        self.assertIn("public DNS does not have the link's name", ping["error"])
+        self.assertEqual(asked, [])
+
+    def test_a_certificate_this_machine_cannot_verify_still_reaches(self):
+        """A root missing from this machine's store is no guest's problem:
+        asked again unverified, the share answering is a pass, said
+        unverified."""
+        import ssl
+        import urllib.error
+
+        fault = urllib.error.URLError(
+            ssl.SSLCertVerificationError(1, "certificate has expired")
+        )
+        ping, asked = self._ping_https(raises=fault)
+        self.assertTrue(ping["ok"], ping)
+        self.assertIs(ping["verified"], False)
+        self.assertEqual([verify for _url, _addr, verify in asked], [True, False])
+
+    def test_a_tailnet_only_link_is_asked_through_this_machine(self):
+        """Its guests are tailnet members, resolving it as this machine does;
+        public DNS is not theirs, and an unreached resolver falls back too."""
+        for public, addresses in ((False, ("203.0.113.7",)), (True, None)):
+            ping, asked = self._ping_https(public=public, addresses=addresses)
+            self.assertTrue(ping["ok"], ping)
+            self.assertEqual(ping["route"], "local")
+            self.assertEqual(asked[0][1], None)
 
     def test_the_bridge_hands_its_caller_the_providers_step(self):
         """The panel shares through the bridge; a step the provider stops on

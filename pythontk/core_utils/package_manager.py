@@ -121,9 +121,14 @@ class _PackageManagerHelperMixin:
         url = f"https://pypi.org/pypi/{package_name}/json"
         request = Request(url)
 
+        from pythontk.net_utils._net_utils import NetUtils
+
         try:
             with urllib.request.urlopen(
-                request, timeout=self.INDEX_TIMEOUT if timeout is None else timeout
+                request,
+                timeout=self.INDEX_TIMEOUT if timeout is None else timeout,
+                # The trust a browser has: a stale OS store fails otherwise.
+                context=NetUtils.tls_context(),
             ) as response:
                 data = json.loads(response.read().decode())
                 return data["info"]["version"]  # Return the latest version

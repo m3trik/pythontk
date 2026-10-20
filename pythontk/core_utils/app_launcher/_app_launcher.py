@@ -3,10 +3,11 @@
 """The :class:`AppLauncher` facade: the three launch shapes, over its job mixins.
 
 ``launch`` (detached: it outlives this process), ``run`` (blocking, with a
-timeout and optional line streaming) and ``spawn`` (a helper that runs beside
-this process and dies with it), plus ``write_batch_script``. Install discovery,
-the process environment, desktop sessions and windows, and the process table
-are private mixins in sibling modules; every member resolves on this class, and
+timeout, optional line streaming, and optionally hidden) and ``spawn`` (a helper
+that runs beside this process and dies with it), plus ``write_batch_script``.
+Install discovery, the process environment, desktop sessions and windows, the
+process table and hidden runs are private mixins in sibling modules; every
+member resolves on this class, and
 every cross-call is spelled ``AppLauncher.<name>`` so patching the facade
 reaches it.
 """
@@ -19,6 +20,7 @@ import logging
 from pythontk.core_utils.app_launcher._desktop import _DesktopMixin
 from pythontk.core_utils.app_launcher._discovery import _DiscoveryMixin
 from pythontk.core_utils.app_launcher._environment import _EnvironmentMixin
+from pythontk.core_utils.app_launcher._hidden import _HiddenMixin
 from pythontk.core_utils.app_launcher._processes import _ProcessesMixin
 from pythontk.core_utils.app_launcher._shortcuts import _ShortcutsMixin
 
@@ -67,17 +69,34 @@ class _AppLauncherInternal(object):
             logger.warning(f"Process {proc.pid} did not exit after kill.")
 
     @staticmethod
-    def _run_streaming(cmd, cwd, timeout, env, creationflags, on_output, poll_interval):
-        """The :meth:`AppLauncher.run` body when *on_output* is given (see there)."""
+    def _cancelled(cmd):
+        """The :class:`~pythontk.OperationCancelled` a run raises once its caller
+        stops it (``on_output`` returned ``False``, or the ambient
+        :class:`~pythontk.CancelScope` was cancelled), carrying that scope."""
+        from pythontk.core_utils.cancel_scope import CancelScope, OperationCancelled
+
+        scope = CancelScope.current()
+        return OperationCancelled(
+            f"'{os.path.basename(cmd[0])}' cancelled by the caller",
+            scope=scope,
+            reason=scope.reason if scope is not None else None,
+        )
+
+    @staticmethod
+    def _run_streaming(
+        cmd, cwd, timeout, env, creationflags, on_output, poll_interval, popen
+    ):
+        """The :meth:`AppLauncher.run` body when *on_output* is given (see there);
+        *popen* is the ``Popen`` class the child starts with."""
         import queue
         import time
 
-        from pythontk.core_utils.cancel_scope import CancelScope, OperationCancelled
+        from pythontk.core_utils.cancel_scope import CancelScope
         from pythontk.core_utils.process_stream import OutputStream, ProcessReader
 
         # Merged into ONE pipe so lines keep their relative order: a traceback on
         # stderr must land after the progress line that preceded it.
-        proc = subprocess.Popen(
+        proc = popen(
             cmd,
             cwd=cwd,
             env=env,
@@ -110,15 +129,16 @@ class _AppLauncherInternal(object):
                         ):
                             break
                 if on_output(line) is False or not CancelScope.proceed():
-                    _AppLauncherInternal._kill(proc)
-                    raise OperationCancelled(
-                        f"'{os.path.basename(cmd[0])}' cancelled by the caller"
-                    )
+                    raise _AppLauncherInternal._cancelled(cmd)
                 if deadline is not None and time.monotonic() > deadline:
-                    _AppLauncherInternal._kill(proc)
                     raise subprocess.TimeoutExpired(
                         cmd, timeout, output="\n".join(output)
                     )
+        except BaseException:
+            # A cancel, the timeout, and as much an error in on_output or a
+            # Ctrl+C: the child must not run on with no one reading it.
+            _AppLauncherInternal._kill(proc)
+            raise
         finally:
             unsubscribe()
             stream.close()
@@ -134,6 +154,7 @@ class AppLauncher(
     _EnvironmentMixin,
     _DesktopMixin,
     _ProcessesMixin,
+    _HiddenMixin,
     _ShortcutsMixin,
 ):
     """
@@ -141,7 +162,7 @@ class AppLauncher(
     """
 
     @staticmethod
-    def launch(app_identifier, args=None, cwd=None, detached=True, env=None):
+    def launch(app_identifier, args=None, cwd=None, detached=True, env=None, log=None):
         """
         Launches an application.
 
@@ -153,6 +174,9 @@ class AppLauncher(
                     sandbox's: the run's temp root goes when the run does (:meth:`TestSandbox.host_environ`).
         :param env: Optional mapping of environment variables for the child process.
                     If None, the child inherits the current process's environment.
+        :param log: A file the child's output (stdout and stderr) is appended to -- a
+                    detached worker's only record of what it did. None: it inherits
+                    this process's.
         :return: The subprocess.Popen object or None if launch failed.
         """
         system = platform.system().lower()
@@ -191,7 +215,17 @@ class AppLauncher(
                     # Linux/Unix
                     kwargs["start_new_session"] = True
 
-            return subprocess.Popen(cmd, **kwargs)
+            if log is None:
+                return subprocess.Popen(cmd, **kwargs)
+            os.makedirs(os.path.dirname(os.path.abspath(log)), exist_ok=True)
+            with open(log, "a", encoding="utf-8") as handle:  # the child keeps its own
+                return subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=handle,
+                    stderr=subprocess.STDOUT,
+                    **kwargs,
+                )
 
         except Exception as e:
             logger.error(f"Failed to launch '{app_identifier}': {e}")
@@ -208,11 +242,15 @@ class AppLauncher(
         hide_window=False,
         on_output=None,
         poll_interval=0.1,
+        hidden=False,
     ):
         """Execute an application synchronously and return its result.
 
         Unlike :meth:`launch` (fire-and-forget), this method blocks until the
-        process finishes and honours a *timeout*.
+        process finishes and honours a *timeout*. The child's stdin is empty
+        (``DEVNULL``): its output is captured, so it cannot prompt anyone, and
+        inheriting this process's stdin fails the start where that is a dead
+        handle (a GUI process whose console went).
 
         :param app_identifier: Name or path of the application.
         :param args: Arguments to pass (str, list, or tuple).
@@ -244,11 +282,26 @@ class AppLauncher(
                         progress should pass ``flush=True``. Not combinable with
                         *output_file*.
         :param poll_interval: Seconds between idle ``on_output(None)`` calls.
+        :param hidden: Windows only -- run a GUI app that has no headless mode
+                        (RizomUV, Marmoset Toolbag) where no one sees it: on a
+                        private desktop with the user's own monitors, so the
+                        windows it opens and saves stay where they always are.
+                        Nothing it starts outlives the run: its exit, the
+                        timeout, an error or an interrupt -- or this process
+                        ending, however -- ends the whole tree. Elsewhere a
+                        no-op (:meth:`can_hide`): a virtual display would move
+                        the app's window on its next normal launch. A dialog
+                        the app opens waits unseen, so a hidden run polls the
+                        ambient :class:`pythontk.CancelScope` as it waits (an
+                        Esc hold under a ``@Cancelable`` slot): a cancel ends
+                        the tree at once rather than at the timeout.
         :return: A ``subprocess.CompletedProcess`` with *returncode* and, unless
                  *output_file* is set, *stdout*/*stderr* (decoded text).
         :raises FileNotFoundError: If the application cannot be found.
         :raises subprocess.TimeoutExpired: If *timeout* is exceeded.
-        :raises pythontk.OperationCancelled: When *on_output* returns ``False``.
+        :raises pythontk.OperationCancelled: When *on_output* returns ``False``,
+                 or the ambient :class:`pythontk.CancelScope` is cancelled during
+                 a streamed or hidden run.
         """
         if on_output is not None and output_file:
             raise ValueError("on_output and output_file are mutually exclusive.")
@@ -261,16 +314,19 @@ class AppLauncher(
         creationflags = (
             subprocess.CREATE_NO_WINDOW if hide_window and os.name == "nt" else 0
         )
-        logger.debug(f"Running (blocking): {cmd}")
+        logger.debug(f"Running (blocking{', hidden' if hidden else ''}): {cmd}")
+        popen = AppLauncher._popen(hidden)
         if on_output is not None:
             return AppLauncher._run_streaming(
-                cmd, cwd, timeout, env, creationflags, on_output, poll_interval
+                cmd, cwd, timeout, env, creationflags, on_output, poll_interval, popen
             )
+        run = subprocess.run if popen is subprocess.Popen else AppLauncher._run_hidden
         if output_file:
             with open(output_file, "w", encoding="utf-8", errors="replace") as fh:
-                return subprocess.run(
+                return run(
                     cmd,
                     cwd=cwd,
+                    stdin=subprocess.DEVNULL,
                     stdout=fh,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -282,9 +338,10 @@ class AppLauncher(
         # errors="replace": the child writes in ITS encoding (mayapy: cp1252), which
         # need not be ours (Blender decodes UTF-8). A strict decode died in the
         # reader thread and returned no output at all -- tracebacks included.
-        return subprocess.run(
+        return run(
             cmd,
             cwd=cwd,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             errors="replace",

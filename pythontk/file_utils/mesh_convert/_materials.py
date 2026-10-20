@@ -569,13 +569,26 @@ class _MaterialsMixin:
                 if len(color) < 3:
                     color += [0.0] * (3 - len(color))
 
-                # A zero colour is zero emission -- and paired with a texture it
-                # is actively harmful rather than merely redundant: glTF
-                # emission is ``emissiveFactor * emissiveTexture``, so writing
-                # both multiplies the map to black while still reporting a
-                # successful transfer. Tested before embedding, so a skipped
-                # material leaves no orphaned image in the file.
+                # A zero colour is zero emission: the material is switched OFF,
+                # never skipped. The converter glows a mapped emissive at 1.0
+                # whatever the DCC said, so a skip shipped an authored-dark
+                # material lit (a production room's ceiling panels at full in
+                # WebXR, 2026-10-17). No map is embedded for it (tested before
+                # embedding, so no orphaned image) and the converter's goes.
                 if all(c <= 0.0 for c in color):
+                    mat["emissiveFactor"] = [0.0, 0.0, 0.0]
+                    mat.pop("emissiveTexture", None)
+                    (mat.get("extensions") or {}).pop(
+                        "KHR_materials_emissive_strength", None
+                    )
+                    records.append(
+                        {
+                            "material": name,
+                            "factor": [0.0, 0.0, 0.0],
+                            "strength": None,
+                            "texture": None,
+                        }
+                    )
                     continue
 
                 peak = max(color)
@@ -679,6 +692,56 @@ class _MaterialsMixin:
                 )
         return records
 
+    #: glTF's unlit shading model (three.js: ``MeshBasicMaterial``).
+    UNLIT_EXTENSION = "KHR_materials_unlit"
+
+    @classmethod
+    def set_glb_unlit(
+        cls, glb: GlbTarget, unlit: Dict[str, Dict[str, Any]]
+    ) -> List[Dict]:
+        """Mark a GLB's materials unlit (``KHR_materials_unlit``), by name.
+
+        The one shading fact no FBX can carry: FBX2glTF makes every material it
+        meets lit PBR, whatever the DCC authored -- a Maya ``surfaceShader``, or
+        the black silhouette of a projected contact shadow. Lit, such a
+        surface takes the viewer's environment specular, and a shadow plane
+        measured BRIGHTER than the floor it lies on (2026-10-15, WebXR: 24.4
+        -> 28.3 mean luminance, off -> on). Unlit, its base colour and alpha
+        are what shows. The DCC says which materials it authored unlit
+        (mayatk ``SceneState._read_unlit``) through this section.
+
+        Metallic 0 / roughness 1 ride along for a viewer without the
+        extension, which then falls back to lit PBR at its most diffuse.
+
+        Parameters:
+            glb: Path to a binary glTF (.glb), modified in place, or an open
+                :class:`GlbEdit` session whose owner will write it.
+            unlit: ``{material_name: {}}`` -- the entries carry nothing yet;
+                a dict so the section reads like its siblings. Names absent
+                from the GLB are reported.
+
+        Returns:
+            List of records: ``material``.
+        """
+        if not unlit:
+            return []
+        records: List[Dict] = []
+        with cls.open_glb(glb) as edit:
+            for name, _spec, mat in cls._match_glb_materials(
+                edit.gltf, unlit, "set_glb_unlit"
+            ):
+                mat.setdefault("extensions", {})[cls.UNLIT_EXTENSION] = {}
+                pbr = mat.setdefault("pbrMetallicRoughness", {})
+                pbr["metallicFactor"] = 0.0
+                pbr["roughnessFactor"] = 1.0
+                records.append({"material": name})
+            if records:
+                used = edit.gltf.setdefault("extensionsUsed", [])
+                if cls.UNLIT_EXTENSION not in used:
+                    used.append(cls.UNLIT_EXTENSION)
+                edit.dirty = True
+        return records
+
     @classmethod
     def set_glb_normal_scale(
         cls, glb: GlbTarget, scale: float, lightmapped_only: bool = True
@@ -771,8 +834,14 @@ class _MaterialsMixin:
         Parameters:
             glb: Path to a binary glTF (.glb), modified in place, or an open
                 :class:`GlbEdit` session whose owner will write it.
-            base_color: ``{material_name: {"color": (r, g, b), "texture": path}}``.
-                Both keys optional. Names absent from the GLB are reported.
+            base_color: ``{material_name: {"color": (r, g, b), "texture": path,
+                "alpha": a}}``. All keys optional. ``alpha`` is the material's
+                own opacity factor (``baseColorFactor[3]``, which glTF
+                multiplies into the texture's alpha): a shader whose opacity
+                is ``texture alpha x a scalar`` or a bare constant -- a shadow
+                plane's static fade -- that FBX cannot carry. Absent, the
+                converter's alpha stands. Names absent from the GLB are
+                reported.
 
         Returns:
             List of records: ``material``, ``factor``, ``texture``.
@@ -835,6 +904,17 @@ class _MaterialsMixin:
                             existing[3] if len(existing) > 3 else 1.0,
                         ]
                         pbr["baseColorFactor"] = factor
+
+                alpha = spec.get("alpha")
+                if alpha is not None:
+                    factor = list(
+                        factor or pbr.get("baseColorFactor") or [1.0, 1.0, 1.0, 1.0]
+                    )
+                    while len(factor) < 4:
+                        factor.append(1.0)
+                    factor[3] = min(1.0, max(0.0, float(alpha)))
+                    pbr["baseColorFactor"] = factor
+                    entry_written = True
 
                 if entry_written:
                     records.append(

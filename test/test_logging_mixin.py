@@ -2207,5 +2207,151 @@ class LayoutCharacterizationTest(BaseTestCase):
         self.assertEqual(widget.messages, self.LOG_TABLE_GOLDEN)
 
 
+class RunLogTest(BaseTestCase):
+    """``RunLog``: one bounded log per source, holding its newest runs."""
+
+    def setUp(self):
+        from pythontk.core_utils.logging_mixin import RunLog
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        self.RunLog = RunLog
+        temp = TempArtifacts("test_run_log", policy="scoped")
+        self.addCleanup(temp.cleanup)
+        self.folder = temp.dir_path()
+        self.logger = logging.getLogger("ptk_test_run_log")
+        self.logger.setLevel(logging.ERROR)
+        self.logger.propagate = False
+
+    def test_the_file_is_named_by_its_source(self):
+        """Every ``layout.ma`` of a production must not share one log, so the
+        name carries a hash of the full path beside the readable stem."""
+        a = os.path.join("projA", "shot1", "layout.ma")
+        b = os.path.join("projA", "shot2", "layout.ma")
+        name = self.RunLog.file_name
+        self.assertEqual(name(a), name(a))
+        self.assertNotEqual(name(a), name(b))
+        self.assertRegex(name(a), r"^layout_[0-9a-f]{8}\.log$")
+        self.assertRegex(
+            name(os.path.join("x", "my scene ★.ma")), r"^my_scene_[0-9a-f]{8}\.log$"
+        )
+        self.assertEqual(name(""), "untitled.log")
+        self.assertEqual(name(None, fallback="scratch"), "scratch.log")
+
+    def test_each_run_is_bracketed_at_any_level_and_appended(self):
+        """Header and footer reach the file whatever the logger's level, so a
+        quiet run still records that it ran and how it ended."""
+        path = os.path.join(self.folder, "a.log")
+        for outcome in ("Export succeeded", "Export failed"):
+            handler = self.RunLog.attach(self.logger, path, header="scene: café.ma")
+            self.logger.info("filtered out at ERROR")
+            self.logger.error("kept → ★")
+            self.RunLog.detach(self.logger, handler, footer=outcome)
+            self.assertNotIn(handler, self.logger.handlers)
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        headers = [ln for ln in lines if ln.startswith(self.RunLog.RUN_MARKER)]
+        footers = [ln for ln in lines if ln.startswith(self.RunLog.END_MARKER)]
+        self.assertEqual(len(headers), 2, lines)
+        self.assertIn("scene: café.ma", headers[0])
+        self.assertRegex(footers[0], r"Export succeeded \(\d+\.\d s\)$")
+        self.assertIn("Export failed", footers[1])
+        self.assertNotIn("filtered out", "\n".join(lines))
+        self.assertEqual(sum("kept → ★" in ln for ln in lines), 2)
+
+    def test_a_header_that_cannot_be_written_leaves_the_file_closed(self):
+        """A lone surrogate cannot encode; the handler must close, not leak an
+        open (on Windows, locked) file the next run cannot trim. The exception
+        is kept, as a caller logging it with its traceback keeps it: the frame
+        it holds would otherwise keep the unclosed handler alive."""
+        path = os.path.join(self.folder, "bad.log")
+        kept = None
+        try:
+            self.RunLog.attach(self.logger, path, header="\ud800")
+        except UnicodeEncodeError as error:
+            kept = error
+        self.assertIsNotNone(kept)
+        self.assertFalse(
+            [h for h in self.logger.handlers if isinstance(h, logging.FileHandler)]
+        )
+        os.remove(path)  # PermissionError on Windows while a handle is open
+
+    def test_capture_gives_the_file_detail_the_other_sinks_never_see(self):
+        """The file records from *capture* while a panel that follows the
+        logger keeps showing what it showed; detach puts both back."""
+        self.logger.setLevel(logging.INFO)
+        stream = io.StringIO()
+        panel = logging.StreamHandler(stream)  # NOTSET: follows the logger
+        self.logger.addHandler(panel)
+        self.addCleanup(self.logger.removeHandler, panel)
+        path = os.path.join(self.folder, "detail.log")
+        handler = self.RunLog.attach(self.logger, path, capture=logging.DEBUG)
+        self.logger.debug("fine detail")
+        self.logger.info("the narrative")
+        self.RunLog.detach(self.logger, handler, footer="done")
+        with open(path, encoding="utf-8") as fh:
+            content = fh.read()
+        self.assertIn("fine detail", content)
+        self.assertIn("the narrative", content)
+        self.assertNotIn("fine detail", stream.getvalue())
+        self.assertIn("the narrative", stream.getvalue())
+        self.assertEqual(self.logger.level, logging.INFO)
+        self.assertEqual(panel.level, logging.NOTSET)
+
+    def test_capture_leaves_a_pinned_handler_at_its_own_level(self):
+        """A handler pinned below the logger (a DEBUG ring buffer) already
+        records the detail; holding it at the panel's level would drop it."""
+        self.logger.setLevel(logging.INFO)
+        stream = io.StringIO()
+        pinned = logging.StreamHandler(stream)
+        pinned.setLevel(logging.DEBUG)
+        pinned._pinned_level = True
+        self.logger.addHandler(pinned)
+        self.addCleanup(self.logger.removeHandler, pinned)
+        handler = self.RunLog.attach(
+            self.logger, os.path.join(self.folder, "p.log"), capture=logging.DEBUG
+        )
+        self.logger.debug("fine detail")
+        self.RunLog.detach(self.logger, handler)
+        self.assertIn("fine detail", stream.getvalue())
+        self.assertEqual(pinned.level, logging.DEBUG)
+        self.assertTrue(pinned._pinned_level)
+
+    def test_trim_keeps_the_newest_whole_runs(self):
+        path = os.path.join(self.folder, "big.log")
+        with open(path, "w", encoding="utf-8") as fh:
+            for i in range(200):
+                fh.write(f"{self.RunLog.RUN_MARKER}run {i:03d}\n{'x' * 99}\n")
+        self.assertFalse(self.RunLog.trim(path, max_bytes=10**6))  # under the cap
+        self.assertTrue(self.RunLog.trim(path, max_bytes=4000))
+        self.assertLessEqual(os.path.getsize(path), 2000)
+        with open(path, encoding="utf-8") as fh:
+            content = fh.read()
+        self.assertTrue(content.startswith(self.RunLog.RUN_MARKER), content[:40])
+        self.assertIn("run 199", content)
+        self.assertNotIn("run 000", content)
+
+    def test_sweep_removes_only_stale_logs(self):
+        import time
+
+        old = time.time() - 40 * 86400
+        for name, mtime in (
+            ("stale.log", old),
+            ("fresh.log", None),
+            ("kept.log", old),
+            ("notes.txt", old),
+        ):
+            path = os.path.join(self.folder, name)
+            open(path, "w").close()
+            if mtime:
+                os.utime(path, (mtime, mtime))
+        removed = self.RunLog.sweep(
+            self.folder, max_age_days=30, keep=[os.path.join(self.folder, "kept.log")]
+        )
+        self.assertEqual(removed, 1)
+        self.assertEqual(
+            sorted(os.listdir(self.folder)), ["fresh.log", "kept.log", "notes.txt"]
+        )
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

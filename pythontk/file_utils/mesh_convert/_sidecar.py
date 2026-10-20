@@ -72,9 +72,11 @@ class _SidecarMixin:
     #: in a doc the reader was never given: a rule that only exists in
     #: documentation is not part of the hand-off.
     #:
-    #: Kept to plain declarative sentences about THIS file's own structure — no
-    #: instructions to the reader about what to do next, which is what makes it
-    #: safe for an agent to read as untrusted content.
+    #: Kept to declarative sentences about THIS file and the scene it rebuilds
+    #: -- never an action outside the file (no command, no fetch, no tool),
+    #: which is what makes it safe for an agent to read as untrusted content.
+    #: What the approved scene consists of is stated part by part in
+    #: ``handoff.assembly`` (:attr:`HANDOFF_ASSEMBLY`, :attr:`LIGHTING_ASSEMBLY`).
     #: Phrased to read correctly wherever this envelope lives -- embedded in
     #: the GLB's ``extras``, and held unscrubbed by the caller that built it --
     #: so it refers to the asset through the envelope's own ``asset`` key
@@ -114,11 +116,13 @@ class _SidecarMixin:
         "own keyframe times are rebased to zero; 'default_clip' is the one a "
         "player opens on, which is not necessarily animations[0] -- an FBX "
         "interchange step can retain a whole-timeline take alongside the split "
-        "ones. 'handoff.rendering' records the lighting setup the "
-        "reference viewer used to produce the look this asset was approved in: "
-        "the asset carries no lights of its own, so a viewer that lights it "
-        "differently renders something different without either side being "
-        "wrong. Check 'version' against the schema you expect."
+        "ones. 'handoff.assembly' lists every part of the approved scene with "
+        "the data it is built from (an address beginning 'rendering.' is in "
+        "'handoff.rendering'); a part left out yields a scene other than the "
+        "one approved. 'handoff.rendering' is the lighting the asset was "
+        "approved under and part of its look: the asset carries no lights of "
+        "its own, so lit any other way the same file renders differently. "
+        "Check 'version' against the schema you expect."
     )
 
     #: Schema version of the FBX-side handoff block (:meth:`build_fbx_handoff`).
@@ -177,6 +181,48 @@ class _SidecarMixin:
     #: sentence.
     FBX_HANDOFF_INSTRUCTIONS = SceneRecords.HANDOFF_INSTRUCTIONS
 
+    #: What the reflection probe does to the scene, whichever carrier holds
+    #: it: the tail of ``environment.probe`` on every carrier. Only the lead
+    #: -- where the image is, its encoding, its units -- is the carrier's
+    #: (:attr:`RENDERING_CARRIERS`).
+    #:
+    #: The level is stated for both lightmap conventions, not as a bare
+    #: ``probeIntensity``: that number is three.js', whose lightmapped diffuse
+    #: is pi below a renderer that composites the texel as ``albedo x
+    #: texel`` -- unitytk plays the same probe at 1 for exactly that reason
+    #: (``LightmapMetadataController.ApplyProbes``), so a Unity build taking
+    #: 1/pi from the policy would reflect a third of the approved room.
+    _PROBE_LIGHTING = (
+        "PMREM-prefiltered it replaces RoomEnvironment. It holds radiance, "
+        "and a lightmap texel is a white card's radiance (irradiance / pi), "
+        "so the probe plays at the lightmaps' own scale: probeIntensity "
+        "(1/pi) in a renderer that takes a lightmap texel as irradiance -- "
+        "three.js, whose baked diffuse is texel x albedo / pi -- and 1 in one "
+        "that composites it as texel x albedo, as Unity's Standard and URP "
+        "Lit shaders do. Every lookup is made in those axes. A "
+        "reflection is box-projected: followed from the shaded point "
+        "to where it leaves the box, and the probe read toward that "
+        "point from 'position'; diffuse irradiance is read along the "
+        "normal. Lightmapped materials reflect it whole -- "
+        "lightmappedMaterials.envMapIntensity is the studio's level -- "
+        "still under reflectionNormalization; unbaked ones take it "
+        "whole, diffuse and specular."
+    )
+    #: The GLB's alone: the copies are a GLB build's (``_highlights.py``); a
+    #: finished FBX carries the same copies as media its lightmap record's
+    #: ``probe.highlights`` names (``MeshConvert.embed_fbx_highlight_probes``).
+    _PROBE_HIGHLIGHTS = (
+        "'highlights', when present, holds the bake's lights as COPIES of "
+        "the probe for groups of receivers: each of 'copies' is a layer "
+        "(Radiance in its 'bufferView', 'width' x 'height', the probe's "
+        "layout and units) to add to the probe, box-filtered down to the "
+        "layer's size, and prefilter as the probe is; the materials it names "
+        "reflect that copy in the probe's place, box-projected from the same "
+        "'position' and 'box'. A copy draws each light where that projection "
+        "shows it true for its receivers, so the lights themselves never "
+        "ship -- lighting them as well lights the scene twice."
+    )
+
     #: The reference viewer's lighting setup (``net_utils/preview/viewer.html``),
     #: published as data so a recipient can reproduce the look the asset was
     #: signed off in instead of inferring it. A baked asset needs this more than
@@ -195,6 +241,10 @@ class _SidecarMixin:
     #: ``test_preview_server`` pins these against the viewer's literals, and
     #: ``test_preview_viewer_live`` against the pixels it draws, so the
     #: published contract cannot drift from what the viewer actually does.
+    #:
+    #: Written in the GLB's addresses, which is where the viewer reads it; a
+    #: carrier that holds the probe and the lightmaps elsewhere publishes it
+    #: through :attr:`RENDERING_CARRIERS`.
     RENDERING_POLICY: Dict[str, Any] = {
         "renderer": {
             "toneMapping": "ACESFilmic",
@@ -218,18 +268,7 @@ class _SidecarMixin:
                 "asin(y) / pi, its top row +Y); 'position' is where it was "
                 "captured and 'box' ({min, max}, or null for an open scene) "
                 "the box its reflections project onto, both in the asset's "
-                "metres. PMREM-prefiltered it replaces RoomEnvironment, at "
-                "probeIntensity: it holds radiance, while a lightmap texel is "
-                "a white card's radiance (irradiance / pi) that a glTF reader "
-                "takes as irradiance, so 1/pi keeps the probe in the bake's "
-                "units. Every lookup is made in the asset's axes. A "
-                "reflection is box-projected: followed from the shaded point "
-                "to where it leaves the box, and the probe read toward that "
-                "point from 'position'; diffuse irradiance is read along the "
-                "normal. Lightmapped materials reflect it whole -- "
-                "lightmappedMaterials.envMapIntensity is the studio's level -- "
-                "still under reflectionNormalization; unbaked ones take it "
-                "whole, diffuse and specular."
+                "metres. " + _PROBE_LIGHTING + " " + _PROBE_HIGHLIGHTS
             ),
             "note": (
                 "The main light for everything that is not baked, and the "
@@ -316,9 +355,177 @@ class _SidecarMixin:
         },
     }
 
+    #: Where each carrier holds what :attr:`RENDERING_POLICY`'s prose points
+    #: at, laid over the policy by :meth:`rendering_policy` -- ``{carrier:
+    #: {section: {field: text}}}``, prose only: every number is the policy's
+    #: own on every carrier. The policy is written in the GLB's addresses;
+    #: the FBX holds the same probe and lightmaps in ``lightmap_metadata``,
+    #: as an embedded OpenEXR in scene units rather than Radiance bytes in a
+    #: bufferView in metres. Before this, the FBX published the GLB's text and
+    #: sent its reader after an ``extras.lightmap_web.probe`` an FBX cannot
+    #: have: on a delivered assembly whose probe rode
+    #: ``data_export.lightmap_metadata``, embedded, a reader of the FBX could
+    #: find no probe where the policy pointed, and a coworker's build dropped
+    #: the lighting environment (reported 2026-10-14). A new carrier is one
+    #: row.
+    RENDERING_CARRIERS: Dict[str, Dict[str, Dict[str, str]]] = {
+        "glb": {},
+        "fbx": {
+            "environment": {
+                "source": (
+                    "the asset's own reflection probe "
+                    "(data_export.lightmap_metadata.probe) when it carries "
+                    "one, else three.js RoomEnvironment"
+                ),
+                "probe": (
+                    "The room the bake lit, captured by it as an HDR from one "
+                    "point: 'map' names a linear equirectangular OpenEXR "
+                    "image by FILE NAME, which a delivered file embeds as "
+                    "media no material uses, in the scene's own Y-up axes (u = 0.5 + "
+                    "atan2(z, x) / 2pi, v = 0.5 + asin(y) / pi, its top row "
+                    "+Y); 'position' is where it was captured and 'box' "
+                    "([min, max], or null for an open scene) the box its "
+                    "reflections project onto, both in the units the file's "
+                    "geometry is written in, 'unit_scale' metres per unit: "
+                    "each converts into a receiving engine exactly as a "
+                    "vertex of the file does. " + _PROBE_LIGHTING
+                ),
+            },
+            "lightmappedMaterials": {
+                "lightMapIntensity": (
+                    "1: a map applies as stored -- each object's 'intensity' "
+                    "in data_export.lightmap_metadata is the multiplier its "
+                    "texels already carry, and informational"
+                ),
+            },
+        },
+    }
+
+    #: The lighting rows of every handoff's ``assembly``, written once beside
+    #: the policy they summarize. Each points into ``rendering`` (an address
+    #: relative to the handoff block, on every carrier) rather than restating
+    #: a number, so an export's override and the row cannot disagree; what
+    #: differs per carrier -- where the probe is -- the policy's own prose
+    #: says (:attr:`RENDERING_CARRIERS`). Stated as what the approved scene
+    #: HAS, because the failure they exist for is a reader treating the
+    #: policy as background: building the geometry faithfully and lighting it
+    #: with whatever its engine defaults to.
+    LIGHTING_ASSEMBLY: Tuple[Dict[str, Any], ...] = (
+        {
+            "part": "environment",
+            "data": ["rendering.environment"],
+            "spec": (
+                "The scene's only ambient and reflected light: the reflection "
+                "probe 'source' names when the asset carries one ('probe' "
+                "says where it is, how it projects and at what level), else a "
+                "neutral studio room at 'intensity'. Every unbaked surface "
+                "takes it whole, diffuse and specular; a lightmapped one only "
+                "its reflections. No sky, ambient colour or other environment "
+                "is part of the approved scene."
+            ),
+        },
+        {
+            "part": "key_light",
+            "data": ["rendering.keyLight"],
+            "spec": (
+                "One white directional light at 'intensity', shining from "
+                "'position' toward the origin, present only while nothing in "
+                "the asset is lightmapped ('disabled_when'). The asset "
+                "carries no lights of its own, and the approved scene has no "
+                "other."
+            ),
+        },
+        {
+            "part": "lightmapped_materials",
+            "data": ["rendering.lightmappedMaterials"],
+            "spec": (
+                "A lightmapped surface's diffuse light is its lightmap alone: "
+                "no environment diffuse, no realtime light, and not its "
+                "material's own ambient-occlusion map, the bake already "
+                "holding the occlusion. It keeps the environment's specular "
+                "at 'envMapIntensity', scaled per texel by "
+                "'reflectionNormalization'; 'lightMapEnergy' and "
+                "'normalRelief' state how the map enters the shading."
+            ),
+        },
+        {
+            "part": "renderer",
+            "data": ["rendering.renderer"],
+            "spec": (
+                "ACES filmic tone mapping at 'toneMappingExposure', output in sRGB."
+            ),
+        },
+    )
+
+    #: The GLB envelope's own ``assembly`` rows: what the asset is, then each
+    #: ``extras`` manifest a conversion may add. The envelope is built before
+    #: those manifests are applied, so a row for one is phrased "when
+    #: present", like the ``reads`` entries beside it. The lighting rows
+    #: (:attr:`LIGHTING_ASSEMBLY`) close the list.
+    HANDOFF_ASSEMBLY: Tuple[Dict[str, Any], ...] = (
+        {
+            "part": "asset",
+            "data": ["the glTF asset 'asset' names"],
+            "spec": (
+                "Meshes, hierarchy, materials and every texture, embedded and "
+                "as approved. The sections of extras.scene_sidecar are already "
+                "applied to these materials (extras.scene_sidecar_applied "
+                "counts the matches): a record of the repair, not values to "
+                "apply again."
+            ),
+        },
+        {
+            "part": "lightmaps",
+            "data": ["extras.lightmap_web"],
+            "spec": (
+                "When present: each material it names carries a baked "
+                "lightmap in occlusionTexture on TEXCOORD_1, sRGB-encoded, "
+                "times that material's 'intensity' -- the surface's diffuse "
+                "light, direct and indirect, and not ambient occlusion. Node "
+                "extras 'fromFBX.userProperties' (lightmap_metadata, "
+                "lightmapInfo) are the source FBX's records, transcribed: "
+                "the maps they name are bound here through this manifest."
+            ),
+        },
+        {
+            "part": "animation",
+            "data": ["extras.animation_web"],
+            "spec": (
+                "When present: the clips, by glTF animation index, opening on "
+                "'default_clip'; a declared clip's 'zero_frame' and 'offset' "
+                "place it on the authoring timeline. A STEP 'scale' channel "
+                "driving a node to zero is its keyed visibility; "
+                "KHR_animation_pointer channels on a material are its "
+                "authored opacity fade (baseColorFactor alpha) and highlight "
+                "(emissiveFactor, added to the material's own)."
+            ),
+        },
+        {
+            "part": "shadows",
+            "data": ["extras.shadow_web"],
+            "spec": (
+                "When present: projected contact shadows a runtime places "
+                "each frame from their source and contact nodes ('reads'); "
+                "without one, the imported keys and the silhouette in the "
+                "base colour stand."
+            ),
+        },
+        {
+            "part": "articulation",
+            "data": ["extras.articulation_web"],
+            "spec": (
+                "When present: articulated rigs a runtime poses and a hand "
+                "grabs ('reads'); without one, the clips play the joints' own "
+                "keys."
+            ),
+        },
+    )
+
     @classmethod
     def rendering_policy(
-        cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None
+        cls,
+        overrides: Optional[Mapping[str, Mapping[str, Any]]] = None,
+        carrier: str = "glb",
     ) -> Dict[str, Any]:
         """:attr:`RENDERING_POLICY` with a deliverable's own choices laid over it.
 
@@ -329,25 +536,39 @@ class _SidecarMixin:
         overridden: a misspelt one would publish a value no reader looks for
         while the field it meant kept its default.
 
+        Parameters:
+            overrides: The export's choices, laid over last.
+            carrier: The deliverable the policy is published in -- a key of
+                :attr:`RENDERING_CARRIERS`, whose prose names where THAT file
+                holds the probe and the lightmaps. ``"glb"`` (the viewer's
+                own) by default.
+
         Raises:
             ValueError: an override names a section or field the policy does
-                not declare.
+                not declare, or *carrier* is not a known carrier.
         """
+        binding = cls.RENDERING_CARRIERS.get(carrier)
+        if binding is None:
+            raise ValueError(
+                f"Rendering carrier {carrier!r} is not one of "
+                f"MeshConvert.RENDERING_CARRIERS ({', '.join(cls.RENDERING_CARRIERS)})."
+            )
         policy = copy.deepcopy(cls.RENDERING_POLICY)
-        for section, fields in (overrides or {}).items():
-            target = policy.get(section)
-            if not isinstance(target, dict):
-                raise ValueError(
-                    f"Rendering override section {section!r} is not one of "
-                    f"MeshConvert.RENDERING_POLICY's ({', '.join(policy)})."
-                )
-            unknown = sorted(set(fields or {}) - set(target))
-            if unknown:
-                raise ValueError(
-                    f"Rendering override {section}.{', '.join(unknown)} is not a "
-                    "field of MeshConvert.RENDERING_POLICY."
-                )
-            target.update(fields)
+        for layer in (binding, overrides or {}):
+            for section, fields in layer.items():
+                target = policy.get(section)
+                if not isinstance(target, dict):
+                    raise ValueError(
+                        f"Rendering override section {section!r} is not one of "
+                        f"MeshConvert.RENDERING_POLICY's ({', '.join(policy)})."
+                    )
+                unknown = sorted(set(fields or {}) - set(target))
+                if unknown:
+                    raise ValueError(
+                        f"Rendering override {section}.{', '.join(unknown)} is "
+                        "not a field of MeshConvert.RENDERING_POLICY."
+                    )
+                target.update(fields)
         return policy
 
     #: Sidecar section -> the writer that applies it to a GLB, in application
@@ -364,6 +585,7 @@ class _SidecarMixin:
         "emissive": "set_glb_emissive",
         "metallic_roughness": "set_glb_metallic_roughness",
         "alpha_mode": "set_glb_alpha_mode",
+        "unlit": "set_glb_unlit",
     }
     #: Root-extras key holding :meth:`apply_scene_sidecar`'s per-section
     #: outcome. Its presence is also the fact "the envelope has been applied
@@ -395,7 +617,9 @@ class _SidecarMixin:
               "sections": {...},         # the extension point
               "handoff": {               # the standalone-reader contract
                 "instructions": "<HANDOFF_INSTRUCTIONS>",
-                "reads": {...}           # extras key -> what it holds
+                "reads": {...},          # extras key -> what it holds
+                "assembly": [...],       # the approved scene, part by part
+                "rendering": {...}       # the lighting it was approved under
               }
             }
 
@@ -488,6 +712,11 @@ class _SidecarMixin:
                     ),
                 },
                 "sections": sorted(cls.SIDECAR_APPLIERS),
+                # The approved scene part by part, each with the data it is
+                # built from -- what a reader holding only this file rebuilds.
+                "assembly": copy.deepcopy(
+                    [*cls.HANDOFF_ASSEMBLY, *cls.LIGHTING_ASSEMBLY]
+                ),
                 # How to LIGHT what the sections describe. The rest of this
                 # envelope says what the asset is; without this, a recipient can
                 # rebuild every material correctly and still not reproduce the

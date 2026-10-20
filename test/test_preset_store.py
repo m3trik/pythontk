@@ -636,5 +636,69 @@ class PresetStoreMarkerTest(_TempRootCase):
         self.assertIsNone(PresetStore.resolve_builtin_spec(None))
 
 
+class PresetStoreAdoptTest(_TempRootCase):
+    """A collection that moved takes its old folder's presets in, once."""
+
+    def _legacy(self, *names):
+        legacy = Path(self.root) / "oldpkg" / "rigs"
+        legacy.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            (legacy / f"{name}.json").write_text('{"v": 1}', encoding="utf-8")
+        return legacy
+
+    def test_an_old_folder_is_copied_in_once_and_kept(self):
+        legacy = self._legacy("a")
+        store = PresetStore("rigs")
+        self.assertTrue(store.adopt(Path(self.root) / "missing", legacy))
+        self.assertEqual(store.load("a"), {"v": 1})
+        self.assertTrue((legacy / "a.json").is_file())  # an older version still reads it
+        self._legacy("b")  # written there after the move: not this store's any more
+        self.assertFalse(store.adopt(legacy))
+        self.assertNotIn("b", store.list())
+
+    def test_with_no_old_folder_nothing_is_made(self):
+        store = PresetStore("rigs")
+        self.assertFalse(store.adopt(Path(self.root) / "missing"))
+        self.assertFalse(store.user_dir.exists())
+
+    def test_a_copy_that_fails_part_way_is_retried_next_time(self):
+        """A copy that failed part way left a partial folder, which made the
+        store look adopted: the rest of the presets never came over."""
+        from unittest import mock
+
+        legacy = self._legacy("a", "b")
+        store = PresetStore("rigs")
+        real = shutil.copytree
+
+        def failing(src, dst, **kwargs):
+            def copy(s, d, **kw):
+                if os.path.basename(s) == "b.json":
+                    raise OSError("the sync client held it")
+                return shutil.copy2(s, d, **kw)
+
+            return real(src, dst, copy_function=copy, **kwargs)
+
+        with mock.patch("shutil.copytree", side_effect=failing):
+            self.assertFalse(store.adopt(legacy))
+        self.assertFalse(store.user_dir.exists())
+        self.assertTrue(store.adopt(legacy))
+        self.assertEqual(sorted(store.list()), ["a", "b"])
+
+    def test_a_folder_another_process_made_meanwhile_is_left_alone(self):
+        from unittest import mock
+
+        legacy = self._legacy("a")
+        store = PresetStore("rigs")
+
+        def raced(src, dst, **kwargs):
+            os.makedirs(dst)
+            Path(dst, "theirs.json").write_text('{"v": 2}', encoding="utf-8")
+            raise FileExistsError(dst)
+
+        with mock.patch("shutil.copytree", side_effect=raced):
+            self.assertFalse(store.adopt(legacy))
+        self.assertEqual(store.load("theirs"), {"v": 2})
+
+
 if __name__ == "__main__":
     unittest.main()

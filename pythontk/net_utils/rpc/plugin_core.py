@@ -631,19 +631,60 @@ class RpcPlugin(object):
             name=f"{self.label}-server",
         )
         self._thread.start()
-        print(f"[{self.label}] listening on http://{bind_host}:{bind_port}")
-        return self._server.server_address
+        address = self._server.server_address  # port 0: the one the OS picked
+        print(f"[{self.label}] listening on http://{address[0]}:{address[1]}")
+        return address
+
+    def serve(self, port=None, host=None):
+        """Bind and serve on the CALLING thread until :meth:`stop`; blocks.
+
+        For a process whose job is the service: every op then runs on this
+        thread (no Qt to marshal onto), so an op may drive something bound to
+        the thread that created it -- a sync browser automation, a renderer --
+        which :meth:`start`'s daemon thread could not. An op calling
+        :meth:`stop` ends it once that op has answered.
+        """
+        if self._server is not None:
+            raise RuntimeError(
+                f"[{self.label}] already serving on {self._server.server_address}"
+            )
+        bind_host = self.host if host is None else host
+        bind_port = self.port if port is None else port
+        server = _ReusableServer((bind_host, bind_port), _make_handler(self))
+        self._server, self._thread = server, threading.current_thread()
+        address = server.server_address  # port 0: the one the OS picked
+        print(f"[{self.label}] serving on http://{address[0]}:{address[1]}", flush=True)
+        try:
+            server.serve_forever()
+        finally:
+            server.server_close()
+            if self._server is server:
+                self._server = self._thread = None
 
     def stop(self):
-        """Shut the server down (host teardown hook, tests, hot-reload)."""
+        """Shut the server down (host teardown hook, tests, hot-reload, an op).
+
+        From an op -- the serving thread itself -- the shutdown is handed to
+        another thread: ``shutdown`` waits for the serve loop, which is waiting
+        for this op to return.
+        """
         if self._server is None:
             return
-        try:
-            self._server.shutdown()
-            self._server.server_close()
-        finally:
-            self._server = None
+        server = self._server
+        self._server = None
+
+        def finish():
+            server.shutdown()
+            server.server_close()
+
+        if threading.current_thread() is self._thread:
             self._thread = None
+            threading.Thread(
+                target=finish, daemon=True, name=f"{self.label}-stop"
+            ).start()
+            return
+        self._thread = None
+        finish()
 
     def autostart(self):
         """Start on plugin load, but only when actually hosted.

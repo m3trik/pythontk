@@ -92,6 +92,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "atlas_seam_pairs",
+    "qualname": "ImgUtils.atlas_seam_pairs",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.file_utils._file_utils",
     "name": "atomic_write",
     "qualname": "FileUtils.atomic_write",
@@ -253,6 +260,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "connected_components",
+    "qualname": "MathUtils.connected_components",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.img_utils._img_utils",
     "name": "convert_f_to_l",
     "qualname": "ImgUtils.convert_f_to_l",
@@ -407,6 +421,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "describe_unwritable",
+    "qualname": "FileUtils.describe_unwritable",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.img_utils._img_utils",
     "name": "detect_normal_map_format",
     "qualname": "ImgUtils.detect_normal_map_format",
@@ -457,8 +478,22 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "encode_hdr_pixels_for_web",
+    "qualname": "ImgUtils.encode_hdr_pixels_for_web",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "encode_hdr_radiance",
     "qualname": "ImgUtils.encode_hdr_radiance",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "encode_hdr_radiance_pixels",
+    "qualname": "ImgUtils.encode_hdr_radiance_pixels",
     "tier": "bare"
   },
   {
@@ -634,6 +669,13 @@
     "module": "pythontk.math_utils._math_utils",
     "name": "fit_into_tile",
     "qualname": "MathUtils.fit_into_tile",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.math_utils._math_utils",
+    "name": "fit_similarity",
+    "qualname": "MathUtils.fit_similarity",
     "tier": "bare"
   },
   {
@@ -1073,6 +1115,13 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "kelvin_tint",
+    "qualname": "ImgUtils.kelvin_tint",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "kelvin_to_linear_rgb",
     "qualname": "ImgUtils.kelvin_to_linear_rgb",
     "tier": "bare"
@@ -1122,6 +1171,13 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "linear_to_oklab",
+    "qualname": "ImgUtils.linear_to_oklab",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "linear_to_srgb",
     "qualname": "ImgUtils.linear_to_srgb",
     "tier": "bare"
@@ -1152,6 +1208,13 @@
     "module": "pythontk.file_utils._file_utils",
     "name": "locking_processes",
     "qualname": "FileUtils.locking_processes",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "luminance",
+    "qualname": "ImgUtils.luminance",
     "tier": "bare"
   },
   {
@@ -1486,6 +1549,13 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "resample_area",
+    "qualname": "ImgUtils.resample_area",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "resize_image",
     "qualname": "ImgUtils.resize_image",
     "tier": "bare"
@@ -1614,6 +1684,13 @@
     "module": "pythontk.math_utils._math_utils",
     "name": "safe_normalize",
     "qualname": "MathUtils.safe_normalize",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "sample_bilinear",
+    "qualname": "ImgUtils.sample_bilinear",
     "tier": "bare"
   },
   {
@@ -1807,6 +1884,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "tonemap",
+    "qualname": "ImgUtils.tonemap",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.file_utils._file_utils",
     "name": "trash_name",
     "qualname": "FileUtils.trash_name",
@@ -1866,6 +1950,13 @@
     "module": "pythontk.img_utils._img_utils",
     "name": "validate_image_integrity",
     "qualname": "ImgUtils.validate_image_integrity",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
+    "name": "warp_quad",
+    "qualname": "ImgUtils.warp_quad",
     "tier": "bare"
   },
   {
@@ -1947,6 +2038,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.geo_utils.articulation.plan",
+    "name": "ArticulationPlan",
+    "qualname": "ArticulationPlan",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.geo_utils.articulation.record",
     "name": "ArticulationRecord",
     "qualname": "ArticulationRecord",
@@ -1971,6 +2069,13 @@
     "module": "pythontk.audio_utils._audio_utils",
     "name": "AudioUtils",
     "qualname": "AudioUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.bake_baseline",
+    "name": "BakeBaseline",
+    "qualname": "BakeBaseline",
     "tier": "root"
   },
   {
@@ -2139,6 +2244,34 @@
     "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
     "name": "ColumnMap",
     "qualname": "ColumnMap",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv.combine",
+    "name": "CombineGroup",
+    "qualname": "CombineGroup",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv.combine",
+    "name": "CombineLayout",
+    "qualname": "CombineLayout",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv.combine",
+    "name": "CombinePlan",
+    "qualname": "CombinePlan",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv.combine",
+    "name": "CombineShell",
+    "qualname": "CombineShell",
     "tier": "root"
   },
   {
@@ -2577,6 +2710,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.file_utils.job_queue",
+    "name": "JobQueue",
+    "qualname": "JobQueue",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.math_utils.key_curve",
     "name": "KeyCurve",
     "qualname": "KeyCurve",
@@ -2605,9 +2745,79 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_layers",
+    "name": "LayerKind",
+    "qualname": "LayerKind",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.logging_mixin.logger_ext",
     "name": "LevelAwareFormatter",
     "qualname": "LevelAwareFormatter",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_layers",
+    "name": "LightLayerInfo",
+    "qualname": "LightLayerInfo",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_layers",
+    "name": "LightLayerScene",
+    "qualname": "LightLayerScene",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_layers",
+    "name": "LightLayerTarget",
+    "qualname": "LightLayerTarget",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_layers",
+    "name": "LightLayers",
+    "qualname": "LightLayers",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_layers",
+    "name": "LightMix",
+    "qualname": "LightMix",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_predictor",
+    "name": "LightPredictor",
+    "qualname": "LightPredictor",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_rig_payload",
+    "name": "LightRigFixture",
+    "qualname": "LightRigFixture",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_rig_payload",
+    "name": "LightRigLight",
+    "qualname": "LightRigLight",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_rig_payload",
+    "name": "LightRigPayload",
+    "qualname": "LightRigPayload",
     "tier": "root"
   },
   {
@@ -2629,6 +2839,76 @@
     "module": "pythontk.core_utils.logging_mixin._logging_mixin",
     "name": "LoggingMixin",
     "qualname": "LoggingMixin",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.preview.look_capture",
+    "name": "LookCapture",
+    "qualname": "LookCapture",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.look_match.fit",
+    "name": "LookFit",
+    "qualname": "LookFit",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.look_match.loop",
+    "name": "LookLoop",
+    "qualname": "LookLoop",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.look_match._look_match",
+    "name": "LookMatch",
+    "qualname": "LookMatch",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.look_match.measures",
+    "name": "LookMeasures",
+    "qualname": "LookMeasures",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.look_match.target",
+    "name": "LookRegion",
+    "qualname": "LookRegion",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.look_match.measures",
+    "name": "LookScore",
+    "qualname": "LookScore",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.look_match.session",
+    "name": "LookSession",
+    "qualname": "LookSession",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.look_match.sheet",
+    "name": "LookSheet",
+    "qualname": "LookSheet",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.look_match.target",
+    "name": "LookTarget",
+    "qualname": "LookTarget",
     "tier": "root"
   },
   {
@@ -3011,6 +3291,27 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.geo_utils.probe_placement",
+    "name": "ProbePlacement",
+    "qualname": "ProbePlacement",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.probe_placement",
+    "name": "ProbeRays",
+    "qualname": "ProbeRays",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.probe_placement",
+    "name": "ProbeSite",
+    "qualname": "ProbeSite",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.process_exit",
     "name": "ProcessExit",
     "qualname": "ProcessExit",
@@ -3165,6 +3466,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.look_match.target",
+    "name": "RegionShape",
+    "qualname": "RegionShape",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.module_reloader",
     "name": "ReloadReport",
     "qualname": "ReloadReport",
@@ -3301,6 +3609,13 @@
     "module": "pythontk.net_utils.rpc.plugin_core",
     "name": "RpcPlugin",
     "qualname": "RpcPlugin",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.logging_mixin.run_log",
+    "name": "RunLog",
+    "qualname": "RunLog",
     "tier": "root"
   },
   {
@@ -3662,6 +3977,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.bake_baseline",
+    "name": "StaleReport",
+    "qualname": "StaleReport",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.key_stash.key_stash_model",
     "name": "StashChanged",
     "qualname": "StashChanged",
@@ -3865,6 +4187,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.geo_utils.uv.combine",
+    "name": "UvCombine",
+    "qualname": "UvCombine",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.geo_utils.uv.pack",
     "name": "UvPack",
     "qualname": "UvPack",
@@ -3896,6 +4225,13 @@
     "module": "pythontk.vid_utils._vid_utils",
     "name": "VidUtils",
     "qualname": "VidUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_predictor",
+    "name": "ViewerTransform",
+    "qualname": "ViewerTransform",
     "tier": "root"
   },
   {

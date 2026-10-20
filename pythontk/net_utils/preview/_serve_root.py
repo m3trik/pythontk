@@ -71,6 +71,8 @@ class _ServeRootMixin:
         "articulated_rig": "features/articulated_rig/articulated_rig.js",
         "playblast": "features/playblast.js",
         "snapshot": "features/snapshot.js",
+        # Headless lighting work: a driver (LookCapture) swaps the bake and reads frames.
+        "look_capture": "features/look_capture.js",
     }
 
     #: Packaged scripts a deliverable turns on by itself: registered name ->

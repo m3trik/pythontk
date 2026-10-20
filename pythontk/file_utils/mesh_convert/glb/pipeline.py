@@ -148,6 +148,7 @@ class GlbPipeline(LoggingMixin):
         release_source: Optional[Callable[[str], Any]] = None,
         progress: Optional[Callable[[str], Any]] = None,
         logger: Any = None,
+        hdr_codec: Any = None,
     ) -> Dict[str, Any]:
         """Build the GLB for *src* and report what each stage did.
 
@@ -196,6 +197,11 @@ class GlbPipeline(LoggingMixin):
                 must not be). Peak scratch is then one FBX, not two.
             progress: Called with a short message before each stage.
             logger: Logger for the stage lines; the class logger otherwise.
+            hdr_codec: What encodes the lightmaps and the reflection probe
+                (:meth:`MeshConvert.apply_glb_lightmaps`): a host whose Python
+                has no cv2 -- Blender's -- hands its own image writer, or every
+                map is warned "not encoded" and the GLB ships unlit. ``None`` is
+                :class:`ImgUtils` (cv2).
 
         Returns:
             ``{"glb", "src", "scratch", "takes", "downsized", "sidecar",
@@ -347,6 +353,7 @@ class GlbPipeline(LoggingMixin):
                 shadow_dirs=shadow_dirs,
                 clip_mode=clip_mode,
                 report=conversion,
+                hdr_codec=hdr_codec,
             )
             convert = time.perf_counter() - converting
             # The converter's own split, when it reports one: the subprocess

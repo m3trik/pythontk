@@ -58,6 +58,30 @@ class _Exporter(SceneExporterBase):
     TASK_MANAGER_CLASS = _StubTasks
 
 
+class _SettingsStore:
+    """uitk's SettingsManager surface: ``<objectName>/<signal>`` keys;
+    ``remove(name)`` drops the row's whole group."""
+
+    def __init__(self, data):
+        self.data, self.synced = dict(data), False
+
+    def keys(self):
+        return list(self.data)
+
+    def value(self, key, default=None):
+        return self.data.get(key, default)
+
+    def setValue(self, key, value):
+        self.data[key] = value
+
+    def remove(self, key):
+        for k in [k for k in self.data if k == key or k.startswith(key + "/")]:
+            del self.data[k]
+
+    def sync(self):
+        self.synced = True
+
+
 class TestHooks(unittest.TestCase):
     def test_the_host_task_manager_is_built_with_the_exporter_logger(self):
         exporter = _Exporter()
@@ -85,7 +109,6 @@ class TestHooks(unittest.TestCase):
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
         exporter = _Exporter(log_level="INFO")
-        exporter.hide_log_file = False
         caller = logging.NullHandler()
         exporter.logger.addHandler(caller)
         self.addCleanup(exporter.logger.removeHandler, caller)
@@ -112,7 +135,6 @@ class TestHooks(unittest.TestCase):
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
         exporter = _Exporter(log_level="ERROR")
-        exporter.hide_log_file = False
         with TempArtifacts("test_scene_exporter_banner", policy="scoped") as temp:
             path = os.path.join(temp.dir_path(), "run.log")
             exporter.setup_file_logging(path)
@@ -141,6 +163,219 @@ class TestHooks(unittest.TestCase):
         with self.assertLogs(exporter.logger, "WARNING") as log:
             exporter._warn_stopped_before_write("Stopped.")
         self.assertIn("tied keys. Undo is on you.", log.output[0])
+
+
+class TestRunLog(unittest.TestCase):
+    """The run's log: ONE file per scene in the per-user cache
+    (``ptk.RunLog``), never one per export beside the deliverable."""
+
+    def setUp(self):
+        from unittest import mock
+
+        from pythontk.core_utils.user_config import UserConfig
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        temp = TempArtifacts("test_scene_exporter_run_log", policy="scoped")
+        self.addCleanup(temp.cleanup)
+        root = temp.dir_path()
+        self.out = os.path.join(root, "out")
+        os.makedirs(self.out)
+        env = mock.patch.dict(
+            os.environ, {UserConfig.CACHE_ROOT_ENV_VAR: os.path.join(root, "cache")}
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        self.exporter = _Exporter(log_level="INFO")
+        self.addCleanup(self.exporter.close_file_handlers)
+        self.exporter.export_dir = self.out
+        self.scene = os.path.join(root, "shot1", "hero.ma")
+        self.exporter._saved_scene_path = lambda: self.scene
+
+    def _export(self, name, succeeded=True):
+        self.exporter.export_path = os.path.join(self.out, name + ".fbx")
+        self.exporter._setup_file_logging()
+        self.exporter.logger.info("exporting " + name)
+        self.exporter._close_file_logging(succeeded)
+
+    def _read_log(self):
+        with open(self.exporter.log_file_path(), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_every_export_of_a_scene_appends_to_one_log(self):
+        """Measured 2026-10-13: each export wrote ``<export name>.log`` beside
+        the deliverable, so a timestamped Output Filename left a new log in the
+        delivery folder on every run, and nothing ever removed one.
+        Added: 2026-10-13"""
+        self._export("hero_2026-10-13_10-00-00")
+        self._export("hero_2026-10-13_10-05-00", succeeded=False)
+        self.assertEqual([f for f in os.listdir(self.out) if f.endswith(".log")], [])
+        log = self.exporter.log_file_path()
+        self.assertEqual(os.listdir(os.path.dirname(log)), [os.path.basename(log)])
+        content = self._read_log()
+        self.assertIn("exporting hero_2026-10-13_10-00-00", content)
+        self.assertIn("exporting hero_2026-10-13_10-05-00", content)
+        self.assertIn("Export succeeded", content)
+        self.assertIn("Export failed", content)
+        self.assertIn(self.scene, content)
+
+    def test_another_scene_of_the_same_name_keeps_its_own_log(self):
+        first = self.exporter.log_file_path()
+        self.scene = os.path.join(os.path.dirname(self.out), "shot2", "hero.ma")
+        self.assertNotEqual(self.exporter.log_file_path(), first)
+        self.assertTrue(os.path.basename(first).startswith("hero_"), first)
+
+    def test_the_log_keeps_debug_detail_the_panel_never_shows(self):
+        """The panel has no Log Level option any more: it shows the run at
+        INFO and the run log records down to DEBUG. Added: 2026-10-14"""
+        import io
+        import logging
+
+        stream = io.StringIO()
+        panel = logging.StreamHandler(stream)
+        self.exporter.logger.addHandler(panel)
+        self.addCleanup(self.exporter.logger.removeHandler, panel)
+        self.exporter.export_path = os.path.join(self.out, "hero.fbx")
+        self.exporter._setup_file_logging()
+        self.exporter.logger.debug("per-object detail")
+        self.exporter._close_file_logging(True)
+        self.assertIn("per-object detail", self._read_log())
+        self.assertNotIn("per-object detail", stream.getvalue())
+        self.assertEqual(self.exporter.logger.level, logging.INFO)
+
+    def test_the_header_names_the_files_the_format_ships(self):
+        """A GLB-only run's export path names its temp FBX; the header must
+        name the GLB that actually ships."""
+        from types import SimpleNamespace
+
+        self.exporter.task_manager.run = SimpleNamespace(output_format="glb")
+        self._export("hero")
+        header = next(
+            ln for ln in self._read_log().splitlines() if ln.startswith("===== ")
+        )
+        self.assertIn(os.path.join(self.out, "hero.glb"), header)
+        self.assertNotIn("hero.fbx", header)
+
+    def test_a_cancelled_run_says_so(self):
+        self.exporter._export_cancelled = True
+        self._export("hero")
+        self.assertIn("Export cancelled", self._read_log())
+
+    def test_the_panel_gets_a_link_to_the_log(self):
+        import io
+        import logging
+
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        self.exporter.logger.addHandler(handler)
+        self.addCleanup(self.exporter.logger.removeHandler, handler)
+        self._export("hero")
+        self.assertIn(self.exporter.log_file_path(), stream.getvalue())
+
+    def _panel(self):
+        import io
+        import logging
+
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        self.exporter.logger.addHandler(handler)
+        self.addCleanup(self.exporter.logger.removeHandler, handler)
+        return stream
+
+    def test_a_shipped_glb_ends_the_run_with_a_webxr_link(self):
+        """The run's last line opens the GLB it shipped in the WebXR preview,
+        once: the next run names its own file or none. Added: 2026-10-14"""
+        stream = self._panel()
+        glb = os.path.join(self.out, "hero.glb")
+        self.exporter.export_path = os.path.join(self.out, "hero.fbx")
+        self.exporter._setup_file_logging()
+        self.exporter._glb_created(glb)
+        self.exporter._close_file_logging(True)
+        lines = stream.getvalue().strip().splitlines()
+        self.assertIn("action://preview", lines[-1])
+        self.assertIn("hero.glb", lines[-1])
+        self.assertIn("GLB created", stream.getvalue())
+        self.assertNotIn("action://preview", self._read_log(), "a panel link")
+
+        self._export("prop")  # no GLB this time
+        self.assertEqual(stream.getvalue().count("action://preview"), 1)
+
+    def test_the_webxr_link_survives_a_log_that_never_opened(self):
+        stream = self._panel()
+        self.exporter._glb_created(os.path.join(self.out, "hero.glb"))
+        self.exporter._close_file_logging(True)
+        self.assertIn("action://preview", stream.getvalue())
+
+    def test_a_successful_run_ends_with_a_link_to_its_folder(self):
+        """The run's last line opens the folder the deliverable landed in,
+        beside the WebXR link when a GLB shipped; a run that shipped nothing
+        links no folder. Added: 2026-10-19"""
+        import html
+        import re
+        from urllib.parse import parse_qs, urlsplit
+
+        stream = self._panel()
+        self._export("hero")
+        last = stream.getvalue().strip().splitlines()[-1]
+        href = re.search(r'href="(action://open[^"]+)"', last).group(1)
+        query = parse_qs(urlsplit(html.unescape(href)).query)
+        self.assertEqual(query["path"], [self.out])
+
+        self.exporter._glb_created(os.path.join(self.out, "hero.glb"))
+        self._export("hero")
+        last = stream.getvalue().strip().splitlines()[-1]
+        self.assertIn("action://open", last)
+        self.assertIn("action://preview", last)
+
+        before = stream.getvalue().count("Open containing folder")
+        self._export("prop", succeeded=False)
+        self.assertEqual(stream.getvalue().count("Open containing folder"), before)
+
+    def test_old_logs_beside_deliverables_are_removed(self):
+        """The logs earlier versions left beside each deliverable go at the
+        next export into that folder -- the exporter's own only: a log naming
+        no deliverable there, or holding text the exporter never wrote, stays.
+        Added: 2026-10-13"""
+        stamp = "2026-10-01 10:00:00,123 - INFO - "
+        files = {
+            "hero.fbx": "",
+            "hero.log": stamp + "Executing Task #1/1\n",
+            "hero_v002.glb": "",
+            ".hero_v002.log": "",  # empty: the 2026-10-09 wrong-logger bug
+            "prop.usd": "",
+            "prop.log": "╔══╗\n",  # a box first (ERROR level)
+            "notes.log": stamp + "no deliverable of this name\n",
+            "rig.fbx": "",
+            "rig.log": "the artist's own notes\n",
+        }
+        for name, text in files.items():
+            with open(os.path.join(self.out, name), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        self._export("hero")
+        left = sorted(f for f in os.listdir(self.out) if f.endswith(".log"))
+        self.assertEqual(left, ["notes.log", "rig.log"])
+
+    def test_a_log_that_cannot_open_never_stops_the_export(self):
+        from unittest import mock
+
+        from pythontk.core_utils.logging_mixin import RunLog
+
+        self.exporter.export_path = os.path.join(self.out, "hero.fbx")
+        for error in (
+            PermissionError("denied"),  # an unwritable cache
+            UnicodeEncodeError("utf-8", "\ud800", 0, 1, "surrogate"),  # the header
+        ):
+            with self.subTest(error=type(error).__name__):
+                with mock.patch.object(RunLog, "attach", side_effect=error):
+                    with self.assertLogs(self.exporter.logger, "WARNING") as log:
+                        self.exporter._setup_file_logging()
+                self.assertIn("could not be opened", log.output[0])
+                self.assertIsNone(getattr(self.exporter, "file_handler", None))
+                self.exporter._close_file_logging(True)  # nothing open: a no-op
+
+    def test_generate_log_file_path_is_retired(self):
+        with self.assertWarns(DeprecationWarning):
+            got = self.exporter.generate_log_file_path("ignored.fbx")
+        self.assertEqual(got, self.exporter.log_file_path())
 
 
 class TestProgress(unittest.TestCase):
@@ -204,6 +439,125 @@ class TestCheckFailure(unittest.TestCase):
         self.assertEqual(exporter.check_label("check_a"), "Check For A")
         self.assertEqual(exporter.check_label("check_b"), "Max B")
         self.assertEqual(exporter.check_label("check_no_row"), "No Row")
+
+    def test_a_preset_picked_says_what_its_retired_rows_no_longer_do(self):
+        """REGRESSION (2026-10-19): a released preset asking for a check whose
+        row retired loaded with the check gone and nothing said. Both panels
+        call this when a preset is picked."""
+        exporter = _Exporter()
+        exporter.task_manager.task_definitions = {
+            "snap_keys_to_frame": {"widget_type": "QCheckBox", "setText": "Snap"}
+        }
+        stored = {"snap_keys_to_frame": False, "check_floating_point_keys": True}
+        with self.assertLogs(exporter.logger, level="WARNING") as caught:
+            exporter._note_retired_preset_rows("Unity", stored)
+        self.assertIn("Preset 'Unity'", caught.output[0])
+        self.assertIn("Floating Point Keys", caught.output[0])
+        with self.assertNoLogs(exporter.logger, level="DEBUG"):
+            exporter._note_retired_preset_rows("Unity", None)
+            exporter._note_retired_preset_rows("", stored)
+
+    def test_saved_panel_state_says_once_what_its_retired_rows_no_longer_do(self):
+        """REGRESSION (2026-10-19): the panel's own saved state (not a preset)
+        kept a retired check row's value where no widget restores it, so a
+        user whose Snap Keys To Frame was saved off lost the check its row had
+        run, with nothing said. Both panels call this on init; the retired
+        keys go once said, so it is said once."""
+        exporter = _Exporter()
+        exporter.task_manager.task_definitions = {
+            "snap_keys_to_frame": {
+                "widget_type": "QCheckBox",
+                "setText": "Snap Keys To Frame",
+                "setChecked": True,
+            },
+            "conform_shape_names": {
+                "widget_type": "QCheckBox",
+                "setText": "Fix Mangled Names",
+                "setChecked": True,
+            },
+        }
+        store = _SettingsStore(
+            {
+                "snap_keys_to_frame/toggled": False,
+                "check_floating_point_keys/toggled": True,
+                # Its fix never saved a value: the row starts at its default (on).
+                "check_mangled_names/toggled": False,
+                "baked_reflections/currentIndexChanged": "Quarter",
+                "cmb004/currentIndexChanged": 1,
+            }
+        )
+        with self.assertLogs(exporter.logger, level="INFO") as caught:
+            exporter._note_retired_panel_state(store)
+        warned = [r.getMessage() for r in caught.records if r.levelname == "WARNING"]
+        said = "\n".join(caught.output)
+        self.assertTrue(
+            any("Floating Point Keys (Snap Keys To Frame)" in m for m in warned), said
+        )
+        self.assertIn("Mangled Names (Fix Mangled Names)", said)
+        self.assertIn("Baked Reflections to Quarter", said)
+        self.assertEqual(
+            sorted(store.data),
+            ["cmb004/currentIndexChanged", "snap_keys_to_frame/toggled"],
+            "the retired rows' keys go; a live row's stay",
+        )
+        self.assertTrue(store.synced, "the removal is flushed, so it holds")
+        with self.assertNoLogs(exporter.logger, level="DEBUG"):
+            exporter._note_retired_panel_state(store)
+
+    def test_a_saved_regex_field_folds_into_the_saved_output_filename_once(self):
+        """REGRESSION (2026-10-19): both panels read the retired RegEx field as
+        ``settings.value("txt002")``, but the switchboard saves it under
+        ``txt002/textChanged``, so a saved rule never migrated; and folded
+        into the widget, the field's own restore would have overwritten it.
+        The fold now lands where the Output Filename restores from."""
+        exporter = _Exporter()
+        store = _SettingsStore(
+            {
+                "txt001/textChanged": "WIP_*",
+                "txt002/textChanged": "test_|prod_",
+                "cmb004/currentIndexChanged": 1,
+            }
+        )
+        saved = []
+
+        def save(pattern):  # the panel's ui.state.save(txt001, pattern)
+            saved.append(pattern)
+            store.setValue("txt001/textChanged", pattern)
+
+        with self.assertLogs(exporter.logger, level="INFO") as caught:
+            folded = exporter._migrate_legacy_regex(store, "txt001", save)
+        self.assertEqual(folded, "WIP_{scene:test_->prod_}")
+        self.assertEqual(saved, [folded])
+        self.assertIn(folded, caught.output[0])
+        self.assertEqual(
+            sorted(store.data),
+            ["cmb004/currentIndexChanged", "txt001/textChanged"],
+            "the retired key goes; a live row's stay",
+        )
+        self.assertTrue(store.synced, "the removal is flushed, so it holds")
+        with self.assertNoLogs(exporter.logger, level="DEBUG"):
+            self.assertIsNone(exporter._migrate_legacy_regex(store, "txt001", save))
+        self.assertEqual(saved, [folded], "once")
+
+    def test_a_regex_whose_fold_was_not_stored_is_kept_for_the_next_open(self):
+        """The retired key goes only once the fold is stored: a save that wrote
+        nothing (a suppressed store) must not cost the user the rule."""
+        exporter = _Exporter()
+        store = _SettingsStore({"txt002/textChanged": "_bar.*"})
+        self.assertIsNone(
+            exporter._migrate_legacy_regex(store, "txt001", lambda pattern: None)
+        )
+        self.assertEqual(store.data, {"txt002/textChanged": "_bar.*"})
+
+    def test_a_blank_regex_field_just_goes(self):
+        exporter = _Exporter()
+        store = _SettingsStore({"txt002/textChanged": "  "})
+        saved = []
+        with self.assertNoLogs(exporter.logger, level="INFO"):
+            self.assertIsNone(
+                exporter._migrate_legacy_regex(store, "txt001", saved.append)
+            )
+        self.assertEqual((store.data, saved), ({}, []))
 
     def test_the_dialog_body_names_the_failure_and_what_is_left(self):
         exporter = _Exporter()

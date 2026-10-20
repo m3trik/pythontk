@@ -631,6 +631,42 @@ class TestPlanReorder(_ShotTest):
         self.assertEqual(set(plan.sequence) & set(plan.parked), set())
 
 
+class TestPlanOrder(_ShotTest):
+    """`plan_order` lays the shots out in a given id order -- the primitive
+    `plan_reorder` and a swap both build."""
+
+    # The helpers alone: subclassing TestPlanReorder ran its tests twice.
+    _abc = TestPlanReorder._abc
+    _apply_bounds = TestPlanReorder._apply_bounds
+
+    def test_swapped_order_trades_places_and_keeps_durations(self):
+        store = _store(
+            [
+                ShotBlock(1, "A", 0, 5, []),
+                ShotBlock(2, "B", 20, 40, []),
+                ShotBlock(3, "C", 50, 58, []),
+            ]
+        )
+        plan = ShotPlanner.plan_order(store, [3, 2, 1], gap=10)
+        self._apply_bounds(store, plan)
+        order = [(s.name, s.start, s.end) for s in store.sorted_shots()]
+        self.assertEqual(order, [("C", 0, 8), ("B", 18, 38), ("A", 48, 53)])
+
+    def test_envelopes_read_the_keys_where_they_are_now(self):
+        store = self._abc()
+        plan = ShotPlanner.plan_order(store, [3, 2, 1], gap=10)
+        self.assertEqual(plan.moves[3].env_start, 40)
+        self.assertEqual(plan.moves[1].env_start, 0)
+
+    def test_current_order_is_empty_plan(self):
+        self.assertEqual(ShotPlanner.plan_order(self._abc(), [1, 2, 3], 10).moves, {})
+
+    def test_an_order_missing_or_repeating_a_shot_is_refused(self):
+        for order in ([1, 2], [1, 2, 2], [1, 2, 3, 4]):
+            with self.assertRaisesRegex(ValueError, "not a permutation"):
+                ShotPlanner.plan_order(self._abc(), order, 10)
+
+
 class TestRespaceCollisionParking(_ShotTest):
     """Mixed-sign respace deltas form an ordering cycle (a forward mover
     and a backward mover each land in the other's unread envelope).  The

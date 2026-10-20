@@ -3,6 +3,7 @@
 from __future__ import annotations
 import os
 import socket
+import ssl
 import subprocess
 from typing import Optional, Dict, List, Sequence, Tuple
 
@@ -273,6 +274,36 @@ class NetUtils:
             could be asked -- offline, or outbound DNS blocked. ``None`` is no
             answer, not a "no".
         """
+        addresses = NetUtils.public_addresses(name, servers, timeout, port)
+        return None if addresses is None else bool(addresses)
+
+    @staticmethod
+    def public_addresses(
+        name: str,
+        servers: Sequence[str] = ("1.1.1.1", "8.8.8.8", "9.9.9.9"),
+        timeout: float = 3.0,
+        port: int = 53,
+    ) -> Optional[List[str]]:
+        """The IPv4 addresses public DNS gives *name*, asked of *servers* directly.
+
+        What a stranger's machine resolves the name to -- not this machine's
+        resolver, which can answer otherwise: Tailscale's MagicDNS gives a
+        tailnet member its own ``100.x`` address for a ``ts.net`` name, so a
+        request through it never touches the public ingress a guest uses.
+        Asked as :meth:`resolves_publicly` asks (no miss cached here), every
+        server in turn until one has the name.
+
+        Parameters:
+            name: The host name.
+            servers: Resolver IPs.
+            timeout: Seconds to wait for each.
+            port: The resolvers' port.
+
+        Returns:
+            The A records of the first resolver that has any (a CNAME chain
+            followed by the resolver); ``[]`` when those that answered have
+            none (NXDOMAIN, or no address); ``None`` when none could be asked.
+        """
         import random
         import struct
 
@@ -298,12 +329,107 @@ class NetUtils:
             ):
                 continue
             rcode = reply[3] & 0x0F
-            if rcode == 0 and struct.unpack(">H", reply[6:8])[0] > 0:
-                return True
+            if rcode == 0:
+                found = NetUtils._a_records(reply, len(packet))
+                if found:
+                    return found
             if rcode in (0, 3):  # no address / NXDOMAIN
-                answer = False
+                answer = []
             # SERVFAIL, REFUSED ...: this resolver has no answer either way.
         return answer
+
+    @staticmethod
+    def _a_records(reply: bytes, offset: int) -> List[str]:
+        """The A records in DNS *reply*'s answer section, which starts at
+        *offset* (just past the one question, echoed as it was sent).
+        A malformed reply yields what was read before the fault."""
+        import struct
+
+        found: List[str] = []
+        try:
+            for _ in range(struct.unpack(">H", reply[6:8])[0]):
+                # The owner name: labels, or a 2-byte compression pointer.
+                while reply[offset] and reply[offset] & 0xC0 != 0xC0:
+                    offset += reply[offset] + 1
+                offset += 2 if reply[offset] & 0xC0 == 0xC0 else 1
+                kind, _cls, _ttl, length = struct.unpack(
+                    ">HHIH", reply[offset : offset + 10]
+                )
+                offset += 10
+                if kind == 1 and length == 4:
+                    found.append(socket.inet_ntoa(reply[offset : offset + 4]))
+                offset += length
+        except (IndexError, struct.error):
+            pass
+        return found
+
+    @staticmethod
+    def tls_context() -> ssl.SSLContext:
+        """A verifying client TLS context that trusts what a browser trusts.
+
+        :func:`ssl.create_default_context` loads the Windows certificate
+        stores as they stand, expired entries included -- and OpenSSL, handed
+        an expired cross-signed copy of a root beside the chain a server
+        sends, picks it and fails the handshake. Measured 2026-10-15: the
+        stores kept ``ISRG Root X2`` cross-signed by X1 (expired 2025-09-15),
+        so every Let's Encrypt site -- a Tailscale ``ts.net`` link among them
+        -- failed ``certificate has expired`` from Python while every browser
+        opened it. Here the expired entries stay out; the rest of the stores,
+        the ``SSL_CERT_FILE`` / ``SSL_CERT_DIR`` overrides and -- when it is
+        installed -- ``certifi``'s bundle (a root the stores never received)
+        are trusted. Built once per process; treat it as read-only.
+
+        Returns:
+            An :class:`ssl.SSLContext` that checks the host name and requires
+            a certificate.
+        """
+        context = NetUtils._tls_context
+        if context is None:
+            context = NetUtils._tls_context = NetUtils._build_tls_context()
+        return context
+
+    _tls_context = None
+
+    @staticmethod
+    def _build_tls_context():
+        import sys
+        import time
+
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.set_default_verify_paths()  # all load_default_certs does off Windows
+        if sys.platform == "win32":
+            now = time.time()
+            for store in ("CA", "ROOT"):  # the order load_default_certs reads
+                trusted = bytearray()
+                for der, encoding, trust in ssl.enum_certificates(store):
+                    usable = encoding == "x509_asn" and (
+                        trust is True or "1.3.6.1.5.5.7.3.1" in trust  # serverAuth
+                    )
+                    if usable and not NetUtils._expired(der, now):
+                        trusted.extend(der)
+                if trusted:
+                    context.load_verify_locations(cadata=bytes(trusted))
+        try:
+            import certifi
+
+            context.load_verify_locations(cafile=certifi.where())
+        except (ImportError, OSError, ssl.SSLError):
+            pass
+        return context
+
+    @staticmethod
+    def _expired(der: bytes, now: float) -> bool:
+        """Whether CA certificate *der* is past its notAfter -- read by OpenSSL
+        itself, through a throwaway context. A certificate it cannot read is
+        left out too; one that is no CA (``get_ca_certs`` lists none) is kept."""
+
+        probe = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        try:
+            probe.load_verify_locations(cadata=der)
+        except ssl.SSLError:
+            return True
+        listed = probe.get_ca_certs()
+        return bool(listed) and ssl.cert_time_to_seconds(listed[0]["notAfter"]) < now
 
     @staticmethod
     def get_local_ip() -> Optional[str]:

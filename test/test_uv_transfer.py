@@ -508,6 +508,38 @@ class TestLayoutJobs(unittest.TestCase):
         self.assertEqual(job["members"], ["mat", "legs"])
         self.assertIs(job["sources"], self.SOURCES)
 
+    def test_per_material_keeps_two_materials_of_one_layout_apart(self):
+        """An in-place re-bake keeps each material's own texture set: two
+        materials on disjoint islands of one set stay two outputs."""
+        left, right = QUAD * [0.5, 1.0], QUAD * [0.5, 1.0] + [0.5, 0.0]
+        parts = [
+            self._part("woodMat", "map1", left, "a"),
+            self._part("metalMat", "map1", right, "b"),
+        ]
+        self.assertEqual(
+            list(ptk.UvTransfer.layout_jobs(parts, self.SOURCES)), ["map1"]
+        )
+        jobs = ptk.UvTransfer.layout_jobs(parts, self.SOURCES, per_material=True)
+        self.assertEqual(sorted(jobs), ["metalMat", "woodMat"])
+        self.assertEqual(jobs["woodMat"]["members"], ["a"])
+
+    def test_per_material_still_merges_one_material_across_set_names(self):
+        """The production table's one layout under two set names stays one
+        output per material."""
+        jobs = ptk.UvTransfer.layout_jobs(
+            [
+                self._part("tableMat", "map1", QUAD * [0.5, 1.0], "mat"),
+                self._part(
+                    "tableMat", "UVChannel_1", QUAD * [0.5, 1.0] + [0.5, 0.0], "legs"
+                ),
+                self._part(None, "map1", QUAD * [0.1, 0.1], "bare"),
+            ],
+            self.SOURCES,
+            per_material=True,
+        )
+        self.assertEqual(sorted(jobs), ["map1", "tableMat"])
+        self.assertEqual(jobs["tableMat"]["members"], ["mat", "legs"])
+
     def test_faces_that_wear_nothing_are_still_a_layout(self):
         """What a target wears says nothing about where its texels go: faces
         whose shading group lost its shader are transferred like any other."""
@@ -841,6 +873,167 @@ class TestTransferMaterialsOutputs(unittest.TestCase):
         first, second = out["a b"]["baseColor"], out["a_b"]["baseColor"]
         self.assertFalse(self._same(first, second))
         self.assertTrue(os.path.isfile(first) and os.path.isfile(second))
+
+    def test_a_job_naming_its_files_writes_the_channel_into_each(self):
+        """An in-place re-bake: the target material's own maps are rewritten
+        where they are, in the format each already has -- nothing lands in
+        the output folder for that channel."""
+        src = self._source(self.tmp)
+        os.makedirs(os.path.join(self.tmp, "tgt"), exist_ok=True)
+        png = os.path.join(self.tmp, "tgt", "seat_BaseColor.png").replace("\\", "/")
+        jpg = os.path.join(self.tmp, "tgt", "seat_diffuse.jpg").replace("\\", "/")
+        job = dict(self._job(src), paths={"baseColor": [png, jpg]})
+        out = self._transfer({"seat": job})
+        self.assertTrue(self._same(out["seat"]["baseColor"], png))
+        self.assertFalse(os.path.isdir(self.out_dir) and os.listdir(self.out_dir))
+        from PIL import Image
+
+        with Image.open(png) as a, Image.open(jpg) as b:
+            self.assertEqual((a.format, b.format), ("PNG", "JPEG"))
+            # The mirrored source.
+            self.assertTrue(np.array_equal(np.asarray(a), _noise(16)[:, ::-1]))
+
+    def test_a_named_file_is_never_another_outputs_fresh_name(self):
+        """One output rewrites ``out/held_BaseColor.png`` in place; another,
+        named ``held`` too, must not write its fresh map over it."""
+        src = self._source(self.tmp)
+        named = os.path.join(self.out_dir, "held_BaseColor.png").replace("\\", "/")
+        out = self._transfer(
+            {
+                "a": self._job(src),
+                "b": dict(self._job(src), paths={"baseColor": [named]}),
+            },
+            name_format="held_{channel}",
+        )
+        self.assertTrue(self._same(out["b"]["baseColor"], named))
+        self.assertFalse(self._same(out["a"]["baseColor"], named))
+
+    def test_a_single_named_file_is_not_split_into_characters(self):
+        src = self._source(self.tmp)
+        named = os.path.join(self.tmp, "solo_BaseColor.png")
+        out = self._transfer({"solo": dict(self._job(src), paths={"baseColor": named})})
+        self.assertTrue(self._same(out["solo"]["baseColor"], named))
+        self.assertTrue(os.path.isfile(named))
+
+    def test_two_jobs_naming_one_file_is_refused_before_any_write(self):
+        src = self._source(self.tmp)
+        named = os.path.join(self.tmp, "one_BaseColor.png")
+        jobs = {
+            label: dict(self._job(src), paths={"baseColor": [named]})
+            for label in ("a", "b")
+        }
+        with self.assertRaises(ValueError):
+            self._transfer(jobs)
+        self.assertFalse(os.path.exists(named))
+
+
+class TestInPlacePaths(unittest.TestCase):
+    """``in_place_paths``: which maps of the re-used materials a job may
+    rewrite where they are -- anything else would change something the run
+    does not own."""
+
+    def setUp(self):
+        artifacts = ptk.TempArtifacts("uv_transfer_in_place", policy="scoped")
+        self.addCleanup(artifacts.cleanup)
+        self.tmp = artifacts.dir_path()
+
+    def _file(self, name):
+        return ptk.UvTransfer.save_map(os.path.join(self.tmp, name), _noise(4))
+
+    def _plan(self, maps, **kwargs):
+        return ptk.UvTransfer.in_place_paths(maps, **kwargs)
+
+    def test_the_materials_own_maps_are_rewritten(self):
+        bc, rough = self._file("seat_BaseColor.png"), self._file("seat_Rough.tga")
+        paths, refused = self._plan({"seat": {"baseColor": bc, "roughness": rough}})
+        self.assertEqual(paths, {"baseColor": [bc], "roughness": [rough]})
+        self.assertEqual(refused, [])
+
+    def test_what_rewriting_would_change_elsewhere_is_left_alone(self):
+        src = self._file("src.png")
+        lib = self._file("lib.png")
+        packed = self._file("packed.png")
+        exr = os.path.join(self.tmp, "hdr.exr")
+        open(exr, "wb").close()
+        gone = os.path.join(self.tmp, "gone.png")
+        maps = {
+            "seat": {
+                "baseColor": src.replace("/", os.sep),  # any spelling
+                "roughness": lib,
+                "metallic": exr,
+                "normal": gone,
+                "emission": packed,
+            }
+        }
+        paths, refused = self._plan(
+            maps, reads=[src], readers={lib: ["seat", "libUser"]}, locked=[packed]
+        )
+        self.assertEqual(paths, {})
+        why = {channel: reason for _m, channel, _p, reason in refused}
+        self.assertEqual(set(why), set(maps["seat"]))
+        self.assertIn("source", why["baseColor"])
+        self.assertIn("libUser", why["roughness"])
+        self.assertIn(".exr", why["metallic"])
+        self.assertIn("writable", why["normal"])
+
+    def test_a_file_two_channels_read_is_left_alone_across_materials(self):
+        """One file under two channels (a packed map) holds no single
+        channel's image -- within one material or across a layout's."""
+        orm = self._file("orm.png")
+        _paths, refused = self._plan({"a": {"roughness": orm}, "b": {"metallic": orm}})
+        self.assertEqual(len(refused), 2)
+        self.assertTrue(all("several channels" in r[3] for r in refused))
+
+    def test_two_materials_sharing_one_map_list_it_once(self):
+        bc = self._file("shared_BaseColor.png")
+        paths, refused = self._plan(
+            {"a": {"baseColor": bc}, "b": {"baseColor": bc}},
+            readers={bc: ["a", "b"]},
+        )
+        self.assertEqual((paths, refused), ({"baseColor": [bc]}, []))
+
+
+class TestSaveMap(unittest.TestCase):
+    """``save_map`` writes the format the path's extension names."""
+
+    def setUp(self):
+        artifacts = ptk.TempArtifacts("uv_transfer_save_map", policy="scoped")
+        self.addCleanup(artifacts.cleanup)
+        self.tmp = artifacts.dir_path()
+
+    def _save(self, name, arr, value_max=255.0):
+        """``(format, mode, first texel)`` of the file *arr* was saved as."""
+        from PIL import Image
+
+        path = ptk.UvTransfer.save_map(os.path.join(self.tmp, name), arr, value_max)
+        with Image.open(path) as img:
+            return img.format, img.mode, np.asarray(img).flat[0]
+
+    def test_each_writable_extension_keeps_its_format(self):
+        for ext, fmt in (
+            (".png", "PNG"),
+            (".tif", "TIFF"),
+            (".tga", "TGA"),
+            (".jpg", "JPEG"),
+            (".bmp", "BMP"),
+        ):
+            with self.subTest(ext=ext):
+                self.assertEqual(self._save(f"m{ext}", _noise(8))[0], fmt)
+
+    def test_a_format_without_alpha_drops_it(self):
+        self.assertEqual(self._save("m.jpg", _noise(8, channels=4))[1], "RGB")
+        self.assertEqual(self._save("m.tga", _noise(8, channels=4))[1], "RGBA")
+
+    def test_16_bit_grey_survives_where_the_format_holds_it(self):
+        deep = np.full((8, 8), 40000.0, np.float32)
+        self.assertEqual(self._save("h.tif", deep, 65535.0)[1], "I;16")
+        _fmt, mode, texel = self._save("h.jpg", deep, 65535.0)
+        self.assertEqual(mode, "L")
+        self.assertEqual(int(texel), round(40000 / 65535 * 255))
+
+    def test_an_unwritable_extension_raises(self):
+        with self.assertRaises(ValueError):
+            ptk.UvTransfer.save_map(os.path.join(self.tmp, "m.exr"), _noise(8))
 
 
 class TestInvalidSourceNormals(unittest.TestCase):

@@ -83,10 +83,11 @@ class ExportProfile:
         """The export button's contract: widget values -> ``perform_export`` inputs.
 
         Exactly what both panels' ``b000`` did inline: read each task / check by
-        its widget key, derive the coupled entries (a texture template arms the
-        material-compatibility check; an optimize choice sets the size cap and
-        arms the optimization check), drop what is off, wrap ``ignore_groups``
-        with its match mode, and lift the scope out of the tasks.
+        its widget key, derive the coupled entries (an optimize choice sets the
+        size cap; each task in :attr:`VERIFYING_CHECKS` arms the check that
+        verifies it), drop what is off, add :attr:`ALWAYS_CHECKS` -- which
+        Override Checks keeps -- wrap ``ignore_groups`` with its match mode,
+        and lift the scope out of the tasks.
 
         Returns:
             ``{"tasks": {...}, "export_mode": str, "export_visible": bool}`` --
@@ -104,23 +105,24 @@ class ExportProfile:
             if key in values:
                 check_params[name] = values[key]
 
-        texture_template = task_params.get("convert_textures")
-        if texture_template:
-            check_params["check_material_compatibility"] = texture_template
-
         optimize_choice = task_params.get("optimize_textures")
         if optimize_choice:
             task_params.update(
-                cls.optimize_textures_tasks(optimize_choice, texture_template)
+                cls.optimize_textures_tasks(
+                    optimize_choice, task_params.get("convert_textures")
+                )
             )
-            check_params["check_texture_optimization"] = task_params[
-                "optimize_textures"
-            ]
+        for task, check in cls.VERIFYING_CHECKS.items():
+            # setdefault: a panel that still offers the check as a row of its
+            # own (an older DCC package) keeps the row's say.
+            if task_params.get(task):
+                check_params.setdefault(check, task_params[task])
 
         task_params = {k: v for k, v in task_params.items() if v}
         check_params = (
             {} if override_checks else {k: v for k, v in check_params.items() if v}
         )
+        check_params.update(dict.fromkeys(cls.ALWAYS_CHECKS, True))
 
         if "ignore_groups" in task_params:
             task_params["ignore_groups"] = {
@@ -187,6 +189,128 @@ class ExportProfile:
                 if widget is not None and hasattr(widget, method):
                     values[key] = getattr(widget, method)()
         return values
+
+    @classmethod
+    def _retired_row_notes(
+        cls,
+        stored: Mapping[str, Any],
+        task_definitions: Mapping[str, Mapping[str, Any]],
+        check_definitions: Mapping[str, Mapping[str, Any]],
+    ) -> List[Tuple[str, str]]:
+        """What a saved preset asks of the rows retired 2026-10-19, said.
+
+        A preset load skips a key no widget takes, so a preset an earlier panel
+        saved would stop doing what it asked with nothing said: a check row
+        on beside its fix row off (the released default for two pairs) loses
+        the check (:attr:`VERIFYING_CHECKS`), a check row off beside its fix
+        on gains it, a Baked Reflections level other than the recipe's own
+        stops shipping, and a writability check turned off runs anyway
+        (:attr:`ALWAYS_CHECKS`). A row this panel still offers, or a fix it
+        never had, is not retired here and says nothing.
+
+        Parameters:
+            stored: The preset's ``{objectName: value}`` -- or the panel's own
+                saved state, read the same way (``SceneExporterBase.
+                _note_retired_panel_state``).
+            task_definitions: The panel's task rows.
+            check_definitions: The panel's check rows.
+
+        Returns:
+            ``[(level, message)]`` -- empty when nothing the preset asks for
+            changed.
+        """
+        lost: List[str] = []
+        gained: List[str] = []
+        for task, check in cls.VERIFYING_CHECKS.items():
+            spec = task_definitions.get(task)
+            if spec is None or check in check_definitions or check not in stored:
+                continue
+            key = cls.widget_key(task, spec)
+            if key not in stored or bool(stored[check]) == bool(stored[key]):
+                continue
+            label = check[len("check_") :].replace("_", " ").title()
+            fix = spec.get("setText") or spec.get("set_row_label") or task
+            (lost if stored[check] else gained).append(f"{label} ({fix})")
+        notes: List[Tuple[str, str]] = []
+        if lost:
+            notes.append(
+                (
+                    "warning",
+                    "it asks for checks that now run only after their fix, which "
+                    f"it leaves off, so an export skips them: {', '.join(lost)}. "
+                    "Turn the fix on to keep its check.",
+                )
+            )
+        if gained:
+            notes.append(
+                (
+                    "info",
+                    "each fix it runs is now checked after it, so what the fix "
+                    f"cannot repair stops the export: {', '.join(gained)}.",
+                )
+            )
+        reflections = stored.get("baked_reflections")
+        offered = "baked_reflections" in task_definitions
+        if reflections not in (None, "") and not offered:
+            from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+            policy = MeshConvert.RENDERING_POLICY["lightmappedMaterials"]
+            # The row persisted its label (restore_by text); a hand-edited
+            # template may carry the token.
+            token = str(
+                cls._BAKED_REFLECTIONS_OPTIONS.get(str(reflections), reflections)
+            )
+            if (
+                ExportRun._BAKED_REFLECTION_LEVELS.get(token.strip().lower())
+                != policy["envMapIntensity"]
+            ):
+                notes.append(
+                    (
+                        "info",
+                        f"it sets Baked Reflections to {reflections}: the row is "
+                        "retired, and the deliverable reflects at the lighting "
+                        "recipe's own level (its own reflection probe whole, "
+                        "where it carries one).",
+                    )
+                )
+        for check in cls.ALWAYS_CHECKS:
+            if check in stored and not stored[check] and check not in check_definitions:
+                label = check[len("check_") :].replace("_", " ").title()
+                notes.append(
+                    (
+                        "info",
+                        f"it turns the {label} check off: it runs on every export.",
+                    )
+                )
+        return notes
+
+    @classmethod
+    def _retired_row_keys(
+        cls,
+        task_definitions: Mapping[str, Mapping[str, Any]],
+        check_definitions: Mapping[str, Mapping[str, Any]],
+    ) -> Tuple[str, ...]:
+        """The objectNames of the rows retired 2026-10-19 that this panel no
+        longer builds -- the keys :meth:`_retired_row_notes` reads beside the
+        live fix rows', and the ones a panel's saved state can drop once said.
+
+        Parameters:
+            task_definitions: The panel's task rows.
+            check_definitions: The panel's check rows.
+
+        Returns:
+            The retired keys, in :attr:`VERIFYING_CHECKS` order, then Baked
+            Reflections, then :attr:`ALWAYS_CHECKS`.
+        """
+        keys = [
+            check
+            for task, check in cls.VERIFYING_CHECKS.items()
+            if task in task_definitions and check not in check_definitions
+        ]
+        if "baked_reflections" not in task_definitions:
+            keys.append("baked_reflections")
+        keys += [c for c in cls.ALWAYS_CHECKS if c not in check_definitions]
+        return tuple(keys)
 
     # -------------------------------------------------------------- check rows
     @staticmethod
@@ -672,6 +796,27 @@ class ExportProfile:
         "check_floating_point_keys": OBJECT_SET_TASKS + KEY_EDIT_TASKS,
     }
 
+    #: For each task, the check that verifies its work. The panels offer the
+    #: task alone and :meth:`run_config` arms the check, with the task's value,
+    #: whenever the task runs. That way, anything the fix could not repair (a
+    #: locked node, a sheared chain with no clean ancestor) still stops the
+    #: export, and a fix turned off takes its concern with it. The scheduler
+    #: places each check after its task (:attr:`CHECK_DEPENDENCIES`).
+    VERIFYING_CHECKS: Dict[str, str] = {
+        "conform_shape_names": "check_mangled_names",
+        "reassign_duplicate_materials": "check_duplicate_materials",
+        "convert_textures": "check_material_compatibility",
+        "optimize_textures": "check_texture_optimization",
+        "flatten_sheared_chains": "check_sheared_local_transforms",
+        "snap_keys_to_frame": "check_floating_point_keys",
+        "tie_all_keyframes": "check_untied_keyframes",
+    }
+    #: Checks every panel run makes, with no row. These are preconditions with
+    #: only one sensible answer, and Override Checks keeps them: a destination
+    #: held open fails the write whatever else is overridden, and finding that
+    #: out first costs milliseconds instead of the whole pipeline.
+    ALWAYS_CHECKS: Tuple[str, ...] = ("check_output_writable",)
+
     @classmethod
     def scoped_tables(cls, manager: type) -> type:
         """Class decorator: give *manager* the shared tables, scoped to it.
@@ -815,19 +960,27 @@ class ExportProfile:
         "Within 1e-4 (0.1 mm)": 1e-4,
         "Within 1e-3 (1 mm)": 1e-3,
     }
-    #: Baked Reflections -- how strongly a lightmapped material reflects the
-    #: viewer's studio environment, published in the deliverable's lighting
-    #: recipe (``handoff.rendering``). A deliverable that carries its own
-    #: reflection probe -- the room its bake lit -- reflects that at full
-    #: strength whatever this says. The values are TOKENS rather than the levels
-    #: (:attr:`ExportRun.BAKED_REFLECTION_LEVELS`): the export button drops a
-    #: falsy row as "unset", and Off is a real choice here, not the default.
-    BAKED_REFLECTIONS_OPTIONS: Dict[str, str] = {
+    #: The retired Baked Reflections row's table: label -> TOKEN (the levels
+    #: are :attr:`ExportRun._BAKED_REFLECTION_LEVELS`). Read privately by the
+    #: rule that still names an older preset's choice (:meth:`_retired_row_notes`).
+    _BAKED_REFLECTIONS_OPTIONS: Dict[str, str] = {
         "Off (Pure Bake)": "off",
         "Quarter": "quarter",
         "Half": "half",
         "Full": "full",
     }
+    #: Retired 2026-10-19 (removed in 0.17.0; reading it warns): kept for a DCC
+    #: package that still builds the row (an older mayatk / blendertk reads it
+    #: at import). No panel offers the row any more: a deliverable reflects at
+    #: the lighting recipe's own level, and one that carries its own reflection
+    #: probe reflects that whole.
+    BAKED_REFLECTIONS_OPTIONS = Deprecation.class_attribute(
+        _BAKED_REFLECTIONS_OPTIONS,
+        "nothing -- no panel offers the row; the deliverable publishes the "
+        "lighting recipe's own level",
+        remove_in="0.17.0",
+        since="2026-10-19",
+    )
 
     @classmethod
     def optimize_textures_options(cls) -> Dict[str, Any]:
@@ -879,29 +1032,35 @@ class ExportProfile:
         "secondary_max_size": "Secondary Map Size",
         "uastc_rdo": "KTX2 RDO",
     }
-    #: The rows that decide the lighting recipe it publishes
-    #: (``handoff.rendering``, :attr:`ExportRun.rendering`), likewise.
-    GLB_LIGHTING_ROWS: Dict[str, str] = {
-        "baked_reflections": "Baked Reflections",
-    }
+    #: The rows that decide the lighting recipe it publishes: none since
+    #: 2026-10-19, when the one row (Baked Reflections) retired. The deliverable
+    #: publishes the recipe's own lighting. Kept, empty, for a published extapps
+    #: that still builds a Lighting section from it (an empty table builds none).
+    GLB_LIGHTING_ROWS: Dict[str, str] = {}
     #: Every row that decides a GLB deliverable. A producer that makes the GLB
     #: and nothing else -- the WebXR preview -- offers exactly these
     #: (:meth:`glb_options`) and resolves them through :meth:`ExportRun.for_glb`,
     #: so a setting there is the same setting here and the two build the same
-    #: texture pass and publish the same recipe from it.
+    #: texture pass from it.
     GLB_ROWS: Dict[str, str] = {**GLB_TEXTURE_ROWS, **GLB_LIGHTING_ROWS}
 
     @classmethod
+    @Deprecation.symbol(
+        "nothing -- no panel offers the row; the deliverable publishes the "
+        "lighting recipe's own level",
+        remove_in="0.17.0",
+        since="2026-10-19",
+    )
     def baked_reflections_default(cls) -> str:
         """The Baked Reflections token a row starts at: the one whose level the
-        lighting recipe itself declares (``MeshConvert.RENDERING_POLICY``), so
-        an untouched row publishes the policy unchanged."""
+        lighting recipe itself declares (``MeshConvert.RENDERING_POLICY``).
+        Retired with the row (:attr:`BAKED_REFLECTIONS_OPTIONS`)."""
         from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
         level = MeshConvert.RENDERING_POLICY["lightmappedMaterials"]["envMapIntensity"]
         return next(
             token
-            for token, value in ExportRun.BAKED_REFLECTION_LEVELS.items()
+            for token, value in ExportRun._BAKED_REFLECTION_LEVELS.items()
             if value == level
         )
 
@@ -943,21 +1102,16 @@ class ExportProfile:
             },
             "secondary_max_size": dict(cls.SECONDARY_MAX_SIZE_OPTIONS),
             "uastc_rdo": dict(cls.UASTC_RDO_OPTIONS),
-            "baked_reflections": dict(cls.BAKED_REFLECTIONS_OPTIONS),
         }
 
     @classmethod
     def glb_defaults(cls) -> Dict[str, Any]:
         """``{row key: value}`` -- where each :attr:`GLB_ROWS` row starts in
         the Scene Exporter, so a producer mirroring the rows starts at the same
-        settings: index 0 of its table (the off state), except Baked
-        Reflections, which starts at the lighting recipe's own level
-        (:meth:`baked_reflections_default`)."""
-        defaults = {
+        settings: index 0 of its table, the off state."""
+        return {
             row: next(iter(table.values())) for row, table in cls.glb_options().items()
         }
-        defaults["baked_reflections"] = cls.baked_reflections_default()
-        return defaults
 
     @classmethod
     def frame_rate_options(cls) -> Dict[str, Optional[str]]:
@@ -1076,22 +1230,34 @@ class ExportRun:
     #: GLB Key Tolerance: the deviation bound for the deliverable's key reduction
     #: (:attr:`ExportProfile.GLB_KEY_REDUCTION_OPTIONS`); None is off.
     glb_key_tolerance: Optional[float] = None
-    #: Baked Reflections: the environment's specular level on a lightmapped
-    #: material, as a level (:attr:`BAKED_REFLECTION_LEVELS`); None is the
-    #: lighting recipe's own (see :attr:`rendering`).
+    #: Retired 2026-10-19 (removed in 0.17.0; setting it warns): the retired
+    #: Baked Reflections row's level (:attr:`BAKED_REFLECTION_LEVELS`) -- the
+    #: environment's specular on a lightmapped material, published through
+    #: :attr:`rendering` while it is still given. None, what every panel run
+    #: now carries, is the lighting recipe's own level.
     baked_reflections: Optional[float] = None
 
     #: The ``output_format`` tokens a run accepts.
     OUTPUT_FORMATS: ClassVar[Tuple[str, ...]] = ("fbx", "glb", "fbx_glb", "usd")
-    #: Baked Reflections token -> the level it publishes
-    #: (``lightmappedMaterials.envMapIntensity``). The row's labels are
-    #: :attr:`ExportProfile.BAKED_REFLECTIONS_OPTIONS`.
-    BAKED_REFLECTION_LEVELS: ClassVar[Dict[str, float]] = {
+    #: The retired Baked Reflections row's token -> the level it published
+    #: (``lightmappedMaterials.envMapIntensity``); its labels are
+    #: :attr:`ExportProfile._BAKED_REFLECTIONS_OPTIONS`. Read privately by the
+    #: rules that still serve the retired field (:meth:`baked_reflection_level`).
+    _BAKED_REFLECTION_LEVELS: ClassVar[Dict[str, float]] = {
         "off": 0.0,
         "quarter": 0.25,
         "half": 0.5,
         "full": 1.0,
     }
+    #: Retired 2026-10-19 (removed in 0.17.0; reading it warns), with the row.
+    #: Unannotated on purpose: ``@dataclass`` reads every annotated class
+    #: attribute while it builds the class, which would warn at import.
+    BAKED_REFLECTION_LEVELS = Deprecation.class_attribute(
+        _BAKED_REFLECTION_LEVELS,
+        "nothing -- the deliverable publishes the lighting recipe's own level",
+        remove_in="0.17.0",
+        since="2026-10-19",
+    )
     #: Texture File Type token for KTX2 PLUS a core-readable PNG/JPEG twin of
     #: every map. :meth:`from_tasks` parses it into the ``ktx2`` container and
     #: the :attr:`ktx2_fallback` flag, so no other consumer ever compares it.
@@ -1140,6 +1306,16 @@ class ExportRun:
                 since="2026-10-05",
                 stacklevel=3,
             )
+        if self.baked_reflections is not None:
+            Deprecation.warn(
+                "ExportRun(baked_reflections=...)",
+                "nothing: the deliverable publishes the lighting recipe's own level",
+                remove_in="0.17.0",
+                kind="parameter",
+                since="2026-10-19",
+                reason="Until then the level is still published.",
+                stacklevel=3,
+            )
 
     @staticmethod
     def _dial(value: Any, cast: type) -> Any:
@@ -1171,20 +1347,25 @@ class ExportRun:
 
         ``{section: {field: value}}`` for ``MeshConvert.rendering_policy`` --
         what ``GlbPipeline.envelope`` writes into a GLB's handoff and an
-        ``ExportContext`` stamps on an FBX's -- empty while no lighting row is
-        set (an absent row publishes the policy's own value). A decision of the
-        EXPORT, so a deliverable handed on alone still says how it was approved
-        to look.
+        ``ExportContext`` stamps on an FBX's. Empty -- the policy's own values
+        -- for every panel run since the one lighting row retired; only the
+        deprecated :attr:`baked_reflections` still fills it.
         """
         if self.baked_reflections is None:
             return {}
         return {"lightmappedMaterials": {"envMapIntensity": self.baked_reflections}}
 
     @classmethod
+    @Deprecation.symbol(
+        "nothing -- the deliverable publishes the lighting recipe's own level",
+        remove_in="0.17.0",
+        since="2026-10-19",
+    )
     def baked_reflection_level(cls, value: Any) -> Optional[float]:
         """A Baked Reflections row value as its level; ``None`` when unset.
+        Retired with the row (:attr:`baked_reflections`).
 
-        Takes the row's token (:attr:`BAKED_REFLECTION_LEVELS`) or a level
+        Takes the row's token (:attr:`_BAKED_REFLECTION_LEVELS`) or a level
         itself, the number a headless caller may pass, clamped at 0.
 
         Raises:
@@ -1192,15 +1373,16 @@ class ExportRun:
         """
         if value is None or value == "":
             return None
+        levels = cls._BAKED_REFLECTION_LEVELS
         token = str(value).strip().lower()
-        if token in cls.BAKED_REFLECTION_LEVELS:
-            return cls.BAKED_REFLECTION_LEVELS[token]
+        if token in levels:
+            return levels[token]
         try:
             return max(0.0, float(value))
         except (TypeError, ValueError):
             raise ValueError(
                 f"Unknown baked_reflections {value!r}; expected one of "
-                f"{', '.join(cls.BAKED_REFLECTION_LEVELS)} or a level."
+                f"{', '.join(levels)} or a level."
             ) from None
 
     def replace(self, **changes: Any) -> "ExportRun":
@@ -1361,9 +1543,9 @@ class ExportRun:
         row (inert on a USD run, with a note), the size
         dial and the three GLB optimisation dials (secondary map size, UASTC
         RDO, key reduction -- each None when off; the key reduction rides
-        Optimize Keys and is inert without it), the Baked Reflections level
-        (:meth:`baked_reflection_level`; an unreadable one warns and ships the
-        recipe's own). A GLB-only format drops
+        Optimize Keys and is inert without it). A retired Baked Reflections
+        row, which an older panel still sends, is dropped with a note: the
+        deliverable publishes the recipe's own level. A GLB-only format drops
         :attr:`FBX_KEY_HYGIENE` with a note: the FBX is then a temp
         intermediate the converter resamples per frame. ``optimize_textures``
         and ``convert_textures`` are READ, not
@@ -1477,13 +1659,15 @@ class ExportRun:
                 )
             )
             key_tolerance = None
-        try:
-            baked_reflections = cls.baked_reflection_level(
-                tasks.pop("baked_reflections", None)
+        if tasks.pop("baked_reflections", None) not in (None, ""):
+            notes.append(
+                (
+                    "info",
+                    "Baked Reflections ignored: the row is retired, and the "
+                    "deliverable reflects at the lighting recipe's own level "
+                    "(its own reflection probe whole, where it carries one).",
+                )
             )
-        except ValueError as error:
-            notes.append(("warning", f"{error} The recipe's own level ships."))
-            baked_reflections = None
         drop_rig_apparatus = bool(tasks.pop("drop_rig_apparatus", False))
         if drop_rig_apparatus and output_format == "usd":
             # The pass edits a written FBX; a USD layer has none, and its
@@ -1528,7 +1712,6 @@ class ExportRun:
             optimize_textures=bool(optimize),
             verify_deliverables=bool(tasks.pop("verify_deliverables", False)),
             drop_rig_apparatus=drop_rig_apparatus,
-            baked_reflections=baked_reflections,
         )
         return run.with_tasks(tasks), tasks, notes
 

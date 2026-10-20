@@ -684,3 +684,92 @@ class _ImgFilterInternal:
         if np.issubdtype(arr.dtype, np.integer):
             np.rint(cur, out=cur)  # see dilate_image: never truncate toward dark
         return cur.astype(arr.dtype, copy=False)
+
+    # ------------------------------------------------------------------ resampling
+    @staticmethod
+    def _area_weights(n_in: int, n_out: int) -> "np.ndarray":
+        """(n_out, n_in) weights: each output cell's overlap with the input cells, normalised."""
+        scale = n_in / n_out
+        lo = np.arange(n_out) * scale
+        hi = lo + scale
+        edges = np.arange(n_in + 1)
+        overlap = np.clip(
+            np.minimum(hi[:, None], edges[None, 1:])
+            - np.maximum(lo[:, None], edges[None, :-1]),
+            0.0,
+            None,
+        )
+        return overlap / overlap.sum(axis=1, keepdims=True)
+
+    @classmethod
+    def resample_area(cls, array, size) -> "np.ndarray":
+        """Body of :meth:`ImgUtils.resample_area`."""
+        arr = np.asarray(array, dtype=np.float64)
+        width, height = int(size[0]), int(size[1])
+        wy = cls._area_weights(arr.shape[0], height)
+        wx = cls._area_weights(arr.shape[1], width)
+        out = np.tensordot(wy, arr, axes=(1, 0))  # (height, W, ...)
+        out = np.moveaxis(
+            np.tensordot(wx, out, axes=(1, 1)), 0, 1
+        )  # (height, width, ...)
+        return out.astype(np.float32)
+
+    @staticmethod
+    def _square_to_quad(corners) -> "np.ndarray":
+        """The homography taking the unit square's (0,0) (1,0) (1,1) (0,1) to *corners*."""
+        src = ((0, 0), (1, 0), (1, 1), (0, 1))
+        rows, rhs = [], []
+        for (s, t), (x, y) in zip(src, corners):
+            rows.append([s, t, 1, 0, 0, 0, -s * x, -t * x])
+            rows.append([0, 0, 0, s, t, 1, -s * y, -t * y])
+            rhs += [x, y]
+        h = np.linalg.solve(np.asarray(rows, np.float64), np.asarray(rhs, np.float64))
+        return np.append(h, 1.0).reshape(3, 3)
+
+    @staticmethod
+    def sample_bilinear(
+        arr: "np.ndarray", px: "np.ndarray", py: "np.ndarray"
+    ) -> "np.ndarray":
+        """Body of :meth:`ImgUtils.sample_bilinear`."""
+        h, w = arr.shape[:2]
+        fx0, fy0 = np.floor(px), np.floor(py)
+        x0 = np.clip(fx0.astype(int), 0, w - 1)
+        y0 = np.clip(fy0.astype(int), 0, h - 1)
+        x1, y1 = np.clip(x0 + 1, 0, w - 1), np.clip(y0 + 1, 0, h - 1)
+        fx = np.clip(px - fx0, 0.0, 1.0)
+        fy = np.clip(py - fy0, 0.0, 1.0)
+        if arr.ndim == 3:
+            fx, fy = fx[..., None], fy[..., None]
+        top = arr[y0, x0] * (1 - fx) + arr[y0, x1] * fx
+        bottom = arr[y1, x0] * (1 - fx) + arr[y1, x1] * fx
+        return top * (1 - fy) + bottom * fy
+
+    @classmethod
+    def warp_quad(cls, array, corners, size, supersample=None) -> "np.ndarray":
+        """Body of :meth:`ImgUtils.warp_quad`."""
+        arr = np.asarray(array)
+        if not np.issubdtype(arr.dtype, np.floating):
+            arr = arr.astype(np.float32)
+        width, height = int(size[0]), int(size[1])
+        quad = np.asarray(corners, np.float64)
+        homography = cls._square_to_quad(quad)
+        if supersample is None:  # about one sample per input pixel the quad covers
+            extent = max(
+                np.linalg.norm(quad[1] - quad[0]) / width,
+                np.linalg.norm(quad[2] - quad[3]) / width,
+                np.linalg.norm(quad[3] - quad[0]) / height,
+                np.linalg.norm(quad[2] - quad[1]) / height,
+            )
+            supersample = max(1, int(np.ceil(extent - 1e-9)))
+        k = int(supersample)
+        sub = (np.arange(k) + 0.5) / k
+        s = ((np.arange(width)[:, None] + sub[None, :]) / width).ravel()
+        t = ((np.arange(height)[:, None] + sub[None, :]) / height).ravel()
+        ss, tt = np.meshgrid(s, t)
+        hm = homography
+        xw = hm[0, 0] * ss + hm[0, 1] * tt + hm[0, 2]
+        yw = hm[1, 0] * ss + hm[1, 1] * tt + hm[1, 2]
+        ww = hm[2, 0] * ss + hm[2, 1] * tt + hm[2, 2]
+        samples = cls.sample_bilinear(arr, xw / ww - 0.5, yw / ww - 0.5)
+        shape = (height, k, width, k) + arr.shape[2:]
+        return samples.reshape(shape).mean(axis=(1, 3)).astype(np.float32)

@@ -21,7 +21,7 @@ readable both at runtime (:meth:`Deprecation.registered`) and statically, by
 ``generate_api_registry.py``, which walks the decorators with ``ast`` and fails
 ``--check`` once a removal version has passed.
 
-Four shapes, matching what the ecosystem actually retires:
+Five shapes, matching what the ecosystem actually retires:
 
     * :meth:`Deprecation.symbol` - a function, method or class.
     * :meth:`Deprecation.parameter` - one keyword of a live function, including
@@ -31,10 +31,12 @@ Four shapes, matching what the ecosystem actually retires:
       as a module ``__getattr__`` that chains onto an existing one (the uitk
       ``_LAZY`` loaders have one already, and clobbering it would break the
       package).
+    * :meth:`Deprecation.class_attribute` - a class constant (a table, a
+      token), served by a descriptor that warns on every read.
     * :meth:`Deprecation.values` - retired members of a value vocabulary, e.g. a
       mode string that now builds as something else.
 
-For anything the four do not reach -- a deprecated branch inside a function
+For anything the five do not reach -- a deprecated branch inside a function
 that stays -- :meth:`Deprecation.warn` emits one notice from a function body.
 It is the escape hatch, not a fifth shape, and it exists so that an awkward
 case cannot justify going back to a hand-rolled ``warnings.warn``.
@@ -64,6 +66,7 @@ working regardless of the sink.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import functools
 import importlib
@@ -449,6 +452,36 @@ class _DeprecationInternal:
         cls._mark(target, record)
 
 
+class _DeprecatedClassAttribute:
+    """The descriptor :meth:`Deprecation.class_attribute` places on a class.
+
+    A non-data descriptor: a read from the class or an instance warns and
+    returns the value itself (never a copy, so a caller that mutated the table
+    still does), while assigning the name -- on the class or an instance --
+    replaces it exactly as it would a plain class attribute.
+    """
+
+    def __init__(self, value: Any, record: DeprecationRecord) -> None:
+        self.value = value
+        #: Provisional until :meth:`__set_name__` names it after its owner.
+        self.record = record
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        """Name the record after its owner and roster it -- at class creation,
+        i.e. at import, so :meth:`Deprecation.expired` sees it unread."""
+        self.record = Deprecation._register(
+            dataclasses.replace(
+                self.record,
+                what=f"{owner.__qualname__}.{name}",
+                module=owner.__module__ or "",
+            )
+        )
+
+    def __get__(self, instance: Any, owner: Optional[type] = None) -> Any:
+        Deprecation._emit(self.record)
+        return self.value
+
+
 class Deprecation(_DeprecationInternal):
     """Retire a public name with a notice and a removal version.
 
@@ -827,6 +860,62 @@ class Deprecation(_DeprecationInternal):
             module_globals, "__dir__", __dir__, previous_dir, stale=stale_dir
         )
         return records
+
+    @classmethod
+    def class_attribute(
+        cls,
+        value: Any,
+        replacement: str,
+        *,
+        remove_in: str,
+        reason: Optional[str] = None,
+        since: Optional[str] = None,
+    ) -> Any:
+        """Retire a class constant: a descriptor that serves *value* and warns.
+
+        Written in the class body in place of the plain value::
+
+            class ExportRun:
+                _LEVELS = {"off": 0.0, "full": 1.0}
+                LEVELS = Deprecation.class_attribute(
+                    _LEVELS, "nothing", remove_in="0.17.0", since="2026-10-19"
+                )
+
+        Every read, from the class or an instance, warns and returns *value*
+        itself. Code that must still read it silently -- the rule a retired
+        table keeps serving until its removal -- reads a private name bound to
+        the same object, as above. The record is named ``Owner.NAME`` and
+        rostered when the class is built (``__set_name__``), so it is
+        registered at import like every other shape; assigned to a class after
+        it was built, it keeps a placeholder name.
+
+        On a ``@dataclass``, leave it UNannotated: the decorator reads every
+        annotated class attribute while it builds the class (``ClassVar``
+        included), which would warn at import; an unannotated one is no field.
+
+        Parameters:
+            value (Any): What the attribute still holds this release.
+            replacement (str): What to use instead. Required.
+            remove_in (str): The release it stops working in.
+            reason (str): Optional extra sentence appended to the message.
+            since (str): ISO date the notice first ships.
+
+        Returns:
+            (descriptor) The class attribute to assign.
+
+        Raises:
+            ValueError: An unparseable ``remove_in`` / ``since`` or an empty
+                ``replacement`` -- where it is written, not at the first read.
+        """
+        record = DeprecationRecord(
+            what="(unbound class attribute)",
+            replacement=replacement,
+            remove_in=remove_in,
+            kind="attribute",
+            reason=reason or "",
+            since=since or "",
+        )
+        return _DeprecatedClassAttribute(value, record)
 
     @staticmethod
     def _resolve_path(path: str) -> Any:

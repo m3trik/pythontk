@@ -43,6 +43,90 @@ class MathTest(BaseTestCase):
         pairs = set(zip(rows, cols))
         self.assertEqual(pairs, {(0, 1), (1, 0), (2, 2)})
 
+    # -------------------------------------------------------------------------
+    # fit_similarity
+    # -------------------------------------------------------------------------
+
+    def test_fit_similarity_recovers_an_interchange_axis_and_unit_change(self):
+        """Blender (Z-up, metres) -> Maya (Y-up, centimetres): ``(x, z, -y) * 100``
+        plus an offset, found from the points alone. Added: 2026-10-17"""
+        source = [(0, 0, 0), (1, 0, 0), (0, 2, 0), (0, 0, 3), (1.5, -0.5, 2.0)]
+        target = [(x * 100 + 5, z * 100 - 2, -y * 100 + 7) for x, y, z in source]
+        scale, rotation, translation, residual = MathUtils.fit_similarity(
+            source, target
+        )
+        self.assertAlmostEqual(scale, 100.0, places=6)
+        expected = [[1, 0, 0], [0, 0, 1], [0, -1, 0]]
+        for row, want in zip(rotation, expected):
+            for got, value in zip(row, want):
+                self.assertAlmostEqual(got, value, places=6)
+        for got, want in zip(translation, (5, -2, 7)):
+            self.assertAlmostEqual(got, want, places=6)
+        self.assertLess(residual, 1e-6)
+
+    def test_fit_similarity_refuses_what_cannot_fix_a_transform(self):
+        self.assertIsNone(MathUtils.fit_similarity([(0, 0, 0)], [(1, 1, 1)]))
+        line = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
+        self.assertIsNone(MathUtils.fit_similarity(line, line))
+        self.assertIsNone(
+            MathUtils.fit_similarity([(0, 0, 0)] * 3, [(0, 0, 0), (1, 0, 0), (0, 1, 0)])
+        )
+
+    def test_fit_similarity_never_mirrors(self):
+        """A reflected set has no proper rotation onto it: the fit says so in its
+        residual rather than returning a mirror."""
+        source = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]
+        target = [(-x, y, z) for x, y, z in source]
+        fit = MathUtils.fit_similarity(source, target)
+        import numpy as np
+
+        self.assertAlmostEqual(float(np.linalg.det(np.array(fit[1]))), 1.0, places=6)
+        self.assertGreater(fit[3], 0.1)
+
+    def test_connected_components_numbers_shells_by_their_lowest_vertex(self):
+        """Rows join their vertices; an unnamed vertex is a component of its own."""
+        self.assertEqual(
+            MathUtils.connected_components(6, [[0, 1], [1, 2], [4, 5]]),
+            [0, 0, 0, 1, 2, 2],
+        )
+        self.assertEqual(MathUtils.connected_components(3, []), [0, 1, 2])
+        self.assertEqual(MathUtils.connected_components(0, []), [])
+
+    def test_connected_components_matches_a_union_find_on_scattered_rows(self):
+        """Pairs and triangles alike, against a plain union-find -- on a strip
+        whose indices are shuffled, where member-only hooking crept a row a pass."""
+        import random
+
+        rng = random.Random(7)
+
+        def reference(count, rows):
+            parent = list(range(count))
+
+            def find(v):
+                while parent[v] != v:
+                    parent[v] = parent[parent[v]]
+                    v = parent[v]
+                return v
+
+            for row in rows:
+                for v in row[1:]:
+                    a, b = find(row[0]), find(v)
+                    parent[max(a, b)] = min(a, b)
+            roots = [find(v) for v in range(count)]
+            order = {r: i for i, r in enumerate(sorted(set(roots)))}
+            return [order[r] for r in roots]
+
+        for width in (2, 3):
+            count = 400
+            rows = [[rng.randrange(count) for _ in range(width)] for _ in range(150)]
+            self.assertEqual(
+                MathUtils.connected_components(count, rows), reference(count, rows)
+            )
+        shuffled = list(range(3000))
+        rng.shuffle(shuffled)
+        strip = [shuffled[i : i + 3] for i in range(len(shuffled) - 2)]
+        self.assertEqual(set(MathUtils.connected_components(3000, strip)), {0})
+
     def test_linear_sum_assignment_rectangular(self):
         """Test Hungarian assignment supports rectangular matrices."""
         # 2 rows, 3 cols; expect 2 assignments
@@ -856,6 +940,15 @@ class MathTest(BaseTestCase):
         self.assertEqual(MathUtils.smoothstep(2.0, 2.0, 4.0), 0.0)
         self.assertEqual(MathUtils.smoothstep(4.0, 2.0, 4.0), 1.0)
         self.assertAlmostEqual(MathUtils.smoothstep(3.0, 2.0, 4.0), 0.5, places=9)
+
+    def test_smoothstep_eases_an_array_element_wise(self):
+        """A spot light's cone eases every point of a surface at once."""
+        import numpy as np
+
+        out = MathUtils.smoothstep(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), 2.0, 4.0)
+        np.testing.assert_allclose(out, [0.0, 0.0, 0.5, 1.0, 1.0])
+        np.testing.assert_array_equal(MathUtils.smoothstep([0.5, 2.0], 1.0, 1.0), [0.0, 1.0])
+        self.assertIsInstance(MathUtils.smoothstep(np.float64(3.0), 2.0, 4.0), float)
 
     # ------------------------------------------------- falloff / B-spline basis
 

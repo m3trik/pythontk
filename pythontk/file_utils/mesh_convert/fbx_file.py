@@ -1131,38 +1131,50 @@ class FbxFile(_FbxFileInternal):
         for record in self.iter_objects():
             if record["name"] != kind:
                 continue
-            for prop in record["props"]:
-                name = self._display_name(prop)
-                if name is not None:
-                    names.append(name)
-                    break
+            name = self._object_name(record)
+            if name is not None:
+                names.append(name)
         return names
+
+    def _object_name(self, record: Dict[str, Any]) -> Optional[str]:
+        """An Objects child's display name: the first of its props that is one."""
+        return next(
+            (n for n in map(self._display_name, record["props"]) if n is not None),
+            None,
+        )
 
     def take_names(self) -> List[str]:
         """Animation take names — the ``AnimationStack`` display names."""
         return self.object_names("AnimationStack")
 
-    def user_properties(self, name: str, kind: str = "Model") -> List[Any]:
+    def user_properties(
+        self, name: str, kind: str = "Model", named: bool = False
+    ) -> List[Any]:
         """Every value a *kind* object carries for the user property *name*.
 
         User properties live in each object's ``Properties70`` as ``P``
         records -- ``(name, type, label, flags, value...)`` -- which is where a
         DCC's custom attributes (the ``data_export`` channels among them) land.
         Values come back as stored: ``bytes`` for a string property, numbers
-        for a numeric one, in file order.
+        for a numeric one, in file order. *named* pairs each with the display
+        name of the object carrying it -- ``(object name, value)`` -- which
+        tells the scene's own ``data_export`` from a referenced module's
+        ``NS:data_export``.
         """
         found: List[Any] = []
         wanted = name.encode("utf-8")
         for record in self.iter_objects():
             if record["name"] != kind:
                 continue
+            owner = self._object_name(record) if named else None
             for child in record["children"]:
                 if child["name"] != "Properties70":
                     continue
                 for prop in child["children"]:
                     props = prop["props"]
                     if len(props) >= 5 and props[0] == wanted:
-                        found.append(props[4] if len(props) == 5 else props[4:])
+                        value = props[4] if len(props) == 5 else props[4:]
+                        found.append((owner, value) if named else value)
         return found
 
     #: The ``AnimationCurve`` arrays :meth:`take_layout` reads. Load with
@@ -1290,6 +1302,143 @@ class FbxFile(_FbxFileInternal):
                     max(lasts) / self.TICKS_PER_SECOND,
                 )
         return spans
+
+    #: A key's interpolation (the ``KeyAttrFlags`` mode of the segment after
+    #: it) in the one vocabulary a key travels with between the DCCs
+    #: (``ShotTransfer.KEY_INTERPOLATIONS``): a hold, a straight line, and a
+    #: cubic whatever its tangents. A mode outside these reads as linear --
+    #: what an importer assumes of a key it cannot place.
+    KEY_INTERPOLATIONS = {
+        _FbxFileInternal._CONSTANT: "step",
+        _FbxFileInternal._LINEAR: "linear",
+        _FbxFileInternal._CUBIC: "smooth",
+    }
+
+    def take_keys(
+        self,
+        properties: Collection[str] = (),
+        user: bool = False,
+        kind: str = "Model",
+    ) -> Dict[str, Dict[Tuple[str, str, str], List[List[Any]]]]:
+        """Every key of the chosen channels, take by take.
+
+        What an importer reading only transforms leaves behind -- a node's
+        ``Visibility``, a DCC's custom attributes -- read off the file itself.
+        The base layer only (each take's first ``AnimationLayer``, the one
+        both DCCs key). Needs the curves' arrays: a file loaded without them
+        is read again, payloads skipped (as :meth:`take_layout` is).
+
+        Parameters:
+            properties: Property names whose curves are read, on any *kind*
+                target (``("Visibility",)``).
+            user: Also read every animated user property -- ``U`` among the
+                target's ``Properties70`` flags: where Maya's extra attributes
+                and Blender's custom properties land.
+            kind: The record the targets are (``"Model"``).
+
+        Returns:
+            ``{take: {(target, property, component): [[ticks, value,
+            interpolation], ...]}}`` for every take in the file (``{}`` for
+            one keying none of the chosen channels). *target* is the object's
+            name -- ``name#uid`` where more than one *kind* object carries that
+            name; *component* the curve's channel as stored
+            (``"d|Visibility"``, ``"d|X"``); *ticks* the key time as stored
+            (:attr:`TICKS_PER_SECOND`); *interpolation* the segment after the
+            key in :attr:`KEY_INTERPOLATIONS`' words.
+
+        Raises:
+            ValueError: A curve whose key times and values differ in count.
+        """
+        wanted = set(properties)
+        source = self
+        if not self._curves_decoded():
+            source = type(self).load(
+                self.path, decode_arrays=self.CURVE_ARRAYS, raw_payloads=False
+            )
+        kinds: Dict[Any, str] = {}
+        names: Dict[Any, str] = {}
+        users: Dict[Any, set] = {}
+        arrays: Dict[Any, Dict[str, Any]] = {}
+        stacks: List[Any] = []
+        for record in source.iter_objects():
+            props = record["props"]
+            if not props or not isinstance(props[0], int):
+                continue
+            uid, what = props[0], record["name"]
+            kinds[uid] = what
+            names[uid] = (self._display_name(props[1]) if len(props) > 1 else "") or ""
+            if what == "AnimationStack":
+                stacks.append(uid)
+            elif what == "AnimationCurve":
+                arrays[uid] = {
+                    child["name"]: child["props"][0]
+                    for child in record["children"]
+                    if child["name"] in self.CURVE_ARRAYS and child["props"]
+                }
+            elif what == kind and user:
+                users[uid] = {
+                    p["props"][0].decode("utf-8", "replace")
+                    for child in record["children"]
+                    if child["name"] == "Properties70"
+                    for p in child["children"]
+                    if len(p["props"]) > 3
+                    and isinstance(p["props"][0], bytes)
+                    and isinstance(p["props"][3], bytes)
+                    and b"U" in p["props"][3]
+                }
+        members: Dict[Any, List[Tuple[Any, Optional[str]]]] = {}
+        for _link, child, parent, prop in source.connections():
+            members.setdefault(parent, []).append((child, prop))
+        repeats = Counter(names[u] for u, k in kinds.items() if k == kind)
+
+        def label(uid: Any) -> str:
+            return f"{names[uid]}#{uid}" if repeats[names[uid]] > 1 else names[uid]
+
+        # A curve node's targets: the (object, property) it drives.
+        driven: Dict[Any, List[Tuple[Any, str]]] = {}
+        for parent, links in members.items():
+            if kinds.get(parent) != kind:
+                continue
+            for child, prop in links:
+                if prop is None or kinds.get(child) != "AnimationCurveNode":
+                    continue
+                if prop in wanted or prop in users.get(parent, ()):
+                    driven.setdefault(child, []).append((parent, prop))
+
+        takes: Dict[str, Dict[Tuple[str, str, str], List[List[Any]]]] = {}
+        for stack in stacks:
+            channels = takes.setdefault(names[stack], {})
+            layer = next(
+                (
+                    c
+                    for c, _p in members.get(stack, ())
+                    if kinds.get(c) == "AnimationLayer"
+                ),
+                None,
+            )
+            for node, _p in members.get(layer, ()):
+                for target, prop in driven.get(node, ()):
+                    for curve, component in members.get(node, ()):
+                        if component is None or curve not in arrays:
+                            continue
+                        key = (label(target), prop, component)
+                        if key in channels:
+                            continue  # FBX plays the first curve on a channel
+                        parsed = self._key_curve(arrays[curve])
+                        channels[key] = [
+                            [
+                                time,
+                                value,
+                                self.KEY_INTERPOLATIONS.get(
+                                    self._key_attr(parsed, i)[0] & self._INTERPOLATION,
+                                    "linear",
+                                ),
+                            ]
+                            for i, (time, value) in enumerate(
+                                zip(parsed.times, parsed.values)
+                            )
+                        ]
+        return takes
 
     def take_layout(self, tolerance: float = 1e-4) -> Dict[str, Any]:
         """Which takes, imported together, carry ALL of the file's animation.

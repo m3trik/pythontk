@@ -94,6 +94,7 @@ from typing import (
 )
 
 from pythontk.core_utils.logging_mixin import LoggingMixin
+from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.temp_artifacts import TempArtifacts
 from pythontk.net_utils._net_utils import NetUtils
 from pythontk.net_utils.preview._page_outputs import _PageOutputsMixin
@@ -367,7 +368,7 @@ class PreviewServer(
         """
         # Read OUTSIDE the lock: a registry lookup has no business holding up a
         # publish, and this is not part of the published state.
-        xr_runtime = None if guest else self._xr_runtime() is not None
+        xr_runtime = None if guest else self._xr_runtime_name() or False
         with self._lock:
             manifest = {
                 "version": self._version,
@@ -393,10 +394,12 @@ class PreviewServer(
         if guest:
             manifest["guest"] = True
         else:
-            # Whether an XR runtime is INSTALLED, which the page cannot see
-            # and the machine can. It is the difference between "no headset
-            # here" and "a headset that is not presenting", and the page
-            # says something useful for each -- see the viewer's XR block.
+            # Which XR runtime is ACTIVE (its name; false for none), which the
+            # page cannot see and the machine can. It is the difference
+            # between "no headset here" and "a headset that is not
+            # presenting" -- and, as the name changes under an open page, "a
+            # runtime this browser has not loaded" -- and the page says
+            # something useful for each: see the viewer's XR block.
             manifest["xrRuntime"] = xr_runtime
         return manifest
 
@@ -466,8 +469,9 @@ class PreviewServer(
         self._thread = None
         self._port = None
         # Any page that was watching is now watching a closed socket, and a
-        # restart usually lands on a different ephemeral port -- so carrying
-        # the flag over would suppress the tab a restarted server most needs.
+        # restart may land on a different port (an ephemeral one whenever
+        # DEFAULT_PORT is taken) -- so carrying the flag over would suppress
+        # the tab a restarted server may need.
         self._clear_viewer()
         self.logger.debug("Preview server stopped.")
 
@@ -811,6 +815,31 @@ class PreviewServer(
         if not isinstance(manifest, str) or not os.path.isfile(manifest):
             return None
         return manifest
+
+    @classmethod
+    def _xr_runtime_name(cls) -> Optional[str]:
+        """The active OpenXR runtime's name, or ``None`` when there is none.
+
+        A name rather than a yes/no, because Chromium loads a runtime ONCE per
+        XR service and never re-reads the registry: a runtime made active
+        later -- Virtual Desktop's, as it connects -- is invisible to that
+        browser until it restarts, and only a name lets the page see the
+        change under it. The manifest's own ``runtime.name``, else the file's
+        stem: another vendor's file is read for a label, never trusted for a
+        shape.
+        """
+        manifest = cls._xr_runtime()
+        if manifest is None:
+            return None
+        # utf-8-sig: a vendor's file written with a BOM is still JSON.
+        document = FileUtils.read_json(manifest, encoding="utf-8-sig")
+        try:
+            name = document["runtime"]["name"]
+        except (KeyError, TypeError):  # Unread, or not a runtime manifest's shape.
+            name = None
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+        return Path(manifest).stem
 
     @classmethod
     def webxr_browser(cls) -> Optional[str]:
