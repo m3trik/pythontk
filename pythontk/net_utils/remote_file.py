@@ -187,8 +187,15 @@ class RemoteFile(_RemoteFileInternal):
         merged = {"User-Agent": cls.USER_AGENT}
         merged.update(headers or {})
         request = Request(target, headers=merged)
+        from pythontk.net_utils._net_utils import NetUtils
+
         try:
-            return urlopen(request, timeout=cls.TIMEOUT if timeout is None else timeout)
+            return urlopen(
+                request,
+                timeout=cls.TIMEOUT if timeout is None else timeout,
+                # The trust a browser has: a stale OS store fails otherwise.
+                context=NetUtils.tls_context(),
+            )
         except HTTPError as exc:
             msg = f"Can't fetch {target}: HTTP {exc.code} {exc.reason}."
             if exc.code in (401, 403):

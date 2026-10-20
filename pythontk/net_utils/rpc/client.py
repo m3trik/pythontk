@@ -28,6 +28,7 @@ import json
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Callable, Optional
 
@@ -58,6 +59,12 @@ class RpcClient:
     @property
     def url(self) -> str:
         return f"http://{self.host}:{self.port}/"
+
+    @classmethod
+    def for_url(cls, url: str, **kwargs: Any) -> "RpcClient":
+        """A client of the server at *url* (``http://host:port/``); *kwargs* as the constructor's."""
+        parts = urllib.parse.urlparse(url)
+        return cls(host=parts.hostname or "127.0.0.1", port=parts.port or 80, **kwargs)
 
     # ------------------------------------------------------------------
     # Probes

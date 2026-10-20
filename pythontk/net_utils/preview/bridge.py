@@ -68,6 +68,18 @@ class PreviewBridge(HandoffBridge):
         """
         return ()
 
+    def hdr_codec(self) -> Any:
+        """What the GLB build encodes the float images with: the lightmaps and
+        the reflection probe (:meth:`MeshConvert.apply_glb_lightmaps`'s
+        *hdr_codec*), or ``None`` for :class:`ImgUtils` (cv2).
+
+        A host hook like :meth:`lightmap_search_dirs`: the build runs in the
+        host's own process, and a host whose Python has no cv2 -- Blender's --
+        answers with its own image writer (blendertk's ``LightmapWebExport``);
+        without it every push of a baked scene previewed unlit.
+        """
+        return None
+
     def _start_node(self, name: str) -> Optional[Any]:
         """The scene's node named *name* -- where every view starts -- or ``None``.
 
@@ -139,10 +151,10 @@ class PreviewBridge(HandoffBridge):
         (and writes) an envelope whose ``sections`` is ``{}``.
 
         *request* is the push's own: the envelope publishes the lighting
-        recipe with the choices its GLB rows made (the Baked Reflections row),
-        which the deliverer resolved in its preflight and left on it
-        (:attr:`PreviewDeliverer.RENDERING_KEY`). Without one -- or through a
-        deliverer that resolves no rows -- the recipe ships as declared.
+        recipe with whatever overrides the deliverer's preflight left on it
+        (:attr:`PreviewDeliverer.RENDERING_KEY`) -- none from a panel row since
+        Baked Reflections retired. Without one -- or through a deliverer that
+        resolves no rows -- the recipe ships as declared.
         """
         from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
 
@@ -381,6 +393,31 @@ class PreviewBridge(HandoffBridge):
             "timings": {"publish": elapsed, "total": elapsed},
         }
 
+    def preview_file(self, path: Union[str, Path], logger: Any = None) -> bool:
+        """:meth:`publish_file` for a click: never raises, and says where it went.
+
+        The ``action://preview`` log link's work (each DCC's
+        ``UiUtils.dispatch_log_link``). The tab is the deliverer's call --
+        ``"auto"`` unless it was built otherwise: one opens only when no page
+        is already watching, so a click swaps the open page to the file
+        rather than stacking tabs -- and the line names the page either way.
+
+        Parameters:
+            path: The ``.glb`` to show.
+            logger: Where the outcome goes; this bridge's logger otherwise.
+
+        Returns:
+            Whether the file was published.
+        """
+        log = logger or self.logger
+        try:
+            result = self.publish_file(path)
+        except (OSError, ValueError, RuntimeError) as error:
+            log.warning(f"Not opened in the WebXR preview: {error}")
+            return False
+        log.info(f"WebXR preview: {Path(path).name} at {result['url']}")
+        return True
+
     @staticmethod
     def sidecar_summary(result: Optional[Dict[str, Any]]) -> str:
         """One plain-text line describing what the scene sidecar did.
@@ -568,7 +605,9 @@ class PreviewBridge(HandoffBridge):
             on_step=on_step,
             private=private,
         )
-        self.logger.info(
+        # Debug: the link is the result, and a caller reports it -- the WebXR
+        # panel with its reach and a [copy] link, which this line duplicated.
+        self.logger.debug(
             "Sharing the preview at %s (%s, view-only).", info["url"], info["label"]
         )
         return info

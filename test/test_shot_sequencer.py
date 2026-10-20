@@ -141,6 +141,10 @@ class TestBoundsOnlyEdits(_SequencerTest):
             lambda: self.seq.delete_shot(999),
             lambda: self.seq.add_shot_space(999, 2),
             lambda: self.seq.move_shot_to_position(999, 1),
+            lambda: self.seq.swap_shots(999, self.sid("A")),
+            lambda: self.seq.swap_shots(self.sid("A"), 999),
+            lambda: self.seq.copy_shot_content(999, self.sid("A")),
+            lambda: self.seq.copy_shot_content(self.sid("A"), 999),
             lambda: self.seq.fit_shot_to_content(999),
             lambda: self.seq.move_object_in_shot(999, "x", 1, 2, 3),
         ):
@@ -152,6 +156,51 @@ class TestTopology(_SequencerTest):
     def test_move_to_position(self):
         self.seq.move_shot_to_position(self.sid("C"), 1)  # at the default gap, 10
         self.assertBounds(("C", 1, 16), ("A", 26, 35), ("B", 45, 60))
+
+    def test_swap_trades_places_whole_by_default(self):
+        self.seq.swap_shots(self.sid("A"), self.sid("C"))  # the default gap, 10
+        self.assertBounds(("C", 1, 16), ("B", 26, 41), ("A", 51, 60))
+        self.assertEqual(self.seq.shot_by_name("A").objects, ["a"])
+
+    def test_swap_retains_fields_in_place(self):
+        store = self.seq.store
+        a, c = self.sid("A"), self.sid("C")
+        store.update_shot(a, description="intro", locked=True, metadata={"step": "1"})
+        store.update_shot(c, description="outro", metadata={"step": "3"})
+        self.seq.swap_shots(a, c, retain=("name", "description", "locked", "metadata"))
+        # C's animation and members now play first, under the first place's
+        # name, notes, lock and step; the shot ids travel with the animation.
+        self.assertBounds(("A", 1, 16), ("B", 26, 41), ("C", 51, 60))
+        first, last = self.seq.sorted_shots()[0], self.seq.sorted_shots()[-1]
+        self.assertEqual((first.shot_id, first.objects), (c, ["c"]))
+        self.assertEqual(
+            (first.description, first.locked, first.metadata),
+            ("intro", True, {"step": "1"}),
+        )
+        self.assertEqual(
+            (last.description, last.locked, last.metadata),
+            ("outro", False, {"step": "3"}),
+        )
+
+    def test_swap_keeps_the_system_member_tags_with_their_members(self):
+        store = self.seq.store
+        a, c = self.sid("A"), self.sid("C")
+        store.add_system_members(a, ["a2"])
+        store.update_shot(c, metadata={"step": "3"})
+        self.seq.swap_shots(a, c, retain=("metadata",))
+        meta_a = self.seq.shot_by_id(a).metadata
+        self.assertEqual(meta_a.get("step"), "3")
+        self.assertEqual(store.system_members(self.seq.shot_by_id(a)), {"a2"})
+        self.assertNotIn(store.SYSTEM_MEMBERS, self.seq.shot_by_id(c).metadata)
+
+    def test_swap_neighbours(self):
+        self.seq.swap_shots(self.sid("B"), self.sid("A"), retain=("name",))
+        self.assertBounds(("A", 1, 16), ("B", 26, 35), ("C", 45, 60))
+
+    def test_swap_refuses_a_field_it_cannot_retain(self):
+        with self.assertRaisesRegex(ValueError, "objects"):
+            self.seq.swap_shots(self.sid("A"), self.sid("C"), retain=("objects",))
+        self.assertBounds(("A", 1, 10), ("B", 15, 30), ("C", 35, 50))
 
     def test_insert_after(self):
         # The store's default gap, 10 (maintainer 2026-10-11), after A.
@@ -1626,6 +1675,128 @@ class TestCopySequences(_SequencerTest):
             [{"kind": "audio", "obj": "trk", "start": 2, "end": 8}], self.sid("C")
         )
         self.assertEqual(self.seq.calls, [])
+
+
+class _ReplaceScene(_VacateScene):
+    """Runs that ride their shots (``runs``: ``{shot id: [(obj, from, to)]}``,
+    offsets from the shot's start), and the copy hook recorded."""
+
+    def __init__(self, *a, **kw):
+        self.runs = {}
+        super().__init__(*a, **kw)
+
+    def collect_object_segments(self, shot_id, **kwargs):
+        shot = self.shot_by_id(shot_id)
+        return [
+            {"obj": obj, "start": shot.start + lo, "end": shot.start + hi}
+            for obj, lo, hi in self.runs.get(shot_id, ())
+        ]
+
+    def copy_attribute_keys(self, obj, attr, delta, times=None, window=None):
+        self.calls.append(("copy_attr", obj, attr, delta, window))
+        return 1
+
+    def _cut_shot_content(self, shot_id):
+        self.runs.pop(shot_id, None)
+        return super()._cut_shot_content(shot_id)
+
+
+class TestCopyShotContent(_SequencerTest):
+    """``copy_shot_content``: the destination's animation is replaced by the
+    source's -- its own keys cut, the source's length taken, the source's
+    runs copied at the same offsets from its start -- and its record stays."""
+
+    SEQUENCER = _ReplaceScene
+
+    def writes(self):
+        return [c for c in self.seq.calls if c[0] in ("cut", "copy_attr")]
+
+    def test_a_later_source_replaces_an_earlier_shot(self):
+        a, c = self.sid("A"), self.sid("C")
+        self.seq.store.update_shot(
+            a, description="intro", metadata={"step": "1"}, objects=["a", "doc_a"]
+        )
+        self.seq.runs = {a: [("a", 0, 9)], c: [("c", 0, 15)]}
+        self.seq.calls.clear()
+        self.assertEqual(self.seq.copy_shot_content(c, a), 1)
+        # A takes C's 15 frames; B and C ripple by 6 -- and the copy reads C
+        # where the ripple left it.
+        self.assertBounds(("A", 1, 16), ("B", 21, 36), ("C", 41, 56))
+        self.assertEqual(
+            self.writes(), [("cut", a), ("copy_attr", "c", None, -40.0, (41, 56))]
+        )
+        shot = self.seq.shot_by_id(a)
+        self.assertEqual(
+            (shot.name, shot.description, shot.metadata, shot.objects),
+            # Its animated member gave way; the manifest's one stayed.
+            ("A", "intro", {"step": "1"}, ["c", "doc_a"]),
+        )
+        self.assertEqual(self.seq.shot_by_id(c).objects, ["c"], "the source keeps it")
+
+    def test_an_earlier_source_replaces_a_later_shot(self):
+        a, c = self.sid("A"), self.sid("C")
+        self.seq.runs = {a: [("a", 2, 8)]}
+        self.seq.calls.clear()
+        self.seq.copy_shot_content(a, c)
+        self.assertBounds(("A", 1, 10), ("B", 15, 30), ("C", 35, 44))
+        self.assertEqual(
+            self.writes(), [("cut", c), ("copy_attr", "a", None, 34.0, (3, 9))]
+        )
+
+    def test_a_shot_cannot_replace_itself(self):
+        with self.assertRaisesRegex(ValueError, "its own"):
+            self.seq.copy_shot_content(self.sid("A"), self.sid("A"))
+        self.assertEqual(self.writes(), [])
+
+
+class TestSwapPlaceMembers(_SequencerTest):
+    """With metadata retained, a swap leaves the members a shot does not
+    animate in the place (they are the step's), and the animated ones travel
+    with their keys."""
+
+    SEQUENCER = _Recording
+
+    def test_unanimated_members_stay_with_the_retained_metadata(self):
+        store = self.seq.store
+        a, c = self.sid("A"), self.sid("C")
+        store.update_shot(a, objects=["a", "doc_a"], metadata={"step": "1"})
+        store.update_shot(c, objects=["c", "doc_c"], metadata={"step": "3"})
+        self.seq.segments = {a: [{"obj": "a"}], c: [{"obj": "c"}]}
+        self.seq.swap_shots(a, c, retain=("metadata",))
+        shot_a, shot_c = self.seq.shot_by_id(a), self.seq.shot_by_id(c)
+        self.assertEqual(
+            (shot_a.objects, shot_a.metadata), (["a", "doc_c"], {"step": "3"})
+        )
+        self.assertEqual(
+            (shot_c.objects, shot_c.metadata), (["c", "doc_a"], {"step": "1"})
+        )
+
+    def test_a_member_keyed_only_with_holds_travels_with_its_keys(self):
+        """A lone flat key (a render-effect off-state) is content: motion-only
+        segments would leave its member behind while its key moved."""
+        store = self.seq.store
+        a, c = self.sid("A"), self.sid("C")
+        store.update_shot(a, objects=["a", "flat_a"])
+        holds = {a: [{"obj": "flat_a"}]}
+        base = self.seq.collect_object_segments
+
+        def segments(shot_id, ignore_holds=True, **kw):
+            extra = [] if ignore_holds else holds.get(shot_id, [])
+            return base(shot_id, **kw) + extra
+
+        self.seq.collect_object_segments = segments
+        self.seq.swap_shots(a, c, retain=("metadata",))
+        # flat_a went with its key; the keyless "a" and "c" stayed in place.
+        self.assertEqual(self.seq.shot_by_id(a).objects, ["c", "flat_a"])
+        self.assertEqual(self.seq.shot_by_id(c).objects, ["a"])
+
+    def test_without_metadata_retained_every_member_travels(self):
+        store = self.seq.store
+        a, c = self.sid("A"), self.sid("C")
+        store.update_shot(a, objects=["a", "doc_a"])
+        self.seq.segments = {a: [{"obj": "a"}], c: [{"obj": "c"}]}
+        self.seq.swap_shots(a, c, retain=("name",))
+        self.assertEqual(self.seq.shot_by_id(a).objects, ["a", "doc_a"])
 
 
 class TestDescribeKeySelection(unittest.TestCase):

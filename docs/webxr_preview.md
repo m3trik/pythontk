@@ -144,16 +144,16 @@ GLB has already answered them; what you see is the file. A `.gltf` is refused ra
 because the server publishes one file into its root and the sibling `.bin` and textures would
 simply 404 — an empty scene with nothing to explain it.
 
-In the Rendering panel this is the **External GLB** entry on the WebXR Preview option box's scope
-combo. Nothing is wired to the combo itself — pressing the button is what opens the browse
-dialog, so the option box can be configured without a modal interrupting it, and so a restored
-External scope cannot greet the next panel open with a file browser. It asks per push rather than
-remembering: the combo is already sitting on External, so re-picking it could never say "same
-source, different file", and a remembered path goes stale on its own. The folder carries over, so
-the second ask opens where the first one landed. It lives on the panel rather than in `scope_spec`:
-it is a *source*, not a scope, and every other hand-off bridge would inherit a choice it has no way
-to honour. The viewer-script rows still apply — those describe the page, and the page is the same
-one either source publishes to.
+In the WebXR Preview panel this is the **Source Files** row. Standalone it is the only source, so
+the panel shows no Source list; opened from a DCC, the list appears above the rows with the scene's
+scopes and **File on Disk** last. An empty field is not an error: **Push** opens the row's own
+browse and writes the pick back, so the next push is one press — and a path is never restored from
+a past session, where it would be pushed by the press meant to ask. It lives on the panel rather
+than in `scope_spec`: it is a *source*, not a scope, and every other hand-off bridge would inherit a
+choice it has no way to honour. The rows follow what the push will build: the texture rows come
+with an FBX (an empty field or GLBs alone show none — nothing re-encodes a GLB), and the
+viewer-script rows always apply — those describe the page, and the page is the same one either
+source publishes to.
 
 In the page, the model stands at its true size, centred on the floor; the view opens through the
 scene's start camera when it has one (see *Where a view starts*), and **View ▸ Frame model**
@@ -423,7 +423,7 @@ nothing for anyone. Guests need no install -- only the builder does (a tunnel cl
 info = preview.share()               # {"url": the link to send, "guests": 0, ...}
 preview.share(provider="tailscale_funnel")
 preview.share(private=True)          # a fresh random link, good for this share only
-preview.ping_share()                 # {"ok", "ms", "status", "error", ...}: can a guest reach it?
+preview.ping_share()                 # {"ok", "ms", "route", "verified", "error", ...}: can a guest reach it?
 preview.share_url                    # None once the share ends -- or once its tunnel dies
 preview.unshare()                    # the owner's page and server are untouched
 ```
@@ -440,21 +440,43 @@ once the step is taken the link comes up by itself, and the footer says what it 
 The row's option box carries **Share Now** (also the retry after a failed share), **Copy Link**
 (which brings the link up when the row is on and it is not), **Test Link** (the check again),
 **Copy Scene Link** (the scene as data, for someone's agent --
-[below](#reading-the-scene-as-data)) and **Stop Sharing**, and the footer
+[below](#reading-the-scene-as-data)), **Stop Sharing** and **Remember Sharing** -- the row starts
+**Off** each session unless that keeps it, and a kept row brings the link up with the first push,
+never when the panel opens (the footer says it *shares with the first push*) -- and the footer
 shows the link and how many guest tabs have it open right now (`guest_count`: polled within the
-viewer timeout), re-read every two seconds while the panel shows. Every address the panel logs --
+viewer timeout), re-read every two seconds while the panel shows. A link the check below finds
+closed to guests is said in **red** (log and footer) and checked again every 15 s for fifteen minutes,
+quietly, until it opens -- said in green -- or the wait runs out, said in red again.
+**Scenes:** the **+** beside Source Files adds another scene -- its own files, page and server
+(`FilePreviewBridge` with a `PreviewDeliverer` of its own) and, while the row is on, its own link
+(see *Several shares at once* below). Push publishes every scene; the other rows apply to them all;
+an added scene not pushed yet shares with its first push, and its **-** stops its server and link. Every address the panel logs --
 the link, the page a step takes, where to install a missing client -- is a link in the log.
-The row starts **Off** each session and is never restored: a link is a door to this machine, and a
-session opens it only when asked -- a row left on yesterday would otherwise share today's first
-push unprompted.
+Without **Remember Sharing** the row starts **Off** each session: a link is a door to this machine,
+and a session opens it only when asked -- a row left on yesterday would otherwise share today's
+first push unprompted.
 
 **Is it up? (`ping_share`).** A provider can report a link before a guest can open it: a quick
-tunnel's new name not yet in every resolver, a client that dropped as it came up, a provider's
-error page answering in its place. So every new link is **checked**, off the UI thread, and the log
-says so -- *Link checked: a guest can reach it (412 ms)*, or why not. The check asks the tunnel's
-own link for the guest manifest, end to end (public DNS, the provider's TLS, the tunnel, the guest
-listener), and passes only when it is THIS share at this server's version that answers -- a 200
-from anything else does not pass. It sends no page id, so it never counts as a guest; it asks the
+tunnel's new name not yet in every resolver, a Funnel name not yet in public DNS (below), a client
+that dropped as it came up, a provider's error page answering in its place. So every new link is
+**checked**, off the UI thread, and the log says so -- *Link checked: a guest can reach it (412 ms)*,
+or why not. The check asks the tunnel's own link for the guest manifest, end to end (public DNS, the
+provider's TLS, the tunnel, the guest listener), and passes only when it is THIS share at this
+server's version that answers -- a 200 from anything else does not pass.
+
+It takes a **guest's route, not this machine's** (`route: "public"`): a public link's name is
+resolved by public DNS (`NetUtils.public_addresses`) and that address is asked, the name still the
+one TLS and `Host` carry. This machine's resolver can answer otherwise -- Tailscale's MagicDNS gives
+a tailnet member the `100.x` address of a `ts.net` name, so a request through it never meets the
+public ingress a guest uses, and proved nothing. A name public DNS lacks fails the check (no
+stranger can find it); a tailnet-only link, or no public resolver to ask, goes through this machine
+(`route: "local"`). The certificate is checked with the trust a browser has
+(`NetUtils.tls_context`: the OS stores without their expired entries, plus `certifi` when it is
+installed). `ssl.create_default_context()` failed every Let's Encrypt site on a Windows machine
+whose store kept an expired cross-signed *ISRG Root X2* (measured 2026-10-15: *certificate has
+expired*, while browsers opened the link); a certificate this machine still cannot verify is asked
+again unverified, and the share answering then passes with `verified: False` -- the provider's
+certificate is a browser's to judge. It sends no page id, so it never counts as a guest; it asks the
 tunnel, never an alias (a page on another server); and a miss is asked again (three tries, two
 seconds apart) before it is reported, since a brand-new name is usually seconds from answering.
 
@@ -511,7 +533,7 @@ where to install) -- a provider is an entry, not a branch:
 | Provider | Link | Trade-off |
 |---|---|---|
 | `cloudflared` (default when installed) | random `https://<words>.trycloudflare.com` per share | no account; fast; TLS ends at Cloudflare's edge, which sees the traffic. Any number of shares at once. The panel offers the download (one executable, `AppInstaller`'s `binary` type) |
-| `tailscale_funnel` | stable `https://<machine>.<tailnet>.ts.net` | bookmark once; TLS ends on this machine; relayed, so large pushes load slower; Funnel must be enabled for the tailnet. Three shares at once per machine (below) |
+| `tailscale_funnel` | stable `https://<machine>.<tailnet>.ts.net` | bookmark once; TLS ends on this machine; relayed, so large pushes load slower; Funnel must be enabled for the tailnet. Three shares at once per machine (below). **Each share's name reaches public DNS minutes after it starts -- 5.5 on one run, not within 8 or 25 on two others (ts.net's authoritative servers said NXDOMAIN) -- and leaves within a minute of it ending** (measured 2026-10-15, 1.102.2): no stranger can open a new link before then; cloudflared's answers in seconds |
 | `tailscale_serve` | the same name, tailnet only | nothing public; a headset needs the Tailscale app |
 
 **Several shares at once.** Each preview server has its own ports (the owner listener falls back
@@ -721,8 +743,16 @@ top-right after the windows -- `setRows`, `show`, an `addButton` of its own, `ad
 `addSlider(label, {min, max, step, value, format}, onInput)` for a labelled slider under the rows,
 whose `value` a script can set without firing `onInput`; hidden until shown, written as text),
 `environment` (what lights the model: `probe` -- the bake's reflection probe on screen or null,
-`{on, width, height, bytes, bufferView, position, box, decodeMs, prefilterMs}` -- `setProbe(on)`,
-the Environment menu's switch, and `maps`, the environment maps held in GPU memory),
+`{on, width, height, bytes, bufferView, position, box, copies, decodeMs, prefilterMs}` -- `setProbe(on)`,
+the Environment menu's switch, and `maps`, the environment maps held in GPU memory, its
+highlight copies among them),
+`lighting` (the bake on screen, swapped without a reload: `relight({maps, images, probe, highlights})`
+puts half-float lightmaps -- `maps` names each material's image -- and a probe in place of the
+file's, with `highlights` the layers its highlight copies are built from (see *Highlights: the
+bake's lights, drawn into the probe*); `restore()` brings the file's back, and
+`renderLinear({camera, width, height})` reads a view as linear light before the tone map; the
+`look_capture` feature and `ptk.LookCapture` drive it to hold a lighting prediction to what the
+viewer actually shows),
 `addHeadsetCard({name, width, height, metres, radius, over})` (a card of text in the headset,
 where the page's chrome is not drawn -- a canvas in its colours on a plane in the headset's layer,
 hidden until shown, `over` the model when asked; `draw(paint)` repaints it and hands
@@ -758,7 +788,10 @@ prompt. The transport is on it too: `mixer`, `playClip(name)`, `playing` / `setP
 `shotAt(seconds)`, `descriptionAt()` — the shot record's own note for whatever the model is posed
 at — and `clip`, the selection as
 `{name, duration, fps, startFrame, endFrame, sequence}`, which is what lets a script address a clip
-in the AUTHORING frames the DCC and the picker quote rather than in seconds. A script that throws is
+in the AUTHORING frames the DCC and the picker quote rather than in seconds. `setRendering(on)`
+stops (`false`) or restarts the frame loop: a page driven headless sleeps between its requests,
+because an idle viewer still draws every frame -- in software GL, several cores -- and explicit
+renders (`lighting.renderLinear`, `renderer.render`) work while it sleeps. A script that throws is
 logged and contained —
 an optional module must never make a good preview *look* broken, because the one place this is read
 is a headset where the console is not visible.
@@ -1064,14 +1097,15 @@ keep direct lighting dynamic, or vertex-bake the low-frequency term.
   a ceiling 40 levels where it moved the floor 6 — a lighting artefact that reads as broken
   normals. The key light's intensity is off on a baked model; its direction still orients this,
   and the published policy states the rule as `lightmappedMaterials.normalRelief`.
-- **A baked material reflects the studio at the level the export chose.** The studio is not the
-  room the bake lit, so at full strength its reflections lift every dark glossy baked surface
-  (measured on a production room: the darkest machine surfaces at 0.06 of display baked alone,
-  0.22 with full reflections, 0.11 at a quarter). The Scene Exporter's **Baked Reflections** row
-  sets the level -- Off (the pure bake), Quarter, Half, Full (the default: each texel's reflection
-  is already scaled by its own bake, `lightmappedMaterials.reflectionNormalization`) -- and the
-  deliverable publishes it as `lightmappedMaterials.envMapIntensity`; the page scales everything
-  the studio gives a baked material by it, with one uniform the baked shaders share.
+- **A baked material reflects the studio scaled by its own bake.** The studio is not the room the
+  bake lit, so taken whole its reflections lift every dark glossy baked surface (measured on a
+  production room: the darkest machine surfaces at 0.06 of display baked alone, 0.22 with full
+  reflections, 0.11 at a quarter). Each texel's reflection is therefore scaled by how lit its bake
+  is (`lightmappedMaterials.reflectionNormalization`), so a shadow reflects next to nothing, and
+  the recipe's level, `lightmappedMaterials.envMapIntensity` (1), scales everything the studio
+  gives a baked material through one uniform the baked shaders share. The Scene Exporter's Baked
+  Reflections row, which set that level, retired on 2026-10-19: its default was already the
+  right answer, so every deliverable publishes the recipe's own.
 - **A bake's reflection probe replaces the studio.** A lightmap is diffuse irradiance and a metal
   has no diffuse, so a baked metal shows only what it reflects -- and an object the bake left out
   is lit by nothing of the room. mayatk's lightmap bake therefore also captures the room it lit as
@@ -1099,6 +1133,48 @@ this page is one of its readers. The earlier **Light** toggle (`bake only` / `ba
 to tell a flat bake from the viewer's lighting; with the environment's diffuse withheld from baked
 materials that question no longer arises, and a mode the export cannot express is a preview that
 lies about the deliverable.
+
+### Highlights: the bake's lights, drawn into the probe
+
+A lightmap is the diffuse light every light of the bake left on a surface: it has no direction,
+so it holds no highlight. Arnold draws each light's highlight on a metal directly. The reflection
+probe holds direction, but it is read box-projected (above): a light ON the probe's box -- a ceiling
+panel -- reflects where it hangs, while one hanging inside the room is read as if it hung on the
+wall behind it. That is why a bright office's ceiling panels lit its metals from the probe alone
+and a moody rig of bench lights left them dark (measured on a production soldering table,
+2026-10-17: Arnold's render with every light's specular off matched the viewer's dull trays and
+puck).
+
+So the GLB build draws the bake's lights into **copies of the probe**, one per group of receivers
+(`MeshConvert.highlight_probe_layers`, embedded as the probe's `highlights` by
+`apply_glb_lightmaps` from the scene record's `lights` -- mayatk's `LightUtils.specular_lights`, at
+most 16, the strongest at the middle of what is baked). For a light and a focal point F, a copy's
+texel whose ray leaves the box at B shows what F sees of the light along F -> B: a reflection from
+F that reads B sees the light true -- direction, size and radiance -- and a surface near F nearly
+so. Each light gets its own F per group, and a scale that makes the light its proxy gives the
+group's surfaces the light's own:
+
+- **the room's shell** (surfaces on the box's faces: walls, floor, ceiling) reads the probe as
+  captured -- lights placed for the bench and read from a wall glowed where no light shines;
+- **an unbaked object** (no lightmap: everything it shows is the probe's) gets a copy of its own,
+  an asset's parts one between them: F at the centroid of each light's irradiance on it, the
+  irradiance matched;
+- **the rest of the interior** shares one: F at each light's highlight hot spot as the eye sees it
+  (the start camera `user_pos`, else the probe's capture point), the highlight matched -- a baked
+  surface shows a light only through its highlight.
+
+The page builds each copy as the probe plus its layer (`kernel/probe.js`), prefilters it like the
+probe, and its materials reflect it as their own environment while the probe is up -- one lookup,
+as every material reads the probe, so the highlights cost the frame nothing; the copies cost GPU
+memory (the interior's at the probe's size, an object's at half: about 9.5 MB beside a desktop
+probe). Measured on the production table against the same 15 lights lit live (2026-10-19): the
+magnifier, puck, trays and button box read as the live render did, where the live lights had cost
+the frame a fifth. The lights themselves never ship -- not in `lightmap_web`, not as
+`KHR_lights_punctual` (`strip_glb_baked_lights`): lit as well, the scene is lit twice. The copies
+cast no shadow, as the live lights did not, and they are placed for one eye: from far round the
+room a highlight sits where the start view would see it. They are copies of the probe, so a bake
+with none (a Z-up scene) ships no highlights. A preview builds copies the same way
+(`viewer.lighting.relight({..., highlights})`), and `restore()` brings the file's back.
 
 ### Are they resource intensive?
 
@@ -1163,7 +1239,11 @@ GLB after conversion, and **embedded in the GLB's own `extras`**.
   },
   "handoff":  {"instructions": "<the standalone-reader contract>",
                "reads": {"extras.<key>": "<what it holds>"},
-               "sections": ["base_color", "emissive", "metallic_roughness"]},
+               "sections": ["base_color", "emissive", "metallic_roughness"],
+               "assembly": [{"part": "environment", "data": ["rendering.environment"],
+                             "spec": "<what the approved scene has>"}, …],
+               "rendering": {"renderer": {…}, "environment": {…}, "keyLight": {…},
+                             "lightmappedMaterials": {…}}},
   "textures": {"<path>": {"image": 7, "sha256": "…", "bytes": 262144,
                           "mimeType": "image/webp"}},
   "validate": {"sections": {"base_color": 9, "metallic_roughness": 8}, "textures": 17}
@@ -1193,8 +1273,14 @@ sha256 is what verifies payloads.
 `handoff.instructions` is the reading contract *as data in the artifact* rather than prose in a doc
 the recipient was never given — a rule that only exists in documentation is not part of the
 hand-off. It states what the file is, that section paths are provenance only, how to resolve them,
-and what a lightmap in the occlusion slot means. It is deliberately declarative about the file's own
-structure and contains no directives, so an agent can read it as untrusted content safely.
+and what a lightmap in the occlusion slot means. `handoff.assembly` is the approved scene part by
+part -- the asset, each manifest a conversion adds, then the lighting -- each row naming the data it
+is built from, so a recipient (or an agent) holding only the file rebuilds the lighting as well as
+the geometry. Both are declarative about the file and the scene it rebuilds and never name an action
+outside the file, so an agent can read them as untrusted content safely. The FBX carries the same
+contract as its `handoff` record (`SceneRecords.handoff_block`): its own `assembly` (each record's
+`RecordSpec.assembly`) and `rendering` in the FBX's addresses (`MeshConvert.RENDERING_CARRIERS`),
+since its probe rides `data_export.lightmap_metadata` rather than `extras.lightmap_web`.
 
 Why these three sections: `aiStandardSurface` / `standardSurface` reach the GLB with
 `baseColorFactor` flat `[1,1,1,1]` (Maya's exporter does not map them), emission is gated behind a
@@ -1246,13 +1332,13 @@ levers — rather than being the only thing that turns the pass on.
 
 **The preview offers those same rows, and resolves them with the same methods.**
 `ExportProfile.GLB_ROWS` declares the rows that decide a GLB deliverable -- its images
-(`GLB_TEXTURE_ROWS`) and the lighting recipe it publishes (`GLB_LIGHTING_ROWS`: Baked
-Reflections). `ExportRun.glb_texture_params` resolves the texture rows against the policy and
-`ExportRun.rendering` the lighting ones, and both Scene Exporters and the preview call them (each
-exporter used to carry a private copy of the texture half, and the preview none: it named a
-container and inherited the web ceiling, so every push was cut to 2048 px whatever the export was
-set to). The WebXR Preview panel's **Textures** and **Lighting** rows are built from the same
-tables with the same labels and defaults (`ExportProfile.glb_options`, `glb_defaults`), and a push
+(`GLB_TEXTURE_ROWS`; `GLB_LIGHTING_ROWS` has been empty since its one row, Baked Reflections,
+retired). `ExportRun.glb_texture_params` resolves them against the policy, and both Scene
+Exporters and the preview call it (each exporter used to carry a private copy of the texture
+half, and the preview none: it named a container and inherited the web ceiling, so every push was
+cut to 2048 px whatever the export was set to). The WebXR Preview panel's **Textures** rows are
+built from the same tables with the same labels and defaults (`ExportProfile.glb_options`,
+`glb_defaults`), and a push
 hands their values to the deliverer as `glb_options`, keyed as the export button keys them:
 
 ```python
@@ -1262,7 +1348,9 @@ preview.push(glb_options={"optimize_textures": 4096, "texture_file_type": "ktx2"
 Set the two panels the same and the GLB texture pass is the same in both: same container, same
 ceilings. An export can still do more to its maps BEFORE that pass -- a Texture Template re-authors
 the materials, and Optimize Textures corrects each scene map's mode and bit depth -- and those are
-export tasks a preview does not run. The panel offers only what a
+export tasks a preview does not run. The panel shows the texture rows only for a push that
+re-encodes images (a scene with Include Textures on, or an FBX — never a GLB, published as
+authored), and KTX2 RDO only with a KTX2 container, as the exporter shows it. It offers only what a
 GLB-only push can honour: the containers a GLB can carry (a TGA or EXR choice means the web default
 inside a GLB anyway), and no *Template Budget* — that ceiling comes from the export's Texture
 Template row, whose material conversion the preview does not run, so pick the template's ceiling
@@ -1270,11 +1358,9 @@ instead. Optimize Textures at **OFF** resizes nothing, in the GLB too: every map
 resolution, re-encoded to the container. A plain **Optimize** names no ceiling, so the GLB takes
 the web ceiling (`WEB_DELIVERY_MAX_SIZE`, 2048 px); *Optimize + Max N* caps at N.
 
-The lighting row rides the same way, into the file rather than the texture pass: the export
-publishes its level in the GLB's `handoff.rendering` (and the FBX's handoff record, through its
-`ExportContext`), and the page reads it from the GLB it loaded. The preview's Lighting row reaches
-the page through the scene sidecar, so it needs Scene Sidecar on, and a file-source push -- which
-builds no sidecar -- does not offer it.
+The lighting recipe takes no row: the export publishes the recipe's own in the GLB's
+`handoff.rendering` (and the FBX's handoff record, through its `ExportContext`), a host push
+publishes the same through the scene sidecar, and the page reads it from the GLB it loaded.
 
 The dependency runs one way. An export reads its own panel and the scene; nothing it needs to be
 configured or handed off comes from a preview run.
@@ -1583,6 +1669,22 @@ are capped at 0.75). The deliverable's per-frame animation keys are the third le
 - **WebXR needs localhost or HTTPS.** Opened over a plain-HTTP LAN address, `navigator.xr` is
   absent and the VR button simply never appears; the page says which case it is in. Anything
   that is not this machine -- a standalone headset, a reviewer -- gets HTTPS from a share.
+- **A VR runtime made active after the browser started is invisible to it until it restarts.**
+  Chromium loads the active OpenXR runtime once per XR service and never re-reads the registry,
+  and a reload does not restart that service. Virtual Desktop makes its own runtime (VDXR) the
+  active one; a browser that loaded Oculus's earlier answers "no device" however long it polls
+  (measured 2026-10-18; a fresh Edge answered supported at once). The page names the switch when
+  it sees one (the manifest's `xrRuntime` is the runtime's name) -- restart the browser
+  (`edge://restart` keeps the tabs).
+- **On a hybrid-graphics laptop, start the browser on the GPU the headset uses.** Measured
+  2026-10-18 (Iris Xe + RTX 3070 Ti, Virtual Desktop): in a browser started on the integrated GPU,
+  Enter VR's session is granted, then `makeXRCompatible` rejects (`InvalidStateError`) while
+  Chromium relaunches its GPU process on the RTX. The context comes back a second later, but
+  three.js has given up by then, and the session sat open and black. The page now ends such a
+  session and presses Enter VR again by itself, once, while the click still counts as a gesture;
+  otherwise it asks for the press. Started on the RTX (the browser set to *High performance* in
+  Windows Settings > Display > Graphics), the first press presents at once: Edge drew 859 frames
+  in 20 s.
 - **A first share can need one-time setup, and says which.** A tailnet that has not enabled
   Serve/Funnel, and a firewall that denies outbound by default, both fail the share at once with
   the step to take first (see *Sharing a link*).

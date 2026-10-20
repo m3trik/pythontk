@@ -777,5 +777,63 @@ class TestMemoDuration(BaseTestCase):
         self.assertEqual(len(self.reads), 4)
 
 
+class TestScopeEvents(BaseTestCase):
+    """``scope_events``: the ``audio_manifest`` events, each in the take that
+    plays it -- the one rule both DCCs' audio producers ship by."""
+
+    TAKES = [
+        {"name": "Intro", "start": 1, "end": 20},
+        {"name": "Fight", "start": 21, "end": 60},
+    ]
+
+    def test_an_event_lands_in_its_take_rebased_to_the_take_start(self):
+        scoped, dropped = AudioUtils.scope_events(
+            [(5, "steps"), (30, "punch")], self.TAKES
+        )
+        self.assertEqual(
+            scoped,
+            [
+                {"clip": "Intro", "frame": 4, "name": "steps"},
+                {"clip": "Fight", "frame": 9, "name": "punch"},
+            ],
+        )
+        self.assertEqual(dropped, [])
+
+    def test_an_event_on_a_shared_boundary_plays_in_both_takes(self):
+        takes = [
+            {"name": "A", "start": 1, "end": 10},
+            {"name": "B", "start": 10, "end": 20},
+        ]
+        scoped, _ = AudioUtils.scope_events([(10, "hit")], takes)
+        self.assertEqual(
+            [(e["clip"], e["frame"]) for e in scoped], [("A", 9), ("B", 0)]
+        )
+
+    def test_an_event_outside_every_take_is_dropped_and_named(self):
+        scoped, dropped = AudioUtils.scope_events([(80, "late")], self.TAKES)
+        self.assertEqual(scoped, [])
+        self.assertEqual(dropped, ["late@80"])
+
+    def test_without_takes_events_ship_unscoped_from_the_origin(self):
+        scoped, dropped = AudioUtils.scope_events([(10, "steps")], [], origin=4)
+        self.assertEqual(scoped, [{"clip": "", "frame": 6, "name": "steps"}])
+        self.assertEqual(dropped, [])
+
+    def test_a_take_missing_its_name_or_range_scopes_nothing(self):
+        broken = [{"name": "NoEnd", "start": 1}, {"start": 1, "end": 50}]
+        scoped, _ = AudioUtils.scope_events([(5, "steps")], broken, origin=1)
+        self.assertEqual(
+            scoped,
+            [{"clip": "", "frame": 4, "name": "steps"}],
+            "no usable take: unscoped, never a phantom take swallowing events",
+        )
+        scoped, _ = AudioUtils.scope_events([(5, "steps")], broken + self.TAKES[:1])
+        self.assertEqual(scoped, [{"clip": "Intro", "frame": 4, "name": "steps"}])
+
+    def test_fractional_frames_round(self):
+        scoped, _ = AudioUtils.scope_events([(10.6, "steps")], [], origin=0.0)
+        self.assertEqual(scoped[0]["frame"], 11)
+
+
 if __name__ == "__main__":
     unittest.main()

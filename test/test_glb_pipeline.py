@@ -104,6 +104,7 @@ class GlbPipelineTestCase(unittest.TestCase):
                 "max_size": 1024,
                 "ktx2_fallback": False,
             },
+            hdr_codec=self,
         )
         self.assertEqual([c[0] for c in self.calls], ["convert", "optimize"])
         _, read, written, kwargs = self.calls[0]
@@ -112,6 +113,8 @@ class GlbPipelineTestCase(unittest.TestCase):
         self.assertIs(kwargs["overwrite"], True)
         self.assertEqual(kwargs["sidecar"], envelope)
         self.assertEqual(kwargs["lightmap_dirs"], ["D:/maps"])
+        # The host's float-image codec (Blender has no cv2). Added: 2026-10-17
+        self.assertIs(kwargs["hdr_codec"], self)
         _, glb, params = self.calls[1]
         self.assertEqual(glb, dst)
         self.assertEqual(

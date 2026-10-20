@@ -347,6 +347,7 @@ class _Fbx2GltfMixin:
         shadow_dirs: Sequence[str] = (),
         clip_mode: str = "both",
         report: Optional[Dict[str, Any]] = None,
+        hdr_codec: Any = None,
     ) -> str:
         """Convert an FBX file to a binary glTF 2.0 (GLB) file.
 
@@ -404,6 +405,9 @@ class _Fbx2GltfMixin:
                            A host that knows where its textures live now (a
                            DCC's workspace, the scene's own folder) passes them
                            here rather than relying on a historical hint.
+            hdr_codec:     What encodes the lightmaps and the reflection probe,
+                           forwarded to :meth:`apply_glb_lightmaps` -- a host
+                           with no cv2 (Blender) hands its own image writer.
             shadow_dirs:   Directories to resolve the shadow rigs' loose maps
                            against (:meth:`apply_glb_shadows`): the horizon
                            data maps, and a silhouette the FBX did not embed.
@@ -734,7 +738,9 @@ class _Fbx2GltfMixin:
                     # Guarded like the alpha repair: a lightmap failure must
                     # never cost the sidecar or the conversion.
                     try:
-                        bound = cls.apply_glb_lightmaps(edit, search_dirs=lightmap_dirs)
+                        bound = cls.apply_glb_lightmaps(
+                            edit, search_dirs=lightmap_dirs, hdr_codec=hdr_codec
+                        )
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("GLB lightmaps skipped: %s", exc)
                         bound = []
@@ -746,6 +752,13 @@ class _Fbx2GltfMixin:
                             )
                     if coverage is not None:
                         report["lightmaps"] = cls.lightmap_report(coverage, bound)
+                # Unconditional and self-feeding: whichever pass or publisher left
+                # the lightmap manifest, a shipped light would land on top of its
+                # own bake.
+                try:
+                    cls.strip_glb_baked_lights(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB baked-light strip skipped: %s", exc)
                 # After the lightmaps, whose image plumbing it shares, and
                 # before the animation passes: a plane's fade is a pointer
                 # channel the viewer reads BESIDE this manifest, so neither

@@ -17,6 +17,8 @@ One feature, formerly one 2,000-line module:
   (``DefaultTextLogHandler``, ``RingBufferHandler``) it attaches.
 * :mod:`.table_mixin` -- ``TableMixin``: tables and titled groups, one record
   each, on any class with a ``logger``.
+* :mod:`.run_log` -- ``RunLog``: one bounded log file per source (a scene, a
+  project), its runs bracketed and appended, trimmed to the newest.
 * :mod:`._text_layout` -- ``TextLayout`` (internal): display widths, wrapping,
   box and table geometry -- the one owner of the column math, reached through
   the instance ``LoggerExt._layout`` holds.
@@ -40,5 +42,6 @@ lazy_exports(
             "RingBufferHandler",
         ),
         "table_mixin": "TableMixin",
+        "run_log": "RunLog",
     },
 )

@@ -21,15 +21,18 @@ methods reach the rest of the server through ``self``.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import secrets
+import socket
+import ssl
 import threading
 import time
 import urllib.error
 import urllib.request
 from functools import partial
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 from urllib.parse import urlparse
 
 from pythontk.net_utils.preview.routes import (
@@ -442,8 +445,8 @@ class _SharingMixin:
     def ping_share(
         self, timeout: float = 10.0, attempts: int = 3, wait: float = 2.0
     ) -> Dict[str, Any]:
-        """Ask the share's link for its manifest, from this machine, the way
-        a guest's page does: whether a guest can reach the share NOW.
+        """Ask the share's link for its manifest the way a guest's browser
+        does: whether someone ELSE can reach the share now.
 
         End to end -- public DNS, the provider's TLS, the tunnel, the guest
         listener -- and it is this share that answers: the reply must be the
@@ -451,6 +454,18 @@ class _SharingMixin:
         or a stale tunnel answering 200 does not pass. A ping is no guest: it
         sends no page id, so :meth:`guest_count` never counts it. The tunnel's
         own link is asked, never an alias, which is a page on another server.
+
+        A guest's route, not this machine's: for a public link the name is
+        resolved by public DNS (:meth:`NetUtils.public_addresses`) and the
+        request goes to that address -- this machine's resolver can send it
+        elsewhere (Tailscale's MagicDNS answers a ``ts.net`` name with the
+        tailnet address, which proves nothing about the public ingress). A
+        name public DNS does not have fails the ping: no stranger can open
+        it. The certificate is checked with the trust a browser has
+        (:meth:`NetUtils.tls_context`); one this machine still cannot verify
+        is asked again unverified, and the share answering then passes with
+        ``verified`` False -- the provider's certificate is a browser's to
+        judge, and a root missing here is no guest's problem.
 
         A brand-new name can take seconds to reach every resolver, so a miss
         is asked again, *attempts* times in all, *wait* seconds apart.
@@ -461,11 +476,15 @@ class _SharingMixin:
             wait: Seconds between attempts.
 
         Returns:
-            ``{"ok", "url", "status", "ms", "attempts", "error"}`` -- ``ms``
-            the round trip of the request that answered (``None`` without
-            one), ``status`` its HTTP status, ``error`` why it did not pass
-            (``None`` when it did). Never raises: nothing shared is a failed
-            ping, said in ``error``.
+            ``{"ok", "url", "status", "ms", "attempts", "error", "route",
+            "verified"}`` -- ``ms`` the round trip of the request that
+            answered (``None`` without one), ``status`` its HTTP status,
+            ``error`` why it did not pass (``None`` when it did), ``route``
+            ``"public"`` (public DNS, as a stranger resolves it) or
+            ``"local"`` (this machine's resolver: a tailnet-only link, plain
+            HTTP, or no public resolver could be asked), ``verified`` whether
+            the certificate was verified (``None`` for plain HTTP). Never
+            raises: nothing shared is a failed ping, said in ``error``.
         """
         info = self.share_info()
         if info is None:
@@ -475,23 +494,41 @@ class _SharingMixin:
         result = self._failed_ping(None)
         result["url"] = info["tunnel_url"]
         url = f"{info['tunnel_url'].rstrip('/')}/manifest.json"
+        secure = url.startswith("https:")
+        public = secure and bool(info.get("public"))
         for attempt in range(max(1, int(attempts))):
             if attempt:
                 time.sleep(wait)
             # Each attempt's own: a miss after an answer must not report the
-            # earlier answer's status and round trip as its own.
-            result.update(attempts=attempt + 1, status=None, ms=None)
+            # earlier answer's status, round trip or route as its own.
+            result.update(
+                attempts=attempt + 1, status=None, ms=None, route="local", verified=None
+            )
+            address = None
+            if public:
+                from pythontk.net_utils._net_utils import NetUtils
+
+                found = NetUtils.public_addresses(urlparse(url).hostname)
+                if found == []:
+                    result["error"] = (
+                        "public DNS does not have the link's name, so no one "
+                        "else's browser can find it"
+                    )
+                    continue
+                if found:
+                    address, result["route"] = found[0], "public"
             started = time.perf_counter()
             try:
-                request = urllib.request.Request(
-                    url,
-                    headers={
-                        "User-Agent": "pythontk-preview-ping",
-                        "Cache-Control": "no-cache",
-                    },
-                )
-                with urllib.request.urlopen(request, timeout=timeout) as response:
-                    status, body = response.status, response.read(1 << 20)
+                try:
+                    status, body = self._ask_share(url, timeout, address, verify=True)
+                    result["verified"] = True if secure else None
+                except urllib.error.URLError as error:
+                    if not isinstance(
+                        getattr(error, "reason", None), ssl.SSLCertVerificationError
+                    ):
+                        raise
+                    status, body = self._ask_share(url, timeout, address, verify=False)
+                    result["verified"] = False
                 result["ms"] = round((time.perf_counter() - started) * 1000, 1)
                 result["status"] = status
                 try:
@@ -519,6 +556,39 @@ class _SharingMixin:
         return result
 
     @staticmethod
+    def _ask_share(
+        url: str, timeout: float, address: Optional[str], verify: bool
+    ) -> Tuple[int, bytes]:
+        """GET *url* -- at *address* when given, the name still the one TLS
+        and the ``Host`` header carry -- as ``(status, body)``. Raises as
+        :func:`urllib.request.urlopen` does."""
+        from pythontk.net_utils._net_utils import NetUtils
+
+        if verify:
+            context = NetUtils.tls_context()
+        else:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "pythontk-preview-ping",
+                "Cache-Control": "no-cache",
+            },
+        )
+        if address is None:
+            opened = urllib.request.urlopen(request, timeout=timeout, context=context)
+        else:
+            # No proxy: the request goes to *address* itself, as a guest's does.
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({}), _PinnedHTTPSHandler(address, context)
+            )
+            opened = opener.open(request, timeout=timeout)
+        with opened as response:
+            return response.status, response.read(1 << 20)
+
+    @staticmethod
     def _failed_ping(error: Optional[str]) -> Dict[str, Any]:
         """:meth:`ping_share`'s result before an answer: nothing passed --
         *error* says why, ``None`` while the asking is still to come."""
@@ -529,6 +599,8 @@ class _SharingMixin:
             "ms": None,
             "attempts": 0,
             "error": error,
+            "route": None,
+            "verified": None,
         }
 
     @property
@@ -536,3 +608,35 @@ class _SharingMixin:
         """The link to hand out while sharing, else ``None``."""
         info = self.share_info()
         return info["url"] if info else None
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """An HTTPS connection to a given *address*: TLS and ``Host`` still name
+    the URL's host -- how a request reaches the address public DNS gives a
+    name, whatever this machine's resolver says."""
+
+    def __init__(self, *args: Any, address: str, context: ssl.SSLContext, **kwargs):
+        super().__init__(*args, context=context, **kwargs)
+        self._address, self._pinned_context = address, context
+
+    def connect(self) -> None:
+        sock = socket.create_connection((self._address, self.port), self.timeout)
+        self.sock = self._pinned_context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    """``urllib``'s HTTPS handler, connecting through :class:`_PinnedHTTPSConnection`."""
+
+    def __init__(self, address: str, context: ssl.SSLContext):
+        super().__init__(context=context)
+        self._address, self._pinned_context = address, context
+
+    def https_open(self, req):
+        return self.do_open(
+            partial(
+                _PinnedHTTPSConnection,
+                address=self._address,
+                context=self._pinned_context,
+            ),
+            req,
+        )

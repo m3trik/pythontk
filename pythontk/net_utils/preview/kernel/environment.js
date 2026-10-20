@@ -23,7 +23,7 @@ import { formatBytes } from './format.js';
 import { applyLighting } from './lightmaps.js';
 import { menuFor } from './menus.js';
 import { current } from './model.js';
-import { probeEnvironment, probeState, probeTarget, setProbeOn } from './probe.js';
+import { probeCopies, probeEnvironment, probeState, probeTarget, setProbeOn } from './probe.js';
 import { DEFAULT_PROBE_INTENSITY, onBeforeDraw, policy, scene, studioTarget } from './scene.js';
 import { paintStats, specs } from './specs.js';
 import { windowFor } from './windows.js';
@@ -237,13 +237,16 @@ export const environment = {
   },
   /**
    * The environment maps the page holds in GPU memory now, `[{name, texture,
-   * active}]` -- `probe` while one is loaded (on or off), `studio` while it
-   * is built: what Inspect counts.
+   * active}]` -- `probe` while one is loaded (on or off) and each of its
+   * highlight copies (`probe copy`), `studio` while it is built: what Inspect
+   * counts.
    */
   get maps() {
     const maps = [];
     const probe = probeTarget();
     if (probe) maps.push({ name: 'probe', texture: probe.texture, active: scene.environment === probe.texture });
+    const on = Boolean(probeState()?.on);
+    for (const copy of probeCopies()) maps.push({ name: 'probe copy', texture: copy.texture, active: on });
     const studio = studioTarget();
     if (studio) maps.push({ name: 'studio', texture: studio.texture, active: scene.environment === studio.texture });
     return maps;

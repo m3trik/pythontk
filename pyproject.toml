@@ -5,7 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pythontk"
 dynamic = ["version", "readme"]
-description = "Foundation layer of a DCC-tooling ecosystem: composable primitives for files, strings, iteration, math, geometry, images, video, audio and networking, the host-agnostic engines built on them (PBR texture conversion, shot timeline, instancing), plus shared class mixins and package infrastructure."
+description = "Python toolkit for DCC pipelines: files, math, geometry, images, video and audio, plus PBR texture, glTF/USD export and shot-timeline engines."
+keywords = ["m3trik", "python-library", "dcc", "technical-art", "pbr", "gltf", "usd", "lightmap"]
 authors = [{name = "Ryan Simpson", email = "m3trik@outlook.com"}]
 license = {text = "MIT"}
 requires-python = ">=3.9"
@@ -14,6 +15,9 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
+    "Intended Audience :: Developers",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
 # Dependencies
@@ -46,6 +50,8 @@ mesh = ["pymeshlab>=2023.12"]
 [project.urls]
 Homepage = "https://github.com/m3trik/pythontk"
 Repository = "https://github.com/m3trik/pythontk"
+Changelog = "https://github.com/m3trik/pythontk/blob/main/CHANGELOG.md"
+Issues = "https://github.com/m3trik/pythontk/issues"
 
 [tool.setuptools.dynamic]
 version = {attr = "pythontk.__version__"}

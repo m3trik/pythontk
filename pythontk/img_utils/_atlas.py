@@ -498,55 +498,199 @@ class _ImgAtlasInternal:
         image: "np.ndarray",
         pairs: "np.ndarray",
         iterations: int = 64,
+        hold: Optional["np.ndarray"] = None,
     ) -> "np.ndarray":
         """Body of :meth:`ImgUtils.stitch_seams`."""
         out = np.array(image, copy=True)
         pairs = np.asarray(pairs, dtype=np.float64).reshape(-1, 4)
+        h, w = out.shape[:2]
+        held = None
+        if hold is not None:
+            held = np.asarray(hold, dtype=bool)
+            if held.shape != (h, w):
+                raise ValueError(f"hold shape {held.shape} != image {(h, w)}")
+            held = held.reshape(-1)
         if not len(pairs):
             return out
-        h, w = out.shape[:2]
         flat = out.reshape(h * w, -1)
         taps = [
             cls._bilinear_taps(pairs[:, 0], pairs[:, 1], h, w),
             cls._bilinear_taps(pairs[:, 2], pairs[:, 3], h, w),
         ]
-        # Least-norm share of a sample's correction per tap (w / sum w^2), and
-        # how many samples touch each texel (their updates are averaged, so a
-        # texel several samples share is not corrected several times over).
-        shares = [
-            wts / np.maximum((wts**2).sum(1, keepdims=True), 1e-12) for _i, wts in taps
+        # The taps a correction may move: every one a read weighs, less the
+        # held texels -- read, never written.
+        free = [
+            wts > 0 if held is None else (wts > 0) & ~held[idx] for idx, wts in taps
         ]
+        movable = [np.where(f, wts, 0.0) for f, (_i, wts) in zip(free, taps)]
+        # Least-norm share of a sample's correction per tap (w / sum w^2) over
+        # the taps it may move, and how many samples move each texel (their
+        # updates are averaged, so a texel several samples share is not
+        # corrected several times over).
+        shares = [m / np.maximum((m**2).sum(1, keepdims=True), 1e-12) for m in movable]
+        # Each side moves half the difference -- the whole of it when the
+        # other side cannot move, none when neither can.
+        if held is None:
+            signs = (-0.5, 0.5)
+            active = slice(None)
+        else:
+            can = [m.sum(1) > 0 for m in movable]
+            both = can[0] & can[1]
+            signs = (
+                np.where(both, -0.5, np.where(can[0], -1.0, 0.0))[:, None, None],
+                np.where(both, 0.5, np.where(can[1], 1.0, 0.0))[:, None, None],
+            )
+            active = can[0] | can[1]
+            if not active.any():
+                return out
         n = h * w
+        read = np.zeros(n, np.float64)
         touched = np.zeros(n, np.float64)
-        for idx, wts in taps:
-            touched += np.bincount(idx[wts > 0], minlength=n)
-        live = np.nonzero(touched)[0]
-        # The solve runs on the touched texels only, gathered once: bincount
-        # over those indices instead of add.at over the whole atlas.
+        for (idx, wts), f in zip(taps, free):
+            read += np.bincount(idx[wts > 0], minlength=n)
+            touched += np.bincount(idx[f], minlength=n)
+        live = np.nonzero(read)[0]
+        # The solve runs on the texels the reads tap only, gathered once:
+        # bincount over those indices instead of add.at over the whole atlas.
         local = np.zeros(n, np.int64)
         local[live] = np.arange(len(live))
         # A zero-weight tap (a read ON a texel row) points at a live texel it
         # leaves untouched, never off the end of the solve's array.
         taps = [(np.where(wts > 0, local[idx], 0), wts) for idx, wts in taps]
         values = flat[live].astype(np.float64)
-        weight = touched[live][:, None]
+        weight = np.maximum(touched[live], 1.0)[:, None]
         settled = 1e-4 * max(float(np.abs(values).mean()), 1e-12)
         for _ in range(max(1, int(iterations))):
             reads = [(values[idx] * wts[..., None]).sum(1) for idx, wts in taps]
             diff = reads[0] - reads[1]  # (N, C): meet halfway
-            if float(np.abs(diff).max()) <= settled:
+            if float(np.abs(diff[active]).max()) <= settled:
                 break
             delta = np.zeros_like(values)
-            for (idx, wts), share, sign in zip(taps, shares, (-0.5, 0.5)):
+            for (idx, _wts), f, share, sign in zip(taps, free, shares, signs):
                 upd = sign * diff[:, None, :] * share[..., None]
-                upd[wts <= 0] = 0.0
+                upd[~f] = 0.0
                 for ch in range(values.shape[1]):
                     delta[:, ch] += np.bincount(
                         idx.ravel(), weights=upd[..., ch].ravel(), minlength=len(live)
                     )
             values += delta / weight
+        if held is not None:
+            moved = ~held[live]
+            live, values = live[moved], values[moved]
         flat[live] = _ImgFilterInternal._restore_dtype(values, out.dtype)
         return out
+
+    @staticmethod
+    def atlas_seam_pairs(
+        edges: Sequence[Optional["np.ndarray"]],
+        rects: Sequence[Sequence[float]],
+        size: Union[int, Tuple[int, int]],
+        tolerance: float = 1e-4,
+        coplanar: float = 0.99,
+    ) -> "np.ndarray":
+        """Body of :meth:`ImgUtils.atlas_seam_pairs`."""
+        if len(edges) != len(rects):
+            raise ValueError(
+                f"edges ({len(edges)}) and rects ({len(rects)}) length differ"
+            )
+        none = np.zeros((0, 4))
+        width, height = (size, size) if np.ndim(size) == 0 else size
+        width, height = int(width), int(height)
+        rows, owner, rect_rows = [], [], []
+        for i, (member, rect) in enumerate(zip(edges, rects)):
+            if member is None:
+                continue
+            member = np.asarray(member, dtype=np.float64).reshape(-1, 16)
+            if not len(member):
+                continue
+            rows.append(member)
+            owner.append(np.full(len(member), i))
+            rect_rows.append(np.tile(np.asarray(rect, np.float64), (len(member), 1)))
+        if len(rows) < 2:
+            return none
+        e = np.concatenate(rows)
+        own = np.concatenate(owner)
+        rect = np.concatenate(rect_rows)
+        p0, p1, uv0, uv1 = e[:, 0:3], e[:, 3:6], e[:, 6:8], e[:, 8:10]
+
+        def unit_rows(v):
+            return v / np.maximum(np.linalg.norm(v, axis=1, keepdims=True), 1e-12)
+
+        normal, inward = unit_rows(e[:, 10:13]), unit_rows(e[:, 13:16])
+        d = p1 - p0
+        length = np.linalg.norm(d, axis=1)
+        unit = unit_rows(d)
+        lo_box = np.minimum(p0, p1)
+        hi_box = np.maximum(p0, p1)
+        tol = max(
+            min(
+                float(tolerance) * float(np.linalg.norm(hi_box.max(0) - lo_box.min(0))),
+                1e-3 * float(np.median(length)),
+            ),
+            1e-9,
+        )
+        # Each edge's length in atlas texels, through its own rect.
+        texels = np.hypot(
+            (uv1[:, 0] - uv0[:, 0]) * rect[:, 0] * width,
+            (uv1[:, 1] - uv0[:, 1]) * rect[:, 1] * height,
+        )
+
+        def to_px(uv, r):
+            x = (uv[:, 0] * r[0] + r[2]) * width - 0.5
+            y = (1.0 - (uv[:, 1] * r[1] + r[3])) * height - 0.5
+            return x, y
+
+        pairs = []
+        order = np.argsort((lo_box[:, 0] + hi_box[:, 0]) * 0.5, kind="stable")
+        for a0 in range(0, len(order), 256):
+            a = order[a0 : a0 + 256]
+            near = np.nonzero(
+                (hi_box >= lo_box[a].min(0) - tol).all(1)
+                & (lo_box <= hi_box[a].max(0) + tol).all(1)
+            )[0]
+            rel0 = p0[near][None, :, :] - p0[a][:, None, :]
+            rel1 = p1[near][None, :, :] - p0[a][:, None, :]
+            ua = unit[a][:, None, :]
+            t0 = (rel0 * ua).sum(-1)
+            t1 = (rel1 * ua).sum(-1)
+            off0 = np.linalg.norm(rel0 - t0[..., None] * ua, axis=-1)
+            off1 = np.linalg.norm(rel1 - t1[..., None] * ua, axis=-1)
+            lo = np.maximum(np.minimum(t0, t1), 0.0)
+            hi = np.minimum(np.maximum(t0, t1), length[a][:, None])
+            hit = (
+                (own[a][:, None] < own[near][None, :])
+                & (off0 < tol)
+                & (off1 < tol)
+                & (hi - lo > tol)
+                & ((normal[a] @ normal[near].T) > float(coplanar))
+                & ((inward[a] @ inward[near].T) < 0.0)
+            )
+            for i, jn in zip(*np.nonzero(hit)):
+                ia, j = a[i], near[jn]
+                overlap = hi[i, jn] - lo[i, jn]
+                # Twice per atlas texel along the overlap, on the finer side.
+                n = max(
+                    2,
+                    int(
+                        np.ceil(
+                            2.0
+                            * max(
+                                texels[ia] * overlap / max(length[ia], 1e-12),
+                                texels[j] * overlap / max(length[j], 1e-12),
+                            )
+                        )
+                    ),
+                )
+                along = lo[i, jn] + (np.arange(n) + 0.5) / n * overlap
+                ta = (along / max(length[ia], 1e-12))[:, None]
+                point = p0[ia] + ta * d[ia]
+                tb = (((point - p0[j]) @ d[j]) / max(float(d[j] @ d[j]), 1e-24))[
+                    :, None
+                ]
+                xa, ya = to_px(uv0[ia] + ta * (uv1[ia] - uv0[ia]), rect[ia])
+                xb, yb = to_px(uv0[j] + tb * (uv1[j] - uv0[j]), rect[j])
+                pairs.append(np.stack([xa, ya, xb, yb], 1))
+        return np.concatenate(pairs) if pairs else none
 
     @classmethod
     def assemble_atlas(
@@ -556,23 +700,44 @@ class _ImgAtlasInternal:
         size: Union[int, Tuple[int, int]],
         *,
         background: float = 0.0,
+        canvas: Optional["np.ndarray"] = None,
     ) -> "np.ndarray":
         """Body of :meth:`ImgUtils.assemble_atlas`."""
         if len(images) != len(rects):
             raise ValueError(
                 f"images ({len(images)}) and rects ({len(rects)}) length differ"
             )
-        if not images:
+        if not images and canvas is None:
             raise ValueError("assemble_atlas requires at least one image")
 
-        import cv2
-
         w_px, h_px = (size, size) if isinstance(size, int) else size
-        first = np.asarray(images[0])
-        dtype = first.dtype
-        squeeze = first.ndim == 2
-        channels = 1 if squeeze else first.shape[2]
-        canvas = np.full((h_px, w_px, channels), background, dtype=np.float32)
+        if canvas is not None:
+            # In place: the atlas starts as a copy of *canvas*, so every texel
+            # no rect covers keeps its value exactly (a float32 copy of float32
+            # data, restored to its own dtype).
+            base = np.asarray(canvas)
+            if base.shape[:2] != (h_px, w_px):
+                raise ValueError(
+                    f"canvas shape {base.shape[:2]} != atlas {(h_px, w_px)}"
+                )
+            dtype = base.dtype
+            squeeze = base.ndim == 2
+            channels = 1 if squeeze else base.shape[2]
+            canvas = base.astype(np.float32, copy=True)
+            if squeeze:
+                canvas = canvas[..., None]
+            if not images:
+                return _ImgFilterInternal._restore_dtype(
+                    canvas[..., 0] if squeeze else canvas, dtype
+                )
+        else:
+            first = np.asarray(images[0])
+            dtype = first.dtype
+            squeeze = first.ndim == 2
+            channels = 1 if squeeze else first.shape[2]
+            canvas = np.full((h_px, w_px, channels), background, dtype=np.float32)
+
+        import cv2
 
         # UV v is bottom-up; image rows are top-down -> atlas_pixel_rects owns
         # the flip + rounding so mask-building consumers can't drift from it.

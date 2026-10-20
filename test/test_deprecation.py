@@ -933,6 +933,76 @@ class DeprecationValuesTest(BaseTestCase):
         self.assertEqual(len(found), 1)
 
 
+class DeprecationClassAttributeTest(BaseTestCase):
+    """``Deprecation.class_attribute`` -- a retired class constant.
+
+    REGRESSION (2026-10-19): ``ExportProfile.BAKED_REFLECTIONS_OPTIONS`` and
+    ``ExportRun.BAKED_REFLECTION_LEVELS`` said "removed in 0.17.0" in a comment
+    and warned no one who read them: no shape reached a class attribute.
+    """
+
+    def test_class_and_instance_reads_warn_and_return_the_value_unchanged(self):
+        table = {"quarter": 0.25}
+
+        class Owner:
+            OLD = Deprecation.class_attribute(
+                table, "Owner.NEW", remove_in="9.9.0", since="2026-10-19"
+            )
+
+        with self.assertWarns(DeprecationWarning) as caught:
+            value = Owner.OLD
+        self.assertIs(value, table, "the value itself, not a copy")
+        message = str(caught.warning)
+        for expected in ("Owner.OLD", "Owner.NEW", "9.9.0"):
+            self.assertIn(expected, message)
+        with self.assertWarns(DeprecationWarning):
+            self.assertIs(Owner().OLD, table)
+
+    def test_attributed_to_the_reader_not_the_machinery(self):
+        class Owner:
+            OLD = Deprecation.class_attribute(1, "Owner.NEW", remove_in="9.9.0")
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            Owner.OLD
+        self.assertEqual(caught[0].filename, __file__)
+
+    def test_registered_when_the_class_is_built_not_at_first_read(self):
+        class NeverRead:
+            OLD = Deprecation.class_attribute(1, "NeverRead.NEW", remove_in="9.9.0")
+
+        found = [
+            r
+            for r in Deprecation.registered(kind="attribute")
+            if r.what.endswith("NeverRead.OLD")
+        ]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].module, __name__)
+
+    def test_a_dataclass_carries_one_unannotated_without_warning_at_import(self):
+        """``@dataclass`` reads every ANNOTATED class attribute while it builds
+        the class, so an annotated one would warn at import; unannotated, it is
+        no field and stays silent until read."""
+        import dataclasses
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+
+            @dataclasses.dataclass(frozen=True)
+            class Run:
+                level: float = 0.0
+                OLD = Deprecation.class_attribute({}, "nothing", remove_in="9.9.0")
+
+        self.assertEqual(caught, [])
+        self.assertEqual([f.name for f in dataclasses.fields(Run)], ["level"])
+        with self.assertWarns(DeprecationWarning):
+            Run().OLD
+
+    def test_an_unparseable_version_raises_where_it_is_written(self):
+        with self.assertRaises(ValueError):
+            Deprecation.class_attribute(1, "x", remove_in="soon")
+
+
 class DeprecationSinkTest(BaseTestCase):
     """The extra channel a DCC needs, because ``DeprecationWarning`` is hidden."""
 

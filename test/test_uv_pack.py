@@ -397,6 +397,41 @@ class TestPackOptionContract(unittest.TestCase):
         )
 
 
+@unittest.skipUnless(np is not None, "Requires numpy")
+class TestSimilarity(unittest.TestCase):
+    """solve_similarity recovers a rigid move; apply_similarity replays it."""
+
+    _POINTS = [[0.1, 0.2], [0.6, 0.25], [0.5, 0.8], [0.15, 0.7], [0.3, 0.4]]
+
+    def _roundtrip(self, scale, angle, mirrored):
+        old = np.asarray(self._POINTS)
+        c0 = old.mean(axis=0)
+        move = (scale, angle, mirrored, c0, c0 + np.array([0.3, -0.1]))
+        new = ptk.UvPack.apply_similarity(old, move)
+        solved = ptk.UvPack.solve_similarity(old, new)
+        self.assertAlmostEqual(solved[0], scale, places=9)
+        self.assertEqual(solved[2], mirrored)
+        self.assertLess(solved[5], 1e-9)
+        np.testing.assert_allclose(ptk.UvPack.apply_similarity(old, solved), new)
+
+    def test_proper_move(self):
+        self._roundtrip(0.37, 33.0, False)
+
+    def test_mirrored_move(self):
+        self._roundtrip(1.8, -120.0, True)
+
+    def test_non_rigid_reports_residual(self):
+        old = np.asarray(self._POINTS)
+        new = old * np.array([2.0, 1.0])  # anisotropic: no similarity fits
+        self.assertGreater(ptk.UvPack.solve_similarity(old, new)[5], 1e-3)
+
+    def test_degenerate_translates(self):
+        move = ptk.UvPack.solve_similarity([[0.5, 0.5]], [[0.7, 0.1]])
+        np.testing.assert_allclose(
+            ptk.UvPack.apply_similarity([[0.5, 0.5]], move), [[0.7, 0.1]]
+        )
+
+
 class TestModuleInvariant(unittest.TestCase):
     """Helpers live on classes, not at module scope (package standard)."""
 

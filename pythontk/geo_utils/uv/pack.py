@@ -225,27 +225,11 @@ class UvPack(HelpMixin):
         """
         import numpy as np
 
+        from pythontk.math_utils._math_utils import MathUtils
+
         count = len(uvs)
         tri = np.asarray(triangles, dtype=np.int64).reshape(-1, 3)
-        # Connected components by min-label hooking with pointer jumping: a
-        # handful of vectorized passes, where a Python union-find would walk
-        # every face-vertex of a dense mesh one by one. Each triangle's lowest
-        # label is hooked onto its corners AND onto the labels they hang from,
-        # so whole trees merge at once: hooking the corners alone crept about a
-        # triangle per pass along an island with scattered indices (a shuffled
-        # 40k-triangle strip took 5753 passes, 11.8 s; about a dozen now).
-        labels = np.arange(count)
-        while True:
-            low = labels[tri].min(axis=1)
-            merged = labels.copy()
-            for col in range(3):
-                np.minimum.at(merged, tri[:, col], low)
-                np.minimum.at(merged, labels[tri[:, col]], low)
-            merged = merged[merged]
-            if np.array_equal(merged, labels):
-                break
-            labels = merged
-        _, island = np.unique(labels, return_inverse=True)
+        island = np.asarray(MathUtils.connected_components(count, tri))
         islands = int(island.max()) + 1
         if islands < 2:
             return uvs
@@ -540,3 +524,90 @@ class UvPack(HelpMixin):
             pages=page_arrays,
             page_count=int(atlas.atlas_count),
         )
+
+    # ------------------------------------------------------------ transforms
+    @staticmethod
+    def solve_similarity(old, new) -> tuple:
+        """Least-squares 2D similarity (reflection-aware) mapping *old* -> *new*.
+
+        The engine moves every island rigidly under one global scale, and it
+        mirrors an island where that packs tighter (verified: a mirrored chart
+        comes back as a perfect *reflected* similarity, det < 0 -- the same
+        liberty Maya's u3dLayout takes), so both the proper and the U-flipped
+        solve are tried and the better fit wins. A consumer recovers each
+        island's move from its before/after coordinates with this, then
+        applies it to anything that moves with the island
+        (:meth:`apply_similarity`).
+
+        Parameters:
+            old: ``(N, 2)`` coordinates before.
+            new: ``(N, 2)`` the same points after.
+
+        Returns:
+            ``(scale, angle_degrees, mirrored, c0, c1, residual)``: flip U
+            about centroid ``c0`` when *mirrored*, rotate + scale about ``c0``,
+            then translate ``c1 - c0``. *residual* is the max abs error over
+            the points -- a rigid move fits to float noise, an island the
+            engine split does not.
+        """
+        import math
+
+        import numpy as np
+
+        old = np.asarray(old, dtype=np.float64).reshape(-1, 2)
+        new = np.asarray(new, dtype=np.float64).reshape(-1, 2)
+        c0, c1 = old.mean(axis=0), new.mean(axis=0)
+        d0, d1 = old - c0, new - c1
+        denom = float((d0 * d0).sum())
+        if denom < 1e-20:  # single-point / degenerate island: translate only
+            return 1.0, 0.0, False, c0, c1, float(np.abs(d1).max(initial=0.0))
+
+        def _solve(source):
+            a = float((source * d1).sum())
+            b = float((source[:, 0] * d1[:, 1] - source[:, 1] * d1[:, 0]).sum())
+            scale = math.hypot(a, b) / denom
+            angle = math.atan2(b, a)
+            cos_a, sin_a = math.cos(angle), math.sin(angle)
+            rebuilt = np.column_stack(
+                [
+                    scale * (source[:, 0] * cos_a - source[:, 1] * sin_a),
+                    scale * (source[:, 0] * sin_a + source[:, 1] * cos_a),
+                ]
+            )
+            return scale, angle, float(np.abs(rebuilt - d1).max())
+
+        scale, angle, residual = _solve(d0)
+        scale_m, angle_m, residual_m = _solve(d0 * np.array([-1.0, 1.0]))
+        if residual_m < residual:
+            return scale_m, math.degrees(angle_m), True, c0, c1, residual_m
+        return scale, math.degrees(angle), False, c0, c1, residual
+
+    @staticmethod
+    def apply_similarity(points, transform):
+        """*points* moved by a :meth:`solve_similarity` result.
+
+        Parameters:
+            points: ``(N, 2)`` coordinates.
+            transform: ``(scale, angle_degrees, mirrored, c0, c1, ...)`` -- the
+                solve's tuple (a trailing residual is ignored).
+
+        Returns:
+            ``(N, 2)`` float64: flipped in U about ``c0`` when mirrored,
+            rotated and scaled about ``c0``, translated by ``c1 - c0``.
+        """
+        import math
+
+        import numpy as np
+
+        scale, angle, mirrored, c0, c1 = transform[:5]
+        d = np.asarray(points, dtype=np.float64).reshape(-1, 2) - np.asarray(c0)
+        if mirrored:
+            d = d * np.array([-1.0, 1.0])
+        rad = math.radians(angle)
+        cos_a, sin_a = math.cos(rad), math.sin(rad)
+        return np.column_stack(
+            [
+                scale * (d[:, 0] * cos_a - d[:, 1] * sin_a),
+                scale * (d[:, 0] * sin_a + d[:, 1] * cos_a),
+            ]
+        ) + np.asarray(c1)

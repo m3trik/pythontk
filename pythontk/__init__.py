@@ -3,7 +3,7 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -83,6 +83,9 @@ DEFAULT_INCLUDE = {
     # A project's bakes of foreign scenes: one slot per source, the record
     # inside each bake (host-read), purged by reference -- both DCC bridges.
     "file_utils.bake_cache": ["BakeCache"],
+    # A folder of JSON jobs one worker process takes in order: work inside a
+    # DCC opened once on a slow scene, without a port anything else could answer.
+    "file_utils.job_queue": ["JobQueue"],
     "iter_utils._iter_utils": "*",
     "math_utils._math_utils": "*",
     "math_utils.progression": "ProgressionCurves",
@@ -101,17 +104,29 @@ DEFAULT_INCLUDE = {
         "ShadowConformance",
     ],
     "geo_utils.shadow_horizon": ["ShadowHorizon", "HeightFieldMap", "HorizonMap"],
+    # Where a lightmap bake's reflection probe stands, by ray casts a DCC
+    # hands it (mayatk's and blendertk's ProbePlacement subclass it).
+    "geo_utils.probe_placement": ["ProbePlacement", "ProbeRays", "ProbeSite"],
     # Articulated rigs: the joint model + grab solver every runtime ports, and
     # the geometry rules that propose a rig from the parts alone.
     "geo_utils.articulation.model": "ArticulationModel",
     "geo_utils.articulation.analysis": "ArticulationAnalysis",
     "geo_utils.articulation.conformance": "ArticulationConformance",
+    # The plan a DCC's ArticulatedRig builds from (mayatk + blendertk share it).
+    "geo_utils.articulation.plan": "ArticulationPlan",
     # The ``articulation`` record's payload and its ``articulation_web``
     # manifest, declared once (SceneRecords.ARTICULATION names them).
     "geo_utils.articulation.record": ["ArticulationRecord", "ArticulationWeb"],
     "img_utils.shadow_atlas": "ShadowAtlas",
     "img_utils.rect_packer": ["RectPacker", "RectPackResult"],
     "geo_utils.uv.pack": ["UvPack", "PackIslandsResult"],
+    "geo_utils.uv.combine": [
+        "UvCombine",
+        "CombineShell",
+        "CombineGroup",
+        "CombinePlan",
+        "CombineLayout",
+    ],
     "geo_utils.uv.budget": [
         "UvBudget",
         "BudgetItem",
@@ -132,6 +147,10 @@ DEFAULT_INCLUDE = {
         "HierarchyBaseline",
         "HierarchyBaselineStore",
     ],
+    # The lightmap bake baseline: what each map was baked against, the stale
+    # rule a re-bake of what changed runs (moved / deformed / neighbours /
+    # lighting) and its dry-run report -- one rule for both DCC bakers.
+    "core_utils.engines.scene_export.bake_baseline": ["BakeBaseline", "StaleReport"],
     # Scene records -- every tool-authored scene channel declared ONCE (key,
     # scope, version, kind, dependencies); the store contract each DCC's
     # DataNodes implements; the export context + snapshot that assemble the
@@ -203,6 +222,33 @@ DEFAULT_INCLUDE = {
         "StashedClip",
         "StashChanged",
     ],
+    # Look match: light a baked scene to match a reference (the engine's own
+    # command line is `python -m pythontk.core_utils.engines.lighting.look_match`).
+    "core_utils.engines.lighting.light_layers": [
+        "LightLayers",
+        "LightMix",
+        "LayerKind",
+        "LightLayerInfo",
+        "LightLayerTarget",
+        "LightLayerScene",
+    ],
+    # The rig payload a look match writes and a host's rig tool builds.
+    "core_utils.engines.lighting.light_rig_payload": [
+        "LightRigPayload",
+        "LightRigLight",
+        "LightRigFixture",
+    ],
+    "core_utils.engines.lighting.light_predictor": ["LightPredictor", "ViewerTransform"],
+    "core_utils.engines.lighting.look_match.target": ["LookTarget", "LookRegion", "RegionShape"],
+    "core_utils.engines.lighting.look_match.measures": ["LookMeasures", "LookScore"],
+    "core_utils.engines.lighting.look_match.fit": "LookFit",
+    "core_utils.engines.lighting.look_match.sheet": "LookSheet",
+    "core_utils.engines.lighting.look_match._look_match": "LookMatch",
+    # The session file every look-match reader opens.
+    "core_utils.engines.lighting.look_match.session": "LookSession",
+    # One round of look matching, from a rig by role to a judged frame: bakes
+    # only the roles that changed (a DCC worker), captures, fits, judges.
+    "core_utils.engines.lighting.look_match.loop": "LookLoop",
     "core_utils.engines.shots.shot_plan": [
         "ShotMove",
         "MovePlan",
@@ -329,6 +375,7 @@ DEFAULT_INCLUDE = {
         "TableMixin",
         "LoggerExt",
         "LevelAwareFormatter",
+        "RunLog",
     ],
     # Same case: mayatk's blender_bridge imports ScriptTemplate and the three
     # mode constants straight from this module.
@@ -473,6 +520,9 @@ DEFAULT_INCLUDE = {
         "PreviewBridge",
         "FilePreviewBridge",
     ],
+    # The viewer, headless, for lighting work: a mix's bake swapped into a
+    # template and shot -- the ground truth the look-match prediction is held to.
+    "net_utils.preview.look_capture": "LookCapture",
     "net_utils.rpc.installer": [
         "PluginInstaller",
     ],

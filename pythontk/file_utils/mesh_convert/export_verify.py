@@ -933,22 +933,27 @@ class ExportVerifier(_ExportVerifierInternal):
         (``FbxMedia.embed_dependencies``) and ship nothing beside the file, so
         a consumer resolves them from the FBX alone. One the file lacks is a
         Unity import without its lightmap, and a GLB built from the file
-        without its lighting. Read off the parsed file: no media is held.
+        without its lighting. The records as a reader applies them
+        (``FbxMedia.reader_records``): a referenced module's copy beside the
+        scene's own, or naming nodes the file does not carry, binds nothing
+        and names no file the FBX needs. Read off the parsed file: no media is
+        held.
         """
         from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
 
         name = "fbx_dependencies"
         if self.fbx is None:
             return [Finding(SKIP, name, "no readable FBX")]
-        payloads = {}
+        channels = []
         for key in FbxMedia.DEPENDENCY_FIELDS:
-            payloads[key] = []
-            for value in self.fbx.user_properties(key):
+            for owner, value in self.fbx.user_properties(key, named=True):
                 try:
-                    payloads[key].append(json.loads(bytes(value).decode("utf-8")))
+                    payload = json.loads(bytes(value).decode("utf-8"))
                 except (TypeError, ValueError, UnicodeDecodeError):
                     continue
-        named = FbxMedia.named_files(payloads)
+                channels.append((owner, key, payload))
+        read = FbxMedia.reader_records(channels, nodes=self.fbx.object_names("Model"))
+        named = FbxMedia.named_files({key: [value] for key, value in read.items()})
         if not named:
             return [Finding(SKIP, name, "the records name no file")]
         inside = {media.casefold() for media in self._embedded_names(self.fbx)}

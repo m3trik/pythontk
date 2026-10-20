@@ -1,70 +1,377 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ 8a51fb8)._
+_Diff vs the last release (origin/main @ fb4f9bb)._
 
-## Added (47)
+## Added (306)
 
-- `audio_utils/_audio_utils.py::AudioUtils.cache_dir_for(cls, audio_path: str, create: bool = False) -> str`
-- `core_utils/user_config.py::UserConfig.cache_dir(*parts: str, create: bool = False) -> Path`
-- `file_utils/bake_cache.py::BakeCache(class)`
-- `file_utils/bake_cache.py::BakeCache.cache_dir(self, project: str, create: bool = False) -> str`
-- `file_utils/bake_cache.py::BakeCache.current(self, src: str, project: str, key: str) -> Optional[str]`
-- `file_utils/bake_cache.py::BakeCache.is_bake(self, path: str) -> bool`
-- `file_utils/bake_cache.py::BakeCache.name_pattern(self) -> Pattern[str]`
-- `file_utils/bake_cache.py::BakeCache.prefix(self) -> str`
-- `file_utils/bake_cache.py::BakeCache.purge(self, project: str, extensions: Iterable[str], live: Iterable[str] = (), dry_run: bool = False) -> List[str]`
-- `file_utils/bake_cache.py::BakeCache.record(self, src: str, project: str, key: Optional[str] = None) -> Dict[str, str]`
-- `file_utils/bake_cache.py::BakeCache.referenced_keys(self, project: str, extensions: Iterable[str], live: Iterable[str] = ()) -> Optional[Set[str]]`
-- `file_utils/bake_cache.py::BakeCache.rehome(self, baked_path: str, project: str, produce: Callable[[str, str, Dict[str, str]], Any]) -> Optional[str]`
-- `file_utils/bake_cache.py::BakeCache.slot(self, src: str, project: str) -> str`
-- `file_utils/bake_cache.py::BakeCache.slot_key(src: str, project: str) -> str`
-- `file_utils/bake_cache.py::BakeCache.source_key(src: str, *parts: Any, companions: Iterable[str] = ()) -> str`
-- `file_utils/bake_cache.py::BakeCache.source_of(self, baked_path: str) -> Optional[str]`
-- `file_utils/bake_cache.py::BakeCache.spell_source(self, src: str, project: str) -> str`
-- `file_utils/bake_cache.py::BakeCache.store(self, project: str, create: bool = False) -> CachedArtifact`
-- `file_utils/bake_cache.py::BakeCache.write(self, src: str, project: str, produce: Callable[[str, Dict[str, str]], Any], key: Optional[str] = None) -> str`
-- `file_utils/file_dependencies.py::FileDependencies.open_decompressed(path: str) -> Optional[BinaryIO]`
-- `file_utils/file_dependencies.py::FileDependencies.reference_bytes(cls, path: str) -> Optional[bytes]`
-- `file_utils/file_dependencies.py::FileDependencies.scan_references(cls, root: str, pattern: Union[bytes, Pattern[bytes]], extensions: Iterable[str], skip: Iterable[str] = ()) -> Optional[Set[str]]`
-- `file_utils/scene_notes.py::SceneNotes(class)`
-- `file_utils/scene_notes.py::SceneNotes.get(self, scene: str) -> str`
-- `file_utils/scene_notes.py::SceneNotes.import_notes(self, notes: Mapping[str, str]) -> Dict[str, str]`
-- `file_utils/scene_notes.py::SceneNotes.move(self, old: str, new: str) -> None`
-- `file_utils/scene_notes.py::SceneNotes.remove(self, scene: str) -> None`
-- `file_utils/scene_notes.py::SceneNotes.set(self, scene: str, text: str) -> None`
-- `file_utils/scene_notes.py::SceneNotes.store_path(self, scene: str) -> Optional[str]`
-- `file_utils/temp_artifacts.py::CachedArtifact.cache_dir(self) -> str`
-- `file_utils/temp_artifacts.py::CachedArtifact.peek(self, key: str) -> Optional[str]`
-- `file_utils/temp_artifacts.py::CachedArtifact.promote(self, key: str, produced: str, *, sidecars: Sequence[str] = ()) -> str`
-- `file_utils/temp_artifacts.py::CachedArtifact.slot(self, key: str) -> str`
-- `file_utils/temp_artifacts.py::CachedArtifact.touch(self, key: str, sidecars: Sequence[str] = ()) -> bool`
-- `file_utils/temp_artifacts.py::TempArtifacts.contains(cls, path: str) -> bool`
-- `file_utils/temp_artifacts.py::TempArtifacts.keep(self, path: str) -> bool`
-- `file_utils/temp_artifacts.py::TempArtifacts.root(cls) -> str`
-- `file_utils/temp_artifacts.py::TempArtifacts.scoped(cls, prefix: str, **kwargs: Any) -> 'TempArtifacts'`
-- `file_utils/temp_artifacts.py::TempArtifacts.sweep_all(cls, root: Optional[str] = None) -> List[str]`
-- `file_utils/workspace.py::Workspace.absolute(self, stored: str) -> str`
-- `file_utils/workspace.py::Workspace.backup_dir(scene_path: str, create: bool = False) -> str`
-- `file_utils/workspace.py::Workspace.cache_dir(self, kind: str, create: bool = False) -> str`
-- `file_utils/workspace.py::Workspace.export_dir(self, create: bool = False) -> str`
-- `file_utils/workspace.py::Workspace.for_scene(cls, scene_path: Optional[str], session_root: Optional[str] = None) -> Optional['Workspace']`
-- `file_utils/workspace.py::Workspace.images_dir(self, create: bool = False) -> str`
-- `file_utils/workspace.py::Workspace.movie_dir(self, create: bool = False) -> str`
-- `file_utils/workspace.py::Workspace.relative(self, path: str) -> str`
+- `audio_utils/_audio_utils.py::AudioUtils.scope_events(events: Iterable[Tuple[float, str]], takes: Iterable[Mapping[str, Any]], origin: float = 0.0) -> Tuple[List[Dict[str, Any]], List[str]]`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.can_hide() -> bool`
+- `core_utils/cli.py::CLI.dispatch(cls, description: str, commands: Mapping[str, 'CLI.Command'], argv: Optional[Sequence[str]] = None, common: Sequence['CLI.Argument'] = ()) -> int`
+- `core_utils/deprecation.py::Deprecation.class_attribute(cls, value: Any, replacement: str, *, remove_in: str, reason: Optional[str] = None, since: Optional[str] = None) -> Any`
+- `core_utils/engines/lighting/light_layers.py::LayerKind(class)`
+- `core_utils/engines/lighting/light_layers.py::LightLayerInfo(class)`
+- `core_utils/engines/lighting/light_layers.py::LightLayerScene(class)`
+- `core_utils/engines/lighting/light_layers.py::LightLayerScene.matches(cls, record: Optional[Mapping[str, Any]], path: str) -> bool`
+- `core_utils/engines/lighting/light_layers.py::LightLayerScene.of(cls, path: str) -> Dict[str, Any]`
+- `core_utils/engines/lighting/light_layers.py::LightLayerTarget(class)`
+- `core_utils/engines/lighting/light_layers.py::LightLayers(class)`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.add(self, name: str, frame: 'np.ndarray', kind: str = 'light', spec: Optional[Mapping[str, Any]] = None, shippable: Optional[bool] = None, replace: bool = False, bakes: Optional[Iterable[str]] = None, **info: Any) -> str`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.bake_files(self, name: str) -> Dict[str, str]`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.info(self, name: str) -> Dict[str, Any]`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.iter_layers(self, names: Optional[Iterable[str]] = None)`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.kind(self, name: str) -> LayerKind`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.load(self, name: str, size: Optional[Tuple[int, int]] = None, region: Optional[Tuple[int, int, int, int]] = None) -> 'np.ndarray'`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.names(self, kind: Optional[str] = None) -> List[str]`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.register_kind(cls, name: str, kind: LayerKind) -> None`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.remove(self, name: str) -> None`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.set_stamp(self, **fields: Any) -> None`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.size(self) -> Optional[Tuple[int, int]]`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.stamp(self) -> Dict[str, Any]`
+- `core_utils/engines/lighting/light_layers.py::LightLayers.validate(self) -> List[str]`
+- `core_utils/engines/lighting/light_layers.py::LightMix(class)`
+- `core_utils/engines/lighting/light_layers.py::LightMix.active(self) -> List[str]`
+- `core_utils/engines/lighting/light_layers.py::LightMix.entries(self) -> Dict[str, Dict[str, Any]]`
+- `core_utils/engines/lighting/light_layers.py::LightMix.from_dict(cls, data: Mapping[str, Any]) -> 'LightMix'`
+- `core_utils/engines/lighting/light_layers.py::LightMix.kelvin(self, name: str) -> Optional[float]`
+- `core_utils/engines/lighting/light_layers.py::LightMix.load(cls, path: str) -> 'LightMix'`
+- `core_utils/engines/lighting/light_layers.py::LightMix.names(self) -> List[str]`
+- `core_utils/engines/lighting/light_layers.py::LightMix.save(self, path: str) -> str`
+- `core_utils/engines/lighting/light_layers.py::LightMix.specular(self, name: str) -> float`
+- `core_utils/engines/lighting/light_layers.py::LightMix.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/lighting/light_layers.py::LightMix.weight(self, name: str) -> float`
+- `core_utils/engines/lighting/light_layers.py::LightMix.with_entries(self, changes: Mapping[str, Mapping[str, Any]]) -> 'LightMix'`
+- `core_utils/engines/lighting/light_layers.py::LightMix.with_weights(self, weights: Mapping[str, float]) -> 'LightMix'`
+- `core_utils/engines/lighting/light_predictor.py::LightPredictor(class)`
+- `core_utils/engines/lighting/light_predictor.py::LightPredictor.bakes(self, mix: LightMix) -> Dict[str, 'np.ndarray']`
+- `core_utils/engines/lighting/light_predictor.py::LightPredictor.contributions(self, mix: LightMix, mask: 'np.ndarray', size: Optional[Tuple[int, int]] = None) -> Dict[str, float]`
+- `core_utils/engines/lighting/light_predictor.py::LightPredictor.frame(self, mix: LightMix, size: Optional[Tuple[int, int]] = None, region: Optional[Tuple[int, int, int, int]] = None) -> 'np.ndarray'`
+- `core_utils/engines/lighting/light_predictor.py::LightPredictor.lights(self, mix: LightMix) -> List[Dict[str, Any]]`
+- `core_utils/engines/lighting/light_predictor.py::LightPredictor.linear(self, mix: LightMix, size: Optional[Tuple[int, int]] = None, region: Optional[Tuple[int, int, int, int]] = None, names: Optional[Iterable[str]] = None) -> 'np.ndarray'`
+- `core_utils/engines/lighting/light_predictor.py::LightPredictor.read_bake(path: str) -> 'np.ndarray'`
+- `core_utils/engines/lighting/light_predictor.py::LightPredictor.region_contributions(self, mix: LightMix, masks: Mapping[str, 'np.ndarray'], size: Optional[Tuple[int, int]] = None) -> Dict[str, Dict[str, float]]`
+- `core_utils/engines/lighting/light_predictor.py::ViewerTransform(class)`
+- `core_utils/engines/lighting/light_predictor.py::ViewerTransform.display(self, linear, exposure: float = 1.0) -> 'np.ndarray'`
+- `core_utils/engines/lighting/light_predictor.py::ViewerTransform.display_linear(self, linear, exposure: float = 1.0) -> 'np.ndarray'`
+- `core_utils/engines/lighting/light_predictor.py::ViewerTransform.from_dict(cls, data: Mapping[str, Any]) -> 'ViewerTransform'`
+- `core_utils/engines/lighting/light_predictor.py::ViewerTransform.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/lighting/light_rig_payload.py::LightRigFixture(class)`
+- `core_utils/engines/lighting/light_rig_payload.py::LightRigLight(class)`
+- `core_utils/engines/lighting/light_rig_payload.py::LightRigPayload(class)`
+- `core_utils/engines/lighting/light_rig_payload.py::LightRigPayload.library(cls) -> 'PresetStore'`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch(class)`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.cli(cls, argv: Optional[Sequence[str]] = None) -> int`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.contributions(self, region: str, mix: Optional[LightMix] = None, size: Optional[Tuple[int, int]] = None) -> Dict[str, float]`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.exposed(self, layer: str, level: float = 0.85, size: Optional[Tuple[int, int]] = None, kelvin: Optional[float] = None) -> Tuple[float, 'np.ndarray']`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.fit(self, free: Sequence[str], mix: Optional[LightMix] = None, size: Optional[Tuple[int, int]] = None, max_iter: int = 30, kelvin: Sequence[str] = (), **options) -> FitResult`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.open(cls, session: str) -> 'LookMatch'`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.owners(self, region: str, size: Optional[Tuple[int, int]] = None, kind: str = 'light') -> List[Tuple[str, float]]`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.predict(self, mix: Optional[LightMix] = None, size: Optional[Tuple[int, int]] = None) -> 'np.ndarray'`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.readout(self, frames: Mapping[str, Union[LightMix, str, 'np.ndarray']], regions: Optional[Sequence[str]] = None, size: Optional[Tuple[int, int]] = None) -> Dict[str, Dict[str, Tuple[float, float, float, float]]]`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.reference(self, size: Optional[Tuple[int, int]] = None) -> 'np.ndarray'`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.score(self, mix: Optional[LightMix] = None, size: Optional[Tuple[int, int]] = None, frame: Optional[Union[str, 'np.ndarray']] = None) -> LookScore`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.sheet(self, path: str, mix: Optional[LightMix] = None, size: Optional[Tuple[int, int]] = None, regions: Optional[Sequence[str]] = None, contributions: bool = True, title: Optional[str] = None, width: int = 1640, frame: Optional[Union[str, 'np.ndarray']] = None) -> str`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.shown(self, mix: Optional[LightMix] = None, size: Optional[Tuple[int, int]] = None, frame: Optional[Union[str, 'np.ndarray']] = None) -> 'np.ndarray'`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.solve(self, layer: str, region: str, mix: Optional[LightMix] = None, kelvin: Optional[float] = None, size: Optional[Tuple[int, int]] = None, max_weight: float = 1000000.0) -> float`
+- `core_utils/engines/lighting/look_match/_look_match.py::LookMatch.to_rig(self, mix: Optional[LightMix] = None, gain: float = math.pi, color_space: str = 'ACEScg', min_weight: float = 0.0001, group: str = 'LIGHT_RIG') -> Dict[str, Any]`
+- `core_utils/engines/lighting/look_match/fit.py::FitResult(class)`
+- `core_utils/engines/lighting/look_match/fit.py::LookFit(class)`
+- `core_utils/engines/lighting/look_match/fit.py::LookFit.run(self, mix: LightMix, free: Sequence[str], max_iter: int = 30, step: float = 0.05, kelvin: Sequence[str] = ()) -> FitResult`
+- `core_utils/engines/lighting/look_match/loop.py::LookLoop(class)`
+- `core_utils/engines/lighting/look_match/loop.py::LookLoop.bake(self, rig: Mapping[str, Any], names: Sequence[str], folder: str, timeout: Optional[float] = None) -> Dict[str, Any]`
+- `core_utils/engines/lighting/look_match/loop.py::LookLoop.capture(self, folder: str) -> Dict[str, Any]`
+- `core_utils/engines/lighting/look_match/loop.py::LookLoop.cli(cls, argv: Optional[Sequence[str]] = None) -> int`
+- `core_utils/engines/lighting/look_match/loop.py::LookLoop.iterate(self, rig_path: str, out: str, fit: bool = True, exact: bool = True, max_iter: int = 20, timeout: Optional[float] = None) -> Dict[str, Any]`
+- `core_utils/engines/lighting/look_match/loop.py::LookLoop.load_rig(cls, path: str) -> Dict[str, Any]`
+- `core_utils/engines/lighting/look_match/loop.py::LookLoop.mix_of(self, rig: Mapping[str, Any]) -> LightMix`
+- `core_utils/engines/lighting/look_match/loop.py::LookLoop.payload(role: Mapping[str, Any]) -> Dict[str, Any]`
+- `core_utils/engines/lighting/look_match/loop.py::LookLoop.rebake(self, names: Sequence[str], folder: str, timeout: Optional[float] = None) -> Dict[str, Any]`
+- `core_utils/engines/lighting/look_match/loop.py::LookLoop.spec_hash(payload: Mapping[str, Any]) -> str`
+- `core_utils/engines/lighting/look_match/loop.py::LookLoop.stale(self, rig: Mapping[str, Any]) -> List[str]`
+- `core_utils/engines/lighting/look_match/loop.py::LookLoop.stale_layers(self) -> List[str]`
+- `core_utils/engines/lighting/look_match/measures.py::LookMeasures(class)`
+- `core_utils/engines/lighting/look_match/measures.py::LookMeasures.default(cls) -> 'LookMeasures'`
+- `core_utils/engines/lighting/look_match/measures.py::LookMeasures.kind(self, name: str) -> str`
+- `core_utils/engines/lighting/look_match/measures.py::LookMeasures.measure(self, name: str, ours, ref, **context) -> MeasureResult`
+- `core_utils/engines/lighting/look_match/measures.py::LookMeasures.names(self, kind: Optional[str] = None) -> List[str]`
+- `core_utils/engines/lighting/look_match/measures.py::LookMeasures.register(self, name: str, kind: str, fn: Callable[..., Tuple[Any, Any]], compare: str = 'log_ratio', eps: float = 1 / 255, scale: float = 1.0, unit: str = 'log') -> None`
+- `core_utils/engines/lighting/look_match/measures.py::LookScore(class)`
+- `core_utils/engines/lighting/look_match/measures.py::LookScore.cost(self, tolerance: float = 0.1) -> float`
+- `core_utils/engines/lighting/look_match/measures.py::LookScore.frame(self) -> Dict[str, MeasureResult]`
+- `core_utils/engines/lighting/look_match/measures.py::LookScore.region(self, name: str) -> Dict[str, MeasureResult]`
+- `core_utils/engines/lighting/look_match/measures.py::LookScore.residuals(self, tolerance: float = 0.1, weights: Optional[Mapping[str, float]] = None) -> 'np.ndarray'`
+- `core_utils/engines/lighting/look_match/measures.py::LookScore.rows(self) -> List[Dict[str, Any]]`
+- `core_utils/engines/lighting/look_match/measures.py::LookScore.summary(self, tolerance: float = 0.1) -> List[Dict[str, Any]]`
+- `core_utils/engines/lighting/look_match/measures.py::MeasureResult(class)`
+- `core_utils/engines/lighting/look_match/measures.py::MeasureResult.miss(self) -> float`
+- `core_utils/engines/lighting/look_match/session.py::LookCaptureSettings(class)`
+- `core_utils/engines/lighting/look_match/session.py::LookLoopSettings(class)`
+- `core_utils/engines/lighting/look_match/session.py::LookSession(class)`
+- `core_utils/engines/lighting/look_match/session.py::LookSession.cache_dir(cls, data: Mapping[str, Any]) -> str`
+- `core_utils/engines/lighting/look_match/session.py::LookSession.read(cls, path: str) -> Dict[str, Any]`
+- `core_utils/engines/lighting/look_match/session.py::LookSession.resolve(cls, path: str, data: Mapping[str, Any], value: Optional[str]) -> Optional[str]`
+- `core_utils/engines/lighting/look_match/session.py::LookWorker(class)`
+- `core_utils/engines/lighting/look_match/sheet.py::LookSheet(class)`
+- `core_utils/engines/lighting/look_match/sheet.py::LookSheet.difference(self, ours: 'np.ndarray', ref: 'np.ndarray') -> 'Image.Image'`
+- `core_utils/engines/lighting/look_match/sheet.py::LookSheet.pair(self, ours: 'np.ndarray', ref: 'np.ndarray', crops: Optional[Mapping[str, Tuple[float, float, float, float]]] = None, title: str = '') -> 'Image.Image'`
+- `core_utils/engines/lighting/look_match/sheet.py::LookSheet.region_row(self, ours: 'np.ndarray', ref: 'np.ndarray', target: LookTarget, region: str, score: Optional[LookScore] = None, contributions: Optional[Mapping[str, float]] = None) -> 'Image.Image'`
+- `core_utils/engines/lighting/look_match/sheet.py::LookSheet.render(self, ours: 'np.ndarray', ref: 'np.ndarray', target: LookTarget, score: Optional[LookScore] = None, regions: Optional[Sequence[str]] = None, contributions: Optional[Mapping[str, Mapping[str, float]]] = None, title: str = '') -> 'Image.Image'`
+- `core_utils/engines/lighting/look_match/sheet.py::LookSheet.save(self, path: str, ours, ref, target: LookTarget, **kwargs) -> str`
+- `core_utils/engines/lighting/look_match/sheet.py::LookSheet.tiles(self, frames: Mapping[str, 'np.ndarray'], columns: int = 2) -> 'Image.Image'`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion(class)`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.anchor(self, side: str, size: Tuple[int, int] = (1000, 1000)) -> Tuple[float, float]`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.drawable(cls) -> Dict[str, RegionShape]`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.from_dict(cls, data: Mapping[str, Any]) -> 'LookRegion'`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.indices(self, side: str, size: Tuple[int, int]) -> 'np.ndarray'`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.line_points(self, side: str, size: Tuple[int, int], n: int = 64) -> Tuple['np.ndarray', 'np.ndarray']`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.mask(self, side: str, size: Tuple[int, int]) -> 'np.ndarray'`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.outline(self, side: str) -> Optional[Tuple[List[Tuple[float, float]], bool]]`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.rectify(self, image: 'np.ndarray', side: str) -> Tuple['np.ndarray', 'np.ndarray']`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.register_shape(cls, shape: RegionShape) -> None`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.sample(self, frame: 'np.ndarray', side: str) -> Any`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.sample_line(self, image: 'np.ndarray', side: str, n: int = 64, across: int = 3) -> 'np.ndarray'`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.spec_from_points(cls, key: str, points: Sequence[Sequence[float]], size: Tuple[int, int]) -> Dict[str, Any]`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.to_dict(self) -> Dict[str, Any]`
+- `core_utils/engines/lighting/look_match/target.py::LookRegion.window(self, side: str, size: Tuple[int, int]) -> Tuple[int, int, int, int]`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget(class)`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.add(self, region: LookRegion) -> LookRegion`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.display_at(image: Union[str, 'np.ndarray'], size: Optional[Tuple[int, int]] = None) -> 'np.ndarray'`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.from_dict(cls, data: Mapping[str, Any], base: Optional[str] = None) -> 'LookTarget'`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.load(cls, path: str) -> 'LookTarget'`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.objects(self, patterns: Sequence[str], size: Tuple[int, int]) -> 'np.ndarray'`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.paint_template(self, folder: str, side: str = 'ref', frame: Optional[str] = None, regions: Optional[Sequence[str]] = None, layer: Optional[str] = None) -> Dict[str, List[int]]`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.painted(self, path: str, color: Sequence[int], size: Tuple[int, int]) -> 'np.ndarray'`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.reference_display(self, size: Optional[Tuple[int, int]] = None) -> 'np.ndarray'`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.reference_size(self) -> Tuple[int, int]`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.region(self, name: str) -> LookRegion`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.remove(self, name: str) -> LookRegion`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.rename(self, name: str, new: str) -> LookRegion`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.save(self, path: str) -> str`
+- `core_utils/engines/lighting/look_match/target.py::LookTarget.to_dict(self, base: Optional[str] = None) -> Dict[str, Any]`
+- `core_utils/engines/lighting/look_match/target.py::RegionShape(class)`
+- `core_utils/engines/lighting/look_match/target.py::RegionShape.anchor(self, spec: Mapping[str, Any]) -> Optional[Tuple[float, float]]`
+- `core_utils/engines/lighting/look_match/target.py::RegionShape.from_points(self, points: Sequence[Sequence[float]], size: Tuple[int, int]) -> Dict[str, Any]`
+- `core_utils/engines/lighting/look_match/target.py::RegionShape.mask(self, region: 'LookRegion', spec: Mapping[str, Any], size: Tuple[int, int]) -> 'np.ndarray'`
+- `core_utils/engines/lighting/look_match/target.py::RegionShape.outline(self, spec: Mapping[str, Any]) -> Optional[Tuple[List[Tuple[float, float]], bool]]`
+- `core_utils/engines/lighting/look_match/target.py::RegionShape.sample(self, region: 'LookRegion', frame: 'np.ndarray', side: str) -> Any`
+- `core_utils/engines/lighting/look_match/target.py::SIDES(constant)`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline(class)`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.advance(cls, record: Any, current: Mapping[str, Mapping], baked: Optional[Mapping[str, Mapping]] = None, lighting: Optional[Mapping[str, Any]] = None, tol: float = 1.0) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.assess(cls, record: Any, current: Mapping[str, Mapping], lighting: Union[Mapping[str, Any], Callable[[Optional[Dict[str, Any]]], Mapping], None] = None, missing: Iterable[str] = (), reach: float = 1.0, objects: Optional[Iterable[str]] = None, tol: float = 1.0) -> 'StaleReport'`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.cell_fits(cls, recorded: Optional[Sequence[float]], current: Optional[Sequence[float]], tolerance: Optional[float] = None) -> bool`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.decode(cls, record: Any) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.diff(cls, a: Mapping, b: Mapping, tol: float = 1.0) -> List['BakeBaseline.Reason']`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.encode(cls, record: Mapping[str, Any]) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.label(cls, reason: Any) -> str`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.light_changes(cls, before: Optional[Mapping[str, Any]], after: Optional[Mapping[str, Any]], tol: float = 1.0) -> List[str]`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.lighting_digest(cls, lights: Optional[Mapping[str, Any]], environment: Optional[Any] = None, settings: Optional[Any] = None, rule: Optional[Mapping[str, Any]] = None) -> str`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.lighting_rules(cls, record: Any) -> Dict[str, Optional[Dict[str, Any]]]`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.lighting_state(cls, lights: Optional[Mapping[str, Any]], environment: Optional[Any] = None, settings: Optional[Any] = None, rule: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.lights_used(cls, record: Any, ids: Optional[Iterable[str]] = None) -> Optional[List[str]]`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.neighbours(cls, causes: Mapping[str, Sequence[_Box]], boxes: Mapping[str, _Box], room: Optional[_Box] = None, reach: float = 1.0) -> Dict[str, List[str]]`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.rematch(cls, record: Any, current: Mapping[str, Mapping], tol: float = 1.0) -> Tuple[Dict[str, str], List[str], List[str]]`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.same(cls, a: Mapping, b: Mapping, tol: float = 1.0) -> bool`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.signature(cls, points: Any, counts: Sequence[int], indices: Sequence[int], dims: int = 3) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/bake_baseline.py::StaleReport(class)`
+- `core_utils/engines/scene_export/bake_baseline.py::StaleReport.leaf(item: str) -> str`
+- `core_utils/engines/scene_export/bake_baseline.py::StaleReport.lines(self, name: Optional[Callable[[str], str]] = None) -> List[str]`
+- `core_utils/engines/scene_export/bake_baseline.py::StaleReport.summary(self, name: Optional[Callable[[str], str]] = None) -> str`
+- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.log_file_path(self) -> str`
+- `core_utils/engines/shots/shot_plan.py::ShotPlanner.plan_order(store: ShotStore, order: List[int], gap: float) -> MovePlan`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.copy_shot_content(self, source_id: int, dest_id: int) -> int`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.swap_shots(self, shot_id: int, other_id: int, retain: Iterable[str] = ()) -> None`
+- `core_utils/logging_mixin/run_log.py::RunLog(class)`
+- `core_utils/logging_mixin/run_log.py::RunLog.attach(cls, logger: logging.Logger, path: str, header: Optional[str] = None, formatter: Optional[logging.Formatter] = None, capture: Optional[int] = None) -> logging.FileHandler`
+- `core_utils/logging_mixin/run_log.py::RunLog.detach(cls, logger: logging.Logger, handler: logging.FileHandler, footer: Optional[str] = None) -> None`
+- `core_utils/logging_mixin/run_log.py::RunLog.file_name(cls, source: Optional[str], fallback: str = 'untitled') -> str`
+- `core_utils/logging_mixin/run_log.py::RunLog.sweep(cls, folder: str, max_age_days: Optional[float] = None, keep: Iterable[str] = ()) -> int`
+- `core_utils/logging_mixin/run_log.py::RunLog.trim(cls, path: str, max_bytes: Optional[int] = None) -> bool`
+- `core_utils/presets/store.py::PresetStore.adopt(self, *legacy_dirs: Union[str, os.PathLike]) -> bool`
+- `file_utils/_file_utils.py::FileUtils.describe_unwritable(cls, filepath: str) -> str`
+- `file_utils/job_queue.py::JobQueue(class)`
+- `file_utils/job_queue.py::JobQueue.alive(self, stale: float = 120.0) -> bool`
+- `file_utils/job_queue.py::JobQueue.begin(self, setup: Optional[Callable[[], None]] = None, beat: float = 5.0) -> None`
+- `file_utils/job_queue.py::JobQueue.end(self) -> None`
+- `file_utils/job_queue.py::JobQueue.lease(self, seconds: Optional[float]) -> None`
+- `file_utils/job_queue.py::JobQueue.leased(self) -> Optional[float]`
+- `file_utils/job_queue.py::JobQueue.result(self, job_id: str) -> Dict[str, Any]`
+- `file_utils/job_queue.py::JobQueue.serve(self, handler: Callable[[Dict[str, Any]], Mapping[str, Any]], setup: Optional[Callable[[], None]] = None, poll: float = 1.0, beat: float = 5.0) -> int`
+- `file_utils/job_queue.py::JobQueue.status(self, job_id: str) -> Optional[str]`
+- `file_utils/job_queue.py::JobQueue.step(self, handler: Callable[[Dict[str, Any]], Mapping[str, Any]]) -> Optional[str]`
+- `file_utils/job_queue.py::JobQueue.stop(self) -> None`
+- `file_utils/job_queue.py::JobQueue.stopping(self) -> bool`
+- `file_utils/job_queue.py::JobQueue.submit(self, job: Mapping[str, Any]) -> str`
+- `file_utils/job_queue.py::JobQueue.wait(self, job_id: str, timeout: Optional[float] = None, poll: float = 1.0, stale: float = 120.0) -> Dict[str, Any]`
+- `file_utils/job_queue.py::JobQueue.worker(self) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.embed_fbx_highlight_probes(cls, fbx: str, glb: Optional[str] = None, *, search_dirs: Sequence[str] = (), hdr_codec: Any = None, logger: Optional[logging.Logger] = None) -> List[str]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.embed_glb_lightmap_probe(cls, glb: GlbTarget, probe: Dict[str, Any], search_dirs: Sequence[str], hdr_codec: Any = None) -> Optional[Dict[str, Any]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.finish_fbx_deliverable(cls, fbx: str, glb: Optional[str] = None, *, search_dirs: Sequence[str] = (), walk_root: str = '', files: Iterable[Any] = (), hdr_codec: Any = None, logger: Optional[logging.Logger] = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.highlight_probe_layers(cls, glb, lights: Optional[Sequence[Dict[str, Any]]], probe: Optional[Dict[str, Any]] = None, width: Optional[int] = None, baked: Optional[Sequence[str]] = None, eye: Optional[Sequence[float]] = None) -> List[Dict[str, Any]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.lights_in_metres(cls, lights: Optional[Sequence[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.set_glb_unlit(cls, glb: GlbTarget, unlit: Dict[str, Dict[str, Any]]) -> List[Dict]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.strip_glb_baked_lights(cls, glb: GlbTarget) -> List[str]`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.take_keys(self, properties: Collection[str] = (), user: bool = False, kind: str = 'Model') -> Dict[str, Dict[Tuple[str, str, str], List[List[Any]]]]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.audio_events(cls, path: str) -> List[str]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.drop_host_lighting_media(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.reader_records(cls, channels: Iterable[Tuple[Optional[str], str, Any]], nodes: Optional[Iterable[str]] = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.record(cls, path: str, key: str) -> Optional[Any]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.set_record(cls, src: str, key: str, payload: Any, dst: Optional[str] = None, *, files: Iterable[Any] = ()) -> Dict[str, Any]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.split_pivot_instances(cls, src: str, dst: Optional[str] = None, *, tolerance: float = 0.001) -> Dict[str, Any]`
+- `geo_utils/articulation/plan.py::ArticulationPlan(class)`
+- `geo_utils/articulation/plan.py::ArticulationPlan.adjusted(cls, spec: Mapping[str, Any], handles: Mapping[str, Sequence[float]], eps: Optional[float] = None) -> Optional[Dict[str, Any]]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.check(cls, spec: Dict[str, Any], parts: Optional[Callable[[Dict[str, Any]], None]] = None) -> None`
+- `geo_utils/articulation/plan.py::ArticulationPlan.default_end(cls, spec: Mapping[str, Any], inverse: Sequence[float], points: Callable[[int], Iterable[Sequence[float]]], link: Optional[int] = None) -> Optional[Dict[str, Any]]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.edit_joint(cls, spec: Dict[str, Any], joint_id: str, world: Sequence[float], **fields: Any) -> Dict[str, Any]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.end_joint(spec: Mapping[str, Any]) -> Optional[int]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.end_link(spec: Mapping[str, Any]) -> Optional[int]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.end_offset(cls, spec: Mapping[str, Any], end_index: int) -> Matrix`
+- `geo_utils/articulation/plan.py::ArticulationPlan.end_pivot_turn(cls, spec: Mapping[str, Any], end_index: int) -> Tuple[Vec, Quat]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.frame(cls, position: Sequence[float], aim: Sequence[float], normal: Sequence[float]) -> Matrix`
+- `geo_utils/articulation/plan.py::ArticulationPlan.frames(cls, spec: Mapping[str, Any]) -> Dict[int, Matrix]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.from_proposal(proposal: Mapping[str, Any], links: Sequence[Any], control_scale: float) -> Dict[str, Any]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.give_of(cls, joint: Mapping[str, Any]) -> float`
+- `geo_utils/articulation/plan.py::ArticulationPlan.insert_joint(cls, spec: Dict[str, Any], uuids: Iterable[str], joint: Dict[str, Any], world: Sequence[float], keep_points: Iterable[Sequence[float]], split_points: Iterable[Sequence[float]]) -> Dict[str, Any]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.joint_entry(spec: Mapping[str, Any], joint_id: str) -> Dict[str, Any]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.joint_records(cls, spec: Mapping[str, Any]) -> List[Dict[str, Any]]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.limits_text(limits: Optional[Mapping[str, Sequence[Optional[float]]]]) -> str`
+- `geo_utils/articulation/plan.py::ArticulationPlan.link_of(spec: Mapping[str, Any], uuid: Optional[str]) -> Optional[int]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.parse_limits(text: str, channels: Sequence[str]) -> Dict[str, Tuple[Optional[float], Optional[float]]]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.pivots(cls, spec: Mapping[str, Any]) -> Dict[str, Matrix]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.plan_joint(cls, joint: Mapping[str, Any], joint_id: str, inverse: Sequence[float]) -> Dict[str, Any]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.record(cls, spec: Mapping[str, Any], name_of: Optional[Callable[[Mapping[str, Any]], str]] = None) -> Dict[str, Any]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.remove_joint(cls, spec: Dict[str, Any], joint_id: str) -> Dict[str, Any]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.rest(cls, spec: Mapping[str, Any]) -> List[Dict[str, Any]]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.retype(cls, joint: Dict[str, Any], kind: str) -> Dict[str, Any]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.riders(spec: Mapping[str, Any]) -> Dict[str, int]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.set_limits(cls, spec: Mapping[str, Any], joint_id: str, channel: str, minimum: Optional[float], maximum: Optional[float]) -> Dict[str, Any]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.set_weight(cls, spec: Mapping[str, Any], joint_id: str, weight: float, channel: Optional[str] = None) -> Dict[str, Any]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.side_limits(cls, spec: Mapping[str, Any], joint_id: str, channel: str, side: str, value: float) -> Tuple[Optional[float], Optional[float]]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.slots(cls, spec: Mapping[str, Any]) -> List[Tuple[str, str]]`
+- `geo_utils/articulation/plan.py::ArticulationPlan.split_link(spec: Mapping[str, Any], uuids: Iterable[str]) -> Tuple[int, List[Dict[str, Any]], List[Dict[str, Any]]]`
+- `geo_utils/probe_placement.py::ProbeHit(class)`
+- `geo_utils/probe_placement.py::ProbePlacement(class)`
+- `geo_utils/probe_placement.py::ProbePlacement.faces(self, point: Sequence[float], scene_units: bool = True) -> List[List[Optional[float]]]`
+- `geo_utils/probe_placement.py::ProbePlacement.place(self) -> Optional[ProbeSite]`
+- `geo_utils/probe_placement.py::ProbePlacement.room(self, point: Sequence[float]) -> List[List[Optional[float]]]`
+- `geo_utils/probe_placement.py::ProbeRays(class)`
+- `geo_utils/probe_placement.py::ProbeRays.add(self, owner: Any, lo: Sequence[float], hi: Sequence[float], payload: Any) -> None`
+- `geo_utils/probe_placement.py::ProbeRays.cast(self, origin: Sequence[float], direction: Sequence[float], far: float = 10000000.0) -> Optional[ProbeHit]`
+- `geo_utils/probe_placement.py::ProbeSite(class)`
+- `geo_utils/uv/combine.py::CombineGroup(class)`
+- `geo_utils/uv/combine.py::CombineGroup.resolution(self, atlas_size: int) -> float`
+- `geo_utils/uv/combine.py::CombineLayout(class)`
+- `geo_utils/uv/combine.py::CombinePlan(class)`
+- `geo_utils/uv/combine.py::CombineShell(class)`
+- `geo_utils/uv/combine.py::RESIDUAL_TOLERANCE(constant)`
+- `geo_utils/uv/combine.py::UvCombine(class)`
+- `geo_utils/uv/combine.py::UvCombine.clusters(cls, shells: Sequence[CombineShell]) -> List[List[int]]`
+- `geo_utils/uv/combine.py::UvCombine.island_shells(key: Any, uvs, shell_ids, tri_uv, tri_face, tri_area, materials: Sequence[Hashable], face_material) -> tuple`
+- `geo_utils/uv/combine.py::UvCombine.pack(cls, shells: Sequence[CombineShell], plan: Optional[CombinePlan] = None, *, map_size: int = 2048, padding: int = 8, margin: float = 0.0, rotate: bool = True, brute_force: bool = False, **plan_kwargs) -> CombineLayout`
+- `geo_utils/uv/combine.py::UvCombine.plan(cls, shells: Sequence[CombineShell], *, sizing: str = 'density', normalize: str = 'density', resolutions: Optional[Dict[Hashable, int]] = None, fill: Optional[float] = None, clusters: Optional[List[List[int]]] = None) -> CombinePlan`
+- `geo_utils/uv/pack.py::UvPack.apply_similarity(points, transform)`
+- `geo_utils/uv/pack.py::UvPack.solve_similarity(old, new) -> tuple`
+- `geo_utils/uv/transfer.py::UvTransfer.in_place_paths(cls, maps: Dict[str, Dict[str, str]], *, reads: Sequence[str] = (), readers: Optional[Dict[str, Sequence[str]]] = None, locked: Sequence[str] = ()) -> Tuple[Dict[str, List[str]], List[Tuple[str, str, str, str]]]`
+- `img_utils/_img_utils.py::ImgUtils.atlas_seam_pairs(edges: Sequence[Optional['np.ndarray']], rects: Sequence[Sequence[float]], size: Union[int, Tuple[int, int]], tolerance: float = 0.0001, coplanar: float = 0.99) -> 'np.ndarray'`
+- `img_utils/_img_utils.py::ImgUtils.encode_hdr_pixels_for_web(cls, rgb, percentile=None)`
+- `img_utils/_img_utils.py::ImgUtils.encode_hdr_radiance_pixels(cls, rgb) -> bytes`
+- `img_utils/_img_utils.py::ImgUtils.kelvin_tint(cls, kelvin: Optional[float]) -> Tuple[float, float, float]`
+- `img_utils/_img_utils.py::ImgUtils.linear_to_oklab(cls, linear) -> 'np.ndarray'`
+- `img_utils/_img_utils.py::ImgUtils.luminance(cls, linear) -> 'np.ndarray'`
+- `img_utils/_img_utils.py::ImgUtils.resample_area(cls, array, size) -> 'np.ndarray'`
+- `img_utils/_img_utils.py::ImgUtils.sample_bilinear(cls, array, px, py) -> 'np.ndarray'`
+- `img_utils/_img_utils.py::ImgUtils.tonemap(cls, linear, operator: str = 'aces_filmic', exposure: float = 1.0) -> 'np.ndarray'`
+- `img_utils/_img_utils.py::ImgUtils.warp_quad(cls, array, corners, size, supersample=None) -> 'np.ndarray'`
+- `math_utils/_math_utils.py::MathUtils.connected_components(count: int, groups) -> List[int]`
+- `math_utils/_math_utils.py::MathUtils.fit_similarity(source: Sequence[Sequence[float]], target: Sequence[Sequence[float]]) -> Optional[Tuple[float, List[List[float]], List[float], float]]`
+- `net_utils/_net_utils.py::NetUtils.public_addresses(name: str, servers: Sequence[str] = ('1.1.1.1', '8.8.8.8', '9.9.9.9'), timeout: float = 3.0, port: int = 53) -> Optional[List[str]]`
+- `net_utils/_net_utils.py::NetUtils.tls_context() -> ssl.SSLContext`
+- `net_utils/preview/bridge.py::PreviewBridge.hdr_codec(self) -> Any`
+- `net_utils/preview/bridge.py::PreviewBridge.preview_file(self, path: Union[str, Path], logger: Any = None) -> bool`
+- `net_utils/preview/look_capture.py::LookCapture(class)`
+- `net_utils/preview/look_capture.py::LookCapture.available() -> bool`
+- `net_utils/preview/look_capture.py::LookCapture.bake_folders(cls, folder: str) -> List[str]`
+- `net_utils/preview/look_capture.py::LookCapture.capture_bake(self, layers: LightLayers, folder: str, black: Sequence[str] = (), replace: bool = True) -> 'np.ndarray'`
+- `net_utils/preview/look_capture.py::LookCapture.capture_layer(self, layers: LightLayers, name: str, black: Sequence[str] = (), replace: bool = True) -> 'np.ndarray'`
+- `net_utils/preview/look_capture.py::LookCapture.cli(cls, argv: Optional[Sequence[str]] = None) -> int`
+- `net_utils/preview/look_capture.py::LookCapture.client(url: str)`
+- `net_utils/preview/look_capture.py::LookCapture.decode(shot: str) -> 'np.ndarray'`
+- `net_utils/preview/look_capture.py::LookCapture.exact(self, predictor: LightPredictor, mix: LightMix, mode: str = 'lit', camera: Optional[Mapping[str, Any]] = None, black: Sequence[str] = (), emissive: Optional[Mapping[str, Any]] = None, swap: Optional[Mapping[str, str]] = None, probe: Optional[Mapping[str, Any]] = None, uncap: Sequence[str] = (), lights: Optional[Any] = None) -> 'np.ndarray'`
+- `net_utils/preview/look_capture.py::LookCapture.file_frame(self, mode: str = 'lit', camera: Optional[Mapping[str, Any]] = None) -> 'np.ndarray'`
+- `net_utils/preview/look_capture.py::LookCapture.handle(self, match, settings: Mapping[str, Any], request: Mapping[str, Any]) -> Dict[str, Any]`
+- `net_utils/preview/look_capture.py::LookCapture.idle(self, asleep: bool = True) -> None`
+- `net_utils/preview/look_capture.py::LookCapture.manifest(self) -> Dict[str, Any]`
+- `net_utils/preview/look_capture.py::LookCapture.open_session(session: str)`
+- `net_utils/preview/look_capture.py::LookCapture.payload(cls, bakes: Mapping[str, 'np.ndarray'], manifest: Mapping[str, Any], probe: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]`
+- `net_utils/preview/look_capture.py::LookCapture.relight(self, bakes: Mapping[str, 'np.ndarray'], emissive: Optional[Mapping[str, Any]] = None, probe: Optional[Mapping[str, Any]] = None, lights: Optional[Any] = None) -> int`
+- `net_utils/preview/look_capture.py::LookCapture.serve(self, session: str, host: str = '127.0.0.1', port: int = 8770) -> None`
+- `net_utils/preview/look_capture.py::LookCapture.shoot(self, mode: str = 'lit', camera: Optional[Mapping[str, Any]] = None, black: Sequence[str] = (), scale: float = 1.0, uncap: Sequence[str] = ()) -> 'np.ndarray'`
+- `net_utils/preview/look_capture.py::LookCapture.shoot_ids(self, camera: Optional[Mapping[str, Any]] = None, scale: float = 1.0) -> Tuple['np.ndarray', List[Dict[str, Any]]]`
+- `net_utils/preview/look_capture.py::LookCapture.spawn(cls, session: str, python: Optional[str] = None, timeout: float = 900.0, output: Optional[Any] = None) -> Tuple[Any, str]`
+- `net_utils/preview/look_capture.py::LookCapture.start(self) -> 'LookCapture'`
+- `net_utils/preview/look_capture.py::LookCapture.stop(self) -> None`
+- `net_utils/rpc/client.py::RpcClient.for_url(cls, url: str, **kwargs: Any) -> 'RpcClient'`
+- `net_utils/rpc/plugin_core.py::RpcPlugin.serve(self, port=None, host=None)`
 
-## Deprecations (3)
+## Deprecations (6)
 
 _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived its window: delete the alias and its tests rather than moving the date. A **HELD** row is due by version, but its notice has not yet had its calendar window._
 
 - **HELD** `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column` — remove in 0.14.0, not before 2026-11-09
 - **HELD** `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard` — remove in 0.14.0, not before 2026-11-09
 - **HELD** `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.confirm_check_override` — remove in 0.14.0, not before 2026-11-03
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.baked_reflections_default` — remove in 0.17.0, not before 2026-11-18
+- `core_utils/engines/scene_export/export_profile.py::ExportRun.baked_reflection_level` — remove in 0.17.0, not before 2026-11-18
+- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.generate_log_file_path` — remove in 0.17.0, not before 2026-11-13
 
-## Signature changed (2)
+## Signature changed (17)
 
-- `core_utils/engines/textures/region_masks.py::RegionMaskPacker.write`
-  - was: `(self, mask_path: str, manifest_path: Optional[str] = None, uv_channel: int = 0) -> RegionMaskManifest`
-  - now: `(self, mask_path: str, manifest_path: Optional[str] = None, uv_channel: int = 0, write_manifest: bool = False) -> RegionMaskManifest`
-- `file_utils/file_dependencies.py::FileDependencies.search_dirs`
-  - was: `(deps: Iterable[Dict[str, Any]], then: Iterable[str] = ()) -> List[str]`
-  - now: `(cls, deps: Iterable[Dict[str, Any]], then: Iterable[str] = ()) -> List[str]`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.launch`
+  - was: `(app_identifier, args=None, cwd=None, detached=True, env=None)`
+  - now: `(app_identifier, args=None, cwd=None, detached=True, env=None, log=None)`
+- `core_utils/app_launcher/_app_launcher.py::AppLauncher.run`
+  - was: `(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None, hide_window=False, on_output=None, poll_interval=0.1)`
+  - now: `(app_identifier, args=None, cwd=None, timeout=None, output_file=None, env=None, hide_window=False, on_output=None, poll_interval=0.1, hidden=False)`
+- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.close_file_handlers`
+  - was: `(self)`
+  - now: `(self, footer: Optional[str] = None)`
+- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.generate_log_file_path`
+  - was: `(self, export_path: str) -> str`
+  - now: `(self, export_path: Optional[str] = None) -> str`
+- `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.setup_file_logging`
+  - was: `(self, log_file_path: str)`
+  - now: `(self, log_file_path: str, header: Optional[str] = None)`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.apply_glb_lightmaps`
+  - was: `(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True) -> List[Dict[str, Any]]`
+  - now: `(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True, hdr_codec: Any = None) -> List[Dict[str, Any]]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fbx_to_glb`
+  - was: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None) -> str`
+  - now: `(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None, hdr_codec: Any = None) -> str`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.rendering_policy`
+  - was: `(cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]`
+  - now: `(cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None, carrier: str = 'glb') -> Dict[str, Any]`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.user_properties`
+  - was: `(self, name: str, kind: str = 'Model') -> List[Any]`
+  - now: `(self, name: str, kind: str = 'Model', named: bool = False) -> List[Any]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.drop_takes`
+  - was: `(cls, src: str, dst: Optional[str] = None, *, names: Iterable[str]) -> Dict[str, Any]`
+  - now: `(cls, src: str, dst: Optional[str] = None, *, names: Optional[Iterable[str]] = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.embed_dependencies`
+  - was: `(cls, src: str, dst: Optional[str] = None, *, search_dirs: Sequence[str] = (), files: Iterable[Any] = (), logger: Any = None) -> Dict[str, Any]`
+  - now: `(cls, src: str, dst: Optional[str] = None, *, search_dirs: Sequence[str] = (), walk_root: str = '', files: Iterable[Any] = (), logger: Any = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/glb/pipeline.py::GlbPipeline.build`
+  - was: `(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None) -> Dict[str, Any]`
+  - now: `(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None, hdr_codec: Any = None) -> Dict[str, Any]`
+- `geo_utils/uv/transfer.py::UvTransfer.layout_jobs`
+  - was: `(cls, parts: Sequence[Dict[str, Any]], sources: Sequence[Dict[str, Any]], *, log: Optional[Callable[[str], None]] = None) -> Dict[str, Dict[str, Any]]`
+  - now: `(cls, parts: Sequence[Dict[str, Any]], sources: Sequence[Dict[str, Any]], *, per_material: bool = False, log: Optional[Callable[[str], None]] = None) -> Dict[str, Dict[str, Any]]`
+- `geo_utils/uv/transfer.py::UvTransfer.save_map`
+  - was: `(path: str, arr: 'np.ndarray', value_max: float = 255.0) -> str`
+  - now: `(cls, path: str, arr: 'np.ndarray', value_max: float = 255.0) -> str`
+- `img_utils/_img_utils.py::ImgUtils.assemble_atlas`
+  - was: `(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0) -> 'np.ndarray'`
+  - now: `(cls, images: Sequence['np.ndarray'], rects: Sequence[Tuple[float, float, float, float]], size: Union[int, Tuple[int, int]], *, background: float = 0.0, canvas: Optional['np.ndarray'] = None) -> 'np.ndarray'`
+- `img_utils/_img_utils.py::ImgUtils.stitch_seams`
+  - was: `(cls, image: 'np.ndarray', pairs: 'np.ndarray', iterations: int = 64) -> 'np.ndarray'`
+  - now: `(cls, image: 'np.ndarray', pairs: 'np.ndarray', iterations: int = 64, hold: Optional['np.ndarray'] = None) -> 'np.ndarray'`
+- `math_utils/_math_utils.py::MathUtils.smoothstep`
+  - was: `(x: float, edge0: float = 0.0, edge1: float = 1.0) -> float`
+  - now: `(x, edge0: float = 0.0, edge1: float = 1.0)`

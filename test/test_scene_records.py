@@ -354,9 +354,135 @@ class TestHandoff(SceneRecordsCase):
 
         self.assertEqual(
             block["rendering"],
-            MeshConvert.RENDERING_POLICY,
-            "the FBX publishes the viewer's own policy, from the one constant",
+            MeshConvert.rendering_policy(carrier="fbx"),
+            "the FBX publishes the viewer's own policy, in its own addresses",
         )
+
+    def test_the_policy_points_at_this_carriers_probe(self):
+        """The lighting environment a coworker's build dropped (2026-10-14).
+
+        The FBX published the GLB's policy word for word, so its environment
+        named ``extras.lightmap_web.probe`` -- an address no FBX has. On the
+        delivered assembly the probe rode ``data_export.lightmap_metadata``
+        and its image was embedded, yet a reader following the block found
+        nothing there and lit the scene with the fallback studio room. The
+        prose must name the record that holds the probe here, and every
+        number must still be the viewer's own.
+        """
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        policy = SR.handoff_block(["lightmap_metadata"])["rendering"]
+        text = json.dumps(policy)
+        self.assertNotIn("extras.", text, "an FBX has no glTF extras to point at")
+        self.assertNotIn("bufferView", text)
+        self.assertIn(
+            "data_export.lightmap_metadata.probe", policy["environment"]["source"]
+        )
+        self.assertIn("unit_scale", policy["environment"]["probe"])
+
+        def numbers(node, path=()):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    yield from numbers(value, path + (key,))
+            elif isinstance(node, (int, float, list)):
+                yield path, node
+
+        self.assertEqual(
+            dict(numbers(policy)),
+            dict(numbers(MeshConvert.RENDERING_POLICY)),
+            "the carrier changes where the policy points, never a value",
+        )
+
+    def test_assembly_rebuilds_every_record_present_and_the_lighting(self):
+        """The block is for a reader holding the file and nothing else, so it
+        lists the approved scene part by part: the content, each record the
+        carrier holds (and only those), then the lighting -- the half a
+        faithful geometry build kept dropping."""
+        block = SR.handoff_block(
+            {"lightmap_metadata": "{}", "visibility_tracks": "{}", "future": "{}"}
+        )
+        parts = [row["part"] for row in block["assembly"]]
+        self.assertEqual(parts[0], "geometry")
+        self.assertIn("lightmap_metadata", parts)
+        self.assertIn("visibility_tracks", parts)
+        self.assertIn("future", parts, "an undeclared channel is listed, not lost")
+        self.assertNotIn("shot_metadata", parts, "never a record the file lacks")
+        for lighting in (
+            "environment",
+            "key_light",
+            "lightmapped_materials",
+            "renderer",
+        ):
+            self.assertIn(lighting, parts)
+        for row in block["assembly"]:
+            with self.subTest(part=row["part"]):
+                self.assertTrue(row["spec"].strip())
+                for address in row["data"]:
+                    if address.startswith("rendering."):
+                        section = address.split(".", 1)[1]
+                        self.assertIn(section, block["rendering"], "points at nothing")
+        self.assertIsNot(
+            block["assembly"][0],
+            SR.HANDOFF_ASSEMBLY[0],
+            "a caller editing the block must not edit the class constant",
+        )
+
+    def test_every_shipping_record_declares_its_assembly(self):
+        """A record added later rides into the block's ``assembly`` from its
+        own declaration -- so it must have one, or a reader of the
+        deliverable learns only that it exists."""
+        for spec in SR.deliverable():
+            if spec is SR.HANDOFF:
+                continue
+            with self.subTest(record=spec.key):
+                self.assertTrue(spec.assembly.strip())
+
+    def test_the_render_effects_are_described_channel_by_channel(self):
+        """``visibility_tracks`` carried a highlight ramp and its colour stops
+        that the record's description never mentioned, so a reader of the
+        deliverable had no way to know the scene pulses: every effect the
+        glTF channel table knows must be named, stops included."""
+        from pythontk.file_utils.mesh_convert.glb.fades import CHANNELS
+
+        for name, channel in CHANNELS.items():
+            keys = [name, *(channel.color_stops.keys if channel.color_stops else ())]
+            for key in keys:
+                with self.subTest(key=key):
+                    self.assertIn(f"'{key}'", SR.VISIBILITY.description)
+                    self.assertIn(f"'{key}'", SR.VISIBILITY.assembly)
+
+    def test_the_lightmap_record_describes_the_probes_highlight_copies(self):
+        """A finished FBX's record lists the probe's highlight copies
+        (``MeshConvert.embed_fbx_highlight_probes``), while the text told a
+        reader only to light the record's 'lights' itself: following it beside
+        the copies, the highlights count twice. Every field an entry carries
+        is named, and so is the rule. Added: 2026-10-19"""
+        text = SR.LIGHTMAPS.assembly
+        for key in ("probe.highlights", "map", "receivers", "objects"):
+            with self.subTest(key=key):
+                self.assertIn(f"'{key}'", text)
+        self.assertIn("lights none of 'lights'", text)
+
+    def test_the_contract_says_which_carrier_wins_and_how_names_join(self):
+        """An assembly ships a referenced module's ``data_export`` beside the
+        scene's own, holding that module's records as it was last exported
+        alone (measured: objects since removed, a map spelled ``_LightMap``
+        where the embedded copy is ``_Lightmap``, no probe, and an older
+        handoff saying the maps are not embedded). Both readers in this repo
+        prefer the scene's own node per record and join without case; the
+        text must say so, or a reader merges the stale copy in."""
+        text = SR.HANDOFF_INSTRUCTIONS
+        self.assertIn("named exactly 'data_export'", text)
+        self.assertIn("read only where the scene's own node carries no record", text)
+        # The handoff is the one record the fallback must NOT reach: a
+        # module's block describes the module, even on a file whose own node
+        # carries none -- and whichever version is newer, so the rule is the
+        # node, never the version (a newer module block would otherwise
+        # outrank the file's own).
+        self.assertIn("describes this file only on the node named exactly", text)
+        self.assertNotIn("lower 'version'", text)
+        self.assertIn("without regard to case", text)
+        self.assertIn("'assembly'", text)
 
     def test_nothing_to_describe_means_no_block(self):
         self.assertEqual(SR.handoff_block({}), {})
@@ -545,7 +671,7 @@ class TestSnapshot(SceneRecordsCase):
         )
         self.assertEqual(
             SR.HANDOFF.load(DictStore)["rendering"],
-            MeshConvert.rendering_policy(rendering),
+            MeshConvert.rendering_policy(rendering, carrier="fbx"),
         )
 
     def test_the_same_context_produces_the_same_records_twice(self):
@@ -687,6 +813,17 @@ class TestSnapshot(SceneRecordsCase):
             ["visibility"],
             "naming an authored record does not make a bridge its authority",
         )
+
+    def test_a_handoff_ships_the_audio_its_scene_plays_now(self):
+        """The audio events are read off the keyed tracks / sound strips an
+        artist moves between one push and the next, like the visibility
+        curves: a hand-off refreshes them. Authored, a Unity-bridge FBX
+        shipped the last Scene Exporter run's events (measured: a track
+        added since was missing) or none at all."""
+        ran = []
+        table = {SR.AUDIO: lambda c: ran.append("audio")}
+        ExportSnapshot.assemble(table, ExportContext(mode=ExportContext.HANDOFF))
+        self.assertEqual(ran, ["audio"])
 
     def test_a_legacy_record_is_cleared_with_its_successor(self):
         """``fbx_takes`` is no longer written; a scene published before 0.11.0
@@ -1520,6 +1657,38 @@ class TestLightmapDirs(SceneRecordsCase):
             SR.LIGHTMAP_DIRS.load(DictStore),
             {"a.exr": "mine", "b.exr": "x", "c.exr": "mine"},
         )
+
+
+class TestLightmapBakeState(SceneRecordsCase):
+    """What each lightmap was baked against (``BakeBaseline``): build-time
+    state keyed by this scene's own node names. Never on a deliverable (the
+    marker and ``lightmap_metadata`` ship), never across a hand-off, and
+    another scene's copy is dropped."""
+
+    def test_it_is_private_its_own_and_never_crosses(self):
+        spec = SR.LIGHTMAP_BAKE_STATE
+        self.assertEqual(spec.key, "lightmap_bake_state")
+        self.assertIs(spec.scope, Scope.PRIVATE)
+        self.assertIs(spec.merge, Merge.OWN)
+        self.assertFalse(spec.portable)
+        self.assertFalse(spec.respell)
+        self.assertNotIn(spec, SR.deliverable())
+        self.assertNotIn(spec, SR.portable())
+        self.assertIs(SR.by_key("lightmap_bake_state", Scope.PRIVATE), spec)
+
+    def test_its_payload_carries_its_version_and_another_scenes_is_dropped(self):
+        SR.LIGHTMAP_BAKE_STATE.save(DictStore, {"serial": 3, "objects": {}})
+        self.assertEqual(SR.LIGHTMAP_BAKE_STATE.load(DictStore)["version"], 1)
+        other = {
+            Scope.PRIVATE: {
+                "lightmap_bake_state": json.dumps({"version": 1, "serial": 9})
+            },
+            Scope.DELIVERABLE: {},
+        }
+        merge = RecordTransfer.between(DictStore, other)
+        self.assertTrue(merge.is_empty)
+        merge.apply(DictStore, None)
+        self.assertEqual(SR.LIGHTMAP_BAKE_STATE.load(DictStore)["serial"], 3)
 
 
 class TestProjectRelativePaths(SceneRecordsCase):

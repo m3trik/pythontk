@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { plural } from './format.js';
 import { materialsOf } from './model.js';
-import { probeEnvironment } from './probe.js';
+import { probeEnvironment, syncProbeCopies } from './probe.js';
 import { LIGHTMAPS } from './records.js';
 import {
   DEFAULT_BAKED_ENV_INTENSITY, keyLight, policy, readExtras, releaseStudio, renderer, scene,
@@ -20,7 +20,7 @@ import {
 //   * colorSpace — GLTFLoader treats occlusion as DATA and loads it linear, but the map
 //     was written sRGB-encoded to survive 8-bit. Left linear it renders far too dark.
 //   * channel — the map is packed against UV2, not UV0.
-//   * intensity — the encoder divided by a percentile to fit a huge HDR range into a PNG;
+//   * intensity — the encoder divided by the map's (capped) peak to fit its HDR range into a PNG;
 //     multiplying it back is what restores the original exposure.
 //
 // Also clears the slot it arrived in, so the same texture is not applied twice under two
@@ -324,6 +324,8 @@ export function applyLighting() {
   scene.environment = probe || studioEnvironment();
   if (probe) releaseStudio();
   scene.environmentIntensity = probe ? policy.probeIntensity : policy.environmentIntensity;
+  // The probe's highlight copies play at the probe's level (probe.js).
+  syncProbeCopies();
   // What a baked material reflects of it: the export's level (see
   // patchBakedShader), on top of the one environment level above. That level
   // exists because the studio is brighter than the room the bake lit; a probe

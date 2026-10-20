@@ -83,6 +83,29 @@ class TestAppLauncher(unittest.TestCase):
                 process.returncode, 0, "python --version returned non-zero exit code"
             )
 
+    def test_a_launched_programs_output_goes_to_its_log(self):
+        """A detached worker's only record: its output appended to a file (twice
+        launched, both runs kept)."""
+        temp = ptk.TempArtifacts("launch_log", policy="scoped")
+        self.addCleanup(temp.cleanup)
+        folder = temp.dir_path()
+        log = os.path.join(folder, "logs", "worker.log")
+        for word in ("first", "second"):
+            process = AppLauncher.launch(
+                self._python_on_path(),
+                args=[  # flushed: stdout to a file is buffered, stderr is not
+                    "-c",
+                    f"import sys; print({word!r}, flush=True); sys.stderr.write('err\\n')",
+                ],
+                detached=False,
+                log=log,
+            )
+            self.assertIsNotNone(process)
+            process.wait(30)
+        with open(log, encoding="utf-8") as f:
+            text = f.read()
+        self.assertEqual(text.split(), ["first", "err", "second", "err"])
+
     @unittest.skipUnless(
         _INTERACTIVE, "Requires interactive desktop with visible windows"
     )
@@ -269,17 +292,14 @@ class TestHandoffEnv(unittest.TestCase):
     """
 
     def setUp(self):
-        import tempfile
-
-        self.root = tempfile.mkdtemp(prefix="ptk_handoff_")
+        self.temp = ptk.TempArtifacts("ptk_handoff", policy="scoped")
+        self.root = self.temp.dir_path()
         self.config = os.path.join(self.root, "datafiles", "config.ocio")
         os.makedirs(os.path.dirname(self.config))
         open(self.config, "w").close()
 
     def tearDown(self):
-        import shutil
-
-        shutil.rmtree(self.root, ignore_errors=True)
+        self.temp.cleanup()
 
     def test_private_ocio_is_stripped(self):
         from unittest.mock import patch
@@ -706,6 +726,54 @@ class TestPythonArgsViaEnv(unittest.TestCase):
         result = AppLauncher.run(sys.executable, args=["-c", code], timeout=60)
         self.assertIn("MARK", result.stdout)
         self.assertIn("END", result.stdout)
+
+    @unittest.skipUnless(sys.platform == "win32", "std handles are a Windows thing")
+    def test_run_starts_when_this_process_has_no_usable_stdin(self):
+        """A GUI process whose console went (uitk's ``Bootstrap.detach_console``)
+        keeps the dead console's stdin value; ``run`` inherited it, and
+        ``DuplicateHandle`` failed before the child started -- WinError 6, or 50
+        once the value was reused. Measured: the desktop-shortcut probe of a hub
+        opened by Explorer. Both captured shapes are covered."""
+        import json
+        import subprocess
+
+        code = "\n".join(
+            [
+                "import ctypes, json, os, sys",
+                "set_std = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_int32, "
+                "ctypes.c_void_p)(('SetStdHandle', ctypes.windll.kernel32))",
+                "set_std(-10, 0xFFFFF0)  # STD_INPUT_HANDLE: a value nothing holds",
+                "from pythontk import AppLauncher",
+                "codes = []",
+                "for kwargs in ({}, {'output_file': os.environ['OUT_FILE']}):",
+                "    try:",
+                "        codes.append(AppLauncher.run(sys.executable, ['-c', 'pass'],"
+                " timeout=60, **kwargs).returncode)",
+                "    except OSError as error:",
+                "        codes.append(str(error))",
+                "print(json.dumps(codes))",
+            ]
+        )
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        out_file = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "temp_tests",
+            f"stdin probe {os.getpid()}.log",
+        )
+        os.makedirs(os.path.dirname(out_file), exist_ok=True)
+        self.addCleanup(lambda: os.path.exists(out_file) and os.remove(out_file))
+        env = dict(os.environ, OUT_FILE=out_file)
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [root, env.get("PYTHONPATH")]))
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [0, 0])
 
     def test_mayapy_receives_a_non_ascii_script_and_argument_intact(self):
         from conftest import find_mayapy
@@ -1373,7 +1441,11 @@ class TestCreateShortcut(unittest.TestCase):
         )
         self.assertEqual(os.path.basename(path), f"{self.WORD} Tools.lnk")
         link = self._read_link(path)
-        self.assertEqual(link.get("PATH"), target)
+        # normcase: the shell hands the drive letter back canonical (O:), while
+        # *target* keeps the case the suite was launched with (o:).
+        self.assertEqual(
+            os.path.normcase(link.get("PATH") or ""), os.path.normcase(target)
+        )
         self.assertEqual(link.get("ARGS"), '-m pkg "an app"')
         self.assertEqual(link.get("CWD"), os.path.expanduser("~"))
         # The description and the AppUserModelID have no reader on
@@ -1451,6 +1523,467 @@ class TestCreateShortcut(unittest.TestCase):
             )
         with open(path, encoding="utf-8") as handle:
             self.assertIn("Exec=/bin/x --flag", handle.read().splitlines())
+
+
+#: The interpreter itself, not a venv's ``python.exe`` (a launcher whose child is
+#: the real process), so a pid a test reads is the process it means.
+_PY = getattr(sys, "_base_executable", None) or sys.executable
+
+
+class _ChildScripts(unittest.TestCase):
+    """A scoped folder for a test's child scripts and the files they write."""
+
+    def setUp(self):
+        temp = ptk.TempArtifacts("app_launcher_run", policy="scoped")
+        self.addCleanup(temp.cleanup)
+        self.root = temp.dir_path()
+
+    def _script(self, name, body):
+        import textwrap
+
+        path = os.path.join(self.root, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(body))
+        return path
+
+    def _wait_for(self, path, seconds=30):
+        """What *path* holds, once something has written it."""
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    text = f.read().strip()
+                if text:
+                    return text
+            time.sleep(0.1)
+        self.fail(f"{os.path.basename(path)} was never written")
+
+    @staticmethod
+    def _alive(pid) -> bool:
+        if os.name != "nt":
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            return True
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        code = wintypes.DWORD()
+        kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        kernel32.CloseHandle(handle)
+        return code.value == 259  # STILL_ACTIVE
+
+    def assertEnds(self, pid, message, seconds=10):
+        end = time.monotonic() + seconds
+        while self._alive(pid) and time.monotonic() < end:
+            time.sleep(0.1)
+        self.assertFalse(self._alive(pid), message)
+
+
+class TestRunStreaming(_ChildScripts):
+    """``run(on_output=)``: however the caller's side of the stream fails, the
+    child goes with it."""
+
+    def test_an_error_in_on_output_ends_the_child(self):
+        """Only a cancel and the timeout killed it: a callback that raised (a UI
+        gone, a bug), or a Ctrl+C, returned to the caller with the child still
+        running, unwatched."""
+        pid_file = os.path.join(self.root, "child.pid")
+        code = (
+            "import os, time; "
+            f"open({pid_file!r}, 'w').write(str(os.getpid())); "
+            "print('ready', flush=True); time.sleep(120)"
+        )
+
+        def on_output(line):
+            if line == "ready":
+                raise RuntimeError("the caller failed")
+
+        with self.assertRaises(RuntimeError):
+            AppLauncher.run(_PY, ["-c", code], timeout=60, on_output=on_output)
+        self.assertEnds(int(self._wait_for(pid_file)), "the child outlived the error")
+
+
+@unittest.skipUnless(sys.platform == "win32", "a hidden run is a Windows desktop")
+class TestRunHidden(_ChildScripts):
+    """``run(hidden=True)``: an app with no headless mode (RizomUV, Toolbag) runs
+    where no one sees it -- its window on a private desktop with the user's own
+    monitors, so where it opens and saves itself is unchanged -- and nothing it
+    started outlives the run, however the run ends."""
+
+    TITLE = "pythontk hidden-run test"
+
+    def setUp(self):
+        super().setUp()
+        # A child that starts a grandchild, says which, and outlives any test.
+        self.tree = self._script(
+            "tree.py",
+            """
+            import subprocess, sys, time
+            grand = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            open(sys.argv[1], "w").write(str(grand.pid))
+            time.sleep(120)
+            """,
+        )
+        self.pids = os.path.join(self.root, "grandchild.pid")
+
+    def _run_in_thread(self, *args, **kwargs):
+        import threading
+
+        outcome = {}
+
+        def target():
+            try:
+                outcome["result"] = AppLauncher.run(*args, hidden=True, **kwargs)
+            except BaseException as error:  # reported by the test that joins
+                outcome["error"] = error
+
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+        return thread, outcome
+
+    @staticmethod
+    def _titles(desktop=None):
+        """Visible top-level window titles on *desktop* (None: this process's)."""
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        found = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def each(hwnd, _):
+            if user32.IsWindowVisible(hwnd):
+                buffer = ctypes.create_unicode_buffer(256)
+                user32.GetWindowTextW(hwnd, buffer, 256)
+                found.append(buffer.value)
+            return True
+
+        if desktop is None:
+            user32.EnumWindows(each, 0)
+        else:
+            user32.EnumDesktopWindows.argtypes = (
+                wintypes.HANDLE,
+                ctypes.c_void_p,
+                wintypes.LPARAM,
+            )
+            user32.EnumDesktopWindows(desktop, each, 0)
+        return found
+
+    def _report(self):
+        """A child that prints ``desktop|cwd|ascii($PROBE)``, writes to stderr and
+        exits 3."""
+        return self._script(
+            "report.py",
+            """
+            import ctypes, os, sys
+            user32 = ctypes.windll.user32
+            desktop = user32.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId())
+            name = ctypes.create_unicode_buffer(256)
+            user32.GetUserObjectInformationW(desktop, 2, name, 512, None)  # UOI_NAME
+            print(name.value, os.getcwd(), ascii(os.environ.get("PROBE")), sep="|", flush=True)
+            sys.stderr.write("to stderr")
+            sys.exit(3)
+            """,
+        )
+
+    def test_it_runs_on_its_own_desktop_with_its_pipes_env_cwd_and_exit_code(self):
+        """Every shape of ``run``: captured, to a file, and streamed."""
+        from pythontk.core_utils.app_launcher import _hidden
+
+        child = self._report()
+        cwd = os.path.join(self.root, "work")
+        os.makedirs(cwd)
+        kwargs = dict(cwd=cwd, env=dict(os.environ, PROBE="café ★"), timeout=60)
+        expected = [_hidden._DESKTOP_NAME, os.path.normcase(cwd), ascii("café ★")]
+
+        def report(line):
+            desktop, where, value = line.strip().split("|")
+            return [desktop, os.path.normcase(where), value]
+
+        captured = AppLauncher.run(_PY, [child], hidden=True, **kwargs)
+        self.assertEqual(report(captured.stdout), expected)
+        self.assertEqual(captured.stderr, "to stderr")
+        self.assertEqual(captured.returncode, 3)
+
+        log = os.path.join(self.root, "run.log")
+        to_file = AppLauncher.run(_PY, [child], hidden=True, output_file=log, **kwargs)
+        self.assertEqual(to_file.returncode, 3)
+        with open(log, encoding="utf-8") as f:
+            first, rest = f.read().split("\n", 1)
+        self.assertEqual(report(first), expected)
+        self.assertEqual(rest, "to stderr")
+
+        lines = []
+        streamed = AppLauncher.run(
+            _PY,
+            [child],
+            hidden=True,
+            on_output=lambda line: line and lines.append(line),
+            **kwargs,
+        )
+        self.assertEqual(streamed.returncode, 3)
+        self.assertEqual(report(lines[0]), expected)
+
+    def test_an_emoji_in_its_environment_reaches_it(self):
+        """The block CreateProcess reads is UTF-16, where an emoji is two units:
+        a block sized in code points refused the start ("string too long")."""
+        value = "café ★ \U0001F600"
+        result = AppLauncher.run(
+            _PY,
+            [self._report()],
+            env=dict(os.environ, PROBE=value),
+            timeout=60,
+            hidden=True,
+        )
+        self.assertEqual(result.stdout.strip().split("|")[-1], ascii(value))
+
+    @unittest.skipUnless(_INTERACTIVE, "needs an interactive desktop")
+    def test_its_window_never_reaches_the_users_desktop(self):
+        import ctypes
+        from ctypes import wintypes
+
+        from pythontk.core_utils.app_launcher import _hidden
+
+        child = self._script(
+            "window.py",
+            f"""
+            import tkinter
+            root = tkinter.Tk()
+            root.title({self.TITLE!r})
+            root.geometry("400x300+200+200")
+            root.after(4000, root.destroy)
+            root.mainloop()
+            """,
+        )
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.OpenDesktopW.restype = wintypes.HANDLE
+        user32.OpenDesktopW.argtypes = (
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        )
+        user32.CloseDesktop.argtypes = (wintypes.HANDLE,)
+        thread, outcome = self._run_in_thread(_PY, [child], timeout=60)
+        on_user, on_hidden, desktop = set(), set(), None
+        while thread.is_alive():
+            # DESKTOP_READOBJECTS | DESKTOP_ENUMERATE; it exists once the run starts.
+            desktop = desktop or user32.OpenDesktopW(
+                _hidden._DESKTOP_NAME, 0, False, 0x0001 | 0x0040
+            )
+            on_user.update(t for t in self._titles() if t == self.TITLE)
+            if desktop:
+                on_hidden.update(t for t in self._titles(desktop) if t == self.TITLE)
+            time.sleep(0.1)
+        if desktop:
+            user32.CloseDesktop(desktop)
+        self.assertNotIn("error", outcome, outcome.get("error"))
+        self.assertEqual(outcome["result"].returncode, 0, outcome["result"].stderr)
+        self.assertEqual(on_user, set(), "its window showed on the user's desktop")
+        self.assertEqual(on_hidden, {self.TITLE}, "its window was never up")
+
+    def test_a_timeout_ends_the_app_and_what_it_started(self):
+        """Promptly: a plain run's timeout kills the app alone, then waits on the
+        output pipe its grandchild still holds -- until the grandchild ends."""
+        import subprocess
+
+        start = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            AppLauncher.run(_PY, [self.tree, self.pids], timeout=5, hidden=True)
+        self.assertLess(time.monotonic() - start, 30, "the timeout did not end it")
+        self.assertEnds(int(self._wait_for(self.pids)), "the grandchild outlived it")
+
+    def test_a_cancel_ends_it_all_and_returns_at_once(self):
+        """A hidden app stuck on a dialog no one can see held its caller for the
+        whole timeout. The ambient ``CancelScope`` is polled while it runs: a
+        source polled on the run's own thread (an Esc hold, Maya's interrupt
+        peek) or a cancel pushed from another (the long-run monitor's Esc watch,
+        its dialog's Cancel) ends the app and what it started, at once.
+        Added: 2026-10-19"""
+        import threading
+
+        def cancel_when_started(scope):
+            end = time.monotonic() + 30
+            while not os.path.exists(self.pids) and time.monotonic() < end:
+                time.sleep(0.05)
+            scope.cancel("escape")
+
+        for how in ("pulled", "pushed"):
+            with self.subTest(how=how):
+                if os.path.exists(self.pids):
+                    os.remove(self.pids)
+                scope = ptk.CancelScope("hidden run")
+                if how == "pulled":
+                    scope.add_source(lambda: os.path.exists(self.pids))
+                else:
+                    threading.Thread(
+                        target=cancel_when_started, args=(scope,), daemon=True
+                    ).start()
+                start = time.monotonic()
+                with scope.activate(), self.assertRaises(ptk.OperationCancelled):
+                    AppLauncher.run(_PY, [self.tree, self.pids], timeout=30, hidden=True)
+                self.assertLess(time.monotonic() - start, 20, "the cancel did not end it")
+                self.assertTrue(scope.consumed, "the run never reported the cancel")
+                self.assertEnds(int(self._wait_for(self.pids)), "the grandchild outlived it")
+
+    def test_an_error_or_interrupt_in_the_caller_ends_it_all(self):
+        import subprocess
+        from unittest import mock
+
+        for error in (RuntimeError("the caller failed"), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__):
+                if os.path.exists(self.pids):
+                    os.remove(self.pids)
+
+                def interrupted(proc, *args, **kwargs):
+                    self._wait_for(self.pids)
+                    raise error
+
+                with mock.patch.object(subprocess.Popen, "communicate", interrupted):
+                    with self.assertRaises(type(error)):
+                        AppLauncher.run(_PY, [self.tree, self.pids], timeout=60, hidden=True)
+                self.assertEnds(int(self._wait_for(self.pids)), "the grandchild outlived it")
+
+        if os.path.exists(self.pids):
+            os.remove(self.pids)
+
+        def on_output(line):
+            if os.path.exists(self.pids):
+                raise RuntimeError("the caller failed")
+
+        with self.assertRaises(RuntimeError):
+            AppLauncher.run(
+                _PY, [self.tree, self.pids], timeout=60, hidden=True, on_output=on_output
+            )
+        self.assertEnds(int(self._wait_for(self.pids)), "the grandchild outlived it")
+
+    def test_what_it_started_ends_when_the_app_does(self):
+        """Nothing is left on a desktop no one can see: a helper the app left
+        running ends with the run."""
+        leaves = self._script(
+            "leaves.py",
+            """
+            import subprocess, sys
+            grand = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            open(sys.argv[1], "w").write(str(grand.pid))
+            """,
+        )
+        result = AppLauncher.run(_PY, [leaves, self.pids], timeout=60, hidden=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEnds(int(self._wait_for(self.pids)), "the helper outlived the run")
+
+    def test_it_all_ends_with_a_caller_killed_outright(self):
+        import subprocess
+
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        caller = self._script(
+            "caller.py",
+            f"""
+            import sys
+            sys.path.insert(0, {root!r})
+            from pythontk.core_utils.app_launcher import AppLauncher
+            AppLauncher.run({_PY!r}, [{self.tree!r}, {self.pids!r}], timeout=120, hidden=True)
+            """,
+        )
+        outer = subprocess.Popen([_PY, caller])
+        self.addCleanup(lambda: outer.poll() is None and outer.kill())
+        grandchild = int(self._wait_for(self.pids))
+        self.assertTrue(self._alive(grandchild))
+        outer.kill()  # TerminateProcess: none of the caller's own cleanup runs
+        outer.wait(10)
+        self.assertEnds(grandchild, "the hidden tree outlived its caller")
+
+    def test_no_other_handle_of_the_caller_reaches_it(self):
+        """It inherits its own std handles and nothing else: another pipe of this
+        process (one meant for some other child) reaches its end of file while the
+        hidden app still runs, instead of waiting on an app no one can see."""
+        import threading
+
+        started = os.path.join(self.root, "started")
+        read, write = os.pipe()
+        self.addCleanup(os.close, read)
+        os.set_inheritable(write, True)  # as a pipe for another child of a host is
+        code = f"import time; open({started!r}, 'w').write('1'); time.sleep(8)"
+        thread, outcome = self._run_in_thread(_PY, ["-c", code], timeout=60)
+        self._wait_for(started)
+        os.close(write)
+        ended = threading.Event()
+        threading.Thread(
+            target=lambda: (os.read(read, 1), ended.set()), daemon=True
+        ).start()
+        self.assertTrue(ended.wait(4), "the hidden app holds another pipe open")
+        self.assertTrue(thread.is_alive(), "the hidden app should still be running")
+        thread.join(30)
+        self.assertNotIn("error", outcome, outcome.get("error"))
+
+    @unittest.skipUnless(_INTERACTIVE, "needs an interactive desktop")
+    def test_where_it_saved_its_window_is_where_it_opens_next(self):
+        """A visible run saves where its window is, as a user's session does; a
+        hidden run restores that and, quitting normally, saves it again: the
+        bytes are unchanged, so the next normal launch opens where it did."""
+        import subprocess
+
+        probe = subprocess.run(
+            [sys.executable, "-c", "import qtpy.QtWidgets"], capture_output=True
+        )
+        if probe.returncode:
+            self.skipTest("qtpy is not installed for this interpreter")
+        geometry = os.path.join(self.root, "geometry.bin")
+        app = self._script(
+            "qt_app.py",
+            f"""
+            import os, sys
+            from qtpy import QtCore, QtWidgets
+            app = QtWidgets.QApplication(sys.argv)
+            window = QtWidgets.QMainWindow()
+            window.setWindowTitle({self.TITLE!r})
+            path = {geometry!r}
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    window.restoreGeometry(QtCore.QByteArray(f.read()))
+            else:
+                window.setGeometry(260, 180, 900, 600)
+            window.show()
+
+            def leave():
+                with open(path, "wb") as f:
+                    f.write(bytes(window.saveGeometry()))
+                app.quit()
+
+            QtCore.QTimer.singleShot(1500, leave)
+            app.exec()
+            """,
+        )
+        env = dict(os.environ)
+        env.pop("QT_QPA_PLATFORM", None)  # a real window, not a test's offscreen one
+        subprocess.run([sys.executable, app], env=env, timeout=60, check=True)
+        with open(geometry, "rb") as f:
+            visible = f.read()
+        result = AppLauncher.run(sys.executable, [app], env=env, timeout=60, hidden=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(geometry, "rb") as f:
+            self.assertEqual(f.read(), visible, "a hidden run moved the window")
+
+    def test_where_it_cannot_hide_it_runs_as_it_always_has(self):
+        """A virtual display is not the user's (Linux: Qt resets a geometry saved
+        on a screen 25% wider or narrower), so elsewhere ``hidden`` is a no-op."""
+        from unittest import mock
+
+        child = self._report()
+        here = AppLauncher.run(_PY, [child], timeout=60).stdout.split("|")[0]
+        with mock.patch.object(AppLauncher, "can_hide", staticmethod(lambda: False)):
+            result = AppLauncher.run(_PY, [child], timeout=60, hidden=True)
+        self.assertEqual(result.stdout.split("|")[0], here)
 
 
 if __name__ == "__main__":

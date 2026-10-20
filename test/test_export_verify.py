@@ -2021,6 +2021,43 @@ class TestFbxDependenciesGate(_FixtureCase):
         self.assertIn("P_shadow.png", row.detail)
         self.assertNotIn("Crate_Lightmap.exr", row.detail)
 
+    def test_a_modules_files_count_only_where_a_reader_binds_them(self):
+        """The gate reads the records a reader reads (``FbxMedia.
+        reader_records``): an assembly export that left a referenced module's
+        objects out still carries the module's ``NS:data_export``, and the
+        gate failed on maps no reader binds -- beside the scene's own record,
+        or for nodes the file does not carry (BACKLOG 2026-10-09).
+        Added: 2026-10-17"""
+        from test_fbx_media import build_carrier_fbx
+
+        module = {
+            "version": 1,
+            "objects": [{"name": "Gone", "map": "Gone_Lightmap.exr"}],
+            "probe": {"map": "Module_Probe.exr", "position": [0, 0, 0]},
+        }
+        left_out = build_carrier_fbx(
+            self.path("left_out.fbx"),
+            {},
+            others={"MOD:data_export": {"lightmap_metadata": module}},
+        )
+        self.assertEqual(self._gate(left_out).status, SKIP)
+
+        shadowed = build_carrier_fbx(
+            self.path("shadowed.fbx"),
+            self.RECORDS,
+            others={"MOD:data_export": {"lightmap_metadata": module}},
+        )
+        files = []
+        for name in ("Crate_Lightmap.exr", "Room_Probe.exr", "P_shadow.png"):
+            files.append(self.path(name))
+            with open(files[-1], "wb") as fh:
+                fh.write(name.encode() * 4)
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        FbxMedia.embed(shadowed, files=files)
+        row = self._gate(shadowed)
+        self.assertEqual(row.status, PASS, row.detail)
+
     def test_records_naming_nothing_and_no_fbx_skip(self):
         from test_fbx_media import build_carrier_fbx
 

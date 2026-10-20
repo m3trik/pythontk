@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -28,6 +29,8 @@ import tempfile
 import unittest
 import unittest.mock
 from unittest.mock import patch
+
+import numpy as np
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -432,8 +435,9 @@ class TestFbxToGlb(unittest.TestCase):
         """
         seen = {}
 
-        def _spy(edit, search_dirs=()):
+        def _spy(edit, search_dirs=(), hdr_codec=None):
             seen["search_dirs"] = list(search_dirs)
+            seen["hdr_codec"] = hdr_codec
             return []
 
         def _run(cmd, **kw):
@@ -455,8 +459,14 @@ class TestFbxToGlb(unittest.TestCase):
             patch("subprocess.run", side_effect=_run),
             patch.object(MeshConvert, "apply_glb_lightmaps", side_effect=_spy),
         ):
-            MeshConvert.fbx_to_glb(self.src, lightmap_dirs=["D:/maps", "D:/more"])
+            codec = object()
+            MeshConvert.fbx_to_glb(
+                self.src, lightmap_dirs=["D:/maps", "D:/more"], hdr_codec=codec
+            )
         self.assertEqual(seen.get("search_dirs"), ["D:/maps", "D:/more"])
+        # ...and so must the host's own float-image codec (Added: 2026-10-17):
+        # a GLB built in Blender, which has no cv2, shipped unlit without it.
+        self.assertIs(seen.get("hdr_codec"), codec)
 
     def test_default_dst_derived_from_src(self):
         expected_dst = os.path.join(self.tmp, "model.glb")
@@ -1465,6 +1475,39 @@ class TestGlbEditSession(unittest.TestCase):
             MeshConvert.set_glb_base_color(path, {"Body": {"color": (0.2, 0.4, 0.8)}})
             MeshConvert.set_glb_emissive(path, {"Body": {"color": (1.0, 0.0, 0.0)}})
         self.assertEqual(len(writes), 2)
+
+    def test_a_black_emissive_switches_the_converters_glow_off(self):
+        """Off means off: FBX2glTF glows a mapped emissive at 1.0 whatever the DCC
+        said, so a material authored dark (Maya's ``emissive_intensity`` 0) must
+        leave with factor 0 and no map -- skipped, a production room's ceiling
+        panels lit WebXR at full (2026-10-17)."""
+        path = self._write_glb(
+            {
+                "asset": {"version": "2.0"},
+                "materials": [
+                    {
+                        "name": "Panel",
+                        "emissiveFactor": [1.0, 1.0, 1.0],
+                        "emissiveTexture": {"index": 0},
+                        "extensions": {
+                            "KHR_materials_emissive_strength": {"emissiveStrength": 4.0}
+                        },
+                    }
+                ],
+                "textures": [{"source": 0}],
+                "images": [{"uri": "panel_Emissive.png"}],
+            }
+        )
+        records = MeshConvert.set_glb_emissive(
+            path, {"Panel": {"color": (0.0, 0.0, 0.0), "texture": self._png()}}
+        )
+        mat = MeshConvert._read_glb(path).gltf["materials"][0]
+        self.assertEqual(mat["emissiveFactor"], [0.0, 0.0, 0.0])
+        self.assertNotIn("emissiveTexture", mat)
+        self.assertNotIn("KHR_materials_emissive_strength", mat.get("extensions") or {})
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["factor"], [0.0, 0.0, 0.0])
+        self.assertIsNone(records[0]["texture"])  # nothing embedded for an unlit map
 
     def test_an_applier_that_matches_nothing_writes_nothing(self):
         """No match, no edit, no I/O — the usual case for the alpha repair."""
@@ -3396,6 +3439,31 @@ class TestSceneSidecar(unittest.TestCase):
         self.assertEqual(handoff["sections"], sorted(MeshConvert.SIDECAR_APPLIERS))
         self.assertIn(f"extras.{MeshConvert.LIGHTMAP_WEB_KEY}", handoff["reads"])
 
+    def test_handoff_assembly_lists_the_approved_scene_lighting_included(self):
+        """A reader holding one .glb rebuilds the scene from ``assembly``: the
+        asset (its repairs already applied -- applying them again would be a
+        second set of values), every manifest a conversion may add, and the
+        lighting it was approved under, each row pointing at real data."""
+        handoff = self._envelope({})["handoff"]
+        rows = {row["part"]: row for row in handoff["assembly"]}
+        self.assertIn("already applied", rows["asset"]["spec"])
+        for key in (
+            MeshConvert.LIGHTMAP_WEB_KEY,
+            MeshConvert.ANIMATION_WEB_KEY,
+            MeshConvert.SHADOW_WEB_KEY,
+            MeshConvert.ARTICULATION_WEB_KEY,
+        ):
+            with self.subTest(manifest=key):
+                self.assertTrue(
+                    any(f"extras.{key}" in row["data"] for row in rows.values())
+                )
+        for row in MeshConvert.LIGHTING_ASSEMBLY:
+            with self.subTest(part=row["part"]):
+                self.assertIn(row["part"], rows)
+                section = row["data"][0].split(".", 1)[1]
+                self.assertIn(section, handoff["rendering"])
+        self.assertIn("'handoff.assembly'", handoff["instructions"])
+
     def test_apply_resolves_every_authoring_path_to_an_embedded_image(self):
         """The content-addressed join: path -> glTF image index + sha256.
 
@@ -3809,28 +3877,65 @@ class TestFbxHandoff(unittest.TestCase):
         self.assertNotIn("supplied separately", text)
         self.assertNotIn("NOT embedded", text)
         self.assertIn("lightmapInfo", text)
-        self.assertIn("scaleOffset", text)
+        # The per-field account lives in the record's own assembly row, which
+        # the block carries whenever the record is present.
+        block = MeshConvert.build_fbx_handoff(["lightmap_metadata"])
+        (row,) = [r for r in block["assembly"] if r["part"] == "lightmap_metadata"]
+        self.assertIn("scaleOffset", row["spec"])
+        self.assertIn("uvIndex", row["spec"])
         # The bake commits a non-1.0 intensity INTO the texels (both readers,
         # Unity and the GLB, apply the map as stored): a reader told it is a
         # multiplier "restoring the bake's range" would apply it twice.
-        self.assertIn("already carry", text)
-        self.assertNotIn("restoring the bake's range", text)
+        self.assertIn("already carry", row["spec"])
+        self.assertNotIn("restoring the bake's range", text + row["spec"])
         # No asset key is carried, so the text must not lean on one.
         self.assertNotIn("named by 'asset'", text)
-        block = MeshConvert.build_fbx_handoff(["lightmap_metadata"])
         self.assertNotIn("asset", block)
 
-    def test_publishes_the_same_rendering_policy_as_the_glb(self):
+    def test_publishes_the_glb_policy_in_its_own_addresses(self):
         """A recipient who lights a baked asset normally blows out every baked
         surface, and that reads as a bake regression whichever container it
-        arrived in — so both carriers publish the one policy, by copy."""
+        arrived in -- so both carriers publish the one policy, by copy, every
+        value the same. Only the prose differs: it names where THIS file holds
+        the probe and the lightmaps (an FBX reader sent to
+        ``extras.lightmap_web`` found no probe and dropped the environment)."""
         block = MeshConvert.build_fbx_handoff(["lightmap_metadata"])
-        self.assertEqual(block["rendering"], MeshConvert.RENDERING_POLICY)
+        self.assertEqual(
+            block["rendering"], MeshConvert.rendering_policy(carrier="fbx")
+        )
+        for section, fields in MeshConvert.RENDERING_POLICY.items():
+            for field, value in fields.items():
+                if isinstance(value, str) and field in (
+                    MeshConvert.RENDERING_CARRIERS["fbx"].get(section) or {}
+                ):
+                    continue
+                with self.subTest(field=f"{section}.{field}"):
+                    self.assertEqual(block["rendering"][section][field], value)
         self.assertIsNot(
             block["rendering"],
             MeshConvert.RENDERING_POLICY,
             "a caller mutating the block must not edit the class constant",
         )
+
+    def test_an_unknown_rendering_carrier_is_refused(self):
+        """A carrier the table does not know would publish the GLB's
+        addresses under another name -- the defect the table exists to end."""
+        with self.assertRaises(ValueError):
+            MeshConvert.rendering_policy(carrier="usdz")
+
+    def test_the_probe_level_is_stated_for_both_lightmap_conventions(self):
+        """``probeIntensity`` (1/pi) is three.js': it draws a lightmapped
+        surface pi below a renderer that composites the texel as albedo x
+        texel, which is why unitytk plays the same probe at 1. A bare number
+        sends a Unity build to a third of the approved reflections, so the
+        prose must name both conventions, on both carriers."""
+        for carrier in MeshConvert.RENDERING_CARRIERS:
+            probe = MeshConvert.rendering_policy(carrier=carrier)["environment"][
+                "probe"
+            ]
+            with self.subTest(carrier=carrier):
+                self.assertIn("probeIntensity (1/pi)", probe)
+                self.assertIn("and 1 in one that composites it", probe)
 
     def test_an_exports_rendering_choice_must_name_a_published_field(self):
         """An export's choices merge over the policy -- a baked-reflection level
@@ -4975,6 +5080,82 @@ class TestGlbLightmaps(unittest.TestCase):
         # Deterministic: the same map encodes to the same bytes.
         self.assertEqual(png, ImgUtils.encode_hdr_for_web(path, percentile=100.0)[0])
 
+    def test_encode_keeps_a_lit_pool_brighter_than_the_percentile(self):
+        """A pool of light wider than 0.5% of the map keeps its peak.
+
+        Divided by the 99.5th percentile, every texel of a lit pool above it
+        clipped: measured on a production room, the backsplash and the floor
+        pools went flat grey, 58-68 screen codes off. The divisor is now the
+        map's peak, held between that percentile and HDR_WEB_HEADROOM times it.
+        """
+        import cv2
+        import numpy as np
+
+        from pythontk import ImgUtils
+
+        img = np.full((100, 100, 3), 0.1, dtype=np.float32)
+        img[:2, :] = np.linspace(0.5, 2.0, 100, dtype=np.float32)[None, :, None]
+        path = os.path.join(self.tmp, "pool.exr")
+        cv2.imwrite(path, img)
+        png, scalar = ImgUtils.encode_hdr_for_web(path)
+        self.assertAlmostEqual(scalar, 2.0, places=4)
+        arr = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+        self.assertEqual(int(arr[:2].max()), 255)  # only the peak reaches full scale
+        self.assertLess(int(arr[:2, :50].max()), 250)
+
+    def test_encode_holds_a_firefly_at_the_headroom(self):
+        """One wild texel cannot crush the map: the divisor stops at the cap."""
+        import cv2
+        import numpy as np
+
+        from pythontk import ImgUtils
+
+        img = np.full((40, 40, 3), 0.1, dtype=np.float32)
+        img[3, 7] = 100.0
+        path = os.path.join(self.tmp, "firefly.exr")
+        cv2.imwrite(path, img)
+        _png, scalar = ImgUtils.encode_hdr_for_web(path)
+        self.assertAlmostEqual(scalar, ImgUtils.HDR_WEB_HEADROOM * 0.1, places=4)
+
+    def test_encode_clips_a_texel_above_the_cap_without_changing_its_hue(self):
+        """A warm light past the cap stays warm: the triple is scaled, not clipped per channel."""
+        import cv2
+        import numpy as np
+
+        from pythontk import ImgUtils
+
+        img = np.full((40, 40, 3), 0.1, dtype=np.float32)
+        img[5, 5] = (5.0, 10.0, 20.0)  # BGR: R 20, G 10, B 5 -- 50x the cap
+        path = os.path.join(self.tmp, "warm.exr")
+        cv2.imwrite(path, img)
+        png, _scalar = ImgUtils.encode_hdr_for_web(path)
+        bgr = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)[5, 5]
+        linear = ImgUtils.srgb_to_linear(bgr.astype(np.float32) / 255.0)
+        self.assertEqual(int(bgr[2]), 255)
+        self.assertAlmostEqual(float(linear[1] / linear[2]), 0.5, delta=0.02)
+        self.assertAlmostEqual(float(linear[0] / linear[2]), 0.25, delta=0.02)
+
+    def test_encode_pixels_is_the_file_encode_without_the_file(self):
+        """The pixel form a host without cv2 (Blender) calls: the same codes and scalar."""
+        import cv2
+        import numpy as np
+
+        from pythontk import ImgUtils
+
+        rng = np.random.default_rng(3)
+        img = (rng.random((16, 24, 3)) ** 3 * 3).astype(np.float32)
+        path = os.path.join(self.tmp, "pixels.exr")
+        cv2.imwrite(path, img)
+        png, scalar = ImgUtils.encode_hdr_for_web(path)
+        codes, pixel_scalar = ImgUtils.encode_hdr_pixels_for_web(img)
+        self.assertAlmostEqual(pixel_scalar, scalar, places=5)
+        np.testing.assert_array_equal(
+            codes, cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+        )
+        flat, flat_scalar = ImgUtils.encode_hdr_pixels_for_web(img.reshape(-1, 3))
+        np.testing.assert_array_equal(flat.reshape(codes.shape), codes)
+        self.assertEqual(flat_scalar, pixel_scalar)
+
     def test_encode_percentile_ignores_zero_texels(self):
         """Unbaked (zero) texels must not drag the divisor toward black."""
         import cv2
@@ -5180,6 +5361,45 @@ class TestGlbLightmaps(unittest.TestCase):
         self.assertAlmostEqual(float(pixels[0, 0, 0]), 35.0, delta=0.35)
         self.assertAlmostEqual(float(pixels[-1, -1, 1]), 0.5, delta=0.005)
 
+    def test_the_bakes_lights_never_ship_as_lights(self):
+        """The bake's lights reach the GLB only as highlights drawn into copies
+        of its probe (``_embed_highlight_probes``): a viewer that lit them live
+        paid for every light on every pixel, and one that does not know they
+        are baked lights the room twice. With no geometry to draw them for,
+        the probe ships as captured and no light rides the manifest."""
+        manifest = self._probe_manifest(os.path.basename(self._probe_exr()))
+        manifest["lights"] = [
+            {"name": "KEY", "type": "point", "position": [0.0, 300.0, 0.0],
+             "intensity": 40000.0, "unit_scale": 0.01},
+        ]
+        glb = self._glb(self._scene(manifest))
+        self.assertEqual(len(MeshConvert.apply_glb_lightmaps(glb)), 1)
+        with MeshConvert.open_glb(glb) as edit:
+            web = edit.gltf["extras"]["lightmap_web"]
+        self.assertNotIn("lights", web)
+        self.assertNotIn("highlights", web["probe"])
+
+    def test_a_malformed_light_is_left_out_and_the_lightmaps_still_ship(self):
+        """REGRESSION: a light entry a host wrote wrong (a coordinate that is
+        no number, a scalar colour) raised out of the pass AFTER the materials
+        were rebound, so the GLB kept its maps in the occlusion slot with no
+        ``lightmap_web`` to read them by. The light is left out, the rest ship."""
+        manifest = self._probe_manifest(os.path.basename(self._probe_exr()))
+        manifest["lights"] = [
+            {"name": "NO_NUMBER", "type": "point", "position": [None, 1.0, 2.0], "intensity": 1.0},
+            {"name": "SCALAR", "type": "point", "position": [0.0, 1.0, 2.0], "color": 0.5, "intensity": 1.0},
+            {"name": "KEY", "type": "point", "position": [0.0, 1.0, 2.0], "intensity": 1.0},
+        ]
+        glb = self._glb(self._scene(manifest))
+        self.assertEqual(len(MeshConvert.apply_glb_lightmaps(glb)), 1)
+        with MeshConvert.open_glb(glb) as edit:
+            web = edit.gltf["extras"]["lightmap_web"]
+        self.assertIn("roomMat", web["materials"])
+        self.assertIn("bufferView", web["probe"])
+        self.assertEqual(
+            [l["name"] for l in MeshConvert.lights_in_metres(manifest["lights"])], ["KEY"]
+        )
+
     def test_the_probe_survives_bin_compaction(self):
         """The view is named from extras alone; compaction keeps what JSON names."""
         manifest = self._probe_manifest(os.path.basename(self._probe_exr()))
@@ -5205,6 +5425,157 @@ class TestGlbLightmaps(unittest.TestCase):
             web = edit.gltf["extras"]["lightmap_web"]
         self.assertNotIn("probe", web)
         self.assertIn("roomMat", web["materials"])
+
+    def _native_glb(self):
+        """A GLB as a DCC's own glTF exporter writes one with its lightmaps:
+        ``lightmap_web`` a JSON string in the first scene's extras (blendertk's
+        ``LightmapWebExport``), no probe yet."""
+        web = {
+            "version": 1,
+            "carrier": "occlusion",
+            "uv": 1,
+            "encoding": "srgb",
+            "materials": {"roomMat": {"map": "room.png", "intensity": 1.0}},
+        }
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scenes": [{"nodes": [], "extras": {"lightmap_web": json.dumps(web)}}],
+        }
+        return self._glb(gltf, name="native.glb"), web
+
+    def _probe_record(self, probe_map):
+        return {
+            "map": probe_map,
+            "position": [1.0, 2.0, -3.0],
+            "box": [[-4.0, 0.0, -4.0], [4.0, 3.0, 4.0]],
+            "unit_scale": 1.0,
+        }
+
+    def test_a_native_exports_probe_embeds_into_its_own_manifest(self):
+        """The view the probe rides exists only once the file does, so a host
+        whose own exporter wrote ``lightmap_web`` embeds it after the export --
+        into that manifest, where the viewer reads it first. Added: 2026-10-17"""
+        glb, web = self._native_glb()
+        probe = self._probe_record(os.path.basename(self._probe_exr()))
+        entry = MeshConvert.embed_glb_lightmap_probe(glb, probe, [self.tmp])
+        self.assertEqual(entry["mimeType"], "image/vnd.radiance")
+        self.assertEqual(entry["position"], [1.0, 2.0, -3.0])
+        with MeshConvert.open_glb(glb) as edit:
+            published = json.loads(edit.gltf["scenes"][0]["extras"]["lightmap_web"])
+            self.assertEqual(published["probe"], entry)
+            self.assertEqual(published["materials"], web["materials"])
+            self.assertNotIn("extras", edit.gltf, "one manifest, where it was")
+            pixels = self._probe_pixels(edit, entry["bufferView"])
+            views = len(edit.gltf["bufferViews"])
+        self.assertAlmostEqual(float(pixels[0, 0, 0]), 35.0, delta=0.35)
+        # An export that runs it twice keeps the one copy.
+        self.assertEqual(
+            MeshConvert.embed_glb_lightmap_probe(glb, probe, [self.tmp]), entry
+        )
+        with MeshConvert.open_glb(glb) as edit:
+            self.assertEqual(len(edit.gltf["bufferViews"]), views)
+
+    class _HostCodec:
+        """A host's own HDR codec (``hdr_codec``) -- what Blender hands the
+        pipeline in place of cv2: records what it encoded, returns marked bytes."""
+
+        def __init__(self, png):
+            self.png, self.encoded = png, []
+
+        def encode_hdr_for_web(self, path, percentile=None):
+            self.encoded.append(("web", os.path.basename(path)))
+            return self.png, 2.5
+
+        def encode_hdr_radiance(self, path):
+            self.encoded.append(("radiance", os.path.basename(path)))
+            return b"#?RADIANCE\nhost-encoded"
+
+    @staticmethod
+    def _png_bytes():
+        import io
+
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.new("RGB", (4, 4), (128, 128, 128)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    def _view_bytes(self, glb, index):
+        with MeshConvert.open_glb(glb) as edit:
+            view = edit.gltf["bufferViews"][index]
+            start = int(view.get("byteOffset", 0))
+            return bytes(edit.bin_data[start : start + int(view["byteLength"])])
+
+    def test_a_host_without_cv2_hands_its_own_radiance_encoder(self):
+        """Blender ships no cv2: its exporter encodes the probe through Blender's
+        own Radiance writer, and the bytes are embedded as given. Added:
+        2026-10-17"""
+        glb, _web = self._native_glb()
+        probe_path = self._probe_exr()
+        codec = self._HostCodec(self._png_bytes())
+        entry = MeshConvert.embed_glb_lightmap_probe(
+            glb,
+            self._probe_record(os.path.basename(probe_path)),
+            [self.tmp],
+            hdr_codec=codec,
+        )
+        self.assertEqual(codec.encoded, [("radiance", "room_Probe.exr")])
+        self.assertEqual(
+            self._view_bytes(glb, entry["bufferView"]), b"#?RADIANCE\nhost-encoded"
+        )
+
+    def test_a_host_codec_binds_the_lightmaps_and_the_probe_with_no_cv2(self):
+        """REGRESSION (2026-10-17): a GLB built inside Blender -- whose Python has
+        no cv2 -- warned every map "not encoded" and shipped unlit, its probe
+        with it. The host's codec encodes every float image the pass reads."""
+        exr = self._exr()
+        manifest = self._probe_manifest(os.path.basename(self._probe_exr()))
+        manifest["objects"][0]["map"] = os.path.basename(exr)
+        glb = self._glb(self._scene(manifest))
+        codec = self._HostCodec(self._png_bytes())
+        with unittest.mock.patch.dict(sys.modules, {"cv2": None}):
+            records = MeshConvert.apply_glb_lightmaps(glb, hdr_codec=codec)
+        self.assertEqual(len(records), 1, "the map bound without cv2")
+        self.assertEqual(
+            sorted(codec.encoded),
+            [("radiance", "room_Probe.exr"), ("web", os.path.basename(exr))],
+        )
+        with MeshConvert.open_glb(glb) as edit:
+            web = edit.gltf["extras"]["lightmap_web"]
+        self.assertEqual(web["materials"]["roomMat"]["intensity"], 2.5)
+        self.assertEqual(
+            self._view_bytes(glb, web["probe"]["bufferView"]),
+            b"#?RADIANCE\nhost-encoded",
+        )
+
+    def test_without_cv2_or_a_host_codec_the_maps_are_warned_not_encoded(self):
+        """The default codec is cv2's: absent, every map says so -- the warning
+        that was the only sign a Blender-built GLB shipped unlit."""
+        exr = self._exr()
+        glb = self._glb(
+            self._scene(
+                self._manifest([{"name": "room", "map": os.path.basename(exr)}])
+            )
+        )
+        with (
+            unittest.mock.patch.dict(sys.modules, {"cv2": None}),
+            self.assertLogs(
+                "pythontk.file_utils.mesh_convert._lightmaps", "WARNING"
+            ) as logs,
+        ):
+            self.assertEqual(MeshConvert.apply_glb_lightmaps(glb), [])
+        self.assertTrue(any("cv2" in line for line in logs.output), logs.output)
+
+    def test_a_glb_that_ships_no_lightmaps_takes_no_probe(self):
+        """Nothing in it binds a lightmap, so nothing would read the probe: the
+        file is left as found. Added: 2026-10-17"""
+        glb = self._glb({"asset": {"version": "2.0"}, "scenes": [{"nodes": []}]})
+        with open(glb, "rb") as fh:
+            before = fh.read()
+        probe = self._probe_record(os.path.basename(self._probe_exr()))
+        self.assertIsNone(MeshConvert.embed_glb_lightmap_probe(glb, probe, [self.tmp]))
+        with open(glb, "rb") as fh:
+            self.assertEqual(fh.read(), before)
 
     def test_superseded_carriers_agree_with_the_authoritative_one(self):
         """Every surviving copy of the lightmap metadata must say the same thing.
@@ -7657,6 +8028,108 @@ class TestSetGlbAlphaMode(unittest.TestCase):
         self.assertEqual(
             MeshConvert.SIDECAR_APPLIERS.get("alpha_mode"), "set_glb_alpha_mode"
         )
+
+
+class TestSetGlbUnlit(unittest.TestCase):
+    """The sidecar's unlit section: KHR_materials_unlit by material name.
+
+    A projected shadow plane reached WebXR lit, and the environment's specular
+    made it brighter than the floor it lay on (2026-10-15).
+    """
+
+    setUp = TestSetGlbAlphaMode.setUp
+    _glb = TestSetGlbAlphaMode._glb
+
+    @staticmethod
+    def _gltf(path):
+        with open(path, "rb") as f:
+            f.read(12)
+            chunk0_len = struct.unpack("<I", f.read(4))[0]
+            f.read(4)
+            return json.loads(f.read(chunk0_len).decode("utf-8"))
+
+    def test_marks_only_the_named_material_and_declares_the_extension(self):
+        path = self._glb(
+            "shadow.glb",
+            [
+                {"name": "S", "alphaMode": "BLEND"},
+                {"name": "Floor", "pbrMetallicRoughness": {"roughnessFactor": 0.4}},
+            ],
+        )
+        records = MeshConvert.set_glb_unlit(path, {"S": {}, "Missing": {}})
+        self.assertEqual(records, [{"material": "S"}])
+        gltf = self._gltf(path)
+        shadow, floor = gltf["materials"]
+        self.assertEqual(shadow["extensions"], {"KHR_materials_unlit": {}})
+        self.assertEqual(shadow["alphaMode"], "BLEND", "alpha stays as authored")
+        self.assertEqual(shadow["pbrMetallicRoughness"]["roughnessFactor"], 1.0)
+        self.assertNotIn("extensions", floor)
+        self.assertIn("KHR_materials_unlit", gltf["extensionsUsed"])
+
+    def test_nothing_named_leaves_the_file_alone(self):
+        path = self._glb("plain.glb", [{"name": "Floor"}])
+        self.assertEqual(MeshConvert.set_glb_unlit(path, {"Missing": {}}), [])
+        self.assertNotIn("extensionsUsed", self._gltf(path))
+
+    def test_registered_as_a_sidecar_section(self):
+        self.assertEqual(MeshConvert.SIDECAR_APPLIERS.get("unlit"), "set_glb_unlit")
+
+
+class TestSetGlbBaseColorAlpha(unittest.TestCase):
+    """The base-colour section's ``alpha``: the material's own opacity factor.
+
+    A shadow plane whose fade sat at a static 0.836 in Maya (texture alpha x
+    the plane's opacity) reached WebXR at alpha 1.0 -- solid black where Maya
+    drew it half-transparent (2026-10-15): no writer stated the factor.
+    """
+
+    setUp = TestSetGlbAlphaMode.setUp
+    _glb = TestSetGlbAlphaMode._glb
+    _gltf = staticmethod(TestSetGlbUnlit._gltf)
+
+    def _factor(self, path):
+        return self._gltf(path)["materials"][0]["pbrMetallicRoughness"][
+            "baseColorFactor"
+        ]
+
+    def test_alpha_alone_keeps_the_colour(self):
+        path = self._glb(
+            "fade.glb",
+            [
+                {
+                    "name": "S",
+                    "pbrMetallicRoughness": {"baseColorFactor": [0.5, 0.5, 0.5, 1.0]},
+                }
+            ],
+        )
+        records = MeshConvert.set_glb_base_color(path, {"S": {"alpha": 0.6}})
+        self.assertEqual(len(records), 1)
+        self.assertEqual(self._factor(path), [0.5, 0.5, 0.5, 0.6])
+
+    def test_alpha_with_a_colour(self):
+        path = self._glb("tint.glb", [{"name": "S"}])
+        MeshConvert.set_glb_base_color(
+            path, {"S": {"color": (0.0, 0.0, 0.0), "alpha": 0.25}}
+        )
+        self.assertEqual(self._factor(path), [0.0, 0.0, 0.0, 0.25])
+
+    def test_alpha_is_clamped(self):
+        path = self._glb("clamp.glb", [{"name": "S"}])
+        MeshConvert.set_glb_base_color(path, {"S": {"alpha": 1.7}})
+        self.assertEqual(self._factor(path), [1.0, 1.0, 1.0, 1.0])
+
+    def test_no_alpha_keeps_the_converters(self):
+        path = self._glb(
+            "keep.glb",
+            [
+                {
+                    "name": "S",
+                    "pbrMetallicRoughness": {"baseColorFactor": [1.0, 1.0, 1.0, 0.4]},
+                }
+            ],
+        )
+        MeshConvert.set_glb_base_color(path, {"S": {"color": (0.2, 0.2, 0.2)}})
+        self.assertEqual(self._factor(path), [0.2, 0.2, 0.2, 0.4])
 
 
 class TestApplyGlbAnimations(unittest.TestCase):
@@ -12245,6 +12718,760 @@ class TestDecodeGlbTextures(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 MeshConvert.decode_glb_textures(self.src, self.dst)
         self.assertFalse(os.path.exists(self.dst))
+
+
+class TestGlbHighlightProbes(unittest.TestCase):
+    """The bake's lights drawn into per-receiver copies of its probe (``_highlights.py``).
+
+    A room box 8 x 4 x 8 m with its probe at head height: a baked floor on the
+    box's bottom face (the shell), a baked table top inside, and an unbaked
+    asset of two materials whose bounds overlap -- plus a third unbaked part
+    across the room.
+    """
+
+    BOX = {"min": [-4.0, 0.0, -4.0], "max": [4.0, 4.0, 4.0]}
+    PROBE = {"position": [0.0, 1.8, 2.0], "box": BOX}
+
+    def setUp(self):
+        from pythontk import TempArtifacts
+
+        artifacts = TempArtifacts("mesh_convert_highlights", policy="scoped")
+        self.tmp = artifacts.dir_path()
+        self.addCleanup(artifacts.cleanup)
+
+    @staticmethod
+    def _quad(center, size, normal):
+        """Corners of an axis-aligned quad facing *normal* (+Y or +Z)."""
+        cx, cy, cz = center
+        sx, sy = size[0] / 2, size[1] / 2
+        if normal == (0, 1, 0):
+            return [(cx - sx, cy, cz + sy), (cx + sx, cy, cz + sy), (cx + sx, cy, cz - sy), (cx - sx, cy, cz - sy)]
+        return [(cx - sx, cy - sy, cz), (cx + sx, cy - sy, cz), (cx + sx, cy + sy, cz), (cx - sx, cy + sy, cz)]
+
+    def _room(self, quads, extra_nodes=(), uvs=False, moves=None):
+        """A GLB of *quads* ``(node, material, center, size, normal)``, each its own mesh.
+
+        *uvs* gives each quad two UV sets (the second the bake's); *moves*
+        ``{node: [(seconds, translation), ...]}`` is one take keying them."""
+        materials = sorted({q[1] for q in quads})
+        blob, views, accessors, nodes, meshes = bytearray(), [], [], [], []
+
+        def add(values, kind, fmt, component):
+            data = struct.pack(f"<{len(values)}{fmt}", *values)
+            data += b"\x00" * (-len(data) % 4)
+            views.append({"buffer": 0, "byteOffset": len(blob), "byteLength": len(data)})
+            blob.extend(data)
+            accessor = {"bufferView": len(views) - 1, "componentType": component, "count": len(values) // {"VEC3": 3, "VEC2": 2, "SCALAR": 1}[kind], "type": kind}
+            accessors.append(accessor)
+            return len(accessors) - 1
+
+        for name, material, center, size, normal in quads:
+            corners = self._quad(center, size, normal)
+            positions = [c for v in corners for c in v]
+            pos = add(positions, "VEC3", "f", 5126)
+            accessors[pos]["min"] = [min(positions[i::3]) for i in range(3)]
+            accessors[pos]["max"] = [max(positions[i::3]) for i in range(3)]
+            nrm = add([c for _ in corners for c in normal], "VEC3", "f", 5126)
+            idx = add([0, 1, 2, 0, 2, 3], "SCALAR", "H", 5123)
+            attributes = {"POSITION": pos, "NORMAL": nrm}
+            if uvs:
+                attributes["TEXCOORD_0"] = add([0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0], "VEC2", "f", 5126)
+                attributes["TEXCOORD_1"] = add([0.1, 0.1, 0.9, 0.1, 0.9, 0.9, 0.1, 0.9], "VEC2", "f", 5126)
+            meshes.append({"primitives": [{"attributes": attributes, "indices": idx, "material": materials.index(material)}]})
+            nodes.append({"name": name, "mesh": len(meshes) - 1})
+        nodes.extend(extra_nodes)
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scenes": [{"nodes": list(range(len(nodes)))}],
+            "scene": 0,
+            "nodes": nodes,
+            "meshes": meshes,
+            "materials": [{"name": m} for m in materials],
+            "accessors": accessors,
+            "bufferViews": views,
+        }
+        if moves:
+            samplers, channels = [], []
+            for node, keys in moves.items():
+                times = [float(t) for t, _ in keys]
+                time = add(times, "SCALAR", "f", 5126)
+                accessors[time]["min"], accessors[time]["max"] = [min(times)], [max(times)]
+                value = add([float(c) for _, v in keys for c in v], "VEC3", "f", 5126)
+                samplers.append({"input": time, "output": value, "interpolation": "LINEAR"})
+                target = {"node": [n["name"] for n in nodes].index(node), "path": "translation"}
+                channels.append({"sampler": len(samplers) - 1, "target": target})
+            gltf["animations"] = [{"name": "Take 001", "samplers": samplers, "channels": channels}]
+        gltf["buffers"] = [{"byteLength": len(blob)}]
+        return _write_glb_file(os.path.join(self.tmp, "room.glb"), gltf, bytes(blob))
+
+    def _scene(self, extra_nodes=(), **room):
+        return self._room(
+            [
+                ("FLOOR", "floorMat", (0.0, 0.0, 0.0), (8.0, 8.0), (0, 1, 0)),
+                ("TABLE", "tableMat", (0.0, 0.9, 0.0), (1.6, 0.8), (0, 1, 0)),
+                ("LAMP_BODY", "lampMat", (0.3, 1.2, 0.0), (0.3, 0.3), (0, 0, 1)),
+                ("LAMP_GLASS", "glassMat", (0.35, 1.25, 0.01), (0.2, 0.2), (0, 0, 1)),
+                ("STOOL", "stoolMat", (-3.0, 0.5, 3.0), (0.4, 0.4), (0, 1, 0)),
+            ],
+            extra_nodes,
+            **room,
+        )
+
+    BAKED = ["floorMat", "tableMat"]
+    # Over the table, and one on the ceiling (the box's top face).
+    HANGING = {"name": "OVER", "type": "point", "position": [0.0, 1.6, 0.3], "color": [1.0, 1.0, 1.0], "intensity": 2.0}
+    CEILING = {"name": "PANEL", "type": "rect", "position": [0.0, 4.0, 0.0], "direction": [0.0, -1.0, 0.0],
+               "right": [1.0, 0.0, 0.0], "color": [1.0, 1.0, 1.0], "intensity": 3.0, "width": 1.0, "height": 0.5}
+
+    def _layers(self, lights, glb=None, **kw):
+        return MeshConvert.highlight_probe_layers(
+            glb or self._scene(), lights, probe=dict(self.PROBE, **kw.pop("probe", {})),
+            width=128, baked=self.BAKED, **kw
+        )
+
+    def test_the_shell_reads_the_probe_as_captured(self):
+        """The floor lies on the box's bottom face: lights placed for the bench
+        and read from it glowed where no light shines, so it gets no copy."""
+        layers = self._layers([self.HANGING])
+        materials = [m for layer in layers for m in layer["materials"]]
+        self.assertNotIn("floorMat", materials)
+        self.assertIn("tableMat", materials)
+
+    def test_an_unbaked_assets_parts_share_one_copy_and_a_far_part_gets_its_own(self):
+        """Everything an unbaked object shows comes from the probe, so it gets a
+        copy placed for it: one per asset -- parts whose bounds meet -- not one
+        per material, and a part across the room one of its own."""
+        layers = self._layers([self.HANGING])
+        unbaked = sorted(sorted(layer["materials"]) for layer in layers if layer["receivers"] == "unbaked")
+        self.assertEqual(unbaked, [["glassMat", "lampMat"], ["stoolMat"]])
+        (interior,) = [layer for layer in layers if layer["receivers"] == "interior"]
+        self.assertEqual(interior["materials"], ["tableMat"])
+        self.assertEqual(interior["image"].shape, (64, 128, 3))
+        self.assertTrue(all(layer["image"].shape == (32, 64, 3) for layer in layers if layer["receivers"] == "unbaked"))
+
+    def test_a_light_on_the_box_is_already_true_and_keeps_its_own_level(self):
+        """A light lying on the box's face is where box projection reads it from
+        any point, so drawn there it gives every surface its own light: the
+        scale that matches the two is exactly 1."""
+        meshes = MeshConvert._highlight_meshes(MeshConvert._read_glb(self._scene()))
+        table = [m for m in meshes if m["material"] == "tableMat"]
+        pts, nrm = MeshConvert._highlight_samples(table)
+        lo, hi = (np.asarray(self.BOX[k], float) for k in ("min", "max"))
+        eye = np.asarray(self.PROBE["position"], float)
+        for irradiance in (True, False):
+            _, scale = MeshConvert._highlight_placement(
+                dict(self.CEILING, type="point", radius=0.0), pts, nrm, eye, lo, hi, irradiance=irradiance
+            )
+            self.assertAlmostEqual(scale, 1.0, places=6)
+
+    @staticmethod
+    def _sheet(x0, cuts, size=1.0):
+        """A flat +Y sheet *size* metres square from x = *x0*, cut into
+        ``cuts x cuts`` cells of two triangles each, as ``_highlight_meshes``
+        returns a mesh."""
+        step = size / cuts
+        corners = []
+        for i in range(cuts):
+            for j in range(cuts):
+                a = (x0 + i * step, 0.0, j * step)
+                b = (x0 + (i + 1) * step, 0.0, j * step)
+                c = (x0 + (i + 1) * step, 0.0, (j + 1) * step)
+                d = (x0 + i * step, 0.0, (j + 1) * step)
+                corners += [(a, c, b), (a, d, c)]
+        triangles = np.asarray(corners, float)
+        normals = np.zeros_like(triangles)
+        normals[..., 1] = 1.0
+        return {"material": "sheetMat", "triangles": triangles, "normals": normals}
+
+    def test_samples_follow_area_not_tessellation_and_stay_bounded(self):
+        """REGRESSION (2026-10-19): every triangle drew one sample on top of its
+        area's share, so a dense mesh drew at least one per triangle -- a
+        square rect light's field over a million-triangle interior cost 30 s
+        per group -- and its samples crowded where it was finely cut rather
+        than where its area is, pulling an irradiance centroid toward the
+        tessellation. Two square metres, one cut into 2 triangles and one into
+        20,000, share the samples evenly; a 1000 m^2 floor stops at the cap."""
+        coarse, fine = self._sheet(0.0, 1), self._sheet(2.0, 100)
+        points, _ = MeshConvert._highlight_samples([coarse, fine])
+        self.assertLess(len(points), 2 * MeshConvert.HIGHLIGHT_MIN_SAMPLES)
+        self.assertAlmostEqual(float((points[:, 0] >= 2.0).mean()), 0.5, delta=0.05)
+        floor, _ = MeshConvert._highlight_samples([self._sheet(0.0, 1, size=31.7)])
+        self.assertLess(len(floor), 1.05 * MeshConvert._HIGHLIGHT_MAX_SAMPLES)
+        self.assertGreater(len(floor), 0.95 * MeshConvert._HIGHLIGHT_MAX_SAMPLES)
+
+    def test_samples_are_the_geometrys_not_its_storage_order(self):
+        """REGRESSION (2026-10-19): samples were drawn in the order the triangles
+        were stored, so the same surfaces stored another way drew another set --
+        an FBX-only export's copies (a build of the FBX) differed from the GLB
+        export's (whose pipeline strips takes and downsizes first, which moves
+        FBX2glTF's triangle order) by 30% of a copy's texels, the lights drawn
+        a little elsewhere. Shuffled, corners rotated, or split across meshes,
+        one surface draws one set of samples."""
+        sheet = self._sheet(0.0, 20)
+        points, normals = MeshConvert._highlight_samples([sheet])
+        rng = np.random.default_rng(3)
+        order = rng.permutation(len(sheet["triangles"]))
+        rotate = rng.integers(0, 3, len(order))
+        idx = (rotate[:, None] + np.arange(3)[None]) % 3
+        moved = {
+            "material": "sheetMat",
+            "triangles": np.take_along_axis(sheet["triangles"][order], idx[..., None], 1),
+            "normals": np.take_along_axis(sheet["normals"][order], idx[..., None], 1),
+        }
+        half = len(order) // 2
+        split = [
+            {k: (v[:half] if k != "material" else v) for k, v in moved.items()},
+            {k: (v[half:] if k != "material" else v) for k, v in moved.items()},
+        ]
+        for meshes in ([moved], split[::-1]):
+            got_points, got_normals = MeshConvert._highlight_samples(meshes)
+            np.testing.assert_allclose(got_points, points, atol=1e-9)
+            np.testing.assert_allclose(got_normals, normals, atol=1e-9)
+
+    def _focal(self, light, box=BOX):
+        """The interior's focal point for *light*, as the pass places it (with
+        no box there is no shell: the floor joins the interior)."""
+        meshes = MeshConvert._highlight_meshes(MeshConvert._read_glb(self._scene()))
+        lo, hi = (np.asarray(box[k], float) for k in ("min", "max")) if box else (None, None)
+        groups = MeshConvert._highlight_groups(meshes, set(self.BAKED), lo, hi)
+        (interior,) = [g for g in groups if g["receivers"] == "interior"]
+        F, _ = MeshConvert._highlight_placement(
+            light, interior["points"], interior["normals"],
+            np.asarray(self.PROBE["position"], float), lo, hi, irradiance=False,
+        )
+        return F, lo, hi
+
+    def _assert_peak_toward(self, image, direction, texels=2):
+        img = image.mean(2)
+        row, col = np.unravel_index(int(np.argmax(img)), img.shape)
+        d = np.asarray(direction, float) / np.linalg.norm(direction)
+        u = 0.5 + math.atan2(d[2], d[0]) / (2 * math.pi)
+        v = 0.5 + math.asin(d[1]) / math.pi
+        h, w = img.shape
+        du = abs(col + 0.5 - u * w)
+        self.assertLessEqual(abs(row + 0.5 - (1.0 - v) * h), texels, (row, col))
+        self.assertLessEqual(min(du, w - du), texels, (row, col))
+
+    def test_a_hanging_light_is_drawn_where_box_projection_reads_it_from_its_focal_point(self):
+        """The copy shows the light along the ray from its focal point F through
+        the light to the box: the probe reads that box point from where it was
+        captured, so a reflection from F sees the light true."""
+        (layer,) = [l for l in self._layers([self.HANGING]) if l["receivers"] == "interior"]
+        F, lo, hi = self._focal(self.HANGING)
+        toward = np.asarray(self.HANGING["position"]) - F
+        B = MeshConvert._box_exit(F, (toward / np.linalg.norm(toward))[None], lo, hi)[0]
+        self.assertLess(F[1], 1.0, "F is on the table")
+        self._assert_peak_toward(layer["image"], B - np.asarray(self.PROBE["position"]))
+
+    def test_a_distant_probe_draws_the_light_along_its_own_direction(self):
+        """A probe with no box is read as distant: its copy shows the light in
+        the direction F sees it."""
+        layers = self._layers([self.HANGING], probe={"box": None})
+        (layer,) = [l for l in layers if l["receivers"] == "interior"]
+        F, _, _ = self._focal(self.HANGING, box=None)
+        self._assert_peak_toward(layer["image"], np.asarray(self.HANGING["position"]) - F)
+
+    def test_a_malformed_light_is_left_out_of_the_copies(self):
+        """REGRESSION (2026-10-19): a light a caller wrote wrong (an intensity
+        that is no number, a position of two) raised out of the public pass --
+        a look capture's ``lights`` request failed whole -- where the lightmap
+        pass leaves such a light out (``lights_in_metres``). It is left out
+        here too, and the rest are drawn as they would be alone."""
+        bad = [
+            dict(self.HANGING, name="WORD", intensity="bright"),
+            dict(self.HANGING, name="FLAT", position=[0.0, 1.6]),
+        ]
+        alone = self._layers([self.HANGING])
+        layers = self._layers(bad + [self.HANGING])
+        self.assertEqual([l["materials"] for l in layers], [l["materials"] for l in alone])
+        for layer, own in zip(layers, alone):
+            np.testing.assert_array_equal(layer["image"], own["image"])
+
+    def test_a_light_just_off_a_wall_is_drawn(self):
+        """REGRESSION (2026-10-19): a light between its receivers' focal point
+        and a nearby wall reads, from the probe's point, many texels wide -- a
+        texel scaled past 90 degrees, whose tangent is negative, sized its
+        sphere 0, and the zero solid angle raised ZeroDivisionError out of the
+        drawing: every copy of the file was dropped ("Probe highlights not
+        drawn"). Such a light is drawn at the largest size a light is."""
+        lo, hi = (np.asarray(self.BOX[k], float) for k in ("min", "max"))
+        C = np.asarray(self.PROBE["position"], float)
+        light = {"name": "WALL", "type": "point", "position": [3.95, 1.0, 0.0],
+                 "color": [1.0, 1.0, 1.0], "intensity": 2.0}
+        F = np.array([3.917, 1.0, 0.0])
+        dist = float(np.linalg.norm(np.asarray(light["position"]) - F))
+        self.assertAlmostEqual(MeshConvert._proxy_radius(light, F, C, lo, hi, 128), 0.5 * dist)
+        layer = MeshConvert._highlight_layer([light], [F], [1.0], C, lo, hi, 128)
+        self.assertGreater(float(layer.max()), 0.0)
+
+    def test_a_spot_whose_cone_misses_the_receivers_draws_nothing_for_them(self):
+        spot = dict(self.HANGING, type="spot", direction=[0.0, 1.0, 0.0], angle=0.3, penumbra=0.2)
+        layers = self._layers([spot])
+        self.assertEqual([l for l in layers if l["receivers"] == "interior"], [])
+
+    def test_the_start_camera_is_the_eye(self):
+        glb = self._scene(extra_nodes=[{"name": "set:user_pos", "translation": [0.5, 1.7, 3.0]}])
+        with MeshConvert.open_glb(glb) as edit:
+            self.assertEqual(MeshConvert._highlight_eye(edit), [0.5, 1.7, 3.0])
+        with MeshConvert.open_glb(self._scene()) as edit:
+            self.assertIsNone(MeshConvert._highlight_eye(edit))
+
+    def test_lights_in_metres_carries_metres_and_candela(self):
+        """The record's lights arrive in scene units with ``unit_scale``: a point
+        or spot light's intensity is candela over metres (its irradiance falls
+        over the unit squared), a rect's radiance is as it is."""
+        lights = MeshConvert.lights_in_metres([
+            {"name": "KEY", "type": "spot", "position": [100.0, 300.0, 0.0], "direction": [0.0, -1.0, 0.0],
+             "color": [1.0, 0.8, 0.6], "intensity": 40000.0, "angle": 0.5, "penumbra": 0.2, "radius": 5.0, "unit_scale": 0.01},
+            {"name": "BAR", "type": "rect", "position": [0.0, 120.0, 250.0], "direction": [0.0, 0.0, -1.0],
+             "right": [1.0, 0.0, 0.0], "intensity": 2.5, "width": 250.0, "height": 16.0, "unit_scale": 0.01},
+            {"name": "BROKEN", "type": "spot", "intensity": 1.0},
+        ])
+        self.assertEqual([l["name"] for l in lights], ["KEY", "BAR"])
+        key, bar = lights
+        self.assertEqual(key["position"], [1.0, 3.0, 0.0])
+        self.assertAlmostEqual(key["intensity"], 4.0)
+        self.assertAlmostEqual(key["radius"], 0.05)
+        self.assertEqual((bar["width"], bar["height"], bar["intensity"]), (2.5, 0.16, 2.5))
+
+    def _lit_scene(self):
+        """The scene GLB through ``apply_glb_lightmaps``, and the record it carried
+        (the floor and table baked, the probe and the hanging light)."""
+        import cv2
+
+        cv2.imwrite(os.path.join(self.tmp, "room_Lightmap.exr"), np.full((8, 8, 3), 0.5, np.float32))
+        probe = np.full((32, 64, 3), 0.2, np.float32)
+        cv2.imwrite(os.path.join(self.tmp, "room_Probe.exr"), probe)
+        manifest = {
+            "version": 1,
+            "objects": [{"name": n, "map": "room_Lightmap.exr", "uvIndex": 1, "intensity": 1.0,
+                         "scaleOffset": [1.0, 1.0, 0.0, 0.0]} for n in ("FLOOR", "TABLE")],
+            "probe": {"map": "room_Probe.exr", "position": self.PROBE["position"],
+                      "box": [self.BOX["min"], self.BOX["max"]], "unit_scale": 1.0},
+            "lights": [dict(self.HANGING, unit_scale=1.0)],
+        }
+        carrier = {"name": "data_export", "extras": {"fromFBX": {"userProperties": {
+            "lightmap_metadata": {"type": "eFbxString", "value": json.dumps(manifest)}}}}}
+        glb = self._scene(extra_nodes=[carrier])
+        with MeshConvert.open_glb(glb) as edit:  # the bake's UV set, as a conversion leaves it
+            for mesh in edit.gltf["meshes"]:
+                for prim in mesh["primitives"]:
+                    prim["attributes"]["TEXCOORD_1"] = prim["attributes"]["POSITION"]
+            edit.dirty = True
+        self.assertTrue(MeshConvert.apply_glb_lightmaps(glb, search_dirs=[self.tmp]))
+        return glb, manifest
+
+    def _deliverable(self, manifest):
+        """The FBX twin of the scene: a carrier holding *manifest*."""
+        from test_fbx_media import build_carrier_fbx
+
+        return build_carrier_fbx(os.path.join(self.tmp, "room.fbx"), {"lightmap_metadata": manifest})
+
+    @staticmethod
+    def _glb_copies(glb):
+        """``[(receivers, bytes)]`` of the GLB's probe copies, in file order."""
+        with MeshConvert.open_glb(glb) as edit:
+            copies = edit.gltf["extras"]["lightmap_web"]["probe"]["highlights"]["copies"]
+            return [(c["receivers"], bytes(edit.image_bytes(c))) for c in copies]
+
+    def test_an_fbx_deliverable_ships_its_glbs_copies(self):
+        """The FBX carried the probe alone, so unitytk's deliverable shading lit
+        its metals without the bench's lights (2026-10-19): the GLB's copies go
+        inside it byte for byte, and its record's probe names each with the
+        objects it shades -- an engine binds a renderer, not a material."""
+        glb, manifest = self._lit_scene()
+        fbx = self._deliverable(manifest)
+        names = MeshConvert.embed_fbx_highlight_probes(fbx, glb)
+        record = FbxMedia.record(fbx, "lightmap_metadata")
+        highlights = record["probe"]["highlights"]
+        self.assertEqual([h["map"] for h in highlights], names)
+        self.assertEqual(names, [f"room_Probe_Highlight{i}.hdr" for i in (1, 2, 3)])
+        shaded = {tuple(o["name"] for o in h["objects"]): h for h in highlights}
+        self.assertEqual(set(shaded), {("TABLE",), ("LAMP_BODY", "LAMP_GLASS"), ("STOOL",)})
+        table = shaded[("TABLE",)]
+        self.assertEqual(table["receivers"], "interior")
+        self.assertEqual(table["objects"], [{"name": "TABLE", "hierarchy": ["TABLE"]}])
+        self.assertEqual(record["objects"], manifest["objects"], "the rest as it was")
+        out = os.path.join(self.tmp, "extracted")
+        os.makedirs(out)
+        extracted = FbxMedia.extract_dependencies(fbx, out)
+        for (receivers, data), entry in zip(self._glb_copies(glb), highlights):
+            self.assertEqual(entry["receivers"], receivers)
+            with open(extracted[entry["map"]], "rb") as fh:
+                self.assertEqual(fh.read(), data, entry["map"])
+
+    def test_without_a_glb_the_copies_come_from_a_build_of_the_fbx(self):
+        """An FBX-only export builds the GLB its copies come from the way a GLB
+        export does -- the lightmap pass, against the host's folders -- and
+        downloads no converter to do it."""
+        glb, manifest = self._lit_scene()
+        fbx = self._deliverable(manifest)
+        seen = {}
+
+        def convert(src, dst, **kwargs):
+            seen.update(kwargs, src=src)
+            shutil.copyfile(glb, dst)
+            return dst
+
+        with patch.object(MeshConvert, "fbx_to_glb", side_effect=convert):
+            names = MeshConvert.embed_fbx_highlight_probes(fbx, search_dirs=[self.tmp])
+        self.assertEqual(len(names), 3)
+        self.assertEqual(seen["src"], fbx, "a file without takes is read as written")
+        self.assertIsNone(seen["data_export"])
+        self.assertEqual(seen["lightmap_dirs"], [self.tmp])
+        self.assertFalse(seen["auto_install"])
+
+    def test_a_record_without_lights_ships_no_copies(self):
+        glb, manifest = self._lit_scene()
+        fbx = self._deliverable({k: v for k, v in manifest.items() if k != "lights"})
+        with open(fbx, "rb") as fh:
+            before = fh.read()
+        self.assertEqual(MeshConvert.embed_fbx_highlight_probes(fbx, glb), [])
+        with open(fbx, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+
+    def _animated_deliverable(self, manifest):
+        """The FBX twin as a Maya take split writes it: three takes beside *manifest*."""
+        from test_fbx_media import build_animated_fbx
+
+        return build_animated_fbx(
+            os.path.join(self.tmp, "room_takes.fbx"),
+            ["Take 001", "Shot_A", "Shot_B"],
+            channels={"lightmap_metadata": manifest},
+        )
+
+    def test_the_copies_build_converts_the_scene_without_its_takes(self):
+        """REGRESSION (2026-10-19): an FBX-only export, and every Unity-bridge
+        send, converted the whole deliverable to draw its copies -- and
+        FBX2glTF bakes every node at every frame of every take (a production
+        assembly's 13 takes: 1013 s of conversion, 108 s without them) for
+        animation the copies never read. The build reads a copy with no take
+        in a store of its own, removed after; the deliverable keeps its takes."""
+        glb, manifest = self._lit_scene()
+        fbx = self._animated_deliverable(manifest)
+        seen = {}
+
+        def convert(src, dst, **kwargs):
+            read = FbxFile.load(src)
+            seen.update(kwargs, src=src, takes=read.take_names(), census=read.objects_census())
+            seen["record"] = FbxMedia.record(src, "lightmap_metadata")
+            shutil.copyfile(glb, dst)
+            return dst
+
+        with patch.object(MeshConvert, "fbx_to_glb", side_effect=convert):
+            names = MeshConvert.embed_fbx_highlight_probes(fbx, search_dirs=[self.tmp])
+        self.assertEqual(len(names), 3)
+        self.assertNotEqual(os.path.abspath(seen["src"]), os.path.abspath(fbx))
+        self.assertEqual(os.path.basename(seen["src"]), os.path.basename(fbx))
+        self.assertEqual(seen["takes"], [])
+        for kind in FbxMedia.TAKE_CHAIN:
+            self.assertNotIn(kind.decode(), seen["census"])
+        self.assertEqual(seen["record"], manifest, "the record the lightmap pass reads")
+        # No shot to cut in it: the clip pass is not told the scene declares some.
+        self.assertEqual(seen["data_export"], {MeshConvert.FBX_TAKES_KEY: None})
+        self.assertFalse(os.path.exists(seen["src"]), "the copy is removed")
+        self.assertEqual(FbxFile.load(fbx).take_names(), ["Take 001", "Shot_A", "Shot_B"])
+
+    def test_a_glb_the_export_built_is_read_and_nothing_converted(self):
+        """An FBX+GLB export's copies come from the GLB it built: no second
+        conversion, no copy of the FBX."""
+        glb, manifest = self._lit_scene()
+        fbx = self._animated_deliverable(manifest)
+        with (
+            patch.object(MeshConvert, "fbx_to_glb") as convert,
+            patch.object(FbxMedia, "drop_takes") as drop,
+        ):
+            names = MeshConvert.embed_fbx_highlight_probes(fbx, glb)
+        self.assertEqual(len(names), 3)
+        convert.assert_not_called()
+        drop.assert_not_called()
+
+    def test_a_copy_that_cannot_be_written_leaves_the_deliverable_as_written(self):
+        """The copy the build reads is written first; when it cannot be (a
+        full temp disk), nothing is converted, the deliverable keeps every
+        byte, and the host's logger says the copies did not ship."""
+        glb, manifest = self._lit_scene()
+        fbx = self._animated_deliverable(manifest)
+        with open(fbx, "rb") as fh:
+            before = fh.read()
+        host = logging.getLogger("test_mesh_convert.highlight_host")
+        with (
+            patch.object(FbxMedia, "drop_takes", side_effect=OSError(errno.ENOSPC, "No space left on device")),
+            patch.object(MeshConvert, "fbx_to_glb") as convert,
+            self.assertLogs(host, level="WARNING") as logs,
+        ):
+            names = MeshConvert.embed_fbx_highlight_probes(fbx, search_dirs=[self.tmp], logger=host)
+        self.assertEqual(names, [])
+        convert.assert_not_called()
+        self.assertTrue(any("highlight copies not shipped" in line for line in logs.output), logs.output)
+        with open(fbx, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+
+    #: Two lights: one over the table, one by the stool across the room.
+    _NEAR_STOOL = {"name": "STOOL_KEY", "type": "point", "position": [-2.5, 1.5, 2.5],
+                   "color": [1.0, 0.9, 0.8], "intensity": 1.5}
+
+    def _room_fbx(self, name, moves):
+        """The room as an FBX deliverable: ``gltf_to_fbx``'s build of it -- its
+        bake's UV set, and a take keying *moves* -- with the record a Scene
+        Exporter carries on its ``data_export`` node: the floor and table
+        baked into a lightmap, the probe and two lights."""
+        import cv2
+        from pythontk.file_utils.mesh_convert._fbx_writer import FbxNode, FbxWriter
+        from pythontk.file_utils.mesh_convert._gltf2fbx import _GltfDocument, _GltfToFbx
+
+        cv2.imwrite(os.path.join(self.tmp, "room_Lightmap.exr"), np.full((8, 8, 3), 0.5, np.float32))
+        cv2.imwrite(os.path.join(self.tmp, "room_Probe.exr"), np.full((32, 64, 3), 0.2, np.float32))
+        manifest = {
+            "version": 1,
+            "objects": [{"name": n, "map": "room_Lightmap.exr", "uvIndex": 1, "intensity": 1.0,
+                         "scaleOffset": [1.0, 1.0, 0.0, 0.0]} for n in ("FLOOR", "TABLE")],
+            "probe": {"map": "room_Probe.exr", "position": self.PROBE["position"],
+                      "box": [self.BOX["min"], self.BOX["max"]], "unit_scale": 1.0},
+            "lights": [dict(light, unit_scale=1.0) for light in (self.HANGING, self._NEAR_STOOL)],
+        }
+        build = _GltfToFbx(
+            _GltfDocument(self._scene(uvs=True, moves=moves)),
+            texture_dir=os.path.join(self.tmp, "textures"),
+            include_animation=True,
+            fps=24.0,
+        )
+        build.build()
+        uid = build._id()
+        carrier = build._object(FbxNode("Model", FbxWriter.i64(uid), "data_export\x00\x01Model", "Null"), "Model")
+        carrier.add("Properties70").p("lightmap_metadata", "KString", "", "U", json.dumps(manifest))
+        build._link(uid, 0)
+        return FbxWriter.write(os.path.join(self.tmp, name), build.records("test_mesh_convert"))
+
+    def test_the_copies_without_the_takes_are_the_copies_of_the_file_as_written(self):
+        """The copies read the scene at rest: FBX2glTF writes each node's
+        transform as its properties hold it, which no take moves -- so a build
+        of the deliverable without its takes draws the very copies a build of
+        it as written does, to the byte, on a still scene (a take holding the
+        rest pose, as a still export writes one) and on one whose take carries
+        the stool and the lamp a metre and more from where they rest (placed
+        there, they draw other copies: measured 2026-10-19)."""
+        if not MeshConvert.resolve_binary(required=False, auto_install=False):
+            self.skipTest("FBX2glTF absent: the identity needs the real converter")
+        convert = MeshConvert.fbx_to_glb
+        cases = {
+            "still": {"STOOL": [(0.0, (0.0, 0.0, 0.0)), (1.0, (0.0, 0.0, 0.0))]},
+            "animated": {
+                "STOOL": [(0.0, (1.0, 0.0, -1.0)), (1.0, (2.0, 0.5, -2.0))],
+                "LAMP_BODY": [(0.0, (0.0, 0.6, 0.0)), (2.0, (-1.0, 1.2, 0.0))],
+            },
+        }
+        for label, moves in cases.items():
+            with self.subTest(label):
+                source = self._room_fbx(f"{label}.fbx", moves)
+                shipped = {}
+                for build in ("as_written", "without_takes"):
+                    fbx = os.path.join(self.tmp, build, f"{label}.fbx")
+                    os.makedirs(os.path.dirname(fbx), exist_ok=True)
+                    shutil.copyfile(source, fbx)
+                    takes = []
+
+                    def spy(src, dst, **kwargs):
+                        takes.append(FbxFile.load(src).take_names())
+                        return convert(src, dst, **kwargs)
+
+                    with patch.object(MeshConvert, "fbx_to_glb", side_effect=spy):
+                        if build == "as_written":
+                            with patch.object(MeshConvert, "_fbx_static_scene", side_effect=lambda f, _store: f):
+                                names = MeshConvert.embed_fbx_highlight_probes(fbx, search_dirs=[self.tmp])
+                        else:
+                            names = MeshConvert.embed_fbx_highlight_probes(fbx, search_dirs=[self.tmp])
+                    self.assertEqual([len(t) for t in takes], [1] if build == "as_written" else [0])
+                    record = FbxMedia.record(fbx, "lightmap_metadata")["probe"]["highlights"]
+                    out = os.path.join(self.tmp, build, f"{label}_maps")
+                    os.makedirs(out)
+                    extracted = FbxMedia.extract_dependencies(fbx, out)
+                    maps = {}
+                    for name in names:
+                        with open(extracted[name], "rb") as fh:
+                            maps[name] = fh.read()
+                    shipped[build] = (names, record, maps)
+                self.assertEqual(len(shipped["as_written"][0]), 3)
+                self.assertEqual(shipped["without_takes"], shipped["as_written"])
+
+    def test_a_node_goes_under_the_copy_holding_most_of_its_triangles(self):
+        """Named as the lightmap record names an object: its hierarchy root
+        first, without the root FBX2glTF puts every scene under."""
+        gltf = {
+            "nodes": [
+                {"name": "RootNode", "children": [1]},
+                {"name": "GRP", "children": [2]},
+                {"name": "MIXED", "mesh": 0},
+            ],
+            "meshes": [{"primitives": [{"material": 0, "indices": 0}, {"material": 1, "indices": 1}]}],
+            "materials": [{"name": "a"}, {"name": "b"}],
+            "accessors": [{"count": 6}, {"count": 30}],
+        }
+        self.assertEqual(
+            MeshConvert._highlight_receivers(gltf, [{"a"}, {"b"}]),
+            [[], [{"name": "MIXED", "hierarchy": ["GRP", "MIXED"]}]],
+        )
+
+    def test_the_lightmap_pass_embeds_the_copies_and_no_light(self):
+        """Through ``apply_glb_lightmaps``: the probe entry carries its copies
+        (Radiance bytes in the file's buffer, each its receivers' materials),
+        the eye they were placed for, and no light rides the manifest."""
+        import cv2
+
+        glb, _manifest = self._lit_scene()
+        with MeshConvert.open_glb(glb) as edit:
+            web = edit.gltf["extras"]["lightmap_web"]
+            highlights = web["probe"]["highlights"]
+            self.assertNotIn("lights", web)
+            self.assertEqual(highlights["eye"], self.PROBE["position"])
+            self.assertEqual(highlights["lights"], 1)
+            copies = {tuple(c["materials"]): c for c in highlights["copies"]}
+            self.assertIn(("tableMat",), copies)
+            self.assertNotIn(("floorMat",), copies)
+            table = copies[("tableMat",)]
+            self.assertEqual((table["width"], table["height"]), (64, 32), "the probe's own size")
+            view = edit.gltf["bufferViews"][table["bufferView"]]
+            start = int(view.get("byteOffset", 0))
+            raw = bytes(edit.bin_data[start : start + int(view["byteLength"])])
+        image = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
+        self.assertEqual(image.shape, (32, 64, 3))
+        self.assertGreater(float(image.max()), 0.0)
+
+
+class TestFinishFbxDeliverable(unittest.TestCase):
+    """``finish_fbx_deliverable``: the one sequence every FBX hand-off runs."""
+
+    def setUp(self):
+        from pythontk import TempArtifacts
+        from test_fbx_media import build_carrier_fbx
+
+        artifacts = TempArtifacts("mesh_convert_finish_fbx", policy="scoped")
+        self.addCleanup(artifacts.cleanup)
+        self.fbx = build_carrier_fbx(os.path.join(artifacts.dir_path(), "room.fbx"), {})
+        self.text = os.path.join(artifacts.dir_path(), "room.txt")
+        with open(self.text, "w", encoding="utf-8") as fh:
+            fh.write("not an fbx")
+
+    def test_the_passes_run_in_order_and_a_failure_costs_only_its_own(self):
+        ran = []
+
+        def step(name, result=None, error=None):
+            def run(*_args, **_kwargs):
+                ran.append(name)
+                if error:
+                    raise error
+                return result
+            return run
+
+        with (
+            patch.object(FbxMedia, "split_pivot_instances", side_effect=step("instances", {"models": []})),
+            patch.object(FbxMedia, "drop_host_lighting_media", side_effect=step("host_lighting", error=ValueError("boom"))),
+            patch.object(MeshConvert, "embed_fbx_highlight_probes", side_effect=step("highlights", ["a.hdr"])),
+            patch.object(FbxMedia, "embed_dependencies", side_effect=step("dependencies", {"embedded": []})),
+            self.assertLogs("pythontk", level="WARNING") as logs,
+        ):
+            report = MeshConvert.finish_fbx_deliverable(self.fbx, search_dirs=["D:/maps"])
+        # The copies first: a build then reads the file a GLB export reads.
+        self.assertEqual(ran, ["highlights", "instances", "host_lighting", "dependencies"])
+        self.assertIsNone(report["host_lighting"])
+        self.assertEqual(report["highlights"], ["a.hdr"])
+        self.assertTrue(any("host_lighting pass failed" in line for line in logs.output))
+
+    def test_a_file_that_is_not_a_binary_fbx_is_left_alone(self):
+        with patch.object(FbxMedia, "split_pivot_instances") as split:
+            self.assertEqual(MeshConvert.finish_fbx_deliverable(self.text), {})
+        split.assert_not_called()
+
+    def test_the_highlight_pass_says_its_outcome_where_the_host_logs(self):
+        """Every pass but the copies' said its outcome on the host's logger:
+        a copy build that could not run (an FBX-only export with no FBX2glTF
+        installed, which this pass never downloads) warned on pythontk's
+        module logger, which no host's run log shows, and the deliverable
+        shipped without its highlights in silence. Added: 2026-10-19"""
+        host = logging.getLogger("test_mesh_convert.finish_host")
+        with (
+            patch.object(FbxMedia, "record", side_effect=OSError("locked")),
+            patch.object(FbxMedia, "split_pivot_instances", return_value={}),
+            patch.object(FbxMedia, "drop_host_lighting_media", return_value={}),
+            patch.object(FbxMedia, "embed_dependencies", return_value={}),
+            self.assertLogs(host, level="WARNING") as logs,
+        ):
+            MeshConvert.finish_fbx_deliverable(self.fbx, logger=host)
+        self.assertTrue(
+            any("highlight copies" in line for line in logs.output), logs.output
+        )
+
+
+class TestBakedLightsLeaveTheGlb(unittest.TestCase):
+    """A lightmapped GLB ships no ``KHR_lights_punctual`` lights.
+
+    Every scene light is already in the lightmaps (the Arnold bake renders all
+    of them), so a light that also ships lands on top of its own bake, with no
+    shadow: an export run under a saved FBX preset (lights on) brought twelve
+    bake spots into a moody room's GLB and the floor under the table read 3x
+    its baked value in WebXR (2026-10-16).
+    """
+
+    def setUp(self):
+        import pythontk as ptk
+
+        artifacts = ptk.TempArtifacts("mesh_convert_baked_lights", policy="scoped")
+        self.tmp = artifacts.dir_path()
+        self.addCleanup(artifacts.cleanup)
+
+    def _prebuilt(self, lightmapped):
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scenes": [{"nodes": [0, 1]}],
+            "scene": 0,
+            "nodes": [
+                {"name": "KEY", "extensions": {"KHR_lights_punctual": {"light": 0}}},
+                {"name": "ROOM"},
+            ],
+            "extensionsUsed": ["KHR_lights_punctual"],
+            "extensions": {
+                "KHR_lights_punctual": {
+                    "lights": [{"type": "spot", "intensity": 2.0, "spot": {}}]
+                }
+            },
+        }
+        if lightmapped:
+            gltf["extras"] = {
+                "lightmap_web": {"version": 1, "carrier": "occlusion", "materials": {}}
+            }
+        return _write_glb_file(os.path.join(self.tmp, "prebuilt.glb"), gltf)
+
+    _gltf = staticmethod(TestSetGlbUnlit._gltf)
+
+    def _converted(self, lightmapped):
+        return self._gltf(_convert_prebuilt(self.tmp, self._prebuilt(lightmapped)))
+
+    def test_a_lightmapped_glb_ships_no_punctual_light(self):
+        gltf = self._converted(lightmapped=True)
+        self.assertNotIn("KHR_lights_punctual", gltf.get("extensions") or {})
+        self.assertNotIn("KHR_lights_punctual", gltf.get("extensionsUsed") or [])
+        for node in gltf["nodes"]:
+            self.assertNotIn("KHR_lights_punctual", node.get("extensions") or {})
+        self.assertEqual([n["name"] for n in gltf["nodes"]], ["KEY", "ROOM"])
+
+    def test_an_unbaked_glb_keeps_its_lights(self):
+        gltf = self._converted(lightmapped=False)
+        self.assertEqual(len(gltf["extensions"]["KHR_lights_punctual"]["lights"]), 1)
+        self.assertIn("KHR_lights_punctual", gltf["nodes"][0]["extensions"])
+
+    def test_a_native_exports_manifest_counts_as_lightmapped(self):
+        """A host's own exporter writes ``lightmap_web`` into the first scene's
+        extras, as a JSON string -- where the viewer reads it first. The strip
+        reads it there too, or a natively exported room kept the bake's lights
+        on top of its own lightmaps."""
+        path = self._prebuilt(lightmapped=False)
+        gltf = self._gltf(path)
+        gltf["scenes"][0]["extras"] = {
+            "lightmap_web": json.dumps({"version": 1, "materials": {"m": {}}})
+        }
+        _write_glb_file(path, gltf)
+        self.assertEqual(MeshConvert.strip_glb_baked_lights(path), ["KEY"])
+        self.assertNotIn("KHR_lights_punctual", self._gltf(path).get("extensions") or {})
 
 
 if __name__ == "__main__":

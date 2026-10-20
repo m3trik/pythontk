@@ -73,10 +73,8 @@ addEventListener('resize', () => {
 // desktop's 60.
 const frameClock = new THREE.Clock();
 
-// The frame loop's start, run once by the composition root (main.js).
-export function startLoop() {
-  // `frame` is the XRFrame while a headset is presenting, and absent otherwise.
-  renderer.setAnimationLoop((time, frame) => {
+// `frame` is the XRFrame while a headset is presenting, and absent otherwise.
+function drawFrame(/** @type {number} */ time, /** @type {any} */ frame) {
     const began = performance.now();
     controls.update();
     const delta = frameClock.getDelta();
@@ -98,5 +96,21 @@ export function startLoop() {
     // `renderer.render` submitting the draw; the GPU works asynchronously, and
     // its own time is only what a query reads back.
     emit('rendered', { delta, time, cpuMs: rendered - began, renderMs: rendered - rendering });
-  });
+}
+
+// The frame loop's start, run once by the composition root (main.js).
+export function startLoop() {
+  setRendering(true);
+}
+
+/**
+ * Stop or restart the frame loop. A page driven headless sleeps between its
+ * requests: idle, it still draws every frame, and in software GL that is
+ * several cores (measured: about three to seven) whatever runs beside it
+ * waits on. An explicit render -- a capture's -- needs no loop.
+ * @param {boolean} on
+ */
+export function setRendering(on) {
+  renderer.setAnimationLoop(on ? drawFrame : null);
+  if (on) frameClock.getDelta();  // the pause is no frame's delta
 }

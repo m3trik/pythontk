@@ -271,6 +271,31 @@ class PresetStore(_PresetStoreInternal):
             )
         return self._user_dir
 
+    def adopt(self, *legacy_dirs: Union[str, os.PathLike]) -> bool:
+        """Take an older location's presets in, once: while this store has no
+        folder of its own, the first of *legacy_dirs* that exists is copied to
+        be it. For a collection that moved (a per-package store made shared);
+        the old folder stays, for an older version still reading it.
+
+        Returns:
+            Whether a copy was made.
+        """
+        import shutil
+
+        if self.user_dir.exists():
+            return False
+        for legacy in legacy_dirs:
+            if Path(legacy).is_dir():
+                try:
+                    shutil.copytree(legacy, self.user_dir)
+                except FileExistsError:  # another process made it meanwhile: theirs
+                    return False
+                except OSError:  # part copied: none, so the next adopt tries again
+                    shutil.rmtree(self.user_dir, ignore_errors=True)
+                    return False
+                return True
+        return False
+
     @property
     def builtin_dir(self) -> Optional[Path]:
         """Read-only shipped preset directory, or ``None`` when not configured."""

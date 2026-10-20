@@ -10,6 +10,8 @@ this one as a private mixin, and the facade is composed from them:
 - ``_sidecar``     -- the scene-sidecar envelope, the FBX handoff, the
   ``data_export`` channels, the rendering policy, ``verify_glb``
 - ``_lightmaps``   -- a host DCC's committed bake, bound for the web viewer
+- ``_highlights``  -- the bake's lights drawn into copies of its reflection
+  probe, for the GLB and its FBX twin
 - ``_shadow_rigs`` -- shadow-plane maps and the ``shadow_web`` manifest
 - ``_articulation`` -- articulated rigs, the ``articulation_web`` manifest
 - ``_animation``   -- shot clips, the ``animation_web`` manifest, key compaction
@@ -20,12 +22,16 @@ this one as a private mixin, and the facade is composed from them:
 - ``_gltf2fbx``    -- the reverse direction with no DCC: glTF -> FBX and its
   manifest (:meth:`~MeshConvert.gltf_to_fbx`)
 
-A mixin reaches the others through ``cls``, which is what keeps a subclass, a
-class-level override and ``mock.patch.object(MeshConvert, ...)`` reaching every
-call site. The GLB container every pass edits is :class:`GlbEdit`
+The facade itself holds what spans them: :meth:`~MeshConvert.finish_fbx_deliverable`,
+the passes a written FBX deliverable takes. A mixin reaches the others through
+``cls``, which is what keeps a subclass, a class-level override and
+``mock.patch.object(MeshConvert, ...)`` reaching every call site. The GLB container every pass edits is :class:`GlbEdit`
 (``glb/edit.py``), bound here as ``MeshConvert.GlbEdit`` along with the private
 buffer helpers the passes call it through.
 """
+
+import logging
+from typing import Any, Dict, Iterable, Optional, Sequence
 
 from pythontk.core_utils.help_mixin import HelpMixin
 from pythontk.file_utils.mesh_convert._animation import _AnimationMixin
@@ -36,6 +42,7 @@ from pythontk.file_utils.mesh_convert._fbx2gltf import (  # noqa: F401
     _Fbx2GltfMixin,
 )
 from pythontk.file_utils.mesh_convert._gltf2fbx import _Gltf2FbxMixin
+from pythontk.file_utils.mesh_convert._highlights import _HighlightsMixin
 from pythontk.file_utils.mesh_convert._images import _ImagesMixin
 from pythontk.file_utils.mesh_convert._lightmaps import _LightmapsMixin
 from pythontk.file_utils.mesh_convert._materials import _MaterialsMixin
@@ -51,6 +58,7 @@ class MeshConvert(
     _Gltf2FbxMixin,
     _SidecarMixin,
     _LightmapsMixin,
+    _HighlightsMixin,
     _ShadowRigsMixin,
     _ArticulationMixin,
     _AnimationMixin,
@@ -114,3 +122,110 @@ class MeshConvert(
         is :meth:`GlbEdit.open`'s.
         """
         return GlbEdit.open(glb)
+
+    @classmethod
+    def finish_fbx_deliverable(
+        cls,
+        fbx: str,
+        glb: Optional[str] = None,
+        *,
+        search_dirs: Sequence[str] = (),
+        walk_root: str = "",
+        files: Iterable[Any] = (),
+        hdr_codec: Any = None,
+        logger: Optional[logging.Logger] = None,
+    ) -> Dict[str, Any]:
+        """The passes a written FBX deliverable takes, so it reads as its GLB twin does.
+
+        The one sequence every host's FBX hand-off runs (the Scene Exporters,
+        the Unity bridges), on the written file and after the GLB built from
+        it, whose copies it can share:
+
+        1. :meth:`embed_fbx_highlight_probes` -- the probe's highlight copies
+           (*glb*'s, or a build's of *fbx* without its takes: *search_dirs*,
+           *hdr_codec*), from the file as written, the one a GLB export reads;
+        2. :meth:`FbxMedia.split_pivot_instances` -- an instance whose pivots
+           differ from its siblings' gets a mesh of its own, which an engine
+           would otherwise move by another's;
+        3. :meth:`FbxMedia.drop_host_lighting_media` -- the host's own
+           environment maps leave the file;
+        4. :meth:`FbxMedia.embed_dependencies` -- every file the records name
+           (*search_dirs*, *walk_root*, *files*), the copies among them.
+
+        Each is guarded: a failure is warned and the next still runs, on the
+        file as it stands. A file that is not a binary FBX is left alone.
+
+        Parameters:
+            fbx: The FBX deliverable, rewritten in place.
+            glb: The GLB this export built from *fbx*, if any.
+            search_dirs: Where the scene keeps the files its records name.
+            walk_root: Where a name those miss is searched for, recursively.
+            files: Further files to embed (paths or ``(name, path)`` pairs).
+            hdr_codec: The HDR encoder for a highlight build.
+            logger: Where the outcome is said; this module's otherwise.
+
+        Returns:
+            ``{"instances", "host_lighting", "highlights", "dependencies"}``
+            -- each pass's report (``highlights`` the copies' names), ``None``
+            for a pass that failed; ``{}`` for a file that is not a binary FBX.
+        """
+        from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        log = logger or logging.getLogger(__name__)
+        if not FbxFile.is_fbx(fbx):
+            return {}
+        passes = (
+            (
+                "highlights",
+                lambda: cls.embed_fbx_highlight_probes(
+                    fbx,
+                    glb,
+                    search_dirs=search_dirs,
+                    hdr_codec=hdr_codec,
+                    logger=log,
+                ),
+            ),
+            ("instances", lambda: FbxMedia.split_pivot_instances(fbx)),
+            ("host_lighting", lambda: FbxMedia.drop_host_lighting_media(fbx)),
+            (
+                "dependencies",
+                lambda: FbxMedia.embed_dependencies(
+                    fbx,
+                    search_dirs=list(search_dirs),
+                    walk_root=walk_root,
+                    files=files,
+                    logger=log,
+                ),
+            ),
+        )
+        report: Dict[str, Any] = {}
+        for name, run in passes:
+            try:
+                report[name] = run()
+            except Exception as error:  # noqa: BLE001 -- the deliverable already shipped
+                log.warning(f"FBX deliverable: the {name} pass failed: {error}")
+                log.debug("FBX deliverable pass failed.", exc_info=True)
+                report[name] = None
+        split = report.get("instances") or {}
+        if split.get("models"):
+            log.info(
+                "FBX instances: %s each got a mesh of their own (their pivots "
+                "differ from their instances').",
+                ", ".join(split["models"]),
+            )
+        if split.get("deformed"):
+            log.warning(
+                "FBX instances: %s stay shared though their instances' pivots "
+                "differ (a deformer drives them); an engine places all but one "
+                "of them off.",
+                ", ".join(split["deformed"]),
+            )
+        dropped = report.get("host_lighting") or {}
+        if dropped.get("textures"):
+            log.info(
+                "FBX: dropped %d host-lighting texture(s) no engine reads (%s).",
+                dropped["textures"],
+                ", ".join(sorted(set(dropped["media"]))) or "no media",
+            )
+        return report

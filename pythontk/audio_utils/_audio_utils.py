@@ -6,7 +6,17 @@ import os
 import struct
 import subprocess
 import wave as _wave
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Set,
+    Tuple,
+)
 
 from pythontk.core_utils.help_mixin import HelpMixin
 
@@ -246,6 +256,62 @@ class AudioUtils(HelpMixin):
 
         FileUtils.atomic_write(output, transcode)
         return output
+
+    @staticmethod
+    def scope_events(
+        events: Iterable[Tuple[float, str]],
+        takes: Iterable[Mapping[str, Any]],
+        origin: float = 0.0,
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """Scope timed audio events to the takes that play them.
+
+        The events of the ``audio_manifest`` record (``SceneRecords.AUDIO``),
+        one rule for every DCC's producer. An event lands in every take whose
+        inclusive ``start``..``end`` range holds it, its frame rebased to that
+        take's start -- the frame the imported clip counts from. A take
+        missing its name or range scopes nothing: defaulted, it would be a
+        phantom take swallowing frame-0 events. With no usable take every
+        event ships unscoped (``clip: ""``, played by every clip), rebased to
+        *origin*, the scene frame the single clip starts at.
+
+        Parameters:
+            events: ``(frame, name)`` pairs, ``name`` the event's track.
+            takes: ``{"name", "start", "end"}`` entries
+                (``SceneRecords.declared_takes``).
+            origin: The frame an unscoped event counts from.
+
+        Returns:
+            ``(scoped, dropped)``: the record's ``{"clip", "frame", "name"}``
+            events, and ``"name@frame"`` for each event outside every take
+            (it can never fire in a clip).
+        """
+        usable = [
+            t
+            for t in takes
+            if t.get("name") is not None
+            and t.get("start") is not None
+            and t.get("end") is not None
+        ]
+        if not usable:
+            return [
+                {"clip": "", "frame": int(round(frame - origin)), "name": name}
+                for frame, name in events
+            ], []
+        scoped: List[Dict[str, Any]] = []
+        dropped: List[str] = []
+        for frame, name in events:
+            hits = [t for t in usable if t["start"] <= frame <= t["end"]]
+            scoped.extend(
+                {
+                    "clip": str(t["name"]),
+                    "frame": int(round(frame - t["start"])),
+                    "name": name,
+                }
+                for t in hits
+            )
+            if not hits:
+                dropped.append(f"{name}@{frame}")
+        return scoped, dropped
 
     @classmethod
     def build_composite_wav(

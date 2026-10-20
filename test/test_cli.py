@@ -71,6 +71,27 @@ class TestCLI(unittest.TestCase):
         # If password is set, it might use it.
 
 
+class TestDispatch(unittest.TestCase):
+    """A command line as data: subcommands from a table, run by name."""
+
+    def test_the_named_command_runs_with_its_own_and_the_common_arguments(self):
+        seen = []
+        commands = {
+            "add": CLI.Command(
+                "add two numbers",
+                lambda args: seen.append((args.session, args.a + args.b)),
+                [("a", {"type": int}), ("--b", {"type": int, "default": 1})],
+            ),
+            "fail": CLI.Command("exit non-zero", lambda args: 3),
+        }
+        common = [("session", {})]
+        self.assertEqual(CLI.dispatch("t", commands, ["add", "s.json", "2", "--b", "5"], common), 0)
+        self.assertEqual(seen, [("s.json", 7)])
+        self.assertEqual(CLI.dispatch("t", commands, ["fail", "s.json"], common), 3)
+        with self.assertRaises(SystemExit):  # an unknown command is argparse's usage error
+            CLI.dispatch("t", commands, ["nope", "s.json"], common)
+
+
 class TestConnectionDefaultResolution(unittest.TestCase):
     """The default host/user/target resolve explicit -> environment -> neutral.
 

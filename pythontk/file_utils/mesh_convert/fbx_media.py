@@ -66,6 +66,7 @@ from typing import (
 
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils._file_utils import FileUtils
+from pythontk.file_utils.file_dependencies import FileDependencies
 from pythontk.file_utils.mesh_convert.fbx_file import FBX_MAGIC, FbxFile
 
 logger = logging.getLogger(__name__)
@@ -262,17 +263,23 @@ class _FbxMediaInternal:
                     head = cls._scalars(obj)
                     if not head or head[0] not in wired:
                         continue
-                filename, content = "", None
+                content = None
                 for child in obj.children:
-                    if child.name == b"Filename" and len(child.props) > 5:
-                        filename = bytes(child.props[5:]).decode("utf-8", "replace")
-                    elif child.name == b"Content" and child.prop_count:
+                    if child.name == b"Content" and child.prop_count:
                         content = child
                 if content is not None and bytes(content.props[:1]) == b"R":
-                    found.append(
-                        (os.path.basename(filename.replace("\\", "/")), content)
-                    )
+                    found.append((cls._video_file(obj), content))
         return found
+
+    @staticmethod
+    def _video_file(video: _Record) -> str:
+        """The file name a ``Video`` record's ``Filename`` names, folder-less;
+        ``""`` when it names none."""
+        filename = ""
+        for child in video.children:
+            if child.name == b"Filename" and len(child.props) > 5:
+                filename = bytes(child.props[5:]).decode("utf-8", "replace")
+        return os.path.basename(filename.replace("\\", "/"))
 
     @classmethod
     def _wired_ids(cls, roots: Iterable[_Record]) -> set:
@@ -388,6 +395,177 @@ class _FbxMediaInternal:
                 child.replaced = cls._pack_long(count) if wide else cls._pack_int(count)
 
     @classmethod
+    def _shift_definitions(
+        cls, sections: Mapping[bytes, _Record], deltas: Mapping[bytes, int], hlen: int
+    ) -> None:
+        """Move the ``Definitions`` counts by *deltas* ``{object type: change}``
+        -- each type's, and the total by what moved -- declaring a type the
+        file had none of when objects of it were added. A file without the
+        section is left alone."""
+        definitions = sections.get(b"Definitions")
+        if definitions is None:
+            return
+        total = 0
+        for kind, delta in deltas.items():
+            if not delta:
+                continue
+            declared = next(
+                (
+                    child
+                    for child in definitions.children
+                    if child.name == b"ObjectType" and cls._scalars(child)[:1] == [kind]
+                ),
+                None,
+            )
+            if declared is not None:
+                cls._shift_count(declared, delta)
+            elif delta > 0:
+                definitions.children.append(
+                    cls._new_record(
+                        b"ObjectType",
+                        [cls._pack_string(kind)],
+                        [cls._new_record(b"Count", [cls._pack_int(delta)], (), hlen)],
+                        hlen,
+                    )
+                )
+            else:
+                continue
+            total += delta
+        if total:
+            cls._shift_count(definitions, total)
+
+    @classmethod
+    def _taken_ids(cls, roots: Iterable[_Record], objects: _Record) -> set:
+        """Every object id the file uses -- its objects' and its connections'
+        -- and 0, which none may take."""
+        roots = list(roots)
+        taken = {0}
+        for record in objects.children:
+            head = cls._scalars(record)
+            if head and isinstance(head[0], int):
+                taken.add(head[0])
+        return taken | cls._wired_ids(roots)
+
+    @classmethod
+    def _remove_objects(
+        cls,
+        sections: Mapping[bytes, _Record],
+        graph: Mapping[str, Any],
+        removed: set,
+        hlen: int,
+        also: Optional[Callable[[_Record], bool]] = None,
+    ) -> Dict[bytes, int]:
+        """Remove every object whose id is in *removed* -- and each one *also*
+        says goes, its id then joining *removed* -- every connection naming
+        one, and their ``Definitions`` counts. *graph* is the file's
+        :meth:`FbxMedia._model_graph`.
+
+        Returns:
+            ``{record name: count}`` of the objects removed.
+        """
+        objects = sections[b"Objects"]
+        connections = sections.get(b"Connections")
+        counts: Dict[bytes, int] = {}
+        survivors = []
+        for record in objects.children:
+            oid = graph["id_of"].get(id(record))
+            if oid in removed or (also is not None and also(record)):
+                removed.add(oid)  # its connections go below
+                counts[record.name] = counts.get(record.name, 0) + 1
+            else:
+                survivors.append(record)
+        objects.children = survivors
+        if connections is not None:
+            connections.children = [
+                record
+                for record, row in graph["rows"]
+                if not (len(row) >= 3 and (row[1] in removed or row[2] in removed))
+            ]
+        cls._shift_definitions(
+            sections, {kind: -count for kind, count in counts.items()}, hlen
+        )
+        return counts
+
+    #: The Model properties an importer moves a mesh by: Unity's (the FBX
+    #: SDK's pivot reset) brings each node's pivots to its origin THROUGH its
+    #: mesh, so every instance of one geometry must agree on them. The
+    #: offsets (``RotationOffset``, ``ScalingOffset``) are translations the
+    #: node keeps -- measured, instances that differ only in those land right.
+    GEOMETRY_PIVOTS: Tuple[bytes, ...] = (
+        b"RotationPivot",
+        b"ScalingPivot",
+        b"GeometricTranslation",
+        b"GeometricRotation",
+        b"GeometricScaling",
+    )
+    _PIVOT_DEFAULTS = {b"GeometricScaling": (1.0, 1.0, 1.0)}
+
+    @classmethod
+    def _pivot_set(cls, model: _Record) -> Tuple[Tuple[float, ...], ...]:
+        """*model*'s :attr:`GEOMETRY_PIVOTS`, each its default where it writes none."""
+        found: Dict[bytes, Tuple[float, ...]] = {}
+        for child in model.children:
+            if child.name != b"Properties70":
+                continue
+            for prop in child.children:
+                head = cls._scalars(prop)
+                if head and head[0] in cls.GEOMETRY_PIVOTS:
+                    found[head[0]] = tuple(float(v) for v in cls._decoded(prop)[4:7])
+        return tuple(
+            found.get(key, cls._PIVOT_DEFAULTS.get(key, (0.0, 0.0, 0.0)))
+            for key in cls.GEOMETRY_PIVOTS
+        )
+
+    #: Material slots that hold the host's own lighting, not the asset's:
+    #: Maya's StingrayPBS wires Autodesk's environment cubes and BRDF table
+    #: into every material. No engine samples them -- each lights its scene
+    #: its own way.
+    HOST_LIGHTING_SLOTS: Tuple[bytes, ...] = (
+        b"Maya|TEX_global_diffuse_cube",
+        b"Maya|TEX_global_specular_cube",
+        b"Maya|TEX_brdf_lut",
+    )
+
+    @classmethod
+    def _prop_span(cls, raw: bytes, index: int) -> Tuple[int, int]:
+        """``(start, end)`` of the *index*-th property in a record's *raw* list
+        (the type widths :class:`FbxFile`'s reader decodes by).
+
+        Raises:
+            ValueError: A property type this reader does not know.
+        """
+        pos = start = 0
+        for _ in range(index + 1):
+            start = pos
+            kind = raw[pos : pos + 1]
+            scalar = FbxFile._SCALAR_PROPS.get(kind)
+            if scalar:
+                pos += 1 + scalar[1]
+            elif kind in (b"S", b"R"):
+                pos += 5 + struct.unpack_from("<I", raw, pos + 1)[0]
+            elif kind in FbxFile._ARRAY_PROPS:
+                # length, encoding, then the stored (maybe compressed) bytes
+                pos += 13 + struct.unpack_from("<I", raw, pos + 9)[0]
+            else:
+                raise ValueError(f"unknown FBX property type {kind!r}")
+        return start, pos
+
+    @classmethod
+    def _replace_prop(cls, record: _Record, index: int, packed: bytes) -> None:
+        """Replace *record*'s *index*-th property with *packed*, one of its own type.
+
+        Raises:
+            ValueError: The property is of another type, or not there.
+        """
+        raw = bytes(record.payload)
+        start, end = cls._prop_span(raw, index)
+        if end > len(raw) or raw[start : start + 1] != packed[:1]:
+            raise ValueError(
+                f"property {index} of {record.name!r} is not a {packed[:1]!r}"
+            )
+        record.replaced = raw[:start] + packed + raw[end:]
+
+    @classmethod
     def _add_media(
         cls,
         sections: Dict[bytes, _Record],
@@ -413,12 +591,7 @@ class _FbxMediaInternal:
             raise ValueError("FBX has no Objects section")
         roots = list(sections.values())
         have = {name.casefold() for name, _record in cls._video_records(roots)}
-        taken = {0}
-        for record in objects.children:
-            head = cls._scalars(record)
-            if head and isinstance(head[0], int):
-                taken.add(head[0])
-        taken |= cls._wired_ids(roots)
+        taken = cls._taken_ids(roots, objects)
         for name, path in entries:
             if not name:
                 continue
@@ -433,69 +606,77 @@ class _FbxMediaInternal:
             objects.children.append(cls._media_record(oid, name, data, hlen))
             report["embedded"].append(name)
             report["bytes"] += len(data)
-        added = len(report["embedded"])
-        definitions = sections.get(b"Definitions")
-        if added and definitions is not None:
-            declared = next(
-                (
-                    child
-                    for child in definitions.children
-                    if child.name == b"ObjectType"
-                    and cls._scalars(child)[:1] == [b"Video"]
-                ),
-                None,
-            )
-            if declared is None:
-                definitions.children.append(
-                    cls._new_record(
-                        b"ObjectType",
-                        [cls._pack_string(b"Video")],
-                        [cls._new_record(b"Count", [cls._pack_int(added)], (), hlen)],
-                        hlen,
-                    )
-                )
-            else:
-                cls._shift_count(declared, added)
-            cls._shift_count(definitions, added)
+        cls._shift_definitions(sections, {b"Video": len(report["embedded"])}, hlen)
         return report
 
+    #: The scene's own carrier node; a module's is ``NS:data_export`` (or a
+    #: renamed ``data_export1``).
+    _OWN_CARRIER = "data_export"
+
     @classmethod
-    def _channel_payloads(cls, roots: Iterable[_Record], key: str) -> Iterator[Any]:
-        """Every Model's user property *key*, JSON-decoded -- one per carrier
-        (a referenced module ships its own). A blank or malformed value is
-        skipped. The scene's own carrier (``data_export``) comes first, the
-        rest in file order -- the GLB applier's precedence
-        (``MeshConvert._data_export_carrier``): a caller that de-duplicates
-        names without case keeps the FIRST spelling, and a stray carrier's
-        stale one bound the stale file of that name."""
-        wanted = key.encode("utf-8")
-        found: List[Tuple[bool, Any]] = []
+    def _models(
+        cls, roots: Iterable[_Record]
+    ) -> Iterator[Tuple[Optional[str], _Record]]:
+        """``(display name, record)`` of every ``Model``, in file order."""
         for root in roots:
             if root.name != b"Objects":
                 continue
             for record in root.children:
-                if record.name != b"Model":
+                if record.name == b"Model":
+                    head = cls._scalars(record)
+                    name = FbxFile._display_name(head[1]) if len(head) > 1 else None
+                    yield name, record
+
+    @classmethod
+    def _carrier_props(
+        cls, roots: Iterable[_Record], keys: Iterable[str]
+    ) -> Iterator[Tuple[Optional[str], str, Any, _Record]]:
+        """:meth:`_carrier_channels`, each with the ``P`` record it was read from."""
+        wanted = {key.encode("utf-8"): key for key in keys}
+        for name, record in cls._models(roots):
+            for child in record.children:
+                if child.name != b"Properties70":
                     continue
-                head = cls._scalars(record)
-                name = FbxFile._display_name(head[1]) if len(head) > 1 else None
-                for child in record.children:
-                    if child.name != b"Properties70":
+                for prop in child.children:
+                    head = cls._scalars(prop)
+                    if len(head) < 5 or head[0] not in wanted:
                         continue
-                    for prop in child.children:
-                        head = cls._scalars(prop)
-                        if len(head) < 5 or head[0] != wanted:
-                            continue
-                        value = head[4]
-                        if not isinstance(value, bytes) or not value.strip():
-                            continue
-                        try:
-                            payload = json.loads(value.decode("utf-8"))
-                            found.append((name == "data_export", payload))
-                        except (ValueError, UnicodeDecodeError):
-                            continue
-        found.sort(key=lambda item: not item[0])  # stable: own first
-        for _own, payload in found:
-            yield payload
+                    value = head[4]
+                    if not isinstance(value, bytes) or not value.strip():
+                        continue
+                    try:
+                        payload = json.loads(value.decode("utf-8"))
+                    except (ValueError, UnicodeDecodeError):
+                        continue
+                    yield name, wanted[head[0]], payload, prop
+
+    @classmethod
+    def _carrier_channels(
+        cls, roots: Iterable[_Record], keys: Iterable[str]
+    ) -> Iterator[Tuple[Optional[str], str, Any]]:
+        """``(carrier name, record key, decoded payload)`` for every Model's
+        user property among *keys*, in file order -- one per carrier (a
+        referenced module ships its own). A blank or malformed value is
+        skipped."""
+        for name, key, payload, _prop in cls._carrier_props(roots, keys):
+            yield name, key, payload
+
+    @classmethod
+    def _applied_channel(
+        cls, roots: Iterable[_Record], key: str
+    ) -> Optional[Tuple[_Record, Any]]:
+        """The ``P`` record holding the *key* record a reader applies, and its
+        payload: the scene's own carrier's, else the first module's in file
+        order -- the copy :meth:`FbxMedia.reader_records` takes. ``None`` when
+        no carrier holds one."""
+        first = None
+        for name, _key, payload, prop in cls._carrier_props(roots, (key,)):
+            if name == cls._OWN_CARRIER:
+                return prop, payload
+            if first is None:
+                first = (prop, payload)
+        return first
+
 
     @staticmethod
     def _field_values(payload: Any, path: Sequence[str]) -> Iterator[Any]:
@@ -1275,7 +1456,11 @@ class FbxMedia(_FbxMediaInternal):
     #: (field path, ...)}``, ``"*"`` walking a list. A record that starts
     #: naming a file adds its paths here and :meth:`embed_dependencies` ships it.
     DEPENDENCY_FIELDS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
-        SceneRecords.LIGHTMAPS.key: (("objects", "*", "map"), ("probe", "map")),
+        SceneRecords.LIGHTMAPS.key: (
+            ("objects", "*", "map"),
+            ("probe", "map"),
+            ("probe", "highlights", "*", "map"),
+        ),
         SceneRecords.SHADOWS.key: (
             ("planes", "*", "texture"),
             ("planes", "*", "atlas", "texture"),
@@ -1283,16 +1468,107 @@ class FbxMedia(_FbxMediaInternal):
         ),
     }
 
+    #: Where each record of :attr:`DEPENDENCY_FIELDS` lists the scene nodes it
+    #: describes, one entry per node: ``{record key: (list field, name
+    #: field)}`` -- what :meth:`reader_records` narrows a module's copy by.
+    NODE_ENTRIES: Dict[str, Tuple[str, str]] = {
+        SceneRecords.LIGHTMAPS.key: ("objects", "name"),
+        SceneRecords.SHADOWS.key: ("planes", "name"),
+    }
+
     @classmethod
     def _dependency_names(cls, roots: Iterable[_Record]) -> List[str]:
         """:meth:`dependencies` of an already-parsed file."""
         roots = list(roots)
-        return cls.named_files(
-            {
-                key: list(cls._channel_payloads(roots, key))
-                for key in cls.DEPENDENCY_FIELDS
-            }
+        read = cls.reader_records(
+            cls._carrier_channels(roots, cls.DEPENDENCY_FIELDS),
+            nodes=[name for name, _record in cls._models(roots) if name],
         )
+        return cls.named_files({key: [payload] for key, payload in read.items()})
+
+    @classmethod
+    def reader_records(
+        cls,
+        channels: Iterable[Tuple[Optional[str], str, Any]],
+        nodes: Optional[Iterable[str]] = None,
+    ) -> Dict[str, Any]:
+        """Each scene record as a reader of the file applies it.
+
+        A file carries the scene's own ``data_export`` and, from an assembly
+        export, one ``NS:data_export`` per referenced module: that module's
+        records as it was last exported alone -- its whole bake, whatever the
+        export set. A reader takes each record from the scene's own carrier,
+        and a module's only where the scene's carries none, the first in file
+        order (unitytk ``CarrierImport.Collect``,
+        ``MeshConvert._data_export_carrier``), so a module's copy beside the
+        scene's is never applied. A module's copy read alone keeps only the
+        entries whose node the file carries (:attr:`NODE_ENTRIES`; the name
+        exactly, else its namespace-stripped leaf -- the appliers' match), and
+        a copy with none of them left names nothing: no reader binds it, so
+        neither its maps nor its probe belong to the file. The scene's own
+        copy is taken as written: its producer scopes it to the export set.
+
+        What the post-write embed ships and the verifier's
+        ``fbx_dependencies`` gate expects: an assembly export that left a
+        module's objects out embedded the module's maps, or failed the gate
+        on them where they could not be found.
+
+        Parameters:
+            channels: ``(carrier name, record key, decoded payload)`` for each
+                carrier's channel, in file order.
+            nodes: The names of the nodes the file carries; ``None`` takes a
+                module's copy whole.
+
+        Returns:
+            ``{record key: payload}`` -- a module's copy narrowed to the nodes
+            the file carries, and left out when none is.
+        """
+        read: Dict[str, Tuple[bool, Any]] = {}
+        for carrier, key, payload in channels:
+            own = carrier == cls._OWN_CARRIER
+            held = read.get(key)
+            if held is None or (own and not held[0]):
+                read[key] = (own, payload)
+        names = leaves = None
+        if nodes is not None:
+            names = {name for name in nodes if name}
+            leaves = {name.rsplit(":", 1)[-1] for name in names}
+        records: Dict[str, Any] = {}
+        for key, (own, payload) in read.items():
+            if not own and names is not None:
+                payload = cls._carried_entries(key, payload, names, leaves)
+                if payload is None:
+                    continue
+            records[key] = payload
+        return records
+
+    @classmethod
+    def _carried_entries(
+        cls, key: str, payload: Any, names: set, leaves: set
+    ) -> Optional[Any]:
+        """*payload* with only the :attr:`NODE_ENTRIES` entries whose node is
+        among *names* (exactly, else by namespace-stripped leaf in *leaves*);
+        ``None`` when none is. A record that lists no nodes is returned as it
+        is."""
+        spec = cls.NODE_ENTRIES.get(key)
+        if spec is None:
+            return payload
+        field_name, node_field = spec
+        entries = payload.get(field_name) if isinstance(payload, Mapping) else None
+        if not isinstance(entries, list):
+            return None
+        kept = []
+        for entry in entries:
+            node = entry.get(node_field) if isinstance(entry, Mapping) else None
+            if not isinstance(node, str) or not node:
+                continue
+            if node in names or node.rsplit(":", 1)[-1] in leaves:
+                kept.append(entry)
+        if not kept:
+            return None
+        if len(kept) == len(entries):
+            return payload
+        return {**payload, field_name: kept}
 
     @classmethod
     def named_files(cls, payloads: Mapping[str, Iterable[Any]]) -> List[str]:
@@ -1305,9 +1581,10 @@ class FbxMedia(_FbxMediaInternal):
         its file name.
 
         Parameters:
-            payloads: ``{record key: [decoded payload, ...]}`` -- one payload
-                per carrier (a referenced module ships its own). Keys no
-                record declares are ignored.
+            payloads: ``{record key: [decoded payload, ...]}`` -- for a
+                delivered file, each record as a reader applies it
+                (:meth:`reader_records`). Keys no record declares are
+                ignored.
 
         Returns:
             The file names, folder-less, in record order.
@@ -1330,7 +1607,9 @@ class FbxMedia(_FbxMediaInternal):
     def dependencies(cls, path: str) -> List[str]:
         """The file names the FBX's scene records name (:attr:`DEPENDENCY_FIELDS`).
 
-        Read off every ``data_export`` carrier in the file: the lightmaps and
+        Read off the file's ``data_export`` carriers as a reader applies them
+        (:meth:`reader_records`: the scene's own record wins, a referenced
+        module's names only the nodes the file carries): the lightmaps and
         the reflection probe ``lightmap_metadata`` names, the silhouette,
         atlas and horizon maps ``shadow_metadata`` names. In record order,
         each name once (compared without case); a name a manifest wrote with
@@ -1351,6 +1630,50 @@ class FbxMedia(_FbxMediaInternal):
         ):
             _version, roots, _fid, _magic = cls._load(buf)
             return cls._dependency_names(roots)
+
+    @classmethod
+    def audio_events(cls, path: str) -> List[str]:
+        """The tracks the FBX's ``audio_manifest`` events play, by event name.
+
+        An audio event names its TRACK, not a file (``SceneRecords.AUDIO``),
+        so the host resolves each name to its file and hands it to
+        :meth:`embed_dependencies` as ``files=[(name + ext, path)]`` -- the
+        name the consumer matches the clip by. Read off the ONE carrier its
+        readers take: the scene's own, else the first that carries the
+        record (:meth:`reader_records`: the GLB applier's precedence,
+        unitytk's ``CarrierImport.Collect``) -- the scene's own record is
+        re-derived from the whole merged scene, so a module's or a stray
+        ``data_export1``'s events are stale and their clips are not shipped.
+        In event order, each name once; a blank or ``"none"`` name names
+        nothing.
+
+        Parameters:
+            path: The FBX to read.
+
+        Returns:
+            The event names; empty when the file carries no audio events.
+
+        Raises:
+            ValueError: *path* is not a binary FBX this writer can read.
+        """
+        with (
+            open(path, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            _version, roots, _fid, _magic = cls._load(buf)
+            key = SceneRecords.AUDIO.key
+            # The carrier precedence alone: an event names a track and its
+            # clip, never a node, so there is nothing to narrow it by.
+            payload = cls.reader_records(cls._carrier_channels(roots, (key,))).get(key)
+        names: List[str] = []
+        events = payload.get("events") if isinstance(payload, Mapping) else None
+        for event in events if isinstance(events, list) else ():
+            if not isinstance(event, Mapping):
+                continue
+            name = str(event.get("name") or "").strip()
+            if name and name.lower() != "none" and name not in names:
+                names.append(name)
+        return names
 
     @classmethod
     def embed(
@@ -1404,12 +1727,309 @@ class FbxMedia(_FbxMediaInternal):
         return report
 
     @classmethod
+    def record(cls, path: str, key: str) -> Optional[Any]:
+        """The scene record *key* the FBX carries, as a reader applies it.
+
+        Read off the file's ``data_export`` carriers: the scene's own, else a
+        referenced module's, the first in file order -- the copy
+        :meth:`reader_records` takes (whole here, not narrowed to the nodes
+        the file carries). ``None`` when no carrier holds one.
+
+        Raises:
+            ValueError: *path* is not a binary FBX this reader can parse.
+        """
+        with (
+            open(path, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            _version, roots, _fid, _magic = cls._load(buf)
+            found = cls._applied_channel(roots, key)
+        return found[1] if found else None
+
+    @classmethod
+    def set_record(
+        cls,
+        src: str,
+        key: str,
+        payload: Any,
+        dst: Optional[str] = None,
+        *,
+        files: Iterable[Any] = (),
+    ) -> Dict[str, Any]:
+        """Replace the scene record *key* the FBX carries, embedding *files* in the same write.
+
+        The copy a reader applies (:meth:`record`) is rewritten, as JSON, in
+        the carrier that holds it; *files* go in as :meth:`embed` puts them.
+        One pass, so a record that starts naming a file is never written
+        without it.
+
+        Parameters:
+            src: The FBX to read.
+            key: The record (a ``SceneRecords`` key).
+            payload: Its new decoded value.
+            dst: Where to write; ``None`` rewrites *src* in place.
+            files: Files to embed: paths, or ``(name, path)`` pairs.
+
+        Returns:
+            ``{"replaced", "embedded", "present", "bytes"}`` -- whether a
+            record was replaced (``False``: the file carries no *key* record
+            and is left as it was) and :meth:`embed`'s report.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+            OSError: A file in *files* cannot be read.
+        """
+        entries = [cls._named(path) for path in files]
+        report: Dict[str, Any] = {
+            "replaced": False,
+            "embedded": [],
+            "present": [],
+            "bytes": 0,
+        }
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            found = cls._applied_channel(roots, key)
+            if found is None:
+                return report
+            cls._replace_prop(
+                found[0], 4, cls._pack_string(json.dumps(payload).encode("utf-8"))
+            )
+            report["replaced"] = True
+            sections = {record.name: record for record in roots}
+            hlen = cls._header_fmt(version >= 7500)[1]
+            report.update(cls._add_media(sections, entries, hlen))
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        cls._promote(part, target)
+        return report
+
+    @classmethod
+    def split_pivot_instances(
+        cls, src: str, dst: Optional[str] = None, *, tolerance: float = 1e-3
+    ) -> Dict[str, Any]:
+        """Give each pivot set among a geometry's instances a geometry of its own.
+
+        An instanced mesh is one ``Geometry`` under several Models, and an
+        engine's importer brings each node's pivots to its origin through the
+        mesh: Unity's moves the shared mesh by ONE instance's pivots, so an
+        instance whose pivots differ lands off by the difference. Measured on
+        a production office (2026-10-19): ``WALL_D``, its rotate pivot
+        131.44 cm below its row's, imported exactly 1.3144 m low, onto the
+        wall under it -- where the GLB, whose converter places each node
+        itself, put it right. Each further set of :attr:`GEOMETRY_PIVOTS`
+        (equal within *tolerance*, in the file's units) gets a copy of the
+        geometry wired to its Models; instances that agree stay one mesh. A
+        geometry a deformer drives (a skin, blend shapes) is left shared: its
+        copy would deform nothing.
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+            tolerance: How far two pivots may differ and still be one.
+
+        Returns:
+            ``{"models", "geometries", "deformed"}`` -- the Models moved onto
+            a copy, how many copies were made, and the geometries left shared
+            because a deformer drives them (both lists sorted). When nothing
+            splits the file is not written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+        """
+        report: Dict[str, Any] = {"models": [], "geometries": 0, "deformed": []}
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            sections = {record.name: record for record in roots}
+            objects = sections.get(b"Objects")
+            connections = sections.get(b"Connections")
+            if objects is None or connections is None:
+                return report
+            graph = cls._model_graph(objects, connections)
+            kinds, models = graph["kinds"], graph["records"]
+            geometries = {
+                graph["id_of"][id(record)]: record
+                for record in objects.children
+                if record.name == b"Geometry" and id(record) in graph["id_of"]
+            }
+            users: Dict[int, List[int]] = {}
+            driven = set()
+            for child, parent in graph["links"]:
+                if child in geometries and parent in models:
+                    users.setdefault(child, []).append(parent)
+                elif parent in geometries and kinds.get(child) == b"Deformer":
+                    driven.add(parent)
+            taken = cls._taken_ids(roots, objects)
+            moves: Dict[Tuple[int, int], int] = {}  # (geometry, model) -> its copy
+            after: Dict[int, List[_Record]] = {}  # source record -> its copies
+            for gid, owners in users.items():
+                sets: List[Tuple[Tuple[Tuple[float, ...], ...], List[int]]] = []
+                for mid in owners:
+                    pivots = cls._pivot_set(models[mid])
+                    for known, members in sets:
+                        if all(
+                            abs(a - b) <= tolerance
+                            for mine, theirs in zip(pivots, known)
+                            for a, b in zip(mine, theirs)
+                        ):
+                            members.append(mid)
+                            break
+                    else:
+                        sets.append((pivots, [mid]))
+                if len(sets) < 2:
+                    continue
+                source = geometries[gid]
+                if gid in driven:
+                    head = cls._scalars(source)
+                    label = head[1] if len(head) > 1 and isinstance(head[1], bytes) else b""
+                    report["deformed"].append(FbxFile._display_name(label) or str(gid))
+                    continue
+                raw = bytes(source.payload)
+                start, end = cls._prop_span(raw, 0)
+                for _pivots, members in sets[1:]:
+                    oid = cls._media_id(f"pivot-split:{gid}:{members[0]}", taken)
+                    taken.add(oid)
+                    after.setdefault(id(source), []).append(
+                        _Record(
+                            source.name,
+                            source.prop_count,
+                            raw[:start] + cls._pack_long(oid) + raw[end:],
+                            source.children,
+                            source.tail,
+                        )
+                    )
+                    for mid in members:
+                        moves[(gid, mid)] = oid
+                        report["models"].append(graph["names"][mid])
+            report["deformed"].sort()
+            if not moves:
+                return report
+            objects.children = [
+                kept
+                for record in objects.children
+                for kept in (record, *after.get(id(record), ()))
+            ]
+            for record, row in graph["rows"]:
+                if len(row) >= 3 and row[0] == b"OO" and (row[1], row[2]) in moves:
+                    cls._replace_prop(record, 1, cls._pack_long(moves[(row[1], row[2])]))
+            report["geometries"] = sum(len(copies) for copies in after.values())
+            report["models"].sort()
+            cls._shift_definitions(
+                sections,
+                {b"Geometry": report["geometries"]},
+                cls._header_fmt(version >= 7500)[1],
+            )
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        cls._promote(part, target)
+        return report
+
+    @classmethod
+    def drop_host_lighting_media(
+        cls, src: str, dst: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Remove the textures only :attr:`HOST_LIGHTING_SLOTS` sample, with their media.
+
+        An embedded-media export carries every file a material samples, and
+        Maya's StingrayPBS samples Autodesk's own environment cubes and BRDF
+        table in every material: a production office's FBX shipped
+        ``specular_cube.png``, ``diffuse_cube.png`` and ``ibl_brdf_lut.png``
+        once per material, and Unity extracted them beside the model, where
+        nothing reads them (2026-10-19; the GLB build already sweeps them,
+        :meth:`MeshConvert.prune_glb_unreferenced_textures`). A texture any
+        other slot samples stays, and so does a file another ``Video`` or a
+        scene record names (the SDK embeds a file's bytes once, in the first
+        ``Video`` naming it), its media left wired to nothing. The slots
+        themselves stay on the material, sampling nothing.
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+
+        Returns:
+            ``{"textures", "media"}`` -- how many textures went and the file
+            names of the media that went with them (sorted). When none
+            qualifies the file is not written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+        """
+        report: Dict[str, Any] = {"textures": 0, "media": []}
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            sections = {record.name: record for record in roots}
+            objects = sections.get(b"Objects")
+            connections = sections.get(b"Connections")
+            if objects is None or connections is None:
+                return report
+            graph = cls._model_graph(objects, connections)
+            kinds, owners = graph["kinds"], graph["owners"]
+            slots: Dict[int, List[Optional[bytes]]] = {}
+            for _record, row in graph["rows"]:
+                if len(row) >= 3 and kinds.get(row[1]) == b"Texture":
+                    slot = row[3] if row[0] == b"OP" and len(row) > 3 else None
+                    slots.setdefault(row[1], []).append(slot)
+            doomed = {
+                texture
+                for texture, used in slots.items()
+                if all(slot in cls.HOST_LIGHTING_SLOTS for slot in used)
+            }
+            if not doomed:
+                return report
+            videos = {
+                graph["id_of"][id(record)]: record
+                for record in objects.children
+                if record.name == b"Video" and id(record) in graph["id_of"]
+            }
+            # The SDK embeds a file's bytes once, in the first Video naming it:
+            # a file a kept Video names (a user's texture on the same file) or
+            # a record names (a probe plugged into a slot) may ride here
+            # alone, so its Video stays, wired to nothing.
+            held = {name.casefold() for name in cls._dependency_names(roots)}
+            held |= {
+                cls._video_file(record).casefold()
+                for oid, record in videos.items()
+                if not (owners.get(oid) and owners[oid] <= doomed)
+            }
+            held.discard("")
+            media = {
+                oid
+                for oid, record in videos.items()
+                if owners.get(oid)
+                and owners[oid] <= doomed
+                and cls._video_file(record).casefold() not in held
+            }
+            going = {id(child) for oid in media for child in videos[oid].children}
+            report["media"] = sorted(
+                name
+                for name, content in cls._video_records(roots)
+                if id(content) in going
+            )
+            counts = cls._remove_objects(
+                sections, graph, doomed | media, cls._header_fmt(version >= 7500)[1]
+            )
+            report["textures"] = counts.get(b"Texture", 0)
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        cls._promote(part, target)
+        return report
+
+    @classmethod
     def embed_dependencies(
         cls,
         src: str,
         dst: Optional[str] = None,
         *,
         search_dirs: Sequence[str] = (),
+        walk_root: str = "",
         files: Iterable[Any] = (),
         logger: Any = None,
     ) -> Dict[str, Any]:
@@ -1424,16 +2044,21 @@ class FbxMedia(_FbxMediaInternal):
         copied them in by hand, or imported unlit with a silhouette shadow.
         Each name is resolved the way the GLB appliers resolve it: the first
         of *search_dirs* holding that file (the host's own answer to where
-        its maps live), then the FBX's own folder, and goes in as
+        its maps live), then the FBX's own folder, then -- for what those miss
+        -- anywhere under *walk_root* (:meth:`FileDependencies.find_files`; a
+        unique hit, never a guess between same-named copies), and goes in as
         :meth:`embed` puts a file -- under the record's own spelling of the
         name, the join key. A name the FBX already embeds is left as it is;
-        one found nowhere is reported and warned.
+        one found nowhere is reported and warned, naming *walk_root* (the
+        folders tried go to DEBUG, the run log's detail).
 
         Parameters:
             src: The FBX to read.
             dst: Where to write; ``None`` rewrites *src* in place.
             search_dirs: Folders to resolve the names against, in priority
                 order (a DCC's ``LightmapRecords.search_dirs``).
+            walk_root: The folder a name those miss is searched for under,
+                recursively -- the project's texture root; ``""`` for none.
             files: Further files to embed, for a host whose records name
                 their files by something other than a file name: a path (it
                 goes in under its file name) or a ``(name, path)`` pair -- an
@@ -1461,6 +2086,7 @@ class FbxMedia(_FbxMediaInternal):
         }
         dirs = [d for d in search_dirs if d]
         dirs.append(os.path.dirname(os.path.abspath(src)))
+        walk_root = walk_root if walk_root and os.path.isdir(walk_root) else ""
         with (
             open(src, "rb") as fh,
             mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
@@ -1487,6 +2113,18 @@ class FbxMedia(_FbxMediaInternal):
                     report["missing"].append(name)
                 else:
                     found.append((name, path))
+            twins: Dict[str, int] = {}
+            if report["missing"] and walk_root:
+                hits: Dict[str, List[str]] = {}
+                for hit in FileDependencies.find_files(report["missing"], walk_root):
+                    hits.setdefault(os.path.basename(hit).casefold(), []).append(hit)
+                for name in list(report["missing"]):
+                    paths = hits.get(name.casefold()) or []
+                    if len(paths) == 1:
+                        report["missing"].remove(name)
+                        found.append((name, paths[0]))
+                    elif paths:
+                        twins[name] = len(paths)
             hlen = cls._header_fmt(version >= 7500)[1]
             extra = [cls._named(path) for path in files]
             added = cls._add_media(sections, [*found, *extra], hlen)
@@ -1507,13 +2145,24 @@ class FbxMedia(_FbxMediaInternal):
                 ", ".join(report["embedded"]),
             )
         if report["missing"]:
+            log.debug(
+                "FBX dependencies: looked in %s%s.",
+                ", ".join(dirs),
+                f", then under {walk_root}" if walk_root else "",
+            )
+            where = (
+                f"{walk_root} or any of its subfolders"
+                if walk_root
+                else f"the {len(dirs)} folder(s) searched"
+            )
+            names = [
+                f"{n} ({twins[n]} same-named files, none guessed)" if n in twins else n
+                for n in report["missing"]
+            ]
             log.warning(
-                "FBX dependencies: %d file(s) the scene records name are in "
-                "neither the FBX nor %s, so the deliverable ships without "
-                "them: %s.",
-                len(report["missing"]),
-                dirs,
-                ", ".join(report["missing"]),
+                "FBX dependencies: not found in %s, so the FBX ships without: %s.",
+                where,
+                ", ".join(names),
             )
         return report
 
@@ -1564,7 +2213,11 @@ class FbxMedia(_FbxMediaInternal):
 
     @classmethod
     def drop_takes(
-        cls, src: str, dst: Optional[str] = None, *, names: Iterable[str]
+        cls,
+        src: str,
+        dst: Optional[str] = None,
+        *,
+        names: Optional[Iterable[str]] = None,
     ) -> Dict[str, Any]:
         """Remove the named animation takes, and everything only they own.
 
@@ -1589,7 +2242,9 @@ class FbxMedia(_FbxMediaInternal):
             src: The FBX to read.
             dst: Where to write; ``None`` rewrites *src* in place.
             names: Take (``AnimationStack`` display) names to drop. Names the
-                file does not carry are ignored.
+                file does not carry are ignored. ``None`` drops every take:
+                the scene at rest, for a build that reads only that
+                (:meth:`MeshConvert.embed_fbx_highlight_probes`).
 
         Returns:
             ``{"takes", "objects", "connections"}`` -- the take names dropped
@@ -1600,7 +2255,7 @@ class FbxMedia(_FbxMediaInternal):
         Raises:
             ValueError: *src* is not a binary FBX this writer can re-emit.
         """
-        wanted = {str(name) for name in names}
+        wanted = None if names is None else {str(name) for name in names}
         report: Dict[str, Any] = {"takes": [], "objects": {}, "connections": 0}
         with (
             open(src, "rb") as fh,
@@ -1613,7 +2268,7 @@ class FbxMedia(_FbxMediaInternal):
             stacks = {
                 uid: name
                 for uid, name in cls._stacks(sections).items()
-                if name in wanted
+                if wanted is None or name in wanted
             }
             if not stacks:
                 return report
@@ -1968,9 +2623,9 @@ class FbxMedia(_FbxMediaInternal):
         does not own is refused, by name. Each Model that goes takes its whole
         subtree, its attribute, its curve geometry and that geometry's
         deformers, and every animation curve node and curve only it drove;
-        every connection naming a removed object, its bind-pose entries and
-        the removed objects' ``Definitions`` counts go with it. Everything else
-        is copied byte for byte.
+        every connection naming a removed object, its bind-pose entries (and
+        a bind pose they leave empty) and the removed objects' ``Definitions``
+        counts go with it. Everything else is copied byte for byte.
 
         Why it exists: a carrier ships every node of a scene, so a baked rig
         arrives twice -- its motion on the joints, and the controls, IK and
@@ -2055,40 +2710,21 @@ class FbxMedia(_FbxMediaInternal):
                 return report
 
             removed = cls._owned_closure(graph, dropped)
-            counts: Dict[bytes, int] = {}
-            survivors = []
-            for record in objects.children:
-                oid = graph["id_of"].get(id(record))
-                if oid in removed:
-                    counts[record.name] = counts.get(record.name, 0) + 1
-                else:
-                    survivors.append(record)
-                    if record.name == b"Pose":
-                        cls._drop_pose_nodes(record, removed)
-            objects.children = survivors
-
+            before = len(connections.children) if connections is not None else 0
+            # A bind pose whose every member went describes nothing, and
+            # Maya's importer, handed one, binds the skins that stayed at the
+            # wrong pose: 6 of 7 production wire looms 97-327 cm off, exact
+            # once the 7 emptied poses were gone.
+            counts = cls._remove_objects(
+                sections,
+                graph,
+                removed,
+                cls._header_fmt(version >= 7500)[1],
+                also=lambda record: record.name == b"Pose"
+                and cls._drop_pose_nodes(record, removed),
+            )
             if connections is not None:
-                before = len(connections.children)
-                connections.children = [
-                    record
-                    for record, row in graph["rows"]
-                    if not (len(row) >= 3 and (row[1] in removed or row[2] in removed))
-                ]
                 report["connections"] = before - len(connections.children)
-
-            definitions = sections.get(b"Definitions")
-            if definitions is not None:
-                total = 0
-                for object_type in definitions.children:
-                    if object_type.name != b"ObjectType":
-                        continue
-                    head = cls._scalars(object_type)
-                    count = counts.get(head[0], 0) if head else 0
-                    if count:
-                        cls._shift_count(object_type, -count)
-                        total += count
-                if total:
-                    cls._shift_count(definitions, -total)
 
             report["models"] = len(dropped)
             report["kinds"] = RigMachinery.tally(
@@ -2294,8 +2930,10 @@ class FbxMedia(_FbxMediaInternal):
         return found
 
     @classmethod
-    def _drop_pose_nodes(cls, pose: _Record, removed: set) -> None:
-        """Remove *pose*'s entries for *removed* nodes and recount it."""
+    def _drop_pose_nodes(cls, pose: _Record, removed: set) -> bool:
+        """Remove *pose*'s entries for *removed* nodes and recount it; True
+        when that took every entry it had (a pose already empty is not this
+        drop's to remove)."""
         entries = [child for child in pose.children if child.name == b"PoseNode"]
         gone = []
         for entry in entries:
@@ -2307,9 +2945,10 @@ class FbxMedia(_FbxMediaInternal):
                     gone.append(entry)
                 break
         if not gone:
-            return
+            return False
         pose.children = [child for child in pose.children if child not in gone]
         cls._shift_count(pose, -len(gone), b"NbPoseNodes")
+        return len(gone) == len(entries)
 
     @classmethod
     def rewrite(cls, src: str, dst: str) -> None:

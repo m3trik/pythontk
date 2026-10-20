@@ -25,6 +25,9 @@ cross-call is spelled ``AppLauncher.<name>``, so patching the facade reaches it:
 * :mod:`._processes` -- running processes (``get_running_processes``,
   ``close_process``, ``process_tree``) and the lifetime binding ``spawn`` puts
   a child under.
+* :mod:`._hidden` -- ``run(hidden=True)``: a GUI app with no headless mode run
+  on a private Windows desktop, inside a job that ends everything it started
+  (``can_hide``: whether this platform does).
 * :mod:`._shortcuts` -- a launcher on the desktop or in the start menu
   (``create_shortcut``: a Windows ``.lnk`` through ``IShellLinkW``, a Linux
   ``.desktop`` entry).

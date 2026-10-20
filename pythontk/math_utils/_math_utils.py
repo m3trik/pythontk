@@ -487,6 +487,54 @@ class MathUtils(
         return _MathClusteringInternal.linear_sum_assignment(cost_matrix, maximize)
 
     @staticmethod
+    def fit_similarity(
+        source: Sequence[Sequence[float]],
+        target: Sequence[Sequence[float]],
+    ) -> Optional[Tuple[float, List[List[float]], List[float], float]]:
+        """The similarity transform taking paired *source* points onto *target*.
+
+        ``target ~= scale * rotation @ source + translation`` in the least-squares
+        sense (Umeyama, 1991), the rotation a proper one (no mirror). What maps
+        one space onto another when the same points are known in both -- a
+        file's vertices before and after an interchange that changed the axes
+        and the units -- with no axis or unit convention written down.
+
+        Parameters:
+            source: N points (each 2D or 3D, all alike).
+            target: The same N points in the other space.
+
+        Returns:
+            ``(scale, rotation rows, translation, residual)`` -- the residual the
+            RMS distance from each mapped source point to its target, in the
+            target's units -- or ``None`` when the pairs cannot fix the
+            transform: fewer than three, unequal counts, or all on one line.
+        """
+        import numpy as np
+
+        a = np.asarray(source, dtype=float)
+        b = np.asarray(target, dtype=float)
+        if a.ndim != 2 or a.shape != b.shape or a.shape[0] < 3:
+            return None
+        mean_a, mean_b = a.mean(axis=0), b.mean(axis=0)
+        da, db = a - mean_a, b - mean_b
+        spread = float((da**2).sum()) / len(a)
+        if spread <= 1e-24:
+            return None
+        u, s, vt = np.linalg.svd(db.T @ da / len(a))
+        # Collinear pairs leave a rotation free about their line.
+        if a.shape[1] > 2 and s[1] <= 1e-9 * max(s[0], 1e-300):
+            return None
+        flip = np.eye(a.shape[1])
+        if np.linalg.det(u) * np.linalg.det(vt) < 0:
+            flip[-1, -1] = -1.0
+        rotation = u @ flip @ vt
+        scale = float(np.trace(np.diag(s) @ flip)) / spread
+        translation = mean_b - scale * rotation @ mean_a
+        mapped = scale * a @ rotation.T + translation
+        residual = float(np.sqrt(((mapped - b) ** 2).sum(axis=1).mean()))
+        return scale, rotation.tolist(), translation.tolist(), residual
+
+    @staticmethod
     def kmeans_clustering(
         points: Sequence[Sequence[float]],
         k: int,
@@ -569,6 +617,30 @@ class MathUtils(
             # threshold ≈ 7.25 (midpoint between medium and large clusters)
         """
         return super().get_kmeans_threshold(values, k)
+
+    @staticmethod
+    def connected_components(count: int, groups) -> List[int]:
+        """The connected components of *count* vertices that *groups* join.
+
+        Each row of *groups* is a set of vertex indices joined to each other --
+        an edge's two, a triangle's three (all rows one width; an ``(M, K)``
+        array or nested sequences). Vectorized (numpy), so a dense mesh's
+        shells come apart in a few passes.
+
+        Parameters:
+            count: The number of vertices (indices ``0 .. count - 1``).
+            groups: The rows joining them.
+
+        Returns:
+            List[int]: One component index per vertex, the components numbered
+                ``0 ..`` in the order of their lowest vertex; a vertex no row
+                names is a component of its own.
+
+        Example:
+            MathUtils.connected_components(6, [[0, 1], [1, 2], [4, 5]])
+            # [0, 0, 0, 1, 2, 2]
+        """
+        return _MathClusteringInternal.connected_components(count, groups)
 
     @staticmethod
     @CoreUtils.listify
@@ -1094,23 +1166,32 @@ class MathUtils(
         )
 
     @staticmethod
-    def smoothstep(x: float, edge0: float = 0.0, edge1: float = 1.0) -> float:
+    def smoothstep(x, edge0: float = 0.0, edge1: float = 1.0):
         """Canonical clamped Hermite smoothstep (``3t² − 2t³``).
 
         Eases ``x`` within ``[edge0, edge1]`` to a smooth ``0``..``1`` with zero
         slope at both ends; ``x`` outside the range clamps to ``0``/``1`` (so a
         raw ratio is safe to pass). Distinct from
         :meth:`ProgressionCurves.smooth_step`, which applies a weight exponent
-        and does not clamp.
+        and does not clamp. An array ``x`` (numpy, or a sequence) is eased
+        element-wise and returns an array.
 
         Parameters:
-            x (float): Input value.
+            x (float | array-like): Input value(s).
             edge0 (float): Lower edge (maps to 0).
             edge1 (float): Upper edge (maps to 1).
 
         Returns:
-            float: Smoothed value in ``0``..``1``.
+            float | numpy.ndarray: Smoothed value(s) in ``0``..``1``.
         """
+        if not isinstance(x, (int, float)):
+            import numpy as np
+
+            x = np.asarray(x, dtype=float)
+            if edge0 == edge1:
+                return np.where(x < edge0, 0.0, 1.0)
+            t = np.clip((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+            return t * t * (3.0 - 2.0 * t)
         if edge0 == edge1:
             return 0.0 if x < edge0 else 1.0
         t = (x - edge0) / (edge1 - edge0)

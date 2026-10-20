@@ -48,6 +48,7 @@ and an Empty) -- this module never knows.
 Zero-dep and DCC-agnostic, like everything in ``pythontk``.
 """
 
+import copy
 import json
 import logging
 from dataclasses import dataclass
@@ -249,6 +250,12 @@ class RecordSpec:
             the write leaves out ships that node's files with nothing to bind
             them to. The scene's own copy stays whole: a scoped assembly keeps
             it (:attr:`ExportSnapshot.scene_wide`) for the exporter to put back.
+        assembly: What the record makes of the approved scene, field by field
+            -- the handoff block's ``assembly`` row for it, so a reader holding
+            nothing but the deliverable rebuilds what the record describes
+            instead of only knowing it is there.  Declarative: what the scene
+            IS, never a step to take outside the file.  Empty for a private
+            record, which never ships.
     """
 
     key: str
@@ -273,6 +280,7 @@ class RecordSpec:
     shape: Optional[Tuple[str, str]] = None
     web: Optional[WebProjection] = None
     export_scoped: bool = False
+    assembly: str = ""
 
     @property
     def path_keys(self) -> Optional[Tuple[str, ...]]:
@@ -408,6 +416,16 @@ class SceneRecords:
         # Each clip's objects name only what the write carries; every take
         # ships (ShotStore.export_records).
         export_scoped=True,
+        assembly=(
+            "The animation is the file's takes, each shot joined to its take "
+            "by 'clip', the take's name. 'clip_mode' says how the takes "
+            "were cut: 'shots', one take per shot; 'full', one whole-timeline "
+            "take in which a shot is the window 'start'..'end'; 'both' (or "
+            "absent), both, the whole-timeline take being the longest one no "
+            "shot names. 'start' and 'end' are frames of the authoring "
+            "timeline at 'fps'; 'objects' names what a shot animates and "
+            "'description' what it shows."
+        ),
     )
     #: No longer written (the ranges ride ``shot_metadata``'s clips); declared
     #: so a file written before 0.11.0 still reads (:meth:`declared_takes`),
@@ -424,15 +442,33 @@ class SceneRecords:
         envelope=False,
         deprecated_by="shot_metadata",
         consumers=("glb", "verifier"),
+        assembly=(
+            "Read only where shot_metadata is absent, which supersedes it: "
+            "one entry per take, its 'name' and its 'start'..'end' frames."
+        ),
     )
     AUDIO = RecordSpec(
         "audio_manifest",
         Scope.DELIVERABLE,
         2,
         owner="Audio Clips",
-        description="audio events with the frames they fire on, scoped to their clip",
+        description=(
+            "audio events with the frames they fire on, scoped to their clip, "
+            "and 'fps', the rate those frames count at"
+        ),
+        # Read off the keyed tracks / sound strips an artist moves between one
+        # push and the next, so every write refreshes it, a hand-off included
+        # (a Unity-bridge FBX shipped the last export's events otherwise).
+        kind=Kind.DERIVED,
         after=("shot_metadata",),
         consumers=("unity",),
+        assembly=(
+            "Each event plays its audio track 'frame' frames into its 'clip' "
+            "(at that take's frame rate); an event with no 'clip' plays in "
+            "every take. The track's file rides the file as media of its "
+            "own, joined to the event's 'name' by file stem without regard "
+            "to case."
+        ),
     )
     LIGHTMAPS = RecordSpec(
         "lightmap_metadata",
@@ -444,13 +480,49 @@ class SceneRecords:
             "intensity, scaleOffset, and the object's scene hierarchy (which "
             "tells apart objects that share a name); and the bake's reflection "
             "probe, when it captured one: its HDR's file name, capture point and "
-            "projection box, in scene units beside unit_scale"
+            "projection box, in the file's unit beside unit_scale; and the lights "
+            "the maps were baked from, for the highlights a lightmap cannot hold"
         ),
         consumers=("unity", "glb"),
         # The maps embedded, keyed by the material each binds to
         # (MeshConvert.apply_glb_lightmaps).
         web=WebProjection("lightmap_web"),
         export_scoped=True,
+        assembly=(
+            "Each 'objects' entry lights one object with a baked lightmap: "
+            "the image 'map' names, read through UV set 'uvIndex' (0-based: "
+            "1 is the second UV set) at uv * [scaleX, scaleY] + [offsetX, "
+            "offsetY] from 'scaleOffset', non-directional and applied as "
+            "stored -- linear, 'intensity' being the multiplier its texels "
+            "already carry. The object is the node 'name' names (its "
+            "namespace aside), 'hierarchy' -- its path from the root -- "
+            "telling apart objects that share a name; a tie nothing settles "
+            "is left unlit rather than guessed. The map is the object's whole "
+            "diffuse light "
+            "and its material stays as authored "
+            "(rendering.lightmappedMaterials). 'probe', when present, is the "
+            "reflection probe the bake captured: the scene's environment "
+            "(rendering.environment). 'lights', when present, are the "
+            "lights the maps were baked from, for their HIGHLIGHTS alone -- "
+            "the diffuse light of each is already in the maps, so a reader "
+            "that lights them must light their specular only, or the scene "
+            "is lit twice. Each is 'type' point, spot or rect at 'position' "
+            "(the file's unit, 'unit_scale' metres per unit), facing 'direction' "
+            "(a rect's width along 'right'), its 'color' linear Rec.709, "
+            "'intensity' radiant intensity per steradian for a point or spot "
+            "(irradiance at one such unit) and radiance for a rect, a spot's "
+            "half 'angle' (radians) and soft 'penumbra' share, a rect's "
+            "'width' and 'height', a source's 'radius'. 'probe.highlights', "
+            "when present, are those lights already drawn for groups of "
+            "receivers, so a reader that uses them lights none of 'lights' "
+            "(the highlights would count twice): each names a 'map', a "
+            "Radiance layer in the probe's layout and units to add to the "
+            "probe (box-filtered down to the layer's size) and prefilter as "
+            "the probe is, the 'receivers' it was drawn for ('interior' or "
+            "'unbaked'), and the 'objects' ('name' and 'hierarchy', as above) "
+            "that reflect that sum in the probe's place, box-projected from "
+            "the same 'position' and 'box'."
+        ),
     )
     SHADOWS = RecordSpec(
         "shadow_metadata",
@@ -466,6 +538,16 @@ class SceneRecords:
         # texture indices (MeshConvert.apply_glb_shadows).
         web=WebProjection("shadow_web", version=2),
         export_scoped=True,
+        assembly=(
+            "Each plane is a projected contact shadow: the node 'name' "
+            "carries the silhouette 'texture' (and, when atlased or "
+            "horizon-mapped, the maps and rects it names), placed each frame "
+            "from its 'source' and 'contact' nodes by the projection the "
+            "record's constants describe (the file's unit, 'unit_scale' "
+            "metres per unit; pythontk's ShadowProjection). 'intensity' is "
+            "informational. Without a runtime for that projection, the "
+            "plane's imported keys and silhouette stand."
+        ),
     )
     ARTICULATION = RecordSpec(
         "articulation",
@@ -486,6 +568,16 @@ class SceneRecords:
             "articulation_web",
             shape=("pythontk.geo_utils.articulation.record", "ArticulationWeb"),
         ),
+        assembly=(
+            "Each rig poses its joints as rotation = rest (x) Euler(channels) "
+            "and translation = rest + rest.(tx, ty, tz), every channel within "
+            "its limits (degrees), and a grabbed part rides its joint -- the "
+            "model pythontk's ArticulationModel solves. Joints are found by "
+            "node name; the rest translations are in the file's own axes, "
+            "their unit the ratio of the imported rest translations to them. "
+            "The imported pose is the rest pose, and the takes play the "
+            "joints' own keys."
+        ),
     )
     EMISSIVE_GROUPS = RecordSpec(
         "emissive_groups",
@@ -497,6 +589,15 @@ class SceneRecords:
         # (RegionMaskManifest.SCHEMA_VERSION, pinned equal by the tests).
         version_key="schema",
         consumers=("unity",),
+        assembly=(
+            "Each group gates the emission of the region its 'slot' selects "
+            "(0-3: R, G, B, A of the mask 'encoding' names -- the vertex "
+            "colours 'color_set', or the texture 'mask' read through UV set "
+            "'uv_channel'), its weight starting at 'default'. A group naming "
+            "'attr' has that weight animated: a keyed property of that name "
+            "on the model's root, or a child node named 'attr' whose scale.x "
+            "carries the curve."
+        ),
     )
     VISIBILITY = RecordSpec(
         "visibility_tracks",
@@ -504,23 +605,44 @@ class SceneRecords:
         1,
         owner="Render Effects",
         description=(
-            "keyed visibility per node, as stepped on/off frames, with the "
-            "authored opacity ramp and each take's first/last authored frame; "
-            "on a shot scene keying none, the exporter's measured whole-timeline "
-            "clip origin alone"
+            "each node's keyed render effects: 'visibility' as stepped on/off "
+            "frames, the authored 'opacity' ramp, and the 'highlight' ramp "
+            "with its colour stops ('highlight_color', 'highlight_color_dim'); "
+            "with 'fps' and each take's first/last authored frame "
+            "('clip_span'); on a shot scene keying none, the exporter's "
+            "measured whole-timeline clip origin alone"
         ),
         kind=Kind.DERIVED,
         after=("shot_metadata",),
         consumers=("glb", "verifier"),
+        assembly=(
+            "Render effects over time, per 'tracks' entry and the subtree "
+            "under its 'node', each a list of [frame, value] keys: "
+            "'visibility' shows (1) or hides (0) it, stepped; 'opacity' is "
+            "its materials' alpha, hidden at 0; 'highlight' adds an emission "
+            "to its materials' own, blended from 'highlight_color_dim' at 0 "
+            "to 'highlight_color' at 1. The same curves ride the file itself: "
+            "each affected object carries 'opacity' / 'highlight' (and "
+            "'highlightColor' / 'highlightColorDim') properties, keyed "
+            "through a child '<object>__opacity' / '<object>__highlight' "
+            "node whose scale.x holds the curve -- transport, not content."
+        ),
     )
+    #: Version 2 (2026-10-14) added ``assembly`` and published ``rendering``
+    #: in the carrier's own addresses. Which block describes a file is the
+    #: node it rides, never its version: a referenced module's block -- a
+    #: version-1 one says the maps are not embedded and that ``intensity`` is
+    #: a multiplier to apply -- describes that module alone, whichever is
+    #: newer.
     HANDOFF = RecordSpec(
         "handoff",
         Scope.DELIVERABLE,
-        1,
+        2,
         owner="Export",
         description=(
             "the standalone-reader contract: what each channel present on the "
-            "carrier holds"
+            "carrier holds, the approved scene part by part, and the lighting "
+            "it was approved under"
         ),
         kind=Kind.DERIVED,
     )
@@ -592,6 +714,42 @@ class SceneRecords:
         envelope=False,
         merge=Merge.UNION,
     )
+    #: Each texture combine the scene holds, by name: the meshes it moved
+    #: (their original UVs and the material each face wore), the source maps
+    #: it read, its settings and table overrides -- what restores the
+    #: originals exactly, and re-combines in place when a source map is
+    #: revised.  Scene nodes and absolute source paths, so it never crosses.
+    TEXTURE_COMBINE = RecordSpec(
+        "texture_combine",
+        Scope.PRIVATE,
+        1,
+        owner="Texture Combine",
+        description=(
+            "texture combines by name: per mesh its original UVs and face "
+            "materials, the source maps read, the settings and overrides"
+        ),
+        # A bare ``{name: entry}`` mapping (each entry carries its own
+        # ``schema``), so a crossing unites combines by name.
+        envelope=False,
+        merge=Merge.UNION,
+    )
+    #: The light rigs applied in this scene, by rig group name: which saved rig
+    #: each group holds, its fingerprint when it went in (what "edited since"
+    #: compares), the plugs it overrides and the sections it carried, and the
+    #: rig the last swap replaced (what Swap Back returns to). Scene state, kept
+    #: off the group: a node attribute rides every FBX as a user property.
+    LIGHT_RIGS = RecordSpec(
+        "light_rigs",
+        Scope.PRIVATE,
+        1,
+        owner="Light Rigs",
+        description=(
+            "light rigs by group: the rig applied, its fingerprint, the plugs "
+            "it overrides and the rig a swap replaced"
+        ),
+        envelope=False,
+        merge=Merge.UNION,
+    )
     AUDIO_FILE_MAP = RecordSpec(
         "audio_file_map",
         Scope.PRIVATE,
@@ -648,7 +806,8 @@ class SceneRecords:
     #: The reflection probe the lightmap bake captured -- the room it lit, as
     #: an HDR from one point: the file's name, that point, and the box its
     #: reflections project onto, in scene units with ``unit_scale`` (metres
-    #: per unit) beside them.  Published inside :attr:`LIGHTMAPS` as its
+    #: per unit) beside them, read at the same moment.  Published inside
+    #: :attr:`LIGHTMAPS` as its
     #: ``probe``; the file's folder and writer ride :attr:`LIGHTMAP_DIRS` and
     #: :attr:`LIGHTMAP_WRITERS` like any map's.  It describes its own scene,
     #: so another scene's copy is dropped.
@@ -660,6 +819,27 @@ class SceneRecords:
         description=(
             "the reflection probe the lightmap bake captured: file name, "
             "capture point and projection box"
+        ),
+        merge=Merge.OWN,
+        respell=False,
+    )
+    #: What each lightmap was baked AGAINST, per object: its transform,
+    #: bounds, geometry and lightmap-UV fingerprints, material group and the
+    #: atlas cell it was written to, and the lighting each bake saw -- the
+    #: baseline a re-bake of what changed diffs the scene against
+    #: (``BakeBaseline``).  Never on the marker, which rides every FBX and is
+    #: read by the GLB applier and WebXR, nor in :attr:`LIGHTMAPS` (the Unity
+    #: contract): build-time state keyed by this scene's own node names, so
+    #: another scene's copy is dropped, and nothing respells it.
+    LIGHTMAP_BAKE_STATE = RecordSpec(
+        "lightmap_bake_state",
+        Scope.PRIVATE,
+        1,
+        owner="Lightmap Baker",
+        description=(
+            "per object the state its lightmap was baked against (transform, "
+            "bounds, geometry and UV fingerprints, material, atlas cell) and "
+            "the lighting each bake saw (a BakeBaseline record)"
         ),
         merge=Merge.OWN,
         respell=False,
@@ -741,18 +921,43 @@ class SceneRecords:
         (``ExportContext.rendering``) merge by ``MeshConvert.rendering_policy``
         on both carriers.  Imported lazily: this module is the lighter
         dependency and must import first.
+
+        Published in the RECORDS' addresses (``carrier="fbx"``, the
+        ``data_export`` node's): the policy's prose points at the reflection
+        probe and the lightmaps, which a GLB binds under ``extras`` and this
+        carrier holds in ``lightmap_metadata``.
         """
         from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
-        return MeshConvert.rendering_policy(overrides)
+        return MeshConvert.rendering_policy(overrides, carrier="fbx")
 
     #: The standalone-reader contract for the carrier the block rides on.
-    #: Plain declarative sentences about the file's own structure, no
-    #: instructions to the reader (which is what makes it safe for an agent to
-    #: read as untrusted content), and no container format named: the same
-    #: records are read out of a GLB, a sidecar or a dump, where "the FBX"
-    #: misleads.  The load-bearing sentence is the one about the files the
-    #: records name: a lighting-only bake deliberately leaves its map off every
+    #: Declarative sentences about the file and the scene it rebuilds --
+    #: never an action outside the file (no command, no fetch, no tool),
+    #: which is what makes it safe for an agent to read as untrusted content
+    #: -- and no container format named: the same records are read out of a
+    #: GLB, a sidecar or a dump, where "the FBX" misleads.
+    #:
+    #: Written for a reader holding the delivered file and nothing else, and
+    #: tightened (2026-10-14) against what such a reader actually dropped on
+    #: a delivered assembly:
+    #:
+    #: - **Which carrier.** An assembly ships one ``data_export`` per
+    #:   referenced module beside the scene's own, each holding that module's
+    #:   records as it was last exported alone -- stale names, objects since
+    #:   removed, no probe, and its own older block contradicting this one.
+    #:   Both readers in this repo resolve a record the same way
+    #:   (``MeshConvert._data_export_carrier``, unitytk's ``CarrierImport``),
+    #:   and the text states that rule rather than leaving a reader to merge.
+    #: - **Case.** A module spelled a map ``_LightMap`` where the embedded copy
+    #:   is ``_Lightmap``; every reader in this repo joins without case.
+    #: - **What the parts ARE.** ``assembly`` (each record's own
+    #:   :attr:`RecordSpec.assembly`, the lighting rows beside the policy)
+    #:   says what each part of the approved scene is built from, so the
+    #:   render effects, the probe and the lighting are not optional reading.
+    #:
+    #: The load-bearing sentence is still the one about the files the records
+    #: name: a lighting-only bake deliberately leaves its map off every
     #: material so the authored material survives, so a delivered file embeds
     #: those maps -- and every other file a record names -- as media of their
     #: own (``FbxMedia.embed_dependencies``; the GLB binds them). Delivered,
@@ -761,26 +966,53 @@ class SceneRecords:
     #: and unitytk's delivery embed -- so the sentence says what a name joins
     #: to where the file holds no copy.
     HANDOFF_INSTRUCTIONS = (
-        "The file carrying this block embeds every texture its MATERIALS "
-        "reference, so material assignment needs no external files or paths. "
-        "Tool-authored metadata rides on the 'data_export' node, each channel "
-        "value a JSON string; 'reads' names each channel present and what it "
-        "holds. 'lightmap_metadata' names each baked object's map by FILE "
-        "NAME, with 'uvIndex' (0-based: 1 is the second UV set), 'intensity' "
-        "(informational: the multiplier the map's texels already carry, so the "
-        "map applies as stored) and 'scaleOffset' "
-        "([scaleX, scaleY, offsetX, offsetY] within a shared atlas); each "
-        "baked object also carries its own 'lightmapInfo' property. No material "
-        "references those maps -- a lighting-only bake leaves them unwired so "
-        "the authored material survives. A delivered file embeds them as media "
-        "of their own, as it does every other file a record names by FILE NAME "
-        "(the reflection probe's HDR, the shadow maps): the file name is the "
-        "join token to that embedded copy, or, where the file holds no copy, "
-        "to one provided with it; the manifest names no folder. "
-        "The asset carries no lights; 'rendering' records the setup "
-        "the reference viewer approved it under, so lighting it differently "
-        "renders differently without either side being wrong. Check "
-        "'version' against the schema you expect."
+        "This block describes the file that carries it and the approved scene "
+        "that file rebuilds. Geometry, hierarchy and materials are complete in "
+        "the file, every texture a material references embedded; the scene's "
+        "records ride as user properties on nodes named 'data_export', each "
+        "value a JSON string. Per record, the node named exactly 'data_export' "
+        "is the delivered scene's own and wins: the same record on any other "
+        "such node ('data_export1', a namespaced 'NS:data_export') is a "
+        "referenced module's, as that module was last exported alone, and is "
+        "read only where the scene's own node carries no record of that name. "
+        "A 'handoff' describes this file only on the node named exactly "
+        "'data_export'; one on any other node describes that module as it was "
+        "delivered alone. 'reads' names what each "
+        "record holds. 'assembly' lists every part of the approved scene with "
+        "the data it is built from (an address beginning 'rendering.' is in "
+        "this block); a part left out yields a scene other than the one "
+        "approved. Records name files by FILE NAME, never by folder. A "
+        "delivered file embeds each one -- the lightmaps, the reflection "
+        "probe's image, the shadow maps -- as media of its own, the name being "
+        "the join token to that embedded copy, matched without regard to "
+        "case, or, where the file holds no copy, to one provided with it. No "
+        "material references those maps -- a lighting-only bake leaves them "
+        "unwired so the authored material survives -- and each baked object "
+        "also carries its own 'lightmapInfo' property repeating its entry. A "
+        "length in a record is in the file's own units and axes, with "
+        "'unit_scale' (metres per unit) beside it where the record gives "
+        "one; an angle is in degrees unless its field says radians; frames "
+        "count at the record's 'fps'. "
+        "The asset carries no "
+        "lights; 'rendering' is the lighting it was approved under and part "
+        "of its look: lit any other way, the same file renders differently. "
+        "Check 'version' against the schema you expect."
+    )
+
+    #: The ``assembly`` rows that hold whatever the carrier carries: the
+    #: content the file itself is.  Each record present adds its own row
+    #: (:attr:`RecordSpec.assembly`) and the lighting rows close the list
+    #: (``MeshConvert.LIGHTING_ASSEMBLY``).
+    HANDOFF_ASSEMBLY: Tuple[Dict[str, Any], ...] = (
+        {
+            "part": "geometry",
+            "data": ["the file's models, materials and embedded textures"],
+            "spec": (
+                "Complete in the file and as approved: hierarchy, meshes, "
+                "materials and every texture a material references, in the "
+                "file's own units and axes."
+            ),
+        },
     )
 
     # ------------------------------------------------------------- catalogue
@@ -1068,21 +1300,51 @@ class SceneRecords:
 
         *rendering* is the export's choices over the lighting recipe
         (:meth:`rendering_policy`); ``None`` publishes the policy as it stands.
+
+        ``assembly`` is the approved scene part by part: the file's content
+        (:attr:`HANDOFF_ASSEMBLY`), then each record present in declaration
+        order (its :attr:`RecordSpec.assembly`; an undeclared channel says
+        only that it is there), then the lighting
+        (``MeshConvert.LIGHTING_ASSEMBLY``).
         """
         if isinstance(channels, Mapping):
             channels = [k for k, v in channels.items() if isinstance(v, str) and v]
         present = sorted(c for c in channels if c != cls.HANDOFF.key)
         if not present:
             return {}
-        described = {s.key: s.description for s in cls.deliverable()}
+        # Lazily, like :meth:`rendering_policy`, and only once there is a
+        # block to build: every commit calls this, most with nothing to say.
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        declared = {s.key: s for s in cls.deliverable()}
+        rows = [
+            {"part": key, "data": [f"data_export.{key}"], "spec": spec.assembly}
+            for key, spec in declared.items()
+            if key in present and spec.assembly
+        ] + [
+            {
+                "part": name,
+                "data": [f"data_export.{name}"],
+                "spec": "A tool-authored record; 'reads' is all this file says of it.",
+            }
+            for name in present
+            if name not in declared
+        ]
         return {
             "version": cls.HANDOFF.version,
             "source": {k: v for k, v in (source or {}).items() if v} or None,
             "instructions": cls.HANDOFF_INSTRUCTIONS,
             "reads": {
-                f"data_export.{name}": described.get(name, "tool-authored channel")
+                f"data_export.{name}": (
+                    declared[name].description
+                    if name in declared
+                    else "tool-authored channel"
+                )
                 for name in present
             },
+            "assembly": copy.deepcopy(
+                [*cls.HANDOFF_ASSEMBLY, *rows, *MeshConvert.LIGHTING_ASSEMBLY]
+            ),
             "rendering": cls.rendering_policy(rendering),
         }
 

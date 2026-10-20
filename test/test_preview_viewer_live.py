@@ -34,6 +34,7 @@ import subprocess
 import sys
 import threading
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -1873,6 +1874,7 @@ class TestPreviewViewerLive(unittest.TestCase):
         baked_reflections=None,
         probe=None,
         probe_intensity=None,
+        highlights=None,
     ):
         """A GLB whose material wears a BAKED map, built by the real applier.
 
@@ -1899,7 +1901,10 @@ class TestPreviewViewerLive(unittest.TestCase):
         one: ``{"image": float (h, w, 3) RGB radiance in the probe's
         equirectangular layout, "position": [x, y, z], "box": [[min], [max]]
         or None}``, in metres (``unit_scale`` 1); *probe_intensity* publishes
-        the level it plays at (``environment.probeIntensity``).
+        the level it plays at (``environment.probeIntensity``). *highlights*
+        gives that probe highlight copies as the export embeds them
+        (``probe.highlights``, ``MeshConvert._embed_highlight_probes``):
+        ``[{"image": float (h, w, 3) RGB layer, "materials": [names]}]``.
         """
         import cv2
         import numpy as np
@@ -1993,6 +1998,31 @@ class TestPreviewViewerLive(unittest.TestCase):
         # A fixture that silently bound nothing would make every assertion
         # below vacuous, and they would all still pass.
         self.assertTrue(bound, "the fixture itself must carry a bound lightmap")
+        if highlights:
+            with ptk.MeshConvert.open_glb(path) as edit:
+                copies = []
+                for layer in highlights:
+                    image = np.asarray(layer["image"], dtype=np.float32)
+                    (view,) = ptk.MeshConvert._append_bin_views(
+                        edit, [ptk.ImgUtils.encode_hdr_radiance_pixels(image)]
+                    )
+                    copies.append(
+                        {
+                            "bufferView": view,
+                            "mimeType": "image/vnd.radiance",
+                            "width": image.shape[1],
+                            "height": image.shape[0],
+                            "receivers": layer.get("receivers", "interior"),
+                            "materials": list(layer["materials"]),
+                        }
+                    )
+                web = edit.gltf["extras"]["lightmap_web"]
+                web["probe"]["highlights"] = {
+                    "eye": list(probe["position"]),
+                    "lights": len(copies),
+                    "copies": copies,
+                }
+                edit.dirty = True
         return path
 
     def _baked_room_glb(self, objects):
@@ -2356,9 +2386,18 @@ class TestPreviewViewerLive(unittest.TestCase):
         )
 
     def _load(
-        self, glb, then_publish=None, probe=None, then=None, scripts=(), host=None
+        self,
+        glb,
+        then_publish=None,
+        probe=None,
+        then=None,
+        scripts=(),
+        host=None,
+        init=None,
     ):
         """Serve *glb*, open it in the real page, return the probe's findings.
+
+        *init* is a script the page runs before its own (a device to emulate).
 
         A list of files is published as the parts of one scene
         (``PreviewServer.publish_parts``).
@@ -2404,6 +2443,8 @@ class TestPreviewViewerLive(unittest.TestCase):
                     args=["--enable-unsafe-swiftshader"],
                 )
                 page = browser.new_page()
+                if init:
+                    page.add_init_script(init)
                 page.on(
                     "console",
                     lambda m: (
@@ -2645,6 +2686,270 @@ class TestPreviewViewerLive(unittest.TestCase):
             self.assertEqual(
                 said["blocked CDN"], "three.js failed to load — needs unpkg.com."
             )
+
+    def test_a_runtime_switched_under_the_browser_names_its_cure(self):
+        """REGRESSION (2026-10-18): connected through Virtual Desktop, the page
+        kept saying "No headset presenting — start Link or SteamVR". Chromium's
+        XR service loads the active OpenXR runtime once and never re-reads it;
+        Virtual Desktop was the active runtime, but Edge's service had loaded
+        Oculus's the day before -- so `immersive-vr` stayed unsupported for
+        good, no `devicechange` could cure it, and the hint named two things to
+        start, neither of them missing. The page now sees the runtime change
+        under it and names the one cure: restart the browser."""
+        from playwright.sync_api import sync_playwright
+
+        # The stale XR service: no device, whatever the registry says.
+        no_device = (
+            "const xr = new EventTarget();"
+            "xr.isSessionSupported = () => Promise.resolve(false);"
+            "Object.defineProperty(navigator, 'xr', {value: xr, configurable: true});"
+        )
+        runtimes = {}
+        for name in ("Oculus OpenXR", "VirtualDesktopXR (Bundled)"):
+            runtimes[name] = self.temp.path(extension=".json")
+            with open(runtimes[name], "w", encoding="utf-8") as fh:
+                json.dump({"runtime": {"name": name, "library_path": "x.dll"}}, fh)
+        active = {"path": runtimes["Oculus OpenXR"]}
+        hint = "document.getElementById('hint').textContent"
+        server = ptk.PreviewServer(viewer=True, title="live-test", port=0)
+        with unittest.mock.patch.object(
+            ptk.PreviewServer, "_xr_runtime", classmethod(lambda cls: active["path"])
+        ):
+            server.start()
+            try:
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(
+                        channel="msedge",
+                        headless=True,
+                        args=["--enable-unsafe-swiftshader"],
+                    )
+                    page = browser.new_page()
+                    page.add_init_script(no_device)
+                    page.goto(
+                        server.url, wait_until="domcontentloaded", timeout=120_000
+                    )
+                    page.wait_for_function(
+                        f"() => {hint}.startsWith('No headset presenting')",
+                        timeout=60_000,
+                    )
+                    before = page.evaluate(f"() => {hint}")
+                    active["path"] = runtimes["VirtualDesktopXR (Bundled)"]
+                    page.wait_for_function(
+                        f"() => {hint}.includes('VirtualDesktopXR')", timeout=30_000
+                    )
+                    after = page.evaluate(f"() => {hint}")
+                    # Switched BACK, the runtime the browser holds is the active
+                    # one again: the plain hint, not a restart it does not need.
+                    active["path"] = runtimes["Oculus OpenXR"]
+                    page.wait_for_function(
+                        f"() => !{hint}.includes('VirtualDesktopXR')", timeout=30_000
+                    )
+                    back = page.evaluate(f"() => {hint}")
+                    browser.close()
+            finally:
+                server.stop()
+
+        # Virtual Desktop is a way to present, as much as Link and SteamVR are.
+        self.assertIn("Virtual Desktop", before)
+        self.assertNotIn("after this browser loaded", before)
+        # Both runtimes named -- which one the browser holds is the news.
+        self.assertIn("Oculus OpenXR", after)
+        self.assertIn("restart the browser", after)
+        self.assertIn("://restart", after)
+        self.assertEqual(back, before)
+
+    #: A WebXR device three can set up a session on end to end -- no `layers`
+    #: (the XRWebGLLayer path, the layer faked), a reference space, frames that
+    #: never come: setup and the page's own handling are what is under test. It
+    #: records every request and every end. `window.__xrFails` picks how
+    #: `makeXRCompatible` answers: 'gpu-move' is what Chromium does when the
+    #: page's GPU is not the headset's (measured 2026-10-18, Edge on a
+    #: hybrid-GPU laptop) -- the context is lost and back a moment later, and
+    #: the call rejects with InvalidStateError -- 'gpu-move-once' does it to the
+    #: first call only, as the hardware did; 'other' rejects with no loss.
+    #: `window.__pressWithoutGesture` has the page itself press Enter VR as it
+    #: appears (Playwright's own evaluate runs as a gesture).
+    FAKE_XR = r"""
+    (() => {
+      const log = (window.__xr = { requests: 0, ended: 0, compatible: 0 });
+      const space = () => {
+        const s = new EventTarget();
+        s.getOffsetReferenceSpace = () => space();
+        return s;
+      };
+      const xr = new EventTarget();
+      xr.isSessionSupported = () => Promise.resolve(true);
+      xr.requestSession = () => {
+        log.requests += 1;
+        const session = new EventTarget();
+        session.renderState = {};
+        session.inputSources = [];
+        session.updateRenderState = () => {};
+        session.requestReferenceSpace = () => Promise.resolve(space());
+        session.requestAnimationFrame = () => 1;
+        session.cancelAnimationFrame = () => {};
+        session.end = () => {
+          log.ended += 1;
+          setTimeout(() => session.dispatchEvent(new Event('end')));
+          return Promise.resolve();
+        };
+        return Promise.resolve(session);
+      };
+      Object.defineProperty(navigator, 'xr', { value: xr, configurable: true });
+      window.XRWebGLLayer = class {
+        constructor() { this.framebufferWidth = 64; this.framebufferHeight = 64; this.framebuffer = null; }
+      };
+      for (const proto of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
+        proto.makeXRCompatible = function () {
+          log.compatible += 1;
+          const fails = window.__xrFails;
+          const moves = fails === 'gpu-move' || (fails === 'gpu-move-once' && log.compatible === 1);
+          if (!moves && fails !== 'other') return Promise.resolve();
+          if (moves) {
+            const lose = this.getExtension('WEBGL_lose_context');
+            lose.loseContext();
+            setTimeout(() => lose.restoreContext(), 300);
+          }
+          return Promise.reject(new DOMException(
+            'An attempt was made to use an object that is not, or is no longer, usable.',
+            'InvalidStateError'));
+        };
+      }
+      if (window.__pressWithoutGesture) {
+        new MutationObserver((_, observer) => {
+          const button = document.getElementById('VRButton');
+          if (!button) return;
+          observer.disconnect();
+          setTimeout(() => {
+            log.gesture = navigator.userActivation.isActive;
+            button.click();
+          });
+        }).observe(document, { childList: true, subtree: true });
+      }
+    })();
+    """
+
+    #: The page's XR state, as the tests below read it.
+    XR_STATE = (
+        "async () => ({ ...window.__xr,"
+        " presenting: (await import('./kernel/scene.js')).renderer.xr.isPresenting,"
+        " hint: document.getElementById('hint').textContent })"
+    )
+
+    def test_a_session_that_sets_up_presents_and_says_so(self):
+        """REGRESSION (2026-10-18): every Enter VR failed with "Cannot read
+        properties of undefined (reading 'setFoveation')" -- the entry guard
+        called three's `setSession` unbound, and setup reaches its manager
+        through `this`. So setup runs to the end here: the session presents,
+        the hint says so, and on the way out the device check takes the line
+        back (it once kept "Starting session…", and the EXIT VR press re-armed
+        the entry time-out)."""
+        from playwright.sync_api import sync_playwright
+
+        hint = "document.getElementById('hint').textContent"
+        server = ptk.PreviewServer(viewer=True, title="live-test", port=0).start()
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    channel="msedge",
+                    headless=True,
+                    args=["--enable-unsafe-swiftshader"],
+                )
+                page = browser.new_page()
+                page.add_init_script(self.FAKE_XR)
+                page.goto(server.url, wait_until="domcontentloaded", timeout=120_000)
+                page.wait_for_selector("#VRButton", timeout=60_000)
+                page.click("#VRButton")
+                page.wait_for_function(f"() => {hint} !== 'Starting session…'", timeout=30_000)
+                entered = page.evaluate(self.XR_STATE)
+                page.click("#VRButton")  # EXIT VR
+                page.wait_for_function(f"() => {hint}.startsWith('Headset detected')", timeout=30_000)
+                left = page.evaluate(self.XR_STATE)
+                browser.close()
+        finally:
+            server.stop()
+
+        self.assertTrue(entered["presenting"], entered)
+        self.assertEqual(entered["hint"], "In VR.", entered)
+        self.assertEqual((entered["requests"], entered["ended"]), (1, 0), entered)
+        self.assertFalse(left["presenting"], left)
+        self.assertEqual(left["ended"], 1, left)
+
+    def test_a_session_whose_setup_fails_is_ended_and_entered_again(self):
+        """REGRESSION (2026-10-18): Enter VR on a hybrid-GPU laptop left the
+        headset black for good. three's `setSession` awaits `makeXRCompatible`
+        after taking the session and nothing catches its rejection, so the
+        session stayed open with nothing drawing it. The page now ends a
+        session whose setup failed, and -- the context being back on the
+        headset's GPU -- presses Enter VR again itself, once, while the click
+        still counts as a gesture; without one it asks for the press, and a
+        failure no GPU move explains is named, not retried."""
+        from playwright.sync_api import sync_playwright
+
+        hint = "document.getElementById('hint').textContent"
+        settled = (
+            f"() => {hint} === 'In VR.' || (window.__xr.ended === window.__xr.requests"
+            f" && /again|failed/.test({hint}))"
+        )
+        cases = {
+            # press: (flags, a person's click?)
+            "the GPU moves once": ({"__xrFails": "gpu-move-once"}, True),
+            "the GPU keeps moving": ({"__xrFails": "gpu-move"}, True),
+            "no gesture": ({"__xrFails": "gpu-move", "__pressWithoutGesture": True}, False),
+            "no context loss": ({"__xrFails": "other"}, True),
+        }
+        server = ptk.PreviewServer(viewer=True, title="live-test", port=0).start()
+        found = {}
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    channel="msedge",
+                    headless=True,
+                    args=["--enable-unsafe-swiftshader"],
+                )
+                for press, (flags, click) in cases.items():
+                    page = browser.new_context().new_page()
+                    page.add_init_script(
+                        "".join(f"window.{k} = {json.dumps(v)};" for k, v in flags.items())
+                    )
+                    page.add_init_script(self.FAKE_XR)
+                    page.goto(server.url, wait_until="domcontentloaded", timeout=120_000)
+                    page.wait_for_selector("#VRButton", timeout=60_000)
+                    if click:
+                        page.click("#VRButton")  # a person's press: a gesture
+                    page.wait_for_function(settled, timeout=30_000)
+                    page.wait_for_timeout(1000)  # no further retry follows
+                    found[press] = page.evaluate(self.XR_STATE)
+                browser.close()
+        finally:
+            server.stop()
+
+        # The setup itself: the page's own press really had no gesture behind it.
+        self.assertIs(found["no gesture"].get("gesture"), False, found["no gesture"])
+        # (requests, ended): every failed session ended, none left open over a
+        # black headset; one automatic retry per press, never a loop, and none
+        # for a failure no GPU move explains, which a retry would only repeat.
+        expected = {
+            "the GPU moves once": (2, 1),
+            "the GPU keeps moving": (2, 2),
+            "no gesture": (1, 1),
+            "no context loss": (1, 1),
+        }
+        for press, counts in expected.items():
+            with self.subTest(press=press):
+                state = found[press]
+                self.assertEqual((state["requests"], state["ended"]), counts, state)
+        with self.subTest(press="the GPU moves once", says="in VR"):
+            self.assertTrue(found["the GPU moves once"]["presenting"])
+            self.assertEqual(found["the GPU moves once"]["hint"], "In VR.")
+        for press in ("the GPU keeps moving", "no gesture"):
+            with self.subTest(press=press, says="the cure"):
+                self.assertFalse(found[press]["presenting"])
+                self.assertIn("press Enter VR again", found[press]["hint"])
+                self.assertIn("High performance", found[press]["hint"])
+        with self.subTest(press="no context loss", says="the reason"):
+            self.assertIn("Enter VR failed", found["no context loss"]["hint"])
+            self.assertIn("no longer, usable", found["no context loss"]["hint"])
 
     # -------------------------------------------------- the lighting policy
     # glTF has no lightmap slot, so a bake travels DISGUISED as occlusion on
@@ -3419,6 +3724,132 @@ class TestPreviewViewerLive(unittest.TestCase):
         self.assertEqual((off["on"], off["specsOn"]), (False, False))
         self.assertIn("the studio (probe off)", found["offRows"])
 
+    def test_a_highlight_copy_is_the_probe_its_materials_reflect(self):
+        """The bake's lights reach a deliverable as highlights drawn into copies
+        of its probe (``MeshConvert._embed_highlight_probes``): a copy is the
+        probe plus its layer, and the materials it names reflect it as their
+        own envMap while the probe is up -- one lookup, as every other
+        material reads the probe. Here the room is grey and the copy's layer
+        (half the probe's size, as an unbaked object's is) red: the face its
+        material names reads red; a copy naming another material leaves it
+        grey; switched off, the studio lights it, and back on, the copy.
+        Added: 2026-10-19"""
+        import numpy as np
+
+        grey = {
+            "image": self._probe_image([], base=(0.5, 0.5, 0.5), width=128),
+            "position": [0.0, 0.0, 0.0],
+            "box": None,
+        }
+        red = np.zeros((32, 64, 3), np.float32)
+        red[...] = (1.5, 0.0, 0.0)
+        pbr = {"metallicFactor": 1.0, "roughnessFactor": 0.3}
+
+        def flip(server, page):
+            looks = {"on": page.evaluate(self.ENVIRONMENT_LOOK_JS)}
+            self._flip_probe(page)
+            looks["off"] = page.evaluate(self.ENVIRONMENT_LOOK_JS)
+            self._flip_probe(page)
+            looks["again"] = page.evaluate(self.ENVIRONMENT_LOOK_JS)
+            looks["copies"] = page.evaluate(
+                "async () => (await import(new URL('kernel/probe.js', document.baseURI).href)).probeState().copies"
+            )
+            return looks
+
+        found = self._load(
+            self._lightmapped_glb(
+                pbr=pbr, probe=grey,
+                highlights=[{"image": red, "materials": ["room_MAT"], "receivers": "unbaked"}],
+            ),
+            then=flip,
+        )
+        self.assertEqual(found["console_errors"], [])
+        self.assertEqual(found["copies"], 1)
+        for look in (found["on"], found["again"]):
+            r, g, b = look["rgb"]
+            self.assertGreater(r - b, 40, f"the copy is not what the face reflects: {look['rgb']}")
+            self.assertEqual(look["maps"], [["probe", True], ["probe copy", True]])
+        r, g, b = found["off"]["rgb"]
+        self.assertLess(abs(r - b), 12, f"the copy outlived the probe: {found['off']['rgb']}")
+        self.assertIn(["probe copy", False], found["off"]["maps"])
+
+        other = self._probe_face(grey, highlights=[{"image": red, "materials": ["other_MAT"]}])
+        r, g, b = other["rgb"]
+        self.assertLess(abs(r - b), 12, f"a copy reached a material it does not name: {other['rgb']}")
+
+    #: A device whose WebGL cannot filter 32-bit float textures
+    #: (``OES_texture_float_linear``, absent on many phone GPUs): such a
+    #: texture sampled with linear filtering reads black.
+    NO_FLOAT_FILTERING_JS = """
+      for (const proto of [WebGL2RenderingContext.prototype, WebGLRenderingContext.prototype]) {
+        const getExtension = proto.getExtension;
+        proto.getExtension = function (name) {
+          return name === 'OES_texture_float_linear' ? null : getExtension.call(this, name);
+        };
+        const supported = proto.getSupportedExtensions;
+        proto.getSupportedExtensions = function () {
+          return (supported.call(this) || []).filter((name) => name !== 'OES_texture_float_linear');
+        };
+      }
+    """
+
+    def test_a_highlight_copy_lights_a_device_that_cannot_filter_float(self):
+        """REGRESSION (2026-10-19): a probe with highlight copies went up as
+        32-bit float textures (decoded so, to sum each copy exactly), which a
+        GPU without ``OES_texture_float_linear`` samples as black: on such a
+        device the room and every copy reflected nothing. Where floats do not
+        filter, the probe and its copies go up as half floats, as a probe
+        without copies always has."""
+        import numpy as np
+
+        grey = {
+            "image": self._probe_image([], base=(0.5, 0.5, 0.5), width=128),
+            "position": [0.0, 0.0, 0.0],
+            "box": None,
+        }
+        red = np.zeros((32, 64, 3), np.float32)
+        red[...] = (1.5, 0.0, 0.0)
+        pbr = {"metallicFactor": 1.0, "roughnessFactor": 0.3}
+
+        def read(server, page):
+            return {
+                "rgb": page.evaluate("() => window.__sampleFacing([0, 0, 1], [1, 0, 0], true)"),
+                "floatLinear": page.evaluate(
+                    "() => window.__api.renderer.extensions.has('OES_texture_float_linear')"
+                ),
+            }
+
+        found = self._load(
+            self._lightmapped_glb(
+                pbr=pbr, probe=grey,
+                highlights=[{"image": red, "materials": ["room_MAT"], "receivers": "unbaked"}],
+            ),
+            then=read,
+            init=self.NO_FLOAT_FILTERING_JS,
+        )
+        self.assertFalse(found["floatLinear"], "the device emulation did not take")
+        self.assertEqual(found["console_errors"], [])
+        r, g, b = found["rgb"]
+        self.assertGreater(r - b, 40, f"the copy reflects nothing on this device: {found['rgb']}")
+
+    def test_a_highlight_copy_too_narrow_to_prefilter_is_reported(self):
+        """three.js' PMREM prefilters nothing narrower than a 16-texel cube
+        face (a 64-wide equirect): a narrower copy came back as no map, and
+        its materials reflected the probe as captured with nothing said. It
+        is skipped and the load says why. Added: 2026-10-19"""
+        import numpy as np
+
+        grey = {
+            "image": self._probe_image([], base=(0.5, 0.5, 0.5), width=64),
+            "position": [0.0, 0.0, 0.0],
+            "box": None,
+        }
+        red = np.zeros((16, 32, 3), np.float32)
+        red[...] = (1.5, 0.0, 0.0)
+        found = self._probe_face(grey, highlights=[{"image": red, "materials": ["room_MAT"]}])
+        texts = [issue["text"] for issue in found["specs"]["issues"]]
+        self.assertTrue(any("probe highlight copy skipped" in t for t in texts), texts)
+
     def test_the_studio_comes_back_for_a_file_without_a_probe(self):
         """Freed while a probe lit the model, the studio is built again when
         the next push carries none -- and the window says so, the menu's
@@ -3445,6 +3876,110 @@ class TestPreviewViewerLive(unittest.TestCase):
         self.assertIn("the studio (three.js RoomEnvironment)", found["rows"])
         # The probe's switches apply only while there is a probe.
         self.assertEqual(found["items"], [["Lighting details", ""]])
+
+    #: A relight's half-float image (relight.js `HalfImage`): 1.0 everywhere.
+    HALF_ONE_JS = "(w, h) => ({width: w, height: h, data: new Uint16Array(w * h * 4).fill(0x3c00)})"
+
+    def test_a_restore_takes_down_a_probe_the_file_does_not_carry(self):
+        """REGRESSION (2026-10-19): ``viewer.lighting.restore()`` put back only
+        a probe the file carries, so a file without one kept the probe a
+        relight swapped in -- "the file as it ships" (``LookCapture.file_frame``)
+        lit by the swap's room."""
+
+        def swap_then_restore(server, page):
+            return page.evaluate(
+                f"""async () => {{
+                  const half = {self.HALF_ONE_JS};
+                  const {{lighting, environment}} = window.__api;
+                  const before = Boolean(environment.probe);
+                  lighting.relight({{maps: {{}}, probe: {{...half(4, 2), position: [0, 0, 0], box: null}}}});
+                  const swapped = Boolean(environment.probe);
+                  await lighting.restore();
+                  return {{probeBefore: before, probeSwapped: swapped, probeAfter: Boolean(environment.probe)}};
+                }}"""
+            )
+
+        found = self._load(self._lightmapped_glb(), then=swap_then_restore)
+        self.assertEqual(found["console_errors"], [])
+        self.assertEqual(
+            (found["probeBefore"], found["probeSwapped"], found["probeAfter"]),
+            (False, True, False),
+        )
+
+    def test_a_restore_outrun_by_a_new_model_leaves_it_alone(self):
+        """REGRESSION (2026-10-19): ``restore()`` decodes the file's probe
+        (async) and then put it up for whatever model was current by then --
+        a push that landed meanwhile got the OLD file's probe and copies over
+        its own, and a probe decoded for no model freed its prefiltered map
+        but not its highlight copies. Outrun, the restore frees what it
+        decoded and leaves the page to the newer load."""
+        import numpy as np
+
+        grey = {
+            "image": self._probe_image([], base=(0.5, 0.5, 0.5), width=128),
+            "position": [0.0, 0.0, 0.0],
+            "box": None,
+        }
+        red = np.zeros((32, 64, 3), np.float32)
+        red[...] = (1.5, 0.0, 0.0)
+
+        def outrun(server, page):
+            return page.evaluate(
+                f"""async () => {{
+                  const half = {self.HALF_ONE_JS};
+                  const api = window.__api;
+                  const model = await import(new URL('kernel/model.js', document.baseURI).href);
+                  api.lighting.relight({{maps: {{}}, probe: {{...half(64, 32), position: [0, 0, 0], box: null}}}});
+                  const swapped = api.environment.probe.width ?? null;
+                  const restoring = api.lighting.restore();
+                  model.setModel(new api.THREE.Group());  // a newer load takes the page
+                  await restoring;
+                  return {{swapped, after: api.environment.probe ? api.environment.probe.width ?? null : 'none'}};
+                }}"""
+            )
+
+        found = self._load(
+            self._lightmapped_glb(
+                probe=grey,
+                highlights=[{"image": red, "materials": ["room_MAT"]}],
+            ),
+            then=outrun,
+        )
+        self.assertEqual(found["console_errors"], [])
+        self.assertIsNone(found["swapped"], "a relight's probe carries no file width")
+        self.assertIsNone(found["after"], "the outrun restore put the old file's probe up")
+
+    def test_a_material_a_relight_leaves_out_wears_its_own_map_again(self):
+        """REGRESSION (2026-10-19): a material one relight named and the next
+        did not kept the first swap's texture after that swap was freed -- its
+        light, re-uploaded on the next draw and never freed again. Left out of
+        a swap, a material wears the file's own map."""
+
+        def swap_twice(server, page):
+            return page.evaluate(
+                f"""() => {{
+                  const half = {self.HALF_ONE_JS};
+                  const api = window.__api;
+                  let material = null;
+                  api.model.traverse((n) => {{ if (n.isMesh && !material) material = n.material; }});
+                  const own = material.lightMap;
+                  const level = material.lightMapIntensity;
+                  const first = api.lighting.relight({{maps: {{[material.name]: 'a'}}, images: {{a: half(2, 2)}}}});
+                  const swapped = material.lightMap !== own;
+                  const second = api.lighting.relight({{maps: {{}}}});
+                  return {{
+                    swaps: [first, second],
+                    swapped,
+                    ownBack: material.lightMap === own && material.lightMapIntensity === level,
+                  }};
+                }}"""
+            )
+
+        found = self._load(self._lightmapped_glb(), then=swap_twice)
+        self.assertEqual(found["console_errors"], [])
+        self.assertEqual(found["swaps"], [1, 0])
+        self.assertTrue(found["swapped"], "the first relight must take the map")
+        self.assertTrue(found["ownBack"], "left out, the material kept the freed swap")
 
     def test_the_environment_window_states_the_level_the_probe_plays_at(self):
         """REGRESSION (2026-10-04): the window said "1/π: the bake's units"

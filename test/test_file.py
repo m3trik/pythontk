@@ -1063,6 +1063,107 @@ class FileTest(BaseTestCase):
         with patch.object(FileUtils, "locking_processes", return_value=[]):
             self.assertEqual(FileUtils.describe_lock(path), "in use by another process")
 
+    def test_describe_lock_says_read_only_rather_than_in_use(self):
+        """REGRESSION (2026-10-19): a read-only destination (a version-control
+        checkout's) cannot be replaced either, but read as "in use by another
+        process" -- and the Scene Exporter's writability check, which every
+        export now makes, told the user to close a program that held nothing."""
+        import stat
+
+        import pythontk as ptk
+
+        temp = ptk.TempArtifacts("describe_lock", policy="scoped")
+        self.addCleanup(temp.cleanup)
+        path = temp.path(extension=".fbx")
+        with open(path, "wb") as fh:
+            fh.write(b"Kaydara")
+        os.chmod(path, stat.S_IREAD)
+        self.addCleanup(os.chmod, path, stat.S_IREAD | stat.S_IWRITE)
+        self.assertEqual(FileUtils.describe_lock(path), "read-only")
+
+    # -------------------------------------------------------------------------
+    # describe_unwritable Tests
+    # -------------------------------------------------------------------------
+
+    def _scratch_folder(self):
+        """A throwaway folder, removed at teardown (after any denial is lifted)."""
+        import pythontk as ptk
+
+        temp = ptk.TempArtifacts("describe_unwritable", policy="scoped")
+        self.addCleanup(temp.cleanup)
+        folder = temp.dir_path()
+        os.makedirs(folder, exist_ok=True)
+        return folder
+
+    def _deny_writes(self, folder):
+        """Deny this user the right to create files in *folder* -- a real ACL
+        denial (a folder's read-only attribute does not stop a write on
+        Windows), lifted at teardown before the folder is removed."""
+        import getpass
+        import subprocess
+
+        user = getpass.getuser()
+        denied = subprocess.run(
+            ["icacls", folder, "/deny", f"{user}:(W)"], capture_output=True
+        )
+        if denied.returncode != 0:
+            self.skipTest(f"icacls could not deny writes: {denied.stderr!r}")
+        self.addCleanup(
+            subprocess.run,
+            ["icacls", folder, "/remove:d", user],
+            capture_output=True,
+        )
+
+    @unittest.skipUnless(os.name == "nt", "the ACL denial is made with icacls")
+    def test_describe_unwritable_names_a_folder_this_user_cannot_write(self):
+        """REGRESSION (2026-10-19): the Scene Exporter's writability check asked
+        only whether the destination FILE was held, so an existing folder the
+        user cannot write to passed it and the run failed at the write."""
+        folder = self._scratch_folder()
+        self._deny_writes(folder)
+        path = os.path.join(folder, "asset.fbx")
+        self.assertEqual(FileUtils.describe_lock(path), "", "nothing holds it")
+        why = FileUtils.describe_unwritable(path)
+        self.assertTrue(why.startswith("the folder is not writable: "), why)
+        self.assertGreater(len(why), len("the folder is not writable: "), why)
+
+    @unittest.skipUnless(os.name == "nt", "the ACL denial is made with icacls")
+    def test_describe_unwritable_asks_the_nearest_folder_that_exists(self):
+        """A missing output folder is made at the write, inside its nearest
+        existing ancestor -- which is the folder that must take it."""
+        folder = self._scratch_folder()
+        path = os.path.join(folder, "new", "deeper", "asset.fbx")
+        self.assertEqual(FileUtils.describe_unwritable(path), "")
+        self.assertFalse(os.path.exists(os.path.join(folder, "new")), "made nothing")
+        self._deny_writes(folder)
+        self.assertTrue(
+            FileUtils.describe_unwritable(path).startswith("the folder is not writable")
+        )
+
+    def test_describe_unwritable_leaves_nothing_in_a_folder_that_takes_it(self):
+        folder = self._scratch_folder()
+        open(os.path.join(folder, "kept.txt"), "w").close()
+        self.assertEqual(
+            FileUtils.describe_unwritable(os.path.join(folder, "asset.glb")), ""
+        )
+        self.assertEqual(os.listdir(folder), ["kept.txt"], "the probe is removed")
+
+    def test_describe_unwritable_reports_why_the_probe_was_refused(self):
+        """Any platform: whatever refuses the probe file is the reason given."""
+        from unittest.mock import patch
+
+        folder = self._scratch_folder()
+        refused = PermissionError(13, "Permission denied")
+        with patch("pythontk.file_utils._file_utils.os.open", side_effect=refused):
+            why = FileUtils.describe_unwritable(os.path.join(folder, "a.fbx"))
+        self.assertEqual(why, "the folder is not writable: Permission denied")
+
+    @unittest.skipUnless(os.name == "nt", "file locking is a Windows behavior")
+    def test_describe_unwritable_still_names_what_holds_the_file(self):
+        """The file's own answer comes first: closing the holder is the fix."""
+        path = self._locked_file()
+        self.assertIn("in use by", FileUtils.describe_unwritable(path))
+
     # -------------------------------------------------------------------------
     # is_under Tests
     # -------------------------------------------------------------------------

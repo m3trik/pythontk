@@ -1717,6 +1717,21 @@ class Cv2PathIoTest(unittest.TestCase):
         self.assertTrue(png.startswith(b"\x89PNG"))
         self.assertAlmostEqual(scalar, 0.25, places=3)
 
+    def test_radiance_pixels_keep_their_channels_and_range(self):
+        """The in-memory encoder takes RGB (cv2 writes BGR): a red highlight of
+        40 decodes red at 40, and the path form, which reads BGR, agrees."""
+        rgb = np.zeros((4, 8, 3), np.float32)
+        rgb[..., 0] = 40.0
+        rgb[..., 2] = 0.5
+        raw = ImgUtils.encode_hdr_radiance_pixels(rgb)
+        self.assertTrue(raw.startswith(b"#?"))
+        bgr = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
+        np.testing.assert_allclose(bgr[..., 2], 40.0, rtol=0.01)  # red
+        np.testing.assert_allclose(bgr[..., 0], 0.5, rtol=0.01)  # blue
+        path = os.path.join(self._folder("maps"), "red.exr")
+        self.assertTrue(ImgUtils.cv2_write(path, rgb[..., ::-1]))
+        self.assertEqual(ImgUtils.encode_hdr_radiance(path), raw)
+
     def test_overlapping_blocks_share_one_swap(self):
         """MapFactory reads maps on a thread pool: with a save/restore per
         block, the block that ended first put TEMP back under one still
@@ -3063,6 +3078,230 @@ class StitchSeamsTest(unittest.TestCase):
             out, np.clip(np.rint(solved), 0, 255).astype(np.uint8)
         )
 
+    def test_held_texels_never_change_and_the_pair_still_meets(self):
+        """One-sided: a cell the caller holds -- another object's lighting in
+        an atlas re-baked in place -- keeps every texel, and the free side
+        moves the WHOLE way to meet it rather than half."""
+        img, pairs = self._two_cells()
+        hold = np.zeros(img.shape[:2], bool)
+        hold[:, 1:9] = True  # cell A
+        out = ImgUtils.stitch_seams(img, pairs, hold=hold)
+        np.testing.assert_array_equal(out[hold], img[hold])
+        np.testing.assert_allclose(
+            out[:, 11].mean(axis=1), out[:, 8].mean(axis=1), atol=2e-3
+        )
+        np.testing.assert_allclose(out[:, 11], 1.0, atol=2e-3)
+
+    def test_a_partly_held_read_moves_its_free_taps_only(self):
+        img, _ = self._two_cells()
+        img[:, 7] = 0.8
+        hold = np.zeros(img.shape[:2], bool)
+        hold[:, 7] = True  # one of the read's two taps
+        pairs = np.array([[7.5, 3.0, 11.0, 3.0]])
+        out = ImgUtils.stitch_seams(img, pairs, hold=hold)
+        np.testing.assert_array_equal(out[hold], img[hold])
+        a = 0.5 * (out[3, 7] + out[3, 8])
+        np.testing.assert_allclose(a, out[3, 11], atol=2e-3)
+
+    def test_a_pair_held_on_both_sides_is_left_as_it_is(self):
+        img, pairs = self._two_cells()
+        out = ImgUtils.stitch_seams(img, pairs, hold=np.ones(img.shape[:2], bool))
+        np.testing.assert_array_equal(out, img)
+
+    def test_an_empty_hold_is_the_two_sided_solve(self):
+        img, pairs = self._two_cells()
+        np.testing.assert_array_equal(
+            ImgUtils.stitch_seams(img, pairs, hold=np.zeros(img.shape[:2], bool)),
+            ImgUtils.stitch_seams(img, pairs),
+        )
+
+    def test_a_hold_of_another_shape_raises(self):
+        img, pairs = self._two_cells()
+        with self.assertRaises(ValueError):
+            ImgUtils.stitch_seams(img, pairs, hold=np.zeros((2, 2), bool))
+
+
+class AtlasSeamPairsTest(unittest.TestCase):
+    """ImgUtils.atlas_seam_pairs -- which atlas positions are one 3D point of a shared edge.
+
+    The correspondence stitch_seams needs: matched only between coplanar
+    members on opposite sides of an edge they both run along (mayatk's and
+    blendertk's lightmap atlas, 2026-10-02 / 2026-10-16).
+    """
+
+    SIZE = 64
+
+    @staticmethod
+    def _quad(x0, x1, y0, y1, z=0.0, normal=(0.0, 0.0, 1.0)):
+        """A flat quad's four open edges, its lightmap UV the unit square over it."""
+        corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+        uvs = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+        centre = np.array([(x0 + x1) / 2, (y0 + y1) / 2, z])
+        rows = []
+        for k in range(4):
+            pa = np.array([*corners[k], z])
+            pb = np.array([*corners[(k + 1) % 4], z])
+            along = (pb - pa) / np.linalg.norm(pb - pa)
+            inward = (centre - pa) - ((centre - pa) @ along) * along
+            rows.append([*pa, *pb, *uvs[k], *uvs[(k + 1) % 4], *normal, *inward])
+        return np.array(rows)
+
+    @staticmethod
+    def _rotate_x(edges, degrees):
+        """*edges* rotated about the world x axis (points, normals, inward)."""
+        r = np.radians(degrees)
+        m = np.array([[1, 0, 0], [0, np.cos(r), -np.sin(r)], [0, np.sin(r), np.cos(r)]])
+        out = edges.copy()
+        for c in (0, 3, 10, 13):
+            out[:, c : c + 3] = edges[:, c : c + 3] @ m.T
+        return out
+
+    def _uv(self, x, y, rect):
+        """Pixel position back to the member's own UV through *rect*."""
+        sx, sy, ox, oy = rect
+        u = ((x + 0.5) / self.SIZE - ox) / sx
+        v = (1.0 - (y + 0.5) / self.SIZE - oy) / sy
+        return u, v
+
+    def test_coplanar_neighbours_read_one_point(self):
+        rects = [(0.4, 0.4, 0.05, 0.05), (0.4, 0.4, 0.55, 0.05)]
+        pairs = ImgUtils.atlas_seam_pairs(
+            [self._quad(0, 1, 0, 1), self._quad(1, 2, 0, 1)], rects, self.SIZE
+        )
+        self.assertEqual(pairs.shape[1], 4)
+        # Twice per atlas texel along the edge: 0.4 * 64 = 25.6 texels.
+        self.assertEqual(len(pairs), 52)
+        for xa, ya, xb, yb in pairs:
+            ua, va = self._uv(xa, ya, rects[0])
+            ub, vb = self._uv(xb, yb, rects[1])
+            self.assertAlmostEqual(ua, 1.0, places=6)  # A's right edge
+            self.assertAlmostEqual(ub, 0.0, places=6)  # B's left edge
+            self.assertAlmostEqual(va, vb, places=6)  # the same 3D point
+
+    def test_a_t_junction_matches_piecewise(self):
+        rects = [
+            (0.2, 0.4, 0.05, 0.05),
+            (0.2, 0.2, 0.30, 0.05),
+            (0.2, 0.2, 0.30, 0.30),
+        ]
+        long_ = self._quad(0, 1, 0, 2)
+        pairs = ImgUtils.atlas_seam_pairs(
+            [long_, self._quad(1, 2, 0, 1), self._quad(1, 2, 1, 2)], rects, self.SIZE
+        )
+        # The long member's cell spans atlas u 0.05-0.25; the short ones' 0.30-0.50.
+        on_long = (pairs[:, 0] + 0.5) / self.SIZE < 0.275
+        world_y = []
+        for xa, ya, xb, yb in pairs[on_long]:
+            ua, va = self._uv(xa, ya, rects[0])
+            self.assertAlmostEqual(ua, 1.0, places=6)
+            # Which short member: its cell, atlas v 0.05-0.25 or 0.30-0.50.
+            lower = 1.0 - (yb + 0.5) / self.SIZE < 0.275
+            ub, vb = self._uv(xb, yb, rects[1] if lower else rects[2])
+            self.assertAlmostEqual(ub, 0.0, places=6)
+            self.assertAlmostEqual(2.0 * va, vb + (0.0 if lower else 1.0), places=5)
+            world_y.append(2.0 * va)
+        self.assertLess(min(world_y), 0.1)
+        self.assertGreater(max(world_y), 1.9)
+        # Both halves of the long edge, and the two short members' own seam.
+        self.assertTrue(any(y < 1.0 for y in world_y) and any(y > 1.0 for y in world_y))
+        for xa, ya, xb, yb in pairs[~on_long]:
+            ua, va = self._uv(xa, ya, rects[1])
+            ub, vb = self._uv(xb, yb, rects[2])
+            self.assertAlmostEqual(va, 1.0, places=6)
+            self.assertAlmostEqual(vb, 0.0, places=6)
+            self.assertAlmostEqual(ua, ub, places=6)
+        self.assertGreater(int((~on_long).sum()), 0)
+
+    def test_a_corner_is_not_matched(self):
+        floor = self._quad(0, 1, 0, 1)
+        # A wall standing on the floor's far edge (y = 1), facing back over it.
+        wall = self._rotate_x(self._quad(0, 1, -1, 0), 90.0)
+        wall[:, [1, 4]] += 1.0
+        pairs = ImgUtils.atlas_seam_pairs(
+            [floor, wall], [(0.4, 0.4, 0.05, 0.05)] * 2, self.SIZE
+        )
+        self.assertEqual(len(pairs), 0)
+
+    def test_a_fold_is_not_matched(self):
+        """A panel folding up 30 degrees off the floor's edge (a ramp, a
+        chamfer): on the OTHER side of the edge, but not in its plane."""
+        floor = self._quad(0, 1, 0, 1)
+        ramp = self._rotate_x(self._quad(0, 1, 0, 1), 30.0)
+        ramp[:, [1, 4]] += 1.0  # its y = 0 edge onto the floor's y = 1 edge
+        rects = [(0.4, 0.4, 0.05, 0.05), (0.4, 0.4, 0.55, 0.05)]
+        self.assertEqual(len(ImgUtils.atlas_seam_pairs([floor, ramp], rects, 64)), 0)
+        # The coplanar gate is what refuses it: opened, the fold matches.
+        self.assertGreater(
+            len(ImgUtils.atlas_seam_pairs([floor, ramp], rects, 64, coplanar=-2.0)), 0
+        )
+
+    def test_a_strip_standing_in_front_is_not_matched(self):
+        pairs = ImgUtils.atlas_seam_pairs(
+            [self._quad(0, 1, 0, 1), self._quad(1, 2, 0, 1, z=0.01)],
+            [(0.4, 0.4, 0.05, 0.05), (0.4, 0.4, 0.55, 0.05)],
+            self.SIZE,
+        )
+        self.assertEqual(len(pairs), 0)
+
+    def test_a_decal_along_a_border_is_not_matched(self):
+        """Both faces on the SAME side of the edge: a decal, not a neighbour."""
+        rects = [(0.4, 0.4, 0.05, 0.05), (0.4, 0.4, 0.55, 0.05)]
+        base, decal = self._quad(0, 1, 0, 1), self._quad(0.5, 1, 0, 1)
+        self.assertEqual(len(ImgUtils.atlas_seam_pairs([base, decal], rects, 64)), 0)
+        # The side test is what refuses it: the decal's face turned to the
+        # other side of the shared line, it matches.
+        decal[:, 13:16] *= -1.0
+        self.assertGreater(len(ImgUtils.atlas_seam_pairs([base, decal], rects, 64)), 0)
+
+    def test_a_member_without_edges_is_skipped(self):
+        rects = [(0.4, 0.4, 0.05, 0.05), (0.4, 0.4, 0.55, 0.05)]
+        self.assertEqual(
+            len(ImgUtils.atlas_seam_pairs([self._quad(0, 1, 0, 1), None], rects, 64)),
+            0,
+        )
+        self.assertEqual(
+            len(
+                ImgUtils.atlas_seam_pairs(
+                    [None, self._quad(0, 1, 0, 1), self._quad(1, 2, 0, 1)],
+                    [rects[0], *rects],
+                    64,
+                )
+            ),
+            52,
+        )
+
+    def test_mismatched_lengths_raise(self):
+        with self.assertRaises(ValueError):
+            ImgUtils.atlas_seam_pairs([self._quad(0, 1, 0, 1)], [], 64)
+
+    def test_the_pairs_stitch_two_noisy_cells(self):
+        """End to end with stitch_seams: two cells with their own noise read one
+        value along the edge they share."""
+        rects = [(0.4, 0.4, 0.05, 0.05), (0.4, 0.4, 0.55, 0.05)]
+        pairs = ImgUtils.atlas_seam_pairs(
+            [self._quad(0, 1, 0, 1), self._quad(1, 2, 0, 1)], rects, self.SIZE
+        )
+        rng = np.random.default_rng(3)
+        img = (1.0 + 0.1 * rng.standard_normal((self.SIZE, self.SIZE))).astype(
+            np.float32
+        )
+        out = ImgUtils.stitch_seams(img, pairs)
+
+        def bilinear(a, x, y):
+            x0, y0 = int(np.floor(x)), int(np.floor(y))
+            fx, fy = x - x0, y - y0
+            return (
+                a[y0, x0] * (1 - fx) * (1 - fy)
+                + a[y0, x0 + 1] * fx * (1 - fy)
+                + a[y0 + 1, x0] * (1 - fx) * fy
+                + a[y0 + 1, x0 + 1] * fx * fy
+            )
+
+        before = [abs(bilinear(img, *p[:2]) - bilinear(img, *p[2:])) for p in pairs]
+        after = [abs(bilinear(out, *p[:2]) - bilinear(out, *p[2:])) for p in pairs]
+        self.assertGreater(max(before), 0.05)
+        self.assertLess(max(after), 5e-3)
+
 
 class ExtrapolateFillTest(unittest.TestCase):
     """ImgUtils.extrapolate_fill -- grow a mask by continuing its content's slope.
@@ -3351,6 +3590,38 @@ class AtlasAssembleTest(unittest.TestCase):
         )
         self.assertTrue((atlas[:, :8] == 1.0).all())  # the in-bounds item landed
         self.assertTrue((atlas[:, 8:] == 2.0).any())  # so did the overhanging part
+
+    def test_a_canvas_keeps_every_texel_no_rect_covers(self):
+        """In place: an existing atlas is the canvas, and only the rects placed
+        on it change -- every other cell, another object's lighting, is kept
+        bit for bit."""
+        canvas = np.random.default_rng(7).random((8, 8, 3)).astype(np.float32)
+        before = canvas.copy()
+        tile = np.full((4, 4, 3), 5.0, np.float32)
+        atlas = ImgUtils.assemble_atlas(
+            [tile], [(0.5, 0.5, 0.0, 0.0)], 8, canvas=canvas
+        )
+        placed = np.zeros((8, 8), bool)
+        placed[4:, :4] = True  # UV bottom-left: the bottom rows
+        np.testing.assert_array_equal(atlas[~placed], before[~placed])
+        self.assertTrue((atlas[placed] == 5.0).all())
+        np.testing.assert_array_equal(canvas, before)  # a copy, never the caller's
+        self.assertEqual(atlas.dtype, canvas.dtype)
+
+    def test_a_canvas_with_nothing_placed_is_a_copy(self):
+        canvas = np.full((4, 4, 3), 0.5, np.float32)
+        atlas = ImgUtils.assemble_atlas([], [], 4, canvas=canvas)
+        np.testing.assert_array_equal(atlas, canvas)
+        self.assertIsNot(atlas, canvas)
+
+    def test_a_canvas_of_another_size_raises(self):
+        with self.assertRaises(ValueError):
+            ImgUtils.assemble_atlas(
+                [np.zeros((2, 2, 3), np.float32)],
+                [(1.0, 1.0, 0.0, 0.0)],
+                8,
+                canvas=np.zeros((4, 4, 3), np.float32),
+            )
 
 
 class RasterizeUvTrianglesTest(unittest.TestCase):
@@ -3763,6 +4034,52 @@ class TestKelvinToLinearRgb(unittest.TestCase):
         lower. Handing a light the display-referred value makes it too pale.
         """
         self.assertLess(self._fn()(2700)[1], 0.5)
+
+
+class TestKelvinTint(unittest.TestCase):
+    """A light's colour at a temperature, with unit luminance: hue apart from level."""
+
+    def test_a_tint_has_unit_luminance_and_the_blackbody_hue(self):
+        from pythontk import ImgUtils
+
+        for kelvin in (2200, 2700, 4000, 6500, 9000):
+            tint = ImgUtils.kelvin_tint(kelvin)
+            self.assertAlmostEqual(float(ImgUtils.luminance(tint)), 1.0, places=6)
+            rgb = ImgUtils.kelvin_to_linear_rgb(kelvin)
+            for c, r in zip(tint, rgb):  # the same hue, scaled
+                self.assertAlmostEqual(c / tint[1], r / rgb[1], places=6)
+        self.assertEqual(ImgUtils.kelvin_tint(None), (1.0, 1.0, 1.0))
+        warm = ImgUtils.kelvin_tint(2700)
+        self.assertGreater(warm[0], warm[2])
+
+
+class TestLuminance(unittest.TestCase):
+    def test_bt709_weights_over_the_last_axis(self):
+        from pythontk import Color, ImgUtils
+
+        rgb = np.random.default_rng(0).random((4, 5, 4)).astype(np.float32)
+        out = ImgUtils.luminance(rgb)
+        self.assertEqual((out.shape, out.dtype), ((4, 5), np.float64))
+        np.testing.assert_allclose(
+            out, rgb[..., :3].astype(np.float64) @ np.asarray(Color.REC709_LUMINANCE)
+        )
+        self.assertAlmostEqual(float(ImgUtils.luminance([1, 1, 1])), 1.0, places=12)
+
+
+class TestSampleBilinear(unittest.TestCase):
+    def test_pixel_centres_are_exact_and_between_is_a_blend(self):
+        from pythontk import ImgUtils
+
+        arr = np.arange(12, dtype=np.float64).reshape(3, 4)
+        px, py = np.array([0.0, 0.5, 3.0, 9.0]), np.array([0.0, 0.0, 2.0, -5.0])
+        np.testing.assert_allclose(
+            ImgUtils.sample_bilinear(arr, px, py), [0.0, 0.5, 11.0, 3.0]
+        )  # clamped at the edges
+        rgb = np.dstack([arr, arr * 2, arr * 3])
+        np.testing.assert_allclose(
+            ImgUtils.sample_bilinear(rgb, np.array([1.5]), np.array([1.0])),
+            [[5.5, 11.0, 16.5]],
+        )
 
 
 class WebPWriteTest(unittest.TestCase):
@@ -4423,6 +4740,88 @@ class DetectNormalMapFormatTest(unittest.TestCase):
             TextureMapFactory.detect_normal_map_format(img),
             ImgUtils.detect_normal_map_format(img),
         )
+
+
+class TonemapTest(unittest.TestCase):
+    """ImgUtils.tonemap: a viewer's display transform, as its shader computes it."""
+
+    # three.js ACESFilmicToneMapping (the WebXR viewer's), output linear 0..1:
+    # frozen from the formula measured against the live viewer at 1.3/255.
+    GOLDEN = {
+        (0.18, 0.18, 0.18): (0.213105, 0.213105, 0.213103),
+        (1.0, 1.0, 1.0): (0.763397, 0.763397, 0.763390),
+        (0.05, 0.02, 0.01): (0.027060, 0.007393, 0.003022),
+        (4.0, 2.0, 0.5): (0.971334, 0.892481, 0.691585),
+        (0.0, 0.0, 0.0): (0.0, 0.0, 0.0),
+    }
+
+    def test_aces_filmic_matches_the_viewer(self):
+        lin = np.array(list(self.GOLDEN), np.float32)
+        out = ImgUtils.tonemap(lin, "aces_filmic")
+        np.testing.assert_allclose(out, np.array(list(self.GOLDEN.values())), atol=2e-6)
+
+    def test_exposure_scales_the_input(self):
+        lin = np.random.default_rng(1).random((4, 5, 3)).astype(np.float32)
+        np.testing.assert_allclose(
+            ImgUtils.tonemap(lin, "aces_filmic", exposure=2.0),
+            ImgUtils.tonemap(lin * 2.0, "aces_filmic"),
+            atol=1e-6,
+        )
+
+    def test_an_unknown_operator_is_refused_by_name(self):
+        with self.assertRaises(ValueError) as ctx:
+            ImgUtils.tonemap(np.zeros((1, 1, 3)), "filmic9")
+        self.assertIn("filmic9", str(ctx.exception))
+
+
+class LinearToOklabTest(unittest.TestCase):
+    """ImgUtils.linear_to_oklab against Bjorn Ottosson's reference values."""
+
+    def test_reference_values(self):
+        lab = ImgUtils.linear_to_oklab(np.array([[1.0, 1.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]))
+        np.testing.assert_allclose(lab[0], [1.0, 0.0, 0.0], atol=1e-4)
+        np.testing.assert_allclose(lab[1], [0.627955, 0.224863, 0.125846], atol=1e-4)
+        np.testing.assert_allclose(lab[2], [0.866440, -0.233888, 0.179498], atol=1e-4)
+        np.testing.assert_allclose(lab[3], [0.452014, -0.032457, -0.311528], atol=1e-4)
+
+    def test_shape_is_kept(self):
+        self.assertEqual(ImgUtils.linear_to_oklab(np.zeros((3, 4, 3))).shape, (3, 4, 3))
+
+
+class ResampleAreaTest(unittest.TestCase):
+    """ImgUtils.resample_area: exact box averaging of float data."""
+
+    def test_an_integer_factor_is_the_block_mean(self):
+        img = np.arange(4 * 6 * 2, dtype=np.float32).reshape(4, 6, 2)
+        out = ImgUtils.resample_area(img, (3, 2))
+        np.testing.assert_allclose(out, img.reshape(2, 2, 3, 2, 2).mean(axis=(1, 3)), atol=1e-5)
+
+    def test_a_fractional_factor_weighs_by_overlap(self):
+        row = np.array([[1.0, 2.0, 4.0]], np.float32)
+        out = ImgUtils.resample_area(row, (2, 1))
+        # output pixel 0 covers input [0, 1.5): 1 + half of 2; pixel 1 covers [1.5, 3)
+        np.testing.assert_allclose(out, [[(1 + 0.5 * 2) / 1.5, (0.5 * 2 + 4) / 1.5]], atol=1e-6)
+
+    def test_the_mean_is_kept(self):
+        img = np.random.default_rng(2).random((37, 53, 3)).astype(np.float32)
+        out = ImgUtils.resample_area(img, (20, 11))
+        self.assertEqual(out.shape, (11, 20, 3))
+        np.testing.assert_allclose(out.mean(axis=(0, 1)), img.mean(axis=(0, 1)), rtol=1e-4)
+
+
+class WarpQuadTest(unittest.TestCase):
+    """ImgUtils.warp_quad: a quadrilateral resampled onto a rectangle."""
+
+    def test_the_full_frame_is_the_image(self):
+        img = np.random.default_rng(3).random((6, 8, 3)).astype(np.float32)
+        corners = [(0, 0), (8, 0), (8, 6), (0, 6)]  # pixel edges: TL, TR, BR, BL
+        np.testing.assert_allclose(ImgUtils.warp_quad(img, corners, (8, 6)), img, atol=1e-5)
+
+    def test_a_half_size_rectangle_samples_between_pixels(self):
+        img = np.zeros((4, 4), np.float32)
+        img[:, 2:] = 1.0  # right half lit
+        out = ImgUtils.warp_quad(img, [(0, 0), (4, 0), (4, 4), (0, 4)], (2, 2))
+        np.testing.assert_allclose(out, [[0.0, 1.0], [0.0, 1.0]], atol=1e-6)
 
 
 if __name__ == "__main__":

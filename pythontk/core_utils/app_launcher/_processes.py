@@ -5,8 +5,9 @@
 The OS-process half of :class:`AppLauncher` (``get_running_processes``,
 ``close_process``, ``process_tree``) and the lifetime binding
 :meth:`AppLauncher.spawn` puts every helper child under: a kill-on-close Job
-Object on Windows, a ``sh`` watcher in its own session on POSIX. Linux reads
-``/proc`` directly (no ``psutil``).
+Object on Windows (``_new_job``, the recipe a hidden run's own job uses too),
+a ``sh`` watcher in its own session on POSIX. Linux reads ``/proc`` directly
+(no ``psutil``).
 
 One job of :class:`AppLauncher`, composed in ``_app_launcher.py``. A cross-call
 goes through the facade (imported on use: that module imports this one for its
@@ -20,6 +21,52 @@ import logging
 import threading
 
 logger = logging.getLogger(__name__)
+
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    class _BasicLimits(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class _ExtendedLimits(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _BasicLimits),
+            ("IoInfo", ctypes.c_ulonglong * 6),  # IO_COUNTERS
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    # A private handle on kernel32, so the argtypes declared here cannot
+    # leak into another caller's use of the shared `ctypes.windll.kernel32`.
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    _kernel32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
+    _kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    _kernel32.SetInformationJobObject.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.POINTER(_ExtendedLimits),
+        wintypes.DWORD,
+    )
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    _kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    _kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    _kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
 
 
 class _ProcessesMixin:
@@ -144,100 +191,56 @@ class _ProcessesMixin:
         """
         if os.name != "nt":
             return _ProcessesMixin._watch_lifetime(pid)
-        import ctypes
-        from ctypes import wintypes
-
-        class _IoCounters(ctypes.Structure):
-            _fields_ = [
-                (name, ctypes.c_ulonglong)
-                for name in (
-                    "ReadOperationCount",
-                    "WriteOperationCount",
-                    "OtherOperationCount",
-                    "ReadTransferCount",
-                    "WriteTransferCount",
-                    "OtherTransferCount",
-                )
-            ]
-
-        class _BasicLimits(ctypes.Structure):
-            _fields_ = [
-                ("PerProcessUserTimeLimit", ctypes.c_int64),
-                ("PerJobUserTimeLimit", ctypes.c_int64),
-                ("LimitFlags", wintypes.DWORD),
-                ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t),
-                ("ActiveProcessLimit", wintypes.DWORD),
-                ("Affinity", ctypes.c_size_t),
-                ("PriorityClass", wintypes.DWORD),
-                ("SchedulingClass", wintypes.DWORD),
-            ]
-
-        class _ExtendedLimits(ctypes.Structure):
-            _fields_ = [
-                ("BasicLimitInformation", _BasicLimits),
-                ("IoInfo", _IoCounters),
-                ("ProcessMemoryLimit", ctypes.c_size_t),
-                ("JobMemoryLimit", ctypes.c_size_t),
-                ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                ("PeakJobMemoryUsed", ctypes.c_size_t),
-            ]
-
-        extended_limit_information = 9  # JobObjectExtendedLimitInformation
-        kill_on_job_close = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         set_quota_and_terminate = 0x0100 | 0x0001  # PROCESS_SET_QUOTA | _TERMINATE
 
-        # A private handle on kernel32, so the argtypes declared here cannot
-        # leak into another caller's use of the shared `ctypes.windll.kernel32`.
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-        kernel32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
-        kernel32.SetInformationJobObject.restype = wintypes.BOOL
-        kernel32.SetInformationJobObject.argtypes = (
-            wintypes.HANDLE,
-            ctypes.c_int,
-            ctypes.POINTER(_ExtendedLimits),
-            wintypes.DWORD,
-        )
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
-        kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
-        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-
         with _ProcessesMixin._lifetime_lock:
+            if _ProcessesMixin._lifetime_job is None:
+                try:
+                    _ProcessesMixin._lifetime_job = _ProcessesMixin._new_job()
+                except OSError as e:
+                    logger.debug(f"No lifetime job: {e}")
+                    return False
             job = _ProcessesMixin._lifetime_job
-            if job is None:
-                job = kernel32.CreateJobObjectW(None, None)
-                if not job:
-                    logger.debug(f"CreateJobObject failed: {ctypes.get_last_error()}")
-                    return False
-                limits = _ExtendedLimits()
-                limits.BasicLimitInformation.LimitFlags = kill_on_job_close
-                if not kernel32.SetInformationJobObject(
-                    job,
-                    extended_limit_information,
-                    ctypes.byref(limits),
-                    ctypes.sizeof(limits),
-                ):
-                    logger.debug(
-                        f"SetInformationJobObject failed: {ctypes.get_last_error()}"
-                    )
-                    kernel32.CloseHandle(job)
-                    return False
-                _ProcessesMixin._lifetime_job = job
-        process = kernel32.OpenProcess(set_quota_and_terminate, False, pid)
+        process = _kernel32.OpenProcess(set_quota_and_terminate, False, pid)
         if not process:
             return False  # already gone, or not ours to manage
         try:
-            if kernel32.AssignProcessToJobObject(job, process):
+            if _kernel32.AssignProcessToJobObject(job, process):
                 return True
             logger.debug(
                 f"AssignProcessToJobObject({pid}) failed: {ctypes.get_last_error()}"
             )
             return False
         finally:
-            kernel32.CloseHandle(process)
+            _kernel32.CloseHandle(process)
+
+    @staticmethod
+    def _new_job():
+        """A new Windows Job Object that ends every process in it once its last
+        handle closes -- however the process holding that handle ends.
+
+        Raises:
+            OSError: Windows refused it.
+        """
+        job = _kernel32.CreateJobObjectW(None, None)
+        if not job:
+            raise ctypes.WinError(ctypes.get_last_error())
+        limits = _ExtendedLimits()
+        limits.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+        extended_limit_information = 9  # JobObjectExtendedLimitInformation
+        if not _kernel32.SetInformationJobObject(
+            job, extended_limit_information, ctypes.byref(limits), ctypes.sizeof(limits)
+        ):
+            error = ctypes.get_last_error()
+            _kernel32.CloseHandle(job)
+            raise ctypes.WinError(error)
+        return job
+
+    @staticmethod
+    def _end_job(job) -> None:
+        """End every process in Job Object *job*, and release it."""
+        _kernel32.TerminateJobObject(job, 1)
+        _kernel32.CloseHandle(job)
 
     @staticmethod
     def get_running_processes(process_name):

@@ -195,12 +195,14 @@ SDK_IDS = (
 )
 
 
-def build_stingray_fbx(path: str, maps) -> str:
+def build_stingray_fbx(path: str, maps, records=None) -> str:
     """A quad with a Stingray PBS material the FBX SDK -- so FBX2glTF -- binds.
 
     *maps* ``{"color" | "roughness" | "metallic": (file name, image bytes)}``
     embeds each image and wires it to ``Maya|TEX_<slot>_map``, as Maya writes
-    a ``GameShader`` network. Beyond what :func:`build_fbx` writes, the SDK
+    a ``GameShader`` network; a key naming a whole slot (``"TEX_brdf_lut"``)
+    is wired to ``Maya|<slot>``. *records* ``{record key: payload}`` ride a
+    ``data_export`` carrier. Beyond what :func:`build_fbx` writes, the SDK
     needs the :data:`SDK_IDS` header, a ``Definitions`` count per object type
     and the ``Texture`` / ``Video`` records' own properties: without those it
     finds the images and binds none ("could not find a image file for texture").
@@ -359,10 +361,19 @@ def build_stingray_fbx(path: str, maps) -> str:
                 ],
             )
         )
+        prop = f"Maya|{slot}" if slot.startswith("TEX_") else f"Maya|TEX_{slot}_map"
         connections += [
-            ("C", [b"OP", texture, material, f"Maya|TEX_{slot}_map".encode()], []),
+            ("C", [b"OP", texture, material, prop.encode()], []),
             ("C", [b"OO", video, texture], []),
         ]
+    if records:
+        held = [
+            p(key.encode(), b"KString", b"", b"U", json.dumps(value).encode())
+            for key, value in records.items()
+        ]
+        label = b"data_export\x00\x01Model"
+        objects.append(("Model", [2004, label, b"Null"], [("Properties70", [], held)]))
+        connections.append(("C", [b"OO", 2004, 0], []))
     counts = {}
     for kind, _props, _children in objects:
         counts[kind] = counts.get(kind, 0) + 1
@@ -386,6 +397,53 @@ def build_stingray_fbx(path: str, maps) -> str:
     return _write_fbx(path, roots, footer_id=footer_id)
 
 
+def build_instanced_fbx(path: str, instances, deformed: bool = False) -> str:
+    """One ``Geometry`` under one Model per entry of *instances* -- each
+    ``{property: (x, y, z)}``, its ``Properties70`` vectors -- as Maya writes
+    an instanced mesh; the Models are ``WALL_A``, ``WALL_B`` ... *deformed*
+    wires a ``Skin`` under the geometry."""
+    geometry = 2001
+    objects = [
+        (
+            "Geometry",
+            [geometry, b"wallShape\x00\x01Geometry", b"Mesh"],
+            [
+                ("Vertices", [Doubles([0, 0, 0, 1, 0, 0, 0, 1, 0])], []),
+                ("PolygonVertexIndex", [Ints([0, 1, -3])], []),
+            ],
+        )
+    ]
+    connections = []
+    for index, props in enumerate(instances):
+        model = 3001 + index
+        vectors = [
+            ("P", [name.encode(), b"Vector3D", b"Vector", b"", *map(float, xyz)], [])
+            for name, xyz in props.items()
+        ]
+        label = f"WALL_{chr(65 + index)}\x00\x01Model".encode()
+        objects.append(("Model", [model, label, b"Mesh"], [("Properties70", [], vectors)]))
+        connections += [("C", [b"OO", model, 0], []), ("C", [b"OO", geometry, model], [])]
+    if deformed:
+        objects.append(("Deformer", [4001, b"skin\x00\x01Deformer", b"Skin"], []))
+        connections.append(("C", [b"OO", 4001, geometry], []))
+    counts = {}
+    for kind, _props, _children in objects:
+        counts[kind] = counts.get(kind, 0) + 1
+    definitions = [
+        ("Version", [I32(100)], []),
+        ("Count", [I32(sum(counts.values()))], []),
+    ] + [
+        ("ObjectType", [kind.encode()], [("Count", [I32(n)], [])])
+        for kind, n in counts.items()
+    ]
+    roots = [
+        ("Definitions", [], definitions),
+        ("Objects", [], objects),
+        ("Connections", [], connections),
+    ]
+    return _write_fbx(path, roots)
+
+
 def build_fbx(path: str, media, models: int = 1, takes=None) -> str:
     """Write a binary FBX whose ``Video`` objects embed *media* ``{name: bytes}``.
 
@@ -403,7 +461,7 @@ def build_fbx(path: str, media, models: int = 1, takes=None) -> str:
     return _write_fbx(path, roots)
 
 
-def build_animated_fbx(path: str, takes, declared=None, media=None) -> str:
+def build_animated_fbx(path: str, takes, declared=None, media=None, channels=None) -> str:
     """An FBX shaped like a Maya take split: one stack per take in *takes*.
 
     Each take owns a layer, a curve node (wired to the model's translation)
@@ -411,7 +469,8 @@ def build_animated_fbx(path: str, takes, declared=None, media=None) -> str:
     takes' layers, so a drop must keep it while either owner survives. The
     ``Definitions`` counts match the objects. *declared* take names are
     published the way the exporters do -- a ``data_export`` model's
-    ``fbx_takes`` user property.
+    ``fbx_takes`` user property -- and *channels* ``{record key: payload}``
+    ride the same carrier.
     """
     objects = [("Model", [1001, b"cube0\x00\x01Model", b"Mesh"], [])]
     connections = []
@@ -438,32 +497,26 @@ def build_animated_fbx(path: str, takes, declared=None, media=None) -> str:
         ("C", [b"OO", 399, 201], []),
         ("C", [b"OP", 499, 399, b"d|X"], []),
     ]
+    held = dict(channels or {})
     if declared is not None:
-        channel = json.dumps([{"name": n, "start": 0, "end": 10} for n in declared])
+        held["fbx_takes"] = [{"name": n, "start": 0, "end": 10} for n in declared]
+    if held:
+        props = [
+            ("P", [k.encode(), b"KString", b"", b"U", json.dumps(v).encode()], [])
+            for k, v in held.items()
+        ]
         objects.append(
             (
                 "Model",
                 [1002, b"data_export\x00\x01Model", b"Null"],
-                [
-                    (
-                        "Properties70",
-                        [],
-                        [
-                            (
-                                "P",
-                                [b"fbx_takes", b"KString", b"", b"U", channel.encode()],
-                                [],
-                            )
-                        ],
-                    )
-                ],
+                [("Properties70", [], props)],
             )
         )
     media_objects, media_connections = _media_records(media or {})
     objects += media_objects
     connections += media_connections
     counts = {
-        b"Model": 1 + (declared is not None),
+        b"Model": 1 + bool(held),
         b"AnimationStack": len(takes),
         b"AnimationLayer": len(takes),
         b"AnimationCurveNode": len(takes) + 1,
@@ -505,7 +558,12 @@ def packed_weights(right: float = 1 / 3, next_left: float = 1 / 3) -> float:
 
 
 def build_curve_fbx(
-    path: str, takes, current=None, layers=None, base_layer=lambda take: "BaseLayer"
+    path: str,
+    takes,
+    current=None,
+    layers=None,
+    base_layer=lambda take: "BaseLayer",
+    user=(),
 ) -> str:
     """An FBX whose takes animate real curves, written by :class:`FbxWriter`.
 
@@ -520,8 +578,9 @@ def build_curve_fbx(
     channel; each declares its key extent as its span. ``Takes/Current``
     names *current* (default: the first take); *layers* ``{take: count}``
     gives a take extra, empty layers; *base_layer* names a take's first layer
-    (Maya's ``BaseLayer``; Blender names it after the take). 30 fps
-    (``TimeMode`` 6).
+    (Maya's ``BaseLayer``; Blender names it after the take); *user* names
+    the user properties (``A+U``, a DCC's custom attributes) every model
+    declares. 30 fps (``TimeMode`` 6).
     """
     from pythontk.file_utils.mesh_convert._fbx_writer import FbxNode, FbxWriter
 
@@ -547,6 +606,10 @@ def build_curve_fbx(
                 record = obj("Model", models[model], model, "Model")
                 record.props[2] = "Null"
                 link(models[model], 0)
+                if user:
+                    declared = record.add("Properties70")
+                    for prop in user:
+                        declared.p(prop, "Number", "", "A+U", 0.0)
 
     spans = {}
     for take, channels in takes.items():
@@ -875,6 +938,27 @@ class DropTakesTestCase(unittest.TestCase):
         self.assertEqual(report, {"takes": [], "objects": {}, "connections": 0})
         self.assertFalse(os.path.exists(out))
 
+    def test_no_names_drops_every_take(self):
+        """``names=None``: the file's static scene alone, what a build that
+        reads only its geometry hands FBX2glTF -- which bakes every node at
+        every frame of every take (the probe's highlight copies, 2026-10-19).
+        Everything else is copied as it was; a file with no take is not
+        written."""
+        out = os.path.join(self.dir, "static.fbx")
+        report = FbxMedia.drop_takes(self.src, out)
+        self.assertEqual(report["takes"], self.TAKES)
+        fbx = FbxFile.load(out)
+        census = fbx.objects_census()
+        for kind in ("AnimationStack", "AnimationLayer", "AnimationCurveNode", "AnimationCurve"):
+            self.assertNotIn(kind, census)
+        self.assertEqual((census["Model"], census["Video"], census["Texture"]), (2, 1, 1))
+        self.assertEqual([c for c in fbx.section("Takes")["children"] if c["name"] == "Take"], [])
+        self.assertEqual(fbx.user_properties("fbx_takes"), FbxFile.load(self.src).user_properties("fbx_takes"))
+        self.assertEqual(FbxMedia.embedded(out), FbxMedia.embedded(self.src))
+        again = os.path.join(self.dir, "static_again.fbx")
+        self.assertEqual(FbxMedia.drop_takes(out, again)["takes"], [])
+        self.assertFalse(os.path.exists(again))
+
     def test_user_properties_read_the_declared_channel(self):
         values = FbxFile.load(self.src).user_properties("fbx_takes")
         self.assertEqual(len(values), 1)
@@ -895,6 +979,66 @@ def take_keys(path: str):
         }
         for take in model["takes"]
     }
+
+
+class TakeKeysTestCase(unittest.TestCase):
+    """``FbxFile.take_keys``: the keys an importer reading only transforms
+    leaves behind -- ``Visibility`` and the user properties -- take by take."""
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_take_keys", policy="scoped")
+        stepped = [(0.0, 0.0, packed_weights(), 0.0)] * 3
+        self.src = build_curve_fbx(
+            os.path.join(self.temp.dir_path(), "props.fbx"),
+            {
+                "Shot_A": {
+                    ("Lamp", "Lcl Translation", "d|X"): frames(1, 10),
+                    ("Lamp", "Visibility", "d|Visibility"): {
+                        "keys": [(1, 1.0), (5, 0.0), (10, 0.0)],
+                        "flags": [CONSTANT] * 3,
+                        "data": stepped,
+                    },
+                    ("Lamp", "opacity", "d|opacity"): {
+                        "keys": [(1, 0.0), (10, 1.0)],
+                        "flags": [CUBIC | USER, LINEAR],
+                        "data": stepped[:2],
+                    },
+                },
+                "Shot_B": {("Lamp", "Lcl Translation", "d|X"): frames(20, 30)},
+            },
+            user=("opacity", "highlight"),
+        )
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_reads_the_named_and_the_user_properties_per_take(self):
+        keys = FbxFile.load(self.src).take_keys(("Visibility",), user=True)
+        self.assertEqual(sorted(keys), ["Shot_A", "Shot_B"])
+        self.assertEqual(
+            keys["Shot_A"],
+            {
+                ("Lamp", "Visibility", "d|Visibility"): [
+                    [FRAME, 1.0, "step"],
+                    [5 * FRAME, 0.0, "step"],
+                    [10 * FRAME, 0.0, "step"],
+                ],
+                ("Lamp", "opacity", "d|opacity"): [
+                    [FRAME, 0.0, "smooth"],
+                    [10 * FRAME, 1.0, "linear"],
+                ],
+            },
+            "the transform curve is not chosen; each key keeps its own mode",
+        )
+        self.assertEqual(keys["Shot_B"], {}, "a take keying none of them")
+
+    def test_a_user_property_is_read_only_when_asked_for(self):
+        keys = FbxFile.load(self.src).take_keys(("Visibility",))
+        self.assertEqual(list(keys["Shot_A"]), [("Lamp", "Visibility", "d|Visibility")])
+        self.assertEqual(
+            list(FbxFile.load(self.src).take_keys(user=True)["Shot_A"]),
+            [("Lamp", "opacity", "d|opacity")],
+        )
 
 
 class MergeTakesTestCase(unittest.TestCase):
@@ -1367,7 +1511,7 @@ RIG_SECTION = {
 }
 
 
-def build_rigged_fbx(path: str) -> str:
+def build_rigged_fbx(path: str, curve_pose: bool = False) -> str:
     """A skinned tube with the rig that drove it, laid out as Maya writes one.
 
     The mesh is skinned to ``tube_jnt_1/2``. The apparatus: a proxy chain
@@ -1376,7 +1520,9 @@ def build_rigged_fbx(path: str) -> str:
     the bind pose. Four named nodes the file itself must keep: a control wired
     to a material (an object the writer does not own), a group holding a mesh,
     a joint deforming a curve that stays (``tube_aux_curve`` is not named) and
-    the ``data_export`` carrier holding a scene record.
+    the ``data_export`` carrier holding a scene record. *curve_pose* adds the
+    IK curve's own bind pose, holding the curve alone -- Maya writes one per
+    skinCluster.
     """
 
     def p(*values):
@@ -1471,6 +1617,23 @@ def build_rigged_fbx(path: str) -> str:
             + pose_nodes,
         )
     )
+    if curve_pose:
+        objects.append(
+            (
+                "Pose",
+                [6001, b"tube_ik_curveSkin\x00\x01Pose", b"BindPose"],
+                [
+                    ("Type", [b"BindPose"], []),
+                    ("Version", [I32(100)], []),
+                    ("NbPoseNodes", [I32(1)], []),
+                    (
+                        "PoseNode",
+                        [],
+                        [("Node", [1120], []), ("Matrix", [Doubles([1.0] * 16)], [])],
+                    ),
+                ],
+            )
+        )
 
     counts = {}
     for kind, _props, _children in objects:
@@ -1592,6 +1755,33 @@ class DropApparatusTestCase(unittest.TestCase):
         self.assertIn("tube_driver_jnt", report["refused"])
         self.assertIn("tube_driver_GRP", report["refused"])
         self.assertEqual(report["kinds"], {"control": 1, "group": 1})
+
+    def test_a_bind_pose_it_empties_goes_with_its_members(self):
+        """Maya writes a bind pose per skin, and the IK curve's holds the curve
+        alone. The drop took the curve and kept its pose with no members --
+        and Maya's importer, handed empty bind poses, bound the skins that
+        stayed at the wrong pose: 6 of the 7 production wire looms 97-327 cm
+        off, each exact once the seven emptied poses were gone (2026-10-17).
+        An emptied pose goes, with its count; a pose that keeps a member
+        stays.
+        Added: 2026-10-17"""
+        src = build_rigged_fbx(os.path.join(self.dir, "poses.fbx"), curve_pose=True)
+        out = os.path.join(self.dir, "lean.fbx")
+        report = FbxMedia.drop_apparatus(src, out, section=RIG_SECTION)
+        fbx = FbxFile.load(out)
+        poses = [r["props"][0] for r in fbx.iter_objects() if r["name"] == "Pose"]
+        self.assertEqual(poses, [6000], "the emptied pose shipped")
+        self.assertEqual(report["objects"].get("Pose"), 1)
+        census = fbx.objects_census()
+        definitions = fbx.section("Definitions")["children"]
+        counts = {
+            c["props"][0].decode(): c["children"][0]["props"][0]
+            for c in definitions
+            if c["name"] == "ObjectType"
+        }
+        self.assertEqual({k: v for k, v in counts.items() if v}, census)
+        total = [c["props"][0] for c in definitions if c["name"] == "Count"][0]
+        self.assertEqual(total, sum(census.values()))
 
     def test_nothing_to_drop_writes_nothing(self):
         out = os.path.join(self.dir, "same.fbx")
@@ -1807,6 +1997,78 @@ class EmbedTestCase(unittest.TestCase):
             ["Room_Lightmap.exr", "Lamp_Lightmap.exr", "Room_Probe.exr"],
         )
 
+    #: A referenced module's lightmaps as that module was last exported
+    #: alone: its own spelling of each name (no namespace), a probe.
+    MODULE_LIGHTMAPS = {
+        "version": 1,
+        "objects": [
+            {"name": "ModA", "map": "ModA_Module.exr", "uvIndex": 1},
+            {"name": "ModB", "map": "ModB_Module.exr", "uvIndex": 1},
+        ],
+        "probe": {"map": "Module_Probe.exr", "position": [0, 0, 0]},
+    }
+
+    def test_a_module_record_the_scenes_own_shadows_names_nothing(self):
+        """A reader takes each record from the scene's own carrier and reads
+        a module's only where the scene's carries none (unitytk
+        ``CarrierImport.Collect``, the GLB applier) -- so a module's copy
+        beside the scene's names no file the deliverable needs: its maps
+        were embedded no reader reads, or failed the verifier when not found
+        (BACKLOG 2026-10-09). Added: 2026-10-17"""
+        path = build_carrier_fbx(
+            os.path.join(self.dir, "assembly.fbx"),
+            {"lightmap_metadata": self.LIGHTMAPS},
+            others={
+                "MOD:ModA": {},
+                "MOD:data_export": {"lightmap_metadata": self.MODULE_LIGHTMAPS},
+            },
+        )
+        self.assertEqual(
+            FbxMedia.dependencies(path),
+            ["Room_Lightmap.exr", "Lamp_Lightmap.exr", "Room_Probe.exr"],
+        )
+
+    def test_a_module_record_names_only_the_nodes_the_file_carries(self):
+        """Read alone, a module's record is that module's whole bake, whatever
+        the export set: an assembly export that left ``MOD:ModB`` out shipped
+        its map. Only an entry whose node the file carries names a file
+        (exact, else by namespace-stripped leaf -- the appliers' rule: the
+        module spells ``ModA``, the file carries ``MOD:ModA``), and a module
+        record none of whose nodes ships names nothing, its probe included:
+        no reader binds it. Added: 2026-10-17"""
+        partial = build_carrier_fbx(
+            os.path.join(self.dir, "partial.fbx"),
+            {},
+            others={
+                "MOD:ModA": {},
+                "MOD:data_export": {"lightmap_metadata": self.MODULE_LIGHTMAPS},
+            },
+        )
+        self.assertEqual(
+            FbxMedia.dependencies(partial), ["ModA_Module.exr", "Module_Probe.exr"]
+        )
+        shadows = {
+            "version": 2,
+            "planes": [{"name": "ModB_shadow", "texture": "ModB_shadow.png"}],
+        }
+        left_out = build_carrier_fbx(
+            os.path.join(self.dir, "left_out.fbx"),
+            {},
+            others={
+                "MOD:data_export": {
+                    "lightmap_metadata": self.MODULE_LIGHTMAPS,
+                    "shadow_metadata": shadows,
+                }
+            },
+        )
+        self.assertEqual(FbxMedia.dependencies(left_out), [])
+        # The scene's own record is the export's to scope (its producer does):
+        # read as written, a node the fixture lacks included.
+        own = build_carrier_fbx(
+            os.path.join(self.dir, "own.fbx"), {"shadow_metadata": shadows}
+        )
+        self.assertEqual(FbxMedia.dependencies(own), ["ModB_shadow.png"])
+
     def test_embed_adds_each_file_as_media_named_by_its_file_name(self):
         out = os.path.join(self.dir, "out.fbx")
         paths = [
@@ -1959,6 +2221,43 @@ class EmbedTestCase(unittest.TestCase):
         self.assertEqual(payloads["Lamp_Lightmap.exr"], self.files["Lamp_Lightmap.exr"])
         self.assertEqual(payloads["Box_shadow.png"], self.silhouette)
 
+    def test_a_name_the_folders_miss_is_found_under_the_walk_root(self):
+        """The folders a host records can lag the disk; the root it keeps its
+        files under is walked for what they miss, and the warning names that
+        root alone -- the folder list it once printed buried the one name
+        that mattered. Two same-named copies are never guessed between.
+        Added: 2026-10-14"""
+        root = os.path.join(self.dir, "root")
+        deep = os.path.join(root, "a", "b")
+        os.makedirs(deep)
+        os.replace(
+            os.path.join(self.maps, "Room_Probe.exr"),
+            os.path.join(deep, "Room_Probe.exr"),
+        )
+        for twin in ("x", "y"):
+            os.makedirs(os.path.join(root, twin))
+            with open(os.path.join(root, twin, "shadow_atlas_horizon.png"), "wb") as fh:
+                fh.write(b"twin")
+        os.remove(os.path.join(self.maps, "shadow_atlas_horizon.png"))
+        out = os.path.join(self.dir, "out.fbx")
+        log = "pythontk.file_utils.mesh_convert.fbx_media"
+        with self.assertLogs(log, "DEBUG") as logs:
+            report = FbxMedia.embed_dependencies(
+                self.src, out, search_dirs=[self.maps], walk_root=root
+            )
+        self.assertIn("Room_Probe.exr", report["embedded"])
+        self.assertEqual(report["missing"], ["shadow_atlas_horizon.png"])
+        (warning,) = [r for r in logs.records if r.levelname == "WARNING"]
+        text = warning.getMessage()
+        self.assertIn(root, text)
+        self.assertIn("subfolders", text)
+        self.assertIn("2 same-named", text)
+        self.assertNotIn(self.maps, text, "the folder list is the full log's")
+        debug = "\n".join(
+            r.getMessage() for r in logs.records if r.levelname == "DEBUG"
+        )
+        self.assertIn(self.maps, debug)
+
     def test_a_dependency_goes_in_under_the_records_spelling(self):
         """The name is the join key: Unity looks the extracted copy up by the
         record's name, and a case-insensitive disk can find the file under
@@ -2005,6 +2304,57 @@ class EmbedTestCase(unittest.TestCase):
             for f in self._videos(out).values()
         }
         self.assertEqual(payloads["footstep.wav"], b"RIFF....WAVE take three")
+
+    def test_audio_events_names_the_tracks_the_manifest_plays(self):
+        """An audio event names its TRACK, not a file: a host resolves each
+        name to its file and hands it over (mayatk / blendertk
+        ``FbxUtils.embed_dependencies``). Each name once; a blank or ``None``
+        name names nothing."""
+        audio = {
+            "version": 2,
+            "events": [
+                {"clip": "Intro", "frame": 4, "name": "footstep"},
+                {"clip": "Fight", "frame": 9, "name": "punch"},
+                {"clip": "Fight", "frame": 20, "name": "footstep"},
+                {"clip": "", "frame": 0, "name": "None"},
+                {"clip": "", "frame": 0, "name": " "},
+            ],
+        }
+        path = build_carrier_fbx(
+            os.path.join(self.dir, "audio.fbx"), {"audio_manifest": audio}
+        )
+        self.assertEqual(FbxMedia.audio_events(path), ["footstep", "punch"])
+        self.assertEqual(FbxMedia.audio_events(self.src), [])
+
+    def test_audio_events_reads_the_carrier_the_readers_read(self):
+        """An assembly ships a stray ``data_export1`` (and a module's
+        ``NS:data_export``) beside the scene's own, each holding the events as
+        last exported alone (measured on an assembly, 2026-10-13). The readers
+        take ONE carrier per channel -- the scene's own, else the first met
+        (the GLB applier; unitytk ``CarrierImport.Collect``) -- and the scene's
+        own record is re-derived from the whole merged scene, so the stray
+        copies' events are stale: their clips are not shipped."""
+        own = {"version": 2, "events": [{"clip": "", "frame": 0, "name": "footstep"}]}
+        stray = {"version": 2, "events": [{"clip": "", "frame": 3, "name": "door"}]}
+        assembly = build_carrier_fbx(
+            os.path.join(self.dir, "assembly.fbx"),
+            {"audio_manifest": own},
+            others={"data_export1": {"audio_manifest": stray}},
+        )
+        self.assertEqual(FbxMedia.audio_events(assembly), ["footstep"])
+        modules = build_carrier_fbx(
+            os.path.join(self.dir, "modules.fbx"),
+            {},
+            others={
+                "Door:data_export": {"audio_manifest": stray},
+                "Lift:data_export": {"audio_manifest": own},
+            },
+        )
+        self.assertEqual(
+            FbxMedia.audio_events(modules),
+            ["door"],
+            "no record on the scene's own carrier: the first met",
+        )
 
     def test_embed_dependencies_writes_nothing_without_records(self):
         bare = build_carrier_fbx(os.path.join(self.dir, "bare.fbx"), {})
@@ -2147,6 +2497,232 @@ class EmbedTestCase(unittest.TestCase):
             FbxMedia.dependencies(corrupt)
         with self.assertRaises(ValueError):
             FbxMedia.embed_dependencies(corrupt, search_dirs=[self.maps])
+
+
+class RecordTestCase(unittest.TestCase):
+    """``record`` / ``set_record``: a scene record read and replaced in the file.
+
+    The post-write passes that learn something the scene could not say (the
+    highlight copies a GLB build draws) write it into the deliverable's own
+    record, in the copy a reader applies.
+    """
+
+    OWN = {"version": 1, "objects": [{"name": "Crate", "map": "Room_Lightmap.exr"}]}
+    MODULE = {"version": 1, "objects": [{"name": "Shelf", "map": "Mod_Lightmap.exr"}]}
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_record", policy="scoped")
+        self.addCleanup(self.temp.cleanup)
+        self.dir = self.temp.dir_path()
+
+    def _fbx(self, own=True, module=True, name="deliverable.fbx"):
+        return build_carrier_fbx(
+            os.path.join(self.dir, name),
+            {"lightmap_metadata": self.OWN, "shadow_metadata": {"planes": []}} if own else {},
+            others={"MOD:data_export": {"lightmap_metadata": self.MODULE}} if module else None,
+        )
+
+    def test_the_scenes_own_record_is_read_over_a_modules(self):
+        self.assertEqual(FbxMedia.record(self._fbx(), "lightmap_metadata"), self.OWN)
+        self.assertEqual(
+            FbxMedia.record(self._fbx(own=False), "lightmap_metadata"), self.MODULE
+        )
+        self.assertIsNone(FbxMedia.record(self._fbx(module=False), "audio_manifest"))
+
+    def test_set_record_replaces_the_applied_copy_and_embeds_in_one_write(self):
+        src = self._fbx()
+        hdr = os.path.join(self.dir, "Room_Probe_Highlight1.hdr")
+        with open(hdr, "wb") as fh:
+            fh.write(b"#?RADIANCE\nhighlight bytes")
+        payload = dict(self.OWN, probe={"map": "Room_Probe.exr", "highlights": [
+            {"map": "Room_Probe_Highlight1.hdr", "objects": [{"name": "Crate"}]}]})
+        report = FbxMedia.set_record(src, "lightmap_metadata", payload, files=[hdr])
+        self.assertTrue(report["replaced"])
+        self.assertEqual(report["embedded"], ["Room_Probe_Highlight1.hdr"])
+        self.assertEqual(FbxMedia.record(src, "lightmap_metadata"), payload)
+        loaded = FbxFile.load(src)
+        # The other channels and the module's copy are as they were.
+        carried = dict(
+            (owner, json.loads(value))
+            for owner, value in loaded.user_properties("lightmap_metadata", named=True)
+        )
+        self.assertEqual(carried["MOD:data_export"], self.MODULE)
+        self.assertEqual(
+            [json.loads(v) for v in loaded.user_properties("shadow_metadata")],
+            [{"planes": []}],
+        )
+        # The copy the record now names rides in the file.
+        self.assertIn("Room_Probe_Highlight1.hdr", FbxMedia.dependencies(src))
+        self.assertIn(
+            "Room_Probe_Highlight1.hdr", [e["name"] for e in FbxMedia.embedded(src)]
+        )
+
+    def test_a_file_carrying_no_such_record_is_left_alone(self):
+        src = self._fbx(own=False, module=False)
+        with open(src, "rb") as fh:
+            before = fh.read()
+        report = FbxMedia.set_record(src, "lightmap_metadata", self.OWN)
+        self.assertFalse(report["replaced"])
+        with open(src, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+
+
+def _definition_counts(path):
+    """``{object type: count}`` of the file's ``Definitions``, ``"*"`` the total."""
+    counts = {}
+    for record in FbxFile.load(path).section("Definitions")["children"]:
+        if record["name"] == "Count":
+            counts["*"] = record["props"][0]
+        elif record["name"] == "ObjectType":
+            for child in record["children"]:
+                if child["name"] == "Count":
+                    counts[record["props"][0].decode()] = child["props"][0]
+    return counts
+
+
+class SplitPivotInstancesTestCase(unittest.TestCase):
+    """``split_pivot_instances``: an instanced mesh lands where each instance is.
+
+    Unity's importer resets a node's pivots through its mesh, so a geometry
+    shared by instances with different pivots is moved by ONE instance's:
+    measured on a production office (2026-10-19), ``WALL_D`` -- its rotate
+    pivot 131.44 cm below its row's -- imported exactly 1.3144 m low.
+    """
+
+    HIGH = {"RotationPivot": (-197.1654, 332.5522, -591.496)}
+    LOW = {"RotationPivot": (-197.1654, 201.1086, -591.496)}
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_split", policy="scoped")
+        self.addCleanup(self.temp.cleanup)
+        self.path = os.path.join(self.temp.dir_path(), "office.fbx")
+
+    def _geometry_of(self, path):
+        """``{model name: geometry id}`` and ``{geometry id: its Vertices}``."""
+        loaded = FbxFile.load(path)
+        names, vertices = {}, {}
+        for record in loaded.iter_objects():
+            if record["name"] == "Model":
+                names[record["props"][0]] = FbxFile._display_name(record["props"][1])
+            elif record["name"] == "Geometry":
+                vertices[record["props"][0]] = next(
+                    c["props"][0] for c in record["children"] if c["name"] == "Vertices"
+                )
+        owner = {
+            names[parent]: child
+            for _kind, child, parent, *_ in loaded.connections()
+            if child in vertices and parent in names
+        }
+        return owner, vertices
+
+    def test_instances_whose_pivots_differ_get_a_geometry_each(self):
+        build_instanced_fbx(self.path, [self.HIGH, self.HIGH, self.LOW, {}])
+        report = FbxMedia.split_pivot_instances(self.path)
+        self.assertEqual(report["models"], ["WALL_C", "WALL_D"])
+        self.assertEqual(report["geometries"], 2)
+        owner, vertices = self._geometry_of(self.path)
+        self.assertEqual(owner["WALL_A"], owner["WALL_B"], "agreeing instances stay one mesh")
+        self.assertEqual(len({owner["WALL_A"], owner["WALL_C"], owner["WALL_D"]}), 3)
+        self.assertEqual(len({str(v) for v in vertices.values()}), 1, "each a copy of the mesh")
+        counts = _definition_counts(self.path)
+        self.assertEqual(counts["Geometry"], 3)
+        self.assertEqual(counts["*"], 7)  # 3 geometries + 4 models
+
+    def test_instances_that_differ_only_in_their_offsets_stay_one_mesh(self):
+        """Measured on the same office: instances that differ only in
+        ``RotationOffset`` (``WALL_X`` against ``WALL_H``) landed right -- an
+        offset is a translation the node keeps, not one the mesh is moved by.
+        Float noise in a pivot is no pivot of its own."""
+        build_instanced_fbx(self.path, [
+            dict(self.HIGH, RotationOffset=(394.3308, 0.0, 1182.9921)),
+            {"RotationPivot": (-197.1653, 332.5522, -591.496)},
+        ])
+        with open(self.path, "rb") as fh:
+            before = fh.read()
+        self.assertEqual(FbxMedia.split_pivot_instances(self.path)["geometries"], 0)
+        with open(self.path, "rb") as fh:
+            self.assertEqual(fh.read(), before, "not written")
+
+    def test_a_deformed_geometry_stays_shared_and_is_said(self):
+        """A copy would deform nothing: its skin binds the original."""
+        build_instanced_fbx(self.path, [self.HIGH, self.LOW], deformed=True)
+        report = FbxMedia.split_pivot_instances(self.path)
+        self.assertEqual(report["geometries"], 0)
+        self.assertEqual(report["deformed"], ["wallShape"])
+
+
+class DropHostLightingTestCase(unittest.TestCase):
+    """``drop_host_lighting_media``: no host's own lighting rides a deliverable.
+
+    Maya's StingrayPBS wires Autodesk's environment cubes and BRDF table into
+    every material, and an embedded-media export carries their files: a
+    production office's FBX shipped ``specular_cube.png``, ``diffuse_cube.png``
+    and ``ibl_brdf_lut.png`` three times over, and Unity extracted them beside
+    the model, where nothing reads them (2026-10-19).
+    """
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_host_lighting", policy="scoped")
+        self.addCleanup(self.temp.cleanup)
+        self.path = build_stingray_fbx(
+            os.path.join(self.temp.dir_path(), "office.fbx"),
+            {
+                "color": ("wall_color.png", png_bytes((4, 4))),
+                "TEX_brdf_lut": ("ibl_brdf_lut.png", png_bytes((8, 8))),
+                "TEX_global_specular_cube": ("specular_cube.png", png_bytes((6, 6))),
+            },
+        )
+
+    def test_the_host_lighting_textures_go_with_their_media(self):
+        report = FbxMedia.drop_host_lighting_media(self.path)
+        self.assertEqual(report["textures"], 2)
+        self.assertEqual(report["media"], ["ibl_brdf_lut.png", "specular_cube.png"])
+        self.assertEqual([e["name"] for e in FbxMedia.embedded(self.path)], ["wall_color.png"])
+        counts = _definition_counts(self.path)
+        self.assertEqual((counts["Texture"], counts["Video"]), (1, 1))
+        loaded = FbxFile.load(self.path)
+        ids = {record["props"][0] for record in loaded.iter_objects()}
+        dangling = [c for c in loaded.connections() if c[1] not in ids or (c[2] and c[2] not in ids)]
+        self.assertEqual(dangling, [])
+
+    def test_a_file_another_video_or_a_record_names_keeps_its_bytes(self):
+        """The SDK embeds a file's bytes once, in the first ``Video`` naming
+        it: a user's texture on the same file as a host-lighting slot carries
+        none of its own, and a probe plugged into a slot may ride only there.
+        Each such file stays, wired to nothing; only the textures go."""
+        path = build_stingray_fbx(
+            os.path.join(self.temp.dir_path(), "shared.fbx"),
+            {
+                "TEX_global_specular_cube": ("studio.png", png_bytes((6, 6))),
+                "TEX_global_diffuse_cube": ("Room_Probe.png", png_bytes((5, 5))),
+                "TEX_brdf_lut": ("ibl_brdf_lut.png", png_bytes((8, 8))),
+                "color": ("studio.png", b""),  # the SDK's later Video of a file
+            },
+            records={"lightmap_metadata": {"version": 1, "probe": {"map": "Room_Probe.png"}}},
+        )
+        report = FbxMedia.drop_host_lighting_media(path)
+        self.assertEqual(report["textures"], 3)
+        self.assertEqual(report["media"], ["ibl_brdf_lut.png"])
+        held = {}
+        for entry in FbxMedia.embedded(path):
+            held[entry["name"]] = max(held.get(entry["name"], 0), entry["bytes"])
+        self.assertGreater(held.get("studio.png", 0), 0, "the user's texture keeps its bytes")
+        self.assertGreater(held.get("Room_Probe.png", 0), 0, "the probe the record names")
+        self.assertNotIn("ibl_brdf_lut.png", held)
+        counts = _definition_counts(path)
+        self.assertEqual((counts["Texture"], counts["Video"]), (1, 3))
+        loaded = FbxFile.load(path)
+        ids = {record["props"][0] for record in loaded.iter_objects()}
+        dangling = [c for c in loaded.connections() if c[1] not in ids or (c[2] and c[2] not in ids)]
+        self.assertEqual(dangling, [])
+
+    def test_a_file_with_none_is_not_written(self):
+        FbxMedia.drop_host_lighting_media(self.path)
+        with open(self.path, "rb") as fh:
+            before = fh.read()
+        self.assertEqual(FbxMedia.drop_host_lighting_media(self.path)["textures"], 0)
+        with open(self.path, "rb") as fh:
+            self.assertEqual(fh.read(), before)
 
 
 if __name__ == "__main__":

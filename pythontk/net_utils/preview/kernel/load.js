@@ -19,7 +19,7 @@ import { syncLookdev } from './lookdev.js';
 import { refreshMenus } from './menus.js';
 import { current, disposeModel, layout, loader, measureBounds, setModel } from './model.js';
 import { composite, setParts } from './parts.js';
-import { loadProbe, releaseProbe, useProbe } from './probe.js';
+import { disposeProbe, loadProbe, releaseProbe, useProbe } from './probe.js';
 import { readExtras, readRenderingPolicy } from './scene.js';
 import { glbJsonBytes, measureModel, setSpecs, showSpecs } from './specs.js';
 import { findStart, homeView } from './start.js';
@@ -98,7 +98,7 @@ export async function load(sources, version) {
     if (probe) break;
   }
   if (generation !== loadGeneration) {
-    if (probe) probe.prefiltered.dispose();
+    if (probe) disposeProbe(probe);
     // Parsed but never shown; free them rather than leak them.
     for (const part of loaded) disposeModel(part.gltf.scene);
     return null;

@@ -29,6 +29,10 @@ class Color:
 
     __slots__ = ("_r", "_g", "_b", "_a")
 
+    #: ITU-R BT.709 relative-luminance weights for linear RGB -- the one spelling
+    #: (``ImgUtils.luminance`` reads it for whole images).
+    REC709_LUMINANCE = (0.2126, 0.7152, 0.0722)
+
     def __init__(self, r: int, g: int, b: int, a: int = 255) -> None:
         object.__setattr__(self, "_r", max(0, min(255, int(r))))
         object.__setattr__(self, "_g", max(0, min(255, int(g))))
@@ -164,11 +168,8 @@ class Color:
         Does not apply sRGB gamma linearisation — sufficient for
         text-contrast decisions but not colorimetrically accurate.
         """
-        return (
-            0.2126 * (self._r / 255)
-            + 0.7152 * (self._g / 255)
-            + 0.0722 * (self._b / 255)
-        )
+        r, g, b = self.REC709_LUMINANCE
+        return r * (self._r / 255) + g * (self._g / 255) + b * (self._b / 255)
 
     # ---- Color math -------------------------------------------------------
 

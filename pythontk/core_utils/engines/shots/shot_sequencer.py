@@ -3423,6 +3423,183 @@ class ShotSequencer(_ShotSequencerHooks):
         # by ADJACENCY, so a lock only survives between shots that stay
         # neighbours.
         plan = ShotPlanner.plan_reorder(self.store, shot_id, target_pos, self.store.gap)
+        self._apply_order_plan(plan)
+
+    #: The :class:`ShotBlock` fields :meth:`swap_shots` can leave in place
+    #: (``retain``): what names or describes a place in the sequence rather
+    #: than the animation in it.  ``objects`` is not one -- the members are
+    #: what the keys animate, so they travel with the keys.
+    SWAP_FIELDS = ("name", "description", "locked", "metadata")
+
+    def swap_shots(
+        self, shot_id: int, other_id: int, retain: Iterable[str] = ()
+    ) -> None:
+        """Exchange two shots' places in the timeline order.
+
+        Each shot takes the other's position with its keys, members and
+        duration; every other shot keeps its position, and the order is laid
+        out as :meth:`move_shot_to_position` lays one out (the store's gap,
+        locked gaps between shots that stay neighbours kept).
+
+        A field named in *retain* stays where it was instead of travelling:
+        the two shots exchange its values, so the shot that lands in a place
+        takes the field of the shot that left it -- retain ``"name"`` and the
+        animation trades places under names that stay in order.  Retained
+        ``metadata`` -- the manifest step a place pairs with -- keeps that
+        place's members its shot holds no keys for there too, the keyed
+        ones travelling with their keys (:meth:`_exchange_place_members`).
+
+        Parameters:
+            shot_id: One shot.
+            other_id: The shot it trades places with.
+            retain: Fields of :attr:`SWAP_FIELDS` that stay in place.
+
+        Raises:
+            ValueError: An unknown shot id, or a field not in
+                :attr:`SWAP_FIELDS`.
+        """
+        for sid in (shot_id, other_id):
+            if self.shot_by_id(sid) is None:
+                raise ValueError(f"No shot with id {sid}")
+        retain = tuple(retain)
+        unknown = [f for f in retain if f not in self.SWAP_FIELDS]
+        if unknown:
+            raise ValueError(
+                f"Cannot retain {unknown}: a swap retains only {self.SWAP_FIELDS}"
+            )
+        if shot_id == other_id:
+            return
+
+        order = [s.shot_id for s in self.sorted_shots()]
+        i, j = order.index(shot_id), order.index(other_id)
+        order[i], order[j] = order[j], order[i]
+        plan = ShotPlanner.plan_order(self.store, order, self.store.gap)
+        with self.store.batch_update():
+            self._apply_order_plan(plan)
+            self._exchange_fields(shot_id, other_id, retain)
+
+    def copy_shot_content(self, source_id: int, dest_id: int) -> int:
+        """Replace *dest_id*'s animation with a copy of *source_id*'s.
+
+        The destination's own keys are cut (:meth:`delete_shot`'s cut: the
+        shots beside it play as they did), it takes the source's duration --
+        its start stays, the shots after it ripple by the difference -- and
+        the source's animator keys are copied in at the same offsets from
+        its start (:meth:`copy_attribute_keys`: the animator's own tangents,
+        no claims).  The destination keeps its record -- name, description,
+        lock, metadata -- and the members it held no keys for; the keyed
+        ones give way to what it animates now (pins and locks kept,
+        :meth:`_recompute_shot_objects`).  The source is
+        untouched.  Audio is not copied: a clip is one placement of its track.
+
+        Parameters:
+            source_id: The shot whose animation is copied.
+            dest_id: The shot whose animation it replaces.
+
+        Returns:
+            The runs copied.
+
+        Raises:
+            ValueError: An unknown shot id, or the same shot twice.
+        """
+        for sid in (source_id, dest_id):
+            if self.shot_by_id(sid) is None:
+                raise ValueError(f"No shot with id {sid}")
+        if source_id == dest_id:
+            raise ValueError("A shot cannot replace its own animation")
+        store = self.store
+        with self._content_batch(), store.batch_update():
+            # What it animated goes with its keys; its other members (the
+            # manifest's, pinned by hand) are the record's and stay.
+            replaced = self._keyed_members(dest_id)
+            self._cut_owned_content(dest_id)
+            src, dest = self.shot_by_id(source_id), self.shot_by_id(dest_id)
+            grow = src.duration - dest.duration
+            if abs(grow) > _EPS:
+                old_end = dest.end
+                dest.end = store.snap(dest.start + src.duration)
+                self.ripple_downstream(dest_id, old_end, dest.end - old_end)
+            # Read after the ripple: a source after the destination moved.
+            runs = self.collect_shot_sequences(source_id, include_audio=False)
+            for run in runs:
+                self._animator_run(run)
+            offset = dest.start - src.start
+            for run in runs:
+                self._copy_sequence(run, run["start"] + offset)
+            # Re-decided: what it animated, and the copied objects -- kept
+            # whether or not they move (a flat key copied in).
+            copied = {r["obj"] for r in runs}
+            self._recompute_shot_objects(
+                dest_id, only=(set(dest.objects) & replaced) | copied, keep=copied
+            )
+        self.reconcile_system_edits()
+        store.mark_dirty()
+        return len(runs)
+
+    def _exchange_fields(self, shot_id: int, other_id: int, fields) -> None:
+        """Trade the values of *fields* between two shots (:meth:`swap_shots`)."""
+        if not fields:
+            return
+        store = self.store
+        a, b = self.shot_by_id(shot_id), self.shot_by_id(other_id)
+        edits = {
+            shot_id: {f: getattr(b, f) for f in fields},
+            other_id: {f: getattr(a, f) for f in fields},
+        }
+        if "metadata" in fields:
+            self._exchange_place_members(a, b, edits)
+        if "name" in fields:
+            # Names are unique: park one on a free name while the other moves.
+            store.update_shot(shot_id, name=store.unique_name(a.name + "_swap"))
+        store.update_shot(other_id, **edits[other_id])
+        store.update_shot(shot_id, **edits[shot_id])
+
+    def _exchange_place_members(self, a, b, edits) -> None:
+        """Split two swapped shots' members by what retained metadata keeps.
+
+        Metadata names what belongs to the PLACE -- the manifest step it pairs
+        with and that step's objects -- so a member the shot holds no keys
+        for (manifest-authored, pinned by hand) stays in the place with it,
+        while a keyed one (:meth:`_keyed_members`, flat holds included)
+        travels with its keys.  The shot system's member tags
+        (:attr:`ShotStore.SYSTEM_MEMBERS`) follow their members.  Without a
+        scene nothing is known to be keyed, and every member
+        travels.  Fills ``edits[id]["objects"]`` and the tags in
+        ``edits[id]["metadata"]``.
+        """
+        store = self.store
+        tag = store.SYSTEM_MEMBERS
+        tags = set((a.metadata or {}).get(tag) or ()) | set(
+            (b.metadata or {}).get(tag) or ()
+        )
+        if self._scene_available():
+            # Read in the new places: each shot's own keys came with it.
+            moving = {s.shot_id: self._keyed_members(s.shot_id) for s in (a, b)}
+        else:
+            moving = {s.shot_id: set(s.objects) for s in (a, b)}
+        for shot, other in ((a, b), (b, a)):
+            objects = (set(shot.objects) & moving[shot.shot_id]) | (
+                set(other.objects) - moving[other.shot_id]
+            )
+            meta = dict(edits[shot.shot_id]["metadata"] or {})
+            meta.pop(tag, None)
+            own = sorted(tags & {store.member_key(o) for o in objects})
+            if own:
+                meta[tag] = own
+            edits[shot.shot_id]["metadata"] = meta
+            edits[shot.shot_id]["objects"] = sorted(objects)
+
+    def _keyed_members(self, shot_id: int) -> set:
+        """The members *shot_id* holds keys for in its frames -- flat holds
+        too: a lone off-state key is content that moves with the shot."""
+        return {
+            seg["obj"]
+            for seg in self.collect_object_segments(shot_id, ignore_holds=False)
+        }
+
+    def _apply_order_plan(self, plan) -> None:
+        """Run a whole-order plan (:meth:`ShotPlanner.plan_order`), if it moves
+        anything."""
         if not plan.sequence and not plan.parked:
             return
         self._apply_plan(plan)
@@ -3651,6 +3828,30 @@ class ShotSequencer(_ShotSequencerHooks):
             return None
         return ShotPlanner.envelope_for(shots, idx)
 
+    def _cut_owned_content(self, shot_id: int) -> int:
+        """Cut every key *shot_id* owns, the shots beside it playing as they
+        did -- the cut :meth:`delete_shot` and :meth:`copy_shot_content` make.
+        Returns the curves the cut reached."""
+        shots = self.sorted_shots()
+        idx = next(i for i, s in enumerate(shots) if s.shot_id == shot_id)
+        shot = shots[idx]
+        lo, hi, lo_open, _hi_closed = ShotPlanner.envelope_for(shots, idx)
+        self._hold_neighbour_poses(
+            shot_id,
+            # Every keyed object: what the closing re-times is any curve
+            # crossing the span, the shot's members or not.
+            self._content_objects(),
+            # The cut's own window: a flush closing sample stays, the
+            # next shot's opening pose (the DCC ``_cut_shot_content``).
+            (
+                max(lo, shot.start - _CONTENT_REACH)
+                + (_KEY_TOL if lo_open else -_KEY_TOL),
+                min(hi, shot.end + _CONTENT_REACH) - _KEY_TOL,
+            ),
+            flush=True,
+        )
+        return self._cut_shot_content(shot_id)
+
     def delete_shot(
         self,
         shot_id: int,
@@ -3696,24 +3897,7 @@ class ShotSequencer(_ShotSequencerHooks):
         vacated = max(0.0, span_end - shot.start)
         name = shot.name
 
-        curves_cut = 0
-        if delete_contents:
-            lo, hi, lo_open, _hi_closed = ShotPlanner.envelope_for(shots, idx)
-            self._hold_neighbour_poses(
-                shot_id,
-                # Every keyed object: what the closing re-times is any curve
-                # crossing the span, the shot's members or not.
-                self._content_objects(),
-                # The cut's own window: a flush closing sample stays, the
-                # next shot's opening pose (the DCC ``_cut_shot_content``).
-                (
-                    max(lo, shot.start - _CONTENT_REACH)
-                    + (_KEY_TOL if lo_open else -_KEY_TOL),
-                    min(hi, shot.end + _CONTENT_REACH) - _KEY_TOL,
-                ),
-                flush=True,
-            )
-            curves_cut = self._cut_shot_content(shot_id)
+        curves_cut = self._cut_owned_content(shot_id) if delete_contents else 0
 
         # The shot's own bound samples go with it -- cut where provably
         # redundant, released otherwise -- BEFORE the gap closes.  Disowned

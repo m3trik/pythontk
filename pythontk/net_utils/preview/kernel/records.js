@@ -53,7 +53,7 @@ export const ARTICULATION = Object.freeze({ key: 'articulation', version: 1, web
  * @typedef {object} ArticulationWebJoint
  * @property {string} name The joint node's name: the join key to the imported transform.
  * @property {number|null} parent An earlier joint's index, or null for a root (its parent is the rig's space).
- * @property {[number, number, number]} t The rest translate in the parent's space, in the DCC's units.
+ * @property {[number, number, number]} t The rest translate in the parent's space, in the file's units (a runtime measures its scale against the rest pose: ArticulationModel.scale_of).
  * @property {[number, number, number, number]} q The rest rotation (the DCC's joint orient), a quaternion x, y, z, w.
  * @property {'xyz'|'yzx'|'zxy'|'xzy'|'yxz'|'zyx'} rotate_order The order the rotation channels compose in; the first letter applies first.
  * @property {ArticulationChannel[]} channels The channels it turns or slides on, in state order.
@@ -63,7 +63,7 @@ export const ARTICULATION = Object.freeze({ key: 'articulation', version: 1, web
 /**
  * One channel a joint turns or slides on, with its limits.
  * @typedef {object} ArticulationChannel
- * @property {'rx'|'ry'|'rz'|'tx'|'ty'|'tz'} channel rx/ry/rz turn about the rest frame's own axes (degrees); tx/ty/tz slide along them (the parent's units).
+ * @property {'rx'|'ry'|'rz'|'tx'|'ty'|'tz'} channel rx/ry/rz turn about the rest frame's own axes (degrees); tx/ty/tz slide along them (the file's units, in the parent's space).
  * @property {number|null} min The lower limit, or null for none.
  * @property {number|null} max The upper limit, or null for none.
  * @property {number} weight How readily a grab moves this channel against the others (1 = evenly).

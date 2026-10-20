@@ -58,6 +58,26 @@ class _ImgColorSpaceInternal:
             linear = [c / peak for c in linear]
         return tuple(linear)
 
+    @classmethod
+    def kelvin_tint(cls, kelvin) -> Tuple[float, float, float]:
+        """Body of :meth:`ImgUtils.kelvin_tint`."""
+        from pythontk.core_utils.color import Color
+
+        if not kelvin:
+            return (1.0, 1.0, 1.0)
+        rgb = cls.kelvin_to_linear_rgb(kelvin)
+        y = sum(w * c for w, c in zip(Color.REC709_LUMINANCE, rgb))
+        return tuple(c / y for c in rgb)
+
+    @staticmethod
+    def luminance(linear):
+        """Body of :meth:`ImgUtils.luminance`."""
+        from pythontk.core_utils.color import Color
+
+        return np.asarray(linear, dtype=np.float64)[..., :3] @ np.asarray(
+            Color.REC709_LUMINANCE
+        )
+
     @staticmethod
     def _srgb_to_linear_np(arr):
         """Convert sRGB values to linear.
@@ -259,6 +279,59 @@ class _ImgColorSpaceInternal:
             return cls._linear_to_srgb_image(data)
         return cls._linear_to_srgb_np(data)
 
+    # three.js ACESFilmicToneMapping (Stephen Hill's fit of the ACES RRT + ODT):
+    # sRGB -> the fit's input space, and back.
+    _ACES_IN = (
+        (0.59719, 0.35458, 0.04823),
+        (0.07600, 0.90834, 0.01566),
+        (0.02840, 0.13383, 0.83777),
+    )
+    _ACES_OUT = (
+        (1.60475, -0.53108, -0.07367),
+        (-0.10208, 1.10813, -0.00605),
+        (-0.00327, -0.07276, 1.07602),
+    )
+    # Bjorn Ottosson's OKLab: linear sRGB -> LMS, and the cube-rooted LMS -> Lab.
+    _OKLAB_LMS = (
+        (0.4122214708, 0.5363325363, 0.0514459929),
+        (0.2119034982, 0.6806995451, 0.1073969566),
+        (0.0883024619, 0.2817188376, 0.6299787005),
+    )
+    _OKLAB_LAB = (
+        (0.2104542553, 0.7936177850, -0.0040720468),
+        (1.9779984951, -2.4285922050, 0.4505937099),
+        (0.0259040371, 0.7827717662, -0.8086757660),
+    )
+
+    @classmethod
+    def _tonemap_aces_filmic(cls, c: "np.ndarray") -> "np.ndarray":
+        """three.js ``ACESFilmicToneMapping`` (its ``/ 0.6`` exposure bias included)."""
+        c = (c / 0.6) @ np.asarray(cls._ACES_IN).T
+        a = c * (c + 0.0245786) - 0.000090537
+        b = c * (0.983729 * c + 0.4329510) + 0.238081
+        return (a / b) @ np.asarray(cls._ACES_OUT).T
+
+    @classmethod
+    def _tonemap_operators(cls):
+        return {"aces_filmic": cls._tonemap_aces_filmic, "linear": lambda c: c}
+
+    @classmethod
+    def tonemap(cls, linear, operator: str = "aces_filmic", exposure: float = 1.0):
+        """Body of :meth:`ImgUtils.tonemap`."""
+        operators = cls._tonemap_operators()
+        if operator not in operators:
+            raise ValueError(
+                f"Unknown tone-map operator {operator!r}; one of {sorted(operators)}."
+            )
+        c = np.clip(np.asarray(linear, dtype=np.float64), 0.0, None) * float(exposure)
+        return np.clip(operators[operator](c), 0.0, 1.0).astype(np.float32)
+
+    @classmethod
+    def linear_to_oklab(cls, linear):
+        """Body of :meth:`ImgUtils.linear_to_oklab`."""
+        lms = np.asarray(linear, dtype=np.float64) @ np.asarray(cls._OKLAB_LMS).T
+        return (np.cbrt(lms) @ np.asarray(cls._OKLAB_LAB).T).astype(np.float32)
+
     #: Seed of the 8-bit encode's dither: fixed, so a map always encodes to the
     #: same bytes (digest de-duplication downstream depends on it).
     _DITHER_SEED = 0x5EED
@@ -272,6 +345,32 @@ class _ImgColorSpaceInternal:
         return np.clip(np.floor(unit * 255.0 + r), 0, 255).astype(np.uint8)
 
     @classmethod
+    def encode_hdr_pixels_for_web(cls, rgb, percentile=None):
+        """Body of :meth:`ImgUtils.encode_hdr_pixels_for_web`."""
+        rgb = np.asarray(rgb, dtype=np.float32)[..., :3]
+        # A renderer's fireflies survive into the file, and both non-finite
+        # kinds poison the encode SILENTLY: `inf > 0` is True, so enough of
+        # them make the divisor itself inf and the whole map encodes BLACK
+        # against an inf scalar; NaN passes the divisor's own filter but
+        # propagates through the divide and casts to uint8 as undefined garbage.
+        if not np.isfinite(rgb).all():
+            rgb = np.nan_to_num(rgb, nan=0.0, posinf=0.0, neginf=0.0)
+        lit = rgb[rgb > 0.0]
+        if not lit.size:
+            scalar = 1.0
+        elif percentile is None:
+            floor = float(np.percentile(lit, cls.HDR_WEB_PERCENTILE))
+            scalar = min(float(lit.max()), cls.HDR_WEB_HEADROOM * floor)
+        else:
+            scalar = float(np.percentile(lit, float(percentile)))
+        scalar = max(scalar, 1e-6)
+        unit = np.maximum(rgb / scalar, 0.0)
+        # Past full scale the triple is scaled down whole, never clipped per
+        # channel: a warm light stays warm instead of bleaching to white.
+        unit /= np.maximum(unit.max(axis=-1, keepdims=True), 1.0)
+        return cls.quantize_8bit(cls._linear_to_srgb_np(unit)), scalar
+
+    @classmethod
     def encode_hdr_for_web(cls, path, percentile=None):
         """Body of :meth:`ImgUtils.encode_hdr_for_web`."""
         try:
@@ -281,30 +380,17 @@ class _ImgColorSpaceInternal:
                 "OpenCV (cv2) is required to encode HDR images for the web."
             ) from e
 
-        percentile = cls.HDR_WEB_PERCENTILE if percentile is None else float(percentile)
         img = cls.cv2_read(path, cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
         if img is None:
             raise ValueError(f"Unreadable image: {path}")
         arr = np.asarray(img, dtype=np.float32)
         if arr.ndim == 2:
             arr = arr[:, :, None].repeat(3, axis=2)
-        bgr = arr[:, :, :3]  # lightmaps are opaque; drop any alpha
-        # A renderer's fireflies survive into the file, and both non-finite
-        # kinds poison the encode SILENTLY: `inf > 0` is True, so enough of
-        # them make the percentile itself inf and the whole map encodes BLACK
-        # against an inf scalar; NaN passes the percentile's own filter but
-        # propagates through np.clip and casts to uint8 as undefined garbage.
-        if not np.isfinite(bgr).all():
-            bgr = np.nan_to_num(bgr, nan=0.0, posinf=0.0, neginf=0.0)
-
-        lit = bgr[bgr > 0.0]
-        scalar = float(np.percentile(lit, percentile)) if lit.size else 1.0
-        scalar = max(scalar, 1e-6)
-
-        srgb = cls._linear_to_srgb_np(np.clip(bgr / scalar, 0.0, 1.0))
-        out = cls.quantize_8bit(srgb)
-        # cv2 reads AND writes BGR: no swap needed. Max compression -- the
-        # bytes go straight into a GLB, where they are the file size.
+        # BGR in, BGR out: the encode treats the channels alike, and cv2 reads
+        # AND writes BGR. Lightmaps are opaque; any alpha is dropped.
+        out, scalar = cls.encode_hdr_pixels_for_web(arr[:, :, :3], percentile)
+        # Max compression -- the bytes go straight into a GLB, where they are
+        # the file size.
         ok, buf = cv2.imencode(".png", out, [cv2.IMWRITE_PNG_COMPRESSION, 9])
         if not ok:
             raise ValueError(f"PNG encode failed for {path}")
@@ -324,7 +410,21 @@ class _ImgColorSpaceInternal:
         arr = np.asarray(img, dtype=np.float32)
         if arr.ndim == 2:
             arr = arr[:, :, None].repeat(3, axis=2)
-        bgr = np.ascontiguousarray(arr[:, :, :3])
+        # cv2 reads BGR; the pixels' form takes RGB.
+        return cls.encode_hdr_radiance_pixels(arr[:, :, 2::-1])
+
+    @classmethod
+    def encode_hdr_radiance_pixels(cls, rgb):
+        """Body of :meth:`ImgUtils.encode_hdr_radiance_pixels`."""
+        try:
+            import cv2
+        except ImportError as e:
+            raise ImportError("OpenCV (cv2) is required to encode HDR images.") from e
+
+        arr = np.asarray(rgb, dtype=np.float32)
+        if arr.ndim == 2:
+            arr = arr[:, :, None].repeat(3, axis=2)
+        bgr = np.ascontiguousarray(arr[:, :, 2::-1])
         # As encode_hdr_for_web: a firefly's inf or NaN would encode as an
         # undefined exponent, and RGBE has no sign, so negatives clamp to 0.
         bgr = np.nan_to_num(bgr, nan=0.0, posinf=0.0, neginf=0.0)
@@ -333,5 +433,5 @@ class _ImgColorSpaceInternal:
         with cls.cv2_temp():
             ok, buf = cv2.imencode(".hdr", bgr)
         if not ok:
-            raise ValueError(f"Radiance HDR encode failed for {path}")
+            raise ValueError("Radiance HDR encode failed")
         return buf.tobytes()

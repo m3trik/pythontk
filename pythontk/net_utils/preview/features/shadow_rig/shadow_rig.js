@@ -59,6 +59,16 @@
   UVs into its atlas rect so a fallback viewer needs no transform; here the
   rect is applied per plane, per instance).
 
+  A Z-up DCC's plane arrives in a Z-up frame: Blender's FBX exporter turns
+  only the ROOT nodes upright and never the mesh data, so a blendertk quad
+  lies in its local X/Y (normal +Z) and its contact's own axes are Blender's
+  -- measured on blendertk pushes, a plane and a contact at the root and under
+  one alike -- where a Y-up DCC's (Maya's) quad lies in X/Z. Told off the quad
+  (quadExtent; unitytk's ShadowPlaneController.IsZUp rule), so no producer
+  flag is needed: such a quad is turned onto the ground as it is placed
+  (Z_UP_PLANE) and its contact's frame read in the file's axes (Z_UP_FRAME),
+  the axes its record's frame is written in.
+
   Textures this script creates are its own: the page's disposeModel frees what
   hangs off a model's materials, so the horizon maps (never on a material) and
   the originals detached from the planes it takes over are disposed HERE, on
@@ -99,6 +109,14 @@ const GROUND_OFFSET = 0.01;
 //: quaternion, IS Maya's world shining direction to 1e-7, while its local -Z
 //: points up. Pinned by test_shadow_web.py on an asymmetric rotation.
 const DIRECTIONAL_AXIS = [0, -1, 0];
+//: A Z-up quad's axes laid onto the Y-up quad `place` turns, as a quaternion
+//: (x, y, z, w): its +Y (away from the source) onto +Z and its +Z (the
+//: normal) onto +Y -- so its +X onto -X (unitytk's ZUpPlaneAxes).
+const Z_UP_PLANE = [0, Math.SQRT1_2, Math.SQRT1_2, 0];
+//: A Z-up node's frame read in the file's Y-up axes: +90 deg about X, the
+//: turn back from the one Blender's exporter gives its roots (unitytk's
+//: ZUpFrameAxes).
+const Z_UP_FRAME = [Math.SQRT1_2, 0, 0, Math.SQRT1_2];
 const ALPHA_POINTER = /^\/materials\/(\d+)\/pbrMetallicRoughness\/baseColorFactor$/;
 const RECT_IDENTITY = [1, 1, 0, 0];
 const CANVAS_DEFAULT = [-1, 1, -0.5, 0.5];
@@ -755,13 +773,18 @@ function normaliseUv(geometry) {
   uv.needsUpdate = true;
 }
 
-// The quad's own size, which the DCC expression divides by (basePlaneSize).
+// The quad's own size, which the DCC expression divides by (basePlaneSize):
+// across it (local X) and along it -- local Z on a Y-up DCC's quad, local Y on
+// a Z-up one's (see the header), told by which of the two it lies flat in.
 function quadExtent(geometry) {
   if (!geometry.boundingBox) geometry.computeBoundingBox();
   const box = geometry.boundingBox;
   const w = box.max.x - box.min.x;
+  const h = box.max.y - box.min.y;
   const d = box.max.z - box.min.z;
-  return { w: w > 1e-9 ? w : 1, d: d > 1e-9 ? d : 1 };
+  const zUp = d < h;
+  const along = zUp ? h : d;
+  return { w: w > 1e-9 ? w : 1, d: along > 1e-9 ? along : 1, zUp };
 }
 
 function prepareDataTexture(THREE, texture) {
@@ -1323,7 +1346,10 @@ function teardown(session) {
 
 /* ----------------------------------------------------------- per frame --- */
 
-const _m = { a: null, b: null, c: null, s: null, q: null, pos: null, scl: null, dir: null, up: null, n: null };
+const _m = {
+  a: null, b: null, c: null, s: null, q: null, pos: null, scl: null, dir: null, up: null, n: null,
+  zPlane: null, zFrame: null, canvas: null,
+};
 
 function scratch(THREE) {
   if (!_m.a) {
@@ -1337,6 +1363,9 @@ function scratch(THREE) {
     _m.dir = new THREE.Vector3();
     _m.up = new THREE.Vector3(0, 1, 0);
     _m.n = new THREE.Matrix3();
+    _m.zPlane = new THREE.Quaternion().fromArray(Z_UP_PLANE);
+    _m.zFrame = new THREE.Quaternion().fromArray(Z_UP_FRAME);
+    _m.canvas = [0, 0, 0, 0];
   }
   return _m;
 }
@@ -1356,10 +1385,14 @@ function modelMatrixOf(object, model, out) {
 // The Maya expression, applied: translate to the canvas centre, lifted off
 // the ground; rotateY = atan2(ux, uz) so local +Z is the bearing (the -Z edge
 // is the near edge, toward the light) and local +X is across it; scale the
-// quad's own size to the canvas extents.
+// quad's own size to the canvas extents. A Z-up quad is turned onto the
+// ground first (Z_UP_PLANE): its +Y runs along the bearing and its +X across
+// it the other way, so its canvas -- whose across fractions run along the DCC
+// quad's own +X -- is read mirrored across the bearing.
 function place(THREE, session, plane) {
   const t = scratch(THREE);
   const { model, unit } = session;
+  const { zUp } = plane.extent;
   modelMatrixOf(plane.contact, model, t.a);
   t.c.setFromMatrixPosition(t.a);
   const contact = [t.c.x, t.c.y, t.c.z];
@@ -1373,11 +1406,26 @@ function place(THREE, session, plane) {
     light = [t.s.x, t.s.y, t.s.z];
   }
   const shadow = shadowModel(contact, light, plane.ground, plane.radius, plane.height, plane.maxStretch);
-  const { centre, along, across } = placement(shadow, plane.canvas);
+  let canvas = plane.canvas;
+  if (zUp) {
+    canvas = t.canvas;
+    canvas[0] = plane.canvas[0];
+    canvas[1] = plane.canvas[1];
+    canvas[2] = -plane.canvas[3];
+    canvas[3] = -plane.canvas[2];
+  }
+  const { centre, along, across } = placement(shadow, canvas);
   const yaw = Math.atan2(shadow.bearing[0], shadow.bearing[1]);
   t.pos.set(centre[0], plane.ground + GROUND_OFFSET * unit, centre[1]);
   t.q.setFromAxisAngle(t.up, yaw);
-  t.scl.set(Math.max(1e-4, across / plane.extent.w), 1, Math.max(1e-4, along / plane.extent.d));
+  const scaleAcross = Math.max(1e-4, across / plane.extent.w);
+  const scaleAlong = Math.max(1e-4, along / plane.extent.d);
+  if (zUp) {
+    t.q.multiply(t.zPlane);
+    t.scl.set(scaleAcross, scaleAlong, 1);
+  } else {
+    t.scl.set(scaleAcross, 1, scaleAlong);
+  }
   t.a.compose(t.pos, t.q, t.scl);
   if (plane.batch) {
     plane.batch.mesh.setMatrixAt(plane.instance, t.a);
@@ -1408,15 +1456,27 @@ function feedSource(THREE, session, plane) {
   const u = plane.material.uniforms;
   const contact = plane.contact.matrixWorld;
   u.uOrigin.value.setFromMatrixPosition(contact);
-  u.uAxisA.value.fromArray(plane.horizon.frameA).transformDirection(contact);
-  u.uAxisB.value.fromArray(plane.horizon.frameB).transformDirection(contact);
-  // The frame's up is the contact's own +Y, NOT a cross product of A and B.
-  // The two DCCs bake with opposite bearing senses -- Maya's frame is (X, Z),
+  u.uAxisA.value.fromArray(plane.horizon.frameA);
+  u.uAxisB.value.fromArray(plane.horizon.frameB);
+  // The frame's up is the contact's own up (+Y in the file's axes), NOT a
+  // cross product of A and B. The two DCCs bake with opposite bearing senses
+  // -- Maya's frame is (X, Z),
   // Blender's arrives as (X, -Z) -- so cross(B, A) is +Y for one and -Y for
   // the other, which puts every Blender-exported source below the horizon and
   // draws nothing. The map's up is the exporter's up, whatever the bearing
   // sense; the rig already assumes the contact stands on the world ground.
-  u.uAxisUp.value.set(0, 1, 0).transformDirection(contact);
+  u.uAxisUp.value.set(0, 1, 0);
+  // A Z-up contact's frame is read in the file's axes (Z_UP_FRAME; see the
+  // header), the axes the record's frame vectors are written in: its own +Y
+  // is the file's -Z, and its own +Z the up.
+  if (plane.extent.zUp) {
+    u.uAxisA.value.applyQuaternion(t.zFrame);
+    u.uAxisB.value.applyQuaternion(t.zFrame);
+    u.uAxisUp.value.applyQuaternion(t.zFrame);
+  }
+  u.uAxisA.value.transformDirection(contact);
+  u.uAxisB.value.transformDirection(contact);
+  u.uAxisUp.value.transformDirection(contact);
   // The ground plane's height along that up, from any point on it. The map's
   // intervals were baked as elevations seen FROM this plane, and the shared
   // body projects every fragment onto it. The ground is a MODEL-space height

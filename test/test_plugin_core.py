@@ -24,6 +24,7 @@ import struct
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 from pythontk.net_utils.rpc.client import RpcClient
@@ -514,6 +515,58 @@ class TestWireContract(_EnvGuard):
             self.assertNotIn("math.add", other.registry.all_ops())
         finally:
             other.stop()
+
+    def test_an_op_can_stop_its_own_server(self):
+        """``shutdown`` waits for the serve loop, which waits for the op: an op
+        that stopped its server hung until the shutdown moved off its thread."""
+        self.plugin.registry.register("halt")(self.plugin.stop)
+        self.client.invoke("halt", timeout=5)  # answers instead of hanging
+        deadline = time.time() + 5
+        while self.client.ping(timeout=0.2) and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(self.plugin.is_running())
+        self.assertFalse(self.client.ping(timeout=0.5))
+
+    def test_serve_runs_every_op_on_the_calling_thread_until_stopped(self):
+        """For an op bound to the thread that made it (a sync browser): serve
+        blocks its caller, every op runs there, and an op's stop returns it."""
+        other = _make_plugin(label="other_rpc", env_prefix="TEST_RPC_OTHER")
+        other.registry.register("where")(lambda: threading.current_thread().name)
+        other.registry.register("halt")(other.stop)
+        thread = threading.Thread(
+            target=other.serve, kwargs={"port": 0}, name="the caller", daemon=True
+        )
+        thread.start()
+        deadline = time.time() + 5
+        while other.address is None and time.time() < deadline:
+            time.sleep(0.01)
+        host, port = other.address
+        client = RpcClient(port=port, host=host)
+        self.assertEqual(client.invoke("where"), "the caller")
+        client.invoke("halt", timeout=5)
+        thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(other.is_running())
+
+    def test_serve_announces_the_port_it_bound(self):
+        """Asked for port 0 the OS picks one, and the line a launching process
+        reads to find the service must name that port, not the 0 it asked for."""
+        other = _make_plugin(label="other_rpc", env_prefix="TEST_RPC_OTHER")
+        other.registry.register("halt")(other.stop)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            thread = threading.Thread(
+                target=other.serve, kwargs={"port": 0}, daemon=True
+            )
+            thread.start()
+            deadline = time.time() + 5
+            while other.address is None and time.time() < deadline:
+                time.sleep(0.01)
+            host, port = other.address
+            RpcClient(port=port, host=host).invoke("halt", timeout=5)
+            thread.join(5)
+        self.assertNotEqual(port, 0)
+        self.assertIn(f"serving on http://{host}:{port}", out.getvalue())
 
 
 class TestRootExport(unittest.TestCase):

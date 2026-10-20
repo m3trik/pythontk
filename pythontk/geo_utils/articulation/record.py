@@ -38,7 +38,7 @@ class ArticulationChannel(SchemaSpec):
     channel: str = _field(
         help=(
             "rx/ry/rz turn about the rest frame's own axes (degrees); tx/ty/tz "
-            "slide along them (the parent's units)."
+            "slide along them (the file's units, in the parent's space)."
         ),
         required=True,
         choices=CHANNELS,
@@ -71,7 +71,11 @@ class ArticulationJoint(SchemaSpec):
         required=True,
     )
     t: Tuple[float, float, float] = _field(
-        help="The rest translate in the parent's space, in the DCC's units.",
+        help=(
+            "The rest translate in the parent's space, in the file's units (a "
+            "runtime measures its scale against the rest pose: "
+            "ArticulationModel.scale_of)."
+        ),
         required=True,
     )
     q: Tuple[float, float, float, float] = _field(
