@@ -1970,6 +1970,35 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.assertEqual(self.converted, [])
         self.assertEqual(self.server.version, 0)
 
+    def test_a_glb_file_push_needs_no_ktx2_encoder(self):
+        """A finished GLB is published as authored -- no texture pass runs -- so
+        KTX2 left picked from a scene push must not demand ``toktx`` for it
+        (extapps' WebXR Preview failed a GLB push on a machine without the
+        encoder). An FBX push still does. Added: 2026-10-20"""
+        from pythontk.img_utils._img_utils import ImgUtils
+        from pythontk.net_utils.preview.bridge import FilePreviewBridge
+
+        bridge = FilePreviewBridge()
+        bridge.deliverer = PreviewDeliverer(
+            server=self.server,
+            open_browser=False,
+            glb_options={"texture_file_type": "ktx2"},
+        )
+        folder = Path(self.temp.dir_path())
+        glb = folder / "prop.glb"
+        glb.write_bytes(self._glb_bytes({"asset": {"version": "2.0"}}))
+        fbx = folder / "room.fbx"
+        fbx.write_bytes(b"fake-fbx-payload")
+        missing = FileNotFoundError("KTX2 encoding requires 'toktx'")
+        with unittest.mock.patch.object(
+            ImgUtils, "resolve_ktx2_encoder", side_effect=missing
+        ):
+            result = bridge.push(objects=[str(glb)])
+            self.assertIsNotNone(result)
+            self.assertEqual(self.server.version, 1)
+            with self.assertRaises(FileNotFoundError):
+                bridge.push(objects=[str(fbx)])
+
     def test_a_push_can_name_the_scripts_for_that_delivery(self):
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         self._push(scripts=["turntable"])

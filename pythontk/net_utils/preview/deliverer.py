@@ -213,6 +213,10 @@ class PreviewDeliverer(Deliverer):
     #: Where :meth:`preflight` leaves the resolved texture pass for
     #: :meth:`deliver` -- on the request, which lives exactly one push.
     _TEXTURE_PARAMS_KEY = "_texture_params"
+    #: Set on the request by a bridge whose every source is a finished GLB
+    #: (:class:`FilePreviewBridge`): the pipeline publishes it as authored, so
+    #: no texture pass runs and :meth:`preflight` asks for no encoder.
+    AS_AUTHORED_KEY = "_as_authored"
     #: Where :meth:`preflight` leaves the push's choices over the lighting
     #: recipe (:attr:`ExportRun.rendering`) for the host, whose envelope
     #: publishes them (:meth:`PreviewBridge._attach_sidecar` reads it).
@@ -276,7 +280,9 @@ class PreviewDeliverer(Deliverer):
         return run
 
     @staticmethod
-    def _texture_params(run: ExportRun, logger: Any) -> Dict[str, Any]:
+    def _texture_params(
+        run: ExportRun, logger: Any, encoder: bool = True
+    ) -> Dict[str, Any]:
         """*run*'s texture pass (:meth:`ExportRun.glb_texture_params`), with its
         encoder settled.
 
@@ -287,11 +293,14 @@ class PreviewDeliverer(Deliverer):
         ``resolve_ktx2_encoder(required=True)`` once it hits a KTX2 image,
         minutes into a conversion it would then abandon.
 
+        *encoder* False skips that check, for a push no texture pass will run
+        (:attr:`AS_AUTHORED_KEY`).
+
         Raises:
             FileNotFoundError: KTX2 with no ``toktx`` to encode it.
         """
         params = run.glb_texture_params(logger=logger)
-        if params["image_format"] == "KTX2":
+        if encoder and params["image_format"] == "KTX2":
             from pythontk.img_utils._img_utils import ImgUtils
 
             ImgUtils.resolve_ktx2_encoder(required=True)
@@ -311,7 +320,7 @@ class PreviewDeliverer(Deliverer):
         if run is None:
             return False
         request.extras[self._TEXTURE_PARAMS_KEY] = self._texture_params(
-            run, bridge.logger
+            run, bridge.logger, encoder=not request.get(self.AS_AUTHORED_KEY)
         )
         request.extras[self.RENDERING_KEY] = run.rendering
         return True
