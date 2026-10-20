@@ -42,6 +42,16 @@ from test_fbx_media import build_stingray_fbx, encoded
 from test_glb_tangents import read_tangents, tangent_quads_glb
 
 
+def _require_cv2():
+    """``cv2``, or skip the test: an optional dependency (CI installs none),
+    which only writing or reading a bake's maps needs."""
+    try:
+        import cv2
+    except ImportError:
+        raise unittest.SkipTest("cv2 unavailable; a bake's maps cannot be written or read")
+    return cv2
+
+
 class TestResolveBinary(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="meshconvert_test_")
@@ -5397,7 +5407,7 @@ class TestGlbLightmaps(unittest.TestCase):
         self.assertIn("roomMat", web["materials"])
         self.assertIn("bufferView", web["probe"])
         self.assertEqual(
-            [l["name"] for l in MeshConvert.lights_in_metres(manifest["lights"])], ["KEY"]
+            [light["name"] for light in MeshConvert.lights_in_metres(manifest["lights"])], ["KEY"]
         )
 
     def test_the_probe_survives_bin_compaction(self):
@@ -12956,7 +12966,7 @@ class TestGlbHighlightProbes(unittest.TestCase):
         """The copy shows the light along the ray from its focal point F through
         the light to the box: the probe reads that box point from where it was
         captured, so a reflection from F sees the light true."""
-        (layer,) = [l for l in self._layers([self.HANGING]) if l["receivers"] == "interior"]
+        (layer,) = [entry for entry in self._layers([self.HANGING]) if entry["receivers"] == "interior"]
         F, lo, hi = self._focal(self.HANGING)
         toward = np.asarray(self.HANGING["position"]) - F
         B = MeshConvert._box_exit(F, (toward / np.linalg.norm(toward))[None], lo, hi)[0]
@@ -12967,7 +12977,7 @@ class TestGlbHighlightProbes(unittest.TestCase):
         """A probe with no box is read as distant: its copy shows the light in
         the direction F sees it."""
         layers = self._layers([self.HANGING], probe={"box": None})
-        (layer,) = [l for l in layers if l["receivers"] == "interior"]
+        (layer,) = [entry for entry in layers if entry["receivers"] == "interior"]
         F, _, _ = self._focal(self.HANGING, box=None)
         self._assert_peak_toward(layer["image"], np.asarray(self.HANGING["position"]) - F)
 
@@ -12983,7 +12993,7 @@ class TestGlbHighlightProbes(unittest.TestCase):
         ]
         alone = self._layers([self.HANGING])
         layers = self._layers(bad + [self.HANGING])
-        self.assertEqual([l["materials"] for l in layers], [l["materials"] for l in alone])
+        self.assertEqual([entry["materials"] for entry in layers], [entry["materials"] for entry in alone])
         for layer, own in zip(layers, alone):
             np.testing.assert_array_equal(layer["image"], own["image"])
 
@@ -13007,7 +13017,7 @@ class TestGlbHighlightProbes(unittest.TestCase):
     def test_a_spot_whose_cone_misses_the_receivers_draws_nothing_for_them(self):
         spot = dict(self.HANGING, type="spot", direction=[0.0, 1.0, 0.0], angle=0.3, penumbra=0.2)
         layers = self._layers([spot])
-        self.assertEqual([l for l in layers if l["receivers"] == "interior"], [])
+        self.assertEqual([entry for entry in layers if entry["receivers"] == "interior"], [])
 
     def test_the_start_camera_is_the_eye(self):
         glb = self._scene(extra_nodes=[{"name": "set:user_pos", "translation": [0.5, 1.7, 3.0]}])
@@ -13027,7 +13037,7 @@ class TestGlbHighlightProbes(unittest.TestCase):
              "right": [1.0, 0.0, 0.0], "intensity": 2.5, "width": 250.0, "height": 16.0, "unit_scale": 0.01},
             {"name": "BROKEN", "type": "spot", "intensity": 1.0},
         ])
-        self.assertEqual([l["name"] for l in lights], ["KEY", "BAR"])
+        self.assertEqual([light["name"] for light in lights], ["KEY", "BAR"])
         key, bar = lights
         self.assertEqual(key["position"], [1.0, 3.0, 0.0])
         self.assertAlmostEqual(key["intensity"], 4.0)
@@ -13037,7 +13047,7 @@ class TestGlbHighlightProbes(unittest.TestCase):
     def _lit_scene(self):
         """The scene GLB through ``apply_glb_lightmaps``, and the record it carried
         (the floor and table baked, the probe and the hanging light)."""
-        import cv2
+        cv2 = _require_cv2()
 
         cv2.imwrite(os.path.join(self.tmp, "room_Lightmap.exr"), np.full((8, 8, 3), 0.5, np.float32))
         probe = np.full((32, 64, 3), 0.2, np.float32)
@@ -13216,7 +13226,7 @@ class TestGlbHighlightProbes(unittest.TestCase):
         bake's UV set, and a take keying *moves* -- with the record a Scene
         Exporter carries on its ``data_export`` node: the floor and table
         baked into a lightmap, the probe and two lights."""
-        import cv2
+        cv2 = _require_cv2()
         from pythontk.file_utils.mesh_convert._fbx_writer import FbxNode, FbxWriter
         from pythontk.file_utils.mesh_convert._gltf2fbx import _GltfDocument, _GltfToFbx
 
@@ -13316,7 +13326,7 @@ class TestGlbHighlightProbes(unittest.TestCase):
         """Through ``apply_glb_lightmaps``: the probe entry carries its copies
         (Radiance bytes in the file's buffer, each its receivers' materials),
         the eye they were placed for, and no light rides the manifest."""
-        import cv2
+        cv2 = _require_cv2()
 
         glb, _manifest = self._lit_scene()
         with MeshConvert.open_glb(glb) as edit:

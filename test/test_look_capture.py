@@ -32,6 +32,16 @@ MANIFEST = {
 }
 
 
+def _require_cv2():
+    """``cv2``, or skip the test: an optional dependency (CI installs none),
+    which only writing or reading a bake's maps needs."""
+    try:
+        import cv2
+    except ImportError:
+        raise unittest.SkipTest("cv2 unavailable; a bake's maps cannot be written or read")
+    return cv2
+
+
 class TestPayload(unittest.TestCase):
     def test_a_bake_maps_onto_the_template_by_image_name(self):
         bakes = {
@@ -260,7 +270,7 @@ class TestRequests(unittest.TestCase):
         self.assertEqual(states, [True, False, True, False, True])
 
     def _bake_folder(self, root, name, kind="light"):
-        import cv2
+        cv2 = _require_cv2()
 
         folder = os.path.join(root, name)
         os.makedirs(folder)
@@ -445,7 +455,7 @@ class TestRequests(unittest.TestCase):
         self.assertEqual(sorted(taken), [("a", ("^DESK",)), ("b", ("^DESK",))])
 
     def test_an_exact_frame_can_swap_a_bake_file_for_one_on_disk(self):
-        import cv2
+        cv2 = _require_cv2()
 
         os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
         desk = os.path.join(self.tmp, "desk.exr")

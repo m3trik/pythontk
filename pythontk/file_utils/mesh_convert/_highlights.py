@@ -788,7 +788,7 @@ class _HighlightsMixin:
         toward it (a rect's irradiance-weighted mean), ``luma`` ``(n,)``.
         """
         color = np.asarray(light.get("color") or (1, 1, 1), float)[:3]
-        I = float(light["intensity"])
+        intensity = float(light["intensity"])
         X = np.asarray(light["position"], float)
         kind = light["type"]
         if kind == "rect":
@@ -803,18 +803,18 @@ class _HighlightsMixin:
                 for i in range(nu)
                 for j in range(nv)
             ]
-            power = color * I * area
+            power = color * intensity * area
         else:
             emitters = [X]
-            power = color * I
+            power = color * intensity
             facing = cls._unit(light.get("direction"), (0, -1, 0))
         E = np.zeros(points.shape)
         V = np.zeros(points.shape)
         S = np.zeros(len(points))
         for x in emitters:
-            l = x - points
-            d2 = np.maximum((l * l).sum(1), 1e-12)
-            lh = l / np.sqrt(d2)[:, None]
+            to_light = x - points
+            d2 = np.maximum((to_light * to_light).sum(1), 1e-12)
+            lh = to_light / np.sqrt(d2)[:, None]
             f = 1.0 / np.maximum(d2, 0.01)
             if kind == "spot":
                 f = f * MathUtils.smoothstep(
@@ -831,9 +831,9 @@ class _HighlightsMixin:
         return E, direction, S
 
     @staticmethod
-    def _ggx_d(normals, l, v, rough: float):
-        """GGX D of the half vector of *l* and *v* (UE4 alpha = roughness^2)."""
-        h = l + v
+    def _ggx_d(normals, to_light, v, rough: float):
+        """GGX D of the half vector of *to_light* and *v* (UE4 alpha = roughness^2)."""
+        h = to_light + v
         h = h / np.maximum(np.linalg.norm(h, axis=-1, keepdims=True), 1e-12)
         a2 = (rough * rough) ** 2
         nh = np.clip((normals * h).sum(-1), 0.0, 1.0)
@@ -921,7 +921,7 @@ class _HighlightsMixin:
         (a point or spot light as a sphere of radius *r*: :meth:`_proxy_radius`)."""
         X = np.asarray(light["position"], float)
         color = np.asarray(light.get("color") or (1, 1, 1), float)[:3]
-        I = float(light["intensity"]) * scale
+        intensity = float(light["intensity"]) * scale
         out = np.zeros(d.shape[:-1] + (3,))
         if light["type"] == "rect":
             facing, right, up = cls._rect_frame(light)
@@ -938,7 +938,7 @@ class _HighlightsMixin:
                 & (np.abs(q @ right) <= float(light.get("width") or 1.0) / 2)
                 & (np.abs(q @ up) <= float(light.get("height") or 1.0) / 2)
             )
-            out[hit] = I * color
+            out[hit] = intensity * color
             return out
         dist = float(np.linalg.norm(X - F))
         omega = 2.0 * math.pi * (1.0 - math.sqrt(1.0 - (r / dist) ** 2))
@@ -950,7 +950,7 @@ class _HighlightsMixin:
             )
             if att <= 0.0:
                 return out
-        L = I * att / (max(dist * dist, 0.01) * omega)
+        L = intensity * att / (max(dist * dist, 0.01) * omega)
         oc = origin - X
         b = (d * oc).sum(-1)
         c = float((oc * oc).sum()) - r * r if oc.ndim == 1 else (oc * oc).sum(-1) - r * r
