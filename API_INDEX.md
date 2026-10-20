@@ -762,7 +762,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/glb/pipeline.py` — FBX -> GLB: the one build every GLB deliverable goes through.
 - `class GlbPipeline(LoggingMixin)`
-  - methods: envelope, build
+  - methods: envelope, publishes_as_authored, build
 
 ### `file_utils/mesh_convert/glb/reader.py` — Read-only structured access to a GLB: accessors, animation sampling, worlds.
 - `class GlbReader(_GlbReaderInternal)`

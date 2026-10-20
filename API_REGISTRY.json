@@ -21064,12 +21064,21 @@
               "deprecated": false
             },
             {
+              "name": "publishes_as_authored",
+              "qualname": "GlbPipeline.publishes_as_authored",
+              "kind": "staticmethod",
+              "signature": "(source: str) -> bool",
+              "summary": "Whether :meth:`build` publishes *source* unchanged: a finished GLB",
+              "line": 134,
+              "deprecated": false
+            },
+            {
               "name": "build",
               "qualname": "GlbPipeline.build",
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None, hdr_codec: Any = None) -> Dict[str, Any]",
               "summary": "Build the GLB for *src* and report what each stage did.",
-              "line": 134,
+              "line": 141,
               "deprecated": false
             }
           ]
@@ -27549,7 +27558,7 @@
               "kind": "method",
               "signature": "(self, bridge, request: HandoffRequest) -> bool",
               "summary": "Resolve this push's GLB rows BEFORE the export is paid for.",
-              "line": 300,
+              "line": 309,
               "deprecated": false
             },
             {
@@ -27558,7 +27567,7 @@
               "kind": "method",
               "signature": "(self, bridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]",
               "summary": "",
-              "line": 319,
+              "line": 328,
               "deprecated": false
             }
           ]

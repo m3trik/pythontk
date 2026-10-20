@@ -707,6 +707,17 @@ class FilePreviewBridge(PreviewBridge):
         """The paths handed in; this bridge has no host to ask."""
         return list(objects or [])
 
+    def _preflight(self, objects, request) -> bool:
+        """Mark a push whose every file the pipeline publishes as authored
+        (:meth:`GlbPipeline.publishes_as_authored`): no texture pass runs, so
+        none needs an encoder (:attr:`PreviewDeliverer.AS_AUTHORED_KEY`)."""
+        from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
+
+        request.extras[PreviewDeliverer.AS_AUTHORED_KEY] = bool(objects) and all(
+            GlbPipeline.publishes_as_authored(path) for path in objects
+        )
+        return super()._preflight(objects, request)
+
     def _produce(self, objects, request) -> Optional[Payload]:
         """Hand the chosen files to the deliverer as the payload, unexported.
 

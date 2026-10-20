@@ -130,6 +130,13 @@ class GlbPipeline(LoggingMixin):
         )
         return envelope
 
+    @staticmethod
+    def publishes_as_authored(source: str) -> bool:
+        """Whether :meth:`build` publishes *source* unchanged: a finished GLB
+        has answered every pass an FBX translation needs, so none runs on it
+        (no texture pass, no encoder)."""
+        return os.path.splitext(str(source))[1].lower() == ".glb"
+
     @classmethod
     def build(
         cls,
@@ -277,7 +284,7 @@ class GlbPipeline(LoggingMixin):
         # and may move it (the deliverer does exactly that once the server has
         # it), and moving the user's own file out from under them is the one
         # unrecoverable thing this function could do.
-        if os.path.splitext(src)[1].lower() == ".glb":
+        if cls.publishes_as_authored(src):
             _say("GLB: already built, publishing as authored…")
             log.info("Source is already a GLB; publishing it unchanged.")
             if data_export:
