@@ -195,14 +195,18 @@ class ReportDoc:
         return _html.escape(text).replace("\n", "<br>")
 
     @classmethod
-    def span(cls, text: Any, tone: Optional[str] = None, bold: bool = False) -> Inline:
-        """*text* in a tone and/or bold."""
+    def span(
+        cls, text: Any, tone: Optional[str] = None, bold: bool = False, italic: bool = False
+    ) -> Inline:
+        """*text* in a tone, bold and/or italic."""
         text = str(text)
         style = []
         if tone:
             style.append(f"color:{cls.color(tone)}")
         if bold:
             style.append("font-weight:bold")
+        if italic:
+            style.append("font-style:italic")
         escaped = cls._escape(text)
         if not style:
             return cls.Inline(text, escaped)

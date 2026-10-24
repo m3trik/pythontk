@@ -318,6 +318,28 @@ class _DeprecationInternal:
         cls._records[record.key] = record
         return record
 
+    @staticmethod
+    def _as_reached(record: DeprecationRecord, owner: Any) -> DeprecationRecord:
+        """*record* named after the class its name was reached through, when
+        that class inherits it: a facade composed of private mixins
+        (``MeshConvert`` of ``_SidecarMixin``) reports the name its caller
+        wrote, not a class the caller never saw. Reached through the class
+        that declares it, or through no class, it reads as declared.
+
+        Parameters:
+            owner: The class -- or an instance of it -- the name was read
+                through: a descriptor's ``owner``, a method's first argument.
+        """
+        head, _, name = record.what.rpartition(".")
+        if not head or owner is None:
+            return record
+        reached = owner if isinstance(owner, type) else type(owner)
+        if reached.__qualname__ == head or not any(
+            base.__qualname__ == head for base in reached.__mro__[1:]
+        ):
+            return record
+        return dataclasses.replace(record, what=f"{reached.__qualname__}.{name}")
+
     @classmethod
     def _emit(cls, record: DeprecationRecord, stacklevel: int = 1) -> None:
         """Warn for *record*, attributed *stacklevel* frames out of the machinery.
@@ -414,7 +436,7 @@ class _DeprecationInternal:
 
         @functools.wraps(target)
         def wrapper(*args, **kwargs):
-            cls._emit(record)
+            cls._emit(cls._as_reached(record, args[0]) if args else record)
             return target(*args, **kwargs)
 
         # After ``functools.wraps``, which copies ``__dict__`` wholesale. Both
@@ -478,7 +500,7 @@ class _DeprecatedClassAttribute:
         )
 
     def __get__(self, instance: Any, owner: Optional[type] = None) -> Any:
-        Deprecation._emit(self.record)
+        Deprecation._emit(Deprecation._as_reached(self.record, owner))
         return self.value
 
 

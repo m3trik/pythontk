@@ -73,7 +73,7 @@ def _data_export_node(payload):
         "extras": {
             "fromFBX": {
                 "userProperties": {
-                    MeshConvert.ARTICULATION_KEY: {
+                    ptk.SceneRecords.ARTICULATION.key: {
                         "type": "eFbxString",
                         "value": json.dumps(payload),
                     }
@@ -242,6 +242,13 @@ def _extras(path):
         return edit.gltf.get("extras") or {}
 
 
+def _node_names(path):
+    """The file's node names by index: what the block's node indices name --
+    it binds a joint and a grabbed part by index alone."""
+    with MeshConvert.open_glb(str(path)) as edit:
+        return [node.get("name") for node in edit.gltf.get("nodes") or []]
+
+
 # ============================================================================
 # The pass
 # ============================================================================
@@ -262,25 +269,32 @@ class TestApplyGlbArticulation(unittest.TestCase):
         path = self._glb(_arm_nodes(record))
         manifest = MeshConvert.apply_glb_articulation(path)
         self.assertIsNotNone(manifest)
-        self.assertEqual(_extras(path)[MeshConvert.ARTICULATION_WEB_KEY], manifest)
+        self.assertEqual(_extras(path)[ptk.SceneRecords.ARTICULATION.key], manifest)
         rig = manifest["rigs"][0]
         self.assertEqual([j["node"] for j in rig["joints"]], [1, 2, 3, 4, 5])
         self.assertEqual([g["node"] for g in rig["grab"]], [6, 7, 8, 9, 10])
-        self.assertEqual([g["name"] for g in rig["grab"]], PARTS)
+        names = _node_names(path)
+        self.assertEqual(
+            [names[j["node"]] for j in rig["joints"]],
+            [j["name"] for j in record["joints"]],
+        )
+        self.assertEqual([names[g["node"]] for g in rig["grab"]], PARTS)
         # the record rides through unchanged beside the indices
         self.assertEqual(rig["joints"][0]["rotate_order"], "zyx")
-        self.assertEqual(manifest["metadata_version"], 1)
+        self.assertNotIn(
+            "metadata_version", manifest, "the record's version is not the block's"
+        )
 
     def test_the_manifest_and_its_record_are_the_declared_shapes(self):
-        """The applier's output IS ``ArticulationWeb`` and its input
+        """The applier's output IS ``ArticulationBlock`` and its input
         ``ArticulationRecord``: the declarations the runtimes' types are
         generated from are held to what the pipeline really writes."""
         record = _rig_record()
         self.assertEqual(ptk.ArticulationRecord.validate(_payload(record)).errors, [])
         manifest = MeshConvert.apply_glb_articulation(self._glb(_arm_nodes(record)))
-        res = ptk.ArticulationWeb.validate(manifest)
+        res = ptk.ArticulationBlock.validate(manifest)
         self.assertEqual((res.errors, res.warnings), ([], []))
-        self.assertEqual(manifest["version"], ptk.SceneRecords.ARTICULATION.web.version)
+        self.assertEqual(manifest["version"], ptk.SceneRecords.ARTICULATION.glb.version)
 
     def test_a_grabbed_part_binds_under_its_own_joint_when_the_name_repeats(self):
         record = _rig_record()
@@ -289,8 +303,9 @@ class TestApplyGlbArticulation(unittest.TestCase):
         )  # a second head_geo under joint 0
         path = self._glb(nodes)
         rig = MeshConvert.apply_glb_articulation(path)["rigs"][0]
-        head = next(g for g in rig["grab"] if g["name"] == "head_geo")
+        head = next(g for g in rig["grab"] if g["joint"] == PARTS.index("head_geo"))
         self.assertEqual(head["node"], 10)  # the one under the head joint
+        self.assertEqual(_node_names(path)[head["node"]], "head_geo")
 
     def test_an_ambiguous_joint_leaves_its_rig_unwired_with_a_warning(self):
         record = _rig_record()
@@ -329,6 +344,21 @@ class TestApplyGlbArticulation(unittest.TestCase):
         with self.assertLogs(MESH_CONVERT_LOGGER, level="WARNING"):
             self.assertIsNone(MeshConvert.apply_glb_articulation(path))
 
+    def test_a_joint_that_states_no_parent_is_refused_and_said(self):
+        """Every joint states its ``parent`` -- ``null`` for a root -- in the
+        record's declared shape (``ArticulationRecord``). A record leaving it
+        out is none a reader reads: refused whole and said, where it was read
+        as a root until 2026-10-20 -- the cure is a re-export."""
+        record = _rig_record()
+        written = json.loads(json.dumps(record))
+        del written["joints"][0]["parent"]
+        path = self._glb(_arm_nodes(record, payload=_payload(written)))
+        with self.assertLogs(MESH_CONVERT_LOGGER, level="WARNING") as logs:
+            self.assertIsNone(MeshConvert.apply_glb_articulation(path))
+        said = "\n".join(logs.output)
+        self.assertIn(f"{ptk.SceneRecords.ARTICULATION.key} record not applied", said)
+        self.assertIn("missing required key 'parent'", said)
+
     def test_rerunning_is_idempotent_and_a_run_that_binds_nothing_clears(self):
         record = _rig_record()
         path = self._glb(_arm_nodes(record))
@@ -341,7 +371,7 @@ class TestApplyGlbArticulation(unittest.TestCase):
             ]
             edit.dirty = True
         self.assertIsNone(MeshConvert.apply_glb_articulation(path))
-        self.assertNotIn(MeshConvert.ARTICULATION_WEB_KEY, _extras(path))
+        self.assertNotIn(ptk.SceneRecords.ARTICULATION.key, _extras(path))
 
     def test_a_grab_part_missing_under_its_joint_is_dropped_with_a_warning(self):
         record = _rig_record()
@@ -349,7 +379,8 @@ class TestApplyGlbArticulation(unittest.TestCase):
         path = self._glb(_arm_nodes(record))
         with self.assertLogs(MESH_CONVERT_LOGGER, level="WARNING"):
             rig = MeshConvert.apply_glb_articulation(path)["rigs"][0]
-        self.assertNotIn("ghost_geo", [g["name"] for g in rig["grab"]])
+        names = _node_names(path)
+        self.assertEqual([names[g["node"]] for g in rig["grab"]], PARTS)
 
     def test_a_cyclic_hierarchy_elsewhere_does_not_hang_the_pass(self):
         """A malformed file whose ``children`` loop must not trap the walk
@@ -373,7 +404,9 @@ class TestApplyGlbArticulation(unittest.TestCase):
         worker.join(30)
         self.assertFalse(worker.is_alive(), "the pass looped on the cycle")
         head = next(
-            g for g in result["manifest"]["rigs"][0]["grab"] if g["name"] == "head_geo"
+            g
+            for g in result["manifest"]["rigs"][0]["grab"]
+            if g["joint"] == PARTS.index("head_geo")
         )
         self.assertEqual(head["node"], 10)  # the one under the head joint
 
@@ -404,33 +437,44 @@ class TestApplyGlbArticulation(unittest.TestCase):
         MeshConvert.strip_glb_curve_proxies(path)
         with MeshConvert.open_glb(str(path)) as edit:
             names = [n.get("name") for n in edit.gltf["nodes"]]
-            rig = edit.gltf["extras"][MeshConvert.ARTICULATION_WEB_KEY]["rigs"][0]
-        for joint in rig["joints"]:
-            self.assertEqual(names[joint["node"]], joint["name"])
-        for entry in rig["grab"]:
-            self.assertEqual(names[entry["node"]], entry["name"])
+            rig = edit.gltf["extras"][ptk.SceneRecords.ARTICULATION.key]["rigs"][0]
+        self.assertEqual(
+            [names[joint["node"]] for joint in rig["joints"]],
+            [joint["name"] for joint in record["joints"]],
+        )
+        self.assertEqual([names[entry["node"]] for entry in rig["grab"]], PARTS)
 
     def test_a_manifest_index_to_a_stripped_node_reads_as_absent(self):
-        """The renumber keeps a manifest's form (a dict, or its JSON text) and
-        turns an index to a removed node into None, never a neighbour's."""
-        manifest = {
+        """The renumber follows the block's declared node fields
+        (``GlbBlock.node_fields``), edits the block itself, and turns an index
+        to a removed node into None, never a neighbour's."""
+        block = {
             "rigs": [{"joints": [{"node": 0}, {"node": 1}], "grab": [{"node": 2}]}]
         }
         remap = {0: 0, 2: 1}  # node 1 was stripped
-        fields = MeshConvert.ARTICULATION_WEB_NODE_FIELDS
-        got = MeshConvert._renumber_manifest_nodes(
-            json.loads(json.dumps(manifest)), fields, remap
-        )
+        fields = ptk.SceneRecords.ARTICULATION.glb.node_fields
+        got = MeshConvert._renumber_block_nodes(block, fields, remap)
+        self.assertIs(got, block)
         self.assertEqual([j["node"] for j in got["rigs"][0]["joints"]], [0, None])
         self.assertEqual(got["rigs"][0]["grab"][0]["node"], 1)
-        text = MeshConvert._renumber_manifest_nodes(json.dumps(manifest), fields, remap)
-        self.assertEqual(json.loads(text), got)
 
     def test_the_handoff_names_the_manifest(self):
-        envelope = MeshConvert.build_scene_sidecar({}, source={"application": "maya"})
-        self.assertIn(
-            f"extras.{MeshConvert.ARTICULATION_WEB_KEY}", envelope["handoff"]["reads"]
-        )
+        """A standalone reader is told the block exists, in the artifact: the
+        handoff of a file carrying it names it -- its ``assembly`` row,
+        addressed at the block under the part the FBX's record gives it too,
+        saying what it means."""
+        path = self._glb(_arm_nodes(_rig_record()))
+        self.assertIsNotNone(MeshConvert.apply_glb_articulation(path))
+        with MeshConvert.open_glb(path) as edit:
+            MeshConvert.embed_glb_handoff(
+                edit, ptk.HandoffRecord.block("glb", [], {"application": "maya"})
+            )
+        handoff = MeshConvert.read_glb_handoff(path)
+        block = f"extras.{ptk.SceneRecords.ARTICULATION.key}"
+        record = ptk.SceneRecords.ARTICULATION
+        (row,) = [r for r in handoff["assembly"] if r["data"] == [block]]
+        self.assertEqual(row["part"], record.key)
+        self.assertEqual(row["spec"], record.glb.assembly)
 
 
 class TestServerAutoActivation(unittest.TestCase):
@@ -620,6 +664,8 @@ SLIDER_JS = """
   const input = rig.panel.element.querySelector('.slider input');
   report.panelShown = rig.panel.shown;
   report.sliderCount = rig.panel.element.querySelectorAll('.slider input').length;
+  report.sliderLabels = [...rig.panel.element.querySelectorAll('.controls .key')].map((n) => n.textContent);
+  report.grabNames = rig.grab.map((g) => g.name);
   input.value = '37';
   input.dispatchEvent(new Event('input'));
   await frames(2);
@@ -774,19 +820,23 @@ class TestArticulatedRigLive(unittest.TestCase):
         self.assertAlmostEqual(found["sliderState"][0], 37.0, places=6)
         self.assertTrue(found["sliderPosed"])
 
-    def test_a_root_joint_without_a_parent_key_binds(self):
-        """The model reads a missing ``parent`` as a root; the script's binding
-        must find its rig space the same way, not skip the rig."""
-        record = _rig_record()
-        written = json.loads(json.dumps(record))
-        del written["joints"][0]["parent"]
-        self.glb = _write_glb(
-            self.temp.path(extension=".glb"),
-            _arm_nodes(record, payload=_payload(written)),
+    def test_the_panel_names_each_joint_and_part_by_its_node(self):
+        """The block binds a joint and a grabbed part by node index alone, so
+        the page names each by its node -- the name the record joined it by:
+        a slider reads ``<joint> <channel>`` for the joint the DCC named
+        (``arm_elbow_jnt`` read as ``elbow``), never ``joint1``. Added:
+        2026-10-20"""
+        found = self._load(SLIDER_JS)
+        conformance = ArticulationConformance.rigs()["arm"]
+        self.assertEqual(
+            found["sliderLabels"],
+            [
+                f"{joint['name']} {channel['channel']}"
+                for joint in conformance["joints"]
+                for channel in joint["channels"]
+            ],
         )
-        MeshConvert.apply_glb_articulation(self.glb)
-        found = self._load("report.joints = session.rigs[0].nodes.length;")
-        self.assertEqual(found["joints"], len(record["joints"]))
+        self.assertEqual(found["grabNames"], PARTS)
 
 
 #: A production export: every rig in the file built, the named part grabbed
@@ -861,6 +911,7 @@ class TestArticulatedRigProduction(TestArticulatedRigLive):
     test_a_headset_grip_holds_the_part_and_carries_it = None
     test_a_mouse_drag_moves_the_rig_and_not_the_camera = None
     test_a_slider_poses_its_channel = None
+    test_the_panel_names_each_joint_and_part_by_its_node = None
     test_a_root_joint_without_a_parent_key_binds = None
 
 

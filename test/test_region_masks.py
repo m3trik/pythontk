@@ -122,7 +122,8 @@ class RegionMaskManifestTest(unittest.TestCase):
             ]
         )
         data = json.loads(m.to_json())
-        self.assertEqual(data["schema"], RegionMaskManifest.SCHEMA_VERSION)
+        self.assertEqual(data["version"], RegionMaskManifest.VERSION)
+        self.assertNotIn("schema", data)  # one version, under "version"
         self.assertEqual(data["encoding"], "vertex-color")
         self.assertEqual(data["color_set"], "emissiveGroups")
         self.assertNotIn("mask", data)  # channels-only fields omitted
@@ -131,16 +132,111 @@ class RegionMaskManifestTest(unittest.TestCase):
             [g.to_dict() for g in back.groups], [g.to_dict() for g in m.groups]
         )
 
+    def test_the_document_is_the_emissive_groups_record(self):
+        """What a manifest writes is the ``emissive_groups`` record in its
+        declared version and shape (``EmissiveGroupsRecord``), in either
+        encoding a deliverable ships. Added: 2026-10-20"""
+        records = ptk.SceneRecords
+        self.assertIs(records.shape(records.EMISSIVE_GROUPS), ptk.EmissiveGroupsRecord)
+        self.assertEqual(RegionMaskManifest.VERSION, records.EMISSIVE_GROUPS.version)
+        for manifest in (
+            RegionMaskManifest.vertex_color(
+                [{"name": "glow", "slot": 0, "attr": "emissiveGroup_glow"}]
+            ),
+            RegionMaskManifest.channels(
+                [{"name": "rim", "slot": 3, "default": 0.25}],
+                mask="prop_EMask.png",
+                uv_channel=1,
+            ),
+        ):
+            with self.subTest(encoding=manifest.encoding):
+                data = manifest.to_dict()
+                self.assertEqual(records.problems(records.EMISSIVE_GROUPS, data), [])
+
+    def test_the_retired_schema_names_still_serve(self):
+        """``RegionMaskManifest.SCHEMA_VERSION`` and ``.schema`` (retired
+        2026-10-20 for ``VERSION`` and ``version``, removed in 0.18.0) warn,
+        and answer the document's version."""
+        manifest = RegionMaskManifest.vertex_color([{"name": "glow", "slot": 0}])
+        with self.assertWarns(DeprecationWarning):
+            retired = RegionMaskManifest.SCHEMA_VERSION
+        self.assertEqual(retired, RegionMaskManifest.VERSION)
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(manifest.schema, manifest.version)
+
     def test_channels_round_trip(self):
         mask = os.path.join(os.path.abspath(os.sep), "out", "prop_EMask.png")
-        m = RegionMaskManifest.channels(
-            [{"name": "a", "slot": 0}], mask=mask, resolution=512
-        )
+        m = RegionMaskManifest.channels([{"name": "a", "slot": 0}], mask=mask)
         data = m.to_dict()
         self.assertEqual(data["mask"], "prop_EMask.png")  # basename only
         self.assertEqual(data["uv_channel"], 0)
-        self.assertEqual(data["resolution"], 512)
+        self.assertNotIn("resolution", data, "the mask image states its size")
         self.assertNotIn("color_set", data)
+        self.assertEqual(RegionMaskManifest.from_dict(data).to_dict(), data)
+
+    def test_the_retired_resolution_warns_and_changes_nothing(self):
+        """``channels(resolution=)`` (retired 2026-10-20, removed in 0.18.0):
+        the mask image states its own size, so the value is ignored."""
+        with self.assertWarns(DeprecationWarning):
+            m = RegionMaskManifest.channels(
+                [{"name": "a", "slot": 0}], mask="p_EMask.png", resolution=512
+            )
+        self.assertEqual(
+            m.to_dict(),
+            RegionMaskManifest.channels(
+                [{"name": "a", "slot": 0}], mask="p_EMask.png"
+            ).to_dict(),
+        )
+
+    def test_the_retired_resolution_warns_by_position_too(self):
+        """REGRESSION (2026-10-24): ``resolution`` was the third positional
+        parameter in 0.16.1 -- required -- and the keyword decorator saw only
+        ``resolution=``, so ``channels(groups, mask, 512)`` ran without a word
+        (and would bind 512 to ``uv_channel`` once it is removed). It warns
+        once, and the value is ignored."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            m = RegionMaskManifest.channels([{"name": "a", "slot": 0}], "p_EMask.png", 512)
+        retired = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        self.assertEqual(len(retired), 1, [str(w.message) for w in retired])
+        self.assertIn("resolution", str(retired[0].message))
+        self.assertEqual(m.to_dict()["uv_channel"], 0)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            RegionMaskManifest.channels(
+                [{"name": "a", "slot": 0}], mask="p_EMask.png", resolution=512
+            )
+        self.assertEqual(
+            len([w for w in caught if issubclass(w.category, DeprecationWarning)]),
+            1,
+            "the keyword warns once too",
+        )
+
+    def test_a_document_of_another_version_is_refused(self):
+        """A reader reads the version the document declares alone: one of
+        another version -- an older one stating it under ``schema`` too, or
+        one stating none -- is refused naming both versions, never read as
+        the current one; one stating the current number under ``schema`` is
+        no current document either, and is said so. Added: 2026-10-20"""
+        current = RegionMaskManifest.vertex_color([{"name": "glow", "slot": 0}])
+        data = current.to_dict()
+        version = RegionMaskManifest.VERSION
+        self.assertEqual(RegionMaskManifest.from_dict(data).to_dict(), data)
+        unstated = {k: v for k, v in data.items() if k != "version"}
+        for label, document, stated in (
+            ("newer", dict(data, version=version + 1), f"v{version + 1} "),
+            ("older", dict(data, version=version - 1), f"v{version - 1} "),
+            ("schema", dict(unstated, schema=1), "v1 (under 'schema')"),
+            ("schema, current", dict(unstated, schema=version), "(under 'schema')"),
+            ("none", unstated, "of no version"),
+        ):
+            with self.subTest(document=label):
+                with self.assertRaises(ValueError) as raised:
+                    RegionMaskManifest.from_dict(document)
+                self.assertIn(stated, str(raised.exception))
+                self.assertIn(f"is not the v{version} ", str(raised.exception))
 
     def test_duplicate_slots_rejected(self):
         with self.assertRaises(ValueError):
@@ -245,11 +341,12 @@ class RegionGroupRegistryTest(unittest.TestCase):
         self.assertIsNone(self.reg.manifest())  # no groups → no manifest
         self.reg.add("a")
         self.assertEqual(self.reg.manifest().encoding, "vertex-color")
-        self.reg.set_encoding("channels", mask="p_EMask.png", resolution=256)
+        self.reg.set_encoding("channels", mask="p_EMask.png", uv_channel=1)
         manifest = self.reg.manifest()
         self.assertEqual(manifest.encoding, "channels")
         self.assertEqual(manifest.mask, "p_EMask.png")
-        self.assertEqual(manifest.resolution, 256)
+        self.assertEqual(manifest.uv_channel, 1)
+        self.assertNotIn("resolution", manifest.to_dict())
 
     def test_sanitize(self):
         self.assertEqual(RegionGroupRegistry.sanitize(" head lights! "), "head_lights_")

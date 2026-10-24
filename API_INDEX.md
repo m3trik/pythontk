@@ -9,6 +9,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class AudioUtils(HelpMixin)`
   - methods: resolve_ffmpeg, memo_duration, is_playable_extension, is_supported_source_extension, cache_dir_for, ensure_playable_path, scope_events, build_composite_wav, resolve_playable_path, build_audio_map, build_audio_map_from_file_map, build_audio_map_from_files, trim_silence, compute_waveform_envelope
 
+### `audio_utils/audio_record.py` — The ``audio`` record's payload, declared once.
+- `class AudioCue(SchemaSpec)`
+- `class AudioRecord(SchemaSpec)`
+
 ### `core_utils/_core_utils.py`
 - `class CoreUtils(HelpMixin)`
   - methods: cached_property, listify, format_return, set_attributes, get_attributes, has_attribute, get_derived_type, teardown_guard, cycle, are_similar, randomize, parse_method_args
@@ -190,9 +194,9 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/scene_export/bake_baseline.py` — What a lightmap re-bake must redo: the bake baseline and its stale rule.
 - `class BakeBaseline`
-  - methods: signature, diff, same, neighbours, assess, advance, rematch, lighting_state, lighting_digest, lighting_rules, lights_used, light_changes, cell_fits, encode, decode, label
+  - methods: signature, diff, same, neighbours, assess, advance, rematch, lighting_state, lighting_digest, lighting_rules, lights_used, light_changes, cell_fits, encode, decode, label, can_bake
 - `class StaleReport`
-  - methods: leaf, summary, lines
+  - methods: leaf, summary, lines, doc, map_rows, tally, fix_plan, why
 
 ### `core_utils/engines/scene_export/export_profile.py` — The Scene Exporter panels' shared contract, written once.
 - `class ExportProfile`
@@ -206,11 +210,42 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class ExportSnapshot`
   - methods: assemble, restore_scene_wide, publish, commit, records, record, channels, summary
 
+### `core_utils/engines/scene_export/handoff_record.py` — The handoff: how a deliverable states itself, declared once for every carrier.
+- `class HandoffPart(SchemaSpec)`
+- `class HandoffSource(SchemaSpec)`
+- `class HandoffExtras(SchemaSpec)`
+- `class HandoffBlock(SchemaSpec)`
+- `class HandoffCarrier`
+  - methods: address
+- `class HandoffRecord`
+  - methods: carrier, instructions, lighting, assembly, payloads, carried, block, rendering_policy, overrides, rendering_values
+
 ### `core_utils/engines/scene_export/hierarchy_baseline.py` — The change-detection baseline an exporter diffs a scene's hierarchy against.
 - `class HierarchyBaseline`
   - methods: top_level, in_scope, relevant_roots, compare, merge, adopt, paths_hash, encode, is_record, decode, recorded_by
 - `class HierarchyBaselineStore`
   - methods: read, inherited_from, is_unreadable, compare, write, adopt_sidecar
+
+### `core_utils/engines/scene_export/lightmap_record.py` — The ``lightmaps`` record and its GLB block: what a bake publishes, declared once.
+- `class LightmapBox(SchemaSpec)`
+- `class LightmapNode(SchemaSpec)`
+- `class LightmapHighlight(SchemaSpec)`
+- `class LightmapProbe(SchemaSpec)`
+- `class LightmapEntry(SchemaSpec)`
+- `class LightmapBakedLight(SchemaSpec)`
+- `class LightmapRecord(SchemaSpec)`
+  - methods: payload, box
+- `class LightmapsBlockMaterial(SchemaSpec)`
+- `class LightmapsBlockHighlight(SchemaSpec)`
+- `class LightmapsBlockProbe(SchemaSpec)`
+- `class LightmapsBlock(SchemaSpec)`
+
+### `core_utils/engines/scene_export/material_record.py` — The ``materials`` record: its payload, declared once, and the one model that
+- constants: ALPHA_MODES
+- `class MaterialEntry(SchemaSpec)`
+- `class MaterialRecord(SchemaSpec)`
+- `class MaterialFamilies`
+  - methods: entry, payload, finish, texture_files, file_name, as_float, as_floats
 
 ### `core_utils/engines/scene_export/record_transfer.py` — Records crossing between scenes, by declaration (:class:`RecordTransfer`).
 - `class TransferContext`
@@ -230,17 +265,27 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class Scope(str, Enum)`
 - `class Kind(str, Enum)`
 - `class Merge(str, Enum)`
-- `class WebProjection`
+- `class Clause`
+  - methods: applies, holds, condition, join
+- `class GlbBlock`
+  - methods: assembly_for, key
+- `class WebProjection(GlbBlock)`
 - `class Record`
   - methods: key, text, save
 - `class RecordSpec`
-  - methods: path_keys, stamp_keys, make, encode, decode, read_text, write_text, load, save, clear, is_present
+  - methods: assembly_for, web, version_key, is_current, path_keys, stamp_keys, make, encode, decode, read_text, write_text, load, save, clear, is_present
 - `class SceneRecords`
-  - methods: resolve_class, codec, shape, web_shape, web_projected, portable, rendering_policy, all, with_paths, with_stamps, stamp_unsaved, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
+  - methods: resolve_class, codec, shape, glb_shape, put_glb_block, glb_block, glb_records, problems, block_problems, web_shape, web_projected, portable, rendering_policy, HANDOFF_INSTRUCTIONS, HANDOFF_ASSEMBLY, all, with_paths, with_stamps, transients, stamp_unsaved, adopt_gone_stamps, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
 
 ### `core_utils/engines/scene_export/scene_store.py` — The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
 - `class SceneStoreBase`
-  - methods: name, read, write, values, keys, channels, dump, scene_path, project_root, writer_stamp, writer_stamp_of, written_here, project_root_of, rebase_paths, respell_for_write, path_records, restore_path_records, format_dump, owner, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
+  - methods: name, is_carrier, read, write, remove, migrate, values, keys, channels, discard_if_empty, dump, scene_path, project_root, writer_stamp, writer_stamp_of, written_here, project_root_of, rebase_paths, respell_for_write, path_records, restore_path_records, format_dump, owner, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
+
+### `core_utils/engines/shots/animation_record.py` — The ``animation`` record's payload and its GLB block, declared once.
+- `class AnimationShot(SchemaSpec)`
+- `class AnimationRecord(SchemaSpec)`
+- `class AnimationBlockClip(SchemaSpec)`
+- `class AnimationBlock(SchemaSpec)`
 
 ### `core_utils/engines/shots/effect_recipe.py` — Effect recipe -- how each render effect and audio clip is keyed, once per scene.
 - constants: RGB
@@ -413,7 +458,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class MapType`
   - methods: compose_aliases, carried_types
 - `class MapRegistry(SingletonMixin)`
-  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, split_duplicate_token, resolve_type_from_path, get_suffix_strip_pattern, split_map_suffix, shares_workflow, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, packed_precedence, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, is_lossy_safe, estimate_gpu_bytes, get_passthrough_maps, get_map_backgrounds, get_map_modes, resolve_missing_map_rule, allow_incomplete_pack, resolve_config
+  - methods: get, register, counterpart_normal_spelling, select_normal_type, resolve_type_from_channel, split_tile_token, split_duplicate_token, resolve_type_from_path, get_suffix_strip_pattern, split_map_suffix, shares_workflow, get_workflow_presets, get_map_types, get_aliases_by_len_desc, get_fallbacks, get_output_fallbacks, get_precedence_rules, packed_precedence, get_scale_as_mask_types, get_resolution_critical_types, is_resolution_critical, is_lossy_safe, estimate_gpu_bytes, get_passthrough_maps, get_map_backgrounds, absent_value, absent_fills, get_map_modes, resolve_missing_map_rule, allow_incomplete_pack, resolve_config
 
 ### `core_utils/engines/textures/mat_report.py` — DCC-agnostic formatters for material / texture info reports.
 - `class MatReport`
@@ -434,7 +479,9 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class RegionGroup`
   - methods: to_dict, coerce
 - `class RegionMaskManifest`
-  - methods: vertex_color, channels, to_dict, to_json, from_dict, from_json, save, load
+  - methods: schema, vertex_color, channels, to_dict, to_json, from_dict, from_json, save, load
+- `class EmissiveGroupsEntry(SchemaSpec)`
+- `class EmissiveGroupsRecord(SchemaSpec)`
 - `class RegionGroupRegistry`
   - methods: merge_record, empty, read, write, sanitize, groups, next_slot, add, remove, set_default, set_attr, compact, set_encoding, manifest
 - `class RegionMaskPacker(pythontk.LoggingMixin, _RegionMaskPackerInternal)`
@@ -642,7 +689,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class ValidationResult`
   - methods: ok, raise_if_errors, raise_or_warn, merge
 - `class SchemaSpec(_SchemaSpecInternal)`
-  - methods: from_dict, to_dict, validate, skeleton, describe, to_markdown, json_schema, spec_field
+  - methods: from_dict, prune, to_dict, validate, skeleton, describe, to_markdown, json_schema, spec_field
 
 ### `core_utils/singleton_mixin.py`
 - `class SingletonMixin`
@@ -696,7 +743,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/file_dependencies.py` — File dependencies -- files a record names by *name*, found where they are NOW.
 - `class FileDependencies(LoggingMixin)`
-  - methods: claims, remove_superseded, set_aside, written_here, find_files, walk, resolve, search_dirs, copy_files, relocate, reference_bytes, scan_references, open_decompressed
+  - methods: claims, remove_superseded, superseded, set_aside, written_here, writer_gone, find_files, walk, resolve, search_dirs, copy_files, relocate, reference_bytes, scan_references, open_decompressed
 
 ### `file_utils/file_naming.py` — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - `class RenamePlan(LoggingMixin)`
@@ -722,24 +769,24 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - constants: GLTF_EXTENSIONS, GLTF_UNDECODABLE_EXTENSIONS
 
 ### `file_utils/mesh_convert/_mesh_convert.py` — FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
-- `class MeshConvert(_Fbx2GltfMixin, _Gltf2FbxMixin, _SidecarMixin, _LightmapsMixin, _HighlightsMixin, _ShadowRigsMixin, _ArticulationMixin, _AnimationMixin, _VisibilityMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`
-  - methods: open_glb, finish_fbx_deliverable, conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fbx_media_dirs, fix_glb_tangents, restore_glb_skin_weights, gltf_to_fbx, rendering_policy, build_scene_sidecar, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, sidecar_foreign_packings, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, embed_glb_lightmap_probe, strip_glb_baked_lights, apply_glb_lightmaps, highlight_probe_layers, lights_in_metres, embed_fbx_highlight_probes, apply_glb_shadows, apply_glb_articulation, apply_glb_clips, clip_spans, prune_glb_animations, compact_glb_animations, reduce_glb_animations, apply_glb_animations, effect_preview_channels, apply_glb_visibility, build_visibility_tracks, apply_glb_fades, check_glb_materials, fix_glb_phantom_opaque_alpha, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, set_glb_alpha_mode, set_glb_unlit, set_glb_normal_scale, set_glb_base_color, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, drop_glb_texture_fallbacks, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, decode_glb_textures, dedupe_glb_images, prune_glb_unreferenced_textures
+- `class MeshConvert(_Fbx2GltfMixin, _Gltf2FbxMixin, _SidecarMixin, _LightmapsMixin, _HighlightsMixin, _ShadowRigsMixin, _ArticulationMixin, _AnimationMixin, _VisibilityMixin, _FbxMaterialsMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`
+  - methods: open_glb, finish_fbx_deliverable, conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fbx_media_dirs, fix_glb_tangents, restore_glb_skin_weights, gltf_to_fbx, SHADOW_PLANE_DEFAULTS, rendering_policy, build_scene_sidecar, strip_fbx_records, finish_glb, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, embed_glb_handoff, embed_scene_sidecar, sidecar_foreign_packings, read_glb_handoff, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, lightmaps_block, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, embed_glb_lightmap_probe, strip_glb_baked_lights, apply_glb_lightmaps, highlight_probe_layers, lights_in_metres, embed_fbx_highlight_probes, apply_glb_shadows, apply_glb_articulation, apply_glb_clips, clip_spans, prune_glb_animations, compact_glb_animations, reduce_glb_animations, apply_glb_animations, effect_preview_channels, apply_glb_visibility, build_visibility_tracks, apply_glb_fades, fbx_materials, read_fbx_materials, apply_glb_materials, check_glb_materials, fix_glb_phantom_opaque_alpha, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, set_glb_alpha_mode, set_glb_unlit, set_glb_normal_scale, set_glb_base_color, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, drop_glb_texture_fallbacks, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, decode_glb_textures, dedupe_glb_images, prune_glb_unreferenced_textures
 
 ### `file_utils/mesh_convert/export_verify.py` — Deliverable verification for exported FBX / GLB pairs.
 - `class Finding`
 - `class VerificationReport`
   - methods: ok, counts, summary, to_json
 - `class ExportVerifier(_ExportVerifierInternal)`
-  - methods: reader, fbx, gate_names, run, check_glb_container, check_glb_extensions, check_glb_images, check_glb_image_bytes, check_glb_skin_weights, check_glb_skins, check_glb_animation_integrity, check_glb_envelope, check_clips_vs_takes, check_clip_origin, check_fbx_container, check_fbx_dependencies, check_fbx_takes, check_fbx_take_channels, check_cross_clips, check_baseline_diff
+  - methods: reader, fbx, gate_names, run, check_glb_container, check_glb_extensions, check_glb_images, check_glb_image_bytes, check_glb_skin_weights, check_glb_skins, check_glb_animation_integrity, check_glb_handoff, check_glb_envelope, check_clips_vs_takes, check_clip_origin, check_fbx_container, check_fbx_dependencies, check_fbx_records, check_fbx_takes, check_fbx_take_channels, check_cross_clips, check_baseline_diff
 
 ### `file_utils/mesh_convert/fbx_file.py` — Zero-dependency binary-FBX reader: header, node records, objects, takes.
 - constants: FBX_MAGIC
 - `class FbxFile(_FbxFileInternal)`
-  - methods: load, is_fbx, section, iter_objects, objects_census, object_names, take_names, user_properties, take_curves, take_spans, take_keys, take_layout, connections
+  - methods: load, is_fbx, section, iter_objects, objects_census, object_names, take_names, materials, user_properties, user_property_items, take_curves, take_spans, take_keys, take_layout, connections
 
 ### `file_utils/mesh_convert/fbx_media.py` — Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 - `class FbxMedia(_FbxMediaInternal)`
-  - methods: embedded, downsize, expand_grayscale, reader_records, named_files, dependencies, audio_events, embed, record, set_record, split_pivot_instances, drop_host_lighting_media, embed_dependencies, extract_dependencies, drop_takes, merge_takes, drop_apparatus, rewrite
+  - methods: embedded, downsize, expand_grayscale, reader_records, named_files, dependencies, audio_events, embed, record, records, set_record, split_pivot_instances, drop_redundant_properties, drop_host_lighting_media, embed_dependencies, extract_dependencies, extract, drop_takes, merge_takes, drop_apparatus, rewrite
 
 ### `file_utils/mesh_convert/glb/clips.py` — Rebuild a GLB's shot clips from its one whole-timeline animation.
 - `class GlbClips(_GlbClipsInternal)`
@@ -747,7 +794,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/glb/edit.py` — The GLB container every ``mesh_convert`` pass edits: :class:`GlbEdit`.
 - `class GlbEdit`
-  - methods: rest, replace_rest, bin_data, materials, textures, images, buffer_views, image_digests, texture_for_image, image_for_texture, base_color_image, image_label, image_bytes, alpha_extrema, channel_extrema, open, read, write, append_bin_views, compact_bin, relocate_embedded_images, bin_view, accessor_elements, map_accessor_refs, referenced_accessors, drop_orphaned_accessors, release_animation_payload
+  - methods: rest, replace_rest, bin_data, materials, textures, images, buffer_views, image_digests, texture_for_image, image_for_texture, base_color_image, image_label, image_bytes, alpha_extrema, channel_extrema, open, read, write, append_bin_views, compact_bin, relocate_embedded_images, bin_view, extras_of, accessor_elements, map_accessor_refs, referenced_accessors, drop_orphaned_accessors, release_animation_payload
 
 ### `file_utils/mesh_convert/glb/fades.py` — Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
 - constants: EXTENSION, POINTER, CHANNELS, DEFAULT_COLOR
@@ -776,6 +823,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class GlbTangents(_GlbTangentsInternal)`
   - methods: repair
 
+### `file_utils/mesh_convert/render_effects_record.py` — The ``render_effects`` record's payload, declared once.
+- `class RenderEffectsTrack(SchemaSpec)`
+- `class RenderEffectsRecord(SchemaSpec)`
+
 ### `file_utils/mesh_ops.py` — File-level mesh processing via PyMeshLab (optional dependency).
 - constants: PYMESHLAB_PYPI_URL, SUPPORTED_EXTS, SAVE_EXTS, OPS
 - `class OpSpec`
@@ -786,6 +837,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class MetadataInternal`
 - `class Metadata(MetadataInternal)`
   - methods: get, set
+
+### `file_utils/pending_files.py` — Files written for the open scene, held out of their folders until it is saved.
+- `class PendingFiles(LoggingMixin)`
+  - methods: session, folder, stage, holds, home, staged, retire, take_retiring, on_save, saving, commit, discard
 
 ### `file_utils/scene_notes.py` — Per-scene notes kept with the project -- one file per project, any host.
 - `class SceneNotes(LoggingMixin)`
@@ -844,16 +899,21 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class ArticulationPlan(_ArticulationPlanInternal)`
   - methods: frame, frames, rest, joint_records, record, riders, slots, from_proposal, plan_joint, check, end_joint, link_of, end_link, default_end, end_offset, end_pivot_turn, joint_entry, split_link, insert_joint, remove_joint, edit_joint, set_limits, side_limits, set_weight, retype, pivots, adjusted, give_of, limits_text, parse_limits
 
-### `geo_utils/articulation/record.py` — The ``articulation`` record's payload and its web projection, declared once.
+### `geo_utils/articulation/record.py` — The ``articulation`` record's payload and its GLB block, declared once.
 - `class ArticulationChannel(SchemaSpec)`
-- `class ArticulationJoint(SchemaSpec)`
+- `class ArticulationJointPose(SchemaSpec)`
+- `class ArticulationJoint(ArticulationJointPose)`
 - `class ArticulationGrab(SchemaSpec)`
 - `class ArticulationRig(SchemaSpec)`
 - `class ArticulationRecord(SchemaSpec)`
-- `class ArticulationWebJoint(ArticulationJoint)`
-- `class ArticulationWebGrab(SchemaSpec)`
-- `class ArticulationWebRig(ArticulationRig)`
-- `class ArticulationWeb(SchemaSpec)`
+- `class ArticulationBlockJoint(ArticulationJointPose)`
+- `class ArticulationBlockGrab(SchemaSpec)`
+- `class ArticulationBlockRig(ArticulationRig)`
+- `class ArticulationBlock(SchemaSpec)`
+- `class ArticulationWeb(ArticulationBlock)`
+- `class ArticulationWebRig(ArticulationBlockRig)`
+- `class ArticulationWebJoint(ArticulationBlockJoint)`
+- `class ArticulationWebGrab(ArticulationBlockGrab)`
 
 ### `geo_utils/plate_emitter.py` — Emitter geometry for a flat light-fixture plate — pure math, no DCC.
 - `class PlateEmitter(NamedTuple)`
@@ -894,6 +954,18 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class ShadowRaster(NamedTuple)`
 - `class ShadowConformance`
   - methods: case, cases
+
+### `geo_utils/shadow_record.py` — The ``shadows`` record's payload and its GLB block, declared once.
+- constants: RIG_TYPES, SOURCE_TYPES
+- `class ShadowPlaneAtlas(SchemaSpec)`
+- `class ShadowHorizonLayout(SchemaSpec)`
+- `class ShadowPlaneHorizon(ShadowHorizonLayout)`
+- `class ShadowPlaneModel(SchemaSpec)`
+- `class ShadowPlane(ShadowPlaneModel)`
+- `class ShadowRecord(SchemaSpec)`
+- `class ShadowBlockHorizon(ShadowHorizonLayout)`
+- `class ShadowBlockPlane(ShadowPlaneModel)`
+- `class ShadowBlock(ShadowRecord)`
 
 ### `geo_utils/uv/budget.py` — UV texture-budget planning: how many maps, at what texel density (numbers in -> plan out).
 - `class BudgetItem`
@@ -1005,7 +1077,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `net_utils/preview/bridge.py` — The hand-off bridge whose target is a live preview page.
 - `class PreviewBridge(HandoffBridge)`
-  - methods: lightmap_search_dirs, hdr_codec, params_defaults, url, scope_objects, push, publish_file, preview_file, sidecar_summary, lightmap_summary, timing_summary, share, unshare, share_url, ping_share, stop
+  - methods: lightmap_search_dirs, hdr_codec, params_defaults, url, scope_objects, push, publish_file, preview_file, materials_summary, sidecar_summary, lightmap_summary, timing_summary, share, unshare, share_url, ping_share, stop
 - `class FilePreviewBridge(PreviewBridge)`
   - methods: lightmap_search_dirs
 
@@ -1015,7 +1087,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `net_utils/preview/look_capture.py` — Look capture: the real WebXR viewer, headless, for lighting work.
 - `class LookCapture`
-  - methods: available, manifest, start, stop, idle, payload, decode, relight, shoot, shoot_ids, exact, file_frame, capture_layer, bake_folders, capture_bake, open_session, handle, serve, spawn, client, cli
+  - methods: available, manifest, maps, bound_maps, start, stop, idle, payload, decode, relight, shoot, shoot_ids, exact, file_frame, capture_layer, bake_folders, capture_bake, open_session, handle, serve, spawn, client, cli
 
 ### `net_utils/preview/playblast.py` — Record a clip playing in the preview page to a movie file.
 - `class PreviewPlayblast(SequenceEncoder)`

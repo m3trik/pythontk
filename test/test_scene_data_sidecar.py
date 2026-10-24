@@ -15,6 +15,7 @@ import unittest
 from pythontk.core_utils.engines.scene_export.scene_data_sidecar import (
     SceneDataSidecarBase as SD,
 )
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.core_utils.test_sandbox import TestSandbox
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -59,12 +60,11 @@ class TestPaths(SidecarCase):
 
 class TestManifestIO(SidecarCase):
     def test_write_then_read_round_trips_paths_and_data(self):
-        written = SD.write_manifest(
-            self.export, {"A|B", "A"}, data={"shot_metadata": {"x": 1}}
-        )
+        data = {SceneRecords.SHOTS.key: {"x": 1}}
+        written = SD.write_manifest(self.export, {"A|B", "A"}, data=data)
         self.assertEqual(written, SD.manifest_path_for(self.export))
         self.assertEqual(SD.read_manifest(self.export), {"A", "A|B"})
-        self.assertEqual(SD.read_data(self.export), {"shot_metadata": {"x": 1}})
+        self.assertEqual(SD.read_data(self.export), data)
         with open(written, encoding="utf-8") as fh:
             payload = json.load(fh)
         self.assertEqual(payload["format"], SD.FORMAT_VERSION)

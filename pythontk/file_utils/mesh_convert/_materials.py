@@ -15,6 +15,7 @@ import logging
 import os
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.glb.edit import GlbTarget
 
 logger = logging.getLogger(__name__)
@@ -770,7 +771,7 @@ class _MaterialsMixin:
                 key rather than writing it, so a reset leaves the file as it
                 would have been had the dial never moved.
             lightmapped_only: Restrict to the materials
-                ``extras.lightmap_web`` names -- the ones the flattening
+                ``extras.lightmaps`` names -- the ones the flattening
                 applies to. ``False`` writes every material carrying a normal
                 map. A file with no manifest matches nothing under ``True``.
 
@@ -782,8 +783,8 @@ class _MaterialsMixin:
         with cls.open_glb(glb) as edit:
             named = None
             if lightmapped_only:
-                manifest = cls._lightmap_web_manifest(edit.gltf)
-                named = set((manifest or {}).get("materials") or ())
+                block = SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS)
+                named = set((block or {}).get("materials") or ())
             for material in edit.materials:
                 if named is not None and material.get("name") not in named:
                     continue

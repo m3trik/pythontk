@@ -18,9 +18,9 @@ importing this package loads none of its modules.
   ordered, rest frames, the record's joints, the end control, the post-rig
   edits, the pivots adjusted), host-free so mayatk and blendertk share it.
 - :mod:`~pythontk.geo_utils.articulation.record` -- :class:`ArticulationRecord`
-  and :class:`ArticulationWeb`: the ``articulation`` record's payload and the
-  glTF manifest bound from it, declared once (the ports' types are generated
-  from them).
+  and :class:`ArticulationBlock`: the ``articulation`` record's payload and the
+  GLB block bound from it, declared once (the ports' types are generated from
+  them).
 - :mod:`~pythontk.geo_utils.articulation.conformance` --
   :class:`ArticulationConformance`: the golden cases every port of the model
   is held to (``Conformance.cases("articulation")``).

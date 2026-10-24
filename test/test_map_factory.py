@@ -489,17 +489,18 @@ class TestMapFactoryRefactored(unittest.TestCase):
             "Opacity map was dropped by base-color processing",
         )
 
-    def test_mask_map_alpha_defaults_white_without_smoothness(self):
+    def test_mask_map_alpha_is_the_absent_smoothness_without_one(self):
         """Regression: with no smoothness/roughness source, the Mask Map's
-        alpha channel must be the neutral white fill — not a copy of the
-        metallic channel.
+        alpha channel must be the absent smoothness -- 0, matte
+        (``MapRegistry.absent_fills``; white, before 2026-10-20, was a mirror)
+        -- not a copy of the metallic channel.
 
-        Needs an explicit Pack Anyway now. This set (metallic + AO, no
-        smoothness) is the one 2-of-3 combination whose missing channel fills
-        NON-neutrally, so the default rule refuses it — a white alpha is a
-        mirror-smooth surface. The leak this guards against is a different
-        failure (metallic data reaching the alpha), and it stays pinned here
-        by asking for the pack the caller would have to ask for.
+        Needs an explicit Pack Anyway. This set (metallic + AO, no
+        smoothness) is the one 2-of-3 combination whose missing channel reads
+        downstream as authored, so the default rule refuses it. The leak this
+        guards against is a different failure (metallic data reaching the
+        alpha), and it stays pinned here by asking for the pack the caller
+        would have to ask for.
         """
         from PIL import Image
 
@@ -528,8 +529,8 @@ class TestMapFactoryRefactored(unittest.TestCase):
                 alpha_min, alpha_max = img.getextrema()[3]
                 self.assertEqual(
                     (alpha_min, alpha_max),
-                    (255, 255),
-                    "Mask Map alpha should be white fill when no smoothness exists",
+                    (0, 0),
+                    "Mask Map alpha should be the absent (matte) smoothness",
                 )
         finally:
             shutil.rmtree(src_dir, ignore_errors=True)
@@ -1578,6 +1579,59 @@ class TestLobeNamedSet(unittest.TestCase):
         metallic = self.make("Hero_Coat_Metallic.png", "L", 0)
         packed = MapFactory.pack_orm_texture(None, roughness, metallic)
         self.assertEqual(os.path.basename(packed), "Hero_Coat_ORM.png")
+
+    def test_an_absent_channel_stores_its_absent_value_in_every_packing(self):
+        """Never a mirror, never a metal: each packing fills a channel it has
+        no map for with that channel's type's absent value
+        (``MapRegistry.absent_fills``) -- occlusion white, roughness white,
+        smoothness and detail black, metallic black -- whichever way the
+        missing map would have been read (an invert flag inverts an image,
+        never a fill). Before 2026-10-20 an ORM or MRAO missing its roughness
+        and a Mask Map missing its smoothness packed a mirror. Added:
+        2026-10-20"""
+        metallic = self.make("Hero_Metallic.png", "L", 40)
+        cases = {
+            "orm": (MapFactory.pack_orm_texture(None, None, metallic, save=False), (255, 255, 40)),
+            "orm from smoothness": (
+                MapFactory.pack_orm_texture(
+                    None, None, metallic, save=False, invert_roughness=True
+                ),
+                (255, 255, 40),
+            ),
+            "mask map": (
+                MapFactory.pack_msao_texture(metallic, None, None, save=False),
+                (40, 255, 0, 0),
+            ),
+            "mask map from roughness": (
+                MapFactory.pack_msao_texture(
+                    metallic, None, None, save=False, invert_alpha=True
+                ),
+                (40, 255, 0, 0),
+            ),
+            "msao rgb": (
+                MapFactory.pack_msao_texture(metallic, None, None, save=False, layout="rgb"),
+                (40, 0, 255),
+            ),
+            "mrao": (MapFactory.pack_mrao_texture(metallic, None, None, save=False), (40, 255, 255)),
+            "mrao rgba": (
+                MapFactory.pack_mrao_texture(
+                    metallic, None, None, save=False, layout="rgba"
+                ),
+                (40, 255, 0, 255),
+            ),
+        }
+        for name, (image, expected) in cases.items():
+            self.assertEqual(image.getpixel((0, 0)), expected, name)
+
+    def test_fill_values_set_the_channels_no_map_feeds(self):
+        """A glTF material multiplies each channel by its factor, so a packing
+        whose factors carry the unmapped channels' constants fills them
+        white."""
+        roughness = self.make("Hero_Roughness.png", "L", 90)
+        white = MapFactory.pack_orm_texture(
+            None, roughness, None, save=False, fill_values={"B": 255}
+        )
+        self.assertEqual(white.getpixel((0, 0)), (255, 90, 255))
 
 
 class TestRegisterHandlerIdempotent(unittest.TestCase):

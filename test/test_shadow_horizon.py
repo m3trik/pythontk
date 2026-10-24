@@ -148,9 +148,8 @@ class TestHeightSpans(HorizonCase):
         z_top, z_bot, mask, _ = ImgUtils.rasterize_height_fields(
             self.chair(), up=1, size=64
         )
-        with np.errstate(all="ignore"):
-            union_hi = np.nanmax(hi, axis=0)
-            union_lo = np.nanmin(lo, axis=0)
+        union_hi = np.fmax.reduce(hi, axis=0)  # NaN only where no span is
+        union_lo = np.fmin.reduce(lo, axis=0)
         self.assertTrue(np.array_equal(mask, ~np.isnan(union_hi)))
         np.testing.assert_allclose(z_top[mask], union_hi[mask])
         np.testing.assert_allclose(z_bot[mask], union_lo[mask])
@@ -321,11 +320,13 @@ class TestEncoding(HorizonCase):
         np.testing.assert_array_equal(hmap.alpha(pts, [5.0, 5.0, 5.0]), [0.0, 0.0])
 
     def test_the_record_block_spells_the_schema_the_readers_expect(self):
+        """What a reader reads and nothing it computes: a map's pyramid levels
+        are log2 of its size, and the one mapping and encoding a horizon map
+        has are no field (2026-10-20)."""
         block = ShadowHorizon.record(
             texture="a_horizon.png",
             size=128,
             spans=2,
-            levels=7,
             bounds=(-1.2345678, 1.2345678, -0.5, 0.5),
             height_scale=2.0,
             frame_a=(1, 0, 0),
@@ -337,11 +338,8 @@ class TestEncoding(HorizonCase):
             sorted(
                 [
                     "texture",
-                    "mapping",
-                    "encoding",
                     "size",
                     "spans",
-                    "levels",
                     "bounds",
                     "height_scale",
                     "frame_a",
@@ -350,10 +348,31 @@ class TestEncoding(HorizonCase):
                 ]
             ),
         )
-        self.assertEqual(block["mapping"], ShadowHorizon.MAPPING)
-        self.assertEqual(block["encoding"], ShadowHorizon.ENCODING)
         self.assertEqual(block["bounds"], [-1.234568, 1.234568, -0.5, 0.5])
         self.assertEqual(block["frame_a"], [1, 0, 0])
+
+    def test_the_retired_horizon_fields_warn_and_change_nothing(self):
+        """``ShadowHorizon.record(levels=)``, ``MAPPING`` and ``ENCODING``
+        (retired 2026-10-20, removed in 0.18.0): a map's levels are log2 of
+        its size, and a horizon map has one mapping and one encoding, so the
+        record states none. The parameter warns and is ignored; the constants
+        warn and serve their values."""
+        kwargs = dict(
+            texture="a_horizon.png",
+            size=128,
+            spans=2,
+            bounds=(-1.0, 1.0, -0.5, 0.5),
+            height_scale=2.0,
+            frame_a=(1, 0, 0),
+            frame_b=(0, 0, 1),
+            rect=[1.0, 1.0, 0.0, 0.0],
+        )
+        with self.assertWarns(DeprecationWarning):
+            leveled = ShadowHorizon.record(levels=7, **kwargs)
+        self.assertEqual(leveled, ShadowHorizon.record(**kwargs))
+        for name in ("MAPPING", "ENCODING"):
+            with self.subTest(name=name), self.assertWarns(DeprecationWarning):
+                self.assertIsNotNone(getattr(ShadowHorizon, name))
 
     def test_horizon_map_is_the_old_name_for_one_release(self):
         self.assertIs(HorizonMap, HeightFieldMap)

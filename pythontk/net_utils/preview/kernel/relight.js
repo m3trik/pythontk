@@ -52,7 +52,7 @@ function halfTexture(image) {
  *   maps: Object<string, string>,
  *   images?: Object<string, HalfImage>,
  *   probe?: (HalfImage & {position: number[], box?: {min: number[], max: number[]} | null}) | null,
- *   highlights?: (HalfImage & {materials: string[], receivers?: string})[],
+ *   highlights?: (HalfImage & {materials: string[]})[],
  * }} lighting `maps`: material name -> image name; `images`: image name -> data;
  *   `highlights`: the probe's highlight layers, each added to `probe` for its
  *   materials (a swap without a probe keeps the one up, copies and all).
@@ -110,7 +110,6 @@ export function relight({ maps, images = {}, probe = null, highlights = [] }) {
         copies.push({
           prefiltered: prefilterEquirect(data, layer.width, layer.height, THREE.FloatType),
           materials: layer.materials || [],
-          receivers: layer.receivers,
         });
       }
     }

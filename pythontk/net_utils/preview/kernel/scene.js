@@ -7,6 +7,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { readBlock } from './extras.js';
+import { HANDOFF } from './records.js';
 
 export const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -112,11 +114,11 @@ export const DEFAULT_PROBE_INTENSITY = 0.3183099;
 
 // The rig this page renders with. The values above are what it FALLS BACK to;
 // the live ones come from the deliverable itself, which publishes the whole
-// recipe as `handoff.rendering` inside its own scene sidecar. That direction
-// matters: the asset carries no lights, so the policy is part of the hand-off,
-// and while the viewer defined its own numbers the published recipe could only
-// be kept honest by a test pinning the two spellings together. Now the file is
-// the source and this page is one of its readers.
+// recipe as `extras.handoff.rendering`. That direction matters: the asset
+// carries no lights, so the policy is part of the hand-off, and while the
+// viewer defined its own numbers the published recipe could only be kept
+// honest by a test pinning the two spellings together. Now the file is the
+// source and this page is one of its readers.
 export const POLICY_FALLBACK = Object.freeze({
   keyIntensity: DEFAULT_KEY_INTENSITY,
   environmentIntensity: DEFAULT_ENV_INTENSITY,
@@ -126,37 +128,22 @@ export const POLICY_FALLBACK = Object.freeze({
 });
 export let policy = { ...POLICY_FALLBACK };
 
-// One `extras` block, wherever it rides. Three holders are real: the first
-// scene's extras (a native DCC export writes there), the glTF ROOT's (where
-// every MeshConvert applier writes), and `scene.userData` (GLTFLoader's parsed
-// copy of the scene's). A value can also be a JSON string rather than an
-// object, depending on the producer. This page reads three such blocks
-// (`scene_sidecar`, `lightmap_web`, `animation_web`) and hand-rolling the probe
-// per block is how one of them ends up missing a holder and going silently
-// inert on a deliverable the others handle.
-export function readExtras(gltf, key) {
-  for (const holder of [
-    gltf.parser?.json?.scenes?.[0]?.extras,
-    gltf.parser?.json?.extras,
-    gltf.scene?.userData,
-  ]) {
-    const raw = holder && holder[key];
-    if (!raw) continue;
-    if (typeof raw !== 'string') return raw;
-    try { return JSON.parse(raw); } catch { /* keep looking */ }
-  }
-  return null;
+// One block of a loaded file (extras.js's readBlock): the root `extras`,
+// where every producer writes it. *block* is a records.js entry.
+export function readExtras(gltf, block) {
+  return readBlock(gltf.parser?.json?.extras, block);
 }
 
-// Reads `extras.scene_sidecar.handoff.rendering`, written by
-// MeshConvert.apply_scene_sidecar. Every field is taken only if it is a finite
-// NUMBER: the published policy is documentation as much as data, so some of its
-// entries are deliberately prose (`lightMapIntensity` says "per material, from
-// extras.lightmap_web"), and a viewer that assigned a string to an intensity
-// would render black with nothing in the file looking wrong. An older GLB, or
-// one from another producer, simply keeps the fallbacks.
+// Reads `extras.handoff.rendering`, written by MeshConvert.embed_glb_handoff.
+// Every field this reads is taken only if it is a finite NUMBER: the policy's
+// names (`reflectionNormalization: 'lightmapLuma'` and the like) state what
+// this page implements by construction, and a GLB published before the policy
+// was values alone carried prose there -- a viewer that assigned a string to
+// an intensity would render black with nothing in the file looking wrong. A
+// GLB that publishes no policy -- older than it, or from another producer --
+// simply keeps the fallbacks.
 export function readRenderingPolicy(gltf) {
-  const published = readExtras(gltf, 'scene_sidecar')?.handoff?.rendering;
+  const published = readExtras(gltf, HANDOFF)?.rendering;
   const num = (value, fallback) =>
     (typeof value === 'number' && isFinite(value) ? value : fallback);
   // Falling back through POLICY_FALLBACK rather than through the constants

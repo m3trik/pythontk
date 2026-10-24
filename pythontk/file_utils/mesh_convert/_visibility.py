@@ -3,7 +3,7 @@
 """Keyed visibility and authored material ramps, realized as channels the GLB
 can play.
 
-Reads the ``visibility_tracks`` channel the DCC publishes, writes on/off
+Reads the ``render_effects`` record the DCC publishes, writes on/off
 presence as STEP ``scale`` channels and fades/highlights as
 ``KHR_animation_pointer`` material channels (:class:`GlbFades`), and builds
 the preview channels one render effect needs.
@@ -59,7 +59,8 @@ class _VisibilityMixin:
             fps: The rate *keys* are quoted in.
 
         Returns:
-            ``{visibility_tracks: envelope, fbx_takes: None, shot_metadata: None}``.
+            ``{render_effects: envelope, animation: None}`` -- the record,
+            and no shots to cut.
 
         Raises:
             KeyError: For a channel with no pointer row.
@@ -91,21 +92,13 @@ class _VisibilityMixin:
                         track[key] = [float(c) for c in list(rgb)[:3]]
             tracks.append(track)
         return {
-            cls.VISIBILITY_TRACKS_KEY: cls.build_visibility_tracks(
+            SceneRecords.VISIBILITY.key: cls.build_visibility_tracks(
                 tracks,
                 fps=fps,
                 clip_spans={cls.DEFAULT_CLIP_SPAN: [ramp[0][0], ramp[-1][0]]},
             ),
-            cls.FBX_TAKES_KEY: None,
-            cls.SHOT_METADATA_KEY: None,
+            SceneRecords.SHOTS.key: None,
         }
-
-    #: ``data_export`` channel carrying the animated visibility that glTF has no
-    #: channel for (mayatk/blendertk ``RenderOpacity.refresh_export_metadata``).
-    #: See :meth:`apply_glb_visibility` for why it cannot ride the FBX.
-    VISIBILITY_TRACKS_KEY = SceneRecords.VISIBILITY.key
-    #: Highest ``visibility_tracks`` schema this applier knows how to read.
-    VISIBILITY_TRACKS_VERSION = SceneRecords.VISIBILITY.version
 
     @classmethod
     def _presence_keys(cls, track: Dict[str, Any]) -> List[Sequence[float]]:
@@ -284,8 +277,8 @@ class _VisibilityMixin:
         as the file's default clip.
 
         Reads its inputs out of the deliverable itself -- the
-        :attr:`VISIBILITY_TRACKS_KEY` channel on the ``data_export`` carrier,
-        joined to :attr:`FBX_TAKES_KEY` for the clip windows -- so it is
+        ``render_effects`` record on the ``data_export`` carrier, joined to
+        the shots record's takes for the clip windows -- so it is
         self-feeding and needs no argument from a caller that may not know the
         scene.
 
@@ -298,18 +291,8 @@ class _VisibilityMixin:
         """
         with cls.open_glb(glb) as edit:
             gltf = edit.gltf
-            channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
-            if not isinstance(channel, dict):
-                return None
-            version = channel.get("version")
-            if isinstance(version, int) and version > cls.VISIBILITY_TRACKS_VERSION:
-                logger.warning(
-                    "Visibility: the file declares %s schema v%d and this reader "
-                    "knows v%d -- skipped rather than half-applied.",
-                    cls.VISIBILITY_TRACKS_KEY,
-                    version,
-                    cls.VISIBILITY_TRACKS_VERSION,
-                )
+            channel = cls._current_record(gltf, SceneRecords.VISIBILITY)
+            if channel is None:
                 return None
             # Each track paired with what it is GATED on, resolved once: the one
             # definition of presence (:meth:`_presence_keys`). A track qualifies
@@ -324,9 +307,9 @@ class _VisibilityMixin:
             if not to_gate:
                 return None
 
-            metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
+            metadata = cls.data_export_channel(gltf, SceneRecords.SHOTS.key)
             # Through the shared resolver, in the session's one order. This
-            # read the channel FIRST and fell back to shot_metadata, so when
+            # read the channel FIRST and fell back to the shots record, so when
             # the two producers disagreed the visibility keys landed at times
             # no other pass in the same conversion agreed with.
             fps = (
@@ -396,7 +379,7 @@ class _VisibilityMixin:
         fps: Optional[float] = None,
         clip_spans: Optional[Dict[str, List[float]]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Wrap *tracks* in the versioned ``visibility_tracks`` envelope.
+        """Wrap *tracks* in the versioned ``render_effects`` envelope.
 
         The one place that schema exists. Both DCC packages publish through it
         rather than shaping the dict themselves, so the channel
@@ -419,7 +402,7 @@ class _VisibilityMixin:
         if not tracks and not clip_spans:
             return None
         payload: Dict[str, Any] = {
-            "version": cls.VISIBILITY_TRACKS_VERSION,
+            "version": SceneRecords.VISIBILITY.version,
             "tracks": cls._rounded(list(tracks), cls.VISIBILITY_TRACK_DIGITS),
         }
         if fps:
@@ -686,7 +669,7 @@ class _VisibilityMixin:
     ) -> Tuple[Dict[str, Dict[str, List[List[float]]]], Dict[str, Dict[str, Any]]]:
         """Every published per-node ramp, by channel, plus each channel's colours.
 
-        Reads the ``visibility_tracks`` carrier once for every row of the
+        Reads the ``render_effects`` record once for every row of the
         pointer-channel table: a track is a per-node dict whose sibling keys
         are named ramps (``opacity``, ``highlight``, ...), so a new channel is
         a new key on the same record rather than a new carrier.
@@ -706,7 +689,7 @@ class _VisibilityMixin:
         """
         from pythontk.file_utils.mesh_convert.glb.fades import CHANNELS
 
-        channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+        channel = cls.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
         ramps: Dict[str, Dict[str, List[List[float]]]] = {}
         colors: Dict[str, Dict[str, Any]] = {}
         if not isinstance(channel, dict):
@@ -769,8 +752,8 @@ class _VisibilityMixin:
             ramps, colors = cls._authored_ramps(gltf)
             if not ramps:
                 return None
-            metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
-            channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+            metadata = cls.data_export_channel(gltf, SceneRecords.SHOTS.key)
+            channel = cls.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
             fps = cls._resolve_clip_fps(
                 metadata if isinstance(metadata, dict) else {}, [], channel
             )

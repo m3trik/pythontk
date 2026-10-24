@@ -130,13 +130,10 @@ class TestLegacyRegexFoldsIntoThePattern(unittest.TestCase):
         """The whole point: same file, whether the rule came from the retired
         field or from an inline modifier."""
         ctx = {"scene": "test_scene", "name": "test_scene"}
-        # Retired (2026-09-23): still honoured, warning, until 0.12.0.
-        with self.assertWarns(DeprecationWarning) as retired:
-            from_field = ExportProfile.resolve_output_path(
-                "WIP_*", ctx, name_regex="test_->prod_"
-            )
-        self.assertIn("'name_regex'", str(retired.warning))
-        self.assertIn("0.12.0", str(retired.warning))
+        # A saved RegEx field folds first, as both exporters do at their entry.
+        from_field = ExportProfile.resolve_output_path(
+            ExportProfile.fold_legacy_naming("WIP_*", name_regex="test_->prod_"), ctx
+        )
         inline = ExportProfile.resolve_output_path("WIP_{scene:test_->prod_}", ctx)
         self.assertEqual(from_field["stem"], "WIP_prod_scene")
         self.assertEqual(from_field["stem"], inline["stem"])
@@ -368,42 +365,26 @@ class TestOutputPath(unittest.TestCase):
         self.assertIn("error", levels)
 
     def test_retired_version_and_timestamp_inputs_fold_into_the_same_file(self):
-        """Retired 2026-09-23 (the exporters fold them once, at their entry
-        point): still honoured here, each warning, until 0.12.0."""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            legacy = self.resolve(
-                "WIP_*", version_format="{stem}_v{n:03d}", timestamp=True
-            )
-        retired = [str(w.message) for w in caught if w.category is DeprecationWarning]
-        for name in ("'version_format'", "'timestamp'"):
-            self.assertTrue(any(name in m for m in retired), retired)
+        """A saved Version pattern / Timestamp flag folds into the pattern once,
+        at the exporter's entry point (:meth:`ExportProfile.fold_legacy_naming`),
+        and the pattern alone resolves to the file they used to make."""
+        folded = ExportProfile.fold_legacy_naming(
+            "WIP_*", version_format="{stem}_v{n:03d}", timestamp=True
+        )
         # the wildcard expands to the CANONICAL name token (ExportProfile.NAME_KEY)
-        self.assertEqual(legacy["folded"], "WIP_{scene}_{date}_{time}_v{n:03d}")
-        self.assertEqual(legacy["stem"], "WIP_hero_2026-09-13_10-00-00_v001")
-        self.assertIsNone(self.resolve("WIP_*")["folded"])
+        self.assertEqual(folded, "WIP_{scene}_{date}_{time}_v{n:03d}")
+        self.assertEqual(
+            self.resolve(folded)["stem"], "WIP_hero_2026-09-13_10-00-00_v001"
+        )
+        self.assertEqual(ExportProfile.fold_legacy_naming("WIP_*"), "WIP_*")
 
     def test_the_report_words_each_diagnostic_at_its_level(self):
-        import re
-
         resolved = self.resolve("{nope}_a?b_{n}")
-        # version_suffix is retired (warns until 0.12.0) as well as ignored.
-        with self.assertWarns(DeprecationWarning) as retired:
-            report = ExportProfile.naming_report(
-                resolved, {"name": "", "n": ""}, version_suffix=re.compile(r"_v\d+$")
-            )
-        self.assertIn("0.12.0", str(retired.warning))
+        report = ExportProfile.naming_report(resolved, {"name": "", "n": ""})
         self.assertEqual([level for level, _ in report], ["warning"] * 2)
         text = " ".join(message for _, message in report)
         for fragment in ("{nope}", "?"):
             self.assertIn(fragment, text)
-        # version_suffix is accepted and IGNORED: it warned that a name not
-        # ending in "_v<N>" would lose its diff baseline across versions, which
-        # was only true while that baseline was keyed by the output file's stem.
-        # It is per-scene now, so no filename can carry or lose it.
-        self.assertNotIn("_v<N>", text)
 
     def test_the_version_suffix_strips_what_the_counter_wrote_and_nothing_else(self):
         self.touch("hero_v002.fbx")
@@ -434,15 +415,16 @@ class TestExportRun(unittest.TestCase):
     """
 
     def test_a_version_pattern_warns_and_still_reaches_the_run(self):
-        """Retired 2026-09-23: a headless ``tasks["version"]`` warns (removed in
-        0.12.0) and is carried on the run for the exporter to fold into the
-        name once; a blank one is no request and says nothing."""
+        """Retired 2026-09-23: a ``tasks["version"]`` warns (removed in 0.19.0:
+        saved data, re-dated from 0.12.0) and is carried on the run for the
+        exporter to fold into the name once; a blank one is no request and
+        says nothing."""
         import warnings
 
         with self.assertWarns(DeprecationWarning) as retired:
             run = ExportRun.from_tasks({"version": "{stem}_v{n:03d}"})[0]
         self.assertIn("tasks['version']", str(retired.warning))
-        self.assertIn("0.12.0", str(retired.warning))
+        self.assertIn("0.19.0", str(retired.warning))
         self.assertEqual(run.version_format, "{stem}_v{n:03d}")
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -948,7 +930,9 @@ class TestGlbOnlyProducer(unittest.TestCase):
         """What a mirroring panel defaults each row to: the off state -- so an
         untouched mirror builds the texture pass and publishes the recipe an
         absent row does."""
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
 
         defaults = ExportProfile.glb_defaults()
         self.assertEqual(list(defaults), list(ExportProfile.GLB_ROWS))
@@ -958,7 +942,8 @@ class TestGlbOnlyProducer(unittest.TestCase):
         )
         self.assertEqual(untouched, absent)
         self.assertEqual(
-            MeshConvert.rendering_policy(chosen), MeshConvert.rendering_policy(none)
+            HandoffRecord.rendering_policy(chosen),
+            HandoffRecord.rendering_policy(none),
         )
 
     def test_an_unknown_row_is_said_rather_than_dropped(self):
@@ -992,7 +977,9 @@ class TestBakedReflections(unittest.TestCase):
     def test_an_older_panels_row_is_dropped_with_a_note(self):
         """A DCC package from before the retirement still sends its row; the
         deliverable publishes the recipe whatever it says, and the log says so."""
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
 
         for value in ("off", "half", 0.4):
             with self.subTest(value=value):
@@ -1000,8 +987,8 @@ class TestBakedReflections(unittest.TestCase):
                 self.assertIsNone(run.baked_reflections)
                 self.assertEqual(run.rendering, {})
                 self.assertEqual(
-                    MeshConvert.rendering_policy(run.rendering),
-                    MeshConvert.RENDERING_POLICY,
+                    HandoffRecord.rendering_policy(run.rendering),
+                    HandoffRecord.RENDERING_POLICY,
                 )
                 self.assertNotIn("baked_reflections", tasks)
                 self.assertEqual([level for level, _ in notes], ["info"])
@@ -1011,27 +998,38 @@ class TestBakedReflections(unittest.TestCase):
 
     def test_a_caller_setting_the_level_is_told_and_still_published(self):
         """The field warns until its removal and, until then, still reaches both
-        carriers: the GLB's envelope and the FBX's handoff record."""
+        carriers: the GLB's handoff block and the FBX's handoff record."""
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
         from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
         with self.assertWarns(DeprecationWarning) as retired:
             run = ExportRun(baked_reflections=0.5)
         self.assertIn("baked_reflections", str(retired.warning))
         self.assertIn("0.17.0", str(retired.warning))
-        envelope = MeshConvert.build_scene_sidecar(
-            {}, source={"application": "test"}, rendering=run.rendering
+        # Published where the file uses it: a lightmapped material's level,
+        # in a file that carries lightmaps.
+        glb = HandoffRecord.block(
+            "glb",
+            [SceneRecords.LIGHTMAPS.key],
+            {"application": "test"},
+            rendering=run.rendering,
         )
-        block = SceneRecords.handoff_block(
-            ["lightmap_metadata"], rendering=run.rendering
+        block = HandoffRecord.block(
+            "fbx",
+            HandoffRecord.carried([SceneRecords.LIGHTMAPS.key]),
+            rendering=run.rendering,
         )
-        for recipe in (envelope["handoff"]["rendering"], block["rendering"]):
+        for recipe in (glb["rendering"], block["rendering"]):
             self.assertEqual(recipe["lightmappedMaterials"]["envMapIntensity"], 0.5)
             self.assertEqual(recipe["lightmappedMaterials"]["envMapTerms"], "specular")
 
     def test_the_retired_tables_still_answer_an_older_panel(self):
         """An older mayatk / blendertk builds the row from these at import."""
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
 
         with self.assertWarns(DeprecationWarning):
             options = ExportProfile.BAKED_REFLECTIONS_OPTIONS
@@ -1042,7 +1040,7 @@ class TestBakedReflections(unittest.TestCase):
             default = ExportProfile.baked_reflections_default()
         self.assertEqual(
             levels[default],
-            MeshConvert.RENDERING_POLICY["lightmappedMaterials"]["envMapIntensity"],
+            HandoffRecord.RENDERING_POLICY["lightmappedMaterials"]["envMapIntensity"],
         )
         with self.assertWarns(DeprecationWarning):
             self.assertEqual(ExportRun.baked_reflection_level("half"), 0.5)

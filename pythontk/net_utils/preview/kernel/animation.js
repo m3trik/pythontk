@@ -8,17 +8,21 @@ import { readExtras } from './scene.js';
 // whole-timeline take its FBX exporter keeps alongside them — so `animations[0]`
 // is routinely the entire timeline rather than the first shot, and every clip's
 // own keyframe times are rebased to zero, which loses where each shot sat.
-// `extras.animation_web` (MeshConvert.apply_glb_animations) is the file's own
-// answer: it marks the clips a shot declared, carries their authoring frame
-// ranges, and names the one to open on. Without the block this still plays —
-// the clips are listed in file order under their own names — it just cannot say
+// `extras.animation` (MeshConvert.apply_glb_animations) is the file's own
+// answer: it states the scene's shots -- every one, whatever clips the file
+// holds -- and each clip by index with the authoring frame its t=0 sits on,
+// and names the one to open on. Without the block this still plays — the
+// clips are listed in file order under their own names — it just cannot say
 // which of them are shots.
 export let mixer = null;
-// The deliverable's `animation_web` block, kept past setupAnimation: a script
+// The deliverable's `animation` block, kept past setupAnimation: a script
 // recording a clip needs the AUTHORING frame rate and frame numbers, and those
 // live in the manifest rather than on the three.js clip (which knows only
 // seconds). Null on a file that ships no manifest.
 let animationManifest = null;
+// The manifest's shots in start order, sorted once per model: the readout
+// looks one up on every rendered frame (timelineShot).
+let timelineShots = [];
 export let clips = [];        // [{clip, meta}] in PICKER order — declared shots first
 let action = null;
 let clipIndex = -1;
@@ -46,22 +50,87 @@ let sequenceSegment = null;
 // apart. "(full range)" is only said when something else IS a shot — with no
 // shots at all, every clip is the full range and the label would be noise.
 //
-// "empty" is said whenever the deliverable says so: a declared shot whose range
-// holds still bakes no curve, so it arrives named and carrying nothing. Picking
-// it plays 0.00s, which reads as broken animation unless the label admits the
-// clip itself is empty.
+// "empty" is said of a clip whose glTF animation has no channels: a declared
+// shot whose range holds still bakes no curve, so it arrives named and carrying
+// nothing. Picking it plays 0.00s, which reads as broken animation unless the
+// label admits the clip itself is empty. Told by the clip the loader built
+// from those channels, which has no tracks -- so a clip of a set of parts
+// (parts.js) is told just as a lone file's is.
 function clipLabel(entry, anyDeclared) {
   if (entry.sequence) {
     const s = entry.sequence;
-    return `${s.name}  (${s.startFrame}–${s.endFrame}, ${s.segments.length} shots)`;
+    return `${s.name}  (${s.startFrame}–${s.endFrame}, ${s.shotCount} shots)`;
   }
   const meta = entry.meta;
-  const empty = meta?.empty ? ', empty' : '';
+  const hollow = !entry.clip.tracks.length;
+  const empty = hollow ? ', empty' : '';
   if (meta?.declared && typeof meta.start_frame === 'number') {
     return `${entry.clip.name}  (${meta.start_frame}–${meta.end_frame}${empty})`;
   }
   if (anyDeclared && !meta?.declared) return `${entry.clip.name}  (full range)`;
-  return meta?.empty ? `${entry.clip.name}  (empty)` : entry.clip.name;
+  return hollow ? `${entry.clip.name}  (empty)` : entry.clip.name;
+}
+
+// A clip's block entry joined to the shot it plays, by name: the block states
+// each shot once (the FBX record's, inherited whole) and each clip once (by
+// glTF index), and this is the one place the two meet -- every reader below
+// takes the joined meta. `declared` is whether a shot plays this clip; the
+// rest of the file's clips (the whole-timeline one) are not shots. Null for
+// a clip the block does not list.
+function clipMeta(entry, shots) {
+  if (!entry) return null;
+  const shot = shots.get(entry.name);
+  if (!shot) return { ...entry, declared: false };
+  return {
+    ...entry,
+    declared: true,
+    start_frame: shot.start,
+    end_frame: shot.end,
+    ...(shot.description ? { description: shot.description } : {}),
+  };
+}
+
+// The authoring frame the WHOLE-TIMELINE clip stands at *seconds*: its
+// zero_frame plus the time at the block's fps. Null on a clip that is a shot,
+// or one the block does not place.
+function timelineFrame(entry, seconds) {
+  const meta = entry?.meta;
+  const fps = Number(animationManifest?.fps) || 0;
+  if (!meta || meta.declared || typeof meta.zero_frame !== 'number' || !fps) return null;
+  return meta.zero_frame + seconds * fps;
+}
+
+// The block's shot standing at authoring *frame*: the last one that has
+// started, and whether the frame is past its end (a gap, holding). Null
+// before the first shot starts -- a lead-in, which is still a frame.
+function shotAtFrame(frame) {
+  let found = null;
+  for (const shot of timelineShots) {
+    if (shot.start <= frame + 1e-6) found = shot; else break;
+  }
+  return found && { shot: found, held: frame > found.end + 1e-6 };
+}
+
+// The shot the WHOLE-TIMELINE clip is standing in at *seconds*. The block
+// states every shot whatever clips the file holds, and a 'full' file holds
+// none of its own -- each shot is its window of this clip, placed by the
+// clip's zero_frame. Null where timelineFrame or shotAtFrame is.
+function timelineShot(entry, seconds) {
+  const frame = timelineFrame(entry, seconds);
+  return frame === null ? null : shotAtFrame(frame);
+}
+
+// The block's shot the SEQUENCE stands in at *seconds* when that shot has no
+// segment: one that holds still bakes no curve, and the build drops the empty
+// clip (prune_glb_animations), so the pose on screen is a neighbour's, held
+// -- but the frames are still that shot's. Null when the shot has a segment
+// (segmentAt answers for it) or before the first shot.
+function stillShotAt(seconds) {
+  if (!activeSequence) return null;
+  const placed = shotAtFrame(activeSequence.startFrame + seconds * activeSequence.fps);
+  if (!placed) return null;
+  const moving = activeSequence.segments.some((s) => s.entry.meta?.name === placed.shot.clip);
+  return moving ? null : placed;
 }
 
 // --- authored alpha ramps (KHR_animation_pointer) ---------------------------
@@ -245,27 +314,34 @@ function buildSequence(entries, manifest) {
   // the picker would offer two ways to watch the same thing, and the real one
   // is exact where this is a reconstruction.
   if (entries.some((entry) => !entry.meta?.declared)) return null;
-  // The TIMELINE is every declared shot; the SEGMENTS are the ones that carry
-  // a curve. A shot whose range holds still bakes nothing and arrives empty,
-  // and dropping it from the span as well would end the sequence early -- the
-  // whole-timeline clip played through those frames, holding the last pose,
-  // which is what the gap rule below already does for them.
+  // The TIMELINE is every declared shot -- the block's `shots`, which states
+  // each one whatever clips the file holds -- and the SEGMENTS are the clips
+  // that carry a curve. A shot whose range holds still bakes nothing: its
+  // clip arrives empty, or not at all once the build drops it
+  // (prune_glb_animations). Measured off the clips, the span would lose it,
+  // and a still shot at either end would fall out of the sequence -- the
+  // whole-timeline clip played through those frames, holding the pose around
+  // them, which is what the gap rule below already does (stillShotAt names
+  // them).
   // BOTH bounds, not just the start: the span is measured across every
-  // declared shot, so one entry missing an end_frame makes `last` NaN and the
-  // whole sequence NaN-long -- a transport that divides by it draws nothing and
+  // declared shot, so one missing an end makes `last` NaN and the whole
+  // sequence NaN-long -- a transport that divides by it draws nothing and
   // never recovers. A shot the manifest describes only half of is not a shot
   // this can place.
-  const declared = entries.filter((e) => (
-    typeof e.meta?.start_frame === 'number' && typeof e.meta?.end_frame === 'number'
+  const placed = (manifest?.shots || []).filter((shot) => (
+    typeof shot.start === 'number' && typeof shot.end === 'number'
   ));
-  if (declared.length < 2) return null;
-  const shots = declared
-    .filter((e) => e.clip.duration > 0)
+  if (placed.length < 2) return null;
+  const shots = entries
+    .filter((e) => (
+      typeof e.meta?.start_frame === 'number' && typeof e.meta?.end_frame === 'number'
+      && e.clip.duration > 0
+    ))
     .sort((a, b) => a.meta.start_frame - b.meta.start_frame);
   if (!shots.length) return null;
 
-  const first = Math.min(...declared.map((e) => e.meta.start_frame));
-  const last = Math.max(...declared.map((e) => e.meta.end_frame));
+  const first = Math.min(...placed.map((shot) => shot.start));
+  const last = Math.max(...placed.map((shot) => shot.end));
   const segments = shots.map((entry) => ({
     entry,
     offset: (entry.meta.start_frame - first) / fps,
@@ -273,6 +349,7 @@ function buildSequence(entries, manifest) {
   }));
   return {
     segments,
+    shotCount: placed.length,
     fps,
     startFrame: first,
     endFrame: last,
@@ -317,10 +394,11 @@ function applySequence(seconds) {
   mixer.update(0);
 }
 
-// *manifest* is the deliverable's `animation_web` block -- read off *gltf* by
+// *manifest* is the deliverable's `animation` block -- read off *gltf* by
 // default; a set of parts hands in theirs merged (parts.js), its clip indices
 // already into the merged `animations`.
-export function setupAnimation(gltf, manifest = readExtras(gltf, SHOTS.webKey)) {
+/** @param {import('./records.js').AnimationBlock | null} [manifest] */
+export function setupAnimation(gltf, manifest = readExtras(gltf, SHOTS)) {
   // Reset FIRST: a model swap must not leave the previous model's mixer driving
   // the frame loop, nor its clip names in the picker.
   if (mixer) mixer.stopAllAction();
@@ -337,6 +415,7 @@ export function setupAnimation(gltf, manifest = readExtras(gltf, SHOTS.webKey)) 
   sequenceTime = 0;
 
   animationManifest = null;
+  timelineShots = [];
 
   const animations = gltf.animations || [];
   if (!animations.length) {
@@ -345,12 +424,17 @@ export function setupAnimation(gltf, manifest = readExtras(gltf, SHOTS.webKey)) 
   }
 
   animationManifest = manifest;
+  timelineShots = [...(manifest?.shots || [])].sort((a, b) => a.start - b.start);
   // Joined on the glTF animation INDEX, which is what the block carries it by —
   // names are what a user reads, not a key: nothing stops two AnimStacks from
   // sharing one, and a name join would then hand one clip the other's frame
   // range. The block is written from this same file, so the indices agree.
   const byIndex = new Map((manifest?.clips || []).map((entry) => [entry.animation, entry]));
-  const entries = animations.map((clip, index) => ({ clip, meta: byIndex.get(index) || null }));
+  const shots = new Map((manifest?.shots || []).map((shot) => [shot.clip, shot]));
+  const entries = animations.map((clip, index) => ({
+    clip,
+    meta: clipMeta(byIndex.get(index), shots),
+  }));
   const anyDeclared = entries.some((entry) => entry.meta?.declared);
   // Declared shots first in the PICKER only. The glTF's own `animations` order
   // is left exactly as written, so a consumer keying on animation index still
@@ -376,10 +460,12 @@ export function setupAnimation(gltf, manifest = readExtras(gltf, SHOTS.webKey)) 
 
   // The file's own answer to "which one first", falling back to the picker's
   // first entry — which is already a declared shot whenever there is one.
-  // Resolved through the manifest entry rather than by comparing the glTF
-  // clip's name, so it lands on the same clip the index join above did.
+  // Resolved through the manifest entry's INDEX rather than by comparing the
+  // glTF clip's name, so it lands on the same clip the index join above did.
   const named = (manifest?.clips || []).find((entry) => entry.name === manifest.default_clip);
-  const wanted = named ? clips.findIndex((entry) => entry.meta === named) : -1;
+  const wanted = named
+    ? clips.findIndex((entry) => entry.meta?.animation === named.animation)
+    : -1;
   selectClip(wanted >= 0 ? wanted : 0);
   // The FILE's clip count, not the picker's row count: a script reading this
   // off the 'load' event is asking what the deliverable carries, and the
@@ -411,7 +497,13 @@ export function clipInfo() {
     };
   }
   const duration = entry.clip?.duration || 0;
-  const start = typeof entry.meta?.start_frame === 'number' ? entry.meta.start_frame : 0;
+  // The authoring frame the clip's t=0 sits on: a shot's declared start, else
+  // the clip's zero_frame -- the frame the readout counts the whole-timeline
+  // clip from (timelineFrame), so a recording names and stamps the frames the
+  // transport shows -- else 0 for a clip the block does not place.
+  const meta = entry.meta;
+  const start = typeof meta?.start_frame === 'number' ? meta.start_frame
+    : typeof meta?.zero_frame === 'number' ? meta.zero_frame : 0;
   // The clip's OWN length decides the end, not the manifest's end_frame: a
   // whole-timeline clip carries no declared range, and a declared one whose
   // curve is shorter than its range would otherwise ask for frames that do not
@@ -511,19 +603,22 @@ function updateTransport() {
   // Not while the user owns the slider: writing the playhead back into the
   // control being dragged fights the drag.
   if (!scrubbing) el.scrub.value = String(tick);
-  // The authoring frame beside the seconds, for the sequence only: it is the
-  // number a reviewer reads back to the animator, and the shot ranges in the
-  // picker are quoted in it.
-  const frame = activeSequence
-    ? `  f${Math.round(activeSequence.startFrame + at * activeSequence.fps)}`
-    : '';
+  // The authoring frame beside the seconds, for the sequence and the
+  // whole-timeline clip: it is the number a reviewer reads back to the
+  // animator, and the shot ranges are quoted in it. Read apart from the shot
+  // lookup: a lead-in frame before the first shot is still a frame.
+  const authored = activeSequence
+    ? activeSequence.startFrame + at * activeSequence.fps
+    : timelineFrame(clips[clipIndex], at);
+  const frame = authored === null ? '' : `  f${Math.round(authored)}`;
   el.clipTime.textContent =
     `${shot ? `${shot} · ` : ''}${at.toFixed(2)} / ${duration.toFixed(2)}s${frame}`;
 }
 
-// Which shot the sequence playhead is standing in, for the readout. Only the
-// sequence has one: on a single clip the picker already names what is playing,
-// and repeating it beside the playhead would be noise.
+// Which shot the playhead is standing in, for the readout: on the sequence,
+// and on the whole-timeline clip, where each shot is a window (timelineShot).
+// A shot's own clip has none: the picker already names what is playing, and
+// repeating it beside the playhead would be noise.
 //
 // A time inside a GAP resolves to the shot before it — that is the pose on
 // screen, held, exactly as the whole-timeline clip played it — so it is labelled
@@ -531,7 +626,13 @@ function updateTransport() {
 // is playing through frames it does not cover, which is the one reading of this
 // label that could send someone looking for a bug in the shot.
 export function shotLabel(seconds) {
-  if (!activeSequence || !sequenceSegment) return null;
+  if (!activeSequence || !sequenceSegment) {
+    const placed = activeSequence ? null : timelineShot(clips[clipIndex], seconds);
+    if (!placed) return null;
+    return placed.held ? `${placed.shot.clip} (hold)` : placed.shot.clip;
+  }
+  const still = stillShotAt(seconds);
+  if (still) return still.held ? `${still.shot.clip} (hold)` : still.shot.clip;
   const entry = sequenceSegment.entry;
   const name = entry.meta?.name || entry.clip?.name || 'shot';
   const held = seconds > sequenceSegment.offset + sequenceSegment.duration + 1e-6;
@@ -545,20 +646,28 @@ export function shotLabel(seconds) {
 // the movie, and a description is the half of a shot record a reviewer
 // watching the file cannot otherwise see.
 //
-// Empty is null, not '': `extras.animation_web` omits the key on a shot with
+// Empty is null, not '': `extras.animation` omits the key on a shot with
 // no note (MeshConvert.apply_glb_animations writes only truthy fields), and a
 // caller should not have to tell "no description" from "an empty one".
 export function shotDescription() {
+  if (!activeSequence && action) {
+    const placed = timelineShot(clips[clipIndex], action.time);
+    if (placed) return placed.shot.description || null;
+  }
+  const still = stillShotAt(sequenceTime);
+  if (still) return still.shot.description || null;
   const entry = activeSequence && sequenceSegment
     ? sequenceSegment.entry
     : clips[clipIndex];
   return entry?.meta?.description || null;
 }
 
-// Whether any clip of the model on screen carries a description -- what
-// decides that there is a caption to offer (captions.js).
+// Whether any shot of the model on screen carries a description -- what
+// decides that there is a caption to offer (captions.js). The block's shots,
+// not just its clips: a 'full' file's shots have no clip of their own.
 export function hasDescriptions() {
-  return clips.some((entry) => Boolean(entry.meta?.description));
+  return (animationManifest?.shots || []).some((shot) => Boolean(shot.description))
+    || clips.some((entry) => Boolean(entry.meta?.description));
 }
 
 // Whether the user owns the scrubber (a drag, an arrow key) -- the transport

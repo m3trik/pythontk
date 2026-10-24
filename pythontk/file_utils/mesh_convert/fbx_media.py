@@ -64,7 +64,8 @@ from typing import (
     Tuple,
 )
 
-from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
+from pythontk.core_utils.engines.scene_export.scene_records import Scope, SceneRecords
+from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.file_dependencies import FileDependencies
 from pythontk.file_utils.mesh_convert.fbx_file import FBX_MAGIC, FbxFile
@@ -611,7 +612,7 @@ class _FbxMediaInternal:
 
     #: The scene's own carrier node; a module's is ``NS:data_export`` (or a
     #: renamed ``data_export1``).
-    _OWN_CARRIER = "data_export"
+    _OWN_CARRIER = SceneStoreBase.name(Scope.DELIVERABLE)
 
     @classmethod
     def _models(
@@ -666,16 +667,27 @@ class _FbxMediaInternal:
         cls, roots: Iterable[_Record], key: str
     ) -> Optional[Tuple[_Record, Any]]:
         """The ``P`` record holding the *key* record a reader applies, and its
-        payload: the scene's own carrier's, else the first module's in file
-        order -- the copy :meth:`FbxMedia.reader_records` takes. ``None`` when
-        no carrier holds one."""
-        first = None
-        for name, _key, payload, prop in cls._carrier_props(roots, (key,)):
+        payload (:meth:`_applied_channels`); ``None`` when no carrier holds
+        one."""
+        return cls._applied_channels(roots, (key,)).get(key)
+
+    @classmethod
+    def _applied_channels(
+        cls, roots: Iterable[_Record], keys: Iterable[str]
+    ) -> Dict[str, Tuple[_Record, Any]]:
+        """``{key: (P record, payload)}`` for each of *keys* a reader applies,
+        in one walk: the scene's own carrier's, else the first module's in
+        file order -- the copy :meth:`FbxMedia.reader_records` takes. The
+        handoff is the scene's own alone: one on a module's carrier describes
+        that module, never the file (the FBX handoff's own rule)."""
+        own: Dict[str, Tuple[_Record, Any]] = {}
+        first: Dict[str, Tuple[_Record, Any]] = {}
+        for name, key, payload, prop in cls._carrier_props(roots, tuple(keys)):
             if name == cls._OWN_CARRIER:
-                return prop, payload
-            if first is None:
-                first = (prop, payload)
-        return first
+                own.setdefault(key, (prop, payload))
+            elif key != SceneRecords.HANDOFF.key:
+                first.setdefault(key, (prop, payload))
+        return {**first, **own}
 
 
     @staticmethod
@@ -1610,8 +1622,8 @@ class FbxMedia(_FbxMediaInternal):
         Read off the file's ``data_export`` carriers as a reader applies them
         (:meth:`reader_records`: the scene's own record wins, a referenced
         module's names only the nodes the file carries): the lightmaps and
-        the reflection probe ``lightmap_metadata`` names, the silhouette,
-        atlas and horizon maps ``shadow_metadata`` names. In record order,
+        the reflection probe ``lightmaps`` names, the silhouette,
+        atlas and horizon maps ``shadows`` names. In record order,
         each name once (compared without case); a name a manifest wrote with
         a folder (one published before 0.11.0) is its file name.
 
@@ -1633,7 +1645,7 @@ class FbxMedia(_FbxMediaInternal):
 
     @classmethod
     def audio_events(cls, path: str) -> List[str]:
-        """The tracks the FBX's ``audio_manifest`` events play, by event name.
+        """The tracks the FBX's ``audio`` events play, by event name.
 
         An audio event names its TRACK, not a file (``SceneRecords.AUDIO``),
         so the host resolves each name to its file and hands it to
@@ -1745,6 +1757,34 @@ class FbxMedia(_FbxMediaInternal):
             _version, roots, _fid, _magic = cls._load(buf)
             found = cls._applied_channel(roots, key)
         return found[1] if found else None
+
+    @classmethod
+    def records(
+        cls, path: str, keys: Optional[Iterable[str]] = None
+    ) -> Dict[str, Any]:
+        """Every scene record the FBX carries, as a reader applies it
+        (:meth:`record`'s copy of each, in one read of the file).
+
+        Parameters:
+            path: The FBX.
+            keys: The records to read; every declared deliverable record
+                (``SceneRecords.deliverable()``) when ``None``.
+
+        Returns:
+            ``{key: payload}`` for each of *keys* a carrier holds.
+
+        Raises:
+            ValueError: *path* is not a binary FBX this reader can parse.
+        """
+        if keys is None:
+            keys = [spec.key for spec in SceneRecords.deliverable()]
+        with (
+            open(path, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            _version, roots, _fid, _magic = cls._load(buf)
+            found = cls._applied_channels(roots, keys)
+        return {key: hit[1] for key, hit in found.items()}
 
     @classmethod
     def set_record(
@@ -1930,6 +1970,70 @@ class FbxMedia(_FbxMediaInternal):
         return report
 
     @classmethod
+    def drop_redundant_properties(
+        cls, src: str, markers: Iterable[str] = (), dst: Optional[str] = None
+    ) -> Dict[str, int]:
+        """Remove the user properties a delivered FBX carries that state
+        nothing its records do not.
+
+        Two kinds, both the export's own: each of *markers* on every model --
+        a per-object property a record restates whole (the lightmap bake's
+        ``lightmapInfo`` repeats its ``lightmaps`` entry) -- and every
+        empty string on a ``data_export`` carrier, a record cleared in the
+        scene whose attribute the FBX writer still ships as a channel holding
+        nothing. Anything else a model carries -- another program's
+        properties, an artist's own attribute -- stays.
+
+        Parameters:
+            src: The FBX to read.
+            markers: The user-property names to drop from every model.
+            dst: Where to write; ``None`` rewrites *src* in place.
+
+        Returns:
+            ``{"markers", "empty"}`` -- how many of each went. When none
+            qualifies the file is not written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+        """
+        names = {name.encode("utf-8") for name in markers}
+        report = {"markers": 0, "empty": 0}
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            for name, model in cls._models(roots):
+                carrier = SceneStoreBase.is_carrier(name)
+                for child in model.children:
+                    if child.name != b"Properties70":
+                        continue
+                    kept = []
+                    for prop in child.children:
+                        head = cls._scalars(prop)
+                        user = len(head) >= 4 and b"U" in bytes(head[3] or b"")
+                        if user and head[0] in names:
+                            report["markers"] += 1
+                            continue
+                        if (
+                            user
+                            and carrier
+                            and len(head) >= 5
+                            and head[1] == b"KString"
+                            and not head[4]
+                        ):
+                            report["empty"] += 1
+                            continue
+                        kept.append(prop)
+                    child.children = kept
+            if not (report["markers"] or report["empty"]):
+                return report
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        cls._promote(part, target)
+        return report
+
+    @classmethod
     def drop_host_lighting_media(
         cls, src: str, dst: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -2037,8 +2141,8 @@ class FbxMedia(_FbxMediaInternal):
 
         The post-write step both Scene Exporters and the Unity hand-off run on
         an FBX deliverable. The records name their files by FILE NAME --
-        ``lightmap_metadata`` its maps and its reflection probe,
-        ``shadow_metadata`` its silhouette, atlas and horizon maps
+        ``lightmaps`` its maps and its reflection probe,
+        ``shadows`` its silhouette, atlas and horizon maps
         (:meth:`dependencies`) -- and a lighting-only bake leaves its maps on
         no material, so the FBX used to carry none of them: the consumer
         copied them in by hand, or imported unlit with a silhouette shadow.
@@ -2189,21 +2293,48 @@ class FbxMedia(_FbxMediaInternal):
             ValueError: *src* is not a binary FBX this writer can read.
             OSError: A file could not be written.
         """
+        return cls.extract(src, dst_dir)
+
+    @classmethod
+    def extract(
+        cls, src: str, dst_dir: str, names: Optional[Iterable[str]] = None
+    ) -> Dict[str, str]:
+        """Write each of *names* the FBX embeds into *dst_dir*, byte for byte.
+
+        The general form of :meth:`extract_dependencies` (which is this with
+        *names* ``None``: the files the records name): a reader that joins
+        names against folders -- the GLB build binding a materials record's
+        maps -- takes the deliverable's own bytes rather than whatever a disk
+        holds under the name. Each file goes out under the spelling asked for,
+        matched without case; a name the FBX does not embed is left out.
+
+        Parameters:
+            src: The FBX to read.
+            dst_dir: An existing folder; same-named files there are replaced.
+            names: The file names to write; ``None`` takes the records'.
+
+        Returns:
+            ``{file name: path written}``, in *names*' order.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can read.
+            OSError: A file could not be written.
+        """
         written: Dict[str, str] = {}
         with (
             open(src, "rb") as fh,
             mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
         ):
             _version, roots, _fid, _magic = cls._load(buf)
-            names = cls._dependency_names(roots)
-            if not names:
+            wanted = cls._dependency_names(roots) if names is None else list(names)
+            if not wanted:
                 return written
             media: Dict[str, _Record] = {}
             for name, record in cls._video_records(roots):
                 media.setdefault(name.casefold(), record)
-            for name in names:
-                record = media.get(name.casefold())
-                if record is None:
+            for name in wanted:
+                record = media.get(str(name).casefold())
+                if record is None or name in written:
                     continue
                 path = os.path.join(dst_dir, name)
                 with open(path, "wb") as out:

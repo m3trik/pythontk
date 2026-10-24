@@ -33,7 +33,10 @@ Two homes, two contracts (both bound by the Hard rules above — no DCC imports,
 ## Run tests
 
 ```powershell
-& python o:\Cloud\Code\_scripts\pythontk\test\run_tests.py
+& python o:\Cloud\Code\_scripts\pythontk\test\run_tests.py test_str -k split  # pointed: modules, -k
+& python o:\Cloud\Code\_scripts\pythontk\test\run_tests.py                   # full suite: review / release
 ```
+
+What a change reaches: `python m3trik/scripts/affected_tests.py <files> --run` (root Testing).
 
 See [CHANGELOG.md](CHANGELOG.md) for history.

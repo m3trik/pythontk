@@ -7,6 +7,8 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+from pythontk.core_utils.engines.scene_export.handoff_record import HandoffRecord
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
 from pythontk.file_utils.temp_artifacts import TempArtifacts
@@ -45,7 +47,9 @@ class GlbPipelineTestCase(unittest.TestCase):
         Path(out).write_bytes(b"glTF")
         report = kwargs.get("report")
         if report is not None:
+            report["materials"] = [{"material": "m", "missing": [], "orm": True}]
             report["sidecar"] = {"emissive": "1 of 1"}
+            report["lightmap_manifest"] = {"version": 1, "objects": []}
             report["lightmaps"] = {
                 "expected": 1,
                 "bound": 1,
@@ -89,15 +93,18 @@ class GlbPipelineTestCase(unittest.TestCase):
         self.assertEqual(list(self.calls[0][3]["shadow_dirs"]), dirs)
 
     def test_the_stages_run_in_order_with_the_dials_forwarded(self):
-        """Convert (sidecar, lightmap dirs, no prompt) then optimize (the caller's
-        params plus its fallback choice), and the report carries both outcomes."""
+        """Convert (a handoff to embed, the lighting choices, lightmap dirs, no
+        prompt) then optimize (the caller's params plus its fallback choice),
+        and the report carries every outcome."""
         src = self._stub_fbx()
         dst = self.temp.path(extension=".glb")
-        envelope = {"sections": {"emissive": {}}}
+        handoff = HandoffRecord.block("glb", [], {"application": "test"})
+        rendering = {"keyLight": {"intensity": 0.4}}
         built = self._build(
             src,
             dst=dst,
-            sidecar=envelope,
+            sidecar=handoff,
+            rendering=rendering,
             lightmap_dirs=["D:/maps"],
             texture_params={
                 "image_format": "KTX2",
@@ -111,7 +118,8 @@ class GlbPipelineTestCase(unittest.TestCase):
         self.assertEqual((read, written), (src, dst))
         self.assertIs(kwargs["prompt"], False)
         self.assertIs(kwargs["overwrite"], True)
-        self.assertEqual(kwargs["sidecar"], envelope)
+        self.assertEqual(kwargs["sidecar"], handoff)
+        self.assertEqual(kwargs["rendering"], rendering)
         self.assertEqual(kwargs["lightmap_dirs"], ["D:/maps"])
         # The host's float-image codec (Blender has no cv2). Added: 2026-10-17
         self.assertIs(kwargs["hdr_codec"], self)
@@ -122,20 +130,24 @@ class GlbPipelineTestCase(unittest.TestCase):
         )
         self.assertEqual(built["glb"], dst)
         self.assertEqual(built["src"], src)
+        self.assertEqual(
+            built["materials"], [{"material": "m", "missing": [], "orm": True}]
+        )
         self.assertEqual(built["sidecar"], {"emissive": "1 of 1"})
         self.assertEqual(built["lightmaps"]["bound"], 1)
+        self.assertEqual(built["lightmap_manifest"], {"version": 1, "objects": []})
         self.assertEqual(built["textures"]["images"], 1)
         self.assertEqual(built["scratch"], [])
 
     def test_a_data_export_overlay_reaches_the_conversion(self):
         """The overlay is the conversion's to apply (its passes read the
         channels); the pipeline only forwards it, and ``None`` by default."""
-        overlay = {"fbx_takes": None}
+        overlay = {SceneRecords.SHOTS.key: None}
         built = self._build(self._stub_fbx(), data_export=overlay)
         self.assertIs(self.calls[0][3]["data_export"], overlay)
         # And the report says what the conversion replaced, so a caller can
         # tell an applied overlay from one that was quietly never honoured.
-        self.assertEqual(built["data_export"], ["fbx_takes"])
+        self.assertEqual(built["data_export"], [SceneRecords.SHOTS.key])
         built = self._build(self._stub_fbx())
         self.assertIsNone(self.calls[-2][3]["data_export"])
         self.assertEqual(built["data_export"], [])
@@ -146,7 +158,9 @@ class GlbPipelineTestCase(unittest.TestCase):
         src = self.temp.path(extension=".glb")
         Path(src).write_bytes(b"glTF")
         logger = unittest.mock.MagicMock()
-        built = GlbPipeline.build(src, data_export={"fbx_takes": None}, logger=logger)
+        built = GlbPipeline.build(
+            src, data_export={SceneRecords.SHOTS.key: None}, logger=logger
+        )
         logger.warning.assert_called_once()
         self.assertEqual(built["data_export"], [], "nothing landed, and it says so")
         logger.reset_mock()
@@ -459,20 +473,22 @@ class GlbPipelineTestCase(unittest.TestCase):
                 self.assertEqual(self.calls[-1][1], beside, "the texture pass too")
                 self.assertTrue(os.path.exists(beside))
 
-    # -- the sidecar envelope --------------------------------------------
+    # -- the retired sidecar envelope (2026-10-20) ----------------------
 
     def test_envelope_wraps_the_hosts_read_once_for_every_producer(self):
-        envelope = GlbPipeline.envelope(
-            lambda: {"emissive": {"m": {"color": [1, 0, 0]}}},
-            source={"application": "test", "version": "0"},
-            asset="scene.fbx",
-        )
-        self.assertEqual(envelope["version"], MeshConvert.SIDECAR_VERSION)
+        """What an older host still builds through here, until its removal."""
+        with self.assertWarns(DeprecationWarning):
+            envelope = GlbPipeline.envelope(
+                lambda: {"emissive": {"m": {"color": [1, 0, 0]}}},
+                source={"application": "test", "version": "0"},
+                asset="scene.fbx",
+            )
+        self.assertEqual(envelope["version"], 2)
         self.assertEqual(envelope["asset"], "scene.fbx")
         self.assertIn("emissive", envelope["sections"])
         self.assertEqual(
             envelope["handoff"]["rendering"],
-            MeshConvert.RENDERING_POLICY,
+            HandoffRecord.RENDERING_POLICY,
             "no choices made: the recipe as declared",
         )
 
@@ -481,11 +497,12 @@ class GlbPipelineTestCase(unittest.TestCase):
         the envelope publishes them as ``handoff.rendering``, where the viewer
         and any other reader find them. Added: 2026-09-21"""
         rendering = {"lightmappedMaterials": {"envMapIntensity": 0.5}}
-        envelope = GlbPipeline.envelope(
-            lambda: {}, source={"application": "test"}, rendering=rendering
-        )
+        with self.assertWarns(DeprecationWarning):
+            envelope = GlbPipeline.envelope(
+                lambda: {}, source={"application": "test"}, rendering=rendering
+            )
         self.assertEqual(
-            envelope["handoff"]["rendering"], MeshConvert.rendering_policy(rendering)
+            envelope["handoff"]["rendering"], HandoffRecord.rendering_policy(rendering)
         )
 
     def test_a_failing_read_degrades_to_an_empty_envelope_not_a_failed_build(self):
@@ -499,7 +516,10 @@ class GlbPipelineTestCase(unittest.TestCase):
         def _boom():
             raise RuntimeError("scene read failed")
 
-        with self.assertLogs(log, level="WARNING") as caught:
+        with (
+            self.assertLogs(log, level="WARNING") as caught,
+            self.assertWarns(DeprecationWarning),
+        ):
             envelope = GlbPipeline.envelope(
                 _boom, source={"application": "test", "version": "0"}, logger=log
             )
@@ -508,9 +528,9 @@ class GlbPipelineTestCase(unittest.TestCase):
 
 
 class TestDeclaredTakes(unittest.TestCase):
-    """Which takes an FBX declares: the shot record's clips (each carries its
-    range since 0.11.0) first, the legacy ``fbx_takes`` channel for a file
-    written before."""
+    """Which takes an FBX declares: the shot record's clips, each carrying its
+    range (since 0.11.0). The take list an older file carried (``fbx_takes``)
+    is no record a reader reads -- such a file is re-exported."""
 
     class _Fbx:
         def __init__(self, props):
@@ -519,10 +539,10 @@ class TestDeclaredTakes(unittest.TestCase):
         def user_properties(self, name):
             return self.props.get(name, [])
 
-    def test_the_shot_record_is_read_first(self):
+    def test_the_shot_record_is_read(self):
         fbx = self._Fbx(
             {
-                "shot_metadata": [
+                "animation": [
                     b'{"version": 1, "shots": [{"clip": "A", "start": 1, "end": 9}]}'
                 ],
                 "fbx_takes": [b'[{"name": "legacy"}]'],
@@ -534,7 +554,7 @@ class TestDeclaredTakes(unittest.TestCase):
         """An imported reference brings its own carrier and clips."""
         fbx = self._Fbx(
             {
-                "shot_metadata": [
+                "animation": [
                     b'{"shots": [{"clip": "A", "start": 1, "end": 9}]}',
                     b'{"shots": [{"clip": "B", "start": 20, "end": 30}]}',
                 ]
@@ -542,18 +562,18 @@ class TestDeclaredTakes(unittest.TestCase):
         )
         self.assertEqual(GlbPipeline._declared_takes(fbx), {"A", "B"})
 
-    def test_clips_without_ranges_are_an_older_file(self):
+    def test_a_clip_without_its_range_declares_no_take(self):
         fbx = self._Fbx(
             {
-                "shot_metadata": [b'{"shots": [{"clip": "A"}]}'],
+                "animation": [b'{"shots": [{"clip": "A"}]}'],
                 "fbx_takes": [b'[{"name": "legacy"}]'],
             }
         )
-        self.assertEqual(GlbPipeline._declared_takes(fbx), {"legacy"})
+        self.assertEqual(GlbPipeline._declared_takes(fbx), set())
 
-    def test_an_older_file_falls_back_to_fbx_takes(self):
+    def test_the_retired_take_list_is_read_by_no_reader(self):
         fbx = self._Fbx({"fbx_takes": [b'[{"name": "legacy"}]', b""]})
-        self.assertEqual(GlbPipeline._declared_takes(fbx), {"legacy"})
+        self.assertEqual(GlbPipeline._declared_takes(fbx), set())
         self.assertEqual(GlbPipeline._declared_takes(self._Fbx({})), set())
 
 
@@ -599,7 +619,7 @@ class TestDropSplitTakes(unittest.TestCase):
         return drop, report
 
     def test_the_split_goes_without_a_published_origin(self):
-        drop, report = self._drop({"shot_metadata": [self.SHOTS]})
+        drop, report = self._drop({"animation": [self.SHOTS]})
         drop.assert_called_once()
         self.assertEqual(report["src"], "scratch.fbx")
 
@@ -615,7 +635,7 @@ class TestEmbeddedDependencies(GlbPipelineTestCase):
     """
 
     LIGHTMAPS = {
-        "version": 1,
+        "version": SceneRecords.LIGHTMAPS.version,
         "objects": [{"name": "Crate", "map": "Room_Lightmap.exr", "uvIndex": 1}],
     }
 
@@ -629,7 +649,7 @@ class TestEmbeddedDependencies(GlbPipelineTestCase):
         with open(os.path.join(maps, "Room_Lightmap.exr"), "wb") as fh:
             fh.write(self.lightmap)
         src = build_carrier_fbx(
-            self.temp.path(extension=".fbx"), {"lightmap_metadata": self.LIGHTMAPS}
+            self.temp.path(extension=".fbx"), {"lightmaps": self.LIGHTMAPS}
         )
         FbxMedia.embed_dependencies(src, search_dirs=[maps])
         os.remove(os.path.join(maps, "Room_Lightmap.exr"))  # the FBX alone

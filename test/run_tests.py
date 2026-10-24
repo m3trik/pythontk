@@ -3,16 +3,20 @@
 """
 Main test runner for pythontk package.
 
-This script discovers and runs all test modules, collecting results
-and outputting them to both console and a log file. It also updates
+This script discovers and runs the test modules, collecting results
+and outputting them to both console and a log file. A full run also updates
 the README.md badge with test results.
 
 Run with:
-    python run_all_tests.py
-    python run_all_tests.py -v          # Verbose output
-    python run_all_tests.py --log       # Enable log file output
-    python run_all_tests.py -v --log    # Both
-    python run_all_tests.py --no-badge  # Skip README badge update
+    python run_tests.py                        # the full suite (review / release)
+    python run_tests.py test_str core_utils    # named modules only
+    python run_tests.py test_str -k split      # ...and only tests matching "split"
+    python run_tests.py -v                     # Verbose output
+    python run_tests.py --log                  # Enable log file output
+    python run_tests.py --no-badge             # Skip README badge update
+
+A scoped run (modules or ``-k``) never stamps the badge. For the modules a
+change reaches, ``python m3trik/scripts/affected_tests.py <files> --run``.
 """
 
 import argparse
@@ -112,22 +116,65 @@ class TestResult:
 
 
 class TestRunner(_TestRunnerInternal):
-    """Discovers and runs all test modules."""
+    """Discovers and runs the test modules -- all of them, or a named subset."""
 
-    def __init__(self, test_dir: Path, verbosity: int = 1):
+    def __init__(
+        self,
+        test_dir: Path,
+        verbosity: int = 1,
+        modules=None,
+        patterns=None,
+    ):
+        """
+        Parameters:
+            test_dir: The directory holding ``test_*.py``.
+            verbosity: unittest verbosity (0 quiet, 1 dots, 2 names).
+            modules: Module names to run (bare or ``test_``-prefixed); None runs
+                every discovered module.
+            patterns: ``-k`` filters on test ids; a pattern without ``*`` matches
+                as a substring (unittest's own ``-k`` semantics).
+        """
         self.test_dir = test_dir
         self.verbosity = verbosity
+        self.modules = list(modules or [])
+        self.patterns = list(patterns or [])
         self.log_buffer = io.StringIO()
 
+    @staticmethod
+    def resolve_modules(test_dir: Path, names):
+        """``(stems, unknown)``: each name as its ``test_*`` stem, and the names
+        no module on disk answers to."""
+        available = StatusBadge.discover_module_names(test_dir)
+        stems, unknown = [], []
+        for name in names:
+            stem = name[:-3] if name.endswith(".py") else name
+            stem = stem if stem.startswith("test_") else f"test_{stem}"
+            if stem in available:
+                stems.append(stem)
+            else:
+                unknown.append(name)
+        return stems, unknown
+
     def discover_tests(self) -> unittest.TestSuite:
-        """Discover all test modules in the test directory."""
+        """The suite to run: every module, or :attr:`modules`; :attr:`patterns`
+        narrows either to the matching test ids."""
         loader = unittest.TestLoader()
-        suite = loader.discover(
-            start_dir=str(self.test_dir),
-            pattern="test_*.py",
-            top_level_dir=str(self.test_dir),
-        )
-        return suite
+        if self.patterns:
+            loader.testNamePatterns = [
+                p if "*" in p else f"*{p}*" for p in self.patterns
+            ]
+        if not self.modules:
+            return loader.discover(
+                start_dir=str(self.test_dir),
+                pattern="test_*.py",
+                top_level_dir=str(self.test_dir),
+            )
+        if str(self.test_dir) not in sys.path:
+            sys.path.insert(0, str(self.test_dir))
+        stems, _unknown = self.resolve_modules(self.test_dir, self.modules)
+        # loadTestsFromName turns an import failure into a failing stand-in
+        # case, exactly as discover() does -- a broken module stays visible.
+        return unittest.TestSuite(loader.loadTestsFromName(stem) for stem in stems)
 
     def run(self, log_to_file: bool = False) -> TestResult:
         """Run all discovered tests and collect results.
@@ -194,20 +241,14 @@ Test Directory: {self.test_dir}
 """
         stream.write(footer)
 
-        # Write detailed failures/errors if any
+        # The tracebacks are above (unittest's own report); end on the ids, so
+        # the last lines of a run say exactly what failed.
         if test_result.failure_details or test_result.error_details:
-            stream.write("\nDETAILED FAILURES AND ERRORS:\n")
-            stream.write("-" * 70 + "\n")
-
-            for test, traceback in test_result.failure_details:
-                stream.write(f"\nFAILED: {test}\n")
-                stream.write(traceback)
-                stream.write("\n")
-
-            for test, traceback in test_result.error_details:
-                stream.write(f"\nERROR: {test}\n")
-                stream.write(traceback)
-                stream.write("\n")
+            stream.write("\nFAILED TESTS:\n")
+            for test, _traceback in test_result.failure_details:
+                stream.write(f"  FAIL:  {test.id()}\n")
+            for test, _traceback in test_result.error_details:
+                stream.write(f"  ERROR: {test.id()}\n")
 
         # Save log file if requested
         if log_to_file:
@@ -231,10 +272,13 @@ Test Directory: {self.test_dir}
 
 
 class DetailedTestResult(unittest.TextTestResult):
-    """Extended test result with better output formatting.
+    """unittest's text result, recording which test modules actually ran, so a
+    run the environment scoped down can be refused the README badge (see
+    :class:`_TestRunnerInternal`).
 
-    Also records which test modules actually ran, so a run the environment
-    scoped down can be refused the README badge (see :class:`_TestRunnerInternal`).
+    It adds no status marks of its own: ``TextTestResult`` already writes the
+    dot / ``ok`` for every outcome, and writing them again here printed each one
+    twice (``....ss`` for two passes and a skip).
     """
 
     def __init__(self, *args, **kwargs):
@@ -256,29 +300,14 @@ class DetailedTestResult(unittest.TextTestResult):
     def addSuccess(self, test):
         super().addSuccess(test)
         self._note_module(test, True)
-        if self.showAll:
-            self.stream.write(" ok\n")
-        elif self.dots:
-            self.stream.write(".")
-            self.stream.flush()
 
     def addError(self, test, err):
         super().addError(test, err)
         self._note_module(test, True)
-        if self.showAll:
-            self.stream.write(" ERROR\n")
-        elif self.dots:
-            self.stream.write("E")
-            self.stream.flush()
 
     def addFailure(self, test, err):
         super().addFailure(test, err)
         self._note_module(test, True)
-        if self.showAll:
-            self.stream.write(" FAIL\n")
-        elif self.dots:
-            self.stream.write("F")
-            self.stream.flush()
 
     def addExpectedFailure(self, test, err):
         super().addExpectedFailure(test, err)
@@ -291,11 +320,6 @@ class DetailedTestResult(unittest.TextTestResult):
     def addSkip(self, test, reason):
         super().addSkip(test, reason)
         self._note_module(test, False)
-        if self.showAll:
-            self.stream.write(f" skipped ({reason})\n")
-        elif self.dots:
-            self.stream.write("s")
-            self.stream.flush()
 
 
 def update_readme_badge(passed: int, failed: int, readme_path: Path) -> bool:
@@ -329,6 +353,18 @@ def update_readme_badge(passed: int, failed: int, readme_path: Path) -> bool:
 def main():
     """Main entry point for the test runner."""
     parser = argparse.ArgumentParser(description="Run pythontk test suite")
+    parser.add_argument(
+        "modules",
+        nargs="*",
+        help="Test modules to run (bare or test_-prefixed); none = the full suite",
+    )
+    parser.add_argument(
+        "-k",
+        dest="patterns",
+        action="append",
+        default=[],
+        help="Only tests whose id matches (substring, or a * pattern); repeatable",
+    )
     parser.add_argument(
         "-v",
         "--verbose",
@@ -370,8 +406,17 @@ def main():
 
     TestSandbox.activate()
 
+    # A name nothing answers to means the run would not cover what was asked
+    # for; running the rest and exiting 0 would read as that coverage.
+    _stems, unknown = TestRunner.resolve_modules(test_dir, args.modules)
+    if unknown:
+        print(f"[ERROR] No such test module(s): {', '.join(unknown)}")
+        sys.exit(2)
+
     # Run tests
-    runner = TestRunner(test_dir, verbosity=verbosity)
+    runner = TestRunner(
+        test_dir, verbosity=verbosity, modules=args.modules, patterns=args.patterns
+    )
     result = runner.run(log_to_file=args.log)
 
     # A refused launch that a broad ``except`` swallowed leaves its test green;
@@ -394,8 +439,12 @@ def main():
         )
 
     # Update README badge unless --no-badge is specified -- and never on a run
-    # the environment scoped down (see StatusBadge.gate).
-    if not args.no_badge and not leaked:
+    # scoped by argument (modules / -k) or by the environment (StatusBadge.gate).
+    # The gate alone would pass a -k that happens to match a test in every module.
+    if args.modules or args.patterns:
+        if not args.no_badge:
+            print("[INFO] Badge not updated (scoped run: modules or -k).")
+    elif not args.no_badge and not leaked:
         TestRunner.stamp_badge(test_dir, root_dir / "docs" / "README.md", result)
 
     # Exit with appropriate code

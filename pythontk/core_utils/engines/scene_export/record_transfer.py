@@ -161,7 +161,32 @@ class RecordTransfer:
             return {k: v for k, v in values.items() if isinstance(v, str) and v}
 
         self.own = {Scope(s): strings(v) for s, v in own.items()}
-        self.other = {Scope(s): strings(v) for s, v in other.items()}
+        # The other scene's at the current keys, as this scene's own are
+        # (SceneStoreBase.migrate runs when a scene opens).
+        self.other = {
+            Scope(s): self._at_current_keys(strings(v), Scope(s))
+            for s, v in other.items()
+        }
+
+    @staticmethod
+    def _at_current_keys(values: Mapping[str, Any], scope: Scope) -> Dict[str, Any]:
+        """*values* -- another scene's channels in *scope* -- at the current
+        keys, as ``SceneStoreBase.migrate`` brings a scene's own: a record
+        under a key it was renamed from (:attr:`RecordSpec.renamed_from`) is
+        read under its key, a value already there winning, and one retired
+        whole (:attr:`SceneRecords.RETIRED`) is none."""
+        found = dict(values)
+        for spec in SceneRecords.all():
+            if spec.scope is not scope:
+                continue
+            for old in spec.renamed_from:
+                value = found.pop(old, None)
+                if value and spec.key not in found:
+                    found[spec.key] = value
+        if scope is Scope.DELIVERABLE:
+            for key in SceneRecords.RETIRED:
+                found.pop(key, None)
+        return found
 
     @classmethod
     def between(cls, store, other: Mapping[Any, Mapping[str, Any]]) -> "RecordTransfer":
@@ -254,7 +279,8 @@ class RecordTransfer:
     def _count(text: str) -> Optional[int]:
         """How many entries a stored payload holds: a list's length; a keyed
         mapping's (every value a container, or none is); a document's first
-        list or mapping (``{"schema": 1, "groups": {...}}`` counts groups)."""
+        list or mapping (``{"version": 2, "encoding": ..., "groups": [...]}``
+        counts groups)."""
         try:
             payload = json.loads(text)
         except (ValueError, TypeError):
@@ -561,7 +587,9 @@ class RecordTransfer:
             *ctx*, its notes the report.
         """
         generic = manifest.get(cls.RECORDS_SECTION) if manifest else None
-        generic = generic if isinstance(generic, Mapping) else {}
+        generic = cls._at_current_keys(
+            generic if isinstance(generic, Mapping) else {}, Scope.PRIVATE
+        )
         for spec in SceneRecords.portable():
             payload = (
                 manifest.get(spec.section) if spec.section else generic.get(spec.key)

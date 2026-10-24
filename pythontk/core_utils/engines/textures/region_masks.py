@@ -39,6 +39,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
+from pythontk.core_utils.deprecation import Deprecation
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
+from pythontk.core_utils.schema_spec import SchemaSpec
+
 # Optional imaging deps: only the packer (rasterize/write/preview) needs
 # them. The manifest model is pure JSON and must resolve without either —
 # vertex-color encoding never touches an image (e.g. vanilla Blender's
@@ -113,23 +117,35 @@ class RegionMaskManifest:
 
     Producer: the DCC bake step. Consumers: the Unity importer template
     (``EmissiveGroupController``) and re-imports of the mask texture.
-    ``schema`` is an integer version consumers compare against the version
-    they support (warn-and-best-effort on newer payloads).
+    ``version`` is the ``emissive_groups`` record's, which a reader reads
+    alone (``SceneRecords.EMISSIVE_GROUPS``).
     """
 
-    SCHEMA_VERSION = 1
+    #: The document's schema version: the deliverable record's.
+    VERSION = SceneRecords.EMISSIVE_GROUPS.version
+    #: Retired 2026-10-20 (removed in 0.18.0): the document states ``version``.
+    SCHEMA_VERSION = Deprecation.class_attribute(
+        VERSION, "RegionMaskManifest.VERSION", remove_in="0.18.0", since="2026-10-24"
+    )
 
     groups: List[RegionGroup] = field(default_factory=list)
     encoding: str = ENCODING_VERTEX_COLOR
-    schema: int = SCHEMA_VERSION
+    version: int = VERSION
     # vertex-color encoding:
     color_set: Optional[str] = None
     # channels encoding:
     mask: Optional[str] = None  # mask texture filename (no path)
     uv_channel: Optional[int] = None
-    resolution: Optional[int] = None
 
     _ENCODINGS = (ENCODING_VERTEX_COLOR, ENCODING_CHANNELS, ENCODING_ID)
+
+    @property
+    @Deprecation.symbol(
+        "RegionMaskManifest.version", remove_in="0.18.0", since="2026-10-24"
+    )
+    def schema(self) -> int:
+        """The document's version (:attr:`version`)."""
+        return self.version
 
     def __post_init__(self):
         if self.encoding not in self._ENCODINGS:
@@ -160,19 +176,43 @@ class RegionMaskManifest:
         )
 
     @classmethod
+    @Deprecation.parameter(
+        "resolution",
+        remove_in="0.18.0",
+        drop=True,
+        reason="The mask image states its own size.",
+        since="2026-10-24",
+    )
     def channels(
         cls,
         groups: Sequence[Union[RegionGroup, dict]],
         mask: str,
-        resolution: int,
+        resolution: Optional[int] = None,
         uv_channel: int = 0,
     ) -> "RegionMaskManifest":
-        """Manifest for membership rasterized into an RGBA mask texture."""
+        """Manifest for membership rasterized into an RGBA mask texture.
+
+        *resolution* is retired (removed in 0.18.0) and ignored: the mask
+        image states its own size, so the manifest does not repeat it.
+        """
+        if resolution is not None:
+            # Passed by position (0.16.1 required it there): the decorator
+            # sees -- and drops -- the keyword alone. On removal, make
+            # *uv_channel* keyword-only, so ``channels(groups, mask, 512)``
+            # fails rather than binding 512 to it.
+            Deprecation.warn(
+                "RegionMaskManifest.channels parameter 'resolution'",
+                "nothing -- the value already has no effect",
+                remove_in="0.18.0",
+                reason="The mask image states its own size.",
+                kind="parameter",
+                stacklevel=2,
+                since="2026-10-24",
+            )
         return cls(
             groups=list(groups),
             encoding=ENCODING_CHANNELS,
             mask=os.path.basename(mask),
-            resolution=int(resolution),
             uv_channel=int(uv_channel),
         )
 
@@ -183,7 +223,7 @@ class RegionMaskManifest:
     def to_dict(self) -> dict:
         """Wire form: encoding-irrelevant fields are omitted, not null."""
         data = {
-            "schema": self.schema,
+            "version": self.version,
             "encoding": self.encoding,
             "groups": [g.to_dict() for g in self.groups],
         }
@@ -192,7 +232,6 @@ class RegionMaskManifest:
         elif self.encoding == ENCODING_CHANNELS:
             data["mask"] = self.mask
             data["uv_channel"] = self.uv_channel or 0
-            data["resolution"] = self.resolution
         return data
 
     def to_json(self, indent: Optional[int] = None) -> str:
@@ -200,14 +239,33 @@ class RegionMaskManifest:
 
     @classmethod
     def from_dict(cls, data: dict) -> "RegionMaskManifest":
+        """*data* read as the document of the version a reader reads
+        (:attr:`VERSION`).
+
+        Raises:
+            ValueError: *data* states another version -- under ``version``,
+                or under ``schema`` as a document written before 2026-10-20
+                did -- or none: it is refused naming both, never read as the
+                current one; the cure is a re-export.
+        """
+        if "version" in data:
+            stated = f"v{data['version']}"
+        elif "schema" in data:
+            stated = f"v{data['schema']} (under 'schema')"
+        else:
+            stated = "of no version"
+        if "version" not in data or data["version"] != cls.VERSION:
+            raise ValueError(
+                f"Region mask manifest {stated} is not the v{cls.VERSION} this "
+                "reader reads; re-export it."
+            )
         known = {
-            "schema",
+            "version",
             "encoding",
             "groups",
             "color_set",
             "mask",
             "uv_channel",
-            "resolution",
         }
         return cls(**{k: v for k, v in data.items() if k in known})
 
@@ -224,6 +282,77 @@ class RegionMaskManifest:
     def load(cls, path: str) -> "RegionMaskManifest":
         with open(path, "r", encoding="utf-8") as f:
             return cls.from_json(f.read())
+
+
+_field = SchemaSpec.spec_field
+
+
+@dataclass
+class EmissiveGroupsEntry(SchemaSpec):
+    """One region group: the mask channel it gates and its weight."""
+
+    TYPED = True
+
+    name: str = _field(
+        help="The group's name: the key a consumer binds its weight by.",
+        required=True,
+    )
+    slot: int = _field(
+        help=(
+            "The mask channel the group gates (0-3: R, G, B, A) -- a stable "
+            "contract, never reassigned once given."
+        ),
+        required=True,
+        choices=tuple(range(len(SLOT_CHANNELS))),
+    )
+    default: float = _field(
+        help="The weight a consumer applies when nothing overrides it (1.0 = on).",
+        required=True,
+        default=1.0,
+    )
+    attr: str = _field(
+        help=(
+            "The property whose animation carries the group's keyed weight: "
+            "on the model's root, or a child node of that name whose scale.x "
+            "carries the curve. Absent when the weight is not keyed."
+        ),
+    )
+
+
+@dataclass
+class EmissiveGroupsRecord(SchemaSpec):
+    """The ``emissive_groups`` record's payload: named emissive regions and
+    how a mesh encodes membership in them (:meth:`RegionMaskManifest.to_dict`)."""
+
+    TYPED = True
+
+    version: int = _field(
+        help="The record's schema version (SceneRecords.EMISSIVE_GROUPS.version).",
+        required=True,
+    )
+    encoding: str = _field(
+        help=(
+            "How membership is encoded: 'vertex-color' (a mesh colour set) or "
+            "'channels' (an RGBA mask texture)."
+        ),
+        required=True,
+        choices=(ENCODING_VERTEX_COLOR, ENCODING_CHANNELS),
+    )
+    groups: List[EmissiveGroupsEntry] = _field(
+        help="The groups, each gating one slot's channel.",
+        required=True,
+        nested=[EmissiveGroupsEntry],
+        default_factory=list,
+    )
+    color_set: str = _field(
+        help="The mesh colour set membership rides in; with 'vertex-color' only.",
+    )
+    mask: str = _field(
+        help="The mask texture's file name, no folder; with 'channels' only.",
+    )
+    uv_channel: int = _field(
+        help="The UV set the mask texture is read through; with 'channels' only.",
+    )
 
 
 class RegionGroupRegistry:
@@ -249,7 +378,9 @@ class RegionGroupRegistry:
     """
 
     MAX_SLOTS = len(SLOT_CHANNELS)
-    SCHEMA_VERSION = RegionMaskManifest.SCHEMA_VERSION
+    #: The registry document's own version (the private record's, stored
+    #: as-is): a scene's bookkeeping, apart from the manifest it produces.
+    SCHEMA_VERSION = 1
     DEFAULT_COLOR_SET = "emissiveGroups"
 
     def __init__(self, load, save, *, max_slots: Optional[int] = None, logger=None):
@@ -497,7 +628,6 @@ class RegionGroupRegistry:
             return RegionMaskManifest.channels(
                 groups,
                 mask=registry.get("mask") or "",
-                resolution=registry.get("resolution") or 512,
                 uv_channel=registry.get("uv_channel", 0),
             )
         return RegionMaskManifest.vertex_color(
@@ -718,7 +848,7 @@ class RegionMaskPacker(ptk.LoggingMixin, _RegionMaskPackerInternal):
         arr = self.rasterize()
         Image.fromarray(arr, mode="RGBA").save(mask_path)
         manifest = RegionMaskManifest.channels(
-            self._groups, mask_path, self.resolution, uv_channel=uv_channel
+            self._groups, mask_path, uv_channel=uv_channel
         )
         written = [os.path.basename(mask_path)]
         if write_manifest or manifest_path is not None:

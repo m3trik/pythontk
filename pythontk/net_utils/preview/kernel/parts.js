@@ -101,20 +101,25 @@ function retarget(clip, partRoot) {
   }
 }
 
-// The parts' `animation_web` blocks as one: each clip's index moved past the
-// clips of the parts before it, and the frame rate and the clip to open on
-// taken from the first part that names them. Null when no part has one.
+// The parts' `animation` blocks as one: each clip's index moved past the
+// clips of the parts before it, each shot kept once (the parts of one scene
+// state the same shots), and the frame rate and the clip to open on taken
+// from the first part that names them. Null when no part has one.
 function mergedShots(loaded) {
   let merged = null;
   let offset = 0;
   for (const { gltf } of loaded) {
-    const block = readExtras(gltf, SHOTS.webKey);
+    /** @type {import('./records.js').AnimationBlock} */
+    const block = readExtras(gltf, SHOTS);
     if (block) {
-      if (!merged) merged = { ...block, clips: [] };
+      if (!merged) merged = { ...block, clips: [], shots: [] };
       if (merged.fps === undefined && block.fps !== undefined) merged.fps = block.fps;
       if (!merged.default_clip && block.default_clip) merged.default_clip = block.default_clip;
       for (const entry of block.clips || []) {
         merged.clips.push({ ...entry, animation: entry.animation + offset });
+      }
+      for (const shot of block.shots || []) {
+        if (!merged.shots.some((kept) => kept.clip === shot.clip)) merged.shots.push(shot);
       }
     }
     offset += (gltf.animations || []).length;
@@ -128,12 +133,12 @@ function mergedShots(loaded) {
  * loader's association tables merged, which is all the model's measure and
  * its transport ask of it. One part is passed through untouched.
  *
- * Returns `{gltf, shots}`: `shots` the `animation_web` block to hand the
+ * Returns `{gltf, shots}`: `shots` the `animation` block to hand the
  * transport -- one part's own, or the parts' merged -- null with none.
  */
 export function composite(loaded, root) {
   if (loaded.length === 1) {
-    return { gltf: loaded[0].gltf, shots: readExtras(loaded[0].gltf, SHOTS.webKey) };
+    return { gltf: loaded[0].gltf, shots: readExtras(loaded[0].gltf, SHOTS) };
   }
   const associations = new Map();
   const animations = [];

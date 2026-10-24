@@ -1,6 +1,6 @@
 # !/usr/bin/python
 # coding=utf-8
-"""Articulated rigs: publish the ``articulation_web`` manifest the viewer poses.
+"""Articulated rigs: publish the ``articulation`` manifest the viewer poses.
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
 the other passes through ``cls``.
@@ -19,28 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 class _ArticulationMixin:
-    """Articulated rigs: the ``extras.articulation_web`` manifest.
+    """Articulated rigs: the ``extras.articulation`` block.
 
     A private part of :class:`MeshConvert`; call it through the facade.
     """
 
-    #: ``data_export`` channel the DCC's ``ArticulatedRig`` publishes.
-    ARTICULATION_KEY = SceneRecords.ARTICULATION.key
-    #: Highest ``articulation`` schema this applier reads.
-    ARTICULATION_VERSION = SceneRecords.ARTICULATION.version
-    #: Root-extras key the viewer's packaged ``articulated_rig`` script reads
-    #: -- the record's declared web projection, shaped by ``ArticulationWeb``.
-    ARTICULATION_WEB_KEY = SceneRecords.ARTICULATION.web.key
-    #: Where ``articulation_web`` binds by glTF NODE INDEX -- the paths a pass
-    #: that renumbers nodes (``strip_glb_curve_proxies``) must follow.
-    ARTICULATION_WEB_NODE_FIELDS = (
-        ("rigs", "joints", "node"),
-        ("rigs", "grab", "node"),
-    )
-
     @classmethod
     def apply_glb_articulation(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
-        """Publish ``extras.articulation_web``: the scene's articulated rigs,
+        """Publish ``extras.articulation``: the scene's articulated rigs,
         bound to this file's nodes.
 
         The GLB half of the articulated-rig contract. The DCC's
@@ -77,34 +63,14 @@ class _ArticulationMixin:
             extras = gltf.get("extras")
             if not isinstance(extras, dict):
                 extras = gltf["extras"] = {}
-            payload = cls.data_export_channel(gltf, cls.ARTICULATION_KEY)
-            rigs: List[Dict[str, Any]] = []
-            if isinstance(payload, dict):
-                try:
-                    version = int(payload.get("version", 1))
-                except (TypeError, ValueError):
-                    version = -1
-                if not 0 < version <= cls.ARTICULATION_VERSION:
-                    # Refuse rather than guess: a newer schema may change what
-                    # a field MEANS.
-                    logger.warning(
-                        "articulation v%r is newer than this reader (v%s); "
-                        "articulated rigs not wired.",
-                        payload.get("version"),
-                        cls.ARTICULATION_VERSION,
-                    )
-                else:
-                    rigs = cls._bind_articulated_rigs(gltf, payload)
+            payload = cls._current_record(gltf, SceneRecords.ARTICULATION)
+            rigs = cls._bind_articulated_rigs(gltf, payload) if payload else []
             if rigs:
-                manifest = {
-                    "version": SceneRecords.ARTICULATION.web.version,
-                    "metadata_version": version,
-                    "rigs": rigs,
-                }
-                extras[cls.ARTICULATION_WEB_KEY] = manifest
                 edit.dirty = True
-                return manifest
-            if extras.pop(cls.ARTICULATION_WEB_KEY, None) is not None:
+                return SceneRecords.put_glb_block(
+                    gltf, SceneRecords.ARTICULATION, {"rigs": rigs}
+                )
+            if extras.pop(SceneRecords.ARTICULATION.key, None) is not None:
                 edit.dirty = True
             return None
 
@@ -165,6 +131,8 @@ class _ArticulationMixin:
                     name,
                 )
                 continue
+            # Bound by index, the name the node already carries left out.
+            names = [joint.pop("name", None) for joint in joints]
             for joint, index in zip(joints, indices):
                 joint["node"] = index
             grab = []
@@ -186,10 +154,10 @@ class _ArticulationMixin:
                         name,
                         entry.get("node"),
                         "ambiguous" if candidates else "not found",
-                        joints[joint_index].get("name"),
+                        names[joint_index],
                     )
                     continue
-                grab.append(dict(entry, node=candidates[0], name=entry.get("node")))
+                grab.append({"node": candidates[0], "joint": joint_index})
             bound.append(dict(rig, joints=joints, grab=grab))
         if out_of_scope:
             logger.info(

@@ -11,6 +11,7 @@ has: parts meeting at knobs that stand off the arm's plane, one tube running
 inside another, a small sphere under the head.
 """
 
+import copy
 import json
 import math
 import os
@@ -110,6 +111,35 @@ class TestModelForward(unittest.TestCase):
             ArticulationModel(_chain(_joint("a", None, (0, 0, 0), rz=(10, -10))))
         with self.assertRaises(ValueError):
             ArticulationModel(_chain(_joint("a", None, (0, 0, 0), order="xxz")))
+
+    def test_a_rig_its_shape_refuses_is_refused_naming_its_problems(self):
+        """The model builds only from a rig its declared shape admits
+        (``ArticulationRig``), as unitytk's C# model does: a reference and a
+        runtime that defaulted what the other refused would pose one rig two
+        ways. A channel with no ``weight``, a joint with no ``parent``, a grab
+        that is no object -- each is a ValueError naming its problem, never
+        defaulted. A rig handed without its grab -- the hosts' IK solvers build
+        from the joints alone -- grabs nothing. Added: 2026-10-20"""
+        rig = _chain(
+            _joint("a", None, (0, 0, 0), rz=(None, None)), _joint("b", 0, (10, 0, 0))
+        )
+        self.assertEqual(len(ArticulationModel(rig).channels), 1)
+        cases = {
+            "missing required key 'weight'": lambda r: r["joints"][0]["channels"][
+                0
+            ].pop("weight"),
+            "missing required key 'parent'": lambda r: r["joints"][1].pop("parent"),
+            "expected a mapping, got str": lambda r: r.update(grab=["head"]),
+        }
+        for problem, cut in cases.items():
+            with self.subTest(problem=problem):
+                broken = copy.deepcopy(rig)
+                cut(broken)
+                with self.assertRaises(ValueError) as raised:
+                    ArticulationModel(broken)
+                self.assertIn(problem, str(raised.exception))
+        joints_alone = {"name": rig["name"], "joints": rig["joints"]}
+        self.assertEqual(len(ArticulationModel(joints_alone).channels), 1)
 
     def test_from_record_finds_a_rig_by_name(self):
         payload = {
@@ -557,7 +587,24 @@ class TestRecordShape(unittest.TestCase):
 
     def test_the_shape_is_the_records_declared_one(self):
         self.assertIs(ptk.SceneRecords.shape("articulation"), ptk.ArticulationRecord)
-        self.assertIs(ptk.SceneRecords.web_shape("articulation"), ptk.ArticulationWeb)
+        self.assertIs(ptk.SceneRecords.glb_shape("articulation"), ptk.ArticulationBlock)
+
+    def test_the_retired_web_shapes_are_their_blocks(self):
+        """``ArticulationWeb`` and its parts (retired 2026-10-20 for the
+        ``ArticulationBlock`` family, removed in 0.18.0) warn, and serve as
+        the block shapes they were renamed to."""
+        from pythontk.geo_utils.articulation import record
+
+        for old, new in (
+            ("ArticulationWeb", "ArticulationBlock"),
+            ("ArticulationWebRig", "ArticulationBlockRig"),
+            ("ArticulationWebJoint", "ArticulationBlockJoint"),
+            ("ArticulationWebGrab", "ArticulationBlockGrab"),
+        ):
+            with self.subTest(name=old):
+                with self.assertWarns(DeprecationWarning):
+                    shape = getattr(record, old)()
+                self.assertIsInstance(shape, getattr(record, new))
 
     def test_a_drifted_payload_is_named_where_it_drifted(self):
         rig = json.loads(json.dumps(ArticulationConformance.rigs()["arm"]))

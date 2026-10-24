@@ -8,8 +8,8 @@ out why the same asset renders differently in their own engine. Nothing in it
 is a re-description: it is the published GLB's own JSON chunk, verbatim (but
 for an embedded ``data:`` payload, cut to its size), and
 the lighting recipe the asset carries for exactly that reader
-(``extras.scene_sidecar.handoff.rendering``) -- or, for an asset that carries
-none, :attr:`MeshConvert.RENDERING_POLICY`, the same fallback the viewer
+(``extras.handoff.rendering``) -- or, for an asset that carries
+none, :attr:`HandoffRecord.RENDERING_POLICY`, the same fallback the viewer
 renders it with. A guest gets it too: it is the JSON of the asset a guest can
 already download, read for them.
 
@@ -218,29 +218,23 @@ class _SceneDescriptionMixin:
 
     @staticmethod
     def _scene_rendering(gltf: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
-        """The recipe the viewer lights *gltf* with, and where it came from.
+        """The recipe the viewer lights *gltf* with, and where it came from:
+        the asset's handoff (``extras.handoff``, the current schema), else
+        the policy."""
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
 
-        The asset's ``scene_sidecar`` is looked for where the viewer's
-        ``readExtras`` looks: the first scene's ``extras``, then the root's,
-        either holding an object or a JSON string of one.
-        """
-        scenes = gltf.get("scenes")
-        first = scenes[0] if isinstance(scenes, list) and scenes else None
-        for owner in (first, gltf):
-            holder = owner.get("extras") if isinstance(owner, dict) else None
-            raw = holder.get("scene_sidecar") if isinstance(holder, dict) else None
-            if isinstance(raw, str):
-                try:
-                    raw = json.loads(raw)
-                except ValueError:
-                    continue
-            handoff = raw.get("handoff") if isinstance(raw, dict) else None
-            rendering = handoff.get("rendering") if isinstance(handoff, dict) else None
+        extras = gltf.get("extras")
+        handoff = extras.get(HandoffRecord.KEY) if isinstance(extras, dict) else None
+        if (
+            isinstance(handoff, dict)
+            and handoff.get("version") == HandoffRecord.VERSION
+        ):
+            rendering = handoff.get("rendering")
             if isinstance(rendering, dict):
                 return rendering, "asset"
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-
-        return MeshConvert.rendering_policy(), "viewer default"
+        return HandoffRecord.rendering_policy(), "viewer default"
 
     def _scene_viewer(self) -> Optional[Dict[str, Any]]:
         """The served page and the three.js release it imports -- read off

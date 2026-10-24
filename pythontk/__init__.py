@@ -3,13 +3,15 @@
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.16.1"
+__version__ = "0.17.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
 
 DEFAULT_INCLUDE = {
     "audio_utils._audio_utils": "AudioUtils",
+    # The ``audio`` record's declared shape.
+    "audio_utils.audio_record": ["AudioRecord"],
     "img_utils._img_utils": "*",
     "img_utils.mask_generator": ["MaskGenerator"],
     "img_utils.ktx2_encoder": ["Ktx2Encoder"],
@@ -45,6 +47,8 @@ DEFAULT_INCLUDE = {
     # The fade/highlight channel table (``GlbFades.CHANNELS``) the DCC render
     # effects join their own channel rows against.
     "file_utils.mesh_convert.glb.fades": ["GlbFades"],
+    # The ``render_effects`` record's declared shape.
+    "file_utils.mesh_convert.render_effects_record": ["RenderEffectsRecord"],
     "file_utils.uv_unwrap": "UvUnwrap",
     # Zero-dep USD primitives: sniffing, spec-compliant USDZ packaging, and a
     # usda mesh author + OBJ converters (the no-DCC publish path). DCC-native
@@ -63,6 +67,7 @@ DEFAULT_INCLUDE = {
     # (resolve, search order, claims, relocation) -- the lightmap markers of
     # both DCC bakers today; any record that names files that way.
     "file_utils.file_dependencies": ["FileDependencies"],
+    "file_utils.pending_files": ["PendingFiles"],
     # The tile / frame token vocabulary of a path (<UDIM>, <uvtile>, <u>_<v>,
     # <f>): detect, collapse to a representative, expand to the set.
     "file_utils.tiled_path": ["TiledPath"],
@@ -114,9 +119,13 @@ DEFAULT_INCLUDE = {
     "geo_utils.articulation.conformance": "ArticulationConformance",
     # The plan a DCC's ArticulatedRig builds from (mayatk + blendertk share it).
     "geo_utils.articulation.plan": "ArticulationPlan",
-    # The ``articulation`` record's payload and its ``articulation_web``
-    # manifest, declared once (SceneRecords.ARTICULATION names them).
-    "geo_utils.articulation.record": ["ArticulationRecord", "ArticulationWeb"],
+    # The ``articulation`` record's payload and the GLB block it binds to,
+    # declared once (SceneRecords.ARTICULATION names them).
+    "geo_utils.articulation.record": [
+        "ArticulationRecord",
+        "ArticulationBlock",
+        "ArticulationWeb",
+    ],
     "img_utils.shadow_atlas": "ShadowAtlas",
     "img_utils.rect_packer": ["RectPacker", "RectPackResult"],
     "geo_utils.uv.pack": ["UvPack", "PackIslandsResult"],
@@ -163,9 +172,29 @@ DEFAULT_INCLUDE = {
         "Record",
         "SceneRecords",
         "Merge",
+        "GlbBlock",
         "WebProjection",
     ],
     "core_utils.engines.scene_export.scene_store": ["SceneStoreBase"],
+    # How a deliverable states itself, for every carrier: the handoff block's
+    # instructions, the approved scene's parts, the lighting it was approved
+    # under -- one declaration each carrier's writer builds from.
+    "core_utils.engines.scene_export.handoff_record": [
+        "HandoffRecord",
+        "HandoffCarrier",
+        "HandoffBlock",
+    ],
+    # The ``animation`` record's declared shape and its GLB block.
+    "core_utils.engines.shots.animation_record": ["AnimationRecord", "AnimationBlock"],
+    # The ``shadows`` record's declared shape and its GLB block.
+    "geo_utils.shadow_record": ["ShadowRecord", "ShadowBlock"],
+    # The lightmap record's model: what both hosts' bakers publish and every
+    # reader reads, in one shape.
+    "core_utils.engines.scene_export.lightmap_record": ["LightmapRecord", "LightmapsBlock"],
+    # The materials record's model: a material in its shading family's own
+    # terms, stated as glTF states it -- what each host's producer and the
+    # FBX reader of a record-less file share.
+    "core_utils.engines.scene_export.material_record": ["MaterialFamilies"],
     "core_utils.engines.scene_export.export_snapshot": [
         "ExportContext",
         "ExportSnapshot",
@@ -353,6 +382,7 @@ DEFAULT_INCLUDE = {
         "RegionGroupRegistry",
         "RegionMaskManifest",
         "RegionMaskPacker",
+        "EmissiveGroupsRecord",
     ],
     "core_utils.engines.textures.mat_report": ["MatReport"],
     "core_utils._core_utils": "*",

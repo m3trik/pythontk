@@ -165,7 +165,11 @@ class _ImgChannelInternal:
                 # Duplicate R into G/B if only R is used
                 band = r_img
             else:
-                band = cls.create_image("L", size, color=fill_values.get(ch, 0))
+                # A fill is the value the channel stores, never inverted: an
+                # absent smoothness stays matte whichever way the map it
+                # stands for would have been read.
+                bands.append(cls.create_image("L", size, color=fill_values.get(ch, 0)))
+                continue
 
             if ch in invert_channels:
                 band = ImageOps.invert(band)

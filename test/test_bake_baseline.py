@@ -429,6 +429,18 @@ class TestAssess(unittest.TestCase):
         report = BB.assess(first_bake(), room(), missing={"|grp|C"})
         self.assertEqual(report.stale, {"|grp|C": (R.MISSING_MAP,)})
 
+    def test_an_untracked_missing_map_is_stale(self):
+        """Untracked is "only the artist knows whether it matches the scene";
+        a map on disk nowhere matches nothing. Flagged only for a tracked
+        object, a production room with no baseline listed its missing map as
+        "Fix All bakes it again", and Fix All left it. Added: 2026-10-23"""
+        legacy = room(L=part(state((16.0, 0.0, 0.0)), so=(1, 1, 0, 0)))
+        report = BB.assess(first_bake(), legacy, missing={"|grp|L"})
+        self.assertEqual(report.stale, {"|grp|L": (R.MISSING_MAP,)})
+        self.assertEqual(report.targets, ("|grp|L",))
+        report = BB.assess(None, room(), missing={"|grp|C"})
+        self.assertEqual(report.targets, ("|grp|C",))
+
     def test_a_hidden_object_cannot_bake_but_its_neighbour_rebakes(self):
         report = BB.assess(
             first_bake(), room(B=part(state((1.5, 0.0, 0.0), rendered=False)))
@@ -444,6 +456,20 @@ class TestAssess(unittest.TestCase):
         )
         self.assertEqual(report.untracked, ("|grp|L",))
         self.assertEqual(report.targets, ())
+
+    def test_a_commit_of_others_leaves_an_untracked_map_untracked(self):
+        """A commit records every participant, and it took an untracked
+        marked object in as tracked, its map vouched for by a bake of
+        something else: tracking two maps in production turned every other
+        untracked row "up to date". Its arrival is recorded, its map stays
+        untracked until a commit bakes (or tracks) it. Added: 2026-10-23"""
+        scene = room(L=part(state((16.0, 0.0, 0.0)), so=(1, 1, 0, 0)))
+        once = BB.advance(first_bake(), scene, baked={"|grp|A": {}})
+        self.assertEqual(BB.rematch(once, scene)[2], ["|grp|L"])
+        report = BB.assess(once, scene)
+        self.assertEqual((report.untracked, report.targets), (("|grp|L",), ()))
+        tracked = BB.advance(once, scene, baked={"|grp|L": {}})
+        self.assertEqual(BB.rematch(tracked, scene)[2], [])
 
     def test_with_no_baseline_nothing_is_stale(self):
         report = BB.assess(None, room())
@@ -612,6 +638,267 @@ class TestStaleReport(unittest.TestCase):
             targets=("|grp|C",), stale={"|grp|C": (R.LIGHTING,)}, lighting=("|lampC",)
         )
         self.assertIn("lighting changed (lampC) -- 1 baked object.", bare.summary())
+
+    def test_the_summary_counts_what_a_repack_drags_in_and_what_is_out_of_the_bake(
+        self,
+    ):
+        """A re-pack re-bakes its atlas's every member: the footer said "2 to
+        re-bake" for a bake of 97 (production PLAYGROUND_wStands)."""
+        report = StaleReport(
+            targets=("|A",),
+            stale={"|A": (R.MOVED,)},
+            repack={"Room_Lightmap.exr": "A: its cell no longer fits"},
+            joining=("|B", "|C"),
+            forked={"Desk_Lightmap.exr": "scenes/source.ma"},
+            out_of_bake=("|STAND",),
+        )
+        self.assertEqual(
+            report.summary(),
+            "1 to re-bake: 1 changed; 1 atlas re-packed whole (+2 more objects); "
+            "1 atlas copied from another scene first; "
+            "1 visible mesh out of the bake.",
+        )
+        lines = report.lines()
+        self.assertIn("B: re-bakes with its atlas, which re-packs whole", lines)
+        self.assertIn(
+            "Desk_Lightmap.exr: copied first -- written by scenes/source.ma", lines
+        )
+        self.assertIn(
+            "STAND: visible, never baked and not excluded -- out of every map's "
+            "lighting",
+            lines,
+        )
+        self.assertEqual(
+            StaleReport(out_of_bake=("|STAND",)).summary(),
+            "Nothing to re-bake; 1 visible mesh out of the bake.",
+        )
+
+
+class TestRequestedReport(unittest.TestCase):
+    def test_targets_asked_for_are_neither_changed_nor_neighbours(self):
+        """A Re-bake Selected's dry run names its targets with no reason:
+        production PLAYGROUND.ma read "96 to re-bake: 96 neighbours"."""
+        report = StaleReport(targets=("|A", "|B"))
+        self.assertEqual(report.summary(), "2 to re-bake: 2 requested.")
+        self.assertEqual(report.lines(), ["A: requested", "B: requested"])
+
+
+class TestStaleReportDoc(unittest.TestCase):
+    """:meth:`StaleReport.doc` -- the Bake State breakdown: one row per map,
+    what re-bakes and why, and what is out of the bake."""
+
+    def setUp(self):
+        self.report = StaleReport(
+            targets=("|grp|A",),
+            stale={"|grp|A": (R.MOVED,)},
+            in_place=("|grp|A",),
+            repack={"Desk_Lightmap.exr": "it sits in another folder"},
+            joining=("|grp|D",),
+            out_of_bake=("|STAND",),
+        )
+        self.maps = [
+            {
+                "map": "Room_Lightmap.exr",
+                "path": "C:/proj/sourceimages/lightmaps/Room_Lightmap.exr",
+                "folder": "sourceimages/lightmaps",
+                "objects": ["|grp|A", "|grp|B"],
+                "writer": None,
+                "size": (2048, 2048),
+            },
+            {
+                "map": "Desk_Lightmap.exr",
+                "path": "C:/proj/sourceimages/Desk_Lightmap.exr",
+                "folder": "sourceimages",
+                "objects": ["|grp|D"],
+                "writer": "scenes/source.ma",
+                "size": (1024, 1024),
+            },
+            {
+                "map": "Lost_Lightmap.exr",
+                "path": None,
+                "folder": "sourceimages/lightmaps",
+                "objects": ["|grp|E"],
+                "writer": None,
+                "size": None,
+            },
+        ]
+
+    def test_each_map_is_a_row_with_its_state(self):
+        text = self.report.doc(self.maps).to_text()
+        self.assertIn("Lightmap Bake State", text)
+        self.assertIn(self.report.summary(), text)
+        for expected in (
+            "Room_Lightmap.exr",
+            "2048 x 2048",
+            "1 changed",
+            "group changed",
+            "scenes/source.ma",
+            "missing",
+            # What a state means and how to fix it, as the panel's tooltip
+            # says it: the re-pack's reason rides here, not in the state.
+            "it sits in another folder",
+            "Re-Bake",
+        ):
+            self.assertIn(expected, text)
+
+    def test_its_links_select_and_open(self):
+        html = self.report.doc(self.maps).to_html()
+        # The map's readers in one link; its folder opens.
+        self.assertIn("action://select?node=%7Cgrp%7CA&amp;node=%7Cgrp%7CB", html)
+        self.assertIn("action://open?path=C%3A%2Fproj%2Fsourceimages%2Flightmaps", html)
+        # Each object to re-bake, and each one out of the bake, selects itself.
+        self.assertIn("action://select?node=%7CSTAND", html)
+
+    def test_what_rebakes_says_why_and_how(self):
+        text = self.report.doc(self.maps).to_text()
+        self.assertIn("moved", text)
+        self.assertIn("in place", text)
+        self.assertIn("re-bakes with its atlas, which re-packs whole", text)
+
+    def test_a_map_waiting_for_the_save_shows_its_folder_and_why(self):
+        """Production: the Bake State listed two maps in a temp folder outside
+        the project, unexplained. A map written since the last save shows the
+        folder it reaches at the save, marked in italics, and says why. Added:
+        2026-10-23"""
+        self.maps[0] = dict(
+            self.maps[0],
+            path="C:/Temp/ptk/pending_files/pending_files_1-2/Room_Lightmap.exr",
+            saves_to="C:/proj/sourceimages/lightmaps/Room_Lightmap.exr",
+        )
+        doc = self.report.doc(self.maps)
+        html, text = doc.to_html(), doc.to_text()
+        self.assertIn("action://open?path=C%3A%2Fproj%2Fsourceimages%2Flightmaps", html)
+        self.assertNotIn("action://open?path=C%3A%2FTemp", html, "never the temp folder")
+        self.assertIn("font-style:italic", html)
+        self.assertIn(f"1 map {StaleReport.ON_SAVE}", text)
+        rows = {r["map"]: r for r in self.report.map_rows(self.maps)}
+        self.assertIn(StaleReport.UNSAVED, rows["Room_Lightmap.exr"]["hint"])
+        self.assertNotIn(StaleReport.UNSAVED, rows["Desk_Lightmap.exr"]["hint"])
+
+    def test_nothing_baked_says_so(self):
+        text = StaleReport().doc([]).to_text()
+        self.assertIn("Nothing in this scene is baked yet.", text)
+
+    def test_map_rows_carry_each_maps_state_for_a_table(self):
+        """The rows a panel's table shows read the state the breakdown does.
+        A state names the map's condition now, never what a re-bake will do
+        to it ("re-packs whole" read as an action nothing offered); the hint
+        says why and which button remedies it. Changed: 2026-10-22"""
+        rows = {row["map"]: row for row in self.report.map_rows(self.maps)}
+        self.assertEqual(set(rows), {m["map"] for m in self.maps})
+        room = rows["Room_Lightmap.exr"]
+        self.assertEqual((room["state"], room["level"], room["stale"]), ("1 changed", "warn", 1))
+        self.assertIn("Re-Bake", room["hint"])
+        self.assertIn("own cell", room["hint"], "written in place")
+        self.assertEqual(rows["Room_Lightmap.exr"]["objects"], ["|grp|A", "|grp|B"])
+        desk = rows["Desk_Lightmap.exr"]
+        self.assertEqual((desk["state"], desk["level"]), ("group changed", "warn"))
+        self.assertIn("it sits in another folder", desk["hint"])
+        self.assertIn("Re-Bake", desk["hint"])
+        lost = rows["Lost_Lightmap.exr"]
+        self.assertEqual((lost["state"], lost["level"]), ("missing", "error"))
+        self.assertIn("sourceimages/lightmaps", lost["hint"])
+        self.assertIn("Re-Bake", lost["hint"])
+        # Its every reader hidden or excluded: no re-bake renders it, so Fix
+        # All reverts it (fix_plan). A production room's missing maps sat on
+        # hidden props brought in from other projects, their rows promising
+        # "Fix All bakes it again", and Fix All left them. Added: 2026-10-23
+        blocked = StaleReport(unbakeable=("|grp|C",)).map_rows(
+            [{"map": "Lost_Lightmap.exr", "objects": ["|grp|C"], "path": None}]
+        )[0]
+        self.assertEqual(blocked["state"], "missing")
+        self.assertNotIn("bakes it again", blocked["hint"])
+        for words in ("hidden or excluded", "Fix All", "Revert"):
+            self.assertIn(words, blocked["hint"])
+        fresh =StaleReport().map_rows(self.maps[:1])[0]
+        self.assertEqual((fresh["state"], fresh["level"]), ("up to date", "ok"))
+        self.assertTrue(fresh["hint"])
+        # A row with no readers and no probe flag is not a map the scene reads.
+        self.assertEqual(StaleReport().map_rows([{"map": "x.exr", "objects": []}]), [])
+
+    def test_a_split_untracked_or_copied_map_says_so_and_how_to_fix_it(self):
+        """The remaining conditions, each with its remedy. A split names its
+        materials -- duplicates still in the scene are merged by the fix, one
+        material has nothing to merge -- and is no re-bake target: Combine
+        mends it with no render. Changed: 2026-10-23 (it said the duplicates
+        were "merged since" whether or not they were, and a split re-baked)."""
+        room = self.maps[0]
+        files = ("Room_Lightmap.exr", "Room_Lightmap_1.exr")
+        dup = StaleReport(
+            split={"Room_Lightmap.exr": files},
+            split_materials={"Room_Lightmap.exr": ("Room", "Room1")},
+        ).map_rows([room])[0]
+        self.assertEqual((dup["state"], dup["level"], dup["stale"]), ("split", "warn", 0))
+        for words in ("Room_Lightmap_1.exr", "Room, Room1", "Combine", "merges"):
+            self.assertIn(words, dup["hint"])
+        one = StaleReport(
+            split={"Room_Lightmap.exr": files},
+            split_materials={"Room_Lightmap.exr": ("Room",)},
+        ).map_rows([room])[0]
+        self.assertIn("one material (Room)", one["hint"])
+        self.assertNotIn("merges", one["hint"])
+        untracked = StaleReport(untracked=("|grp|B",)).map_rows([room])[0]
+        self.assertEqual((untracked["state"], untracked["level"]), ("untracked", "info"))
+        self.assertIn("Start Tracking", untracked["hint"])
+        self.assertIn("Re-Bake", untracked["hint"])
+        copied = StaleReport(
+            targets=("|grp|A",),
+            stale={"|grp|A": (R.MOVED,)},
+            in_place=("|grp|A",),
+            forked={"Room_Lightmap.exr": "scenes/source.ma"},
+        ).map_rows([room])[0]
+        self.assertEqual(copied["state"], "1 changed")
+        self.assertIn("scenes/source.ma", copied["hint"])
+        self.assertIn("copy", copied["hint"])
+
+    def test_tally_counts_the_rows_states_worst_first(self):
+        """The footer's line: short, worst first, every changed state one
+        count. Added: 2026-10-23"""
+        rows = [{"state": s} for s in ("up to date", "untracked", "2 changed",
+                                       "split", "group changed", "split")]
+        self.assertEqual(
+            StaleReport.tally(rows), "2 split, 2 changed, 1 untracked, 1 up to date"
+        )
+
+    def test_fix_all_leaves_no_row_needing_a_fix(self):
+        """Fix All's plan: a split no re-bake mends combines, the targets
+        re-bake, a missing map no re-bake reaches comes off its hidden reader,
+        and the untracked rest is tracked as it stands. It left untracked and
+        missing rows in production: "Fix All is still not fixing all".
+        Added: 2026-10-23"""
+        rows = [
+            {"map": "S.exr", "state": "split", "objects": ["|s"]},
+            {"map": "J.exr", "state": "split", "objects": ["|m", "|j"]},
+            {"map": "U.exr", "state": "untracked", "objects": ["|u"]},
+            {"map": "H.exr", "state": "missing", "objects": ["|h"]},
+            {"map": "M.exr", "state": "missing", "objects": ["|m"]},
+        ]
+        report = StaleReport(
+            targets=("|m",),
+            unbakeable=("|h",),
+            untracked=("|s", "|u", "|h", "|m"),
+        )
+        self.assertEqual(
+            report.fix_plan(rows),
+            {
+                "combine": ["S.exr"],  # J.exr re-packs with |m's re-bake
+                "rebake": ["|m"],
+                "revert": ["|h"],
+                "track": ["|s", "|u"],
+            },
+        )
+        nothing = StaleReport().fix_plan([{"map": "A.exr", "state": "up to date", "objects": ["|a"]}])
+        self.assertFalse(any(nothing.values()))
+        self.assertEqual(StaleReport.tally([]), "No maps.")
+
+    def test_can_bake_is_the_rule_assess_leaves_out_unbakeable_by(self):
+        """A DCC naming targets of its own asks the same rule ``assess``
+        does. Added: 2026-10-22"""
+        shown = {"role": BB.Role.BAKED, "state": {"rendered": True}}
+        self.assertTrue(BB.can_bake(shown))
+        self.assertFalse(BB.can_bake(dict(shown, state={"rendered": False})))
+        self.assertFalse(BB.can_bake(dict(shown, role=BB.Role.EXCLUDED)))
+        self.assertTrue(BB.can_bake(dict(shown, role=BB.Role.ISOLATED)))
 
 
 if __name__ == "__main__":

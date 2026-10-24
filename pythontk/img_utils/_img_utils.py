@@ -3071,12 +3071,15 @@ class ImgUtils(
             channel_files (dict): {"R": image, "G": image, "B": image, "A": image} (values can be None).
             channels (list): Channel order, default ["R","G","B","A"].
             out_mode (str): "RGB" or "RGBA". If None, uses "RGBA" if "A" present, else "RGB".
-            fill_values (dict): Per-channel fallback, default: 0 for RGB, 255 for A.
+            fill_values (dict): The value each channel with no image stores,
+                default 0 for RGB, 255 for A -- a map type's absent value is
+                ``MapRegistry.absent_fills``.
             output_path (str): If given, saves image and returns path.
             output_format (str): Save format, e.g., "png", "tga".
             grayscale_to_rgb (bool): If True and only one RGB channel is assigned,
                                     its image will be duplicated across R, G, B.
-            invert_channels (list): List of channels to invert (e.g. ["A"]).
+            invert_channels (list): Channels whose image is inverted (e.g.
+                ["A"]); a fill is stored as given, never inverted.
             **kwargs: Additional arguments passed to PIL.Image.save (e.g., optimize=True).
 
         Returns:
@@ -3326,7 +3329,7 @@ class ImgUtils(
         pools flat (58-68 screen codes off); the peak brings every highlight
         within 2 codes and the PNGs come out 1-11% smaller. A texel still past
         full scale is scaled down whole, so its hue survives. The scalar is
-        returned so a viewer multiplies it back (the ``lightmap_web``
+        returned so a viewer multiplies it back (the ``lightmaps``
         manifest's per-material ``intensity``: decoded sRGB times the scalar).
 
         The 8-bit step is stochastic rounding (:meth:`quantize_8bit`): unbiased,

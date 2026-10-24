@@ -19,7 +19,8 @@
   through the manifest and api.js imports it and hands it `viewer` -- the one
   seam the page grows through. A feature reads the deliverable's manifests by
   the keys the scene records declare (records.js, generated from pythontk's
-  SceneRecords) and may build on the pure math every port shares (math.js).
+  SceneRecords), through the extras walk the page reads its own with
+  (extras.js), and may build on the pure math every port shares (math.js).
 */
 
 import { initXr } from './xr.js';

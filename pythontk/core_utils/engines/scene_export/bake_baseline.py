@@ -42,9 +42,11 @@ Exclude / Isolate roles -- and the files on disk; nothing here touches either.
 import hashlib
 import json
 import math
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -56,6 +58,9 @@ from typing import (
     Tuple,
     Union,
 )
+
+if TYPE_CHECKING:  # the return of StaleReport.doc, imported where it is built
+    from pythontk.str_utils.report_doc import ReportDoc
 
 # Eager on purpose: ``BakeBaseline.FORMAT`` is a class attribute, read at
 # definition time.  ``scene_records`` is stdlib-only, so this costs nothing
@@ -470,7 +475,8 @@ class BakeBaseline:
         bake. An isolated participant's changes reach no neighbour.
 
         With no record there is nothing to diff: every marked object is
-        untracked, nothing is stale.
+        untracked, and only a missing map is stale -- as an untracked object's
+        is under any record.
 
         Parameters:
             record: The stored record (text, payload or :meth:`decode` form).
@@ -554,8 +560,10 @@ class BakeBaseline:
             elif in_room:
                 then[k] = ([st.get("bbox")], e["placed_at"])
             own[k] = list(e["stale"] or []) + reasons
-            if k in missing:
-                own[k].append(R.MISSING_MAP)
+        # Tracked or not: an untracked map is one only the artist can vouch
+        # for, and one on disk nowhere matches nothing.
+        for k in missing.intersection(current):
+            own[k].append(R.MISSING_MAP)
         for k, e in objects.items():
             if k in current or not cls._in_room(e["role"], e["state"]):
                 continue
@@ -617,10 +625,7 @@ class BakeBaseline:
                     own[k].append(R.LIGHTING)
                     lit.update(verdicts[d])
 
-        bakes = {
-            k: p["role"] != cls.Role.EXCLUDED and bool(p["state"].get("rendered", True))
-            for k, p in current.items()
-        }
+        bakes = {k: cls.can_bake(p) for k, p in current.items()}
         return {
             "record": rec,
             "objects": objects,
@@ -658,7 +663,9 @@ class BakeBaseline:
           when a change reaches it now (the old place it was near is about to
           be forgotten); its ``placed_at`` steps when the change reaches
           neighbours.  A newcomer is recorded at the new serial -- a
-          duplicate of a tracked object kept stale.
+          duplicate of a tracked object kept stale, a marked one nothing
+          baked kept ``untracked`` (its map is not vouched for by a bake of
+          something else).
         - A participant that is gone is marked ``removed_at`` and pruned once
           no object within its reach still holds a map baked before it left.
 
@@ -698,6 +705,11 @@ class BakeBaseline:
                 entry.update(role=p["role"], placed_at=serial, map=marker_map)
                 if k in survey["duplicates"]:
                     entry["stale"] = [R.DUPLICATE]
+                elif marker_map is not None and k not in baked:
+                    # Its arrival is recorded (it reaches its neighbours
+                    # once), its map never vouched for: untracked until a
+                    # bake of it, or a track, records it as baked.
+                    entry["untracked"] = True
             else:
                 entry = dict(e, state=p["state"], role=p["role"])
                 if k in survey["now"]:
@@ -720,6 +732,7 @@ class BakeBaseline:
                     extent=info.get("extent"),
                     size=info.get("size"),
                     packing=info.get("packing"),
+                    untracked=False,
                 )
             out[k] = entry
         for k, e in survey["objects"].items():
@@ -780,7 +793,8 @@ class BakeBaseline:
           and ``scaleOffset`` of a tracked object still present -- it reads
           its source's cell, so its map is wrong.
         - Untracked: any other marked newcomer -- baked before change
-          tracking, or brought in. Reported, never re-baked.
+          tracking, or brought in -- and any marked object a commit recorded
+          without baking it (:meth:`advance`). Reported, never re-baked.
 
         Returns:
             ``(renames, duplicates, untracked)``: ``{old id: new id}`` and two
@@ -819,7 +833,15 @@ class BakeBaseline:
                 duplicates.append(k)
             else:
                 untracked.append(k)
-        return renames, duplicates, untracked
+        # ...and the marked ones a commit recorded unvouched (advance).
+        untracked += [
+            renames.get(k, k)
+            for k, e in live.items()
+            if e["untracked"]
+            and renames.get(k, k) in current
+            and cls._marker_map(current[renames.get(k, k)]) is not None
+        ]
+        return renames, duplicates, sorted(untracked)
 
     # --------------------------------------------------------------- lighting
     @classmethod
@@ -1120,6 +1142,7 @@ class BakeBaseline:
             "extent": cls._floats(entry.get("extent"), 2),
             "size": cls._int(entry.get("size")),
             "packing": cls._text(packing) if packing else None,
+            "untracked": bool(entry.get("untracked")),
         }
 
     @classmethod
@@ -1160,6 +1183,15 @@ class BakeBaseline:
         if not name or not isinstance(rect, (list, tuple)):
             return None
         return (name, tuple(float(v) for v in rect))
+
+    @classmethod
+    def can_bake(cls, participant: Mapping) -> bool:
+        """Whether a scene-state *participant* (``{"role", "state"}``) can bake
+        now: rendered, and not in the Exclude set -- what :meth:`assess`
+        leaves out of the targets as ``unbakeable``."""
+        return participant["role"] != cls.Role.EXCLUDED and bool(
+            participant["state"].get("rendered", True)
+        )
 
     @classmethod
     def _in_room(cls, role: Any, state: Mapping) -> bool:
@@ -1224,6 +1256,20 @@ class StaleReport:
             room when every light lit it.
         in_place: Targets written back into their own atlas cells.
         repack: Atlas file -> why its whole group re-packs.
+        joining: Objects that re-bake only because their atlas re-packs
+            whole (``repack``): neither stale nor a neighbour.
+        forked: Atlas file -> the scene file that wrote it: copied under this
+            scene's own name first, then written in place -- a Save As copy's
+            first update, its source's map left as it was.
+        split: Map file -> every map of its atlas group, when the group reads
+            more than one (a material in two shading groups, a duplicate
+            material, baked apart): one atlas would do. Never a re-bake
+            target by itself -- a DCC combines the maps, no render.
+        split_materials: Map file -> the materials its split group's objects
+            use, sorted: more than one is a duplicate still in the scene.
+        out_of_bake: Visible meshes no bake renders (never baked, not in the
+            Exclude set): out of every map's lighting until they are baked or
+            excluded, so they stale nothing.
         baked: How many baked objects the scene holds (marked and tracked,
             whatever the report is limited to) -- what :meth:`summary` counts
             a lighting change's reach against; 0 when unknown.
@@ -1237,7 +1283,17 @@ class StaleReport:
     lighting: Tuple[str, ...] = ()
     in_place: Tuple[str, ...] = ()
     repack: Mapping[str, str] = field(default_factory=dict)
+    joining: Tuple[str, ...] = ()
+    forked: Mapping[str, str] = field(default_factory=dict)
+    split: Mapping[str, Tuple[str, ...]] = field(default_factory=dict)
+    split_materials: Mapping[str, Tuple[str, ...]] = field(default_factory=dict)
+    out_of_bake: Tuple[str, ...] = ()
     baked: int = 0
+
+    @staticmethod
+    def _count(n: int, noun: str, plural: Optional[str] = None) -> str:
+        """``"1 atlas"`` / ``"2 atlases"``."""
+        return f"{n} {noun if n == 1 else plural or noun + 's'}"
 
     @staticmethod
     def leaf(item: str) -> str:
@@ -1255,7 +1311,11 @@ class StaleReport:
         """
         name = name or self.leaf
         changed = sum(1 for k in self.targets if self.stale.get(k))
-        near = len(self.targets) - changed
+        near = sum(
+            1 for k in self.targets if not self.stale.get(k) and k in self.neighbours
+        )
+        # A target with no reason was asked for (a re-bake of given objects).
+        asked = len(self.targets) - changed - near
         clauses = []
         if self.lighting:
             relit = sum(
@@ -1277,13 +1337,25 @@ class StaleReport:
         if self.in_place:
             clauses.append(f"{len(self.in_place)} written in place")
         if self.repack:
-            n = len(self.repack)
-            clauses.append(f"{n} atlas{'es' if n != 1 else ''} re-packed whole")
+            clause = f"{self._count(len(self.repack), 'atlas', 'atlases')} re-packed whole"
+            if self.joining:
+                clause += f" (+{self._count(len(self.joining), 'more object')})"
+            clauses.append(clause)
+        if self.forked:
+            clauses.append(
+                f"{self._count(len(self.forked), 'atlas', 'atlases')} copied from "
+                "another scene first"
+            )
         if self.unbakeable:
             clauses.append(f"{len(self.unbakeable)} cannot bake")
         if self.untracked:
             clauses.append(
                 f"{len(self.untracked)} untracked (no baseline; left as baked)"
+            )
+        if self.out_of_bake:
+            clauses.append(
+                f"{self._count(len(self.out_of_bake), 'visible mesh', 'visible meshes')}"
+                " out of the bake"
             )
         if not self.targets:
             if not clauses:
@@ -1293,6 +1365,8 @@ class StaleReport:
             counts = [f"{changed} changed"] if changed else []
             if near:
                 counts.append(f"{near} neighbour{'s' if near != 1 else ''}")
+            if asked:
+                counts.append(f"{asked} requested")
             head = f"{len(self.targets)} to re-bake: {', '.join(counts)}"
         return "; ".join([head] + clauses) + "."
 
@@ -1306,7 +1380,7 @@ class StaleReport:
         name = name or self.leaf
         placed = set(self.in_place)
         out = [
-            f"{name(k)}: {self._why(k, name)}" + (" [in place]" if k in placed else "")
+            f"{name(k)}: {self.why(k, name)}" + (" [in place]" if k in placed else "")
             for k in self.targets
         ]
         if self.lighting:
@@ -1314,16 +1388,369 @@ class StaleReport:
         out += [
             f"{atlas}: re-packed whole -- {why}" for atlas, why in self.repack.items()
         ]
+        out += [f"{name(k)}: {self.JOINS}" for k in self.joining]
         out += [
-            f"{name(k)}: cannot bake ({self._why(k, name)}) -- keeps its map"
+            f"{atlas}: copied first -- written by {writer}"
+            for atlas, writer in self.forked.items()
+        ]
+        out += [
+            f"{name(k)}: cannot bake ({self.why(k, name)}) -- keeps its map"
             for k in self.unbakeable
         ]
         out += [
             f"{name(k)}: untracked -- no baseline, not re-baked" for k in self.untracked
         ]
+        out += [f"{name(k)}: {self.OUT_OF_BAKE}" for k in self.out_of_bake]
         return out
 
-    def _why(self, k: str, name: Callable[[str], str]) -> str:
+    #: How :meth:`lines` and :meth:`doc` word a ``joining`` object.
+    JOINS = "re-bakes with its atlas, which re-packs whole"
+    #: ... and an ``out_of_bake`` mesh.
+    OUT_OF_BAKE = "visible, never baked and not excluded -- out of every map's lighting"
+
+    def doc(
+        self,
+        maps: Sequence[Mapping[str, Any]] = (),
+        name: Optional[Callable[[str], str]] = None,
+    ) -> "ReportDoc":
+        """The Bake State breakdown: every map, what re-bakes and why, and
+        what is out of the bake -- a ``ReportDoc`` for a viewer
+        (``to_html``, its ``action://`` links selecting objects and opening
+        folders) or a log (``to_text``).
+
+        Parameters:
+            maps: One row per lightmap the scene reads: ``{"map": file name,
+                "path": the file found, or None (missing), "folder": the folder
+                as recorded, "objects": [reader ids], "writer": the OTHER scene
+                file that wrote it, or None, "size": (w, h) or None}``; a probe
+                row adds ``"probe": True`` (:meth:`map_rows`), and a map written
+                since the scene was last saved ``"saves_to"``: the file it becomes
+                at the save (``PendingFiles``), its row's ``"folder"`` that one's.
+            name: Id -> display name; default :meth:`leaf`.
+        """
+        from pythontk.str_utils.report_doc import ReportDoc as D
+
+        name = name or self.leaf
+        doc = D().heading("Lightmap Bake State", 1).text(self.summary(name))
+        rows = self.map_rows(maps)
+        if not rows:
+            return doc.text("Nothing in this scene is baked yet.")
+
+        map_of: Dict[str, str] = {}
+        table = []
+        for row in rows:
+            file, path = str(row["map"]), row.get("path")
+            readers = list(row.get("objects") or ())
+            for obj in readers:
+                map_of[obj] = file
+            folder = row.get("folder") or "-"
+            size = row.get("size")
+            state = D.span(row["state"], row["level"])
+            saves_to = row.get("saves_to")
+            if saves_to:  # waits in the session: its folder, once saved
+                where = D.join(
+                    [
+                        D.action(folder, "open", path=os.path.dirname(saves_to)),
+                        D.span(self.ON_SAVE, "info", italic=True),
+                    ],
+                    " ",
+                )
+            elif path:
+                where = D.action(folder, "open", path=os.path.dirname(path))
+            else:
+                where = folder
+            table.append(
+                [
+                    D.file(path, file) if path else D.span(file, "error"),
+                    where,
+                    "probe"
+                    if row.get("probe")
+                    else D.action(str(len(readers)), "select", node=readers),
+                    f"{size[0]} x {size[1]}" if size else "-",
+                    D.span(row["writer"], "warn") if row.get("writer") else "this scene",
+                    state,
+                ]
+            )
+        doc.heading("Maps").table(
+            ["Map", "Folder", "Objects", "Size", "Written by", "State"],
+            table,
+            align="llrrll",
+        )
+        waiting = sum(1 for row in rows if row.get("saves_to"))
+        if waiting:
+            doc.text(
+                D.span(
+                    f"{waiting} map{'s' if waiting != 1 else ''} {self.ON_SAVE}: "
+                    + self.UNSAVED,
+                    "info",
+                    italic=True,
+                )
+            )
+        # What each state means and the button that fixes it -- the panel's
+        # tooltip, for every map that is not up to date.
+        attention = [row for row in rows if row["level"] != "ok"]
+        if attention:
+            doc.heading("Needs attention").items(
+                [f"{row['map']} ({row['state']}): {row['hint']}" for row in attention]
+            )
+
+        placed = set(self.in_place)
+        redo = [
+            [
+                D.action(name(k), "select", node=k),
+                map_of.get(k, "-"),
+                self.why(k, name),
+                "in place" if k in placed else "re-pack",
+            ]
+            for k in self.targets
+        ] + [
+            [D.action(name(k), "select", node=k), map_of.get(k, "-"), self.JOINS, "re-pack"]
+            for k in self.joining
+        ]
+        if redo:
+            doc.heading("To re-bake").table(["Object", "Map", "Why", "How"], redo)
+        for title, ids, hint in (
+            (
+                "Cannot bake now",
+                self.unbakeable,
+                "Hidden, or in the Exclude set: each keeps the map it has.",
+            ),
+            (
+                "Untracked",
+                self.untracked,
+                "Baked before change tracking, or brought in: left as baked "
+                "until a bake records them.",
+            ),
+            (
+                "Out of the bake",
+                self.out_of_bake,
+                "Visible, never baked and not excluded: they cast no shadow or "
+                "bounce into any map. Bake them, or add them to the Exclude "
+                "set to have them cast without a map of their own.",
+            ),
+        ):
+            if ids:
+                doc.heading(title).text(hint).items(
+                    [D.action(name(k), "select", node=k) for k in ids]
+                )
+        return doc
+
+    def map_rows(self, maps: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+        """The maps a scene reads, each with its state -- what a panel's
+        table shows and :meth:`doc` lays out, so both read one definition.
+
+        Parameters:
+            maps: As :meth:`doc`'s; a row with no readers and no ``"probe"``
+                flag is left out.
+
+        Returns:
+            A copy of each row, adding ``"state"`` -- the map's condition now,
+            never what a re-bake will do to it -- ``"level"`` (a ``ReportDoc``
+            span class), ``"hint"`` (why, and which action remedies it) and
+            ``"stale"`` (how many of its readers re-bake). The states, first
+            that applies:
+
+            - ``"missing"`` (error): the file is on disk nowhere.
+            - ``"split"`` (warn): its atlas group reads more than one map
+              (:attr:`split`).
+            - ``"N changed"`` (warn): N of its readers changed since the bake.
+            - ``"group changed"`` (warn): none of its readers did, but its
+              atlas is rebuilt for its group (:attr:`repack` says why).
+            - ``"untracked"`` (info): a reader was baked before change
+              tracking, so its changes are not detected.
+            - ``"up to date"`` (ok).
+        """
+        targets = set(self.targets)
+        untracked = set(self.untracked)
+        unbakeable = set(self.unbakeable)
+        repack = {k.lower(): why for k, why in self.repack.items()}
+        forked = {k.lower(): who for k, who in self.forked.items()}
+        split = {k.lower(): files for k, files in self.split.items()}
+        materials = {k.lower(): m for k, m in self.split_materials.items()}
+        rows = []
+        for row in maps:
+            readers = list(row.get("objects") or ())
+            if not (readers or row.get("probe")):
+                continue
+            file = str(row["map"]).lower()
+            stale = sum(1 for obj in readers if obj in targets)
+            state, level, hint = self._map_state(
+                row, len(readers), stale, repack.get(file), forked.get(file),
+                split.get(file), materials.get(file) or (),
+                any(obj in untracked for obj in readers),
+                bool(readers) and all(obj in unbakeable for obj in readers),
+            )
+            if row.get("saves_to"):
+                hint = f"{hint} {self.UNSAVED}"
+            rows.append(
+                {**row, "state": state, "level": level, "hint": hint, "stale": stale}
+            )
+        return rows
+
+    #: The mark :meth:`doc` puts on a map written since the scene was last
+    #: saved (a row's ``"saves_to"``), and what it means -- every hint of one.
+    ON_SAVE = "on save"
+    UNSAVED = (
+        "Written since the scene was last saved, so it waits in a temp folder "
+        "the scene reads it from, and reaches its folder when the scene is "
+        "saved. Not saved, the folder stays as the saved scene left it."
+    )
+
+    #: The states :meth:`tally` counts, in the order it names them.
+    TALLY = ("missing", "split", "changed", "untracked", "up to date")
+
+    @classmethod
+    def tally(cls, rows: Sequence[Mapping[str, Any]]) -> str:
+        """*rows*' (:meth:`map_rows`) states counted, worst first -- a footer's
+        line: ``"1 split, 2 untracked, 1 up to date"``. "N changed" and "group
+        changed" count as changed."""
+        counts: Dict[str, int] = {}
+        for row in rows:
+            state = "changed" if row["state"].endswith("changed") else row["state"]
+            counts[state] = counts.get(state, 0) + 1
+        return ", ".join(f"{counts[s]} {s}" for s in cls.TALLY if s in counts) or "No maps."
+
+    def fix_plan(self, rows: Iterable[Mapping[str, Any]]) -> Dict[str, List[str]]:
+        """What a Fix All does about *rows* (:meth:`map_rows`), so none is left
+        needing a fix -- the one rule the DCC panels confirm, then run.
+
+        Returns:
+            ``{"combine": maps, "rebake": objects, "revert": objects,
+            "track": objects}``:
+
+            - ``combine``: the split maps no re-bake mends -- no render.
+            - ``rebake``: :attr:`targets` -- what changed, a missing map's
+              readers among them.
+            - ``revert``: a missing map's readers no re-bake renders (hidden
+              or excluded, :attr:`unbakeable`): nothing can make their map, so
+              its marker comes off them.
+            - ``track``: the untracked objects nothing above takes, recorded
+              as they stand -- no render; confirming is the artist vouching
+              for their maps.
+        """
+        rows = list(rows)
+        redo = set(self.targets) | set(self.joining)
+        unbakeable = set(self.unbakeable)
+        revert = sorted(
+            {
+                obj
+                for row in rows
+                if row["state"] == "missing"
+                for obj in row.get("objects") or ()
+                if obj in unbakeable
+            }
+        )
+        return {
+            "combine": sorted(
+                row["map"]
+                for row in rows
+                if row["state"] == "split"
+                and not redo.intersection(row.get("objects") or ())
+            ),
+            "rebake": list(self.targets),
+            "revert": revert,
+            "track": sorted(set(self.untracked) - redo - set(revert)),
+        }
+
+    #: How a panel redoes what changed -- the remedy each changed state's hint
+    #: names (the Lightmap Bakers' footer button, then their table menu).
+    REDO = "Fix All, or right-click: Re-Bake,"
+
+    @classmethod
+    def _map_state(
+        cls,
+        row: Mapping[str, Any],
+        readers: int,
+        stale: int,
+        repack: Optional[str],
+        writer: Optional[str],
+        split: Optional[Sequence[str]],
+        materials: Sequence[str],
+        untracked: bool,
+        unbakeable: bool = False,
+    ) -> Tuple[str, str, str]:
+        """``(state, level, hint)`` of one :meth:`map_rows` row; *unbakeable*:
+        every reader is one no re-bake renders (:attr:`unbakeable`)."""
+        every = f"all {readers} objects reading it" if readers != 1 else "its object"
+        if not row.get("path"):
+            where = f"Not on disk (expected in {row.get('folder') or 'its folder'})."
+            if unbakeable:
+                return (
+                    "missing",
+                    "error",
+                    f"{where} {'Its object is' if readers == 1 else every.capitalize() + ' are'} "
+                    "hidden or excluded, so no re-bake renders it. Fix All, or "
+                    "right-click: Revert, takes the lightmap off -- or show it "
+                    "and re-bake, or put the file back.",
+                )
+            return (
+                "missing",
+                "error",
+                f"{where} {cls.REDO} bakes it again -- or put the file back.",
+            )
+        if split:
+            others = ", ".join(f for f in split if f.lower() != str(row["map"]).lower())
+            if len(materials) > 1:
+                why = (
+                    f"Its objects use duplicate materials ({', '.join(materials)}), "
+                    f"baked into {len(split)} maps (this and {others}) where one "
+                    "atlas would do."
+                )
+                fix = "packs the maps into one atlas and merges the duplicates"
+            else:
+                why = (
+                    "Its objects share one material"
+                    + (f" ({materials[0]})" if materials else "")
+                    + f", yet read {len(split)} maps (this and {others}): baked "
+                    "while it was duplicated, or from two shading groups."
+                )
+                fix = "packs the maps into one atlas"
+            return (
+                "split",
+                "warn",
+                f"{why} Each extra map is one more texture to load, and its "
+                f"objects can't batch with the rest. Fix All, or right-click: "
+                f"Combine, {fix} -- no render.",
+            )
+        if stale:
+            hint = f"{stale} of its {readers} objects changed since the bake. {cls.REDO} "
+            if repack:
+                hint += f"rebuilds the atlas with {every} ({repack})."
+            else:
+                hint += "puts them back into their own cells, every other cell kept."
+            if writer:
+                hint += (
+                    f" {writer} wrote this map: this scene gets its own copy first, "
+                    "and that file keeps the original."
+                )
+            return f"{stale} changed", "warn", hint
+        if repack:
+            return (
+                "group changed",
+                "warn",
+                "Nothing in it changed, but its material group's atlas is rebuilt "
+                f"({repack}). {cls.REDO} re-bakes {every}.",
+            )
+        if untracked:
+            return (
+                "untracked",
+                "info",
+                "Baked before change tracking, or brought in from another file: "
+                "changes to its objects go unseen. Fix All, or right-click: Start "
+                "Tracking, records them as they stand, no render -- or Re-Bake if "
+                "they may have changed since this map was baked.",
+            )
+        return "up to date", "ok", "Matches the scene as baked: nothing to do."
+
+    def why(self, k: str, name: Optional[Callable[[str], str]] = None) -> str:
+        """Why object *k* re-bakes, in words: its own changes, else the
+        neighbours whose change reaches it, else ``"requested"``.
+
+        Parameters:
+            k: An object id.
+            name: Id -> display name; default :meth:`leaf`.
+        """
+        name = name or self.leaf
         causes = self.neighbours.get(k)
         parts = [
             BakeBaseline.label(r)
@@ -1332,4 +1759,4 @@ class StaleReport:
         ]
         if causes:
             parts.append("neighbour of " + ", ".join(name(a) for a in causes))
-        return "; ".join(parts)
+        return "; ".join(parts) or "requested"

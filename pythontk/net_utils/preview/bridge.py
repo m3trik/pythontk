@@ -4,9 +4,8 @@
 
 :class:`PreviewBridge` specialises :class:`pythontk.HandoffBridge` for one
 delivery shape -- geometry pushed to a browser -- and owns everything about it
-that is host-independent: the glTF-appropriate export defaults, the scene
-sidecar attach, and the ``push`` / ``publish_file`` / ``url`` / ``share`` /
-``stop`` surface. A DCC package supplies only the mixin that reads its selection
+that is host-independent: the glTF-appropriate export defaults and the
+``push`` / ``publish_file`` / ``url`` / ``share`` / ``stop`` surface. A DCC package supplies only the mixin that reads its selection
 (``mayatk.WebXrPreview`` / ``blendertk.WebXrPreview``). It lives here rather
 than mirrored per engine because mayatk and blendertk cannot import each
 other, and anything written in both drifts in both.
@@ -111,21 +110,22 @@ class PreviewBridge(HandoffBridge):
         The converter triangulates on the way to glTF regardless, so nothing is
         lost by leaving it to the one step that cannot avoid it.
 
-        ``SCENE_SIDECAR`` carries extended scene setup the FBX cannot express,
-        read from the live scene and applied to the GLB after conversion (see
-        :meth:`MeshConvert.apply_scene_sidecar`). Turning it off is a
-        deliberate probe -- the preview then shows exactly what the FBX itself
-        carried, which is the only way to tell something the exporter dropped
-        from something it mistranslated.
+        There is no sidecar knob: the FBX states its own materials and its
+        handoff, so the preview always shows what the file itself carries.
         """
         return {
             "INCLUDE_MATERIALS": True,
             "EMBED_TEXTURES": True,
             "TRIANGULATE": False,
             "INCLUDE_ANIMATION": False,
-            "SCENE_SIDECAR": True,
         }
 
+    @Deprecation.symbol(
+        "nothing -- the FBX states its materials and the handoff "
+        "(mayatk 0.28 / blendertk 0.20 attach no envelope)",
+        remove_in="0.18.0",
+        since="2026-10-24",
+    )
     def _attach_sidecar(
         self,
         payload: Payload,
@@ -133,28 +133,26 @@ class PreviewBridge(HandoffBridge):
         source: Dict[str, str],
         request: Optional[HandoffRequest] = None,
     ) -> Payload:
-        """Attach the scene-sidecar envelope for this push to *payload*.
+        """Attach the retired scene-sidecar envelope for this push to *payload*.
 
-        The envelope is built by :meth:`GlbPipeline.envelope` -- the one path
-        every producer of a GLB (this bridge, the Scene Exporters) takes, so
-        its schema, its log line and its failure policy cannot fork -- and
-        rides on ``Payload.extras`` for the deliverer, which hands it to the
-        build. That embedded copy is the handoff, and the only one: a
-        `.scene.json` written beside the payload was a second carrier of the
-        same envelope that nothing ever read back.
+        What a host that predates the ``materials`` record calls from its
+        producer -- mayatk 0.27 and blendertk 0.19 do on every push unless
+        ``SCENE_SIDECAR`` is off -- kept one more minor so such a host's push
+        still publishes, and publishes what it did. The envelope is built as
+        it was (:meth:`GlbPipeline.envelope`) and rides ``Payload.extras`` to
+        the build, whose legacy path applies its sections to a file that
+        states no materials -- that host's FBX carries no ``materials``
+        record -- and embeds the handoff its source and lighting make
+        (:meth:`MeshConvert.fbx_to_glb`). Returning *payload* bare instead
+        would publish the converter's own reading of those materials, with
+        nothing saying so. The key's presence is what the result's
+        ``sidecar_requested`` reports.
 
-        *read_sections* is the host's scene-state read, called here so a read
-        that raises degrades to an envelope with no sections rather than
-        failing the push. The producer only calls this when the sidecar param
-        is on, so key presence in ``Payload.extras`` is the "was it requested"
-        signal :meth:`sidecar_summary` reads -- an empty scene still attaches
-        (and writes) an envelope whose ``sections`` is ``{}``.
-
-        *request* is the push's own: the envelope publishes the lighting
-        recipe with whatever overrides the deliverer's preflight left on it
-        (:attr:`PreviewDeliverer.RENDERING_KEY`) -- none from a panel row since
-        Baked Reflections retired. Without one -- or through a deliverer that
-        resolves no rows -- the recipe ships as declared.
+        *read_sections* is the host's scene-state read, called inside the
+        envelope build so a read that raises degrades to an envelope with no
+        sections rather than failing the push. *request* is the push's own:
+        the envelope publishes the lighting recipe with whatever overrides the
+        deliverer's preflight left on it (:attr:`PreviewDeliverer.RENDERING_KEY`).
         """
         from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
 
@@ -205,14 +203,24 @@ class PreviewBridge(HandoffBridge):
         )
         return self._resolve_objects(objects)
 
+    #: Keywords :meth:`push` no longer takes, each mapped to what to pass
+    #: instead. ``**params`` would otherwise sweep a stale caller's spelling
+    #: into the EXPORT bag, where nothing reads it, and the knob would do
+    #: nothing with no word said; :meth:`push` drops it and warns once per
+    #: session (:attr:`_retired_announced`). ``SCENE_SIDECAR`` joins when its
+    #: notice comes due: until then a released host's producer reads it.
+    RETIRED_PARAMS: Dict[str, str] = {
+        "texture_format": 'glb_options={"texture_file_type": ...}',
+    }
+    #: The :attr:`RETIRED_PARAMS` already warned about this session.
+    _retired_announced: set = set()
+
     @Deprecation.parameter(
-        "texture_format",
-        remove_in="0.12.0",
-        since="2026-09-23",
-        new="glb_options",
-        transform=lambda value: {"texture_file_type": value},
-        reason="A push now takes every Scene Exporter GLB row, the "
-        "container being Texture File Type.",
+        "SCENE_SIDECAR",
+        remove_in="0.18.0",
+        since="2026-10-24",
+        reason="The FBX states its own materials and handoff; only a host "
+        "older than mayatk 0.28 / blendertk 0.20 still reads it.",
     )
     def push(
         self,
@@ -255,9 +263,10 @@ class PreviewBridge(HandoffBridge):
                 deliverer's. Named explicitly rather than left to
                 ``**params``, which is the *export* param bag -- swept up there
                 it would be handed to the exporter and never reach the
-                deliverer. Replaces ``texture_format`` (the container alone),
-                which still works as ``{"texture_file_type": ...}`` and warns
-                until 0.12.0.
+                deliverer. The ``texture_format`` keyword it replaced (the
+                container alone) is removed: pass ``{"texture_file_type":
+                ...}`` here. A stale ``texture_format=`` is dropped with a
+                warning (:attr:`RETIRED_PARAMS`), never handed to the exporter.
             scripts: Viewer scripts to run for this push -- a list of
                 :attr:`PreviewServer.SCRIPTS` names, or a ``{name: path}``
                 mapping for modules of your own. ``None`` (the default) leaves
@@ -280,6 +289,8 @@ class PreviewBridge(HandoffBridge):
                 without writing it into the scene first. Named for the same
                 reason as the knobs above: ``**params`` is the EXPORT bag.
             **params: Export param overrides (see :meth:`params_defaults`).
+                ``SCENE_SIDECAR`` is deprecated: it warns, and still travels
+                for a released host's producer (:meth:`_attach_sidecar`).
 
         The start node -- the scene's camera named by the deliverer's
         ``user_pos`` -- joins any push that has something in it, whatever
@@ -296,6 +307,7 @@ class PreviewBridge(HandoffBridge):
         # sees where the host's half (the export, chiefly) ends and the build
         # begins.
         started = time.perf_counter()
+        self._drop_retired_params(params)
         if objects is None:
             objects = self.scope_objects(scope)
         name = getattr(self.deliverer, "user_pos", None)
@@ -316,6 +328,20 @@ class PreviewBridge(HandoffBridge):
             data_export=data_export,
             **{PreviewDeliverer.STARTED_KEY: started},
         )
+
+    def _drop_retired_params(self, params: Dict[str, Any]) -> None:
+        """Remove every :attr:`RETIRED_PARAMS` keyword from *params*, warning
+        once per session for each, naming it and what to pass instead."""
+        for key in [key for key in self.RETIRED_PARAMS if key in params]:
+            del params[key]
+            if key in self._retired_announced:
+                continue
+            self._retired_announced.add(key)
+            self.logger.warning(
+                "push(%s=...) is no longer a keyword and was ignored; pass %s.",
+                key,
+                self.RETIRED_PARAMS[key],
+            )
 
     def publish_file(
         self,
@@ -419,6 +445,36 @@ class PreviewBridge(HandoffBridge):
         return True
 
     @staticmethod
+    def materials_summary(result: Optional[Dict[str, Any]]) -> str:
+        """One plain-text line: how the preview's materials were stated.
+
+        Read off the deliverer's result -- what the build's materials pass
+        wrote (``MeshConvert.apply_glb_materials``): each material as the
+        FBX's ``materials`` record states it, else as the file's own reads --
+        so a preview says when a map the record names was not found, the one
+        miss a render shows as a flat colour rather than an error. Lives here
+        for the reason :meth:`lightmap_summary` does: it reads only the
+        result, so it is the same line in every host's panel.
+        """
+        if not result:
+            return ""
+        stated = result.get("materials") or []
+        if not stated:
+            return "Materials: the converter's own (the file's could not be read)."
+        names = {entry.get("material") for entry in stated}
+        missing = sorted({m for entry in stated for m in entry.get("missing") or ()})
+        line = f"Materials: {len(names)} stated by the file"
+        if missing:
+            shown = ", ".join(missing[:4]) + (", ..." if len(missing) > 4 else "")
+            line += f"; {len(missing)} map(s) not found: {shown}"
+        return line + "."
+
+    @staticmethod
+    @Deprecation.symbol(
+        "PreviewBridge.materials_summary -- the FBX states its materials",
+        remove_in="0.18.0",
+        since="2026-10-24",
+    )
     def sidecar_summary(result: Optional[Dict[str, Any]]) -> str:
         """One plain-text line describing what the scene sidecar did.
 
@@ -426,14 +482,15 @@ class PreviewBridge(HandoffBridge):
         deliverer's result -- nothing about it is Maya- or Blender-specific,
         and written per panel it would be the same paragraph twice.
 
-        The three outcomes it separates all render as the *same* unlit preview,
-        which is what made the feature undebuggable from the UI: switched off,
-        on but the scene had nothing to carry, and on but nothing matched.
+        A push no envelope rode -- every current host's -- has no sidecar to
+        report, so the line is :meth:`materials_summary`'s: the released
+        panel prints this one after every push, and "sidecar off" would name
+        a switch the preview no longer has. For an older host's envelope it
+        separates the two outcomes that render the *same* preview: the scene
+        had nothing to carry, and the sections matched nothing.
         """
-        if not result:
-            return ""
-        if not result.get("sidecar_requested"):
-            return "Scene sidecar off - showing what the FBX carried."
+        if not (result or {}).get("sidecar_requested"):
+            return PreviewBridge.materials_summary(result)
         applied = result.get("sidecar") or {}
         if not applied:
             # Section-agnostic on purpose: the sections are a registry
@@ -451,7 +508,7 @@ class PreviewBridge(HandoffBridge):
     def lightmap_summary(cls, result: Optional[Dict[str, Any]]) -> str:
         """One plain-text line on the lightmaps: bound, or how many came back unlit.
 
-        The sibling of :meth:`sidecar_summary`, for the same reason: a bake
+        The sibling of :meth:`materials_summary`, for the same reason: a bake
         the pass could not find renders exactly like no bake at all, and
         the one warning the applier logs names a file, not an outcome. Empty
         for a scene with no committed lightmaps -- nothing to report is not
@@ -522,7 +579,7 @@ class PreviewBridge(HandoffBridge):
     def timing_summary(cls, result: Optional[Dict[str, Any]]) -> str:
         """One plain-text line on where a push's time went.
 
-        The sibling of :meth:`sidecar_summary` and :meth:`lightmap_summary`.
+        The sibling of :meth:`materials_summary` and :meth:`lightmap_summary`.
         After a slow push the question is WHICH stage, and the answer decides
         where the fix goes: FBX2glTF's cost is set by what the DCC exports
         (the take range, the node count -- docs/webxr_preview.md, *Cost and

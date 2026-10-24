@@ -1056,7 +1056,9 @@ class TextureProcessor:
         orm_img = ImgUtils.pack_channels(
             channel_files={"R": ao, "G": roughness, "B": metallic},
             output_path=None,
-            fill_values={"R": 255} if not ao else None,
+            # An absent channel stores its type's absent value: unoccluded,
+            # matte, dielectric -- never a mirror.
+            fill_values=MapRegistry.absent_fills(MapRegistry.instance().get("ORM").channels),
         )
         if self.logger:
             self.logger.info(

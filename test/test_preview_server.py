@@ -26,6 +26,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from pythontk.core_utils.engines.scene_export.handoff_record import HandoffRecord
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.core_utils.handoff.app_handoff import (
     Deliverer,
     HandoffBridge,
@@ -607,7 +609,7 @@ class PreviewServerTestCase(unittest.TestCase):
     def test_published_rendering_policy_matches_the_viewer(self):
         """The hand-off's lighting recipe must be what the viewer actually does.
 
-        ``MeshConvert.RENDERING_POLICY`` ships inside every deliverable as
+        ``HandoffRecord.RENDERING_POLICY`` ships inside every deliverable as
         ``handoff.rendering`` -- it is how a recipient reproduces the look the
         asset was approved in, since the asset carries no lights of its own.
         The viewer now READS that policy out of the file it is rendering, so
@@ -619,11 +621,9 @@ class PreviewServerTestCase(unittest.TestCase):
         diverge -- and it diverges silently, on exactly the old files nobody
         re-renders to check.
         """
-        from pythontk import MeshConvert
-
         self._serve()
         page = _served_page(self.root)
-        policy = MeshConvert.RENDERING_POLICY
+        policy = HandoffRecord.RENDERING_POLICY
 
         for const, published in (
             ("DEFAULT_KEY_INTENSITY", policy["keyLight"]["intensity"]),
@@ -649,9 +649,11 @@ class PreviewServerTestCase(unittest.TestCase):
         # The key light's OFF-CONDITION, not just its magnitude. 0.9 stayed 0.9
         # right through the 2026-08-12 regression that gated the light on the
         # asset being FULLY baked rather than partly, so a number-only check
-        # cannot see a condition invert -- and `disabled_when` is not a note,
-        # it is a field a recipient ACTS on: read the wrong way it puts a
-        # directional light on geometry whose lighting is already baked in.
+        # cannot see a condition invert -- and the condition is not a note, a
+        # recipient ACTS on it: read the wrong way it puts a directional light
+        # on geometry whose lighting is already baked in. The policy names it
+        # (``disabledWhen``, a value a runtime switches on) and the lighting
+        # rows say what each value means (``HandoffRecord.lighting``).
         #
         # Asserted as "must not say the WRONG thing" rather than "must say this
         # exact thing". Demanding a keyword (an earlier cut of this required
@@ -662,10 +664,13 @@ class PreviewServerTestCase(unittest.TestCase):
         # This one stays prose-checked even now the viewer reads the policy:
         # the off-CONDITION is the half no number carries, and the viewer
         # implements it (`lightmapped ? 0 : ...`) rather than reading it.
-        disabled_when = policy["keyLight"].get("disabled_when", "").lower()
-        self.assertTrue(
-            disabled_when.strip(),
-            "the recipe no longer states WHEN the key light is disabled -- the "
+        rows = {row["part"]: row["spec"] for row in HandoffRecord.lighting("glb")}
+        self.assertEqual(policy["keyLight"]["disabledWhen"], "lightmapped")
+        disabled_when = rows["key_light"].lower()
+        self.assertIn(
+            "'disabledwhen'",
+            disabled_when,
+            "the key light's row no longer states WHEN it is disabled -- the "
             "half a recipient cannot infer from the intensity",
         )
         for misreading in ("all material", "every material", "fully baked"):
@@ -676,31 +681,37 @@ class PreviewServerTestCase(unittest.TestCase):
                 "reading the viewer was fixed away from",
             )
         # What a baked material takes from the environment is a RULE and a
-        # LEVEL. The rule is stated the way `disabled_when` states the key
-        # light's off-condition -- a recipient acts on it -- and the viewer
-        # implements it in the baked materials' shader (see the specular-only
-        # test above). The level is the export's choice (the Baked Reflections
-        # row), published beside it and read like the other numbers.
+        # LEVEL. The rule is stated the way the key light's off-condition is
+        # -- a recipient acts on it -- and the viewer implements it in the
+        # baked materials' shader (see the specular-only test above). The
+        # level is the export's choice, published beside it and read like the
+        # other numbers.
         self.assertEqual(policy["lightmappedMaterials"]["envMapTerms"], "specular")
         self.assertIn("published?.lightmappedMaterials?.envMapIntensity", page)
+        baked = rows["lightmapped_materials"]
         # The baked normal relief (patchBakedShader) is part of the look too,
         # and no number carries it: a recipe that omits it has every baked
         # normal map read flat in a recipient's runtime where the preview
         # showed it -- the drift this pairing exists to stop, and how the
         # relief first shipped. Its behaviour is pinned on the pixels
-        # (test_preview_viewer_live); here, that the recipe states it at all.
+        # (test_preview_viewer_live); here, that the recipe names it and its
+        # row states the formula.
         self.assertIn("const RELIEF_GLSL", page)
-        self.assertTrue(
-            policy["lightmappedMaterials"].get("normalRelief", "").strip(),
+        self.assertEqual(
+            policy["lightmappedMaterials"]["normalRelief"],
+            "halfLambertRatio",
             "the viewer relieves baked normal maps and the recipe does not say so",
         )
+        self.assertIn("(dot(N, L) * 0.5 + 0.5) / (dot(Ng, L) * 0.5 + 0.5)", baked)
         # Likewise the reflection normalization: a recipient that plays the
         # level flat either lifts every shadow or flattens every lit surface.
         self.assertIn("bakedReflection *= clamp( baked / max( studio", page)
-        self.assertTrue(
-            policy["lightmappedMaterials"].get("reflectionNormalization", "").strip(),
+        self.assertEqual(
+            policy["lightmappedMaterials"]["reflectionNormalization"],
+            "lightmapLuma",
             "the viewer normalizes baked reflections and the recipe does not say so",
         )
+        self.assertIn("clamp(luma(E_bake) / luma(E_env), 0, 1)", baked)
         # The key light's POSITION as well as its level: its direction orients
         # that relief even while a baked model holds its intensity at 0, and
         # nothing else pins the page's placement to the published one.
@@ -711,12 +722,17 @@ class PreviewServerTestCase(unittest.TestCase):
             [float(v) for v in policy["keyLight"]["position"]],
             "the key light the page places disagrees with the published recipe",
         )
+        # And its COLOUR: the recipe states it linear, white as [1, 1, 1], and
+        # the page builds the light white. A hex string ("#ffffff", the
+        # released recipe's) is no value a runtime reads as a colour.
+        self.assertEqual(policy["keyLight"]["color"], [1.0, 1.0, 1.0])
+        self.assertIn("new THREE.DirectionalLight(0xffffff,", page)
 
         # The named pieces of the rig, spelled as the viewer builds them.
         self.assertIn("THREE.ACESFilmicToneMapping", page)
         self.assertEqual(policy["renderer"]["toneMapping"], "ACESFilmic")
         self.assertIn("new RoomEnvironment()", page)
-        self.assertIn("RoomEnvironment", policy["environment"]["source"])
+        self.assertEqual(policy["environment"]["fallback"], "RoomEnvironment")
         # The studio is prefiltered by a generator made for the job and freed
         # after it (scene.js `prefilter`), from a RoomEnvironment it disposes.
         blur = re.search(r"pmrem\.fromScene\(\w+, ([0-9.]+)\)", page)
@@ -738,11 +754,13 @@ class PreviewServerTestCase(unittest.TestCase):
         # published unit, and its rule stated -- a recipient that reads it as
         # a plain environment at 1 lights every reflection and every unbaked
         # object pi too bright beside the bake, and one that skips the box
-        # projection reflects the room's walls as if infinitely far.
+        # projection reflects the room's walls as if infinitely far. The
+        # policy names the source; the environment row says where the probe is
+        # and how it plays.
         self.assertIn("published?.environment?.probeIntensity", page)
-        self.assertIn("RoomEnvironment", policy["environment"]["source"])
-        self.assertIn("lightmap_web.probe", policy["environment"]["source"])
-        probe_rule = policy["environment"].get("probe", "")
+        self.assertEqual(policy["environment"]["source"], "probe")
+        probe_rule = rows["environment"]
+        self.assertIn(f"extras.{SceneRecords.LIGHTMAPS.key}.probe", probe_rule)
         for term in (
             "bufferView",
             "box-projected",
@@ -756,10 +774,12 @@ class PreviewServerTestCase(unittest.TestCase):
         self.assertIn(
             "const LIGHTMAP_AS_IBL_GLSL = 'iblIrradiance += lightMapIrradiance;'", page
         )
-        self.assertTrue(
-            policy["lightmappedMaterials"].get("lightMapEnergy", "").strip(),
+        self.assertEqual(
+            policy["lightmappedMaterials"]["lightMapEnergy"],
+            "splitSum",
             "the viewer weights the bake's diffuse by its Fresnel and the recipe does not say so",
         )
+        self.assertIn("iblIrradiance", baked)
 
     def test_the_viewer_reads_the_policy_out_of_the_deliverable(self):
         """The direction of truth: the file states the rig, the page spends it.
@@ -767,35 +787,46 @@ class PreviewServerTestCase(unittest.TestCase):
         While the viewer declared its own numbers, a value could only be
         changed in two places at once and a regex tripwire was all that held
         them together. The read path is what removes the duplication, so it is
-        pinned here by the fields it actually walks -- the envelope key the
-        applier writes, and the ``handoff.rendering`` section inside it.
+        pinned here by the fields it actually walks -- the handoff block the
+        converter writes, and the ``rendering`` section inside it.
         """
         self._serve()
         page = _served_page(self.root)
         self.assertIn("function readRenderingPolicy(gltf)", page)
-        self.assertIn("readExtras(gltf, 'scene_sidecar')", page)
-        self.assertIn("?.handoff?.rendering", page)
-        # ONE probe for every extras block the page reads (scene_sidecar,
-        # lightmap_web, animation_web): a value can ride as an object or a JSON
-        # string, under the scene's extras or the glTF root's, and a per-block
-        # copy of that walk is how one block ends up missing a holder and going
-        # silently inert on a deliverable the others handle.
-        self.assertEqual(page.count("for (const holder of"), 1)
+        self.assertIn("readExtras(gltf, HANDOFF)?.rendering", page)
+        # ONE read for every block the page reads (handoff, lightmaps,
+        # animation, the rigs): the root extras, under the record's key, in
+        # the schema the page reads -- a block of another schema is read by no
+        # branch of its own, and the load says so once per block.
+        self.assertEqual(page.count("export function readBlock("), 1)
+        self.assertIn("value.version === block.version", page)
+        self.assertIn("staleBlocks(part.gltf.parser?.json?.extras, BLOCKS)", page)
+        self.assertIn(
+            "is not the v${block.version} this page reads -- re-export the file", page
+        )
+        # A block key a record was renamed from is said too, from the
+        # declarations' own list (records.js), never a silent unlit load.
+        self.assertIn("import { RETIRED_BLOCK_KEYS } from './records.js';", page)
+        self.assertIn("is a retired block -- re-export the file", page)
+        # The page's table of blocks is the declarations' own (records.js).
+        for spec in (*SceneRecords.glb_records(), SceneRecords.HANDOFF):
+            version = spec.glb.version if spec.glb else spec.version
+            with self.subTest(block=spec.key):
+                self.assertIn(f"{{ key: '{spec.key}', version: {version} }}", page)
         # Read BEFORE the lights are set, or the first frame of a new model is
         # lit by the previous one's policy. In the load path itself: the
         # Environment menu re-applies the lighting too, after its switch. Of
         # several parts, the first that publishes one (parts.js).
         load = (self.root / "kernel" / "load.js").read_text(encoding="utf-8")
-        self.assertIn(
-            "readExtras(part.gltf, 'scene_sidecar')?.handoff?.rendering", load
-        )
+        self.assertIn("readExtras(part.gltf, HANDOFF)?.rendering", load)
         self.assertLess(
             load.index("readRenderingPolicy("), load.index("applyLighting();")
         )
-        # Only finite NUMBERS are taken. The published policy is documentation
-        # as much as data -- `lightMapIntensity` is deliberately a sentence --
-        # and assigning a string to an intensity renders black with nothing in
-        # the file looking wrong.
+        # Only finite NUMBERS are taken: a block another producer wrote -- or
+        # one published before the policy was values alone, with prose in its
+        # fields -- may hold a string where a number belongs, and assigning a
+        # string to an intensity renders black with nothing in the file
+        # looking wrong.
         self.assertIn("typeof value === 'number' && isFinite(value)", page)
 
     def test_every_policy_field_the_viewer_reads_is_published_as_a_number(self):
@@ -807,9 +838,7 @@ class PreviewServerTestCase(unittest.TestCase):
         exact paths ``readRenderingPolicy`` walks and requires a real number at
         each, which is the only way that goes noticed.
         """
-        from pythontk import MeshConvert
-
-        policy = MeshConvert.RENDERING_POLICY
+        policy = HandoffRecord.RENDERING_POLICY
         for path in (
             ("keyLight", "intensity"),
             ("environment", "intensity"),
@@ -997,14 +1026,17 @@ class PreviewServerTestCase(unittest.TestCase):
 
         Maya's FBX exporter keeps the whole-timeline take alongside the takes
         it split out and it converts FIRST, so index 0 is the entire timeline
-        rather than shot 1. ``extras.animation_web.default_clip`` is the file's
+        rather than shot 1. ``extras.animation.default_clip`` is the file's
         own answer (``MeshConvert.apply_glb_animations`` writes it), and the
         page has to be reading it rather than picking an index.
         """
         self._serve()
         page = _served_page(self.root)
-        self.assertIn("readExtras(gltf, SHOTS.webKey)", page)
-        self.assertIn(f"webKey: '{MeshConvert.ANIMATION_WEB_KEY}'", page)
+        self.assertIn("readExtras(gltf, SHOTS)", page)
+        self.assertIn(
+            f"{{ key: '{SceneRecords.SHOTS.key}', version: {SceneRecords.SHOTS.glb.version} }}",
+            page,
+        )
         # Regex, not a literal: the page reads the field through whichever
         # optional-chaining spelling the surrounding guard makes correct, and
         # WHICH FIELD it opens on is the behaviour worth pinning.
@@ -1562,32 +1594,29 @@ class _StubBridge(HandoffBridge):
 
 
 def _sidecar(sections):
-    """A sidecar envelope as `PreviewBridge._attach_sidecar` shapes it.
+    """An older host's envelope, as `MeshConvert.build_scene_sidecar` shapes
+    it: its sections, and the GLB handoff its source makes.
 
     Deliverer tests build their fixtures through this rather than as bare
     section maps, so a drift between what the producer wraps and what the
     deliverer unwraps fails here instead of only in a live DCC.
     """
+    source = {"application": "test", "version": "0"}
     return {
-        "version": MeshConvert.SIDECAR_VERSION,
-        "source": {"application": "test", "version": "0"},
+        "version": 2,
+        "source": source,
         "asset": "scene.fbx",
-        "color_space": "linear",
         "sections": sections,
+        "handoff": HandoffRecord.block("glb", [], source),
     }
 
 
 class _StubPreviewBridge(PreviewBridge):
-    """A minimal `PreviewBridge` exercising the real producer-side envelope.
-
-    Unlike `_StubBridge` this attaches its sidecar through `_attach_sidecar`
-    -- the same call the Maya and Blender producers make -- so the
-    producer -> deliverer pair is tested end to end against the one schema
-    owner rather than against a hand-built dict.
+    """A minimal `PreviewBridge` producing as the Maya and Blender producers
+    do: the FBX alone, which states its own materials and handoff.
     """
 
     payload_prefix = "test_preview_envelope"
-    sections = {"emissive": {"m": {"color": [1, 0, 0]}}}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1607,8 +1636,26 @@ class _StubPreviewBridge(PreviewBridge):
     def _produce(self, objects, request):
         path = self._make_payload_path(extension=".fbx")
         Path(path).write_bytes(b"fake-fbx-payload")
+        return Payload(primary=path)
+
+
+class _SidecarPreviewBridge(_StubPreviewBridge):
+    """A released host's producer (mayatk 0.27.1 / blendertk 0.19.2), call
+    for call: unless the push switched ``SCENE_SIDECAR`` off, it hands its
+    scene read to the bridge's ``_attach_sidecar``, which builds the retired
+    envelope -- so the producer -> deliverer pair is tested end to end the
+    way an old host drives it, through the one schema owner rather than a
+    hand-built dict. Every push warns.
+    """
+
+    sections = {"emissive": {"m": {"color": [1, 0, 0]}}}
+
+    def _produce(self, objects, request):
+        payload = super()._produce(objects, request)
+        if payload is None or not request.params.get("SCENE_SIDECAR", True):
+            return payload
         return self._attach_sidecar(
-            Payload(primary=path),
+            payload,
             lambda: self.sections,
             source={"application": "stub", "version": "0"},
             request=request,
@@ -1862,13 +1909,17 @@ class PreviewDelivererTestCase(unittest.TestCase):
         """
         self.converted.append({"src": src, "dst": dst, **kwargs})
         Path(dst).write_bytes(self._glb_bytes({"asset": {"version": "2.0"}}))
-        # What the real chain does with the envelope it is handed: applies it
-        # inside the conversion and records the outcome in the caller's report.
-        # The deliverer applies nothing itself any more, so a stub that only
-        # wrote bytes would leave every sidecar assertion below testing air.
+        # What the real chain does with an older host's envelope on a file
+        # that states no materials (this one): applies its sections inside the
+        # conversion, embeds its handoff and reports the outcome to the caller
+        # -- the deliverer applies nothing itself, so a stub that only wrote
+        # bytes would leave every sidecar assertion below testing air.
         report = kwargs.get("report")
-        if report is not None and kwargs.get("sidecar"):
-            report["sidecar"] = MeshConvert.apply_scene_sidecar(dst, kwargs["sidecar"])
+        if report is not None:
+            sidecar = kwargs.get("sidecar")
+            report["sidecar"] = (
+                MeshConvert._apply_scene_sidecar(dst, sidecar) if sidecar else {}
+            )
         if report is not None and kwargs.get("data_export"):
             report["data_export"] = sorted(kwargs["data_export"])
         return dst
@@ -2042,10 +2093,11 @@ class PreviewDelivererTestCase(unittest.TestCase):
 
     def test_a_push_publishes_the_lighting_recipe_whatever_a_retired_row_says(self):
         """The lighting recipe reaches the GLB as the export's does: the
-        deliverer resolves the run in its preflight, and the host's envelope
-        publishes it -- an input to the envelope, never patched on afterwards.
-        The Baked Reflections row retired 2026-10-19, so an older panel's
-        choice, the deliverer's or a push's own, publishes the recipe's level."""
+        deliverer resolves the run in its preflight and hands the build its
+        choices (``rendering=``), laid over what the FBX's handoff states --
+        an input to the build, never patched on afterwards. The Baked
+        Reflections row retired 2026-10-19, so an older panel's choice, the
+        deliverer's or a push's own, publishes the recipe's level."""
         from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
 
         bridge = _StubPreviewBridge()
@@ -2065,10 +2117,15 @@ class PreviewDelivererTestCase(unittest.TestCase):
 
         with unittest.mock.patch.object(GlbPipeline, "build", side_effect=_build):
             bridge.push(glb_options={"baked_reflections": "off"})
-            pushed = seen["sidecar"]["handoff"]["rendering"]["lightmappedMaterials"]
+            pushed = HandoffRecord.rendering_policy(seen["rendering"])
             bridge.push()
-            default = seen["sidecar"]["handoff"]["rendering"]["lightmappedMaterials"]
-        recipe = MeshConvert.RENDERING_POLICY["lightmappedMaterials"]["envMapIntensity"]
+            default = HandoffRecord.rendering_policy(seen["rendering"])
+        self.assertIsNone(seen["sidecar"], "a current host attaches no envelope")
+        pushed = pushed["lightmappedMaterials"]
+        default = default["lightmappedMaterials"]
+        recipe = HandoffRecord.RENDERING_POLICY["lightmappedMaterials"][
+            "envMapIntensity"
+        ]
         self.assertEqual(pushed["envMapIntensity"], recipe)
         self.assertEqual(default["envMapIntensity"], recipe)
 
@@ -2124,6 +2181,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
             )
 
         self.assertEqual(seen["sidecar"], envelope)
+        self.assertIn("rendering", seen, "the push's lighting rows reach the build")
         self.assertEqual(seen["lightmap_dirs"], ["D:/maps"])
         # The bridge's own float-image codec reaches the build (a Blender push
         # shipped unlit without one: no cv2 there). Added: 2026-10-17
@@ -2145,6 +2203,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.assertEqual(result["sidecar"], {"emissive": "1 of 1"})
         self.assertEqual(result["lightmaps"]["bound"], 1)
         self.assertTrue(result["sidecar_requested"])
+        self.assertEqual(result["materials"], [], "the build stated none")
         self.assertEqual(result["version"], 1)
 
     def test_a_texture_pass_failure_now_costs_the_push_and_says_so(self):
@@ -2480,32 +2539,6 @@ class PreviewDelivererTestCase(unittest.TestCase):
         # than overriding it with the parameter's `None` sentinel.
         self.assertEqual(optimize.call_args.kwargs["image_format"], "WEBP")
 
-    def test_the_retired_texture_format_still_names_the_container(self):
-        """``texture_format`` (push and deliverer) was the container alone; it
-        is now the Texture File Type row of ``glb_options`` and warns for
-        one release rather than breaking a caller."""
-        bridge = _StubPreviewBridge()
-        from pythontk.img_utils._img_utils import ImgUtils
-
-        with (
-            unittest.mock.patch.object(
-                MeshConvert, "optimize_glb_textures", return_value={}
-            ) as optimize,
-            unittest.mock.patch.object(ImgUtils, "resolve_ktx2_encoder"),
-            unittest.mock.patch.object(
-                MeshConvert, "fbx_to_glb", side_effect=self._fake_convert
-            ),
-            self.assertWarns(DeprecationWarning),
-        ):
-            bridge.deliverer = PreviewDeliverer(
-                server=self.server, open_browser=False, texture_format="KTX2"
-            )
-            self.assertEqual(
-                bridge.deliverer.glb_options, {"texture_file_type": "KTX2"}
-            )
-            bridge.push(texture_format="WEBP")
-        self.assertEqual(optimize.call_args.kwargs["image_format"], "WEBP")
-
     def test_push_defers_to_a_deliverer_that_says_no_browser(self):
         """A deliverer built with ``open_browser=False`` holds when the caller
         says nothing. ``push()`` once carried its own ``"auto"`` as the default,
@@ -2622,19 +2655,19 @@ class PreviewDelivererTestCase(unittest.TestCase):
         one push (an effect preview) reaches `fbx_to_glb`, and the next push
         that says nothing builds from the scene again."""
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        overlay = {"fbx_takes": None}
+        overlay = {SceneRecords.SHOTS.key: None}
         result = self._push(data_export=overlay)
         self.assertEqual(self.converted[-1].get("data_export"), overlay)
         # The result names what landed: the one way a panel can tell its
         # effect is in the published file without reading the GLB back.
-        self.assertEqual(result["data_export"], ["fbx_takes"])
+        self.assertEqual(result["data_export"], [SceneRecords.SHOTS.key])
         result = self._push()
         self.assertIsNone(self.converted[-1].get("data_export"))
         self.assertEqual(result["data_export"], [])
 
     def test_push_names_the_overlay_as_a_request_knob_not_an_export_param(self):
         bridge = _StubPreviewBridge()
-        overlay = {"fbx_takes": None}
+        overlay = {SceneRecords.SHOTS.key: None}
         with unittest.mock.patch.object(bridge, "send", return_value={}) as send:
             bridge.push(objects=["a"], data_export=overlay)
         kwargs = send.call_args.kwargs
@@ -2719,20 +2752,58 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.assertEqual(result["sidecar"], {"emissive": "0 of 1 matched"})
 
     def test_summary_separates_off_from_nothing_to_carry(self):
-        """Both render the same unlit preview; the report must tell them apart."""
-        self.assertIn(
-            "off", PreviewBridge.sidecar_summary({"sidecar_requested": False})
-        )
-        self.assertIn(
-            "nothing to carry",
-            PreviewBridge.sidecar_summary({"sidecar_requested": True, "sidecar": {}}),
-        )
-        self.assertIn(
-            "emissive 2 of 3",
-            PreviewBridge.sidecar_summary(
-                {"sidecar_requested": True, "sidecar": {"emissive": "2 of 3"}}
+        """Both render the same unlit preview; the report must tell them apart.
+        (The retired line, for an older host's envelope.)"""
+        for result, said in (
+            ({"sidecar_requested": True, "sidecar": {}}, "nothing to carry"),
+            (
+                {"sidecar_requested": True, "sidecar": {"emissive": "2 of 3"}},
+                "emissive 2 of 3",
             ),
+        ):
+            with self.subTest(said=said), self.assertWarns(DeprecationWarning):
+                self.assertIn(said, PreviewBridge.sidecar_summary(result))
+
+    def test_the_retired_line_without_an_envelope_is_the_materials_line(self):
+        """Bug: the released WebXR panel (extapps) prints ``sidecar_summary``
+        after every push, and no current host attaches an envelope -- so every
+        push read "Scene sidecar off - showing what the FBX carried", naming a
+        switch the preview no longer has. Fixed: 2026-10-24 -- with no
+        envelope offered it is the materials line, which says how the
+        preview's materials were stated."""
+        for result in (
+            {"sidecar_requested": False, "materials": [{"material": "a"}]},
+            {"materials": []},
+            None,
+        ):
+            with self.subTest(result=result), self.assertWarns(DeprecationWarning):
+                line = PreviewBridge.sidecar_summary(result)
+            self.assertEqual(line, PreviewBridge.materials_summary(result))
+            self.assertNotIn("sidecar off", line)
+
+    def test_the_materials_line_says_how_the_preview_stated_them(self):
+        """Read off the result alone: how many materials the file stated, the
+        maps it named that were not found -- the one miss a render shows as
+        a flat colour -- and when the file's materials could not be read."""
+        self.assertEqual(PreviewBridge.materials_summary(None), "")
+        self.assertIn(
+            "converter's own", PreviewBridge.materials_summary({"materials": []})
         )
+        stated = {
+            "materials": [
+                {"material": "a", "missing": []},
+                {"material": "a", "missing": ["A_Color.png"]},
+                {"material": "b", "missing": ["B_Normal.png", "A_Color.png"]},
+            ]
+        }
+        line = PreviewBridge.materials_summary(stated)
+        self.assertIn("2 stated by the file", line)
+        self.assertIn("2 map(s) not found: A_Color.png, B_Normal.png", line)
+
+    def test_the_preview_has_no_sidecar_knob(self):
+        """The FBX states its own materials and handoff, so a push always
+        shows what the file itself carries."""
+        self.assertNotIn("SCENE_SIDECAR", _StubPreviewBridge().params_defaults())
 
     def test_result_records_whether_a_sidecar_was_offered(self):
         """An empty summary alone cannot distinguish 'off' from 'found nothing'."""
@@ -2750,56 +2821,6 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.assertFalse(off["sidecar_requested"])
         self.assertTrue(on["sidecar_requested"])
 
-    def test_attach_sidecar_builds_the_versioned_envelope(self):
-        """The envelope top level is a frozen contract for standalone readers.
-
-        A dev tool holding only the deliverable parses against exactly these
-        keys — which is why they are pinned by name rather than by "some dict
-        came through": adding one later is free, but reshaping any of these
-        means a schema-version bump. What the *artifact* carries is pinned
-        where it is written, in `test_mesh_convert`'s `_assert_embeds`; this
-        pins what the bridge hands the deliverer to embed.
-        """
-        bridge = _StubPreviewBridge()
-        sections = {"emissive": {"m": {"color": [1, 0, 0]}}}
-        fbx = self._fbx()
-        payload = bridge._attach_sidecar(
-            Payload(primary=fbx),
-            lambda: sections,
-            source={"application": "stub", "version": "0"},
-        )
-
-        envelope = payload.extras["scene_sidecar"]
-        self.assertEqual(
-            set(envelope),
-            {"version", "source", "asset", "color_space", "sections", "handoff"},
-        )
-        self.assertEqual(envelope["version"], MeshConvert.SIDECAR_VERSION)
-        self.assertEqual(envelope["source"], {"application": "stub", "version": "0"})
-        self.assertEqual(envelope["asset"], Path(fbx).name)
-        self.assertEqual(envelope["color_space"], "linear")
-        self.assertEqual(envelope["sections"], sections)
-
-        # The GLB's extras is the only carrier: the bridge writes no second
-        # copy of the envelope beside the payload for it to drift against.
-        # Asserted on what the attach produced, not on a temp-dir glob -- that
-        # dir is shared with every real push this machine has ever made.
-        self.assertNotIn("scene_sidecar_path", payload.extras)
-        self.assertEqual(bridge.payload_paths, [])
-
-    def test_attach_sidecar_with_no_sections_still_attaches_the_envelope(self):
-        """Requested-but-empty must stay distinguishable from switched off.
-
-        The producer calls `_attach_sidecar` only when SCENE_SIDECAR is on, so
-        key presence in extras is the "was it requested" signal the panel
-        summary reads. Skipping the attach on an empty scene collapsed the two
-        cases: a user with the checkbox ON was told "Scene sidecar off".
-        """
-        payload = _StubPreviewBridge()._attach_sidecar(
-            Payload(primary=self._fbx()), dict, source={"application": "stub"}
-        )
-        self.assertEqual(payload.extras["scene_sidecar"]["sections"], {})
-
     def test_requested_but_empty_scene_reports_nothing_to_carry_not_off(self):
         """The panel must not claim "off" while the user's checkbox is on.
 
@@ -2808,15 +2829,19 @@ class PreviewDelivererTestCase(unittest.TestCase):
         and the summary line was "Scene sidecar off - showing what the FBX
         carried" — the exact misreport `sidecar_summary` exists to prevent.
         """
-        bridge = _StubPreviewBridge()
+        bridge = _SidecarPreviewBridge()
         bridge.sections = {}
         bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        with unittest.mock.patch(target, side_effect=self._fake_convert):
+        with (
+            unittest.mock.patch(target, side_effect=self._fake_convert),
+            self.assertWarns(DeprecationWarning),
+        ):
             result = bridge.send()
         self.assertTrue(result["sidecar_requested"])
         self.assertEqual(result["sidecar"], {})
-        self.assertIn("nothing to carry", PreviewBridge.sidecar_summary(result))
+        with self.assertWarns(DeprecationWarning):
+            self.assertIn("nothing to carry", PreviewBridge.sidecar_summary(result))
 
     def test_producer_envelope_reaches_the_appliers_unwrapped(self):
         """Producer wraps, deliverer unwraps — the pair contract, end to end.
@@ -2826,42 +2851,126 @@ class PreviewDelivererTestCase(unittest.TestCase):
         drift between the two halves fails this test rather than surfacing as
         a silently unlit preview in a live DCC.
         """
-        bridge = _StubPreviewBridge()
+        bridge = _SidecarPreviewBridge()
         bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
         emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        with unittest.mock.patch(target, side_effect=self._fake_convert):
-            with unittest.mock.patch(emissive_target, return_value=[{}]) as applied:
-                result = bridge.send()
+        with (
+            unittest.mock.patch(target, side_effect=self._fake_convert),
+            unittest.mock.patch(emissive_target, return_value=[{}]) as applied,
+            self.assertWarns(DeprecationWarning),
+        ):
+            result = bridge.send()
         applied.assert_called_once()
         self.assertEqual(
-            applied.call_args[0][1], _StubPreviewBridge.sections["emissive"]
+            applied.call_args[0][1], _SidecarPreviewBridge.sections["emissive"]
         )
         self.assertEqual(result["sidecar"], {"emissive": "1 of 1"})
         self.assertTrue(result["sidecar_requested"])
 
-    def test_envelope_is_embedded_in_the_published_glb(self):
-        """The published artifact is self-describing — envelope + outcome inside.
-
-        No applier is patched here: the fake GLB has no materials, so the
-        emissive section reports "0 of 1 matched" — and both the envelope and
-        that summary must still be readable back out of the served file with
-        no side files, which is the whole embed contract.
-        """
-        bridge = _StubPreviewBridge()
+    def test_a_released_hosts_push_still_publishes(self):
+        """Bug: mayatk 0.27.1 and blendertk 0.19.2 hand their scene read to
+        ``PreviewBridge._attach_sidecar``, which this release had deleted --
+        their producer raised AttributeError, the skeleton logged "Failed to
+        produce the export payload", and no push from a released host
+        published, though both hosts' floors admit this pythontk. Fixed:
+        2026-10-24 -- the method stays, deprecated, for one more minor, and
+        builds the envelope as before so the push publishes what it did."""
+        bridge = _SidecarPreviewBridge()
         bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        with unittest.mock.patch(target, side_effect=self._fake_convert):
+        with (
+            unittest.mock.patch(target, side_effect=self._fake_convert),
+            self.assertWarns(DeprecationWarning) as caught,
+        ):
+            result = bridge.push(objects=["stub_object"])
+        self.assertIsNotNone(result, "the released host's push published nothing")
+        self.assertEqual(self.server.version, 1)
+        self.assertTrue(result["sidecar_requested"])
+        self.assertTrue(
+            any("_attach_sidecar" in str(w.message) for w in caught.warnings),
+            [str(w.message) for w in caught.warnings],
+        )
+
+    def test_a_released_hosts_sidecar_switch_still_reaches_it(self):
+        """The released panel passes ``SCENE_SIDECAR`` on every push, and a
+        released host's producer is its only reader: the keyword warns, but
+        still travels in the export bag, so that host's switch keeps working
+        for the one minor ``_attach_sidecar`` survives."""
+        bridge = _SidecarPreviewBridge()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with (
+            unittest.mock.patch(target, side_effect=self._fake_convert),
+            self.assertWarns(DeprecationWarning) as caught,
+        ):
+            result = bridge.push(objects=["stub_object"], SCENE_SIDECAR=False)
+        self.assertIsNotNone(result)
+        self.assertFalse(result["sidecar_requested"])
+        self.assertTrue(
+            any("SCENE_SIDECAR" in str(w.message) for w in caught.warnings),
+            [str(w.message) for w in caught.warnings],
+        )
+
+    def test_a_removed_push_keyword_is_dropped_with_one_warning(self):
+        """Bug: ``push`` takes ``**params``, so ``texture_format=`` -- the
+        keyword ``glb_options`` replaced, removed this release -- no longer
+        failed but landed in the EXPORT bag, where nothing reads it: the
+        container the caller asked for silently did not happen. Fixed:
+        2026-10-24 -- it is dropped, with one warning per session naming it
+        and what to pass instead."""
+
+        class _Recording(_StubPreviewBridge):
+            params_seen = []
+
+            def _produce(self, objects, request):
+                self.params_seen.append(dict(request.params))
+                return super()._produce(objects, request)
+
+        bridge = _Recording()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with (
+            unittest.mock.patch.object(PreviewBridge, "_retired_announced", set()),
+            unittest.mock.patch(target, side_effect=self._fake_convert),
+            self.assertLogs(bridge.logger, level="WARNING") as logged,
+        ):
+            for _ in range(2):
+                bridge.push(objects=["stub_object"], texture_format="KTX2")
+        self.assertEqual(len(bridge.params_seen), 2)
+        for params in bridge.params_seen:
+            self.assertNotIn("texture_format", params)
+        said = [line for line in logged.output if "texture_format" in line]
+        self.assertEqual(len(said), 1, logged.output)
+        self.assertIn("texture_file_type", said[0])
+
+    def test_the_envelopes_handoff_is_embedded_in_the_published_glb(self):
+        """The published artifact is self-describing -- the handoff the
+        envelope's source makes, inside -- and the outcome rides the result.
+
+        No applier is patched here: the fake GLB has no materials, so the
+        emissive section reports "0 of 1 matched" -- on the result, which
+        describes the push; the file carries neither the envelope nor that
+        outcome, only what describes the asset, readable back out of the
+        served file with no side files.
+        """
+        bridge = _SidecarPreviewBridge()
+        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
+        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
+        with (
+            unittest.mock.patch(target, side_effect=self._fake_convert),
+            self.assertWarns(DeprecationWarning),
+        ):
             result = bridge.send()
         served = Path(self.server.root) / result["asset"]
-        embedded = MeshConvert.read_scene_sidecar(str(served))
-        self.assertEqual(embedded["sections"], _StubPreviewBridge.sections)
-        self.assertEqual(embedded["version"], MeshConvert.SIDECAR_VERSION)
+        handoff = MeshConvert.read_glb_handoff(str(served))
+        self.assertEqual(handoff["version"], HandoffRecord.VERSION)
+        self.assertEqual(
+            handoff["extras"]["source"], {"application": "stub", "version": "0"}
+        )
         with MeshConvert.open_glb(str(served)) as edit:
-            self.assertEqual(
-                edit.gltf["extras"]["scene_sidecar_applied"],
-                {"emissive": "0 of 1 matched"},
-            )
+            self.assertNotIn("scene_sidecar", edit.gltf["extras"])
+            self.assertNotIn("scene_sidecar_applied", edit.gltf["extras"])
         self.assertEqual(result["sidecar"], {"emissive": "0 of 1 matched"})
 
     def test_the_deliverer_sets_the_start_and_locomotion_on_every_publish(self):
@@ -3557,10 +3666,7 @@ class PreviewSettingsTestCase(unittest.TestCase):
         gltf = {
             "asset": {"version": "2.0"},
             "extras": {
-                "lightmap_web": {
-                    "version": 1,
-                    "materials": {"room": {"intensity": 1.0}},
-                }
+                SceneRecords.LIGHTMAPS.key: MeshConvert.lightmaps_block({"room": 1.0})
             },
             "materials": [{"name": "room", "normalTexture": {"index": 0}}],
             "textures": [{"source": 0}],
@@ -5098,26 +5204,38 @@ class PreviewSceneDescriptionTestCase(unittest.TestCase):
         self.assertEqual((status, chunk["value"]), (200, gltf["asset"]))
 
     def test_the_rendering_is_the_one_the_asset_publishes(self):
-        """Wherever the viewer's readExtras finds it: the root's extras, or
-        the first scene's -- a JSON string there, as some producers write."""
+        """Where the viewer reads it: ``extras.handoff`` in the root extras, in
+        the schema the page reads. A handoff anywhere else -- the first
+        scene's extras, the ``scene_sidecar`` envelope of a file built before
+        the block -- or of another version is none: the viewer lights the
+        file with its own recipe, and the file is re-exported."""
         recipe = {"renderer": {"toneMapping": "Neutral", "toneMappingExposure": 1.4}}
-        sidecar = {"handoff": {"rendering": recipe}}
-        for placed in ("root", "scene"):
-            with self.subTest(placed):
+        block = {"version": HandoffRecord.VERSION, "rendering": recipe}
+        gltf = self._room()
+        gltf["extras"] = {HandoffRecord.KEY: block}
+        self._publish(gltf)
+        _status, scene = self._get(f"/{SCENE_PATH}")
+        self.assertEqual(scene["rendering"], recipe)
+        self.assertEqual(scene["renderingSource"], "asset")
+
+        for where in ("scene", "envelope", "older"):
+            with self.subTest(where=where):
                 gltf = self._room()
-                if placed == "root":
-                    gltf["extras"] = {"scene_sidecar": sidecar}
+                if where == "scene":
+                    gltf["scenes"][0]["extras"] = {HandoffRecord.KEY: json.dumps(block)}
+                elif where == "envelope":
+                    gltf["extras"] = {"scene_sidecar": {"handoff": block}}
                 else:
-                    gltf["scenes"][0]["extras"] = {"scene_sidecar": json.dumps(sidecar)}
+                    gltf["extras"] = {HandoffRecord.KEY: dict(block, version=2)}
                 self._publish(gltf)
                 _status, scene = self._get(f"/{SCENE_PATH}")
-                self.assertEqual(scene["rendering"], recipe)
-                self.assertEqual(scene["renderingSource"], "asset")
+                self.assertEqual(scene["rendering"], HandoffRecord.rendering_policy())
+                self.assertEqual(scene["renderingSource"], "viewer default")
 
     def test_an_asset_with_no_recipe_gets_the_one_the_viewer_falls_back_to(self):
         self._publish(self._room())
         _status, scene = self._get(f"/{SCENE_PATH}")
-        self.assertEqual(scene["rendering"], MeshConvert.rendering_policy())
+        self.assertEqual(scene["rendering"], HandoffRecord.rendering_policy())
         self.assertEqual(scene["renderingSource"], "viewer default")
 
     def test_the_viewer_names_the_three_release_the_page_imports(self):

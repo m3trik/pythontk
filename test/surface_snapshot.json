@@ -1996,6 +1996,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.animation_record",
+    "name": "AnimationBlock",
+    "qualname": "AnimationBlock",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.animation_record",
+    "name": "AnimationRecord",
+    "qualname": "AnimationRecord",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.app_installer",
     "name": "AppInstaller",
     "qualname": "AppInstaller",
@@ -2020,6 +2034,13 @@
     "module": "pythontk.geo_utils.articulation.analysis",
     "name": "ArticulationAnalysis",
     "qualname": "ArticulationAnalysis",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.articulation.record",
+    "name": "ArticulationBlock",
+    "qualname": "ArticulationBlock",
     "tier": "root"
   },
   {
@@ -2062,6 +2083,13 @@
     "module": "pythontk.core_utils.engines.instancing.assembly_sorter",
     "name": "AssemblySorter",
     "qualname": "AssemblySorter",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.audio_utils.audio_record",
+    "name": "AudioRecord",
+    "qualname": "AudioRecord",
     "tier": "root"
   },
   {
@@ -2367,6 +2395,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.region_masks",
+    "name": "EmissiveGroupsRecord",
+    "qualname": "EmissiveGroupsRecord",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.execution_monitor._execution_monitor",
     "name": "ExecutionMonitor",
     "qualname": "ExecutionMonitor",
@@ -2507,6 +2542,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.scene_records",
+    "name": "GlbBlock",
+    "qualname": "GlbBlock",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.file_utils.mesh_convert.glb.fades",
     "name": "GlbFades",
     "qualname": "GlbFades",
@@ -2528,6 +2570,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.handoff_record",
+    "name": "HandoffBlock",
+    "qualname": "HandoffBlock",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "HandoffBridge",
     "qualname": "HandoffBridge",
@@ -2535,9 +2584,23 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.handoff_record",
+    "name": "HandoffCarrier",
+    "qualname": "HandoffCarrier",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.handoff.manifest",
     "name": "HandoffManifest",
     "qualname": "HandoffManifest",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.handoff_record",
+    "name": "HandoffRecord",
+    "qualname": "HandoffRecord",
     "tier": "root"
   },
   {
@@ -2822,6 +2885,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.lightmap_record",
+    "name": "LightmapRecord",
+    "qualname": "LightmapRecord",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.lightmap_record",
+    "name": "LightmapsBlock",
+    "qualname": "LightmapsBlock",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.process_stream",
     "name": "LogTailer",
     "qualname": "LogTailer",
@@ -3011,6 +3088,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.material_record",
+    "name": "MaterialFamilies",
+    "qualname": "MaterialFamilies",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.math_utils._math_utils",
     "name": "MathUtils",
     "qualname": "MathUtils",
@@ -3182,6 +3266,13 @@
     "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "Payload",
     "qualname": "Payload",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.pending_files",
+    "name": "PendingFiles",
+    "qualname": "PendingFiles",
     "tier": "root"
   },
   {
@@ -3490,6 +3581,13 @@
     "module": "pythontk.file_utils.file_naming",
     "name": "RenamePlan",
     "qualname": "RenamePlan",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.mesh_convert.render_effects_record",
+    "name": "RenderEffectsRecord",
+    "qualname": "RenderEffectsRecord",
     "tier": "root"
   },
   {
@@ -3816,6 +3914,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.geo_utils.shadow_record",
+    "name": "ShadowBlock",
+    "qualname": "ShadowBlock",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.geo_utils.shadow_projection",
     "name": "ShadowConformance",
     "qualname": "ShadowConformance",
@@ -3847,6 +3952,13 @@
     "module": "pythontk.geo_utils.shadow_projection",
     "name": "ShadowRaster",
     "qualname": "ShadowRaster",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.shadow_record",
+    "name": "ShadowRecord",
+    "qualname": "ShadowRecord",
     "tier": "root"
   },
   {

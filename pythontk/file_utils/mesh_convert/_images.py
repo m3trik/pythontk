@@ -8,11 +8,11 @@ the other passes through ``cls``.
 
 import base64
 import hashlib
-import json
 import logging
 import os
 from typing import Any, Dict, Optional
 
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 
 logger = logging.getLogger(__name__)
@@ -81,40 +81,6 @@ class _ImagesMixin:
         if any(v.get("buffer", 0) != 0 for v in gltf.get("bufferViews") or []):
             return "the file has bufferViews outside the embedded BIN (buffer 0)."
         return None
-
-    @staticmethod
-    def _map_sidecar_image_refs(gltf: Dict[str, Any], visit) -> None:
-        """Apply *visit* to every image index the embedded scene sidecar names.
-
-        ``visit(index)`` returns where those bytes live now, or ``None`` when
-        they left the file -- that reference is dropped, and the envelope's own
-        ``validate`` count drops with it so a verifying reader still finds the
-        envelope consistent with itself. Digests stay valid: a renumber moves
-        bytes, never changes them. The one definition of where the sidecar
-        names images, shared by the passes that renumber them
-        (:meth:`dedupe_glb_images`, :meth:`prune_glb_unreferenced_textures`).
-        """
-        extras = gltf.get("extras")
-        sidecar = extras.get("scene_sidecar") if isinstance(extras, dict) else None
-        entries = sidecar.get("textures") if isinstance(sidecar, dict) else None
-        if not isinstance(entries, dict):
-            return
-        dropped = 0
-        for path in list(entries):
-            ref = entries[path]
-            index = ref.get("image") if isinstance(ref, dict) else None
-            if not isinstance(index, int):
-                continue
-            moved = visit(index)
-            if moved is None:
-                del entries[path]
-                dropped += 1
-            else:
-                ref["image"] = moved
-        claims = sidecar.get("validate")
-        if dropped and isinstance(claims, dict):
-            if isinstance(claims.get("textures"), int):
-                claims["textures"] -= dropped
 
     @classmethod
     def decode_glb_textures(
@@ -323,11 +289,6 @@ class _ImagesMixin:
                         and binding.get("source") in replacement
                     ):
                         binding["source"] = replacement[binding["source"]]
-            # The sidecar names the same bytes by image index: its references
-            # follow the survivor rather than leaving with the duplicate.
-            cls._map_sidecar_image_refs(
-                gltf, lambda index: replacement.get(index, index)
-            )
             edit.dirty = True
             # The duplicates are now unreferenced; the prune owns dropping them
             # (and their exclusive views), remapping every surviving index and
@@ -373,12 +334,8 @@ class _ImagesMixin:
         rebuilt from the surviving views only, 4-byte padded like every
         repack here.
 
-        Runs at the tail of :meth:`apply_scene_sidecar`, BEFORE the embedded
-        texture map is built, and again wherever a later applier unbinds an
-        image -- so that map is renumbered here as well
-        (:meth:`_map_sidecar_image_refs`): a reference follows its image, one
-        whose image was dropped goes, and one that named no image is left for
-        :meth:`verify_glb` to report. Safe to run standalone on any GLB; a file
+        Runs after the materials are stated, and again wherever a later
+        applier unbinds an image. Safe to run standalone on any GLB; a file
         with nothing to drop is not rewritten.
 
         Returns:
@@ -419,28 +376,18 @@ class _ImagesMixin:
                 r["index"] for r in refs if 0 <= r["index"] < len(textures)
             }
 
-            # --- and what extras.shadow_web binds by index --------------------
+            # --- and what extras.shadows binds by index --------------------
             # The shadow manifest names its maps by INDEX, and the horizon map
             # is sampled by no material -- so the walk above can see neither
             # fact, and without this the prune DELETES the horizon map and
             # renumbers the survivors out from under the manifest. In the
             # preview path the prune always fires (FBX2glTF's diffuse_cube /
             # ibl_brdf_lut sit at low indices), so every projected plane
-            # shipped a stale index. extras.lightmap_web is immune only
+            # shipped a stale index. extras.lightmaps is immune only
             # because it stores names.
-            gltf_extras = gltf.get("extras")
-            shadow_raw = (
-                gltf_extras.get(cls.SHADOW_WEB_KEY)
-                if isinstance(gltf_extras, dict)
-                else None
+            shadow_slots = cls._shadow_texture_slots(
+                SceneRecords.glb_block(gltf, SceneRecords.SHADOWS)
             )
-            shadow_doc = shadow_raw
-            if isinstance(shadow_raw, str):
-                try:
-                    shadow_doc = json.loads(shadow_raw)
-                except ValueError:
-                    shadow_doc = None
-            shadow_slots = cls._shadow_web_texture_slots(shadow_doc)
             live_textures |= {
                 h["texture_index"]
                 for h in shadow_slots
@@ -502,21 +449,6 @@ class _ImagesMixin:
             for holder in shadow_slots:
                 if holder["texture_index"] in texture_map:
                     holder["texture_index"] = texture_map[holder["texture_index"]]
-            if shadow_slots and isinstance(shadow_raw, str):
-                # Carried as JSON text: the in-place rewrite above landed on the
-                # decoded copy, so it has to be re-serialised to reach the file.
-                gltf_extras[cls.SHADOW_WEB_KEY] = json.dumps(shadow_doc)
-            # The scene sidecar's texture map names IMAGES by index too, and is
-            # recorded before later appliers run -- the highlight pass unbinds
-            # emissive maps and prunes after it -- so without this every later
-            # reference named its neighbour (28 of 35 on a production GLB).
-            before = len(image_map) + dropped_images
-            cls._map_sidecar_image_refs(
-                gltf,
-                # One that named no image BEFORE this prune is not the prune's
-                # to erase: left as found, verify_glb still reports it.
-                lambda index: image_map.get(index) if 0 <= index < before else index,
-            )
             edit.embedded = {
                 key: texture_map[index]
                 for key, index in edit.embedded.items()

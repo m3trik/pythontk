@@ -1189,6 +1189,21 @@ class ImgTest(BaseTestCase):
         out = ImgUtils.pack_channels({"R": r}, grayscale_to_rgb=True)
         self.assertEqual(out.getpixel((0, 0)), (200, 200, 200))
 
+    def test_pack_channels_inverts_an_image_never_a_fill(self):
+        """A fill is the value the channel stores: an absent smoothness stays
+        matte whichever way its missing map would have been read (before
+        2026-10-20 an inverted channel's fill came out inverted too, so a
+        Mask Map's absent smoothness packed a mirror or not by an unrelated
+        flag)."""
+        r = Image.new("L", (4, 4), 10)
+        out = ImgUtils.pack_channels(
+            {"R": r},
+            out_mode="RGB",
+            fill_values={"R": 0, "G": 200, "B": 0},
+            invert_channels=["R", "G"],
+        )
+        self.assertEqual(out.getpixel((0, 0)), (245, 200, 0))
+
     # -------------------------------------------------------------------------
     # Image Comparison Tests
     # -------------------------------------------------------------------------

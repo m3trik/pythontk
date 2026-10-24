@@ -12,7 +12,7 @@ loads the file (it is declared in ``extensionsUsed``, never
 ``extensionsRequired``).
 
 ONE pass, a TABLE of channels. Each :class:`PointerChannel` row says which
-``visibility_tracks`` key carries its ramp, which material property it targets,
+``render_effects`` key carries its ramp, which material property it targets,
 how many components that property has, whether the clone needs ``alphaMode
 BLEND`` (only alpha does -- an additive emissive sorts as opaque), and how a
 ramp sample composes with the material's own value. The pass isolates a node's
@@ -140,7 +140,7 @@ class PointerChannel:
     """One animatable material property and how a published ramp reaches it.
 
     Attributes:
-        name: The ``visibility_tracks`` key carrying the ramp (``[[frame, v]]``).
+        name: The ``render_effects`` key carrying the ramp (``[[frame, v]]``).
         pointer: JSON pointer template with ``{index}`` for the material.
         property: Path of the material property inside the material dict, as
             ``("pbrMetallicRoughness", "baseColorFactor")`` or ``("emissiveFactor",)``.
@@ -350,7 +350,7 @@ class _GlbFadesInternal:
                         clone = copy.deepcopy(materials[source])
                         # The NAME is kept, deliberately: glTF does not require
                         # unique material names, and the lightmap manifest
-                        # (`lightmap_web.materials`) is keyed by name -- a
+                        # (`lightmaps.materials`) is keyed by name -- a
                         # renamed clone loses its lightmap in every reader that
                         # binds that way, the preview included.
                         materials.append(clone)

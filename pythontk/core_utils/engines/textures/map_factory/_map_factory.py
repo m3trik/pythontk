@@ -1648,18 +1648,29 @@ class MapFactory(
         invert_roughness: bool = False,
         output_path: str = None,
         save: bool = True,
+        *,
+        fill_values: Optional[Dict[str, int]] = None,
     ) -> Union[str, "Image.Image"]:
         """Pack AO (R) + Roughness (G) + Metallic (B) into a single ORM texture.
 
+        A channel with no source stores its map type's absent value
+        (:meth:`MapRegistry.absent_fills`), as every packing does:
+        unoccluded, matte, dielectric.
+
         Parameters:
-            ao_map_path (str): AO texture. Can be None (fills white).
-            roughness_map_path (str): Roughness texture. Can be None (fills black).
-            metallic_map_path (str): Metallic texture. Can be None (fills black).
+            ao_map_path (str): AO texture. Can be None (white: unoccluded).
+            roughness_map_path (str): Roughness texture. Can be None (white: matte).
+            metallic_map_path (str): Metallic texture. Can be None (black: dielectric).
             output_dir (str, optional): Output directory. Defaults to the first source's directory.
             suffix (str, optional): Suffix for the output file name.
             invert_roughness (bool, optional): Treat ``roughness_map_path`` as Smoothness and invert it.
             output_path (str, optional): Explicit output path. Overrides output_dir/suffix logic.
             save (bool, optional): If True, saves to disk. If False, returns PIL Image.
+            fill_values (dict, optional): ``{"R"|"G"|"B": 0-255}`` for a channel
+                with no source, over the absent values. A glTF material
+                multiplies each channel by its factor, so a packing whose
+                factors carry the unmapped channels' constants fills them
+                white (255).
 
         Returns:
             str | Image.Image: Path to the packed ORM texture or PIL Image.
@@ -1678,6 +1689,7 @@ class MapFactory(
             invert_roughness,
             output_path,
             save,
+            fill_values=fill_values,
         )
 
     @classmethod
@@ -1696,10 +1708,14 @@ class MapFactory(
     ) -> Union[str, "Image.Image"]:
         """Pack Metallic + AO + Smoothness (and optional Detail) into a single MSAO texture.
 
+        A channel with no source stores its map type's absent value
+        (:meth:`MapRegistry.absent_fills`), as every packing does:
+        dielectric, unoccluded, no detail, matte.
+
         Parameters:
             metallic_map_path (str): Path to the metallic texture map.
-            ao_map_path (str): Path to the ambient occlusion texture map. Can be None (fills with white).
-            alpha_map_path (str): Path to the smoothness/roughness texture map. Can be None (fills with white).
+            ao_map_path (str): Path to the ambient occlusion texture map. Can be None (white: unoccluded).
+            alpha_map_path (str): Path to the smoothness/roughness texture map. Can be None (black: matte).
             detail_map_path (str, optional): Path to the detail mask map (RGBA layout only).
             output_dir (str, optional): Output directory. If None, uses the first source map's directory.
             suffix (str, optional): Suffix for the output file name.
@@ -1741,10 +1757,14 @@ class MapFactory(
     ) -> Union[str, "Image.Image"]:
         """Pack Metallic + Roughness + AO (and optional Detail) into a single MRAO texture.
 
+        A channel with no source stores its map type's absent value
+        (:meth:`MapRegistry.absent_fills`), as every packing does:
+        dielectric, matte, unoccluded.
+
         Parameters:
-            metallic_map_path (str): Metallic texture. Can be None (fills black).
-            roughness_map_path (str): Roughness texture. Can be None (fills black).
-            ao_map_path (str): AO texture. Can be None (fills white).
+            metallic_map_path (str): Metallic texture. Can be None (black: dielectric).
+            roughness_map_path (str): Roughness texture. Can be None (white: matte).
+            ao_map_path (str): AO texture. Can be None (white: unoccluded).
             detail_map_path (str, optional): Detail mask (RGBA layout only).
             output_dir (str, optional): Output directory. If None, uses the first source map's directory.
             suffix (str, optional): Suffix for the output file name.

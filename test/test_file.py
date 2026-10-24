@@ -767,6 +767,36 @@ class FileTest(BaseTestCase):
                 FileUtils.get_classes_from_path(tmp, "classname"), ["BomWidget"]
             )
 
+    def test_an_unchanged_file_is_parsed_once(self):
+        """A Switchboard re-scans every slot file on each construction: parsing
+        and walking the same unchanged files was 95% of uitk's switchboard tests
+        (measured 2026-10-21: 22,757 parses in one module, 299 of 315 s)."""
+        import ast
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "cached_widget.py").write_text(
+                "class CachedWidget:\n    class Inner:\n        pass\n", encoding="utf-8"
+            )
+            with mock.patch.object(ast, "parse", wraps=ast.parse) as parse:
+                first = FileUtils.get_classes_from_path(tmp, "classname", top_level_only=False)
+                second = FileUtils.get_classes_from_path(tmp, "classname", top_level_only=False)
+                top = FileUtils.get_classes_from_path(tmp, "classname")
+            self.assertEqual(first, ["CachedWidget", "Inner"])
+            self.assertEqual(second, first)
+            self.assertEqual(top, ["CachedWidget"])  # the mode is part of the key
+            self.assertEqual(parse.call_count, 2)  # once per mode, not once per scan
+
+    def test_an_edited_file_is_parsed_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "edited_widget.py"
+            path.write_text("class Before:\n    pass\n", encoding="utf-8")
+            self.assertEqual(FileUtils.get_classes_from_path(tmp, "classname"), ["Before"])
+            path.write_text("class AfterTheEdit:\n    pass\n", encoding="utf-8")
+            self.assertEqual(
+                FileUtils.get_classes_from_path(tmp, "classname"), ["AfterTheEdit"]
+            )
+
     # -------------------------------------------------------------------------
     # Version Management Tests
     # -------------------------------------------------------------------------
@@ -1366,6 +1396,25 @@ class FileTest(BaseTestCase):
         ):
             entry = FileUtils.relativize_output_dir(picked, base)
             self.assertEqual(FileUtils.resolve_output_dir(entry, base), picked, entry)
+
+    @unittest.skipUnless(os.name == "nt", "drive letters are a Windows path shape")
+    def test_relativize_output_dir_drive_letter_case_is_one_drive(self):
+        """'o:' and 'O:' are the same drive. is_under folds the case, so the
+        relative spelling must too: a case-sensitive drive compare treated
+        them as two drives and kept only the leaf ('hero'), which resolves to
+        a different folder than the one picked."""
+        base = r"O:\proj\sourceimages"
+        picked = r"o:\proj\sourceimages\lightmaps\hero"
+        self.assertEqual(
+            FileUtils.convert_to_relative_path(picked, base, prepend_base=False),
+            "lightmaps/hero",
+        )
+        entry = FileUtils.relativize_output_dir(picked, base)
+        self.assertEqual(entry, "lightmaps/hero")
+        self.assertEqual(
+            os.path.normcase(FileUtils.resolve_output_dir(entry, base)),
+            os.path.normcase(picked),
+        )
 
     # -------------------------------------------------------------------------
     # portable_path / resolve_portable_path Tests -- scene-record file paths

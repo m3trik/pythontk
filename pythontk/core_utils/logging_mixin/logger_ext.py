@@ -808,10 +808,18 @@ class LoggerExt:
     def _action_url(action: str, /, **params: Any) -> str:
         """``action://ACTION?k=v&...`` -- the one builder of the link grammar the
         DCC dispatchers parse (``UiUtils.dispatch_log_link``): values are
-        URL-encoded, so a node path's ``|`` or a name's ``&`` round-trips."""
+        URL-encoded, so a node path's ``|`` or a name's ``&`` round-trips. A
+        list or tuple value repeats its key, one per item (every reader of a
+        map in one ``select`` link)."""
         from urllib.parse import urlencode
 
-        query = urlencode({k: str(v) for k, v in params.items()})
+        query = urlencode(
+            {
+                k: [str(i) for i in v] if isinstance(v, (list, tuple)) else str(v)
+                for k, v in params.items()
+            },
+            doseq=True,
+        )
         return f"action://{action}?{query}" if query else f"action://{action}"
 
     @staticmethod

@@ -287,17 +287,23 @@ class ArticulationModel(_ArticulationModelInternal):
 
     ``parent`` is an earlier joint's index or null (a root: its parent is the
     rig space); ``min`` / ``max`` are null for an unbounded channel;
-    ``weight`` (default 1) is how readily the grab moves that channel against
-    the others. ``grab`` is the runtimes' business and read here only by
-    :meth:`from_record`.
+    ``weight`` is how readily the grab moves that channel against the others.
+    ``grab`` is the runtimes' business and read here only by
+    :meth:`from_record`. A rig is the shape the record declares
+    (``ArticulationRig``) or no rig: what it leaves out is not defaulted, so
+    this reference and every runtime (unitytk's C# model refuses the same)
+    pose one rig alike. A rig handed without its ``grab`` -- the hosts' IK
+    solvers build the model from a rig's joints alone -- is read as grabbing
+    nothing: the model reads no grab.
 
     Parameters:
         rig: One rig mapping, as above.
 
     Raises:
-        ValueError: A joint whose parent is not an earlier joint, an unknown
-            channel or rotate order, a channel named twice on one joint, or a
-            limit whose ``min`` exceeds its ``max``.
+        ValueError: A rig its declared shape refuses (each problem named), a
+            joint whose parent is not an earlier joint, an unknown channel or
+            rotate order, a channel named twice on one joint, or a limit whose
+            ``min`` exceeds its ``max``.
     """
 
     #: Solver iterations per position solve; it stops early once within
@@ -324,6 +330,20 @@ class ArticulationModel(_ArticulationModelInternal):
     EPS = 1.0e-9
 
     def __init__(self, rig: Mapping[str, Any]):
+        # The shape the record declares (imported here: it reads this module's
+        # vocabularies).
+        from pythontk.geo_utils.articulation.record import ArticulationRig
+
+        if isinstance(rig, Mapping) and "grab" not in rig:
+            rig = dict(rig, grab=[])
+        problems = ArticulationRig.validate(rig).errors
+        if problems:
+            label = rig.get("name") if isinstance(rig, Mapping) else None
+            raise ValueError(
+                f"Rig {label!r} is not the shape a reader reads: "
+                + "; ".join(problems)
+                + "."
+            )
         self.name = str(rig.get("name") or "")
         self.joints: List[Dict[str, Any]] = []
         #: ``(joint index, channel)`` per state slot, in state order.

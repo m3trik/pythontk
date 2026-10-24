@@ -22,11 +22,12 @@ shows X but the export ships Y" of the last month was a gap between those two.
                  texture ceiling FIRST, so the converter and every pass after
                  it read a 2K file rather than a 4K one (measured on a
                  production assembly: the push went from 419 s to 333 s);
-    convert   -- ``MeshConvert.fbx_to_glb`` with the scene sidecar, the host's
-                 live lightmap folders and a *report*: one edit session running
-                 the alpha repair, image dedupe, sidecar, dead-texture sweep,
-                 lightmaps, shadow rigs, curve-proxy strip, clips, visibility
-                 gates, fades, the skin and tangent repairs and the animation
+    convert   -- ``MeshConvert.fbx_to_glb`` with the host's live lightmap
+                 folders and a *report*: one edit session running the alpha
+                 repair, image dedupe, the materials record, the handoff the
+                 FBX's own record implies, the dead-texture sweep, lightmaps,
+                 shadow rigs, curve-proxy strip, clips, visibility gates,
+                 fades, the skin and tangent repairs and the animation
                  manifest, in the order their own docstrings justify;
     reduce    -- ``MeshConvert.reduce_glb_animations`` when the caller names a
                  key tolerance: the converter bakes a key on every frame, and
@@ -44,10 +45,9 @@ speed wins whose output the conversion would reach anyway (the clip rebuild
 discards the split takes, the texture ceiling re-applies the size), so their
 failure is a warning and the unstripped / original FBX is read.
 
-:meth:`GlbPipeline.envelope` is the matching single path for the scene
-sidecar: every producer reads its host's scene state (a DCC concern) and hands
-the reader here, so the envelope's construction, its log line and its failure
-policy (a bare GLB still beats no GLB) exist once.
+The GLB says what its FBX says: the materials its ``materials`` record
+states, the handoff -- source and lighting -- its ``handoff`` record states,
+so no producer hands the build an account of the scene beside the file.
 """
 
 from __future__ import annotations
@@ -58,6 +58,7 @@ import time
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, Optional, Sequence
 
+from pythontk.core_utils.deprecation import Deprecation
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.file_utils.temp_artifacts import TempArtifacts
 
@@ -84,6 +85,11 @@ class GlbPipeline(LoggingMixin):
             timings[stage] = round(timings.get(stage, 0.0) + elapsed, 3)
 
     @classmethod
+    @Deprecation.symbol(
+        "nothing -- GlbPipeline.build reads the handoff off the FBX's own record",
+        remove_in="0.18.0",
+        since="2026-10-24",
+    )
     def envelope(
         cls,
         read_sections: Callable[[], Optional[Dict[str, Any]]],
@@ -120,12 +126,16 @@ class GlbPipeline(LoggingMixin):
             sections, source=source, asset=asset, rendering=rendering
         )
         # Names what the sidecar IS, because "riding the GLB" read as a
-        # companion file the consumer has to be handed: the sections are
-        # written INTO the GLB's own material JSON and a copy is embedded in
-        # `extras` as provenance. Nothing outside the .glb is produced.
+        # companion file the consumer has to be handed: it is embedded in the
+        # GLB's `extras`, nothing outside the .glb is produced. Its sections
+        # repair the converter's reading only of a file whose materials no
+        # reader can parse (an ASCII FBX): an FBX's ``materials`` record --
+        # or its own materials, read -- states every material, and the build
+        # says so once it has applied them.
         log.info(
-            "Scene sidecar (%s) written into the GLB's materials (copy embedded "
-            "in extras; no companion file).",
+            "Scene sidecar read (%s): embedded in the GLB's extras with its "
+            "handoff and lighting; its sections repair only a file whose "
+            "materials cannot be read (no companion file).",
             ", ".join(sorted(sections)) or "no sections",
         )
         return envelope
@@ -144,6 +154,7 @@ class GlbPipeline(LoggingMixin):
         dst: Optional[str] = None,
         *,
         sidecar: Optional[Dict[str, Any]] = None,
+        rendering: Optional[Dict[str, Dict[str, Any]]] = None,
         data_export: Optional[Dict[str, Any]] = None,
         lightmap_dirs: Sequence[str] = (),
         shadow_dirs: Sequence[str] = (),
@@ -162,8 +173,11 @@ class GlbPipeline(LoggingMixin):
         Parameters:
             src: The exported FBX.
             dst: Where the GLB goes; ``None`` writes it beside *src*.
-            sidecar: A scene-sidecar envelope (:meth:`envelope`) applied inside
-                the conversion and embedded in the file.
+            sidecar: A handoff block to embed in place of the one the FBX's
+                own record implies (:meth:`MeshConvert.fbx_to_glb`); ``None``,
+                every export's case, reads it off the file.
+            rendering: The export's choices over the lighting recipe, laid
+                over what the FBX's handoff states -- a preview's GLB rows.
             data_export: ``{channel key: value or None}`` overlaid on the file's
                 in-band channels before any pass reads them
                 (:meth:`MeshConvert.overlay_data_export`). ``None`` builds from
@@ -211,15 +225,22 @@ class GlbPipeline(LoggingMixin):
                 :class:`ImgUtils` (cv2).
 
         Returns:
-            ``{"glb", "src", "scratch", "takes", "downsized", "sidecar",
-            "lightmaps", "animation", "textures", "data_export",
-            "dependencies", "timings"}`` -- the GLB written, the FBX the
+            ``{"glb", "src", "scratch", "takes", "downsized", "materials",
+            "sidecar", "lightmaps", "lightmap_manifest", "animation",
+            "textures", "data_export", "dependencies", "timings"}`` -- the
+            GLB written, the FBX the
             converter actually read, the
             scratch files minted, the split-take strip's
             :meth:`FbxMedia.drop_takes` report (``None`` when the strip did
-            not run), the downsize report (or ``None``), the sidecar's
-            per-section outcome, the lightmap coverage
-            (:meth:`MeshConvert.lightmap_report`), the key-reduction summary
+            not run), the downsize report (or ``None``), what each material
+            took from the ``materials`` record
+            (:meth:`MeshConvert.apply_glb_materials`; ``[]`` for a file the
+            reader cannot parse), an old envelope's per-section outcome
+            (``{}`` otherwise), the lightmap coverage
+            (:meth:`MeshConvert.lightmap_report`), the lightmap manifest
+            corrected to what the GLB ships (``None`` without one: the scene's
+            own record of the export keeps it; the GLB states its lightmaps
+            once, in ``extras.lightmaps``), the key-reduction summary
             (``None`` without a tolerance), the texture-pass summary, the
             in-band channel keys a *data_export* overlay replaced (``[]`` when
             none landed), the files the FBX embeds for its records that the
@@ -245,8 +266,10 @@ class GlbPipeline(LoggingMixin):
             "scratch": [],
             "takes": None,
             "downsized": None,
+            "materials": [],
             "sidecar": {},
             "lightmaps": None,
+            "lightmap_manifest": None,
             "animation": None,
             "textures": None,
             # The in-band channels an overlay replaced (``data_export=``);
@@ -355,6 +378,7 @@ class GlbPipeline(LoggingMixin):
                 # first conversion instead of installing.
                 prompt=False,
                 sidecar=sidecar,
+                rendering=rendering,
                 data_export=data_export,
                 lightmap_dirs=lightmap_dirs,
                 shadow_dirs=shadow_dirs,
@@ -374,8 +398,18 @@ class GlbPipeline(LoggingMixin):
                 timings["fbx2gltf"] = round(max(convert - passes, 0.0), 3)
                 timings["passes"] = round(passes, 3)
             report["glb"] = glb
+            report["materials"] = list(conversion.get("materials") or [])
+            stated = report["materials"]
+            if stated:
+                missing = sorted({m for r in stated for m in r.get("missing") or ()})
+                log.info(
+                    "Materials: %d set as the materials record states them%s.",
+                    len({r["material"] for r in stated}),
+                    f"; {len(missing)} map(s) not found" if missing else "",
+                )
             report["sidecar"] = conversion.get("sidecar") or {}
             report["lightmaps"] = conversion.get("lightmaps")
+            report["lightmap_manifest"] = conversion.get("lightmap_manifest")
             report["data_export"] = list(conversion.get("data_export") or [])
 
             if key_tolerance:
@@ -489,7 +523,7 @@ class GlbPipeline(LoggingMixin):
         The clip rebuild inside the conversion (``MeshConvert.apply_glb_clips``)
         cuts every shot from that whole-timeline stack and discards the
         converter's split takes -- so a declared take is pure converter cost.
-        Only takes the file's own ``fbx_takes`` channel names are dropped, and
+        Only takes the file's own shots record names are dropped, and
         only while a stack those names do not cover survives to cut from; a
         file that declares nothing is read as is. Never the caller's file.
 
@@ -537,24 +571,19 @@ class GlbPipeline(LoggingMixin):
     def _declared_takes(cls, fbx) -> set:
         """Take names *fbx* declares; empty when none.
 
-        Each carrier's shot record read through ``SceneRecords.declared_takes``
-        (the clips' own ranges since 0.11.0), falling back to the legacy
-        ``fbx_takes`` channel an older FBX carries.  Unioned across carriers:
-        a file can hold more than one (an imported reference brings its own).
+        Each carrier's shots record read through ``SceneRecords.declared_takes``
+        -- each clip's own range. Unioned across carriers: a file can hold
+        more than one (an imported reference brings its own).
         """
         from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 
-        names: set = set()
-        for key in (SceneRecords.SHOTS.key, SceneRecords.FBX_TAKES.key):
-            for payload in cls._carrier_payloads(fbx, key):
-                names.update(
-                    str(take["name"])
-                    for take in SceneRecords.declared_takes({key: payload}.get)
-                    if take.get("name")
-                )
-            if names:
-                break
-        return names
+        key = SceneRecords.SHOTS.key
+        return {
+            str(take["name"])
+            for payload in cls._carrier_payloads(fbx, key)
+            for take in SceneRecords.declared_takes({key: payload}.get)
+            if take.get("name")
+        }
 
     @staticmethod
     def _carrier_payloads(fbx, key: str) -> Iterator[Any]:

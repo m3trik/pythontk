@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 from pythontk.core_utils.handoff.app_handoff import Deliverer, HandoffRequest, Payload
-from pythontk.core_utils.deprecation import Deprecation
 from pythontk.core_utils.engines.scene_export.export_profile import ExportRun
 from pythontk.net_utils.preview.server import PreviewServer
 
@@ -92,15 +91,6 @@ class PreviewDeliverer(Deliverer):
             *user_pos*.
     """
 
-    @Deprecation.parameter(
-        "texture_format",
-        remove_in="0.12.0",
-        since="2026-09-23",
-        new="glb_options",
-        transform=lambda value: {"texture_file_type": value},
-        reason="The preview now takes every Scene Exporter GLB row, the "
-        "container being Texture File Type.",
-    )
     def __init__(
         self,
         server: Optional[PreviewServer] = None,
@@ -218,8 +208,8 @@ class PreviewDeliverer(Deliverer):
     #: no texture pass runs and :meth:`preflight` asks for no encoder.
     AS_AUTHORED_KEY = "_as_authored"
     #: Where :meth:`preflight` leaves the push's choices over the lighting
-    #: recipe (:attr:`ExportRun.rendering`) for the host, whose envelope
-    #: publishes them (:meth:`PreviewBridge._attach_sidecar` reads it).
+    #: recipe (:attr:`ExportRun.rendering`) for :meth:`deliver`, whose GLB
+    #: build lays them over the FBX's own handoff (``GlbPipeline.build``).
     RENDERING_KEY = "rendering"
     #: Where :meth:`PreviewBridge.push` leaves the moment it began
     #: (``time.perf_counter``), so :meth:`deliver` can time the host's half
@@ -313,8 +303,9 @@ class PreviewDeliverer(Deliverer):
         nothing but the check here -- found in :meth:`deliver` it arrived after
         the host had already written the FBX. The results ride the request:
         the texture pass to :meth:`deliver`, and the lighting recipe's
-        overrides (:attr:`RENDERING_KEY`) to the host, whose envelope publishes
-        them -- so the rows are resolved (and their notes logged) once.
+        overrides (:attr:`RENDERING_KEY`) to the build, which lays them over
+        the FBX's own -- so the rows are resolved (and their notes logged)
+        once.
         """
         run = self._glb_run(request, bridge.logger)
         if run is None:
@@ -378,24 +369,6 @@ class PreviewDeliverer(Deliverer):
                 return None
             builds.append(built)
 
-        sidecar = extras.get("scene_sidecar")
-        if not (sidecar or {}).get("sections"):
-            # Distinguish "switched off" from "on, but the scene had nothing":
-            # both produce a bare-FBX preview, and only one is a surprise.
-            # Key present means the producer ran and found nothing; absent
-            # means it was never asked (the producer attaches an envelope --
-            # possibly with empty sections -- whenever the param is on).
-            # Debug: the result's ``sidecar_requested`` / ``sidecar`` carry
-            # it, and ``PreviewBridge.sidecar_summary`` is the reported line
-            # -- this one repeated it, and said it for file pushes, which
-            # never carry a sidecar.
-            bridge.logger.debug(
-                "No scene sidecar %s.",
-                "produced for this export"
-                if "scene_sidecar" in extras
-                else "requested",
-            )
-
         publishing = time.perf_counter()
         published = self.publish(
             builds[0]["glb"] if len(builds) == 1 else [b["glb"] for b in builds],
@@ -435,8 +408,11 @@ class PreviewDeliverer(Deliverer):
         built = builds[0]["built"]
         return {
             **published,
-            # The per-section outcome the conversion recorded (what the panel
-            # summarises); ``{}`` when no envelope was offered.
+            # What the materials pass wrote, material by material
+            # (``PreviewBridge.materials_summary``); ``[]`` when the file
+            # could not be read.
+            "materials": list(built.get("materials") or []),
+            # An old host's envelope's per-section outcome; ``{}`` otherwise.
             "sidecar": built.get("sidecar") or {},
             # ``{"expected", "bound", "unbound": [names], "out_of_scope"}``
             # from the conversion's lightmap bind, or ``None`` when it never
@@ -496,11 +472,11 @@ class PreviewDeliverer(Deliverer):
             built = GlbPipeline.build(
                 source,
                 dst=glb,
-                # Applied INSIDE the conversion, ahead of its fade pass: a
-                # material clone copies its source as it stands, so a repair
-                # made afterwards would land only on the original and every
-                # fade clone would keep the converter's packing (measured).
+                # A host that predates the materials record still attaches
+                # an envelope; every other build reads the FBX's own handoff.
                 sidecar=sidecar,
+                # The push's own lighting rows, over the FBX's (preflight).
+                rendering=request.get(self.RENDERING_KEY),
                 # Request-scoped: a preview's overlay describes THIS push (an
                 # effect at the panel's current settings), never the next one.
                 data_export=data_export,

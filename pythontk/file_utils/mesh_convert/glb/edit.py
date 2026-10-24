@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import struct
+from collections.abc import Mapping
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
@@ -836,6 +837,20 @@ class GlbEdit:
         ):
             return None
         return view
+
+    @staticmethod
+    def extras_of(owner: Any) -> Mapping:
+        """The ``extras`` object of *owner* -- a glTF object, or a block of
+        ours, which keeps glTF's convention -- for reading: ``{}`` when it has
+        none or holds a value that is not an object.
+
+        glTF allows any JSON value under ``extras``, so a reader that assumes
+        an object raises on a valid file. For reading only: a missing or
+        non-object one comes back as a fresh ``{}``, and a write to that goes
+        nowhere -- a pass that writes extras makes its own.
+        """
+        extras = owner.get("extras") if isinstance(owner, Mapping) else None
+        return extras if isinstance(extras, Mapping) else {}
 
     @classmethod
     def accessor_elements(cls, edit: "GlbEdit", index: int) -> Optional[List[bytes]]:

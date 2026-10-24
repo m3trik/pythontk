@@ -85,20 +85,21 @@ class _ServeRootMixin:
     #: (never its geometry) and activates through :meth:`add_script`, so the
     #: script joins whatever set the push named, in the same load order. Opt
     #: out by removing the entry, or with :meth:`remove_script` after the push.
-    #: The keys are the records' declared web projections, never spelled here.
+    #: The keys are the records' own, never spelled here: a GLB carries each
+    #: record's block under its key.
     AUTO_SCRIPTS: Dict[str, str] = {
-        "shadow_rig": SceneRecords.SHADOWS.web.key,
+        "shadow_rig": SceneRecords.SHADOWS.key,
         # An articulated rig is a prop a hand is meant to move; without its
         # script the page shows it frozen at whatever the clip says, which
         # reads as "the rig did not export" rather than as a missing option.
-        "articulated_rig": SceneRecords.ARTICULATION.web.key,
+        "articulated_rig": SceneRecords.ARTICULATION.key,
         # A deliverable that ships clips grows a picker and a transport in the
         # page; recording what that transport plays is the same kind of "not
         # optional in any useful sense" as the shadow rigs. There is no
         # checkbox for it because the alternative is worse: the button would be
         # missing on exactly the push a reviewer just watched and wants to
         # send on, and getting it would mean re-exporting the animation.
-        "playblast": SceneRecords.SHOTS.web.key,
+        "playblast": SceneRecords.SHOTS.key,
     }
 
     #: Viewer scripts that write through the owner's routes -- a recording, a

@@ -511,9 +511,10 @@ class HandoffSendTest(unittest.TestCase):
             merged = br.merge_params({"OLD_SCALE": 2.5})
         self.assertEqual(merged["SCALE"], 2.5)
         self.assertNotIn("OLD_SCALE", merged)
-        self.assertEqual(
-            br.merge_params({"OLD_SCALE": 2.5, "SCALE": 3.0})["SCALE"], 3.0
-        )
+        # Still told when the live spelling wins: the old one was given.
+        with self.assertWarns(DeprecationWarning):
+            both = br.merge_params({"OLD_SCALE": 2.5, "SCALE": 3.0})
+        self.assertEqual(both["SCALE"], 3.0)
 
     def test_unknown_mode_aborts_before_export(self):
         br = self._bridge()

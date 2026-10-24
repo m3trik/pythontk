@@ -13,9 +13,9 @@ engine (``scene_records`` / ``scene_store`` / ``export_snapshot`` /
 
 - **Declare once, derive everything.** :class:`RecordSpec` is the declaration:
   key, scope, version, description, kind and dependencies -- and, where
-  another language reads it, its payload's shape and the manifest a GLB
-  publishes it as (:class:`WebProjection`).  Nothing else spells a channel
-  name, and the other languages' types are generated from the shapes.
+  another language reads it, its payload's shape and the block a GLB
+  carries it as (:class:`GlbBlock`).  Nothing else spells a channel name,
+  and the other languages' types are generated from the shapes.
 - **Storage is dumb, records are smart.** :class:`SceneStoreBase` is the whole
   contract a DCC implements: ``read`` / ``write`` / ``keys`` / ``values`` per
   :class:`Scope`, strings only.  Encoding, the version envelope, tolerant
@@ -51,11 +51,13 @@ Zero-dep and DCC-agnostic, like everything in ``pythontk``.
 import copy
 import json
 import logging
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
     Any,
     Callable,
+    ClassVar,
     Dict,
     Iterable,
     List,
@@ -65,6 +67,9 @@ from typing import (
     Tuple,
     Union,
 )
+
+from pythontk.core_utils.class_property import ClassProperty
+from pythontk.core_utils.deprecation import Deprecation
 
 logger = logging.getLogger(__name__)
 
@@ -124,28 +129,193 @@ class Merge(str, Enum):
     CODEC = "codec"
 
 
+#: A validator message naming no key of its own (``SchemaSpec.validate``'s
+#: "missing required key 'x'", "expected a mapping, got str"), which a nested
+#: spec's path joins with a dot ("tracks[0].missing required key 'node'").
+_PATHLESS = re.compile(
+    r"^(?:(?P<path>.+?)\.)?"
+    r"(?P<message>(?:missing required key|expected a mapping, got) .*)$"
+)
+
+
+def _located(where: str, error: str) -> str:
+    """*error* -- a ``SchemaSpec.validate`` line -- said at *where* as every
+    problem line is: where it is, then what is wrong, behind a colon."""
+    found = _PATHLESS.match(error)
+    if found is None:
+        return f"{where}.{error}"
+    path = f"{where}.{found['path']}" if found["path"] else where
+    return f"{path}: {found['message']}"
+
+
+def _declared(key: str, shape: Any, body: Dict[str, Any]) -> Dict[str, Any]:
+    """*body* pruned to *shape* (:meth:`SchemaSpec.prune`), each key it cut
+    warned under the record's *key*: a writer's drift said, never shipped."""
+    dropped: List[str] = []
+    body = shape.prune(body, dropped)
+    if dropped:
+        # One name per field, however many entries carried it.
+        fields = sorted({re.sub(r"\[\d+\]", "[]", path) for path in dropped})
+        logger.warning(
+            "%s: left out what its shape does not declare (%s).",
+            key,
+            ", ".join(fields),
+        )
+    return body
+
+
+class _Unknown:
+    """A held record whose content is not at hand (:attr:`Clause.UNKNOWN`)."""
+
+    def __repr__(self) -> str:
+        return "Clause.UNKNOWN"
+
+
 @dataclass(frozen=True)
-class WebProjection:
-    """How a deliverable record is published for the glTF runtimes.
+class Clause:
+    """A sentence of an assembly that only some files need.
+
+    It applies when the payload holds *value* at *path* -- keys in turn, a
+    list fanning out over its entries -- or, with *value* left out, holds
+    anything there but null or an empty value. So a file states only what
+    its own content uses: a shadows record of projected planes carries no
+    horizon march, a scene without lightmaps no lightmap rule. Without a
+    payload to test (:meth:`RecordSpec.assembly_for` with none) every clause
+    applies -- the full statement the generated docs print.
+
+    Parameters:
+        text: The sentence or sentences.
+        path: Keys into the payload; empty, it always applies.
+        value: What some entry at *path* must equal, type included (``True``
+            is not ``1``); ``None`` for anything present.
+    """
+
+    #: A payload known to be held but not at hand: whatever a clause looks
+    #: for in it may be there, so the clause applies.
+    UNKNOWN: ClassVar[object] = _Unknown()
+
+    text: str
+    path: Tuple[str, ...] = ()
+    value: Any = None
+
+    def applies(self, payload: Any) -> bool:
+        """Whether *payload* calls for this clause."""
+        return Clause.holds(payload, self.path, self.value)
+
+    @staticmethod
+    def holds(payload: Any, path: Tuple[str, ...], value: Any = None) -> bool:
+        """Whether *payload* holds *value* at *path* (or, with *value*
+        ``None``, anything there but null or an empty value) -- the test a
+        clause applies by, for anything else a file's content decides
+        (``HandoffRecord.RENDERING_NEEDS``). An empty path always holds."""
+        if not path:
+            return True
+        found = [payload]
+        for key in tuple(path) + (None,):
+            step = []
+            for item in found:
+                if item is Clause.UNKNOWN:
+                    return True
+                for entry in item if isinstance(item, list) else (item,):
+                    if key is None:
+                        step.append(entry)
+                    elif isinstance(entry, Mapping) and key in entry:
+                        step.append(entry[key])
+            found = step
+        if value is None:
+            return any(v is not None and v != "" and v != {} for v in found)
+        return any(type(v) is type(value) and v == value for v in found)
+
+    @property
+    def condition(self) -> str:
+        """When the clause applies, in words (for the generated docs)."""
+        if not self.path:
+            return "always"
+        where = ".".join(self.path)
+        if self.value is None:
+            return f"when `{where}` is present"
+        return f"when `{where}` is {json.dumps(self.value)}"
+
+    @staticmethod
+    def join(text: str, clauses: Iterable["Clause"], payload: Any = None) -> str:
+        """*text* and each of *clauses* that *payload* calls for -- every one
+        when *payload* is ``None`` -- as one statement."""
+        parts = [text] + [
+            c.text for c in clauses if payload is None or c.applies(payload)
+        ]
+        return " ".join(p.strip() for p in parts if p and p.strip())
+
+
+@dataclass(frozen=True)
+class GlbBlock:
+    """How a deliverable record rides a GLB: a block in its root ``extras``.
 
     A GLB conversion (``MeshConvert``) reads the record off the carrier, binds
     it to the file -- names resolved to glTF node indices, maps to texture
-    indices -- and publishes the result in the root ``extras`` under
-    :attr:`key`: the manifest a viewer script reads, and the key
-    ``PreviewServer.AUTO_SCRIPTS`` activates that script on.
+    indices -- and writes the result in the root ``extras`` under the
+    record's own key (:attr:`RecordSpec.key`): one name for the record in
+    every file, the key ``PreviewServer.AUTO_SCRIPTS`` activates a viewer
+    script on.
+
+    Declared here, beside the record, for the same reason the record is: one
+    statement of each block, whichever exporter writes it -- the GLB's
+    handoff takes its ``assembly`` row from these.
 
     Parameters:
-        key: The root-extras key -- a wire contract, like the record's own key.
-        version: The manifest's own schema version, which its applier stamps
+        version: The block's own schema version, which its writer stamps
             (independent of the record's: the binding can change alone).
         shape: ``(module, class)`` of the :class:`~pythontk.SchemaSpec`
-            declaring the manifest (:meth:`SceneRecords.web_shape`); ``None``
+            declaring the block (:meth:`SceneRecords.glb_shape`); ``None``
             while it is undeclared.
+        assembly: What the block makes of the approved scene: its row's
+            ``spec`` in the GLB handoff's ``assembly``, before its
+            *clauses* (:meth:`assembly_for`).
+        node_fields: Where the block binds by glTF NODE INDEX, as paths
+            (``("planes", "node")``: each plane's ``node``) -- what a pass
+            that renumbers the file's nodes follows.
+        clauses: The :class:`Clause` s of the assembly that only some blocks
+            need, tested against the block.
     """
 
-    key: str
     version: int = 1
     shape: Optional[Tuple[str, str]] = None
+    assembly: str = ""
+    node_fields: Tuple[Tuple[str, ...], ...] = ()
+    clauses: Tuple[Clause, ...] = ()
+
+    def assembly_for(self, payload: Any = None) -> str:
+        """The assembly a block *payload* needs (:meth:`Clause.join`)."""
+        return Clause.join(self.assembly, self.clauses, payload)
+
+    @property
+    @Deprecation.symbol(
+        "RecordSpec.key -- a block takes its record's key",
+        remove_in="0.18.0",
+        since="2026-10-24",
+    )
+    def key(self) -> str:
+        """The record's key, which the block is written under; empty for a
+        block no :class:`RecordSpec` holds."""
+        return self.__dict__.get("_record_key", "")
+
+
+@Deprecation.symbol(
+    "GlbBlock -- a record's block is named for the file it rides",
+    remove_in="0.18.0",
+    since="2026-10-24",
+)
+class WebProjection(GlbBlock):
+    """Retired 2026-10-20 (removed in 0.18.0): :class:`GlbBlock`.
+
+    Builds as it did in 0.16.1 -- ``WebProjection(key, version=1,
+    shape=None)`` -- its *key* what :attr:`GlbBlock.key` reads until a
+    :class:`RecordSpec` holds it."""
+
+    def __init__(
+        self, key: str, version: int = 1, shape: Optional[Tuple[str, str]] = None
+    ) -> None:
+        super().__init__(version=version, shape=shape)
+        object.__setattr__(self, "_record_key", key)
 
 
 @dataclass(frozen=True)
@@ -178,7 +348,8 @@ class RecordSpec:
             every reader keys on (a Unity importer, a GLB applier).
         scope: :class:`Scope`.
         version: The schema this declaration describes.  An enveloped record
-            carries it in its payload; a reader refuses a NEWER one.
+            carries it in its payload; a reader reads that schema alone
+            (:meth:`is_current`).
         owner: The tool that produces it (a role name, DCC-agnostic).
         description: What the record holds, for the handoff block and the
             docs -- the one sentence a standalone reader gets.
@@ -187,16 +358,8 @@ class RecordSpec:
             coordinator orders producers by declaration rather than by dict
             order and a comment.
         envelope: True for a dict payload carrying its version (every
-            deliverable record); False for a legacy shape stored as-is (a bare
-            list, a store's own document).
-        version_key: The payload key the version rides under -- ``"version"``
-            unless the payload is a document with its own schema key (the
-            emissive manifest's ``"schema"``, which its Unity reader gates on):
-            one version per record, never two that could disagree.
-        deprecated_by: The key of the record that supersedes this one.  Still
-            written while present (a one-release dual write); readers prefer
-            the successor.
-        remove_in: The pythontk release a deprecated record stops being written.
+            deliverable record); False for a payload stored as-is (a store's
+            own document).
         consumers: Names of the readers, for the docs and the cross-package
             gates (``"unity"``: the C# importers; ``"glb"``: the GLB appliers;
             ``"verifier"``: the deliverable gates).
@@ -242,8 +405,8 @@ class RecordSpec:
             another language reads it through are generated from it
             (``m3trik/scripts/sync_scene_records.py``). ``None`` while the
             payload is described only in prose.
-        web: The record's :class:`WebProjection` -- how a GLB conversion
-            publishes it for the glTF runtimes; ``None`` when it publishes none.
+        glb: The record's :class:`GlbBlock` -- the block a GLB carries it
+            as; ``None`` when a GLB carries none.
         export_scoped: Whether the record's producer narrows it to the export
             set (:attr:`ExportContext.scope`): its entries are scene nodes and
             the files they name ride the deliverable, so an entry for a node
@@ -255,7 +418,22 @@ class RecordSpec:
             nothing but the deliverable rebuilds what the record describes
             instead of only knowing it is there.  Declarative: what the scene
             IS, never a step to take outside the file.  Empty for a private
-            record, which never ships.
+            record, which never ships.  The part every payload needs; what
+            only some do is a *clause* (:meth:`assembly_for`).
+        transient: Whether the record describes one WRITE rather than the
+            scene: produced from the scene as staged for that write (an
+            export's converted maps, its baked keys), carried by the file, and
+            never held by the scene -- the exporter clears it once the write
+            is done (:meth:`ExportSnapshot.restore_scene_wide`) and no crossing
+            takes one in (:class:`RecordTransfer`).  So a later write that
+            does not produce it (a File > Export) ships none rather than a
+            stale one naming files the export's restore deleted.  A
+            :attr:`Kind.DERIVED` record: it is refreshed for every write.
+        renamed_from: The keys a scene stored the record under before *key*;
+            a carrier still holding one has it moved to *key*, once
+            (:meth:`SceneStoreBase.migrate`). No reader reads them.
+        clauses: The :class:`Clause` s of the assembly that only some
+            payloads need: a file carries the ones its record calls for.
     """
 
     key: str
@@ -266,9 +444,6 @@ class RecordSpec:
     kind: Kind = Kind.AUTHORED
     after: Tuple[str, ...] = ()
     envelope: bool = True
-    version_key: str = "version"
-    deprecated_by: Optional[str] = None
-    remove_in: Optional[str] = None
     consumers: Tuple[str, ...] = ()
     merge: Merge = Merge.DERIVE
     merge_key: Optional[str] = None
@@ -278,9 +453,60 @@ class RecordSpec:
     paths: Union[bool, Tuple[str, ...]] = False
     stamps: Union[bool, Tuple[str, ...]] = False
     shape: Optional[Tuple[str, str]] = None
-    web: Optional[WebProjection] = None
+    glb: Optional[GlbBlock] = None
     export_scoped: bool = False
     assembly: str = ""
+    transient: bool = False
+    renamed_from: Tuple[str, ...] = ()
+    clauses: Tuple[Clause, ...] = ()
+
+    def assembly_for(self, payload: Any = None) -> str:
+        """The assembly a record *payload* needs (:meth:`Clause.join`): every
+        clause without one."""
+        return Clause.join(self.assembly, self.clauses, payload)
+
+    def __post_init__(self) -> None:
+        if self.transient and self.kind is not Kind.DERIVED:
+            raise ValueError(
+                f"{self.key!r} is transient, so it is produced for every write: "
+                "declare it Kind.DERIVED."
+            )
+        if self.glb is not None:
+            # What the retired ``GlbBlock.key`` serves until its removal, on a
+            # block of this record's own: stamped on the one handed over, a
+            # ``dataclasses.replace`` of this record would re-key the
+            # original's. A copy, not a ``replace``, which would rebuild a
+            # ``WebProjection`` through an ``__init__`` that wants its key.
+            glb = copy.copy(self.glb)
+            object.__setattr__(glb, "_record_key", self.key)
+            object.__setattr__(self, "glb", glb)
+
+    @property
+    @Deprecation.symbol(
+        "RecordSpec.glb -- a record's block is named for the file it rides",
+        remove_in="0.18.0",
+        since="2026-10-24",
+    )
+    def web(self) -> Optional[GlbBlock]:
+        """The record's GLB block (:attr:`glb`)."""
+        return self.glb
+
+    @property
+    @Deprecation.symbol(
+        '"version" -- every record states its version under that key',
+        remove_in="0.18.0",
+        since="2026-10-24",
+    )
+    def version_key(self) -> str:
+        """The key every record's version rides under: ``"version"``."""
+        return "version"
+
+    def is_current(self, payload: Any) -> bool:
+        """Whether *payload* is this record in the schema this declaration
+        describes -- the one a reader reads. An older payload is refused as a
+        newer one is: a file written before the current schema is re-exported,
+        never read through a branch for its shape."""
+        return isinstance(payload, Mapping) and payload.get("version") == self.version
 
     @property
     def path_keys(self) -> Optional[Tuple[str, ...]]:
@@ -300,7 +526,11 @@ class RecordSpec:
 
         An enveloped record's payload must be a mapping; its ``version`` is
         stamped from this declaration when absent, so a producer never spells
-        the number.  A non-enveloped payload is taken as given.
+        the number. A declared record's payload is pruned to its shape
+        (:meth:`SchemaSpec.prune`): a file states what its readers read and
+        nothing more, and what a producer added beyond the shape is warned --
+        its drift said, never shipped. A non-enveloped payload is taken as
+        given.
 
         Raises:
             TypeError: An enveloped record handed a non-mapping payload.
@@ -313,8 +543,12 @@ class RecordSpec:
                 )
             # Version FIRST (a producer's own value wins), the order every
             # producer wrote by hand before the declaration stamped it.
-            body = {self.version_key: self.version}
+            body = {"version": self.version}
             body.update(payload)
+            if self.shape:
+                body = _declared(
+                    self.key, SceneRecords.resolve_class(*self.shape), body
+                )
             return Record(self, body)
         return Record(self, payload)
 
@@ -342,7 +576,7 @@ class RecordSpec:
         except (ValueError, TypeError):
             return default
         if self.envelope and isinstance(payload, Mapping):
-            found = payload.get(self.version_key)
+            found = payload.get("version")
             if isinstance(found, (int, float)) and found > self.version:
                 logger.warning(
                     "%s record is version %s; this reader knows %s -- ignored.",
@@ -388,6 +622,126 @@ class RecordSpec:
         return bool(self.read_text(store))
 
 
+# The texts a record and its block share, stated once. The shadows record's
+# runtime restates pythontk's ShadowProjection.model / ShadowModel.placement
+# and the horizon map's layout and march (HeightFieldMap.to_rgba / .alpha, the
+# reference every engine shader is pinned to) so a reader with only the file
+# rebuilds every plane: change them together. test_scene_records pins the
+# constants quoted here to the code's and implements the text cold.
+_LIGHTMAP_PROBE = Clause(
+    "'probe' is the reflection probe the bake captured: the scene's "
+    "environment (rendering.environment).",
+    ("probe",),
+)
+_SHADOW_PLANE = (
+    "Each plane is a ground quad, centred on its node's origin, showing the "
+    "shadow its source casts from the prop standing on its contact; every "
+    "length in the record times 'unit_scale' is metres, and up is +Y. It "
+    "draws in its "
+    "material's colour at alpha = shadow * min(the material's opacity, "
+    "'intensity'). Its source places the shadow alone and lights nothing."
+)
+_SHADOW_PROJECTED = (
+    "A projected plane's shadow is the alpha of {map} through the quad's own "
+    "UVs, which then address its tile; its colour is the material's times "
+    "that map's."
+)
+_SHADOW_PLACEMENT = Clause(
+    "With 'follow_source' a runtime re-places the quad every frame (otherwise "
+    "its imported keys stand). All in metres, with .xz a point's horizontal "
+    "(x, z) part, C the contact's position and L the source's -- a "
+    "directional source's is "
+    "C - s*1e6*max(height, 2*radius), s the unit direction it shines, its "
+    "node's local -Y: d = C.xz - L.xz, dist = |d|, u = d/dist ((0, 1) when "
+    "dist < 1e-6), k_max = 1 + max_stretch, k_base = clamp((L.y - "
+    "ground)/max(1e-4, L.y - C.y), 0, k_max), k_top = clamp((L.y - "
+    "ground)/max(1e-4, L.y - C.y - height), 0, min(k_max, k_base + "
+    "max_stretch*height/max(dist, 1e-6))), reach = max(0, dist*(k_top - "
+    "k_base)), width = 2*radius*max(k_top, k_base), anchor = L.xz + d*k_base "
+    "and far = max(reach + canvas[1]*radius*k_top, 0). Turn the quad so its "
+    "along axis -- local +Z on a quad lying in its local X/Z, +Y on one lying "
+    "in X/Y (a Z-up exporter's) -- runs along u and its normal (+Y, or +Z) "
+    "up, which puts its own +X along up x u (X/Z) or u x up (X/Y); then scale "
+    "it from its own size (its mesh's extent along each axis) and move it, "
+    "0.01 of the record's unit above the ground, to span canvas[0]*far..far "
+    "along u and canvas[2]*width..canvas[3]*width along its own +X, both from "
+    "the anchor -- the across span follows the quad's +X, as its silhouette's "
+    "u axis does, so it mirrors with the quad.",
+    ("planes", "follow_source"),
+    True,
+)
+_SHADOW_HORIZON = (
+    "A horizon plane's shadow is marched from its map, {map}, at "
+    "'horizon.rect' ([scale_u, scale_v, offset_u, offset_v] of the image from "
+    "its {origin}). The map is data, its texels read whole (never filtered or "
+    "colour-decoded; what is interpolated below is decoded values): S = "
+    "'size' texels tall and S*(K + 2) wide, K = 'spans', S x S tiles side by "
+    "side whose texel (i, j) -- column i, row j counted from the map's top "
+    "row -- is the footprint pixel whose low corner is (a0 + i*pa, b0 + j*pb), "
+    "with 'bounds' [a0, a1, b0, b1], pa = (a1 - a0)/S, pb = (b1 - b0)/S, p = "
+    "min(pa, pb) and aspect = max(pa, pb)/p. With w = 256*first byte + "
+    "second, H16 = w/65535*height_scale and H8 = byte/255*height_scale: tile "
+    "k < K holds a span per pixel, from lo = H16(R, G) to hi = H16(B, A) "
+    "above the ground (hi = 0: none), a pixel holding any span being solid; "
+    "tile K the distance D to the nearest solid pixel, w(R, G)/64 in p, and "
+    "that pixel's hull, top H8(B), bottom H8(A); tile K + 1, in its left "
+    "half, a min/max pyramid that only speeds the march (a reader may ignore "
+    "it) and, when its texel (S/2, S/2) is (83, 72, 1, 165), at texel "
+    "(S/2 + i/2, j/2) a solid pixel's distance I to the nearest empty one "
+    "(0 on an empty pixel), byte/4 in p: R for even i and j, G odd i, B odd "
+    "j, A both odd. The "
+    "shadow at a fragment F is marched in the contact's frame -- origin C, "
+    "axes a = 'frame_a', b = 'frame_b' and up = +Y, each turned first +90 "
+    "degrees about X when the quad lies in its local X/Y, then by the "
+    "contact's world rotation (never its scale) -- from the ground point "
+    "(P, g) under F: P = ((F - C).a, (F - C).b), g = ((0, 'ground', 0) - "
+    "C).up, F's own height dropped. v is the unit vector from (P, g) toward "
+    "the source, in that frame (against the way a directional source "
+    "shines, its node's local -Y), with v.ab its (a, b) part and v.up its up "
+    "part; rho = asin(min(1, 'source_size'/2/the source's distance from "
+    "(P, g))), "
+    "or for a directional source 'source_angle'/2 ('source_angle' is in "
+    "radians); no shadow where v.up <= 0 or c = |v.ab| < 1e-9. From rise = "
+    "side = 0, clear = infinity and no hit, visit in order each pixel the "
+    "line P + t*v.ab/c (t >= 0) crosses inside the footprint, over [t0, t1]: "
+    "h0 = t0*v.up/c, h1 = t1*v.up/c, tm = (t0 + t1)/2. A span blocks when "
+    "h1 >= lo and h0 <= hi, otherwise its gap is max(lo - h1, h0 - hi); "
+    "rise = max(rise, (hi - h0)*c^2/tm) over every span with hi >= h0, "
+    "blocking or not. A blocking pixel sets hit and side = max(side, max(I - "
+    "aspect/2, 0)*p*c/tm) (infinite without I); before any hit, any other "
+    "sets clear = min(clear, e/tm), e its least gap*c^2 when solid, otherwise "
+    "hypot(max(D - aspect/2, 0)*p*c, c^2*the gap from [h0, h1] to [bottom, "
+    "top], 0 where they overlap). I, D, bottom and top are read bilinearly "
+    "at the line's point at tm, texel centres at +0.5, each corner clamped "
+    "to the tile. Stop once hit and min(rise, side) >= rho. shadow = (hit ? "
+    "1 : 0) when rho = 0, else disc(hit ? -min(rise, side)/rho : clear/rho), "
+    "disc(x) = (acos(x) - x*sqrt(1 - x^2))/pi over x clamped to [-1, 1]: the "
+    "share of the source's disc one edge hides, an approximation that is the "
+    "approved look. Cheapest: march into a texture over the quad's UVs, a "
+    "texel per 3 map pixels, sampled bilinearly, again only when the source, "
+    "the quad or the ground moves relative to the contact."
+)
+
+
+def _shadow_clauses(projected_map: str, horizon_map: str, origin: str):
+    """The shadows assembly's clauses in one carrier's addresses: a plane
+    type's clause where some plane is of it, the placement where some plane
+    follows its source."""
+    return (
+        Clause(
+            _SHADOW_PROJECTED.format(map=projected_map),
+            ("planes", "type"),
+            "projected",
+        ),
+        _SHADOW_PLACEMENT,
+        Clause(
+            _SHADOW_HORIZON.format(map=horizon_map, origin=origin),
+            ("planes", "type"),
+            "horizon",
+        ),
+    )
+
+
 class SceneRecords:
     """The registry: every record, declared once, and what derives from it.
 
@@ -398,24 +752,90 @@ class SceneRecords:
     """
 
     # -- deliverable ---------------------------------------------------------
+    #: Produced from the scene as staged for each write (the hosts'
+    #: ``MaterialRecords.export_record``, through ``MaterialFamilies``) and
+    #: never held by it: the export's own converted maps are what the record
+    #: names, and the restore that puts the scene back clears it. The GLB is
+    #: built from the file that carries it (``MeshConvert.fbx_materials``), so
+    #: the two deliverables state every material alike; a file without one
+    #: (a File > Export) is read into the same families from its own
+    #: materials.
+    MATERIALS = RecordSpec(
+        "materials",
+        Scope.DELIVERABLE,
+        1,
+        owner="Export",
+        description=(
+            "every material as glTF 2.0 states it: its factors, the embedded "
+            "map behind each, alpha mode, double-sidedness and unlit"
+        ),
+        kind=Kind.DERIVED,
+        transient=True,
+        consumers=("unity", "glb"),
+        shape=(
+            "pythontk.core_utils.engines.scene_export.material_record",
+            "MaterialRecord",
+        ),
+        export_scoped=True,
+        assembly=(
+            "Every material's inputs are exactly as its 'materials' entry "
+            "states them, whatever an importer makes of the file's own "
+            "material (how each is lit is the lighting parts'): glTF 2.0 "
+            "metallic-roughness, each factor linear and multiplied by its map, "
+            "every map on UV set 0, colour and emission maps sRGB, the others "
+            "linear with metal, roughness and occlusion read from R, opacity "
+            "the base colour's alpha (MASK cuts at 'alphaCutoff', BLEND "
+            "blends), 'unlit' shows the base colour alone. An entry's 'name' "
+            "is the material's in the file, namespace included; where an "
+            "import drops the namespace, the name after the last ':' joins."
+        ),
+    )
     SHOTS = RecordSpec(
-        "shot_metadata",
+        "animation",
         Scope.DELIVERABLE,
         1,
         owner="Shots",
+        renamed_from=("shot_metadata",),
         description=(
             "shot definitions -- per clip its frame range ('start'/'end', the "
-            "take the clip is cut from), objects, and any description and "
-            "section; the scene fps and the declared clip mode; the clip name "
-            "is the join key to the imported animation clip"
+            "take the clip is cut from) and any description; the scene fps and "
+            "the declared clip mode; the clip name is the join key to the "
+            "imported animation clip"
         ),
+        # DERIVED, so every write refreshes it, hand-offs included: the shot
+        # store is its one authority and it reads the live scene (which shots
+        # are stale). Authored, a WebXR or Unity push shipped the last Scene
+        # Exporter run's shots or none (measured 2026-10-21, both DCCs).
+        kind=Kind.DERIVED,
         consumers=("unity", "glb", "verifier"),
-        # The file's clips joined to the shots by glTF animation index
-        # (MeshConvert.apply_glb_animations).
-        web=WebProjection("animation_web"),
-        # Each clip's objects name only what the write carries; every take
-        # ships (ShotStore.export_records).
-        export_scoped=True,
+        shape=("pythontk.core_utils.engines.shots.animation_record", "AnimationRecord"),
+        # The record's shots inherited whole, and the file's clips by glTF
+        # animation index (MeshConvert.apply_glb_animations). Version 2
+        # (2026-10-21): the shots ride whatever clips the file holds -- v1
+        # listed only the clips, so a shot with none (a 'full' file) was lost.
+        glb=GlbBlock(
+            version=2,
+            shape=(
+                "pythontk.core_utils.engines.shots.animation_record",
+                "AnimationBlock",
+            ),
+            assembly=(
+                "The clips, by glTF animation index, open on 'default_clip'. "
+                "'shots' are the scene's shots whatever clips the file holds: "
+                "a shot plays the clip its 'clip' names, else (a 'full' file, "
+                "or a take that was not cut) its window 'start'..'end' of the "
+                "whole-timeline clip, the one no shot names. A clip's "
+                "'zero_frame' is the authoring frame its t=0 sits on, so a "
+                "frame f is (f - zero_frame) / fps seconds into it. A STEP "
+                "'scale' channel driving a "
+                "node to zero is its keyed visibility, not authored scale: glTF "
+                "has no visibility channel. KHR_animation_pointer channels on a "
+                "material are its authored opacity fade (baseColorFactor alpha) "
+                "and highlight (emissiveFactor, added to the material's own); a "
+                "runtime without the extension plays a fade by binding each "
+                "channel to that material's alpha."
+            ),
+        ),
         assembly=(
             "The animation is the file's takes, each shot joined to its take "
             "by 'clip', the take's name. 'clip_mode' says how the takes "
@@ -423,35 +843,31 @@ class SceneRecords:
             "take in which a shot is the window 'start'..'end'; 'both' (or "
             "absent), both, the whole-timeline take being the longest one no "
             "shot names. 'start' and 'end' are frames of the authoring "
-            "timeline at 'fps'; 'objects' names what a shot animates and "
-            "'description' what it shows."
+            "timeline at 'fps'; 'description' says what a shot shows."
         ),
     )
-    #: No longer written (the ranges ride ``shot_metadata``'s clips); declared
-    #: so a file written before 0.11.0 still reads (:meth:`declared_takes`),
-    #: and cleared from a scene the next time its shots are published.
-    FBX_TAKES = RecordSpec(
-        "fbx_takes",
-        Scope.DELIVERABLE,
-        1,
-        owner="Shots",
-        description=(
-            "the take list an older file carries, one per shot -- superseded "
-            "by shot_metadata's per-clip ranges and no longer written"
+    #: Retired 2026-10-20 (removed in 0.18.0): the take list a file written
+    #: before 0.11.0 carried. No reader reads it; a scene still holding one has
+    #: it cleared (:attr:`RETIRED`).
+    FBX_TAKES = Deprecation.class_attribute(
+        RecordSpec(
+            "fbx_takes",
+            Scope.DELIVERABLE,
+            1,
+            owner="Shots",
+            description="the take list a file written before 0.11.0 carried",
+            envelope=False,
         ),
-        envelope=False,
-        deprecated_by="shot_metadata",
-        consumers=("glb", "verifier"),
-        assembly=(
-            "Read only where shot_metadata is absent, which supersedes it: "
-            "one entry per take, its 'name' and its 'start'..'end' frames."
-        ),
+        "SceneRecords.SHOTS -- each shot's range rides its clip",
+        remove_in="0.18.0",
+        since="2026-10-24",
     )
     AUDIO = RecordSpec(
-        "audio_manifest",
+        "audio",
         Scope.DELIVERABLE,
         2,
         owner="Audio Clips",
+        renamed_from=("audio_manifest",),
         description=(
             "audio events with the frames they fire on, scoped to their clip, "
             "and 'fps', the rate those frames count at"
@@ -460,93 +876,154 @@ class SceneRecords:
         # push and the next, so every write refreshes it, a hand-off included
         # (a Unity-bridge FBX shipped the last export's events otherwise).
         kind=Kind.DERIVED,
-        after=("shot_metadata",),
+        after=("animation",),
         consumers=("unity",),
+        shape=("pythontk.audio_utils.audio_record", "AudioRecord"),
         assembly=(
             "Each event plays its audio track 'frame' frames into its 'clip' "
-            "(at that take's frame rate); an event with no 'clip' plays in "
-            "every take. The track's file rides the file as media of its "
+            "(at the record's 'fps'); an event whose 'clip' is empty plays in "
+            "every clip, its frame counted from the first frame the file's "
+            "animation holds. The track's file rides the file as media of its "
             "own, joined to the event's 'name' by file stem without regard "
             "to case."
         ),
     )
+    #: The payload's model is ``LightmapRecord``: one ``unit_scale`` for every
+    #: length, the probe's box as ``{min, max}``, no direction on a point light.
     LIGHTMAPS = RecordSpec(
-        "lightmap_metadata",
+        "lightmaps",
         Scope.DELIVERABLE,
-        1,
+        2,
         owner="Lightmap Baker",
+        renamed_from=("lightmap_metadata",),
         description=(
             "per-object baked-lightmap records: map file name, uvIndex, "
-            "intensity, scaleOffset, and the object's scene hierarchy (which "
+            "scaleOffset, and the object's scene hierarchy (which "
             "tells apart objects that share a name); and the bake's reflection "
             "probe, when it captured one: its HDR's file name, capture point and "
-            "projection box, in the file's unit beside unit_scale; and the lights "
-            "the maps were baked from, for the highlights a lightmap cannot hold"
+            "projection box; and the lights the maps were baked from, for the "
+            "highlights a lightmap cannot hold -- every length times "
+            "unit_scale is metres"
         ),
         consumers=("unity", "glb"),
-        # The maps embedded, keyed by the material each binds to
-        # (MeshConvert.apply_glb_lightmaps).
-        web=WebProjection("lightmap_web"),
+        shape=(
+            "pythontk.core_utils.engines.scene_export.lightmap_record",
+            "LightmapRecord",
+        ),
+        # Per material its intensity alone -- its map is its bound texture, its
+        # UV set that texture's texCoord -- and the embedded probe with its
+        # highlight copies (MeshConvert.apply_glb_lightmaps).
+        glb=GlbBlock(
+            version=2,
+            shape=(
+                "pythontk.core_utils.engines.scene_export.lightmap_record",
+                "LightmapsBlock",
+            ),
+            assembly=(
+                "Each material in 'materials' carries a baked lightmap in the "
+                "texture slot 'carrier' names (occlusion: occlusionTexture) -- "
+                "its RGB, read through that texture's texCoord and "
+                "KHR_texture_transform, not glTF's red-only occlusion -- 8-bit "
+                "sRGB decoded to linear, times its 'intensity': the "
+                "surface's diffuse light, direct and indirect, and not ambient "
+                "occlusion."
+            ),
+            clauses=(_LIGHTMAP_PROBE,),
+        ),
         export_scoped=True,
         assembly=(
             "Each 'objects' entry lights one object with a baked lightmap: "
-            "the image 'map' names, read through UV set 'uvIndex' (0-based: "
+            "the image 'map' names, wired to no material, read through UV set "
+            "'uvIndex' (0-based: "
             "1 is the second UV set) at uv * [scaleX, scaleY] + [offsetX, "
-            "offsetY] from 'scaleOffset', non-directional and applied as "
-            "stored -- linear, 'intensity' being the multiplier its texels "
-            "already carry. The object is the node 'name' names (its "
-            "namespace aside), 'hierarchy' -- its path from the root -- "
+            "offsetY] from 'scaleOffset' (in the file's own V-up UVs), "
+            "non-directional and applied as "
+            "stored, linear. The object is the node 'name' names (its "
+            "namespace aside), 'hierarchy' -- its path from the scene root, "
+            "namespaces kept, its own name last -- "
             "telling apart objects that share a name; a tie nothing settles "
             "is left unlit rather than guessed. The map is the object's whole "
-            "diffuse light "
-            "and its material stays as authored "
-            "(rendering.lightmappedMaterials). 'probe', when present, is the "
-            "reflection probe the bake captured: the scene's environment "
-            "(rendering.environment). 'lights', when present, are the "
-            "lights the maps were baked from, for their HIGHLIGHTS alone -- "
-            "the diffuse light of each is already in the maps, so a reader "
-            "that lights them must light their specular only, or the scene "
-            "is lit twice. Each is 'type' point, spot or rect at 'position' "
-            "(the file's unit, 'unit_scale' metres per unit), facing 'direction' "
-            "(a rect's width along 'right'), its 'color' linear Rec.709, "
-            "'intensity' radiant intensity per steradian for a point or spot "
-            "(irradiance at one such unit) and radiance for a rect, a spot's "
-            "half 'angle' (radians) and soft 'penumbra' share, a rect's "
-            "'width' and 'height', a source's 'radius'. 'probe.highlights', "
-            "when present, are those lights already drawn for groups of "
-            "receivers, so a reader that uses them lights none of 'lights' "
-            "(the highlights would count twice): each names a 'map', a "
-            "Radiance layer in the probe's layout and units to add to the "
-            "probe (box-filtered down to the layer's size) and prefilter as "
-            "the probe is, the 'receivers' it was drawn for ('interior' or "
-            "'unbaked'), and the 'objects' ('name' and 'hierarchy', as above) "
-            "that reflect that sum in the probe's place, box-projected from "
-            "the same 'position' and 'box'."
+            "diffuse light and its material stays as authored "
+            "(rendering.lightmappedMaterials). Every length in the record "
+            "times 'unit_scale' is metres."
+        ),
+        clauses=(
+            _LIGHTMAP_PROBE,
+            Clause(
+                "'lights' are the "
+                "lights the maps were baked from, for their HIGHLIGHTS alone -- "
+                "the diffuse light of each is already in the maps, so a reader "
+                "that lights them must light their specular only, or the scene "
+                "is lit twice. Each is 'type' point, spot or rect at 'position', a "
+                "spot or rect facing 'direction' (a rect's width along 'right'), "
+                "its 'color' linear Rec.709, "
+                "'intensity' its radiant intensity for a point or spot (the "
+                "irradiance it gives one unit away) and its radiance for a rect, "
+                "a spot's "
+                "half 'angle' (radians) and soft 'penumbra' share, a rect's "
+                "'width' and 'height', a source's 'radius'.",
+                ("lights",),
+            ),
+            Clause(
+                "'probe.highlights' "
+                "are the bake's lights already drawn for groups of "
+                "receivers, so a reader that uses them lights none of 'lights' "
+                "(the highlights would count twice): each names a 'map', a "
+                "Radiance layer in the probe's layout and units to add to the "
+                "probe (box-filtered down to the layer's size) and prefilter as "
+                "the probe is, and the 'objects' ('name' and 'hierarchy', as above) "
+                "that take that sum in the probe's place (diffuse irradiance "
+                "and reflections alike), box-projected from the same 'position' "
+                "and 'box'.",
+                ("probe", "highlights"),
+            ),
         ),
     )
     SHADOWS = RecordSpec(
-        "shadow_metadata",
+        "shadows",
         Scope.DELIVERABLE,
         2,
         owner="Shadow Rig",
+        renamed_from=("shadow_metadata",),
         description=(
-            "projected-shadow planes: per plane, the plane node name, its "
-            "silhouette texture file name, and the authored intensity"
+            "projected-shadow planes: per plane its node name, type, "
+            "silhouette texture and intensity, the source and contact it "
+            "follows and the projection model's constants, and, when packed "
+            "or baked, its atlas rect and horizon map -- every length times "
+            "unit_scale is metres"
         ),
         consumers=("unity", "glb"),
+        shape=("pythontk.geo_utils.shadow_record", "ShadowRecord"),
         # Each plane, its source and contact as node indices, its maps as
         # texture indices (MeshConvert.apply_glb_shadows).
-        web=WebProjection("shadow_web", version=2),
+        glb=GlbBlock(
+            version=2,
+            shape=("pythontk.geo_utils.shadow_record", "ShadowBlock"),
+            node_fields=(
+                ("planes", "node"),
+                ("planes", "source_node"),
+                ("planes", "contact_node"),
+            ),
+            assembly=(
+                "A plane, its source and its contact are the glTF nodes "
+                "'node', 'source_node' and 'contact_node' (null where the file "
+                "holds no single node of that name). " + _SHADOW_PLANE
+            ),
+            clauses=_shadow_clauses(
+                "texture 'texture_index' (its atlas once packed)",
+                "texture 'horizon.texture_index'",
+                "top-left",
+            ),
+        ),
         export_scoped=True,
         assembly=(
-            "Each plane is a projected contact shadow: the node 'name' "
-            "carries the silhouette 'texture' (and, when atlased or "
-            "horizon-mapped, the maps and rects it names), placed each frame "
-            "from its 'source' and 'contact' nodes by the projection the "
-            "record's constants describe (the file's unit, 'unit_scale' "
-            "metres per unit; pythontk's ShadowProjection). 'intensity' is "
-            "informational. Without a runtime for that projection, the "
-            "plane's imported keys and silhouette stand."
+            "A plane, its source and its contact are the nodes named 'name', "
+            "'source' and 'contact'. " + _SHADOW_PLANE
+        ),
+        clauses=_shadow_clauses(
+            "the image 'texture' names ('atlas.texture' once packed)",
+            "the image 'horizon.texture' names",
+            "bottom-left",
         ),
     )
     ARTICULATION = RecordSpec(
@@ -558,21 +1035,38 @@ class SceneRecords:
             "articulated rigs: per rig its joints (node name, parent, rest "
             "translate and orient, rotate order, channels with limits and "
             "grab weights) and the parts a hand grabs, each with the joint "
-            "it rides -- the ArticulationModel a runtime poses"
+            "it rides"
         ),
         consumers=("unity", "glb"),
         shape=("pythontk.geo_utils.articulation.record", "ArticulationRecord"),
         # Every joint and grabbed part bound to its glTF node
         # (MeshConvert.apply_glb_articulation).
-        web=WebProjection(
-            "articulation_web",
-            shape=("pythontk.geo_utils.articulation.record", "ArticulationWeb"),
+        glb=GlbBlock(
+            shape=("pythontk.geo_utils.articulation.record", "ArticulationBlock"),
+            node_fields=(("rigs", "joints", "node"), ("rigs", "grab", "node")),
+            assembly=(
+                "Per rig its joints -- the glTF node index, the parent joint, "
+                "the rest translate and rotation in the parent's space, the "
+                "rotate order and the channels (rx/ry/rz degrees, tx/ty/tz a "
+                "slide along the rest axes) with their limits -- and the parts "
+                "a hand grabs, each with its node index and the joint it "
+                "rides. A joint poses as rotation = rest (x) Euler(channels) "
+                "and translation = rest + rest.(tx, ty, tz), every channel "
+                "within its limits: the built state is that pose at the clips' "
+                "keys, the rest pose without them. A hand that grabs a part "
+                "moves the channels of the joints from it up to the rig's "
+                "root, each in proportion to its 'weight' and within its "
+                "limits; a runtime measures its unit factor off the rest "
+                "translations."
+            ),
         ),
         assembly=(
             "Each rig poses its joints as rotation = rest (x) Euler(channels) "
             "and translation = rest + rest.(tx, ty, tz), every channel within "
-            "its limits (degrees), and a grabbed part rides its joint -- the "
-            "model pythontk's ArticulationModel solves. Joints are found by "
+            "its limits (degrees), and a grabbed part rides its joint; a "
+            "grab moves the channels of the joints from the part up to the "
+            "rig's root, each in proportion to its 'weight' and within its "
+            "limits. Joints are found by "
             "node name; the rest translations are in the file's own axes, "
             "their unit the ratio of the imported rest translations to them. "
             "The imported pose is the rest pose, and the takes play the "
@@ -582,13 +1076,15 @@ class SceneRecords:
     EMISSIVE_GROUPS = RecordSpec(
         "emissive_groups",
         Scope.DELIVERABLE,
-        1,
+        2,
         owner="Emissive Groups",
         description="named emissive material groups and their weights",
-        # A RegionMaskManifest document versions itself under "schema"
-        # (RegionMaskManifest.SCHEMA_VERSION, pinned equal by the tests).
-        version_key="schema",
+        # The payload is a RegionMaskManifest document (its VERSION is this).
         consumers=("unity",),
+        shape=(
+            "pythontk.core_utils.engines.textures.region_masks",
+            "EmissiveGroupsRecord",
+        ),
         assembly=(
             "Each group gates the emission of the region its 'slot' selects "
             "(0-3: R, G, B, A of the mask 'encoding' names -- the vertex "
@@ -600,10 +1096,15 @@ class SceneRecords:
         ),
     )
     VISIBILITY = RecordSpec(
-        "visibility_tracks",
+        "render_effects",
         Scope.DELIVERABLE,
         1,
         owner="Render Effects",
+        renamed_from=("visibility_tracks",),
+        shape=(
+            "pythontk.file_utils.mesh_convert.render_effects_record",
+            "RenderEffectsRecord",
+        ),
         description=(
             "each node's keyed render effects: 'visibility' as stepped on/off "
             "frames, the authored 'opacity' ramp, and the 'highlight' ramp "
@@ -613,7 +1114,7 @@ class SceneRecords:
             "measured whole-timeline clip origin alone"
         ),
         kind=Kind.DERIVED,
-        after=("shot_metadata",),
+        after=("animation",),
         consumers=("glb", "verifier"),
         assembly=(
             "Render effects over time, per 'tracks' entry and the subtree "
@@ -629,22 +1130,50 @@ class SceneRecords:
         ),
     )
     #: Version 2 (2026-10-14) added ``assembly`` and published ``rendering``
-    #: in the carrier's own addresses. Which block describes a file is the
-    #: node it rides, never its version: a referenced module's block -- a
-    #: version-1 one says the maps are not embedded and that ``intensity`` is
-    #: a multiplier to apply -- describes that module alone, whichever is
-    #: newer.
+    #: in the carrier's own addresses. Version 3 (2026-10-20) is the shape
+    #: every block keeps: the fundamentals at the top (``instructions``,
+    #: ``assembly`` -- each part named as on every carrier, its ``data`` the
+    #: addresses it reads -- and ``rendering``, its values alone, their
+    #: meaning in the lighting rows' specs) and the rest under ``extras``
+    #: (``source``), where a later addition needs no new version. Which block
+    #: describes a file is the node it rides, never its version: a referenced
+    #: module's block -- a version-1 one says the maps are not embedded and
+    #: that ``intensity`` is a multiplier to apply -- describes that module
+    #: alone, whichever is newer.
     HANDOFF = RecordSpec(
         "handoff",
         Scope.DELIVERABLE,
-        2,
+        3,
         owner="Export",
         description=(
-            "the standalone-reader contract: what each channel present on the "
-            "carrier holds, the approved scene part by part, and the lighting "
-            "it was approved under"
+            "the standalone-reader contract: the approved scene part by part "
+            "and the lighting it was approved under"
         ),
         kind=Kind.DERIVED,
+        # Unity's importer reads its lighting recipe; the GLB build reads the
+        # FBX's to state the GLB's, and the glTF runtimes the GLB's.
+        consumers=("unity", "glb"),
+        shape=(
+            "pythontk.core_utils.engines.scene_export.handoff_record",
+            "HandoffBlock",
+        ),
+    )
+    #: Keys a scene may still hold for a record retired whole, which nothing
+    #: reads: cleared from a carrier (:meth:`SceneStoreBase.migrate`) and
+    #: dropped from a written deliverable. A renamed record names its old keys
+    #: itself (:attr:`RecordSpec.renamed_from`).
+    RETIRED: Tuple[str, ...] = ("fbx_takes",)
+    #: Root-``extras`` keys a GLB written before 0.17.0 carries for a block
+    #: since renamed (the ``*_web`` blocks, now under their record's key) or
+    #: retired whole (the ``scene_sidecar`` envelope), which nothing reads: a
+    #: reader names each one it finds stale, so the file is re-exported (the
+    #: viewer's ``RETIRED_BLOCK_KEYS``, generated by ``sync_scene_records.py``).
+    RETIRED_BLOCKS: Tuple[str, ...] = (
+        "animation_web",
+        "lightmap_web",
+        "shadow_web",
+        "articulation_web",
+        "scene_sidecar",
     )
 
     # -- private -------------------------------------------------------------
@@ -653,7 +1182,12 @@ class SceneRecords:
         Scope.PRIVATE,
         1,
         owner="Shots",
-        description="the shot store's full app state",
+        description=(
+            "the shot store's full app state: its shots (id, name, start, end, "
+            "objects, metadata, locked, description), the hidden and pinned "
+            "objects, markers, locked gaps, the manifest's edits and the "
+            "panel's settings"
+        ),
         envelope=False,
         merge=Merge.CODEC,
         portable=True,
@@ -664,7 +1198,10 @@ class SceneRecords:
         Scope.PRIVATE,
         1,
         owner="Key Stash",
-        description="the clip manifest of parked keys",
+        description=(
+            "the clip manifest of parked keys: per clip its id, label, "
+            "objects, parked curves, source shot and metadata"
+        ),
         envelope=False,
         # Declared after the shot store: a parked clip follows its source
         # shot through the renumbering the shot store's merge publishes.
@@ -675,7 +1212,10 @@ class SceneRecords:
         Scope.PRIVATE,
         2,
         owner="SmartBake",
-        description="LIFO stack of bake-session restore manifests",
+        description=(
+            "LIFO stack of bake-session restore manifests, oldest first, each "
+            "under its 'id': what the bake replaced, to put it back"
+        ),
         envelope=False,
         merge=Merge.UNION,
         merge_key="id",
@@ -685,18 +1225,26 @@ class SceneRecords:
         Scope.PRIVATE,
         1,
         owner="Hierarchy check",
-        description="the export hierarchy baseline (a HierarchyBaseline record)",
+        description=(
+            "the export hierarchy baseline (a HierarchyBaseline record): the "
+            "exported node paths, their hash and count, and the scene file "
+            "that recorded them"
+        ),
         envelope=False,
         merge=Merge.OWN,
         paths=("scene",),
         stamps=("scene",),
     )
     EMISSIVE_REGISTRY = RecordSpec(
-        "emissive_groups",
+        "emissive_registry",
         Scope.PRIVATE,
         1,
         owner="Emissive Groups",
-        description="the group registry: slots, defaults, encoding",
+        description=(
+            "the group registry: per group its slot, default weight and keyed "
+            "attr, the membership encoding and the retired slots"
+        ),
+        renamed_from=("emissive_groups",),
         envelope=False,
         merge=Merge.CODEC,
         respell=False,
@@ -708,8 +1256,9 @@ class SceneRecords:
         1,
         owner="Render Effects",
         description=(
-            "the viewport material bindings a preview drives, so a suspend "
-            "and rebind round-trips"
+            "legacy, Maya only: the bindings the retired viewport material "
+            "mode left, per material channel its object and the authored "
+            "values -- read to restore them, then cleared"
         ),
         envelope=False,
         merge=Merge.UNION,
@@ -818,7 +1367,7 @@ class SceneRecords:
         owner="Lightmap Baker",
         description=(
             "the reflection probe the lightmap bake captured: file name, "
-            "capture point and projection box"
+            "capture point, projection box and unit_scale"
         ),
         merge=Merge.OWN,
         respell=False,
@@ -849,16 +1398,18 @@ class SceneRecords:
     #: ``merge_record(own, other, ctx)`` is a :attr:`Merge.CODEC` record's
     #: merge.  Resolved lazily, like a DCC's producer table -- the codec lives
     #: with the model it merges, and this module stays the lighter import.
+    # Keyed by the declarations, never a spelling: a renamed record keeps
+    # its codec.
     CODECS: Dict[str, Tuple[str, str]] = {
-        "shot_store": (
+        SHOT_STORE.key: (
             "pythontk.core_utils.engines.shots.shot_transfer",
             "ShotTransfer",
         ),
-        "key_stash": (
+        KEY_STASH.key: (
             "pythontk.core_utils.engines.key_stash.key_stash_model",
             "KeyStash",
         ),
-        "emissive_groups": (
+        EMISSIVE_REGISTRY.key: (
             "pythontk.core_utils.engines.textures.region_masks",
             "RegionGroupRegistry",
         ),
@@ -890,130 +1441,153 @@ class SceneRecords:
         return cls.resolve_class(*spec.shape) if spec.shape else None
 
     @classmethod
-    def web_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]:
-        """The :class:`~pythontk.SchemaSpec` declaring *item*'s web manifest
-        (:attr:`WebProjection.shape`), or ``None``."""
-        web = cls.resolve(item).web
-        return cls.resolve_class(*web.shape) if web and web.shape else None
+    def glb_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]:
+        """The :class:`~pythontk.SchemaSpec` declaring *item*'s GLB block
+        (:attr:`GlbBlock.shape`), or ``None``."""
+        block = cls.resolve(item).glb
+        return cls.resolve_class(*block.shape) if block and block.shape else None
 
     @classmethod
+    def put_glb_block(
+        cls,
+        gltf: Dict[str, Any],
+        item: Union[RecordSpec, str],
+        block: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Write *block* as *item*'s block in the glTF document *gltf* -- its
+        root ``extras``, under the record's key -- the block's version
+        stamped (a writer's own wins) and pruned to its declared shape, as
+        :meth:`RecordSpec.make` does a record. The one writer of every block,
+        beside :meth:`glb_block`, its one reader. Returns the block written."""
+        spec = cls.resolve(item)
+        body: Dict[str, Any] = {"version": spec.glb.version}
+        body.update(block)
+        shape = cls.glb_shape(spec)
+        if shape is not None:
+            body = _declared(f"extras.{spec.key}", shape, body)
+        extras = gltf.get("extras")
+        if not isinstance(extras, dict):
+            extras = gltf["extras"] = {}
+        extras[spec.key] = body
+        return body
+
+    @classmethod
+    def glb_block(
+        cls, gltf: Any, item: Union[RecordSpec, str]
+    ) -> Optional[Dict[str, Any]]:
+        """*item*'s block in the glTF document *gltf* -- its root ``extras``,
+        under the record's key -- in the current schema
+        (:attr:`GlbBlock.version`); ``None`` otherwise. The block itself, so
+        a pass that edits it edits the document."""
+        spec = cls.resolve(item)
+        extras = gltf.get("extras") if isinstance(gltf, Mapping) else None
+        if not spec.glb or not isinstance(extras, Mapping):
+            return None
+        block = extras.get(spec.key)
+        current = isinstance(block, dict) and block.get("version") == spec.glb.version
+        return block if current else None
+
+    @classmethod
+    def glb_records(cls) -> List[RecordSpec]:
+        """The records a GLB carries a block for (:attr:`RecordSpec.glb`), in
+        declaration order."""
+        return [s for s in cls.all() if s.glb]
+
+    @classmethod
+    def problems(cls, item: Union[RecordSpec, str], payload: Any) -> List[str]:
+        """What *payload* breaks of *item*'s declaration, one line each: a
+        version other than the declared one (:meth:`RecordSpec.is_current`),
+        or what its declared shape refuses (``SchemaSpec.validate``); empty
+        when a reader reads it."""
+        spec = cls.resolve(item)
+        return cls._problems(spec.key, spec.version, cls.shape(spec), payload)
+
+    @classmethod
+    def block_problems(cls, item: Union[RecordSpec, str], block: Any) -> List[str]:
+        """What *block* -- *item*'s GLB block -- breaks of its declaration
+        (:attr:`RecordSpec.glb`), as :meth:`problems` says it of a record."""
+        spec = cls.resolve(item)
+        if not spec.glb:
+            return [f"extras.{spec.key}: {spec.key!r} declares no GLB block"]
+        shape = cls.glb_shape(spec)
+        return cls._problems(f"extras.{spec.key}", spec.glb.version, shape, block)
+
+    @staticmethod
+    def _problems(where: str, version: int, shape: Any, payload: Any) -> List[str]:
+        """:meth:`problems`' lines for *payload* at *where*."""
+        if not isinstance(payload, Mapping):
+            return [f"{where}: not an object"]
+        found = payload.get("version")
+        if found != version:
+            return [f"{where}: v{found} is not the v{version} a reader reads"]
+        if shape is None:
+            return []
+        return [_located(where, error) for error in shape.validate(payload).errors]
+
+    # Retired 2026-10-20 (removed in 0.18.0): a record's block is named for
+    # the file it rides, not for one of its readers.
+    @classmethod
+    @Deprecation.symbol(
+        "SceneRecords.glb_shape", remove_in="0.18.0", since="2026-10-24"
+    )
+    def web_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]:
+        """:meth:`glb_shape`."""
+        return cls.glb_shape(item)
+
+    @classmethod
+    @Deprecation.symbol(
+        "SceneRecords.glb_records", remove_in="0.18.0", since="2026-10-24"
+    )
     def web_projected(cls) -> List[RecordSpec]:
-        """The records a GLB conversion publishes for the glTF runtimes
-        (:attr:`RecordSpec.web`), in declaration order."""
-        return [s for s in cls.all() if s.web]
+        """:meth:`glb_records`."""
+        return cls.glb_records()
 
     @classmethod
     def portable(cls) -> List[RecordSpec]:
         """The records that cross a DCC hand-off, in declaration order."""
         return [s for s in cls.all() if s.portable]
 
+    # The handoff's names here retired 2026-10-20 (removed in 0.18.0): the
+    # block is declared once, for every carrier, by ``HandoffRecord``, which builds
+    # on this registry -- so each alias reads it at call time.
     @staticmethod
+    @Deprecation.symbol(
+        "HandoffRecord.rendering_policy", remove_in="0.18.0", since="2026-10-24"
+    )
     def rendering_policy(
         overrides: Optional[Mapping[str, Mapping[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """What a deliverable claims about how it should be lit.
+        """What a deliverable claims about how it should be lit
+        (``HandoffRecord.rendering_policy``)."""
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
 
-        The GLB's handoff section and the FBX's handoff record publish the
-        same policy, and it is the reference viewer's contract
-        (``MeshConvert.RENDERING_POLICY``, pinned against the viewer's own
-        literals by ``test_preview_server``), so it is read from there rather
-        than declared twice -- *overrides* included: an export's choices
-        (``ExportContext.rendering``) merge by ``MeshConvert.rendering_policy``
-        on both carriers.  Imported lazily: this module is the lighter
-        dependency and must import first.
+        return HandoffRecord.rendering_policy(overrides)
 
-        Published in the RECORDS' addresses (``carrier="fbx"``, the
-        ``data_export`` node's): the policy's prose points at the reflection
-        probe and the lightmaps, which a GLB binds under ``extras`` and this
-        carrier holds in ``lightmap_metadata``.
-        """
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-
-        return MeshConvert.rendering_policy(overrides, carrier="fbx")
-
-    #: The standalone-reader contract for the carrier the block rides on.
-    #: Declarative sentences about the file and the scene it rebuilds --
-    #: never an action outside the file (no command, no fetch, no tool),
-    #: which is what makes it safe for an agent to read as untrusted content
-    #: -- and no container format named: the same records are read out of a
-    #: GLB, a sidecar or a dump, where "the FBX" misleads.
-    #:
-    #: Written for a reader holding the delivered file and nothing else, and
-    #: tightened (2026-10-14) against what such a reader actually dropped on
-    #: a delivered assembly:
-    #:
-    #: - **Which carrier.** An assembly ships one ``data_export`` per
-    #:   referenced module beside the scene's own, each holding that module's
-    #:   records as it was last exported alone -- stale names, objects since
-    #:   removed, no probe, and its own older block contradicting this one.
-    #:   Both readers in this repo resolve a record the same way
-    #:   (``MeshConvert._data_export_carrier``, unitytk's ``CarrierImport``),
-    #:   and the text states that rule rather than leaving a reader to merge.
-    #: - **Case.** A module spelled a map ``_LightMap`` where the embedded copy
-    #:   is ``_Lightmap``; every reader in this repo joins without case.
-    #: - **What the parts ARE.** ``assembly`` (each record's own
-    #:   :attr:`RecordSpec.assembly`, the lighting rows beside the policy)
-    #:   says what each part of the approved scene is built from, so the
-    #:   render effects, the probe and the lighting are not optional reading.
-    #:
-    #: The load-bearing sentence is still the one about the files the records
-    #: name: a lighting-only bake deliberately leaves its map off every
-    #: material so the authored material survives, so a delivered file embeds
-    #: those maps -- and every other file a record names -- as media of their
-    #: own (``FbxMedia.embed_dependencies``; the GLB binds them). Delivered,
-    #: not every: the block rides EVERY carrier-bearing write (a File > Export
-    #: or Game Exporter write restamps it too), while only the Scene Exporters
-    #: and unitytk's delivery embed -- so the sentence says what a name joins
-    #: to where the file holds no copy.
-    HANDOFF_INSTRUCTIONS = (
-        "This block describes the file that carries it and the approved scene "
-        "that file rebuilds. Geometry, hierarchy and materials are complete in "
-        "the file, every texture a material references embedded; the scene's "
-        "records ride as user properties on nodes named 'data_export', each "
-        "value a JSON string. Per record, the node named exactly 'data_export' "
-        "is the delivered scene's own and wins: the same record on any other "
-        "such node ('data_export1', a namespaced 'NS:data_export') is a "
-        "referenced module's, as that module was last exported alone, and is "
-        "read only where the scene's own node carries no record of that name. "
-        "A 'handoff' describes this file only on the node named exactly "
-        "'data_export'; one on any other node describes that module as it was "
-        "delivered alone. 'reads' names what each "
-        "record holds. 'assembly' lists every part of the approved scene with "
-        "the data it is built from (an address beginning 'rendering.' is in "
-        "this block); a part left out yields a scene other than the one "
-        "approved. Records name files by FILE NAME, never by folder. A "
-        "delivered file embeds each one -- the lightmaps, the reflection "
-        "probe's image, the shadow maps -- as media of its own, the name being "
-        "the join token to that embedded copy, matched without regard to "
-        "case, or, where the file holds no copy, to one provided with it. No "
-        "material references those maps -- a lighting-only bake leaves them "
-        "unwired so the authored material survives -- and each baked object "
-        "also carries its own 'lightmapInfo' property repeating its entry. A "
-        "length in a record is in the file's own units and axes, with "
-        "'unit_scale' (metres per unit) beside it where the record gives "
-        "one; an angle is in degrees unless its field says radians; frames "
-        "count at the record's 'fps'. "
-        "The asset carries no "
-        "lights; 'rendering' is the lighting it was approved under and part "
-        "of its look: lit any other way, the same file renders differently. "
-        "Check 'version' against the schema you expect."
+    @ClassProperty
+    @Deprecation.symbol(
+        "HandoffRecord.instructions('fbx')", remove_in="0.18.0", since="2026-10-24"
     )
+    def HANDOFF_INSTRUCTIONS(cls) -> str:
+        """The FBX block's reading contract (``HandoffRecord.instructions``)."""
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
 
-    #: The ``assembly`` rows that hold whatever the carrier carries: the
-    #: content the file itself is.  Each record present adds its own row
-    #: (:attr:`RecordSpec.assembly`) and the lighting rows close the list
-    #: (``MeshConvert.LIGHTING_ASSEMBLY``).
-    HANDOFF_ASSEMBLY: Tuple[Dict[str, Any], ...] = (
-        {
-            "part": "geometry",
-            "data": ["the file's models, materials and embedded textures"],
-            "spec": (
-                "Complete in the file and as approved: hierarchy, meshes, "
-                "materials and every texture a material references, in the "
-                "file's own units and axes."
-            ),
-        },
+        return HandoffRecord.instructions("fbx")
+
+    @ClassProperty
+    @Deprecation.symbol(
+        "HandoffRecord.CARRIERS['fbx'].own", remove_in="0.18.0", since="2026-10-24"
     )
+    def HANDOFF_ASSEMBLY(cls) -> Tuple[Dict[str, Any], ...]:
+        """The FBX block's rows for the file's own content (``HandoffRecord.CARRIERS``)."""
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
+
+        return HandoffRecord.CARRIERS["fbx"].own
 
     # ------------------------------------------------------------- catalogue
     @classmethod
@@ -1032,6 +1606,13 @@ class SceneRecords:
         """The records holding writer stamps (:attr:`RecordSpec.stamps`), in
         declaration order."""
         return [s for s in cls.all() if s.stamps]
+
+    @classmethod
+    def transients(cls) -> List[RecordSpec]:
+        """The records that describe one write (:attr:`RecordSpec.transient`),
+        in declaration order -- what a scene clears when it holds one outside
+        a write (an import adopted it; a save)."""
+        return [s for s in cls.all() if s.transient]
 
     @classmethod
     def stamp_unsaved(cls, store, stamp: str) -> int:
@@ -1069,6 +1650,46 @@ class SceneRecords:
             }
 
         return cls._remap_records(store, cls.with_stamps(), stamped)
+
+    @classmethod
+    def adopt_gone_stamps(cls, store, stamp: str, base: Optional[str]) -> int:
+        """Give every writer stamp in *store* that names a scene file now gone
+        (``FileDependencies.writer_gone``: renamed or moved) *stamp* -- what a
+        DCC's save hook calls at every save of the open scene.
+
+        Gone, the old name reads as the scene's own; but only while nothing is
+        there. A file that came back to that path -- a Save As back to the old
+        name, a restored backup -- then owned the same maps, and its re-bake
+        wrote over what this scene reads. Written down at the save, the
+        ownership no longer depends on what is missing.
+
+        Parameters:
+            store: The scene store (a :class:`SceneStoreBase`).
+            stamp: The heir, spelled as a writer stamp from *base*.
+            base: The project the stamps are spelled from.
+
+        Returns:
+            int: How many entries were stamped.
+        """
+        if not stamp:
+            return 0
+        from pythontk.file_utils.file_dependencies import FileDependencies
+
+        def adopted(spec: RecordSpec, payload: Mapping) -> Dict[str, Any]:
+            keys = spec.stamp_keys
+            return {
+                key: (
+                    stamp
+                    if isinstance(value, str)
+                    and (keys is None or key in keys)
+                    and value != stamp
+                    and FileDependencies.writer_gone(value, base)
+                    else value
+                )
+                for key, value in payload.items()
+            }
+
+        return cls._remap_records(store, cls.with_stamps(), adopted)
 
     @staticmethod
     def _remap_records(
@@ -1246,12 +1867,10 @@ class SceneRecords:
 
     @classmethod
     def declared_takes(cls, read: Callable[[str], Any]) -> List[Dict[str, Any]]:
-        """The take list a deliverable declares, however old the file.
+        """The take list a deliverable declares.
 
         The one reader of the take list, as ``{"name", "start", "end"}``
-        entries: each ``shot_metadata`` clip that carries its range (every
-        file since 0.11.0), else the legacy ``fbx_takes`` channel an older
-        file holds instead.
+        entries: each clip of the shots record that carries its range.
 
         Parameters:
             read: Channel key -> that channel's DECODED payload, ``None`` when
@@ -1263,90 +1882,33 @@ class SceneRecords:
         """
         meta = read(cls.SHOTS.key)
         shots = meta.get("shots") if isinstance(meta, Mapping) else None
-        ranged = [
+        return [
             {"name": s["clip"], "start": s["start"], "end": s["end"]}
             for s in (shots if isinstance(shots, list) else ())
             if isinstance(s, Mapping) and s.get("clip") and "start" in s and "end" in s
         ]
-        if ranged:
-            return ranged
-        takes = read(cls.FBX_TAKES.key)
-        if not isinstance(takes, list):
-            return []
-        return [t for t in takes if isinstance(t, dict)]
 
     # ---------------------------------------------------------------- handoff
     @classmethod
+    @Deprecation.symbol(
+        "HandoffRecord.block('fbx', channels, source, rendering)",
+        remove_in="0.18.0",
+        since="2026-10-24",
+    )
     def handoff_block(
         cls,
         channels: Union[Iterable[str], Mapping[str, Any]],
         source: Optional[Mapping[str, str]] = None,
         rendering: Optional[Mapping[str, Mapping[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """The standalone-reader contract for an FBX, ready to store.
+        """The FBX's handoff block for a carrier holding *channels*, or ``{}``
+        when it holds no record (``HandoffRecord.block``)."""
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
 
-        *channels* is what the carrier actually holds -- a mapping of channel
-        name to stored value, of which only the STRING values are described
-        (the carrier also holds keyable float attrs, animated custom
-        properties the manifest beside them already describes, and the block
-        says every channel value is a JSON string), or an iterable of names.
-        Taken from the carrier rather than assumed so the block describes THIS
-        file.  Empty dict when there is nothing to describe: a carrier with no
-        metadata has no handoff to make.
-
-        *source* is producer identity and provenance (``application``,
-        ``version``, ``scene``); empty entries are dropped rather than
-        published as nulls.
-
-        *rendering* is the export's choices over the lighting recipe
-        (:meth:`rendering_policy`); ``None`` publishes the policy as it stands.
-
-        ``assembly`` is the approved scene part by part: the file's content
-        (:attr:`HANDOFF_ASSEMBLY`), then each record present in declaration
-        order (its :attr:`RecordSpec.assembly`; an undeclared channel says
-        only that it is there), then the lighting
-        (``MeshConvert.LIGHTING_ASSEMBLY``).
-        """
-        if isinstance(channels, Mapping):
-            channels = [k for k, v in channels.items() if isinstance(v, str) and v]
-        present = sorted(c for c in channels if c != cls.HANDOFF.key)
-        if not present:
-            return {}
-        # Lazily, like :meth:`rendering_policy`, and only once there is a
-        # block to build: every commit calls this, most with nothing to say.
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-
-        declared = {s.key: s for s in cls.deliverable()}
-        rows = [
-            {"part": key, "data": [f"data_export.{key}"], "spec": spec.assembly}
-            for key, spec in declared.items()
-            if key in present and spec.assembly
-        ] + [
-            {
-                "part": name,
-                "data": [f"data_export.{name}"],
-                "spec": "A tool-authored record; 'reads' is all this file says of it.",
-            }
-            for name in present
-            if name not in declared
-        ]
-        return {
-            "version": cls.HANDOFF.version,
-            "source": {k: v for k, v in (source or {}).items() if v} or None,
-            "instructions": cls.HANDOFF_INSTRUCTIONS,
-            "reads": {
-                f"data_export.{name}": (
-                    declared[name].description
-                    if name in declared
-                    else "tool-authored channel"
-                )
-                for name in present
-            },
-            "assembly": copy.deepcopy(
-                [*cls.HANDOFF_ASSEMBLY, *rows, *MeshConvert.LIGHTING_ASSEMBLY]
-            ),
-            "rendering": cls.rendering_policy(rendering),
-        }
+        held = HandoffRecord.carried(channels)
+        return HandoffRecord.block("fbx", channels, source, rendering) if held else {}
 
     @classmethod
     def describe(cls) -> List[Dict[str, Any]]:
@@ -1360,13 +1922,11 @@ class SceneRecords:
                 "owner": s.owner,
                 "after": list(s.after),
                 "envelope": s.envelope,
-                "version_key": s.version_key,
-                "deprecated_by": s.deprecated_by,
-                "remove_in": s.remove_in,
                 "consumers": list(s.consumers),
                 "merge": s.merge.value,
                 "portable": s.portable,
-                "web": s.web.key if s.web else None,
+                "transient": s.transient,
+                "glb": s.glb.version if s.glb else None,
                 "description": s.description,
             }
             for s in cls.all()

@@ -265,14 +265,15 @@ class AudioUtils(HelpMixin):
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
         """Scope timed audio events to the takes that play them.
 
-        The events of the ``audio_manifest`` record (``SceneRecords.AUDIO``),
+        The events of the ``audio`` record (``SceneRecords.AUDIO``),
         one rule for every DCC's producer. An event lands in every take whose
         inclusive ``start``..``end`` range holds it, its frame rebased to that
         take's start -- the frame the imported clip counts from. A take
         missing its name or range scopes nothing: defaulted, it would be a
         phantom take swallowing frame-0 events. With no usable take every
         event ships unscoped (``clip: ""``, played by every clip), rebased to
-        *origin*, the scene frame the single clip starts at.
+        *origin*, the scene frame the single clip starts at; one before it
+        can never fire, and is dropped as one outside every take is.
 
         Parameters:
             events: ``(frame, name)`` pairs, ``name`` the event's track.
@@ -292,13 +293,16 @@ class AudioUtils(HelpMixin):
             and t.get("start") is not None
             and t.get("end") is not None
         ]
-        if not usable:
-            return [
-                {"clip": "", "frame": int(round(frame - origin)), "name": name}
-                for frame, name in events
-            ], []
         scoped: List[Dict[str, Any]] = []
         dropped: List[str] = []
+        if not usable:
+            for frame, name in events:
+                rebased = int(round(frame - origin))
+                if rebased < 0:
+                    dropped.append(f"{name}@{frame}")
+                else:
+                    scoped.append({"clip": "", "frame": rebased, "name": name})
+            return scoped, dropped
         for frame, name in events:
             hits = [t for t in usable if t["start"] <= frame <= t["end"]]
             scoped.extend(
