@@ -201,7 +201,7 @@ class _ShotPlannerInternal(object):
         every other site already follows (the drag path treats
         ``t > shot.end`` as outside, ``scaleKey`` lands the last key ON
         ``end``, cluster detection sets ``end`` to the last key, and
-        ``fbx_takes`` bake ``[start, end]`` inclusive).  The two returned
+        the declared takes bake ``[start, end]`` inclusive).  The two returned
         flags carry that decision to every consumer:
 
         ``hi_closed``

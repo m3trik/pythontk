@@ -13,11 +13,11 @@ the other passes through ``cls``.
 import hashlib
 import io
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from pythontk.core_utils.class_property import ClassProperty
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.glb.edit import GlbTarget
 
 logger = logging.getLogger(__name__)
@@ -564,11 +564,10 @@ class _TexturesMixin:
         if the eye were judging them; the same split
         :attr:`BASIS_BY_SEMANTIC` makes for KTX2. Lightmaps are additionally
         exempt from the resize (the bake sized them deliberately) and never
-        lossy-encoded whatever they are sampled as; that exemption is both by
-        the names the ``lightmap_web`` manifest lists and structurally, by texCoord-1
-        occlusion/emissive binding, so a digest-deduped image whose name lies
-        is still protected. A re-encode that comes out larger keeps the
-        original bytes.
+        lossy-encoded whatever they are sampled as; a lightmap is found by its
+        binding -- a texCoord-1 occlusion/emissive map -- never by its name, so
+        a digest-deduped image whose name lies is still protected. A re-encode
+        that comes out larger keeps the original bytes.
 
         The BIN chunk is repacked -- image payloads replaced, former data-URI
         images relocated into it (dropping base64's 33%), every other
@@ -705,20 +704,10 @@ class _TexturesMixin:
                 return {}
 
             # The bake sized the lightmaps deliberately; never resize them.
-            exempt: Set[str] = set()
-            # Read where the viewer reads it: a native DCC export writes the
-            # first scene's extras, which the root alone never saw.
-            web_manifest = cls._lightmap_web_manifest(gltf)
-            published = (web_manifest or {}).get("materials")
-            if isinstance(published, dict):
-                for entry in published.values():
-                    if isinstance(entry, dict) and entry.get("map"):
-                        exempt.add(os.path.basename(str(entry["map"])))
-            # Structural exemption alongside the name set: an image bound as a
-            # texCoord-1 occlusion/emissive map IS a lightmap however it is
-            # named -- the digest dedupe can hand a lightmap payload the name
-            # of whichever image embedded those bytes first, and a name-only
-            # check then resizes/lossy-encodes it anyway.
+            # An image bound as a texCoord-1 occlusion/emissive map IS a
+            # lightmap, however it is named -- the digest dedupe can hand a
+            # lightmap payload the name of whichever image embedded those
+            # bytes first, so it is found by what binds it, never by name.
             exempt_indices: Set[int] = set()
             for mat in gltf.get("materials") or []:
                 for slot in ("occlusionTexture", "emissiveTexture"):
@@ -736,8 +725,8 @@ class _TexturesMixin:
             # or a span's bottom. The silhouettes and their atlas were sized by the
             # rasterizer, and the viewer's shim samples them by rect.
             kept: Set[int] = set()
-            shadow_manifest = (gltf.get("extras") or {}).get(cls.SHADOW_WEB_KEY)
-            for t_index in cls._shadow_web_texture_indices(shadow_manifest):
+            shadows = SceneRecords.glb_block(gltf, SceneRecords.SHADOWS)
+            for t_index in cls._shadow_texture_indices(shadows):
                 src = edit.image_for_texture(t_index)
                 if src is not None:
                     kept.add(src)
@@ -794,9 +783,7 @@ class _TexturesMixin:
                 if index in kept:
                     after += len(payload)
                     continue
-                is_exempt = (
-                    index in exempt_indices or (image.get("name") or "") in exempt
-                )
+                is_exempt = index in exempt_indices
                 if non_core_output and not is_exempt and index not in sampled:
                     # No texture samples this image, so nothing can rebind it
                     # through the container's texture extension -- and that
@@ -1221,12 +1208,6 @@ class _TexturesMixin:
             cls._reconcile_texture_extensions(gltf)
 
             edit.replace_rest(new_bin)
-            # Re-encoding invalidated every content address the sidecar
-            # recorded at apply time. Restamped from the repacked payloads
-            # (image INDICES are untouched above, which is what makes this a
-            # refresh rather than a rebuild) so the digests describe the bytes
-            # actually delivered. A file with no sidecar is a no-op.
-            cls._stamp_sidecar_digests(edit)
 
         summary = {
             "images": len(replacements),

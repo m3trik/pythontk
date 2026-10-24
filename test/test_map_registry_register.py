@@ -297,6 +297,51 @@ class TestPackedMapContract(RegistryStateGuard):
         m = MapType(name="Curvature", aliases=["Curv"], mode="L")
         self.assertFalse(m.is_packed)
 
+    def test_a_packed_maps_background_is_its_channels_absent_values(self):
+        """What a packed map holds where it is empty is what each channel's own
+        type holds there (``MapRegistry.absent_fills``): one declaration, so a
+        composite's fill and a packing's never disagree. Before 2026-10-20 the
+        Mask Map's and the MRAO's read as a mirror, the Metallic-Smoothness's
+        as a mirror and a metal. Added: 2026-10-20"""
+        for name, map_type in MapRegistry._maps.items():
+            if not map_type.is_packed:
+                continue
+            declared = dict(zip("RGBA", map_type.default_background))
+            for channel, value in MapRegistry.absent_fills(map_type.channels).items():
+                self.assertEqual(declared[channel], value, f"{name}.{channel}")
+
+    def test_absent_values_are_dielectric_matte_unoccluded_and_opaque(self):
+        self.assertEqual(
+            {
+                name: MapRegistry.absent_value(name)
+                for name in (
+                    "Metallic",
+                    "Roughness",
+                    "Smoothness",
+                    "Glossiness",
+                    "Ambient_Occlusion",
+                    "Detail_Mask",
+                    "Opacity",
+                )
+            },
+            {
+                "Metallic": 0.0,
+                "Roughness": 1.0,
+                "Smoothness": 0.0,
+                "Glossiness": 0.0,
+                "Ambient_Occlusion": 1.0,
+                "Detail_Mask": 0.0,
+                "Opacity": 1.0,
+            },
+        )
+        self.assertIsNone(MapRegistry.absent_value("No_Such_Map"))
+        self.assertEqual(
+            MapRegistry.absent_fills(
+                {"R": "Roughness", "G": "No_Such_Map", "B": None, "A": "None"}
+            ),
+            {"R": 255, "G": 0, "B": 0, "A": 255},
+        )
+
     def test_every_registered_packed_map_satisfies_the_contract(self):
         """Sweep the live registry: is_packed or replaces → the full trio.
 

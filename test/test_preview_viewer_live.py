@@ -222,6 +222,9 @@ export default function probe(viewer) {
       report.labels = [...select.options].map((o) => o.textContent);
       report.selected = viewer.playClip('FULL SEQUENCE');
       report.openedOn = (select.options[select.selectedIndex] || {}).textContent;
+      // What a recorder is told of the clip the transport is on: the frame
+      // numbers it names and stamps the movie's frames with.
+      report.clip = viewer.clip;
 
       const cube = detail.model.getObjectByName('cube');
       const scrub = document.getElementById('scrub');
@@ -1010,17 +1013,20 @@ class TestPreviewViewerLive(unittest.TestCase):
                 },
             ],
         }
-        takes = [
-            {"name": "HOLDS", "start": 1, "end": 10},
-            {"name": "MOVES", "start": 20, "end": 40},
-        ]
+        shots = {
+            "version": ptk.SceneRecords.SHOTS.version,
+            "fps": self.FPS,
+            "shots": [
+                {"clip": "HOLDS", "start": 1, "end": 10},
+                {"clip": "MOVES", "start": 20, "end": 40},
+            ],
+        }
         gltf["nodes"][1]["extras"] = {
             "fromFBX": {
                 "userProperties": {
-                    "fbx_takes": {"type": "eFbxString", "value": json.dumps(takes)},
-                    "shot_metadata": {
+                    ptk.SceneRecords.SHOTS.key: {
                         "type": "eFbxString",
-                        "value": json.dumps({"version": 1, "fps": self.FPS}),
+                        "value": json.dumps(shots),
                     },
                 }
             }
@@ -1053,11 +1059,19 @@ class TestPreviewViewerLive(unittest.TestCase):
         with_sequence=False,
         half_take=False,
         described=False,
+        still=(),
+        pruned=False,
     ):
         """A deliverable that ships ONLY shots, with a GAP between them.
 
         *empty_tail* adds a third declared shot that bakes no curve -- the
-        production shape for a range in which nothing moves.
+        production shape for a range in which nothing moves. *still* names
+        shots of the first two that bake none either.
+
+        *pruned* runs the build's own pass for such a clip before the block is
+        written (``MeshConvert.prune_glb_animations``): glTF cannot carry an
+        empty clip, so a still shot reaches the page with no clip at all --
+        only the block's ``shots`` still states it.
 
         *described* gives SHOT_B the description a shot record carries and
         leaves SHOT_A without one -- the mixed case, which is the only one that
@@ -1087,6 +1101,9 @@ class TestPreviewViewerLive(unittest.TestCase):
                 for name in ("SHOT_A", "SHOT_B")
             ],
         }
+        for animation in gltf["animations"]:
+            if animation["name"] in still:
+                animation["samplers"], animation["channels"] = [], []
         takes = [
             {"name": "SHOT_A", "start": 0, "end": 60},
             {"name": "SHOT_B", "start": 90, "end": 150},
@@ -1097,10 +1114,10 @@ class TestPreviewViewerLive(unittest.TestCase):
             )
             takes.append({"name": "SHOT_C", "start": 180, "end": 300})
         if half_take:
-            # A take the carrier declares with no "end". The manifest builds
-            # its clip rows with `take.get("start")` / `take.get("end")`, so
-            # this reaches the page as start_frame=210, end_frame=null -- the
-            # shape a DCC writing a partial take produces.
+            # A shot the carrier declares with a null "end" -- the shape a DCC
+            # writing a partial take produces. The block builds its clip rows
+            # with `take.get("start")` / `take.get("end")`, so this reaches the
+            # page as start_frame=210, end_frame=null.
             gltf["animations"].append(
                 {
                     "name": "SHOT_D",
@@ -1110,15 +1127,24 @@ class TestPreviewViewerLive(unittest.TestCase):
                     ],
                 }
             )
-            takes.append({"name": "SHOT_D", "start": 210})
-        metadata = {"version": 1, "fps": self.FPS}
+            takes.append({"name": "SHOT_D", "start": 210, "end": None})
+        # Each shot its clip with the range it declares.
+        metadata = {
+            "version": ptk.SceneRecords.SHOTS.version,
+            "fps": self.FPS,
+            "shots": [
+                {"clip": t["name"], "start": t["start"], "end": t["end"]} for t in takes
+            ],
+        }
         if described:
             # Keyed by CLIP, which is how `apply_glb_animations` joins a shot
-            # record to the animation it became. SHOT_A is left out: a shot
+            # record to the animation it became. SHOT_A states none: a shot
             # with no note is the common case, and the burn-in has to record it
             # without holding an empty line open for one.
             note = described if isinstance(described, str) else self.SHOT_B_DESCRIPTION
-            metadata["shots"] = [{"clip": "SHOT_B", "description": note}]
+            for shot in metadata["shots"]:
+                if shot["clip"] == "SHOT_B":
+                    shot["description"] = note
         if with_sequence:
             # An UNDECLARED clip: the whole-timeline stack "Shots + Full
             # Sequence" keeps beside the shots.
@@ -1134,8 +1160,7 @@ class TestPreviewViewerLive(unittest.TestCase):
         gltf["nodes"][1]["extras"] = {
             "fromFBX": {
                 "userProperties": {
-                    "fbx_takes": {"type": "eFbxString", "value": json.dumps(takes)},
-                    "shot_metadata": {
+                    ptk.SceneRecords.SHOTS.key: {
                         "type": "eFbxString",
                         "value": json.dumps(metadata),
                     },
@@ -1143,6 +1168,8 @@ class TestPreviewViewerLive(unittest.TestCase):
             }
         }
         path = self._write(gltf)
+        if pruned:
+            ptk.MeshConvert.prune_glb_animations(path)
         ptk.MeshConvert.apply_glb_animations(path)
         return path
 
@@ -1170,8 +1197,8 @@ class TestPreviewViewerLive(unittest.TestCase):
         self.assertIn("f0", found["start"]["readout"])
 
     def test_a_shot_the_carrier_never_finished_is_not_placed(self):
-        """The manifest reads both bounds with `.get`, so a take written
-        without an "end" arrives as ``end_frame: null``.
+        """The block reads both bounds with `.get`, so a shot whose record
+        states a null "end" arrives as ``end_frame: null``.
 
         Placed anyway, such a shot becomes a segment at its own start offset
         inside a span that never accounted for it -- here at 7.0s of a 5.00s
@@ -1228,6 +1255,47 @@ class TestPreviewViewerLive(unittest.TestCase):
         self.assertIn("/ 10.00s", found["end"]["readout"])
         self.assertIn("f300", found["end"]["readout"])
         # ... and it holds the last MOVING pose out there, as the gap does.
+        self.assertEqual(found["end"]["y"], 2.0)
+
+    def test_a_still_first_shot_the_build_dropped_still_opens_the_sequence(self):
+        """Bug: the build drops the clip of a shot in which nothing moves
+        (``prune_glb_animations`` -- glTF cannot carry an empty clip), and
+        FULL SEQUENCE was measured off the clips, so a still first shot left
+        one clip and no sequence at all, though the block's ``shots`` states
+        both. Fixed: 2026-10-24 -- the timeline is the block's shots; the
+        still shot's frames hold the pose the next shot opens on, under its
+        own name."""
+        found = self._load(
+            self._shots_only_glb(still=("SHOT_A",), pruned=True),
+            probe=self._sequence_probe(),
+        )
+
+        self.assertEqual(found["errors"], [])
+        self.assertIs(found["selected"], True, "the sequence must be offered")
+        self.assertIn("0–150, 2 shots", found["labels"][0], found["labels"])
+        self.assertIn("/ 5.00s", found["end"]["readout"])
+        self.assertIn("SHOT_A", found["start"]["readout"])
+        self.assertIn("f0", found["start"]["readout"])
+        self.assertEqual(found["start"]["y"], 0.0)
+        self.assertIn("SHOT_A (hold)", found["gap"]["readout"])
+        self.assertIn("SHOT_B", found["inShotB"]["readout"])
+        self.assertEqual(found["inShotB"]["y"], 1.0)
+
+    def test_a_still_last_shot_the_build_dropped_still_ends_the_sequence(self):
+        """The same drop at the far end ran the sequence 150 frames short of
+        the range the file declares, and named the frames it did reach after
+        the shot before (`SHOT_B (hold)`) rather than the shot they are."""
+        found = self._load(
+            self._shots_only_glb(empty_tail=True, pruned=True),
+            probe=self._sequence_probe(),
+        )
+
+        self.assertEqual(found["errors"], [])
+        self.assertIn("0–300, 3 shots", found["labels"][0], found["labels"])
+        self.assertIn("/ 10.00s", found["end"]["readout"])
+        self.assertIn("f300", found["end"]["readout"])
+        self.assertIn("SHOT_C", found["end"]["readout"])
+        self.assertNotIn("SHOT_B", found["end"]["readout"])
         self.assertEqual(found["end"]["y"], 2.0)
 
     def test_a_file_that_ships_its_own_sequence_is_left_alone(self):
@@ -1303,6 +1371,107 @@ class TestPreviewViewerLive(unittest.TestCase):
         self.assertEqual(found["errors"], [])
         self.assertIs(found["selected"], False, "this fixture ships no sequence")
         self.assertNotIn("·", found["start"]["readout"])
+
+    def _full_glb(self, zero=0, lead_in=0):
+        """What ``Animation Clips: Full Sequence Only`` writes: ONE
+        whole-timeline clip (the 2 s :meth:`_write` bakes, frames 0-60 at 30
+        fps) and no clip per shot -- SHOT_A (0-20) and SHOT_B (40-60,
+        described) are windows of it, placed by the clip span the exporter
+        published.
+
+        *zero* moves the whole timeline to start there (a 1001-start scene);
+        *lead_in* starts SHOT_A that many frames after the clip does."""
+        shots = {
+            "version": ptk.SceneRecords.SHOTS.version,
+            "fps": self.FPS,
+            "clip_mode": "full",
+            "shots": [
+                {"clip": "SHOT_A", "start": zero + lead_in, "end": zero + 20},
+                {
+                    "clip": "SHOT_B",
+                    "start": zero + 40,
+                    "end": zero + 60,
+                    "description": self.SHOT_B_DESCRIPTION,
+                },
+            ],
+        }
+        effects = {
+            "version": ptk.SceneRecords.VISIBILITY.version,
+            "tracks": [],
+            "fps": self.FPS,
+            "clip_span": {"*": [zero, zero + 60]},
+        }
+        props = {
+            key: {"type": "eFbxString", "value": json.dumps(value)}
+            for key, value in (
+                (ptk.SceneRecords.SHOTS.key, shots),
+                (ptk.SceneRecords.VISIBILITY.key, effects),
+            )
+        }
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scenes": [{"nodes": [0]}],
+            "scene": 0,
+            "nodes": [
+                {"name": "cube", "mesh": 0},
+                {"name": "data_export", "extras": {"fromFBX": {"userProperties": props}}},
+            ],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 1}}]}],
+            "accessors": [{"type": "SCALAR", "min": [0.0], "max": [5.0]}],
+            "animations": [
+                {
+                    "name": "Take 001",
+                    "samplers": [{"input": 0, "output": 2}],
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 0, "path": "translation"}}
+                    ],
+                }
+            ],
+        }
+        path = self._write(gltf)
+        ptk.MeshConvert.apply_glb_animations(path)
+        return path
+
+    def test_a_full_files_readout_names_the_shot_window_it_is_in(self):
+        """Bug: a 'full' GLB stated no shot (block v1 listed clips only), so
+        scrubbing its one clip named nothing and captioned nothing, though the
+        FBX beside it named both shots. Fixed: 2026-10-21 -- the block
+        inherits the shots, and the whole-timeline clip's readout places each
+        as its window, by the clip's zero_frame."""
+        found = self._load(self._full_glb(), probe=self._sequence_probe())
+
+        self.assertEqual(found["errors"], [])
+        self.assertIs(found["selected"], False, "the file's own clip plays")
+        self.assertIn("SHOT_A", found["start"]["readout"])
+        self.assertIn("f0", found["start"]["readout"])
+        self.assertIn("SHOT_A (hold)", found["gap"]["readout"])
+        self.assertIn("SHOT_B", found["inShotB"]["readout"])
+        self.assertIn("f48", found["inShotB"]["readout"])
+        self.assertIsNone(found["start"]["description"], "SHOT_A states none")
+        self.assertEqual(found["inShotB"]["description"], self.SHOT_B_DESCRIPTION)
+
+    def test_a_full_files_clip_counts_its_frames_from_its_own_zero(self):
+        """Bug: on the whole-timeline clip of a scene authored from frame 1001
+        the readout showed the authoring frame (zero_frame + t * fps) but
+        ``viewer.clip.startFrame`` stayed 0 -- so a playblast read
+        ``SHOT_B f1049`` on screen, burned in ``SHOT_B 0048`` and asked the
+        server for frames from 0. And before the first shot started the
+        readout showed no frame at all, its frame read off the shot lookup.
+        Fixed: 2026-10-24 -- the clip starts at its zero_frame, and the frame
+        is read apart from the shot."""
+        found = self._load(
+            self._full_glb(zero=1001, lead_in=10), probe=self._sequence_probe()
+        )
+
+        self.assertEqual(found["errors"], [])
+        self.assertIs(found["selected"], False, "the file's own clip plays")
+        self.assertEqual(found["clip"]["startFrame"], 1001)
+        self.assertEqual(found["clip"]["endFrame"], 1061)
+        # 1001 is a lead-in frame: SHOT_A starts at 1011, so no shot is named.
+        self.assertIn("f1001", found["start"]["readout"])
+        self.assertNotIn("·", found["start"]["readout"])
+        self.assertIn("SHOT_B", found["inShotB"]["readout"])
+        self.assertIn("f1049", found["inShotB"]["readout"])
 
     # ------------------------------------------------- recording a clip
     # The page's transport can play one shot or the whole sequence; these are
@@ -1878,7 +2047,7 @@ class TestPreviewViewerLive(unittest.TestCase):
     ):
         """A GLB whose material wears a BAKED map, built by the real applier.
 
-        Hand-writing `extras.lightmap_web` would test the page against a
+        Hand-writing `extras.lightmaps` would test the page against a
         fixture rather than against the pipeline, and the whole point of these
         assertions is that the two agree. So the manifest rides the
         `data_export` carrier exactly as an FBX delivers it and
@@ -1919,27 +2088,28 @@ class TestPreviewViewerLive(unittest.TestCase):
             cv2.imwrite(os.path.join(exr_dir, "room_Probe.exr"), image[..., ::-1])
 
         manifest = {
-            # Load-bearing: the reader refuses a manifest whose version it does
-            # not recognise, and an ABSENT version reads as newer than v1 --
-            # so a fixture without it binds nothing and every assertion below
-            # would pass vacuously. That is what the `bound` check catches.
-            "version": 1,
+            # Load-bearing: the reader reads the record's declared version
+            # alone, an absent or other one refused -- so a fixture without it
+            # binds nothing and every assertion below would pass vacuously.
+            # That is what the `bound` check catches.
+            "version": ptk.SceneRecords.LIGHTMAPS.version,
             "objects": [
                 {
                     "name": "room",
                     "map": "room_Lightmap.exr",
                     "uvIndex": 1,
-                    "intensity": 1.0,
                     "scaleOffset": [1.0, 1.0, 0.0, 0.0],
+                    "hierarchy": [],
                 }
             ],
         }
         if probe is not None:
+            manifest["unit_scale"] = 1.0
             manifest["probe"] = {
                 "map": "room_Probe.exr",
                 "position": list(probe["position"]),
-                "box": probe["box"],
-                "unit_scale": 1.0,
+                # The record states a box as {min, max}; a host's [min, max].
+                "box": ptk.LightmapRecord.box(probe["box"]),
             }
         gltf = {
             "asset": {"version": "2.0"},
@@ -1952,7 +2122,7 @@ class TestPreviewViewerLive(unittest.TestCase):
                     "extras": {
                         "fromFBX": {
                             "userProperties": {
-                                "lightmap_metadata": {
+                                "lightmaps": {
                                     "type": "eFbxString",
                                     "value": json.dumps(manifest),
                                 }
@@ -1992,7 +2162,12 @@ class TestPreviewViewerLive(unittest.TestCase):
         if baked_reflections is not None:
             rendering["lightmappedMaterials"] = {"envMapIntensity": baked_reflections}
         if rendering:
-            gltf["extras"] = {"scene_sidecar": {"handoff": {"rendering": rendering}}}
+            gltf["extras"] = {
+                ptk.HandoffRecord.KEY: {
+                    "version": ptk.HandoffRecord.VERSION,
+                    "rendering": rendering,
+                }
+            }
         path = self._write(gltf, uvs=True)
         bound = ptk.MeshConvert.apply_glb_lightmaps(path, search_dirs=[exr_dir])
         # A fixture that silently bound nothing would make every assertion
@@ -2007,21 +2182,12 @@ class TestPreviewViewerLive(unittest.TestCase):
                         edit, [ptk.ImgUtils.encode_hdr_radiance_pixels(image)]
                     )
                     copies.append(
-                        {
-                            "bufferView": view,
-                            "mimeType": "image/vnd.radiance",
-                            "width": image.shape[1],
-                            "height": image.shape[0],
-                            "receivers": layer.get("receivers", "interior"),
-                            "materials": list(layer["materials"]),
-                        }
+                        {"bufferView": view, "materials": list(layer["materials"])}
                     )
-                web = edit.gltf["extras"]["lightmap_web"]
-                web["probe"]["highlights"] = {
-                    "eye": list(probe["position"]),
-                    "lights": len(copies),
-                    "copies": copies,
-                }
+                # The list the lightmap pass publishes: a copy's size is its
+                # Radiance header's (MeshConvert._embed_highlight_probes).
+                web = edit.gltf["extras"][ptk.SceneRecords.LIGHTMAPS.key]
+                web["probe"]["highlights"] = copies
                 edit.dirty = True
         return path
 
@@ -2030,11 +2196,11 @@ class TestPreviewViewerLive(unittest.TestCase):
 
         *objects* are ``(name, material indices, map[, rect])``: one mesh node
         per object with one primitive per material, *map* the EXR its bake
-        names (``None``: never baked; a file that does not exist: baked, with
-        its map lost) and *rect* its atlas ``scaleOffset``. Every baked object
-        carries the bake's ``lightmapInfo`` marker in its node extras, shaped as
-        FBX2glTF transcribes it -- which is what lets the page tell an object
-        the bake meant to light from one it merely wears a lit material.
+        names (``None``: never baked) and *rect* its atlas ``scaleOffset``.
+        The bake is stated as a finished file states it: the record on the
+        carrier, and the block the applier derives from it -- no per-object
+        ``lightmapInfo`` marker, which a finished file no longer carries. The
+        page tells what the bake lit from the materials that block names.
         """
         import cv2
         import numpy as np
@@ -2056,36 +2222,24 @@ class TestPreviewViewerLive(unittest.TestCase):
                 }
             )
             if lightmap:
-                scale_offset = rect[0] if rect else [1.0, 1.0, 0.0, 0.0]
                 entries.append(
                     {
                         "name": name,
                         "map": lightmap,
                         "uvIndex": 1,
-                        "intensity": 1.0,
-                        "scaleOffset": scale_offset,
+                        "scaleOffset": rect[0] if rect else [1.0, 1.0, 0.0, 0.0],
+                        "hierarchy": [],
                     }
                 )
-                marker = {"map": lightmap, "uvIndex": 1, "scaleOffset": scale_offset}
-                node["extras"] = {
-                    "fromFBX": {
-                        "userProperties": {
-                            "lightmapInfo": {
-                                "type": "eFbxString",
-                                "value": json.dumps(marker),
-                            }
-                        }
-                    }
-                }
             nodes.append(node)
-        manifest = {"version": 1, "objects": entries}
+        manifest = {"version": ptk.SceneRecords.LIGHTMAPS.version, "objects": entries}
         nodes.append(
             {
                 "name": "data_export",
                 "extras": {
                     "fromFBX": {
                         "userProperties": {
-                            "lightmap_metadata": {
+                            "lightmaps": {
                                 "type": "eFbxString",
                                 "value": json.dumps(manifest),
                             }
@@ -2543,6 +2697,25 @@ class TestPreviewViewerLive(unittest.TestCase):
         found = self._load(self._animated_glb())
 
         self.assertEqual(found["console_errors"], [])
+
+    def test_a_retired_block_is_said_not_left_to_read_as_a_bad_bake(self):
+        """A file published before its record was renamed carries the old
+        block key (``lightmap_web``): nothing reads it, and the load says so
+        in words -- never a silently unlit room. Added: 2026-10-24"""
+        gltf = {
+            "asset": {"version": "2.0"},
+            "scenes": [{"nodes": [0]}],
+            "scene": 0,
+            "nodes": [{"name": "cube", "mesh": 0}],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 1}}]}],
+            "extras": {"lightmap_web": {"version": 1, "lightmaps": []}},
+        }
+        found = self._load(self._write(gltf))
+
+        self.assertIn(
+            "'lightmap_web' is a retired block -- re-export the file",
+            found["issueLine"] or "",
+        )
 
     # ------------------------------------------------------- the page's boot
     def test_a_script_named_with_the_asset_is_in_before_the_asset_loads(self):
@@ -3112,11 +3285,8 @@ class TestPreviewViewerLive(unittest.TestCase):
         self.assertEqual((specs["objects"], specs["meshes"]), (2, 3))
         self.assertEqual(specs["materials"]["file"], 3)
         self.assertEqual(
-            {
-                k: specs["lightmaps"][k]
-                for k in ("lit", "objects", "baked", "unlit", "foreign")
-            },
-            {"lit": 1, "objects": 2, "baked": 1, "unlit": [], "foreign": []},
+            {k: specs["lightmaps"][k] for k in ("lit", "objects", "baked", "unlit")},
+            {"lit": 1, "objects": 2, "baked": 1, "unlit": []},
         )
         self.assertEqual(
             found["statLines"],
@@ -3146,45 +3316,40 @@ class TestPreviewViewerLive(unittest.TestCase):
 
     def test_a_baked_object_whose_lightmap_did_not_bind_is_named(self):
         """Its map was lost: it renders exactly like an object never baked,
-        which is why the page -- not the render -- has to say which."""
-        found = self._load(
-            self._baked_room_glb(
-                [("floor", [0], "room_Lightmap.exr"), ("wall", [1], "gone.exr")]
-            )
-        )
-        self.assertEqual(found["specs"]["lightmaps"]["unlit"], ["wall"])
-        self.assertEqual(
-            found["issueLine"],
-            "⚠ 1 baked object renders unlit — no lightmap bound: wall",
-        )
-        self.assertEqual(found["console_errors"], [], "a warning, not an error")
+        which is why the page -- not the render -- has to say which. The file
+        says what its bake lit by the materials its lightmaps block names, so
+        an object wearing one that arrived without its map is named."""
 
-    def test_an_object_lit_by_a_bake_it_was_never_in_is_named(self):
-        """What a deliverable built before the applier stopped binding in place
-        over a material an unbaked object wears looks like: the prop renders
-        the floor's lighting, and the old HUD counted that material as
-        lightmapped. The bake's own markers say the prop was never baked."""
-
-        def share_the_floors_material(gltf):
-            floor = gltf["meshes"][0]["primitives"][0]["material"]
-            gltf["meshes"][1]["primitives"][0]["material"] = floor
+        def lose_the_walls_map(gltf):
+            (wall,) = [node for node in gltf["nodes"] if node.get("name") == "wall"]
+            material = gltf["meshes"][wall["mesh"]]["primitives"][0]["material"]
+            del gltf["materials"][material]["occlusionTexture"]
 
         glb = self._rewire(
             self._baked_room_glb(
-                [("floor", [0], "room_Lightmap.exr"), ("prop", [1], None)]
+                [
+                    ("floor", [0], "room_Lightmap.exr"),
+                    ("wall", [1], "room_Lightmap.exr"),
+                ]
             ),
-            share_the_floors_material,
+            lose_the_walls_map,
         )
         found = self._load(glb)
-        self.assertEqual(found["specs"]["lightmaps"]["foreign"], ["prop"])
-        self.assertIn("never baked with: prop", found["issueLine"])
+        self.assertEqual(found["specs"]["lightmaps"]["unlit"], ["wall"])
+        issues = {i["text"]: i.get("names") for i in found["specs"]["issues"]}
+        self.assertEqual(
+            issues.get("1 baked object renders unlit — no lightmap bound"),
+            ["wall"],
+            issues,
+        )
+        self.assertEqual(found["console_errors"], [], "a warning, not an error")
 
     def test_an_unreadable_carrier_is_reported_not_swallowed(self):
         """A carrier the page does not read binds nothing -- deliberately -- and
         used to say nothing either, so the room just rendered unlit."""
 
         def unknown_carrier(gltf):
-            gltf["extras"]["lightmap_web"]["carrier"] = "sheen"
+            gltf["extras"][ptk.SceneRecords.LIGHTMAPS.key]["carrier"] = "sheen"
 
         found = self._load(self._rewire(self._lightmapped_glb(), unknown_carrier))
         self.assertEqual(found["lightmapped"], 0)
@@ -3201,14 +3366,16 @@ class TestPreviewViewerLive(unittest.TestCase):
                 primitive["attributes"].pop("TEXCOORD_1", None)
 
     def test_the_uv_warning_checks_the_set_the_bake_is_sampled_on(self):
-        """A bake is sampled on the UV set its manifest names
-        (`lightmap_web.uv`), and the warning for a mesh without it looked for
-        the SECOND set whatever the manifest said: a bake laid out on the
+        """A bake is sampled on the UV set its binding names (the lightmap
+        texture's ``texCoord``), and the warning for a mesh without it looked
+        for the SECOND set whatever the file said: a bake laid out on the
         first -- which the page renders correctly -- was reported as reading
         one texel. It is checked against the set actually sampled."""
 
         def on_the_first_set(gltf):
-            gltf["extras"]["lightmap_web"]["uv"] = 0
+            for material in gltf["materials"]:
+                if "occlusionTexture" in material:
+                    material["occlusionTexture"]["texCoord"] = 0
             self._drop_second_uv(gltf)
 
         found = self._load(self._rewire(self._lightmapped_glb(), on_the_first_set))
@@ -3217,8 +3384,9 @@ class TestPreviewViewerLive(unittest.TestCase):
         self.assertFalse(any("UV set" in text for text in texts), texts)
 
     def test_a_mesh_without_its_bakes_uv_set_is_named(self):
-        """The other half: the manifest's set (the second, here) missing from
-        the mesh reads one texel of the bake, and the load says so."""
+        """The other half: the set the binding names (the second, here)
+        missing from the mesh reads one texel of the bake, and the load says
+        so."""
         found = self._load(self._rewire(self._lightmapped_glb(), self._drop_second_uv))
         self.assertEqual(self._lit(found)["lightMapChannel"], 1)
         self.assertIn("no second UV set", found["issueLine"])
@@ -3635,7 +3803,9 @@ class TestPreviewViewerLive(unittest.TestCase):
         )
         with ptk.MeshConvert.open_glb(glb) as edit:
             view = edit.gltf["bufferViews"][
-                edit.gltf["extras"]["lightmap_web"]["probe"]["bufferView"]
+                edit.gltf["extras"][ptk.SceneRecords.LIGHTMAPS.key]["probe"][
+                    "bufferView"
+                ]
             ]
             start, length = int(view.get("byteOffset", 0)), int(view["byteLength"])
             data = bytearray(edit.bin_data)
@@ -3759,7 +3929,7 @@ class TestPreviewViewerLive(unittest.TestCase):
         found = self._load(
             self._lightmapped_glb(
                 pbr=pbr, probe=grey,
-                highlights=[{"image": red, "materials": ["room_MAT"], "receivers": "unbaked"}],
+                highlights=[{"image": red, "materials": ["room_MAT"]}],
             ),
             then=flip,
         )
@@ -3822,7 +3992,7 @@ class TestPreviewViewerLive(unittest.TestCase):
         found = self._load(
             self._lightmapped_glb(
                 pbr=pbr, probe=grey,
-                highlights=[{"image": red, "materials": ["room_MAT"], "receivers": "unbaked"}],
+                highlights=[{"image": red, "materials": ["room_MAT"]}],
             ),
             then=read,
             init=self.NO_FLOAT_FILTERING_JS,
@@ -4399,7 +4569,7 @@ class TestPreviewViewerLive(unittest.TestCase):
 
     #: The key light the relief takes a bake's light to arrive along, as the
     #: published recipe states it (`test_preview_server` pins the page to it).
-    KEY_LIGHT = tuple(ptk.MeshConvert.RENDERING_POLICY["keyLight"]["position"])
+    KEY_LIGHT = tuple(ptk.HandoffRecord.RENDERING_POLICY["keyLight"]["position"])
     #: A matte dielectric: with the environment published at zero, the bake --
     #: and the relief on it -- is the whole picture.
     MATTE = {"metallicFactor": 0.0, "roughnessFactor": 1.0}
@@ -4607,7 +4777,7 @@ class TestPreviewViewerLive(unittest.TestCase):
         The ramp is authored so the arithmetic is checkable: alpha rises 0 -> 1
         over frames 0-60 at 30fps, i.e. exactly ``clip_time / 2``.
 
-        *manifest=False* strips ``extras.animation_web`` after the fact, which
+        *manifest=False* strips ``extras.animation`` after the fact, which
         is the proof that the fade is carried by the file's OWN animation
         channels and by nothing else.
         """
@@ -4642,9 +4812,12 @@ class TestPreviewViewerLive(unittest.TestCase):
             ],
         }
         channels = {
-            "fbx_takes": [{"name": "SHOT", "start": 0, "end": 60}],
-            "shot_metadata": {"version": 1, "fps": self.FPS},
-            "visibility_tracks": {
+            "animation": {
+                "version": 1,
+                "fps": self.FPS,
+                "shots": [{"clip": "SHOT", "start": 0, "end": 60}],
+            },
+            "render_effects": {
                 "version": 1,
                 "fps": self.FPS,
                 # Visibility is constant-ON, so no gate is written and the only
@@ -4675,10 +4848,10 @@ class TestPreviewViewerLive(unittest.TestCase):
         ptk.MeshConvert.apply_glb_fades(path)
         ptk.MeshConvert.apply_glb_animations(path)
         if not manifest:
-            # No `animation_web` at all: what a reader that never ran the
+            # No animation block at all: what a reader that never ran the
             # manifest pass would hand over. The fade must not depend on it.
             with ptk.MeshConvert.open_glb(path) as session:
-                session.gltf.get("extras", {}).pop("animation_web", None)
+                session.gltf.get("extras", {}).pop(ptk.SceneRecords.SHOTS.key, None)
                 session.dirty = True
         return path
 
@@ -4790,9 +4963,12 @@ export default function probe(viewer) {
             ],
         }
         channels = {
-            "fbx_takes": [{"name": "SHOT", "start": 0, "end": 60}],
-            "shot_metadata": {"version": 1, "fps": self.FPS},
-            "visibility_tracks": {
+            "animation": {
+                "version": 1,
+                "fps": self.FPS,
+                "shots": [{"clip": "SHOT", "start": 0, "end": 60}],
+            },
+            "render_effects": {
                 "version": 1,
                 "fps": self.FPS,
                 "tracks": [
@@ -4928,7 +5104,7 @@ export default function probe(viewer) {
 
         The page plays the deliverable's KHR_animation_pointer channels -- the
         same bytes any extension-aware viewer plays -- by handing them to the
-        mixer as ordinary keyframe tracks. With `extras.animation_web` gone
+        mixer as ordinary keyframe tracks. With `extras.animation` gone
         there is no side block to fall back on, so a fade that still plays can
         only have come from the animation itself.
         """
@@ -5014,6 +5190,24 @@ export default function probe(viewer) {
         self.assertFalse(found["depthHooked"]["untouched"])
 
     # ------------------------------------------------------------ a share
+    @staticmethod
+    def _close_guest_page(page):
+        """Close *page* as a guest's tab leaves: its ``pagehide`` beacon, then
+        the close.
+
+        Dispatched while the page is alive, because a real close runs
+        ``pagehide`` only if the renderer answers within Chromium's unload
+        deadline: a main thread busy for about a second at that moment tears
+        the page down with no beacon at all (measured 2026-10-24: 4/4 lost at
+        1-3 s of work, 0/2 at 0.3 s), which the full suite's load did once
+        (2026-10-23) -- and the server then retires the tab only by
+        ``VIEWER_TIMEOUT``. The page's own handler still sends the beacon, so
+        a wrong event, URL or id fails as before; the real close follows,
+        and its beacon, if it gets one out, retires nothing twice.
+        """
+        page.evaluate("() => dispatchEvent(new PageTransitionEvent('pagehide'))")
+        page.close(run_before_unload=True)
+
     def test_a_guest_sees_the_model_and_nothing_that_writes(self):
         """The page as a share delivers it: through the guest listener, under
         a public name, in a secure context -- which is what a tunnel adds, so
@@ -5066,7 +5260,7 @@ export default function probe(viewer) {
                 )
                 found["export"] = self._menu_items(page, "Export")
                 found["guests_open"] = server.guest_count()
-                page.close(run_before_unload=True)
+                self._close_guest_page(page)
                 deadline = time.monotonic() + 10  # the beacon is asynchronous
                 while server.guest_count() and time.monotonic() < deadline:
                     time.sleep(0.1)
@@ -5144,7 +5338,7 @@ export default function probe(viewer) {
                         "() => ({guest: window.__api.guest, meshes: window.__probe.meshes})"
                     )
                     found["guests_open"] = server.guest_count()
-                    page.close(run_before_unload=True)
+                    self._close_guest_page(page)
                     deadline = time.monotonic() + 10  # the beacon is asynchronous
                     while server.guest_count() and time.monotonic() < deadline:
                         time.sleep(0.1)

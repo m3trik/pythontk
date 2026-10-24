@@ -431,7 +431,13 @@ class PlayblastRegistrationTestCase(unittest.TestCase):
     def test_a_deliverable_that_ships_clips_turns_the_recorder_on(self):
         """No checkbox: the button would otherwise be missing on exactly the
         push a reviewer just watched and wants to send on."""
-        self.assertEqual(PreviewServer.AUTO_SCRIPTS.get("playblast"), "animation_web")
+        from pythontk.core_utils.engines.scene_export.scene_records import (
+            SceneRecords,
+        )
+
+        self.assertEqual(
+            PreviewServer.AUTO_SCRIPTS.get("playblast"), SceneRecords.SHOTS.key
+        )
 
     def test_the_script_only_talks_to_routes_the_server_answers(self):
         """Every action the script posts is one the handler's allow-list names —

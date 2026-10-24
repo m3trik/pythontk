@@ -1,6 +1,6 @@
 // The deliverable's reflection probe: the room its bake lit, captured by the
 // bake as an HDR from one point (MeshConvert._embed_lightmap_probe ->
-// `extras.lightmap_web.probe`) -- what a lightmap cannot hold.
+// `extras.lightmaps.probe`) -- what a lightmap cannot hold.
 //
 // A lightmap is diffuse irradiance with no direction in it, so a baked METAL,
 // which has no diffuse, showed only what the page's studio environment gave
@@ -293,9 +293,11 @@ export function releaseProbe() {
 // (see load.js). The decode and the prefilter are timed apart: the first is
 // the CPU's, the second the GPU's, and a headset pays both inside the load.
 export async function loadProbe(gltf, issues = []) {
-  const entry = readExtras(gltf, LIGHTMAPS.webKey)?.probe;
+  /** @type {import('./records.js').LightmapsBlockProbe} */
+  const entry = readExtras(gltf, LIGHTMAPS)?.probe;
   if (!entry || !Number.isInteger(entry.bufferView)) return null;
-  const layers = (entry.highlights?.copies || []).filter((copy) => Number.isInteger(copy.bufferView));
+  const listed = Array.isArray(entry.highlights) ? entry.highlights : [];
+  const layers = listed.filter((copy) => Number.isInteger(copy?.bufferView));
   // A probe with highlight copies is decoded at full float: each copy is the
   // probe plus its layer, summed here before it is prefiltered.
   const type = layers.length ? THREE.FloatType : THREE.HalfFloatType;
@@ -332,7 +334,6 @@ export async function loadProbe(gltf, issues = []) {
     copies.push({
       prefiltered: prefilterEquirect(data, image.width, image.height, THREE.FloatType),
       materials: copy.materials || [],
-      receivers: copy.receivers,
     });
   }
   const done = performance.now();

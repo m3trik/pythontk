@@ -13,7 +13,6 @@ One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
 the other passes through ``cls``.
 """
 
-import json
 import logging
 import os
 import platform as _platform
@@ -27,13 +26,15 @@ from typing import (
     Callable,
     Dict,
     List,
+    Mapping,
     Optional,
     Sequence,
     Set,
     Union,
 )
 
-from pythontk.file_utils.mesh_convert.glb.edit import GlbTarget
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
+from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 
 if TYPE_CHECKING:
     from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
@@ -341,6 +342,7 @@ class _Fbx2GltfMixin:
         timeout: Optional[float] = AUTO_TIMEOUT,
         extra_args: Optional[List[str]] = None,
         sidecar: Optional[Dict[str, Any]] = None,
+        rendering: Optional[Mapping[str, Mapping[str, Any]]] = None,
         data_export: Optional[Dict[str, Any]] = None,
         lightmaps: bool = True,
         lightmap_dirs: Sequence[str] = (),
@@ -375,14 +377,18 @@ class _Fbx2GltfMixin:
                            embedded-media extraction goes to a temp store
                            removed when the call returns, unless these name
                            ``--fbx-temp-dir`` themselves.
-            sidecar:       A scene-sidecar envelope (:meth:`build_scene_sidecar`)
-                           to apply to and embed in the converted GLB — the one
-                           parameter that turns a bare conversion into a
-                           scene-faithful deliverable. Applied inside the same
-                           post-conversion edit session as the alpha repair, so
-                           it costs no extra file pass. Callers that need the
-                           per-section outcome summary call
-                           :meth:`apply_scene_sidecar` separately instead.
+            sidecar:       A handoff block (``HandoffRecord.block("glb", ...)``) to embed in
+                           place of the one the FBX's own ``handoff`` record
+                           implies; ``None`` -- every export -- reads it off
+                           the file, so the GLB says what its FBX says, and a
+                           file with no record gets none. An envelope a host
+                           built before the materials record
+                           (:meth:`build_scene_sidecar`) is still taken: its
+                           sections repair a file that carries no record, until
+                           they retire.
+            rendering:     The export's choices over the lighting recipe
+                           (:meth:`rendering_policy`), laid over what the FBX's
+                           handoff states -- a preview's own GLB rows.
             data_export:   ``{channel key: value or None}`` overlaid on the
                            file's in-band channels (:meth:`overlay_data_export`)
                            BEFORE any pass reads them, so every pass builds from
@@ -428,9 +434,10 @@ class _Fbx2GltfMixin:
                            only there would downgrade to shipping Maya's lossy
                            split takes with nothing but a log line.
             report:        A dict this fills with what the chain did, for a
-                           caller that reports rather than logs: ``"sidecar"``
-                           (the per-section outcome
-                           :meth:`apply_scene_sidecar` returns) and
+                           caller that reports rather than logs:
+                           ``"materials"`` (what :meth:`apply_glb_materials`
+                           wrote), ``"sidecar"`` (an old envelope's
+                           per-section outcome, ``{}`` otherwise) and
                            ``"lightmaps"`` (:meth:`lightmap_report`
                            -- what the manifest wanted of THIS file against
                            what bound) and ``"data_export"`` (the channel keys
@@ -499,7 +506,7 @@ class _Fbx2GltfMixin:
         # budget and overlaid the visibility channel: that overlay is the
         # caller's statement for this build (an effect preview places its ramp
         # over its own extent), so the measurement is not stamped over it.
-        stamp = cls.VISIBILITY_TRACKS_KEY not in (data_export or {})
+        stamp = SceneRecords.VISIBILITY.key not in (data_export or {})
         auto = timeout is not None and timeout < 0
         fbx = cls._read_curves(src_abs) if stamp or auto else None
         measured = fbx.take_spans() if stamp else {}
@@ -507,6 +514,14 @@ class _Fbx2GltfMixin:
             # The default. An explicit number wins outright (a caller that says
             # 60 means 60) and ``None`` still means no limit.
             timeout = cls.conversion_timeout(src_abs, fbx=fbx)
+        # The file's own materials, off the same parse: the materials pass
+        # below needs a few hundred bytes of it, never the parse itself.
+        own_materials = None
+        if fbx is not None and fbx.roots:
+            try:
+                own_materials = cls.read_fbx_materials(fbx)
+            except Exception as exc:  # noqa: BLE001 -- the pass parses it then
+                logger.debug("FBX materials not read with the curves: %s", exc)
         del fbx
 
         # FBX2glTF wants the output base WITHOUT extension; --binary forces .glb.
@@ -645,20 +660,6 @@ class _Fbx2GltfMixin:
                     cls.dedupe_glb_images(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("dedupe_glb_images skipped: %s", exc)
-                # Before the sidecar writes the GLB's OWN handoff, so the
-                # file never holds both accounts at once.
-                try:
-                    dropped = cls.strip_fbx_handoff(edit.gltf)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("strip_fbx_handoff skipped: %s", exc)
-                else:
-                    if dropped:
-                        edit.dirty = True
-                        logger.debug(
-                            "Dropped the FBX handoff block from %d node(s); the "
-                            "GLB carries its own.",
-                            dropped,
-                        )
                 # Ahead of EVERY pass that reads an in-band channel (sidecar,
                 # lightmaps, clips, gate, fades): each reads "out of the
                 # deliverable itself", so an overlay placed after any one of
@@ -695,32 +696,84 @@ class _Fbx2GltfMixin:
                             edit.dirty = True
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("Measured clip spans skipped: %s", exc)
-                if sidecar:
-                    # Guarded like every other pass in this chain: the apply
-                    # handles its own per-section and container failures, and
-                    # anything past those must cost the repairs, never the
-                    # conversion -- the preview routes its envelope through
-                    # here now, and a push must not fail on a sidecar.
+                # The materials, stated once: the ``materials`` record the
+                # file carries states each material it names -- produced from
+                # the scene as staged for the write, the statement the FBX
+                # deliverable itself carries -- and the FBX's own materials,
+                # read into the same families, state the rest. Every material
+                # takes it whole, its maps read out of the FBX itself, before
+                # anything records image indices. A file this reader cannot
+                # parse (an ASCII FBX) states nothing: the converter's reading
+                # stands. Guarded like every pass here: a failure costs the
+                # materials their statement, never the conversion.
+                from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
+
+                written = None
+                carried = cls.data_export_channel(edit.gltf, cls.MATERIALS_KEY)
+                if FbxFile.is_fbx(src_abs):
                     try:
-                        applied = cls.apply_scene_sidecar(edit, sidecar)
+                        _stated, written = cls._apply_fbx_materials(
+                            edit, src_abs, lightmap_dirs, read=own_materials
+                        )
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning("Scene sidecar skipped: %s", exc)
-                        applied = {}
-                    if report is not None:
-                        report["sidecar"] = applied
+                        logger.warning("Materials record skipped: %s", exc)
+                    else:
+                        if report is not None:
+                            report["materials"] = written
+                # The handoff: the caller's, else the one the FBX's own record
+                # implies -- its source and lighting, in this file's
+                # addresses. It names the blocks the file carries once every
+                # pass has run (the tail of this session).
+                applied: Dict[str, str] = {}
+                if not (sidecar and sidecar.get("sections") and carried is None):
+                    try:
+                        cls._warn_destructive_orms(
+                            edit,
+                            described=[
+                                r["material"] for r in written or () if r.get("orm")
+                            ],
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("ORM check skipped: %s", exc)
+                try:
+                    if sidecar and sidecar.get("sections") and carried is None:
+                        # Sections are what a host that predates the materials
+                        # record still sends, for a file that carries none:
+                        # they repair the reading, as they did, until they
+                        # retire.
+                        from pythontk.core_utils.deprecation import Deprecation
+
+                        Deprecation.warn(
+                            "a scene sidecar's material sections",
+                            "the FBX's materials record, which "
+                            "mayatk 0.28 / blendertk 0.20 publish",
+                            remove_in="0.18.0",
+                            since="2026-10-24",
+                        )
+                        applied = cls._apply_scene_sidecar(edit, sidecar, finish=False)
+                    else:
+                        handoff = (
+                            cls._handoff_of(sidecar)
+                            if sidecar
+                            else cls._fbx_handoff(edit.gltf, rendering)
+                        )
+                        if handoff:
+                            # Named last, once every pass has added its
+                            # block (_finish_glb_handoff, below).
+                            cls._write_glb_handoff(edit, handoff)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB handoff skipped: %s", exc)
+                if report is not None:
+                    report["sidecar"] = applied
                 # Sweep images no material samples, BEFORE anything pays to
                 # re-encode them. An embedded-media export carries every wired
                 # file texture, which for a StingrayPBS scene includes
                 # Autodesk's own environment maps (``diffuse_cube``,
                 # ``specular_cube``, ``ibl_brdf_lut`` -- ~2.6 MB a file);
                 # FBX2glTF re-embeds them and glTF has no slot for them to
-                # land in. ``apply_scene_sidecar`` sweeps at its own tail, so
-                # this is the OTHER half: a conversion offered no envelope
-                # shipped that dead payload and paid the texture pass to
-                # compress it first. Ordered after the sidecar (whose
-                # ``extras.textures`` map is recorded at its tail and would go
-                # stale under a renumber) and before the lightmap and shadow
-                # passes, which add images of their own.
+                # land in. After the materials, which unbind the converter's
+                # own maps, and before the lightmap and shadow passes, which
+                # add images of their own.
                 try:
                     cls.prune_glb_unreferenced_textures(edit)
                 except Exception as exc:  # noqa: BLE001
@@ -780,7 +833,7 @@ class _Fbx2GltfMixin:
                         logger.info(
                             "Shadow rigs: %d plane(s) published in extras.%s.",
                             len(shadows["planes"]),
-                            cls.SHADOW_WEB_KEY,
+                            SceneRecords.SHADOWS.key,
                         )
                 # Reads node names only, so its place in the chain is free of
                 # the image and animation passes; self-feeding like the shadow
@@ -794,7 +847,7 @@ class _Fbx2GltfMixin:
                         logger.info(
                             "Articulated rigs: %d published in extras.%s.",
                             len(articulated["rigs"]),
-                            cls.ARTICULATION_WEB_KEY,
+                            SceneRecords.ARTICULATION.key,
                         )
                 # Before every animation pass: a curve proxy is an FBX-only
                 # transport node whose scale channel would otherwise count as
@@ -896,15 +949,34 @@ class _Fbx2GltfMixin:
                     logger.warning("GLB animation manifest skipped: %s", exc)
                 else:
                     if animation:
-                        declared = sum(1 for c in animation["clips"] if c["declared"])
+                        shots = {s["clip"] for s in animation["shots"]}
+                        cut = sum(1 for c in animation["clips"] if c["name"] in shots)
                         logger.info(
-                            "Animation: %d clip(s) named in extras.%s (%d from "
-                            "declared shots); opens on %r.",
+                            "Animation: %d shot(s) and %d clip(s) in extras.%s "
+                            "(%d shot(s) with a clip of their own); opens on %r.",
+                            len(shots),
                             len(animation["clips"]),
-                            cls.ANIMATION_WEB_KEY,
-                            declared,
-                            animation["default_clip"],
+                            SceneRecords.SHOTS.key,
+                            cut,
+                            animation.get("default_clip"),
                         )
+                # LAST, once every pass has read the FBX's records and stated
+                # them in glTF's own terms: the handoff names the blocks this
+                # file carries, and what the records left on the nodes -- the
+                # carrier's channels, the baked objects' markers, a carrier
+                # left empty -- leaves, so the file states each thing once.
+                try:
+                    if report is not None:
+                        # What the scene's own record of this export keeps:
+                        # the manifest corrected to what the file ships.
+                        report["lightmap_manifest"] = cls._lightmap_manifest(edit.gltf)
+                    cls._finish_glb_handoff(edit)
+                    stripped = cls.strip_fbx_records(edit.gltf)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB record strip skipped: %s", exc)
+                else:
+                    if stripped:
+                        edit.dirty = True
         except Exception as exc:  # noqa: BLE001 — never let post-process kill a successful conversion
             logger.warning("GLB post-process skipped: %s", exc)
 
@@ -919,23 +991,17 @@ class _Fbx2GltfMixin:
     #: float transport for engines that flatten custom-property curves (a child
     #: transform named ``<node>__<attr>`` whose ``scale.x`` carries the curve).
     #: Both DCC producers stamp it; :meth:`strip_glb_curve_proxies` removes the
-    #: node from the GLB, where the ramp already rides ``visibility_tracks``.
+    #: node from the GLB, where the ramp already rides ``render_effects``.
     CURVE_PROXY_MARKER = "curveProxy"
 
     @staticmethod
-    def _renumber_manifest_nodes(
-        manifest: Any, fields: Sequence[Sequence[str]], remap: Dict[int, int]
+    def _renumber_block_nodes(
+        block: Any, fields: Sequence[Sequence[str]], remap: Dict[int, int]
     ) -> Any:
-        """*manifest* (a dict, or its JSON text -- returned in the same form)
-        with the node index at each of *fields* renumbered through *remap*: a
-        path of keys, descending through every list on the way. An index to a
-        node that is gone becomes None, which every reader takes as absent."""
-        text = isinstance(manifest, str)
-        if text:
-            try:
-                manifest = json.loads(manifest)
-            except ValueError:
-                return manifest
+        """*block* with the node index at each of *fields* renumbered through
+        *remap*: a path of keys, descending through every list on the way. An
+        index to a node that is gone becomes None, which every reader takes as
+        absent."""
 
         def walk(value: Any, path: Sequence[str]) -> None:
             if isinstance(value, list):
@@ -950,8 +1016,8 @@ class _Fbx2GltfMixin:
                     walk(value.get(path[0]), path[1:])
 
         for path in fields:
-            walk(manifest, path)
-        return json.dumps(manifest) if text else manifest
+            walk(block, path)
+        return block
 
     @classmethod
     def strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]:
@@ -964,7 +1030,7 @@ class _Fbx2GltfMixin:
         carries that child through as a node with a ``scale`` channel --
         measured: ``hlCube__highlight`` arrived with its 0->1 scale intact --
         which in the GLB is a stray animated node under the object. The GLB
-        route gets the ramp from ``visibility_tracks`` instead, so the node is
+        route gets the ramp from ``render_effects`` instead, so the node is
         removed here, BEFORE the clip rebuild counts its channel as content.
 
         Nodes are identified by the :attr:`CURVE_PROXY_MARKER` user property,
@@ -983,66 +1049,73 @@ class _Fbx2GltfMixin:
             }
             if not doomed:
                 return []
-            remap: Dict[int, int] = {}
-            kept: List[Dict[str, Any]] = []
-            for index, node in enumerate(nodes):
-                if index in doomed:
-                    continue
-                remap[index] = len(kept)
-                kept.append(node)
-
-            def renumber(indices: Any) -> List[int]:
-                return [remap[i] for i in indices if isinstance(i, int) and i in remap]
-
-            for node in kept:
-                if "children" in node:
-                    node["children"] = renumber(node["children"])
-                    if not node["children"]:
-                        del node["children"]
-            for scene in gltf.get("scenes") or []:
-                if "nodes" in scene:
-                    scene["nodes"] = renumber(scene["nodes"])
-            for skin in gltf.get("skins") or []:
-                if "joints" in skin:
-                    skin["joints"] = renumber(skin["joints"])
-                if isinstance(skin.get("skeleton"), int):
-                    skin["skeleton"] = remap.get(skin["skeleton"])
-                    if skin["skeleton"] is None:
-                        del skin["skeleton"]
-            for animation in gltf.get("animations") or []:
-                survivors = []
-                for channel in animation.get("channels") or []:
-                    target = channel.get("target") or {}
-                    node = target.get("node")
-                    if isinstance(node, int):
-                        if node in doomed:
-                            continue
-                        target["node"] = remap[node]
-                    survivors.append(channel)
-                animation["channels"] = survivors
-            # The manifests earlier passes bound BY NODE INDEX follow the
-            # renumber too: measured, a proxy ahead of a shadow plane left the
-            # plane following the node after its source, and a rig posing its
-            # joints one node over.
-            extras = gltf.get("extras")
-            if isinstance(extras, dict):
-                for key, fields in (
-                    (cls.SHADOW_WEB_KEY, cls.SHADOW_WEB_NODE_FIELDS),
-                    (cls.ARTICULATION_WEB_KEY, cls.ARTICULATION_WEB_NODE_FIELDS),
-                ):
-                    if key in extras:
-                        extras[key] = cls._renumber_manifest_nodes(
-                            extras[key], fields, remap
-                        )
-            gltf["nodes"] = kept
+            removed = cls._remove_glb_nodes(gltf, doomed)
             edit.dirty = True
-            removed = [str(nodes[i].get("name") or i) for i in sorted(doomed)]
             logger.info(
                 "Curve proxies: %d transport node(s) stripped from the GLB (%s).",
                 len(removed),
                 ", ".join(removed),
             )
             return removed
+
+    @classmethod
+    def _remove_glb_nodes(cls, gltf: Dict[str, Any], doomed: Set[int]) -> List[str]:
+        """Remove the nodes at the indices *doomed* names from *gltf*, and every
+        channel that animates one; renumber every reference to the rest --
+        children, scenes, skins, channel targets, and the manifests earlier
+        passes bound by node index. Returns the removed nodes' names, in file
+        order."""
+        nodes = gltf.get("nodes") or []
+        remap: Dict[int, int] = {}
+        kept: List[Dict[str, Any]] = []
+        for index, node in enumerate(nodes):
+            if index in doomed:
+                continue
+            remap[index] = len(kept)
+            kept.append(node)
+
+        def renumber(indices: Any) -> List[int]:
+            return [remap[i] for i in indices if isinstance(i, int) and i in remap]
+
+        for node in kept:
+            if "children" in node:
+                node["children"] = renumber(node["children"])
+                if not node["children"]:
+                    del node["children"]
+        for scene in gltf.get("scenes") or []:
+            if "nodes" in scene:
+                scene["nodes"] = renumber(scene["nodes"])
+        for skin in gltf.get("skins") or []:
+            if "joints" in skin:
+                skin["joints"] = renumber(skin["joints"])
+            if isinstance(skin.get("skeleton"), int):
+                skin["skeleton"] = remap.get(skin["skeleton"])
+                if skin["skeleton"] is None:
+                    del skin["skeleton"]
+        for animation in gltf.get("animations") or []:
+            survivors = []
+            for channel in animation.get("channels") or []:
+                target = channel.get("target") or {}
+                node = target.get("node")
+                if isinstance(node, int):
+                    if node in doomed:
+                        continue
+                    target["node"] = remap[node]
+                survivors.append(channel)
+            animation["channels"] = survivors
+        # The manifests earlier passes bound BY NODE INDEX follow the
+        # renumber too: measured, a proxy ahead of a shadow plane left the
+        # plane following the node after its source, and a rig posing its
+        # joints one node over. Every block that declares where it binds by
+        # node index (GlbBlock.node_fields).
+        extras = gltf.get("extras")
+        for spec in SceneRecords.glb_records():
+            if spec.glb.node_fields and isinstance(extras, dict) and spec.key in extras:
+                extras[spec.key] = cls._renumber_block_nodes(
+                    extras[spec.key], spec.glb.node_fields, remap
+                )
+        gltf["nodes"] = kept
+        return [str(nodes[i].get("name") or i) for i in sorted(doomed)]
 
     @staticmethod
     def _node_user_property(node: Dict[str, Any], key: str) -> Any:
@@ -1052,7 +1125,7 @@ class _Fbx2GltfMixin:
         as ``{"type", "value"}`` records; a native glTF writer puts a plain
         value at ``extras[key]``.
         """
-        extras = (node or {}).get("extras") or {}
+        extras = GlbEdit.extras_of(node)
         nested = ((extras.get("fromFBX") or {}).get("userProperties") or {}).get(key)
         if isinstance(nested, dict):
             return nested.get("value")

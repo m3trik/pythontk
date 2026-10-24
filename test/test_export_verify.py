@@ -31,6 +31,7 @@ from pythontk.file_utils.mesh_convert.export_verify import (
     WARN,
     _main,
 )
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 from pythontk.file_utils.mesh_convert.glb.reader import GlbReader
 
@@ -56,12 +57,11 @@ def build_glb(
     zero_frame: float = None,
     hold_frames: float = 0.0,
     hold_moves: bool = False,
-    data_export: dict = None,
 ) -> str:
     """Write a tiny, valid GLB: two nodes, one clip, one skin, two images.
 
-    *data_export* (``{channel key: value}``) adds a ``data_export`` carrier
-    node publishing those channels, as a conversion leaves them."""
+    *zero_frame* states the authoring frame the clip was cut from where a
+    finished file states it: its entry in ``extras.animation``."""
     bin_parts = []
     views = []
     accessors = []
@@ -132,9 +132,6 @@ def build_glb(
         "animations": [
             {
                 "name": clip_name,
-                **(
-                    {} if zero_frame is None else {"extras": {"zero_frame": zero_frame}}
-                ),
                 "channels": [
                     {
                         "sampler": 0,
@@ -166,10 +163,17 @@ def build_glb(
         gltf["nodes"].append({"name": "stray"})
         gltf["scenes"][0]["nodes"].append(len(gltf["nodes"]) - 1)
         gltf["skins"][0]["skeleton"] = len(gltf["nodes"]) - 1
-    if data_export:
-        extras = {key: json.dumps(value) for key, value in data_export.items()}
-        gltf["nodes"].append({"name": "data_export", "extras": extras})
-        gltf["scenes"][0]["nodes"].append(len(gltf["nodes"]) - 1)
+    if zero_frame is not None:
+        gltf["extras"] = {
+            SceneRecords.SHOTS.key: {
+                "version": SceneRecords.SHOTS.glb.version,
+                "shots": [],
+                "clips": [
+                    {"name": clip_name, "animation": 0, "zero_frame": zero_frame}
+                ],
+                "default_clip": clip_name,
+            }
+        }
 
     json_chunk = _pad4(json.dumps(gltf).encode("utf-8"), b" ")
     bin_chunk = _pad4(b"".join(bin_parts), b"\x00")
@@ -368,18 +372,22 @@ def build_truncated_fbx(path: str, inside: bytes = b"KeyTime") -> str:
 
 
 def build_sidecar(path: str, takes, span=None, fps=30.0, clip_mode=None) -> str:
-    """*span* publishes ``clip_span["*"]`` -- the origin clips are cut against.
-    *clip_mode* declares the run's Animation Clips mode on ``shot_metadata``."""
-    data_export = {"fbx_takes": list(takes)}
+    """*takes* (``[{"name", "start", "end"}]``) are the shots the run declares,
+    each a clip of the ``animation`` record with its range; *span* publishes
+    ``clip_span["*"]`` -- the origin clips are cut against -- and *clip_mode*
+    declares the run's Animation Clips mode on that record."""
+    shots = {
+        "version": SceneRecords.SHOTS.version,
+        "fps": fps,
+        "shots": [
+            {"clip": t["name"], "start": t["start"], "end": t["end"]} for t in takes
+        ],
+    }
     if clip_mode is not None:
-        data_export["shot_metadata"] = {
-            "version": 1,
-            "fps": fps,
-            "shots": [],
-            "clip_mode": clip_mode,
-        }
+        shots["clip_mode"] = clip_mode
+    data_export = {SceneRecords.SHOTS.key: shots}
     if span is not None:
-        data_export["visibility_tracks"] = {
+        data_export["render_effects"] = {
             "fps": fps,
             "version": 1,
             "tracks": [],
@@ -663,6 +671,35 @@ class TestFbxFile(_FixtureCase):
     def test_connections(self):
         rows = self.fbx.connections()
         self.assertEqual(rows, [("OO", 2001, 1001, None)])
+
+    def test_user_property_items_lists_every_user_property_in_file_order(self):
+        """``(object, property, value)`` for every user property a kind of
+        object carries, in one pass and file order -- a module's carrier,
+        written ahead of the scene's, first -- each value as
+        ``user_properties`` returns it. Added: 2026-10-20"""
+        from test_fbx_media import build_carrier_fbx
+
+        shots, lightmaps = SceneRecords.SHOTS.key, SceneRecords.LIGHTMAPS.key
+        path = build_carrier_fbx(
+            self.path("carriers.fbx"),
+            {shots: {"version": 1}, "glow_weight": 0.5},
+            others={"MOD:data_export": {lightmaps: {"version": 2}}},
+        )
+        fbx = FbxFile.load(path)
+        items = fbx.user_property_items()
+        self.assertEqual(
+            items,
+            [
+                ("MOD:data_export", lightmaps, b'{"version": 2}'),
+                ("data_export", shots, b'{"version": 1}'),
+                ("data_export", "glow_weight", b"0.5"),
+            ],
+        )
+        self.assertEqual(
+            [value for _owner, key, value in items if key == shots],
+            fbx.user_properties(shots),
+        )
+        self.assertEqual(fbx.user_property_items("Texture"), [])
 
     def test_raw_payloads_can_be_skipped_without_changing_the_census(self):
         """``raw_payloads=False`` leaves embedded media on disk -- a census
@@ -1353,6 +1390,17 @@ class TestExportVerifier(_FixtureCase):
         self.assertEqual(statuses["clips_vs_takes"], PASS)
         self.assertEqual(statuses["fbx_takes"], PASS)
 
+    def test_the_retired_envelope_gate_answers_through_the_handoff_gate(self):
+        """``check_glb_envelope`` (0.16.1; retired 2026-10-20, removed in
+        0.18.0) warns and answers as ``check_glb_handoff`` -- and is no gate
+        of its own, so a run states the handoff once. Added: 2026-10-20"""
+        glb, fbx = self._good_pair()
+        verifier = ExportVerifier(glb=glb, fbx=fbx)
+        with self.assertWarns(DeprecationWarning):
+            retired = verifier.check_glb_envelope()
+        self.assertEqual(retired, verifier.check_glb_handoff())
+        self.assertNotIn("check_glb_envelope", verifier.gate_names())
+
     # ---- a declared Full Sequence Only export ------------------------------
 
     def _full_sequence(self, clip_mode):
@@ -1535,32 +1583,23 @@ class TestExportVerifier(_FixtureCase):
         report = ExportVerifier(glb=glb).run(["check_clip_origin"])
         self.assertEqual(report.rows[0].status, SKIP)
 
-    # The conversion measures the stack's span from the FBX it reads and
-    # stamps it into the GLB (``MeshConvert._stamp_clip_spans``), so the clips
-    # are cut against the FILE's span, whatever the producer predicted.
-
-    @staticmethod
-    def _cut_against(span):
-        """The GLB carrier's ``visibility_tracks``, publishing *span* as ``*``."""
-        return {
-            "visibility_tracks": {
-                "version": 1,
-                "fps": 30.0,
-                "tracks": [],
-                "clip_span": {"*": list(span)},
-            }
-        }
+    # The conversion measures the stack's span from the FBX it reads
+    # (``MeshConvert._stamp_clip_spans``) and states where each clip was cut
+    # from in ``extras.animation`` (``zero_frame``), so the clips are cut from
+    # the FILE's own stack, whatever the producer predicted.
 
     def test_clip_origin_judges_the_span_the_file_was_cut_against(self):
         """A producer whose prediction was off FAILed a deliverable cut right
         -- "every clip is cut from the wrong frame" -- when the conversion had
-        placed every clip by the FBX's own keys (2026-10-04 review). The stack
-        is judged against the span the GLB carries; the producer's is a WARN
-        naming both."""
+        placed every clip by the FBX's own keys (2026-10-04 review). The file
+        states where its whole-timeline clip was cut from (its ``zero_frame``
+        in ``extras.animation``, 2026-10-20): the stack is judged from there,
+        and the producer's span is a WARN naming both."""
         glb = build_glb(
             self.path("asset.glb"),
+            clip_name="FULL_SEQUENCE",
             clip_end=0.5,  # 15 frames carried
-            data_export=self._cut_against([100, 115]),
+            zero_frame=100,
         )
         build_sidecar(self.path(".asset.scene_data.json"), [], span=[100, 108])
         report = ExportVerifier(glb=glb).run(["check_clip_origin"])
@@ -1569,20 +1608,13 @@ class TestExportVerifier(_FixtureCase):
         self.assertIn("published 100-108", report.rows[0].detail)
         self.assertIn("cut against 100-115", report.rows[0].detail)
 
-        # Without a sidecar the file still says what it was cut against.
+        # Without a sidecar the file's own origin is all there is: its stack
+        # measured from there is its own length by construction, so nothing
+        # independent judges it (2026-10-24: this PASSed a number compared
+        # with itself).
         report = ExportVerifier(glb=glb, sidecar=None).run(["check_clip_origin"])
-        self.assertEqual([row.status for row in report.rows], [PASS])
-
-    def test_clip_origin_fails_a_file_cut_against_a_span_its_stack_lacks(self):
-        glb = build_glb(
-            self.path("asset.glb"),
-            clip_end=0.5,
-            data_export=self._cut_against([100, 108]),
-        )
-        build_sidecar(self.path(".asset.scene_data.json"), [], span=[100, 115])
-        report = ExportVerifier(glb=glb).run(["check_clip_origin"])
-        self.assertEqual([row.status for row in report.rows], [FAIL, WARN])
-        self.assertIn("8f span (100-108)", report.rows[0].detail)
+        self.assertEqual([row.status for row in report.rows], [SKIP])
+        self.assertIn("no independent span", report.rows[0].detail)
 
     def test_a_truncated_fbx_fails_its_container_gate_with_the_reason(self):
         """Cut inside a key array, the reader's ``zlib.error`` escaped as
@@ -1703,14 +1735,17 @@ class TestExportVerifier(_FixtureCase):
         self.assertIn(PASS, [row.status for row in report.rows])
 
     def test_a_declared_requirement_is_stated_not_warned(self):
-        """The envelope gate restated ``verify_glb``'s extension prerequisite
+        """The handoff gate restated ``verify_glb``'s extension prerequisite
         as a WARN -- on every WebP deliverable, and on every KTX2 one once the
         web policy stopped writing fallback twins -- while ``glb_images``
         PASSes the same fact as the declared contract. The prerequisite is the
-        extension gates' to state; the envelope's own notes still warn.
+        extension gates' to state; the reader's own notes still warn.
         """
         from unittest.mock import patch
 
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
         from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
         glb = self._drop_png_fallback(build_glb(self.path("asset.glb")), require=True)
@@ -1719,24 +1754,56 @@ class TestExportVerifier(_FixtureCase):
             any("KHR_texture_basisu" in note for note in verified["notes"]),
             f"precondition: verify_glb states the prerequisite: {verified['notes']}",
         )
-        verified["notes"].append("a note the envelope owns")
+        verified["notes"].append("a note the reader owns")
         with MeshConvert.open_glb(glb) as edit:  # the gate skips a GLB with none
-            edit.gltf.setdefault("extras", {})["scene_sidecar"] = {"version": 1}
+            extras = edit.gltf.setdefault("extras", {})
+            extras[HandoffRecord.KEY] = HandoffRecord.block("glb", [])
             edit.dirty = True
 
         with patch.object(MeshConvert, "verify_glb", return_value=verified):
             report = ExportVerifier(glb=glb, sidecar=None).run(
-                ["check_glb_envelope", "check_glb_extensions"]
+                ["check_glb_handoff", "check_glb_extensions"]
             )
 
         warned = [row.detail for row in report.rows if row.status == WARN]
-        self.assertIn("a note the envelope owns", warned)
+        self.assertIn("a note the reader owns", warned)
         self.assertFalse(
             any("KHR_texture_basisu" in detail for detail in warned), warned
         )
         extensions = [row for row in report.rows if row.check == "glb_extensions"]
         self.assertEqual([row.status for row in extensions], [PASS])
         self.assertIn("required=['KHR_texture_basisu']", extensions[0].detail)
+
+    def test_the_handoff_gate_runs_the_recipients_reader(self):
+        """``check_glb_handoff`` hands a GLB that says what it is -- its
+        ``extras.handoff`` -- to ``verify_glb``: a problem FAILs, a clean
+        report PASSes, and a GLB that carries no handoff is skipped.
+        Added: 2026-10-20"""
+        from unittest.mock import patch
+
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        def rows(glb):
+            report = ExportVerifier(glb=glb, sidecar=None).run(["check_glb_handoff"])
+            return [(row.status, row.check, row.detail) for row in report.rows]
+
+        glb = build_glb(self.path("asset.glb"))
+        self.assertEqual(rows(glb), [(SKIP, "glb_handoff", "no embedded handoff")])
+        with MeshConvert.open_glb(glb) as edit:
+            MeshConvert.embed_glb_handoff(edit, HandoffRecord.block("glb", []))
+        problem = "the handoff states no 'rendering'"
+        for verified, expected in (
+            ({"problems": [], "notes": []}, (PASS, "handoff verified")),
+            ({"problems": [problem], "notes": []}, (FAIL, problem)),
+        ):
+            with (
+                self.subTest(expected=expected[0]),
+                patch.object(MeshConvert, "verify_glb", return_value=verified),
+            ):
+                self.assertEqual(rows(glb), [(expected[0], "glb_handoff", expected[1])])
 
     def test_take_length_mismatch_fails(self):
         glb = build_glb(self.path("asset.glb"), clip_end=1.0)  # 30 frames
@@ -1755,8 +1822,9 @@ class TestExportVerifier(_FixtureCase):
         takes' declared end while being perfectly correct. Reading its raw
         end frame called that a failure -- the same blind spot that, on the
         producer side, slid every shot by 33 frames on the PROPS assembly.
-        The clip publishes its origin in ``extras.zero_frame``; the gate has
-        to use it.
+        The file states the clip's origin -- its ``zero_frame`` in
+        ``extras.animation``, the one place a finished GLB states it -- and
+        the gate has to use it.
         """
         glb = build_glb(
             self.path("asset.glb"),
@@ -1976,13 +2044,13 @@ class TestFbxDependenciesGate(_FixtureCase):
     """
 
     RECORDS = {
-        "lightmap_metadata": {
-            "version": 1,
+        SceneRecords.LIGHTMAPS.key: {
+            "version": SceneRecords.LIGHTMAPS.version,
             "objects": [{"name": "Crate", "map": "Crate_Lightmap.exr", "uvIndex": 1}],
             "probe": {"map": "Room_Probe.exr", "position": [0, 0, 0]},
         },
-        "shadow_metadata": {
-            "version": 2,
+        SceneRecords.SHADOWS.key: {
+            "version": SceneRecords.SHADOWS.version,
             "planes": [{"name": "P", "texture": "P_shadow.png"}],
         },
     }
@@ -2031,21 +2099,21 @@ class TestFbxDependenciesGate(_FixtureCase):
         from test_fbx_media import build_carrier_fbx
 
         module = {
-            "version": 1,
+            "version": SceneRecords.LIGHTMAPS.version,
             "objects": [{"name": "Gone", "map": "Gone_Lightmap.exr"}],
             "probe": {"map": "Module_Probe.exr", "position": [0, 0, 0]},
         }
         left_out = build_carrier_fbx(
             self.path("left_out.fbx"),
             {},
-            others={"MOD:data_export": {"lightmap_metadata": module}},
+            others={"MOD:data_export": {SceneRecords.LIGHTMAPS.key: module}},
         )
         self.assertEqual(self._gate(left_out).status, SKIP)
 
         shadowed = build_carrier_fbx(
             self.path("shadowed.fbx"),
             self.RECORDS,
-            others={"MOD:data_export": {"lightmap_metadata": module}},
+            others={"MOD:data_export": {SceneRecords.LIGHTMAPS.key: module}},
         )
         files = []
         for name in ("Crate_Lightmap.exr", "Room_Probe.exr", "P_shadow.png"):
@@ -2066,6 +2134,100 @@ class TestFbxDependenciesGate(_FixtureCase):
         glb_only = ExportVerifier(glb=build_glb(self.path("only.glb")), sidecar=None)
         row = glb_only.run(["check_fbx_dependencies"]).rows[0]
         self.assertEqual(row.status, SKIP)
+
+
+class TestFbxRecordsGate(_FixtureCase):
+    """``fbx_records``: every record an FBX's carriers hold -- the scene's and
+    every referenced module's -- is one the standard declares, in the version
+    a reader reads and its declared shape (``SceneRecords.problems``), each
+    problem said where the record rides. Added: 2026-10-20"""
+
+    EFFECTS = {
+        "version": SceneRecords.VISIBILITY.version,
+        "tracks": [{"node": "Crate"}],
+    }
+
+    def _rows(self, channels, others=None):
+        from test_fbx_media import build_carrier_fbx
+
+        fbx = build_carrier_fbx(self.path("records.fbx"), channels, others=others)
+        report = ExportVerifier(fbx=fbx, sidecar=None).run(["check_fbx_records"])
+        return [(row.status, row.detail) for row in report.rows]
+
+    def test_records_in_their_version_and_shape_pass(self):
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
+
+        effects = SceneRecords.VISIBILITY.key
+        handoff = HandoffRecord.block("fbx", [effects], {"application": "maya"})
+        rows = self._rows({effects: self.EFFECTS, HandoffRecord.KEY: handoff})
+        self.assertEqual(
+            rows, [(PASS, "2 record(s) in their declared version and shape")]
+        )
+
+    def test_each_problem_is_said_where_the_record_rides(self):
+        spec = SceneRecords.VISIBILITY
+        stale = dict(self.EFFECTS, version=spec.version + 1)
+        nameless = dict(self.EFFECTS, tracks=[{"visibility": [[0, 1]]}])
+        rows = self._rows(
+            {spec.key: stale}, others={"MOD:data_export": {spec.key: nameless}}
+        )
+        module = SceneRecords.problems(spec, nameless)
+        scene = SceneRecords.problems(spec, stale)
+        self.assertTrue(module and scene)
+        self.assertEqual(
+            rows,
+            [(FAIL, f"MOD:data_export: {problem}") for problem in module]
+            + [(FAIL, f"data_export: {problem}") for problem in scene],
+        )
+
+    def test_a_record_under_a_key_no_record_declares_fails(self):
+        """A record by its shape -- an object stating a version -- under a key
+        the standard does not declare is one no reader reads: an older file's
+        (``lightmap_metadata``), which is re-exported. A carrier's other
+        properties are no records."""
+        rows = self._rows(
+            {
+                "lightmap_metadata": {"version": 1, "objects": []},
+                "glow_weight": 0.5,
+                "notes": {"text": "no version, no record"},
+            }
+        )
+        self.assertEqual(
+            rows, [(FAIL, "data_export: 'lightmap_metadata' is no declared record")]
+        )
+
+    def test_a_numeric_property_is_no_record_and_allocates_nothing(self):
+        """REGRESSION (2026-10-24): both carrier gates read a property's value
+        through ``bytes(value)``, which for an int is that many zero bytes --
+        an int64 property raised OverflowError ("check raised"), and a large
+        one allocated its count. A number is no record's text: passed over."""
+        from types import SimpleNamespace
+
+        held = [("data_export", "frame_count", 2**63 - 1), ("data_export", "slot", 3)]
+        stand_in = SimpleNamespace(
+            user_property_items=lambda: list(held),
+            user_properties=lambda key, named=True: [
+                (owner, value) for owner, name, value in held
+            ],
+            object_names=lambda kind: [],
+            iter_objects=lambda: iter(()),
+        )
+        verifier = ExportVerifier(fbx=self.path("held.fbx"), sidecar=None)
+        verifier._fbx = stand_in  # parsed already: the path is never read
+        rows = verifier.run(["check_fbx_records", "check_fbx_dependencies"]).rows
+        self.assertEqual(
+            [(row.check, row.status) for row in rows],
+            [("fbx_records", SKIP), ("fbx_dependencies", SKIP)],
+            [row.detail for row in rows],
+        )
+
+    def test_an_fbx_carrying_no_record_skips(self):
+        self.assertEqual(self._rows({}), [(SKIP, "the FBX carries no record")])
+        glb_only = ExportVerifier(glb=build_glb(self.path("only.glb")), sidecar=None)
+        row = glb_only.run(["check_fbx_records"]).rows[0]
+        self.assertEqual((row.status, row.detail), (SKIP, "no readable FBX"))
 
 
 if __name__ == "__main__":

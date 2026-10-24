@@ -6,13 +6,12 @@ One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
 the other passes through ``cls``.
 """
 
-import json
 import logging
 import os
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-# Eager: the channel keys below are SceneRecords' own, read at class
-# definition.
+# Eager: the signatures name GlbTarget; SceneRecords is the light
+# declaration module every pass reads.
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 
@@ -20,28 +19,11 @@ logger = logging.getLogger(__name__)
 
 
 class _ShadowRigsMixin:
-    """Shadow rigs: plane maps and the ``extras.shadow_web`` manifest.
+    """Shadow rigs: plane maps and the ``extras.shadows`` manifest.
 
     A private part of :class:`MeshConvert`; call it through the facade.
     """
 
-    #: ``data_export`` channel the DCC shadow rigs publish (mayatk / blendertk
-    #: ``ShadowRig.SHADOW_METADATA``). Read here only -- unlike the lightmap
-    #: markers it is never promoted to a top-level extras key.
-    SHADOW_METADATA_KEY = SceneRecords.SHADOWS.key
-    #: Highest ``shadow_metadata`` schema this applier knows how to read --
-    #: the record's declared version, like the lightmap and visibility ones.
-    SHADOW_METADATA_VERSION = SceneRecords.SHADOWS.version
-    #: Root-extras key the viewer's packaged ``shadow_rig`` script reads --
-    #: the record's declared web projection.
-    SHADOW_WEB_KEY = SceneRecords.SHADOWS.web.key
-    #: Where ``shadow_web`` binds by glTF NODE INDEX -- the paths a pass that
-    #: renumbers nodes (``strip_glb_curve_proxies``) must follow.
-    SHADOW_WEB_NODE_FIELDS = (
-        ("planes", "node"),
-        ("planes", "source_node"),
-        ("planes", "contact_node"),
-    )
     #: Sampler a horizon DATA map is bound with: no mipmaps (9729 = LINEAR
     #: for both filters -- a mip would average span heights, distances and
     #: pyramid bounds across texels; the shader reads texels whole, so the
@@ -51,25 +33,6 @@ class _ShadowRigsMixin:
         "minFilter": 9729,
         "wrapS": 33071,
         "wrapT": 33071,
-    }
-    #: What a record leaves unsaid is read as. A v1 channel carries only
-    #: ``name`` / ``texture`` / ``intensity``: a projected plane with no
-    #: source to follow, no contact, no atlas and no horizon map.
-    #: ``max_stretch`` is ``ShadowProjection.DEFAULT_MAX_STRETCH``.
-    SHADOW_PLANE_DEFAULTS: Dict[str, Any] = {
-        "type": "projected",
-        "intensity": 1.0,
-        "source": None,
-        "source_type": "point",
-        "source_size": 0.0,
-        "source_angle": 0.0,
-        "follow_source": False,
-        "contact": None,
-        "ground": 0.0,
-        "radius": 0.5,
-        "height": 1.0,
-        "max_stretch": 6.0,
-        "canvas": [-1.0, 1.0, -0.5, 0.5],
     }
 
     @staticmethod
@@ -216,74 +179,64 @@ class _ShadowRigsMixin:
         return None
 
     @classmethod
-    def _shadow_web_texture_slots(cls, manifest: Any) -> List[Dict[str, Any]]:
-        """Every dict in an ``extras.shadow_web`` manifest holding a
-        ``texture_index``: the plane's own colour map, its atlas and its
-        horizon map.
+    def _shadow_texture_slots(cls, block: Any) -> List[Dict[str, Any]]:
+        """Every dict in an ``extras.shadows`` block holding a
+        ``texture_index``: a projected plane's colour map (its atlas once
+        packed) and a horizon plane's map.
 
         Yields the CONTAINERS rather than the values, so one walk serves both
-        readers of this manifest: the optimiser asks which textures are bound
+        readers of this block: the optimiser asks which textures are bound
         and must be kept byte for byte, and the prune has to REWRITE those
-        numbers when it renumbers the survivors. Accepts the dict or its JSON
-        string; anything malformed yields nothing.
+        numbers when it renumbers the survivors. Anything but a block yields
+        nothing.
         """
-        if isinstance(manifest, str):
-            try:
-                manifest = json.loads(manifest)
-            except ValueError:
-                return []
         slots: List[Dict[str, Any]] = []
-        for plane in (
-            (manifest or {}).get("planes") or [] if isinstance(manifest, dict) else []
-        ):
+        for plane in block.get("planes") or [] if isinstance(block, dict) else []:
             if not isinstance(plane, dict):
                 continue
-            atlas = plane.get("atlas") if isinstance(plane.get("atlas"), dict) else {}
             horizon = (
                 plane.get("horizon") if isinstance(plane.get("horizon"), dict) else {}
             )
-            for holder in (plane, atlas, horizon):
+            for holder in (plane, horizon):
                 value = holder.get("texture_index")
                 if isinstance(value, int) and not isinstance(value, bool):
                     slots.append(holder)
         return slots
 
     @classmethod
-    def _shadow_web_texture_indices(cls, manifest: Any) -> Set[int]:
-        """Every texture index an ``extras.shadow_web`` manifest binds.
-
-        The plane's own colour map, its atlas and its horizon map -- the set
-        the texture optimiser keeps byte for byte. Accepts the dict or its
-        JSON string; anything malformed yields nothing.
-        """
-        return {h["texture_index"] for h in cls._shadow_web_texture_slots(manifest)}
+    def _shadow_texture_indices(cls, block: Any) -> Set[int]:
+        """Every texture index an ``extras.shadows`` block binds: a projected
+        plane's colour map and a horizon plane's map -- the set the texture
+        optimiser keeps byte for byte."""
+        return {h["texture_index"] for h in cls._shadow_texture_slots(block)}
 
     @classmethod
     def apply_glb_shadows(
         cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()
     ) -> Optional[Dict[str, Any]]:
-        """Bind a scene's shadow-rig maps into a GLB; publish ``extras.shadow_web``.
+        """Bind a scene's shadow-rig maps into a GLB; publish ``extras.shadows``.
 
         The GLB half of the shadow-rig contract (``mayatk/docs/
         shadow_rig_morphing.md``, *Contracts*). The DCC rigs publish
-        ``shadow_metadata`` on the ``data_export`` carrier -- per plane its
+        ``shadows`` on the ``data_export`` carrier -- per plane its
         node, source and contact names, the projection model's constants, the
         silhouette texture and, when in use, the atlas rect and the horizon
         map. This reads that channel back out of the file (like the lightmap
         pass), resolves every name to a glTF node index, binds the loose maps
         the FBX does not carry (the horizon PNG, embedded byte for byte under
         a bilinear / no-mip / clamp sampler; a silhouette the material lost)
-        and writes the viewer's manifest: the v2 record plus, per plane,
+        and writes the viewer's manifest (``ShadowBlock``): per plane the
+        record's projection model, bound by index in place of every name --
         ``node`` / ``source_node`` / ``contact_node`` (glTF node indices, or
-        ``None``), ``material`` (the first primitive's), ``texture_index``
-        (the plane's colour map -- the material's base colour, which IS the
-        atlas once packed) and ``atlas.texture_index`` /
-        ``horizon.texture_index``. Rects in the manifest are glTF top-left
-        (:meth:`ImgUtils.flip_rect_v` of the record's bottom-left ones);
+        ``None``), a projected plane's ``texture_index`` (its colour map --
+        the material's base colour, which IS the atlas once packed, its tile
+        the quad's own UVs) and a horizon plane's map with its
+        ``texture_index``. The horizon rect is glTF top-left
+        (:meth:`ImgUtils.flip_rect_v` of the record's bottom-left one);
         lengths stay DCC units with ``unit_scale`` beside them, as the record
-        has them; ``metadata_version`` says which schema the record arrived in
-        (a v1 record -- name, texture, intensity -- is filled from
-        :attr:`SHADOW_PLANE_DEFAULTS`). The packaged viewer script
+        has them; every plane states every field its shape declares
+        (``pythontk.geo_utils.shadow_record``) and nothing more. The
+        packaged viewer script
         (``preview/features/shadow_rig/``) reads the manifest on load,
         evaluates ``ShadowProjection.model`` per frame and drives the planes.
 
@@ -313,6 +266,7 @@ class _ShadowRigsMixin:
         """
         import copy
 
+        from pythontk.geo_utils.shadow_record import ShadowBlockPlane
         from pythontk.img_utils._img_utils import ImgUtils
 
         identity = [1.0, 1.0, 0.0, 0.0]
@@ -326,22 +280,8 @@ class _ShadowRigsMixin:
 
         with cls.open_glb(glb) as edit:
             gltf = edit.gltf
-            payload = cls.data_export_channel(gltf, cls.SHADOW_METADATA_KEY)
-            if not isinstance(payload, dict):
-                return None
-            try:
-                version = int(payload.get("version", 1))
-            except (TypeError, ValueError):
-                version = -1
-            if not 0 < version <= cls.SHADOW_METADATA_VERSION:
-                # Refuse rather than guess, as the lightmap reader does: a
-                # newer schema is free to change what a field MEANS.
-                logger.warning(
-                    "shadow_metadata v%r is newer than this reader (v%s); "
-                    "shadow rigs not wired.",
-                    payload.get("version"),
-                    cls.SHADOW_METADATA_VERSION,
-                )
+            payload = cls._current_record(gltf, SceneRecords.SHADOWS)
+            if payload is None:
                 return None
             try:
                 unit_scale = float(payload.get("unit_scale", 1.0))
@@ -349,8 +289,8 @@ class _ShadowRigsMixin:
                 unit_scale = 0.0
             if not unit_scale > 0.0:
                 logger.warning(
-                    "shadow_metadata: unit_scale %r is not a positive number; "
-                    "read as 1.0.",
+                    "%s: unit_scale %r is not a positive number; read as 1.0.",
+                    SceneRecords.SHADOWS.key,
                     payload.get("unit_scale"),
                 )
                 unit_scale = 1.0
@@ -400,18 +340,11 @@ class _ShadowRigsMixin:
             skipped = 0
             for record in records:
                 plane = copy.deepcopy(record)
-                for key, value in cls.SHADOW_PLANE_DEFAULTS.items():
-                    plane.setdefault(key, copy.deepcopy(value))
                 name, kind = plane.get("name"), plane.get("type")
                 if not isinstance(name, str) or not name:
                     logger.warning(
-                        "shadow_metadata: a plane record has no name; skipped."
-                    )
-                    skipped += 1
-                    continue
-                if kind not in ("projected", "horizon"):
-                    logger.warning(
-                        "Shadow plane %r: unknown type %r; skipped.", name, kind
+                        "%s: a plane record has no name; skipped.",
+                        SceneRecords.SHADOWS.key,
                     )
                     skipped += 1
                     continue
@@ -445,9 +378,11 @@ class _ShadowRigsMixin:
                 # meaningless (and, in the viewer, unbatchable -- planes batch
                 # by the texture they sample). Resolved from the file first,
                 # then from the search dirs; a record with no atlas, or one
-                # whose atlas is nowhere, keeps the old chain below.
+                # whose atlas is nowhere, keeps the old chain below. A horizon
+                # plane samples no colour map (the march shades it), so none
+                # is looked up -- or embedded -- for it.
                 atlas_texture = None
-                if atlas:
+                if atlas and kind == "projected":
                     atlas_texture = cls._texture_for_named_image(
                         edit, atlas.get("texture")
                     )
@@ -462,16 +397,18 @@ class _ShadowRigsMixin:
                     skipped += 1
                     continue
                 for node_index in node_indices:
-                    material_index, base_texture = cls._shadow_plane_material(
-                        gltf, nodes[node_index]
-                    )
-                    texture_index = atlas_texture
-                    if texture_index is None:
-                        texture_index = (
-                            base_texture
-                            if base_texture is not None
-                            else _bind(plane.get("texture"), data=False)
+                    texture_index = None
+                    if kind == "projected":
+                        _material, base_texture = cls._shadow_plane_material(
+                            gltf, nodes[node_index]
                         )
+                        texture_index = atlas_texture
+                        if texture_index is None:
+                            texture_index = (
+                                base_texture
+                                if base_texture is not None
+                                else _bind(plane.get("texture"), data=False)
+                            )
                     if kind == "projected" and texture_index is None:
                         logger.warning(
                             "Shadow plane %r (node %d): no colour map -- neither the "
@@ -483,36 +420,25 @@ class _ShadowRigsMixin:
                         )
                         skipped += 1
                         continue
+                    # The block's plane: the record's, bound by index -- the
+                    # names the indices replace, and the atlas tile the quad's
+                    # own UVs already address, pruned by the block's shape.
                     entry = copy.deepcopy(plane)
                     entry.update(
                         {
                             "node": node_index,
                             "source_node": source_node,
                             "contact_node": contact_node,
-                            "material": material_index,
                             "texture_index": texture_index,
                         }
                     )
-                    if atlas:
-                        packed = dict(atlas)
-                        # Whatever the plane ends up sampling: with the atlas
-                        # unresolvable, the material's own map IS the atlas
-                        # (the DCC points its file node at it), and the rect
-                        # still describes the tile inside it -- the viewer
-                        # applies the rect only when these two agree.
-                        packed["texture_index"] = (
-                            atlas_texture
-                            if atlas_texture is not None
-                            else texture_index
-                        )
-                        packed["rect"] = _rect(atlas.get("rect"))
-                        entry["atlas"] = packed
                     if horizon:
-                        block = dict(horizon)
-                        block["texture_index"] = horizon_texture
-                        block["rect"] = _rect(horizon.get("rect"))
-                        entry["horizon"] = block
-                    planes.append(entry)
+                        entry["horizon"] = {
+                            **horizon,
+                            "rect": _rect(horizon.get("rect")),
+                            "texture_index": horizon_texture,
+                        }
+                    planes.append(ShadowBlockPlane.prune(entry))
 
             extras = gltf.get("extras")
             if not isinstance(extras, dict):
@@ -524,16 +450,13 @@ class _ShadowRigsMixin:
                     len(out_of_scope),
                 )
             if planes:
-                manifest = {
-                    "version": SceneRecords.SHADOWS.web.version,
-                    "metadata_version": version,
-                    "unit_scale": unit_scale,
-                    "planes": planes,
-                }
-                extras[cls.SHADOW_WEB_KEY] = manifest
                 edit.dirty = True
-                return manifest
-            if extras.pop(cls.SHADOW_WEB_KEY, None) is not None:
+                return SceneRecords.put_glb_block(
+                    gltf,
+                    SceneRecords.SHADOWS,
+                    {"unit_scale": unit_scale, "planes": planes},
+                )
+            if extras.pop(SceneRecords.SHADOWS.key, None) is not None:
                 edit.dirty = True
             if skipped:
                 logger.warning(

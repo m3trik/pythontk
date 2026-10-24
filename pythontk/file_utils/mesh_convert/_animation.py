@@ -4,7 +4,7 @@
 only the keys it needs.
 
 Rebuilds the declared shot clips from the whole timeline, publishes
-``extras.animation_web``, and compacts, reduces and prunes the samplers.
+``extras.animation``, and compacts, reduces and prunes the samplers.
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
 the other passes through ``cls``.
@@ -15,8 +15,10 @@ import logging
 import struct
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-# Eager: the channel keys below are SceneRecords' own, read at class
-# definition.
+# Eager: ANIMATION_CLIP_MODES reads ExportProfile's options at class
+# definition and the signatures name GlbTarget; SceneRecords is the light
+# declaration module every pass reads.
+from pythontk.core_utils.engines.scene_export.export_profile import ExportProfile
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 
@@ -24,31 +26,17 @@ logger = logging.getLogger(__name__)
 
 
 class _AnimationMixin:
-    """Animation: shot clips, the ``animation_web`` manifest, key compaction.
+    """Animation: shot clips, the ``animation`` manifest, key compaction.
 
     A private part of :class:`MeshConvert`; call it through the facade.
     """
 
-    #: ``data_export`` channels the shot system publishes (mayatk/blendertk
-    #: ``ShotStore.publish_export_view``): the take list the FBX exporter splits
-    #: its AnimStacks by, and the per-shot extras a take NAME cannot carry.
-    FBX_TAKES_KEY = SceneRecords.FBX_TAKES.key
-    SHOT_METADATA_KEY = SceneRecords.SHOTS.key
     #: The run's Animation Clips mode (``ExportProfile.ANIMATION_CLIPS_OPTIONS``:
-    #: ``full`` / ``shots`` / ``both``), DECLARED by the exporter on the
-    #: ``shot_metadata`` envelope beside ``fps``. ``fbx_takes`` lists the
-    #: scene's shots in every mode, so only this says whether the file was
-    #: meant to carry them as clips; one stack alone is also what a split that
-    #: silently failed leaves.
+    #: ``full`` / ``shots`` / ``both``), DECLARED by the exporter on the shots
+    #: record beside ``fps``. The record lists the scene's shots in every
+    #: mode, so only this says whether the file was meant to carry them as
+    #: clips; one stack alone is also what a split that silently failed leaves.
     SHOT_CLIP_MODE_KEY = "clip_mode"
-    #: Root-extras key the web viewer reads to choose and place clips -- the
-    #: animation twin of :attr:`LIGHTMAP_WEB_KEY`, and written by the same
-    #: kind of applier: derived from the in-band channels at conversion time,
-    #: so the decoded, index-bound view exists in one place instead of in
-    #: every consumer. The shots record's declared web projection.
-    ANIMATION_WEB_KEY = SceneRecords.SHOTS.web.key
-    #: Schema version of that block.
-    ANIMATION_WEB_VERSION = SceneRecords.SHOTS.web.version
 
     @staticmethod
     def _animation_span(gltf: dict, animation: dict) -> Optional[Tuple[float, float]]:
@@ -110,7 +98,7 @@ class _AnimationMixin:
     #: from); the other two drop the half a given consumer never plays, which
     #: is the same performance either way -- measured on a production assembly,
     #: the whole-timeline stack alone was 66.52 MB of a 158.69 MB file.
-    ANIMATION_CLIP_MODES = ("both", "shots", "full")
+    ANIMATION_CLIP_MODES = tuple(ExportProfile.ANIMATION_CLIPS_OPTIONS.values())
 
     @classmethod
     def apply_glb_clips(
@@ -175,8 +163,8 @@ class _AnimationMixin:
             takes = cls._declared_takes(gltf)
             if not takes:
                 return None
-            metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
-            channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+            metadata = cls.data_export_channel(gltf, SceneRecords.SHOTS.key)
+            channel = cls.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
             fps = cls._resolve_clip_fps(
                 metadata if isinstance(metadata, dict) else {}, [], channel
             )
@@ -210,7 +198,7 @@ class _AnimationMixin:
                 return None
             source = animations[index]
 
-            zero = (source.get("extras") or {}).get(GlbClips.ZERO_FRAME_KEY)
+            zero = GlbEdit.extras_of(source).get(GlbClips.ZERO_FRAME_KEY)
             if not isinstance(zero, (int, float)):
                 span = cls._published_origin(
                     lambda key: cls.data_export_channel(gltf, key)
@@ -246,7 +234,7 @@ class _AnimationMixin:
         cls, read: Callable[[str], Any]
     ) -> Optional[Tuple[float, float]]:
         """The first and last frame the whole-timeline stack carries, as the
-        producer published them (the ``visibility_tracks`` channel's
+        producer published them (the ``render_effects`` record's
         :attr:`DEFAULT_CLIP_SPAN` entry); ``None`` when nothing publishes one.
 
         The one reader of that number, for every party that needs it: the
@@ -258,7 +246,7 @@ class _AnimationMixin:
             read: Channel key -> that channel's DECODED payload, ``None`` when
                 absent -- the reader ``SceneRecords.declared_takes`` takes.
         """
-        channel = read(cls.VISIBILITY_TRACKS_KEY)
+        channel = read(SceneRecords.VISIBILITY.key)
         spans = channel.get("clip_span") if isinstance(channel, dict) else None
         span = spans.get(cls.DEFAULT_CLIP_SPAN) if isinstance(spans, dict) else None
         pair = cls._numeric_pairs([span])
@@ -299,8 +287,8 @@ class _AnimationMixin:
             The entries stamped; empty when nothing was measured or no rate
             places the frames in time (the published spans then stand).
         """
-        metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY)
-        channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
+        metadata = cls.data_export_channel(gltf, SceneRecords.SHOTS.key)
+        channel = cls.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
         fps = cls._resolve_clip_fps(
             metadata if isinstance(metadata, dict) else {}, [], channel
         )
@@ -323,7 +311,7 @@ class _AnimationMixin:
         payload = (
             dict(channel)
             if isinstance(channel, dict)
-            else {"version": cls.VISIBILITY_TRACKS_VERSION, "tracks": [], "fps": fps}
+            else {"version": SceneRecords.VISIBILITY.version, "tracks": [], "fps": fps}
         )
         published = payload.get("clip_span")
         published = published if isinstance(published, dict) else {}
@@ -342,11 +330,11 @@ class _AnimationMixin:
         # carrier -- right for a caller's statement about this build, but this
         # read one carrier, and on every conversion a module's tracks left the
         # GLB with the others.
-        found = cls._data_export_carrier(gltf, cls.VISIBILITY_TRACKS_KEY)
+        found = cls._data_export_carrier(gltf, SceneRecords.VISIBILITY.key)
         if found is None:
-            cls.overlay_data_export(gltf, {cls.VISIBILITY_TRACKS_KEY: payload})
+            cls.overlay_data_export(gltf, {SceneRecords.VISIBILITY.key: payload})
         else:
-            cls._write_data_export(found[0], cls.VISIBILITY_TRACKS_KEY, payload)
+            cls._write_data_export(found[0], SceneRecords.VISIBILITY.key, payload)
         return stamped
 
     #: What Maya (and so FBX2glTF) names the whole-timeline AnimStack. The
@@ -419,7 +407,7 @@ class _AnimationMixin:
 
         Parameters:
             frames: Every authored key time in the scene, in frames.
-            takes: ``fbx_takes`` entries -- ``{"name", "start", "end"}``.
+            takes: The declared takes, each ``{"name", "start", "end"}``.
             stack_range: ``(first, last)`` frame the SOURCE STACK will
                 actually carry -- the exported/baked range. Pass it whenever
                 the caller knows it. The converter rebases every stack onto
@@ -490,9 +478,8 @@ class _AnimationMixin:
     @classmethod
     def _declared_takes(cls, gltf: Dict[str, Any]) -> List[Dict[str, Any]]:
         """The take list *gltf*'s carrier declares
-        (:meth:`SceneRecords.declared_takes` over its channels): every GLB
-        reader of the takes goes through here, so none of them is left reading
-        only the legacy ``fbx_takes`` projection when it is retired."""
+        (:meth:`SceneRecords.declared_takes` over its records): every GLB
+        reader of the takes goes through here."""
         return SceneRecords.declared_takes(
             lambda key: cls.data_export_channel(gltf, key)
         )
@@ -583,7 +570,7 @@ class _AnimationMixin:
         # clip that came straight off the converter, where nobody does.
         from pythontk.file_utils.mesh_convert.glb.clips import GlbClips
 
-        declared = (animation.get("extras") or {}).get(GlbClips.ZERO_FRAME_KEY)
+        declared = GlbEdit.extras_of(animation).get(GlbClips.ZERO_FRAME_KEY)
         if isinstance(declared, (int, float)):
             return float(declared)
 
@@ -945,115 +932,119 @@ class _AnimationMixin:
 
     @classmethod
     def apply_glb_animations(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
-        """Publish the GLB's clips as ``extras.animation_web``, joined to the shots.
+        """Publish ``extras.animation``: the FBX's shots, inherited whole, and
+        the GLB's clips.
 
-        The GLB consumer half of the shots contract, and the answer to three
-        things a shot-split deliverable cannot say for itself (all measured on
+        The GLB consumer half of the shots contract. The FBX's ``animation``
+        record is the statement of the shots, and this block carries it into
+        the GLB as it stands -- every shot, whatever clips the conversion
+        produced -- adding only what the GLB alone can say (all measured on
         Maya 2025 -> FBX2glTF 0.13.1):
 
-        * **Which clip is a shot.** Maya's exporter keeps its whole-timeline
+        * **Which clip plays a shot.** Maya's exporter keeps its whole-timeline
           ``Take 001`` AnimStack alongside the takes it was asked to split out,
           and it converts to ``animations[0]`` -- so the naive
           ``clipAction(animations[0])`` plays the entire timeline rather than
-          the first shot. Each clip here carries ``declared`` -- whether a shot
-          asked for it -- and ``default_clip`` names the one to open on.
+          the first shot. A shot plays the clip its ``clip`` names; a shot the
+          file holds no clip for (a ``full`` file cuts none, a take the
+          rebuild could not cut) plays its window of the whole-timeline clip,
+          the one no shot names. ``default_clip`` names the one to open on.
         * **Where a clip sits on the timeline.** The converter rebases every
           clip to t=0, which is right for playback and loses the sequence: a
           shot authored at frames 20-30 and one at 1-10 both start at zero.
-          The declared frame range rides on each clip, with ``offset`` (its
-          first DECLARED frame in seconds) and ``zero_frame`` -- the authored
-          frame the converter actually put at t=0. The two differ, and only
-          the second one converts a playhead: a take is rebased to its first
-          authored KEY rather than to its window, so a clip whose motion
-          starts late carries a lead-in (measured at 43 frames on a production
-          assembly). ``zero_frame`` is what maps clip time back to the frame
-          numbers every other field here is quoted in.
+          ``zero_frame`` is the authored frame a clip's t=0 sits on, which is
+          what maps clip time back to the frame numbers the shots are quoted
+          in. It is measured, not assumed to be the shot's ``start``: a take
+          the converter rebased itself starts at its first authored KEY, so a
+          clip whose motion starts late carries a lead-in (measured at 43
+          frames on a production assembly).
         * **What the frames MEAN.** Frame numbers need the rate they were
           authored at; ``fps`` carries it.
 
-        Reads its inputs out of the deliverable itself (the ``fbx_takes`` and
-        ``shot_metadata`` channels on the ``data_export`` carrier) rather than
+        Inherited rather than derived from the clips (block v2, 2026-10-21):
+        v1 listed one entry per glTF animation, so a shot without a clip of
+        its own was silently gone from the GLB while its FBX still named it.
+
+        Reads its inputs out of the deliverable itself (the shots record,
+        ``animation``, on the ``data_export`` carrier) rather than
         from the host, so it is self-feeding: it runs unconditionally after
-        every conversion, is a clean no-op on a GLB with no animation, and
-        needs no argument from a caller that may not know the scene. A GLB with
-        animation but no declared shots still gets the block -- names, spans
-        and rate are what a player needs whether or not shots exist.
+        every conversion, and is a clean no-op on a GLB with neither shots nor
+        animation. A GLB with animation but no declared shots still gets the
+        block -- names, spans and rate are what a player needs whether or not
+        shots exist -- and one with shots but no animation states the shots.
 
         Also the one place the double encoding is undone. The channels arrive
         as JSON *strings* nested under ``extras.fromFBX.userProperties`` (a
-        consumer has to parse the JSON it just parsed), and they are left there
-        as provenance; this block is the decoded reading, and it cannot drift
-        from them because it is derived from them in the same pass.
+        consumer has to parse the JSON it just parsed); this block is the
+        decoded reading, derived from them in the same pass, and they leave the
+        file at its end with every other record (:meth:`strip_fbx_records`), so
+        it states each thing once.
 
         Parameters:
             glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
 
         Returns:
-            The published manifest, or ``None`` when the file has no animation.
+            The published block, or ``None`` when the file has neither shots
+            nor animation.
         """
         with cls.open_glb(glb) as edit:
             gltf = edit.gltf
             animations = gltf.get("animations") or []
-            if not animations:
-                return None
-
-            takes = cls._declared_takes(gltf)
-            metadata = cls.data_export_channel(gltf, cls.SHOT_METADATA_KEY) or {}
+            metadata = cls.data_export_channel(gltf, SceneRecords.SHOTS.key) or {}
             if not isinstance(metadata, dict):
                 metadata = {}
-            by_name = {
-                str(t.get("name")): t
-                for t in takes
-                if isinstance(t, dict) and t.get("name") is not None
-            }
-            by_clip = {
-                str(s.get("clip")): s
+            # The record's own entries, as it states them: the block's shape
+            # prunes anything it does not declare.
+            shots = [
+                dict(s)
                 for s in (metadata.get("shots") or [])
                 if isinstance(s, dict) and s.get("clip") is not None
-            }
+            ]
+            if not animations and not shots:
+                return None
+            by_clip = {str(s["clip"]): s for s in shots}
 
             clips: List[Dict[str, Any]] = []
+            #: Clip names carrying no channels: what the default clip skips.
+            hollow_names = set()
+            #: Each clip's measured span in seconds, for deriving the rate when
+            #: no record states it (:meth:`_resolve_clip_fps`); never in the
+            #: block, whose reader measures the clip itself.
+            durations: Dict[str, float] = {}
             for index, animation in enumerate(animations):
                 name = animation.get("name") or f"animation_{index}"
-                clip: Dict[str, Any] = {"name": name, "animation": index}
+                clips.append({"name": name, "animation": index})
+                span = cls._animation_span(gltf, animation)
+                if span:
+                    durations[name] = round(span[1] - span[0], 6)
                 if not (animation.get("channels") or []):
                     # Named, listed, and carrying nothing. Maya's split emits an
                     # AnimStack per declared range but bakes no curve for a range
                     # in which nothing moves (a hold, or a shot whose motion
                     # belongs to objects outside the export), so this is a normal
-                    # authoring outcome rather than a conversion failure -- and
-                    # it is invisible from the clip list, which is what made it
-                    # read as broken animation instead of an empty shot. In the
+                    # authoring outcome rather than a conversion failure. In the
                     # conversion chain :meth:`prune_glb_animations` has already
                     # removed these (glTF forbids them); this is the path for a
                     # file handed in directly, or a prune that was skipped.
-                    clip["empty"] = True
-                span = cls._animation_span(gltf, animation)
-                if span:
-                    clip["duration"] = round(span[1] - span[0], 6)
-                take = by_name.get(name)
-                # "declared", not "is a shot": a clip the shot system asked for
-                # is the one a player should offer; the rest (Maya's retained
-                # full-range stack, anything authored outside the Shots panel)
-                # is playable but unnamed by the pipeline.
-                clip["declared"] = take is not None
-                if take is not None:
-                    clip["start_frame"] = take.get("start")
-                    clip["end_frame"] = take.get("end")
-                shot = by_clip.get(name)
-                if shot is not None:
-                    for key in ("description", "objects", "section"):
-                        if shot.get(key):
-                            clip[key] = shot[key]
-                clips.append(clip)
+                    # Not stated in the block: a reader sees it in the file.
+                    hollow_names.add(name)
 
             # The fourth resolution in the same session: this one derived from
             # clip spans but never read the visibility channel, so a file whose
             # only stated rate lives there fell through to derivation while the
             # other passes used the stated number.
-            channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
-            fps = cls._resolve_clip_fps(metadata, clips, channel)
-            if fps:
+            channel = cls.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
+            measured = [
+                {
+                    "start_frame": by_clip[c["name"]].get("start"),
+                    "end_frame": by_clip[c["name"]].get("end"),
+                    "duration": durations[c["name"]],
+                }
+                for c in clips
+                if c["name"] in by_clip and c["name"] in durations
+            ]
+            fps = cls._resolve_clip_fps(metadata, measured, channel)
+            if fps and clips:
                 windows = cls._take_windows(gltf)
                 union = (
                     (
@@ -1063,18 +1054,10 @@ class _AnimationMixin:
                     if windows
                     else None
                 )
-                channel = cls.data_export_channel(gltf, cls.VISIBILITY_TRACKS_KEY)
                 spans = (channel or {}).get("clip_span")
                 if not isinstance(spans, dict):
                     spans = {}
                 for index, clip in enumerate(clips):
-                    start = clip.get("start_frame")
-                    if isinstance(start, (int, float)):
-                        # Where this clip's first frame sits on the AUTHORING
-                        # timeline, in seconds. The clip's own times start at
-                        # zero, so without this a sequence cannot be rebuilt
-                        # from the file.
-                        clip["offset"] = round(start / fps, 6)
                     window = windows.get(clip["name"]) or union
                     span = cls._clip_span_for(clip["name"], spans, windows)
                     if window is None and span is None:
@@ -1082,14 +1065,14 @@ class _AnimationMixin:
                         # is nothing to place this clip against, and a guessed
                         # origin is worse than an absent one.
                         continue
-                    # NOT start_frame, and that is the whole point: the
+                    # NOT the shot's start, and that is the whole point: the
                     # converter rebases a take to its first authored KEY, not
                     # to its declared window, so t=0 sits at the take's lead-in
                     # -- measured at 43 frames (1.43s) into Shot_5 of a
                     # production assembly. Every frame number published
                     # elsewhere in this block is an AUTHORING frame, so this is
-                    # the one value that lets a
-                    # consumer convert between the two:
+                    # the one value that lets a consumer convert between the
+                    # two:
                     #
                     #     authoring_frame = zero_frame + clip_time * fps
                     #
@@ -1116,46 +1099,55 @@ class _AnimationMixin:
                         6,
                     )
 
-            declared = [c for c in clips if c["declared"]]
-            # The clip to open on: the first DECLARED one that can actually
-            # PLAY, because a deliverable that went to the trouble of splitting
-            # shots means the shots -- but opening on an empty one shows 0.00s
-            # of nothing and reads as broken animation rather than as a shot
-            # that holds. Measured on a production assembly whose Shot_1 was a
-            # hold: the preview opened dead with 11 populated clips behind it.
-            # Each fallback is narrower than the last, and the final one is
-            # unconditional: a file where every clip is empty still gets a
-            # default, since naming no clip at all is worse than naming a
-            # quiet one.
-            playable = [c for c in declared if not c.get("empty")] or [
-                c for c in clips if not c.get("empty")
-            ]
             manifest: Dict[str, Any] = {
-                "version": cls.ANIMATION_WEB_VERSION,
+                "version": SceneRecords.SHOTS.glb.version,
+                "shots": shots,
                 "clips": clips,
-                "default_clip": (playable or declared or clips)[0]["name"],
             }
+            # The clip to open on: the first SHOT's clip that can actually
+            # PLAY, because a deliverable that went to the trouble of
+            # splitting shots means the shots -- but opening on an empty one
+            # shows 0.00s of nothing and reads as broken animation rather than
+            # as a shot that holds. Measured on a production assembly whose
+            # Shot_1 was a hold: the preview opened dead with 11 populated
+            # clips behind it. Each fallback is narrower than the last, and
+            # the final one is unconditional: a file where every clip is empty
+            # still gets a default, since naming no clip at all is worse than
+            # naming a quiet one.
+            shot_clips = [c for c in clips if c["name"] in by_clip]
+            playable = [c for c in shot_clips if c["name"] not in hollow_names] or [
+                c for c in clips if c["name"] not in hollow_names
+            ]
+            opening = playable or shot_clips or clips
+            if opening:
+                manifest["default_clip"] = opening[0]["name"]
             if fps:
                 manifest["fps"] = fps
+            if metadata.get("clip_mode"):
+                manifest["clip_mode"] = metadata["clip_mode"]
 
-            hollow = [c["name"] for c in declared if c.get("empty")]
+            hollow = [c["name"] for c in shot_clips if c["name"] in hollow_names]
             if hollow:
                 # Not an error -- a declared range can legitimately hold still --
                 # but the one thing a reviewer needs told, because the clip is
                 # in the list, in the player's dropdown, and plays as nothing.
                 logger.info(
                     "Animation: %d declared shot(s) carry no keyframes (%s); "
-                    "listed and marked empty, and not opened on.",
+                    "listed, and not opened on.",
                     len(hollow),
                     ", ".join(hollow),
                 )
 
-            missing = sorted(set(by_name) - {c["name"] for c in clips})
-            if missing:
+            # A 'full' file cuts no shot by design: each plays its window of
+            # the whole-timeline clip, which the block states.
+            uncut = sorted(set(by_clip) - {c["name"] for c in clips})
+            if uncut and metadata.get("clip_mode") != "full":
                 # Loud, like every lightmap miss: the takes were declared and
                 # the file does not carry them, which means the split did not
-                # run (the exporter's task is off) or the names disagree. Both
-                # ship a deliverable whose metadata describes clips it lacks.
+                # run (the exporter's task is off) or the names disagree. The
+                # block still states each shot, so a player can play it as its
+                # window of the whole-timeline clip -- but a consumer that
+                # plays a named shot's own clip will not find one.
                 #
                 # The CONSEQUENCE is spelled out because the bare fact reads as
                 # bookkeeping: measured on a production assembly, the WebXR
@@ -1167,16 +1159,17 @@ class _AnimationMixin:
                     "(%s) -- the take split did not reach this file, or the "
                     "take held no keyframes and was pruned, so it "
                     "carries %d clip(s) where the scene declares %d shot(s). "
-                    "A consumer that plays a named shot will not find one.",
-                    len(missing),
-                    ", ".join(missing),
+                    "Each still plays as its window of the whole-timeline "
+                    "clip; a consumer that plays a named shot's own clip will "
+                    "not find one.",
+                    len(uncut),
+                    ", ".join(uncut),
                     len(clips),
-                    len(by_name),
+                    len(by_clip),
                 )
 
-            gltf.setdefault("extras", {})[cls.ANIMATION_WEB_KEY] = manifest
             edit.dirty = True
-            return manifest
+            return SceneRecords.put_glb_block(gltf, SceneRecords.SHOTS, manifest)
 
     @staticmethod
     def _resolve_clip_fps(
@@ -1188,9 +1181,9 @@ class _AnimationMixin:
 
         One rule for the whole conversion, in this order:
 
-        1. ``shot_metadata.fps`` -- published by the shot system, which owns
-           the frame numbers every other channel quotes.
-        2. ``visibility_tracks.fps`` -- the producer's own rate, stated only
+        1. ``animation.fps`` -- published by the shot system, which owns
+           the frame numbers every other record quotes.
+        2. ``render_effects.fps`` -- the producer's own rate, stated only
            by files whose shot system did not publish one.
         3. Derived from the first declared clip carrying both a frame range
            and a measured span: the two describe the same interval, one in
@@ -1207,9 +1200,9 @@ class _AnimationMixin:
         each other, in a converter whose output ships.
 
         Parameters:
-            metadata: The ``shot_metadata`` channel, or ``{}``.
+            metadata: The shots record (``animation``), or ``{}``.
             clips: Declared clips, for derivation; ``[]`` to skip it.
-            channel: The ``visibility_tracks`` channel, when the caller has it.
+            channel: The ``render_effects`` record, when the caller has it.
         """
         published = metadata.get("fps")
         if isinstance(published, (int, float)) and published > 0:

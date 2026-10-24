@@ -78,7 +78,7 @@ def _data_uri(png: bytes) -> str:
 
 
 def _record(name: str, **overrides):
-    """One v2 ``shadow_metadata`` plane record, the contract's shape."""
+    """One v2 ``shadows`` plane record, the contract's shape."""
     record = {
         "name": name,
         "type": "projected",
@@ -114,7 +114,7 @@ def _data_export_node(payload: dict) -> dict:
         "extras": {
             "fromFBX": {
                 "userProperties": {
-                    MeshConvert.SHADOW_METADATA_KEY: {
+                    ptk.SceneRecords.SHADOWS.key: {
                         "type": "eFbxString",
                         "value": json.dumps(payload),
                     }
@@ -149,7 +149,15 @@ def _pointer_animation(material: int) -> dict:
 
 
 def _write_glb(
-    path, *, nodes, materials, images, textures, animations=None, z_up=False
+    path,
+    *,
+    nodes,
+    materials,
+    images,
+    textures,
+    animations=None,
+    z_up=False,
+    uv_rects=None,
 ):
     """A minimal but VALID binary glTF around one shared unit quad.
 
@@ -161,25 +169,39 @@ def _write_glb(
     mesh data), its near edge -Y. Every mesh node references mesh index = its
     own material index, one mesh per material, so a per-material fade has one
     representative mesh. A node named in another's ``children`` is not a root.
+    *uv_rects* packs the quads as the DCC packs an atlas: per mesh index, the
+    tile ``[scale_u, scale_v, offset_u, offset_v]`` (glTF top-left) its UVs
+    are remapped into; a mesh it does not name keeps the unit square.
     """
     if z_up:
         positions = struct.pack(
             "<12f", 0.5, 0.5, 0, -0.5, 0.5, 0, -0.5, -0.5, 0, 0.5, -0.5, 0
         )
-        uvs = struct.pack("<8f", 1, 0, 0, 0, 0, 1, 1, 1)
+        unit_uvs = (1, 0, 0, 0, 0, 1, 1, 1)
         indices = struct.pack("<6H", 0, 1, 2, 0, 2, 3)
         bounds = ([-0.5, -0.5, 0], [0.5, 0.5, 0])
     else:
         positions = struct.pack(
             "<12f", -0.5, 0, 0.5, 0.5, 0, 0.5, -0.5, 0, -0.5, 0.5, 0, -0.5
         )
-        uvs = struct.pack("<8f", 0, 1, 1, 1, 0, 0, 1, 0)
+        unit_uvs = (0, 1, 1, 1, 0, 0, 1, 0)
         indices = struct.pack("<6H", 0, 1, 2, 1, 3, 2)
         bounds = ([-0.5, 0, -0.5], [0.5, 0, 0.5])
+    uvs = struct.pack("<8f", *unit_uvs)
     children = {c for node in nodes for c in node.get("children", [])}
     times = struct.pack("<3f", 0.0, 1.0, 2.0)
     alphas = struct.pack("<12f", 1, 1, 1, 1, 1, 1, 1, 0.5, 1, 1, 1, 0)
     chunks = [positions, uvs, indices, times, alphas]
+    #: mesh index -> its TEXCOORD_0 accessor: the unit square's (1), or its
+    #: tile's, appended after the fixed five.
+    texcoords = {}
+    for mesh, rect in enumerate(uv_rects or []):
+        if rect is None:
+            continue
+        scale_uv, offset_uv = rect[:2], rect[2:]
+        tiled = [v * scale_uv[k % 2] + offset_uv[k % 2] for k, v in enumerate(unit_uvs)]
+        texcoords[mesh] = len(chunks)
+        chunks.append(struct.pack("<8f", *tiled))
     views, blob, offset = [], b"", 0
     for raw in chunks:
         views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(raw)})
@@ -195,7 +217,10 @@ def _write_glb(
             {
                 "primitives": [
                     {
-                        "attributes": {"POSITION": 0, "TEXCOORD_0": 1},
+                        "attributes": {
+                            "POSITION": 0,
+                            "TEXCOORD_0": texcoords.get(index, 1),
+                        },
                         "indices": 2,
                         "material": index,
                     }
@@ -229,6 +254,10 @@ def _write_glb(
                 "max": [2.0],
             },
             {"bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC4"},
+        ]
+        + [
+            {"bufferView": view, "componentType": 5126, "count": 4, "type": "VEC2"}
+            for view in sorted(texcoords.values())
         ],
     }
     if animations:
@@ -311,11 +340,8 @@ def _horizon_block(hmap, frame_b=(0, 0, 1), **extra):
     """The record's ``horizon`` block for *hmap*, the contract's shape."""
     block = {
         "texture": "Box_horizon.png",
-        "mapping": "heightfield",
-        "encoding": 2,
         "size": hmap.size,
         "spans": hmap.spans,
-        "levels": hmap.levels,
         "bounds": [float(v) for v in hmap.bounds],
         "height_scale": float(hmap.height_scale),
         "frame_a": [1, 0, 0],
@@ -465,11 +491,8 @@ class TestApplyGlbShadows(unittest.TestCase):
     #: treats it as opaque bytes).
     HORIZON = {
         "texture": "Box_horizon.png",
-        "mapping": "heightfield",
-        "encoding": 2,
         "size": POLE_SIZE,
         "spans": POLE_SPANS,
-        "levels": 6,
         "bounds": [-0.14, 1.06, -0.41, 0.79],
         "height_scale": POLE_HEIGHT,
         "frame_a": [1, 0, 0],
@@ -561,10 +584,13 @@ class TestApplyGlbShadows(unittest.TestCase):
         MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
         MeshConvert.strip_glb_curve_proxies(path)
         gltf = self._read(path)
-        manifest = gltf["extras"][MeshConvert.SHADOW_WEB_KEY]
+        manifest = gltf["extras"][ptk.SceneRecords.SHADOWS.key]
         names = [n.get("name") for n in gltf["nodes"]]
+        self.assertEqual(
+            sorted(names[plane["node"]] for plane in manifest["planes"]),
+            ["Box_horizon_plane", "Box_shadow"],
+        )
         for plane in manifest["planes"]:
-            self.assertEqual(names[plane["node"]], plane["name"])
             self.assertEqual(names[plane["source_node"]], "shadow_source")
             self.assertEqual(names[plane["contact_node"]], "Box_contact_loc")
 
@@ -574,24 +600,24 @@ class TestApplyGlbShadows(unittest.TestCase):
 
         self.assertIsNotNone(manifest)
         self.assertEqual(manifest["version"], 2)
-        self.assertEqual(manifest["metadata_version"], 2)
+        self.assertNotIn(
+            "metadata_version", manifest, "the record's version is not the block's"
+        )
         self.assertAlmostEqual(manifest["unit_scale"], 0.01)
         gltf = self._read(path)
-        self.assertEqual(gltf["extras"][MeshConvert.SHADOW_WEB_KEY], manifest)
-        by_name = {p["name"]: p for p in manifest["planes"]}
+        self.assertEqual(gltf["extras"][ptk.SceneRecords.SHADOWS.key], manifest)
+        # Bound by index in place of every name, and nothing beyond the
+        # declared shape: a packed plane's tile is its quad's own UVs.
+        res = ptk.ShadowBlock.validate(manifest)
+        self.assertEqual((res.errors, res.warnings), ([], []))
+        by_name = {gltf["nodes"][p["node"]]["name"]: p for p in manifest["planes"]}
         self.assertEqual(set(by_name), {"Box_shadow", "Box_horizon_plane"})
 
         projected = by_name["Box_shadow"]
         self.assertEqual(projected["node"], 0)
         self.assertEqual(projected["source_node"], 1)
         self.assertEqual(projected["contact_node"], 2)
-        self.assertEqual(projected["material"], 0)
         self.assertEqual(projected["texture_index"], 0, "the material's base colour")
-        self.assertEqual(projected["atlas"]["texture_index"], 0)
-        self.assertEqual(
-            projected["atlas"]["rect"], ImgUtils.flip_rect_v(self.ATLAS_RECT)
-        )
-        self.assertEqual(projected["atlas"]["rect"], [0.5, 0.5, 0.0, 0.0])
         self.assertTrue(projected["follow_source"])
         # The record's own fields travel untouched, DCC units and all.
         self.assertEqual(projected["radius"], 0.6)
@@ -599,7 +625,7 @@ class TestApplyGlbShadows(unittest.TestCase):
 
         horizon = by_name["Box_horizon_plane"]
         self.assertEqual(horizon["node"], 3)
-        self.assertEqual(horizon["material"], 1)
+        self.assertIsNone(horizon["texture_index"], "the march shades it")
         self.assertEqual(
             horizon["horizon"]["rect"], ImgUtils.flip_rect_v(self.HORIZON["rect"])
         )
@@ -613,7 +639,6 @@ class TestApplyGlbShadows(unittest.TestCase):
         # The atlas texture the material samples keeps ITS sampler.
         self.assertEqual(gltf["textures"][0]["sampler"], 0)
         self.assertEqual(horizon["horizon"]["spans"], POLE_SPANS)
-        self.assertEqual(horizon["horizon"]["encoding"], 2)
 
     def test_the_horizon_png_is_embedded_byte_for_byte(self):
         """Never decoded: the map is data, and the session relocates it into
@@ -640,35 +665,56 @@ class TestApplyGlbShadows(unittest.TestCase):
         self.assertEqual(len(after["samplers"]), len(before["samplers"]))
         self.assertEqual(after["extras"], before["extras"])
 
-    def test_a_v1_channel_reads_as_a_still_projected_plane(self):
-        payload = _payload(
-            [{"name": "Box_shadow", "texture": "Box_shadow.png", "intensity": 0.8}],
-            version=1,
+    def test_a_record_of_another_version_is_refused_not_guessed(self):
+        """A reader reads the schema the record declares alone: an older one
+        -- version 1 stated no source, contact or unit -- is refused as a
+        newer one is, and said, the cure a re-export; never read through a
+        branch for its shape. Added: 2026-10-20"""
+        current = ptk.SceneRecords.SHADOWS.version
+        for version in (current - 1, current + 1):
+            with self.subTest(version=version):
+                path = self._glb(_payload([_record("Box_shadow")], version=version))
+                with self.assertLogs(MESH_CONVERT_LOGGER, level="WARNING") as log:
+                    self.assertIsNone(
+                        MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
+                    )
+                self.assertTrue(
+                    any(
+                        f"v{version} " in line and "re-export the file" in line
+                        for line in log.output
+                    ),
+                    log.output,
+                )
+                self.assertNotIn(
+                    ptk.SceneRecords.SHADOWS.key, self._read(path).get("extras", {})
+                )
+
+    def test_the_retired_plane_defaults_are_the_planes_declared_ones(self):
+        """``MeshConvert.SHADOW_PLANE_DEFAULTS`` (retired 2026-10-20, removed
+        in 0.18.0: a plane states every field ``ShadowPlane`` declares, and the
+        pass fills none it leaves unsaid) warns, and serves the table it was
+        in 0.16.1 -- REGRESSION (2026-10-24): it served ``""`` for no source or
+        contact, the plane's own spelling, where its readers test ``None``."""
+        with self.assertWarns(DeprecationWarning):
+            defaults = MeshConvert.SHADOW_PLANE_DEFAULTS
+        self.assertEqual(
+            defaults,
+            {
+                "type": "projected",
+                "intensity": 1.0,
+                "source": None,
+                "source_type": "point",
+                "source_size": 0.0,
+                "source_angle": 0.0,
+                "follow_source": False,
+                "contact": None,
+                "ground": 0.0,
+                "radius": 0.5,
+                "height": 1.0,
+                "max_stretch": 6.0,
+                "canvas": [-1.0, 1.0, -0.5, 0.5],
+            },
         )
-        path = self._glb(payload)
-        manifest = MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
-
-        self.assertEqual(manifest["metadata_version"], 1)
-        self.assertEqual(manifest["unit_scale"], 1.0)
-        (plane,) = manifest["planes"]
-        self.assertEqual(plane["type"], "projected")
-        self.assertEqual(plane["intensity"], 0.8)
-        self.assertFalse(plane["follow_source"])
-        self.assertIsNone(plane["source_node"])
-        self.assertIsNone(plane["contact_node"])
-        self.assertEqual(plane["texture_index"], 0)
-        self.assertNotIn("atlas", plane)
-        self.assertNotIn("horizon", plane)
-        self.assertEqual(plane["max_stretch"], ptk.ShadowProjection.DEFAULT_MAX_STRETCH)
-
-    def test_a_newer_schema_is_refused_not_guessed(self):
-        path = self._glb(_payload([_record("Box_shadow")], version=3))
-        with self.assertLogs(MESH_CONVERT_LOGGER, level="WARNING") as log:
-            self.assertIsNone(
-                MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
-            )
-        self.assertTrue(any("newer" in line for line in log.output), log.output)
-        self.assertNotIn(MeshConvert.SHADOW_WEB_KEY, self._read(path).get("extras", {}))
 
     def test_a_missing_horizon_map_skips_that_plane_with_a_warning(self):
         path = self._glb(self._v2())
@@ -677,12 +723,17 @@ class TestApplyGlbShadows(unittest.TestCase):
         self.assertTrue(
             any("Box_horizon.png" in line for line in log.output), log.output
         )
-        self.assertEqual([p["name"] for p in manifest["planes"]], ["Box_shadow"])
+        nodes = self._read(path)["nodes"]
+        self.assertEqual(
+            [nodes[p["node"]]["name"] for p in manifest["planes"]], ["Box_shadow"]
+        )
 
     def test_no_channel_is_a_clean_no_op(self):
         path = self._glb(None, nodes=[{"name": "Box_shadow", "mesh": 0}])
         self.assertIsNone(MeshConvert.apply_glb_shadows(path))
-        self.assertNotIn(MeshConvert.SHADOW_WEB_KEY, self._read(path).get("extras", {}))
+        self.assertNotIn(
+            ptk.SceneRecords.SHADOWS.key, self._read(path).get("extras", {})
+        )
 
     def test_a_run_that_binds_nothing_removes_a_stale_manifest(self):
         path = self._glb(self._v2())
@@ -695,7 +746,7 @@ class TestApplyGlbShadows(unittest.TestCase):
                     node["name"] = "gone_" + node["name"]
             edit.dirty = True
         self.assertIsNone(MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps]))
-        self.assertNotIn(MeshConvert.SHADOW_WEB_KEY, self._read(path)["extras"])
+        self.assertNotIn(ptk.SceneRecords.SHADOWS.key, self._read(path)["extras"])
 
     def test_a_leaf_name_binds_every_namespaced_plane_but_never_an_ambiguous_source(
         self,
@@ -760,11 +811,11 @@ class TestApplyGlbShadows(unittest.TestCase):
     def test_an_atlas_in_the_file_becomes_the_planes_colour_map(self):
         """The real Maya shape: the materials lost their textures through the
         FBX, both the atlas and each plane's own PNG are embedded, and the
-        record names an atlas. The plane must sample the ATLAS -- its rect
-        names a tile of that image, so pointing the manifest at the plane's own
-        full-frame PNG leaves the rect meaningless and the viewer unable to
-        batch (measured on shadow_e2e_proj.glb: three planes, three different
-        texture indices, no InstancedMesh)."""
+        record names an atlas. The plane must sample the ATLAS -- its quad's
+        UVs address a tile of that image, so pointing the block at the plane's
+        own full-frame PNG reads the wrong part of it and leaves the viewer
+        unable to batch (measured on shadow_e2e_proj.glb: three planes, three
+        different texture indices, no InstancedMesh)."""
         with open(os.path.join(self.maps, "Box_shadow.png"), "wb") as fh:
             fh.write(_silhouette_png(4))
         own, atlas_png = _silhouette_png(4), _silhouette_png(8)
@@ -804,8 +855,6 @@ class TestApplyGlbShadows(unittest.TestCase):
             "shadow_atlas_projected.png",
             "the plane must sample the atlas, not its own tile PNG",
         )
-        self.assertEqual(plane["atlas"]["texture_index"], plane["texture_index"])
-        self.assertEqual(plane["atlas"]["rect"], ImgUtils.flip_rect_v(self.ATLAS_RECT))
         # Resolved from the file: no second copy of the atlas was embedded.
         self.assertEqual(len(gltf["images"]), 2)
 
@@ -837,13 +886,29 @@ class TestApplyGlbShadows(unittest.TestCase):
             manifest = MeshConvert.apply_glb_shadows(path, search_dirs=[])
         (plane,) = manifest["planes"]
         self.assertEqual(plane["texture_index"], 0)
-        self.assertEqual(plane["atlas"]["texture_index"], 0)
 
     def test_the_handoff_names_the_manifest(self):
-        envelope = MeshConvert.build_scene_sidecar({}, source={"application": "maya"})
-        self.assertIn(
-            f"extras.{MeshConvert.SHADOW_WEB_KEY}", envelope["handoff"]["reads"]
+        """A standalone reader is told the block exists, in the artifact: the
+        handoff of a file carrying it names it -- its ``assembly`` row,
+        addressed at the block under the part the FBX's record gives it too,
+        saying what it means."""
+        path = self._glb(self._v2())
+        self.assertIsNotNone(
+            MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
         )
+        with MeshConvert.open_glb(path) as edit:
+            MeshConvert.embed_glb_handoff(
+                edit, ptk.HandoffRecord.block("glb", [], {"application": "maya"})
+            )
+        handoff = MeshConvert.read_glb_handoff(path)
+        block = f"extras.{ptk.SceneRecords.SHADOWS.key}"
+        record = ptk.SceneRecords.SHADOWS
+        (row,) = [r for r in handoff["assembly"] if r["data"] == [block]]
+        self.assertEqual(row["part"], record.key)
+        # what this file's planes use, and nothing they do not
+        with MeshConvert.open_glb(path) as edit:
+            payload = edit.gltf["extras"][record.key]
+        self.assertEqual(row["spec"], record.glb.assembly_for(payload))
 
     def test_the_optimiser_keeps_every_bound_shadow_map_as_found(self):
         """Neither resized nor re-encoded, in a mode that resizes everything else."""
@@ -908,9 +973,11 @@ class TestApplyGlbShadows(unittest.TestCase):
             patch(f"{FBX2GLTF_MODULE}.subprocess.run", side_effect=fake_run),
         ):
             out = MeshConvert.fbx_to_glb(src, timeout=60, lightmaps=False)
-        manifest = self._read(out)["extras"][MeshConvert.SHADOW_WEB_KEY]
+        gltf = self._read(out)
+        manifest = gltf["extras"][ptk.SceneRecords.SHADOWS.key]
         self.assertEqual(
-            {p["name"] for p in manifest["planes"]}, {"Box_shadow", "Box_horizon_plane"}
+            {gltf["nodes"][p["node"]]["name"] for p in manifest["planes"]},
+            {"Box_shadow", "Box_horizon_plane"},
         )
 
 
@@ -962,6 +1029,19 @@ class TestServerAutoActivation(unittest.TestCase):
 
     def test_a_plain_deliverable_activates_nothing(self):
         self.server.publish(self._glb(False))
+        self.assertEqual(self.server.scripts, ())
+
+    def test_only_the_records_key_activates_it(self):
+        """The script is activated on the record's own key alone: a block a
+        file holds under any other -- the one it had before the 2026-10-20
+        rename too -- is no block of this reader's, and the file is
+        re-exported."""
+        path = self._glb(True)
+        with MeshConvert.open_glb(path) as edit:
+            extras = edit.gltf["extras"]
+            extras["shadow_web"] = extras.pop(ptk.SceneRecords.SHADOWS.key)
+            edit.dirty = True
+        self.server.publish(path)
         self.assertEqual(self.server.scripts, ())
 
     def test_a_file_that_is_not_a_glb_is_served_without_a_probe_failure(self):
@@ -1027,7 +1107,7 @@ export default function probe(viewer) {
       const u = material.uniforms || {};
       const horizon = u.uHorizonMap ? u.uHorizonMap.value : null;
       return {
-        name: plane.record.name,
+        name: plane.name,
         node: plane.record.node,
         follow: plane.follow,
         position: [p.x, p.y, p.z],
@@ -1183,6 +1263,7 @@ class TestShadowRigLive(unittest.TestCase):
         animations=None,
         search_dirs=(),
         z_up=False,
+        uv_rects=None,
     ):
         path = self.temp.path(extension=".glb")
         _write_glb(
@@ -1194,6 +1275,7 @@ class TestShadowRigLive(unittest.TestCase):
             textures=textures or [{"source": 0, "sampler": 0}],
             animations=animations,
             z_up=z_up,
+            uv_rects=uv_rects,
         )
         manifest = MeshConvert.apply_glb_shadows(path, search_dirs=list(search_dirs))
         self.assertIsNotNone(manifest, "the fixture itself must bind")
@@ -1470,6 +1552,9 @@ class TestShadowRigLive(unittest.TestCase):
                 _plane_material("C_MAT"),
             ],
             animations=[_pointer_animation(2)],
+            # Packed as the DCC packs them: each quad's UVs remapped into the
+            # tile its record names, which the block then states nowhere.
+            uv_rects=[ImgUtils.flip_rect_v(rect) for rect in rects.values()],
         )
         found = self._load(
             glb,
@@ -1484,6 +1569,7 @@ class TestShadowRigLive(unittest.TestCase):
         faded = by_name["C_shadow"]
         self.assertFalse(faded["instanced"])
         self.assertTrue(faded["isShader"])
+        # Each plane on its own tile: its quad's UV bounds, read off the quad.
         for name, plane in by_name.items():
             for got, want in zip(plane["uRect"], ImgUtils.flip_rect_v(rects[name])):
                 self.assertAlmostEqual(got, want, places=6, msg=name)
@@ -1590,6 +1676,8 @@ class TestShadowRigLive(unittest.TestCase):
                 },
             ],
             textures=[{"source": 0, "sampler": 0}, {"source": 1, "sampler": 0}],
+            # Each quad's UVs remapped into its tile, as the DCC packs it.
+            uv_rects=[ImgUtils.flip_rect_v(rect) for rect in rects.values()],
         )
         found = self._load(glb)
 

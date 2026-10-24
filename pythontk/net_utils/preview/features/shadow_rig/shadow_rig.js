@@ -12,9 +12,10 @@
   export and the horizon map is a data texture no material references.
 
   `MeshConvert.apply_glb_shadows` (pythontk) binds the maps into the file and
-  writes root `extras.shadow_web`: the v2 record per plane plus the glTF NODE
-  indices of the plane, its source and its contact, the texture index of each
-  map, and rects in glTF top-left space. This script is the runtime half:
+  writes root `extras.shadows`: each plane's projection model, bound to the
+  file by index in place of every name -- the glTF NODE of the plane, of its
+  source and of its contact, the TEXTURE of each map -- and a horizon map's
+  rect in glTF top-left space. This script is the runtime half:
 
     load   read the manifest; map node indices to Object3Ds through the
            loader's association table (names are not unique); give every plane
@@ -54,10 +55,11 @@
   unaffected. The horizon shader works in WORLD space, so its ground -- a
   model-space height like the placement's -- goes through the model's world
   matrix too: the page stands a model on its lowest point, which need not be
-  the ground. The record's lengths are DCC units times `unit_scale`. A plane's
-  UVs are brought back to the unit square first (the DCC remaps a packed plane's
-  UVs into its atlas rect so a fallback viewer needs no transform; here the
-  rect is applied per plane, per instance).
+  the ground. The record's lengths are DCC units times `unit_scale`. A packed
+  plane's UVs address its tile of the atlas (the DCC remaps them into it, so a
+  fallback viewer needs no transform): they are brought back to the unit
+  square and their bounds become the plane's rect, applied per plane and per
+  instance -- so one quad serves a batch, each instance on its own tile.
 
   A Z-up DCC's plane arrives in a Z-up frame: Blender's FBX exporter turns
   only the ROOT nodes upright and never the mesh data, so a blendertk quad
@@ -88,15 +90,14 @@
   exceeds its intensity, so an alpha under 1 is that opacity already stated.
 
   Activate:  automatic -- PreviewServer.AUTO_SCRIPTS turns it on for any
-             deliverable whose root extras carry `shadow_web`;
+             deliverable whose root extras carry `shadows`;
              or bridge.push(scripts=["shadow_rig"]).
 */
 
+import { readBlock } from '../../kernel/extras.js';
 import { SHADOWS } from '../../kernel/records.js';
 import { farPoint, placement, shadowModel } from './model.js';
 
-//: The manifest this reads: the shadow record's declared web projection.
-const MANIFEST_KEY = SHADOWS.webKey;
 //: Lift above the ground in DCC units (the Maya rig's GROUND_OFFSET), so the
 //: plane never z-fights the floor; times unit_scale at run time.
 const GROUND_OFFSET = 0.01;
@@ -515,13 +516,15 @@ float ShMarch(ShField g, vec2 o, vec2 d, float slope, float rho, float cosEl,
                 // width when a boundary-hugging ray lands one pixel over in
                 // float32 (measured in the viewer: 0.21 against 0.07). Inside
                 // and out alike, so the two meet at zero on the edge.
+                // each corner clamped on its own (clamp-to-edge): continuous
+                // across the outermost texel centres
                 vec2 m = o + d * tmid - 0.5;
                 vec2 f = floor(m);
                 vec2 w = clamp(m - f, 0.0, 1.0);
                 int x0 = clamp(int(f.x), 0, g.size - 1);
                 int y0 = clamp(int(f.y), 0, g.size - 1);
-                int x1 = min(x0 + 1, g.size - 1);
-                int y1 = min(y0 + 1, g.size - 1);
+                int x1 = clamp(int(f.x) + 1, 0, g.size - 1);
+                int y1 = clamp(int(f.y) + 1, 0, g.size - 1);
                 if (blocked)
                 {
                     hit = true;
@@ -679,12 +682,11 @@ void main() {
 
 /* ------------------------------------------------------------- the file --- */
 
+// The shadows record's block (the ROOT's extras, where the conversion
+// writes it and PreviewServer.AUTO_SCRIPTS looks).
+/** @returns {import('../../kernel/records.js').ShadowBlock | null} */
 function readManifest(parser) {
-  let raw = parser?.json?.extras?.[MANIFEST_KEY];
-  if (typeof raw === 'string') {
-    try { raw = JSON.parse(raw); } catch { return null; }
-  }
-  return raw && typeof raw === 'object' ? raw : null;
+  return readBlock(parser?.json?.extras, SHADOWS);
 }
 
 // glTF material indices a KHR_animation_pointer alpha ramp drives -- read off
@@ -711,21 +713,22 @@ const finite = (value, fallback) => (Number.isFinite(Number(value)) ? Number(val
 const flatRect = (rect) => (Array.isArray(rect) && rect.length === 4 ? rect.map(Number) : RECT_IDENTITY.slice());
 const vec3 = (value, fallback) => (Array.isArray(value) && value.length === 3 ? value.map(Number) : fallback.slice());
 
-// The record's horizon block, validated and in metres; null when this shim
-// cannot read it (an encoding or mapping it does not know -- the coverage
-// maps of encoding 1 included, which fall back to the silhouette).
+// The plane's horizon map, validated and in metres; null when it is none this
+// shim can march (its size, spans, footprint or height scale out of range).
+// Its min/max pyramid stands log2(size) levels over level 0: the size is a
+// power of two.
+/** @param {import('../../kernel/records.js').ShadowBlockPlane} record */
 function horizonSpec(record, unit) {
   const h = record.horizon;
   if (!h || typeof h !== 'object') return null;
   const size = Number(h.size);
   const spans = Number(h.spans);
-  const levels = h.levels === undefined ? Math.round(Math.log2(size)) : Number(h.levels);
+  const levels = Math.round(Math.log2(size));
   const bounds = Array.isArray(h.bounds) && h.bounds.length === 4
     ? h.bounds.map((v) => Number(v) * unit)
     : null;
   const heightScale = Number(h.height_scale) * unit;
   const ok = Number.isInteger(h.texture_index) && size >= 8 && spans >= 1 && bounds
-    && (h.encoding ?? 1) === 2 && h.mapping === 'heightfield'
     && heightScale > 0 && bounds[1] > bounds[0] && bounds[3] > bounds[2];
   if (!ok) return null;
   return {
@@ -741,15 +744,18 @@ function horizonSpec(record, unit) {
   };
 }
 
-// A packed plane's UVs were remapped into its atlas rect by the DCC; the rect
-// is applied here per plane (and per instance, over one shared quad), so the
-// UVs come back to the unit square first. Idempotent, and the identity for an
-// unpacked plane. A degenerate range is left alone.
+// The rect a plane's UVs address -- [scale_u, scale_v, offset_u, offset_v] in
+// its texture's own (glTF top-left) space -- with the UVs brought back to the
+// unit square. A packed plane's UVs were remapped into its atlas tile by the
+// DCC, so their bounds ARE that tile; it is applied per plane (and per
+// instance, over one shared quad). The identity for an unpacked plane, and for
+// a degenerate range, which is left alone. Idempotent: a quad several planes
+// share answers each with the rect it was measured at.
 function normaliseUv(geometry) {
-  if (geometry.userData.shadowRigUv) return;
-  geometry.userData.shadowRigUv = true;
+  if (geometry.userData.shadowRigUv) return geometry.userData.shadowRigUv.slice();
+  geometry.userData.shadowRigUv = RECT_IDENTITY.slice();
   const uv = geometry.getAttribute('uv');
-  if (!uv) return;
+  if (!uv) return RECT_IDENTITY.slice();
   let minU = Infinity;
   let minV = Infinity;
   let maxU = -Infinity;
@@ -764,13 +770,15 @@ function normaliseUv(geometry) {
   }
   const du = maxU - minU;
   const dv = maxV - minV;
-  if (du < 1e-6 || dv < 1e-6) return;
+  if (du < 1e-6 || dv < 1e-6) return RECT_IDENTITY.slice();
   const unit = Math.abs(minU) < 1e-5 && Math.abs(minV) < 1e-5 && Math.abs(du - 1) < 1e-5 && Math.abs(dv - 1) < 1e-5;
-  if (unit) return;
+  if (unit) return RECT_IDENTITY.slice();
   for (let i = 0; i < uv.count; i += 1) {
     uv.setXY(i, (uv.getX(i) - minU) / du, (uv.getY(i) - minV) / dv);
   }
   uv.needsUpdate = true;
+  geometry.userData.shadowRigUv = [du, dv, minU, minV];
+  return geometry.userData.shadowRigUv.slice();
 }
 
 // The quad's own size, which the DCC expression divides by (basePlaneSize):
@@ -1105,10 +1113,10 @@ function keepDepthOff() {
 // The colour map a plane samples, onto that material's uMap. Taken off the
 // material when it already carries exactly this texture (no second decode),
 // otherwise fetched through the parser -- which is the normal case on a real
-// export, where the manifest's atlas is in the file but no material points at
-// it. A fetched texture is given the colour space the loader would have given
-// it in a base-colour slot; getDependency hands back the loader's own cached
-// instance, so a material already using it sees no change.
+// export, where the atlas the block names is in the file but no material
+// points at it. A fetched texture is given the colour space the loader would
+// have given it in a base-colour slot; getDependency hands back the loader's
+// own cached instance, so a material already using it sees no change.
 function attachMap(THREE, session, parser, plane, material) {
   if (plane.useOwnMap) {
     material.uniforms.uMap.value = plane.original.map;
@@ -1122,8 +1130,9 @@ function attachMap(THREE, session, parser, plane, material) {
   }));
 }
 
-// `resolve`: glTF node index -> Object3D (`viewer.nodeResolver`).
-function build(THREE, renderer, model, gltf, environment, resolve) {
+// `resolve`: glTF node index -> Object3D (`viewer.nodeResolver`); `nameOf`:
+// glTF node index -> its name as the file spells it (`viewer.nodeName`).
+function build(THREE, renderer, model, gltf, environment, resolve, nameOf) {
   const parser = gltf.parser;
   const manifest = readManifest(parser);
   if (!manifest || !Array.isArray(manifest.planes) || !manifest.planes.length) return null;
@@ -1147,36 +1156,42 @@ function build(THREE, renderer, model, gltf, environment, resolve) {
   };
 
   for (const record of manifest.planes) {
+    // The block binds a plane by its node's index alone: its name is the
+    // node's, as the file spells it.
+    const name = nameOf(record.node);
     const node = resolve(record.node);
     const mesh = node && (node.isMesh ? node : node.children.find((child) => child.isMesh));
     if (!mesh || Array.isArray(mesh.material) || !mesh.geometry) {
-      console.warn(`shadow_rig: plane ${record.name} (node ${record.node}) has no mesh to drive`);
+      console.warn(`shadow_rig: plane ${name} (node ${record.node}) has no mesh to drive`);
       continue;
     }
     const mode = record.type === 'horizon' ? 1 : 0;
     const horizon = mode === 1 ? horizonSpec(record, unit) : null;
     if (mode === 1 && !horizon) {
-      console.warn(`shadow_rig: plane ${record.name}: horizon record not readable by this viewer`);
+      console.warn(`shadow_rig: plane ${name}: horizon record not readable by this viewer`);
       continue;
     }
     const mapIndex = Number.isInteger(record.texture_index) ? record.texture_index : null;
     if (mode === 0 && mapIndex === null) {
-      console.warn(`shadow_rig: plane ${record.name} has no colour map`);
+      console.warn(`shadow_rig: plane ${name} has no colour map`);
       continue;
     }
     const original = mesh.material;
-    const ownIndex = materialDefs[record.material]?.pbrMetallicRoughness?.baseColorTexture?.index;
-    const atlasIndex = record.atlas?.texture_index;
+    // The material the mesh WEARS, through the loader's own association --
+    // the index the page's fade shim binds by, a material the fade pass
+    // isolated onto a clone included.
+    const materialIndex = parser.associations.get(original)?.materials;
+    const ownIndex = materialDefs[materialIndex]?.pbrMetallicRoughness?.baseColorTexture?.index;
     const source = resolve(record.source_node);
     const contact = resolve(record.contact_node);
-    // The material the mesh WEARS, through the loader's own association --
-    // the index the page's fade shim binds by -- falling back to the
-    // manifest's: the shadow pass runs before the fade pass, which may
-    // isolate a shared material onto a clone.
-    const materialIndex = parser.associations.get(original)?.materials ?? record.material;
     const isFaded = faded.has(materialIndex);
+    // The quad's UVs, to the unit square: a projected plane's rect is their
+    // bounds -- its tile, once packed -- and a horizon plane's cache marches
+    // over them.
+    const rect = normaliseUv(mesh.geometry);
     const plane = {
       record,
+      name,
       node,
       mesh,
       original,
@@ -1189,11 +1204,7 @@ function build(THREE, renderer, model, gltf, environment, resolve) {
       // Once: a fade track, or a static alpha below 1, already states the
       // opacity the DCC multiplied it into (see the header).
       intensity: isFaded || original.opacity < 1 ? 1 : finite(record.intensity, 1),
-      // The rect applies only when the colour map IS the atlas; a silhouette
-      // bound on its own is the whole tile.
-      rect: mode === 0 && Number.isInteger(atlasIndex) && atlasIndex === mapIndex
-        ? flatRect(record.atlas.rect)
-        : RECT_IDENTITY.slice(),
+      rect: mode === 0 ? rect : RECT_IDENTITY.slice(),
       mapIndex,
       useOwnMap: mode === 0 && ownIndex === mapIndex && !!original.map,
       faded: isFaded,
@@ -1213,7 +1224,6 @@ function build(THREE, renderer, model, gltf, environment, resolve) {
       instance: -1,
       lastOpacity: NaN,
     };
-    normaliseUv(mesh.geometry);
     session.planes.push(plane);
   }
   if (!session.planes.length) return null;
@@ -1551,7 +1561,9 @@ export default function shadowRig(viewer) {
     teardown(session);
     session = null;
     try {
-      session = build(THREE, viewer.renderer, model, gltf, viewer.scene.environment, viewer.nodeResolver(gltf, model));
+      session = build(
+        THREE, viewer.renderer, model, gltf, viewer.scene.environment,
+        viewer.nodeResolver(gltf, model), (index) => viewer.nodeName(gltf, index));
     } catch (error) {
       console.warn('shadow_rig: could not read the shadow manifest', error);
     }

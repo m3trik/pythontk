@@ -12,11 +12,13 @@ this one as a private mixin, and the facade is composed from them:
 - ``_lightmaps``   -- a host DCC's committed bake, bound for the web viewer
 - ``_highlights``  -- the bake's lights drawn into copies of its reflection
   probe, for the GLB and its FBX twin
-- ``_shadow_rigs`` -- shadow-plane maps and the ``shadow_web`` manifest
-- ``_articulation`` -- articulated rigs, the ``articulation_web`` manifest
-- ``_animation``   -- shot clips, the ``animation_web`` manifest, key compaction
+- ``_shadow_rigs`` -- shadow-plane maps and the ``shadows`` manifest
+- ``_articulation`` -- articulated rigs, the ``articulation`` manifest
+- ``_animation``   -- shot clips, the ``animation`` manifest, key compaction
 - ``_visibility``  -- keyed visibility, authored fades/highlights, previews
 - ``_materials``   -- material checks and the per-channel writers
+- ``_fbx_materials`` -- the ``materials`` record an FBX carries (or its own
+  materials, read into the record's families) applied to a GLB
 - ``_textures``    -- the web-delivery texture pass and its policy
 - ``_images``      -- image embedding, de-duplication and pruning
 - ``_gltf2fbx``    -- the reverse direction with no DCC: glTF -> FBX and its
@@ -36,6 +38,7 @@ from typing import Any, Dict, Iterable, Optional, Sequence
 from pythontk.core_utils.help_mixin import HelpMixin
 from pythontk.file_utils.mesh_convert._animation import _AnimationMixin
 from pythontk.file_utils.mesh_convert._articulation import _ArticulationMixin
+from pythontk.file_utils.mesh_convert._fbx_materials import _FbxMaterialsMixin
 from pythontk.file_utils.mesh_convert._fbx2gltf import (  # noqa: F401
     FBX2GLTF_PLATFORMS,  # published extapps <= 0.2.2 imports these from HERE;
     FBX2GLTF_VERSION,  # drop once its pythontk floor passes this release
@@ -63,6 +66,7 @@ class MeshConvert(
     _ArticulationMixin,
     _AnimationMixin,
     _VisibilityMixin,
+    _FbxMaterialsMixin,
     _MaterialsMixin,
     _TexturesMixin,
     _ImagesMixin,
@@ -150,7 +154,14 @@ class MeshConvert(
         3. :meth:`FbxMedia.drop_host_lighting_media` -- the host's own
            environment maps leave the file;
         4. :meth:`FbxMedia.embed_dependencies` -- every file the records name
-           (*search_dirs*, *walk_root*, *files*), the copies among them.
+           (*search_dirs*, *walk_root*, *files*), the copies among them;
+        5. :meth:`FbxMedia.drop_redundant_properties` -- each baked object's
+           ``lightmapInfo`` marker, which its ``lightmaps`` entry
+           states whole, and the carrier's empty channels: the file states
+           each thing once;
+        6. :meth:`_finish_fbx_handoff` -- the handoff stated again from the
+           records as the passes left them (the copies change what the
+           lightmaps row says).
 
         Each is guarded: a failure is warned and the next still runs, on the
         file as it stands. A file that is not a binary FBX is left alone.
@@ -165,8 +176,9 @@ class MeshConvert(
             logger: Where the outcome is said; this module's otherwise.
 
         Returns:
-            ``{"instances", "host_lighting", "highlights", "dependencies"}``
-            -- each pass's report (``highlights`` the copies' names), ``None``
+            ``{"instances", "host_lighting", "highlights", "dependencies",
+            "redundant", "handoff"}`` -- each pass's report (``highlights``
+            the copies' names, ``handoff`` whether it changed), ``None``
             for a pass that failed; ``{}`` for a file that is not a binary FBX.
         """
         from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
@@ -198,6 +210,13 @@ class MeshConvert(
                     logger=log,
                 ),
             ),
+            (
+                "redundant",
+                lambda: FbxMedia.drop_redundant_properties(
+                    fbx, markers=(cls.LIGHTMAP_INFO_KEY,)
+                ),
+            ),
+            ("handoff", lambda: cls._finish_fbx_handoff(fbx)),
         )
         report: Dict[str, Any] = {}
         for name, run in passes:

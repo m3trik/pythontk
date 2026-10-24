@@ -778,7 +778,7 @@ class TestMemoDuration(BaseTestCase):
 
 
 class TestScopeEvents(BaseTestCase):
-    """``scope_events``: the ``audio_manifest`` events, each in the take that
+    """``scope_events``: the ``audio`` record's events, each in the take that
     plays it -- the one rule both DCCs' audio producers ship by."""
 
     TAKES = [
@@ -818,6 +818,21 @@ class TestScopeEvents(BaseTestCase):
         scoped, dropped = AudioUtils.scope_events([(10, "steps")], [], origin=4)
         self.assertEqual(scoped, [{"clip": "", "frame": 6, "name": "steps"}])
         self.assertEqual(dropped, [])
+
+    def test_an_unscoped_event_before_the_origin_is_dropped_and_named(self):
+        # Before the clip's first frame it can never fire: shipped, it was a
+        # negative frame Unity's importer skips without a word.
+        scoped, dropped = AudioUtils.scope_events(
+            [(2, "early"), (4, "first"), (9, "steps")], [], origin=4
+        )
+        self.assertEqual(
+            scoped,
+            [
+                {"clip": "", "frame": 0, "name": "first"},
+                {"clip": "", "frame": 5, "name": "steps"},
+            ],
+        )
+        self.assertEqual(dropped, ["early@2"])
 
     def test_a_take_missing_its_name_or_range_scopes_nothing(self):
         broken = [{"name": "NoEnd", "start": 1}, {"start": 1, "end": 50}]

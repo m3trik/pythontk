@@ -19,6 +19,9 @@ import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from pythontk.core_utils.engines.scene_export.scene_records import (  # noqa: E402
+    SceneRecords,
+)
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile  # noqa: E402
 from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia  # noqa: E402
 from pythontk.file_utils.temp_artifacts import TempArtifacts  # noqa: E402
@@ -195,17 +198,24 @@ SDK_IDS = (
 )
 
 
-def build_stingray_fbx(path: str, maps, records=None) -> str:
+def build_stingray_fbx(
+    path: str, maps, records=None, props=None, shading=None, name="orm"
+) -> str:
     """A quad with a Stingray PBS material the FBX SDK -- so FBX2glTF -- binds.
 
-    *maps* ``{"color" | "roughness" | "metallic": (file name, image bytes)}``
-    embeds each image and wires it to ``Maya|TEX_<slot>_map``, as Maya writes
-    a ``GameShader`` network; a key naming a whole slot (``"TEX_brdf_lut"``)
-    is wired to ``Maya|<slot>``. *records* ``{record key: payload}`` ride a
-    ``data_export`` carrier. Beyond what :func:`build_fbx` writes, the SDK
-    needs the :data:`SDK_IDS` header, a ``Definitions`` count per object type
-    and the ``Texture`` / ``Video`` records' own properties: without those it
-    finds the images and binds none ("could not find a image file for texture").
+    *maps* ``{"color" | "roughness" | "metallic" | "emissive" | "ao" |
+    "normal": (file name, image bytes)}`` embeds each image and wires it to
+    ``Maya|TEX_<slot>_map`` with its ``use_<slot>_map`` on, as Maya writes a
+    ``GameShader`` network; a key naming a whole slot (``"TEX_brdf_lut"``,
+    ``"opacity"``) is wired to ``Maya|<slot>``. *records* ``{record key:
+    payload}`` ride a ``data_export`` carrier. *props* ``{property: value}``
+    adds or replaces the material's ``Maya|<property>`` rows (a tuple is a
+    vector, a float a scalar); *shading* replaces the whole row list with
+    ``[(property, type, values...)]`` -- a legacy model's -- and *name* is the
+    material's. Beyond what :func:`build_fbx` writes, the SDK needs the
+    :data:`SDK_IDS` header, a ``Definitions`` count per object type and the
+    ``Texture`` / ``Video`` records' own properties: without those it finds
+    the images and binds none ("could not find a image file for texture").
     """
 
     def p(*values):
@@ -283,7 +293,9 @@ def build_stingray_fbx(path: str, maps, records=None) -> str:
         p(b"Maya", b"Compound", b"", b""),
         p(b"Maya|TypeId", b"int", b"Integer", b"", I32(1166017)),  # Stingray PBS
     ]
-    for slot in ("color", "metallic", "roughness"):
+    slots = ["color", "metallic", "roughness"]
+    slots += [s for s in maps if s not in slots and not s.startswith("TEX_") and s != "opacity"]
+    for slot in slots:
         use = F32(1.0 if slot in maps else 0.0)
         shader.append(p(f"Maya|use_{slot}_map".encode(), b"float", b"", b"", use))
         shader.append(
@@ -297,15 +309,29 @@ def build_stingray_fbx(path: str, maps, records=None) -> str:
                 0.0,
             )
         )
-    shader.append(p(b"Maya|metallic", b"float", b"", b"", F32(0.0)))
-    shader.append(p(b"Maya|roughness", b"float", b"", b"", F32(0.33)))
+    stated = {"metallic": 0.0, "roughness": 0.33, **(props or {})}
+    for key, value in stated.items():
+        label = f"Maya|{key}".encode()
+        shader = [row for row in shader if row[1][0] != label]
+        if isinstance(value, (tuple, list)):
+            shader.append(p(label, b"Vector3D", b"Vector", b"", *[float(v) for v in value]))
+        else:
+            shader.append(p(label, b"float", b"", b"", F32(float(value))))
+    model_name = b"unknown"
+    if shading is not None:
+        model_name, rows = shading
+        shader = [
+            p(key.encode(), kind.encode(), b"", b"A", *[float(v) for v in values])
+            for key, kind, *values in rows
+        ]
+        model_name = model_name.encode()
     objects.append(
         (
             "Material",
-            [material, b"orm\x00\x01Material", b""],
+            [material, name.encode() + b"\x00\x01Material", b""],
             [
                 ("Version", [I32(102)], []),
-                ("ShadingModel", [b"unknown"], []),
+                ("ShadingModel", [model_name], []),
                 ("MultiLayer", [I32(0)], []),
                 ("Properties70", [], shader),
             ],
@@ -361,7 +387,12 @@ def build_stingray_fbx(path: str, maps, records=None) -> str:
                 ],
             )
         )
-        prop = f"Maya|{slot}" if slot.startswith("TEX_") else f"Maya|TEX_{slot}_map"
+        if shading is not None:
+            prop = slot  # a legacy model's own slot name (DiffuseColor ...)
+        elif slot.startswith("TEX_") or slot == "opacity":
+            prop = f"Maya|{slot}"
+        else:
+            prop = f"Maya|TEX_{slot}_map"
         connections += [
             ("C", [b"OP", texture, material, prop.encode()], []),
             ("C", [b"OO", video, texture], []),
@@ -468,9 +499,9 @@ def build_animated_fbx(path: str, takes, declared=None, media=None, channels=Non
     and a curve. One extra curve node + curve is SHARED between the first two
     takes' layers, so a drop must keep it while either owner survives. The
     ``Definitions`` counts match the objects. *declared* take names are
-    published the way the exporters do -- a ``data_export`` model's
-    ``fbx_takes`` user property -- and *channels* ``{record key: payload}``
-    ride the same carrier.
+    published the way the exporters do -- each a clip of the ``animation``
+    record on a ``data_export`` model, with its range -- and *channels*
+    ``{record key: payload}`` ride the same carrier.
     """
     objects = [("Model", [1001, b"cube0\x00\x01Model", b"Mesh"], [])]
     connections = []
@@ -499,7 +530,10 @@ def build_animated_fbx(path: str, takes, declared=None, media=None, channels=Non
     ]
     held = dict(channels or {})
     if declared is not None:
-        held["fbx_takes"] = [{"name": n, "start": 0, "end": 10} for n in declared]
+        held[SceneRecords.SHOTS.key] = {
+            "version": SceneRecords.SHOTS.version,
+            "shots": [{"clip": n, "start": 0, "end": 10} for n in declared],
+        }
     if held:
         props = [
             ("P", [k.encode(), b"KString", b"", b"U", json.dumps(v).encode()], [])
@@ -953,17 +987,20 @@ class DropTakesTestCase(unittest.TestCase):
             self.assertNotIn(kind, census)
         self.assertEqual((census["Model"], census["Video"], census["Texture"]), (2, 1, 1))
         self.assertEqual([c for c in fbx.section("Takes")["children"] if c["name"] == "Take"], [])
-        self.assertEqual(fbx.user_properties("fbx_takes"), FbxFile.load(self.src).user_properties("fbx_takes"))
+        shots = SceneRecords.SHOTS.key
+        self.assertEqual(
+            fbx.user_properties(shots), FbxFile.load(self.src).user_properties(shots)
+        )
         self.assertEqual(FbxMedia.embedded(out), FbxMedia.embedded(self.src))
         again = os.path.join(self.dir, "static_again.fbx")
         self.assertEqual(FbxMedia.drop_takes(out, again)["takes"], [])
         self.assertFalse(os.path.exists(again))
 
     def test_user_properties_read_the_declared_channel(self):
-        values = FbxFile.load(self.src).user_properties("fbx_takes")
+        values = FbxFile.load(self.src).user_properties(SceneRecords.SHOTS.key)
         self.assertEqual(len(values), 1)
         self.assertEqual(
-            [e["name"] for e in json.loads(values[0])], ["Shot_A", "Shot_B"]
+            [s["clip"] for s in json.loads(values[0])["shots"]], ["Shot_A", "Shot_B"]
         )
         self.assertEqual(FbxFile.load(self.src).user_properties("absent"), [])
 
@@ -1532,7 +1569,7 @@ def build_rigged_fbx(path: str, curve_pose: bool = False) -> str:
     for oid, name, kind, parent in RIG_MODELS:
         props = []
         if name == "data_export":
-            props.append(p(b"shot_metadata", b"KString", b"", b"U", b"{}"))
+            props.append(p(b"animation", b"KString", b"", b"U", b"{}"))
         objects.append(
             (
                 "Model",
@@ -1918,7 +1955,7 @@ class EmbedTestCase(unittest.TestCase):
         self.silhouette = png_bytes((16, 16), "RGBA")
         self.src = build_carrier_fbx(
             os.path.join(self.dir, "deliverable.fbx"),
-            {"lightmap_metadata": self.LIGHTMAPS, "shadow_metadata": self.SHADOWS},
+            {"lightmaps": self.LIGHTMAPS, "shadows": self.SHADOWS},
             media={"Box_shadow.png": self.silhouette},
         )
 
@@ -1964,11 +2001,11 @@ class EmbedTestCase(unittest.TestCase):
         must not stop the rest being read."""
         legacy = {"objects": [{"name": "A", "map": "C:/bake/Old.exr"}, {"name": "B"}]}
         path = build_carrier_fbx(
-            os.path.join(self.dir, "two.fbx"), {"lightmap_metadata": self.LIGHTMAPS}
+            os.path.join(self.dir, "two.fbx"), {"lightmaps": self.LIGHTMAPS}
         )
         other = build_carrier_fbx(
             os.path.join(self.dir, "legacy.fbx"),
-            {"lightmap_metadata": legacy, "shadow_metadata": "not json {"},
+            {"lightmaps": legacy, "shadows": "not json {"},
         )
         self.assertEqual(
             FbxMedia.dependencies(path),
@@ -1989,8 +2026,8 @@ class EmbedTestCase(unittest.TestCase):
         }
         path = build_carrier_fbx(
             os.path.join(self.dir, "stray.fbx"),
-            {"lightmap_metadata": self.LIGHTMAPS},
-            others={"data_export1": {"lightmap_metadata": stale}},
+            {"lightmaps": self.LIGHTMAPS},
+            others={"data_export1": {"lightmaps": stale}},
         )
         self.assertEqual(
             FbxMedia.dependencies(path),
@@ -2017,10 +2054,10 @@ class EmbedTestCase(unittest.TestCase):
         (BACKLOG 2026-10-09). Added: 2026-10-17"""
         path = build_carrier_fbx(
             os.path.join(self.dir, "assembly.fbx"),
-            {"lightmap_metadata": self.LIGHTMAPS},
+            {"lightmaps": self.LIGHTMAPS},
             others={
                 "MOD:ModA": {},
-                "MOD:data_export": {"lightmap_metadata": self.MODULE_LIGHTMAPS},
+                "MOD:data_export": {"lightmaps": self.MODULE_LIGHTMAPS},
             },
         )
         self.assertEqual(
@@ -2041,7 +2078,7 @@ class EmbedTestCase(unittest.TestCase):
             {},
             others={
                 "MOD:ModA": {},
-                "MOD:data_export": {"lightmap_metadata": self.MODULE_LIGHTMAPS},
+                "MOD:data_export": {"lightmaps": self.MODULE_LIGHTMAPS},
             },
         )
         self.assertEqual(
@@ -2056,17 +2093,15 @@ class EmbedTestCase(unittest.TestCase):
             {},
             others={
                 "MOD:data_export": {
-                    "lightmap_metadata": self.MODULE_LIGHTMAPS,
-                    "shadow_metadata": shadows,
+                    "lightmaps": self.MODULE_LIGHTMAPS,
+                    "shadows": shadows,
                 }
             },
         )
         self.assertEqual(FbxMedia.dependencies(left_out), [])
         # The scene's own record is the export's to scope (its producer does):
         # read as written, a node the fixture lacks included.
-        own = build_carrier_fbx(
-            os.path.join(self.dir, "own.fbx"), {"shadow_metadata": shadows}
-        )
+        own = build_carrier_fbx(os.path.join(self.dir, "own.fbx"), {"shadows": shadows})
         self.assertEqual(FbxMedia.dependencies(own), ["ModB_shadow.png"])
 
     def test_embed_adds_each_file_as_media_named_by_its_file_name(self):
@@ -2320,9 +2355,7 @@ class EmbedTestCase(unittest.TestCase):
                 {"clip": "", "frame": 0, "name": " "},
             ],
         }
-        path = build_carrier_fbx(
-            os.path.join(self.dir, "audio.fbx"), {"audio_manifest": audio}
-        )
+        path = build_carrier_fbx(os.path.join(self.dir, "audio.fbx"), {"audio": audio})
         self.assertEqual(FbxMedia.audio_events(path), ["footstep", "punch"])
         self.assertEqual(FbxMedia.audio_events(self.src), [])
 
@@ -2338,16 +2371,16 @@ class EmbedTestCase(unittest.TestCase):
         stray = {"version": 2, "events": [{"clip": "", "frame": 3, "name": "door"}]}
         assembly = build_carrier_fbx(
             os.path.join(self.dir, "assembly.fbx"),
-            {"audio_manifest": own},
-            others={"data_export1": {"audio_manifest": stray}},
+            {"audio": own},
+            others={"data_export1": {"audio": stray}},
         )
         self.assertEqual(FbxMedia.audio_events(assembly), ["footstep"])
         modules = build_carrier_fbx(
             os.path.join(self.dir, "modules.fbx"),
             {},
             others={
-                "Door:data_export": {"audio_manifest": stray},
-                "Lift:data_export": {"audio_manifest": own},
+                "Door:data_export": {"audio": stray},
+                "Lift:data_export": {"audio": own},
             },
         )
         self.assertEqual(
@@ -2418,8 +2451,8 @@ class EmbedTestCase(unittest.TestCase):
         self.assertEqual(
             FbxMedia.named_files(
                 {
-                    "shadow_metadata": [self.SHADOWS],
-                    "lightmap_metadata": [self.LIGHTMAPS, {"objects": "not a list"}],
+                    "shadows": [self.SHADOWS],
+                    "lightmaps": [self.LIGHTMAPS, {"objects": "not a list"}],
                     "unrelated": [{"map": "ignored.exr"}],
                 }
             ),
@@ -2518,16 +2551,45 @@ class RecordTestCase(unittest.TestCase):
     def _fbx(self, own=True, module=True, name="deliverable.fbx"):
         return build_carrier_fbx(
             os.path.join(self.dir, name),
-            {"lightmap_metadata": self.OWN, "shadow_metadata": {"planes": []}} if own else {},
-            others={"MOD:data_export": {"lightmap_metadata": self.MODULE}} if module else None,
+            {"lightmaps": self.OWN, "shadows": {"planes": []}} if own else {},
+            others={"MOD:data_export": {"lightmaps": self.MODULE}} if module else None,
         )
 
     def test_the_scenes_own_record_is_read_over_a_modules(self):
-        self.assertEqual(FbxMedia.record(self._fbx(), "lightmap_metadata"), self.OWN)
+        self.assertEqual(FbxMedia.record(self._fbx(), "lightmaps"), self.OWN)
         self.assertEqual(
-            FbxMedia.record(self._fbx(own=False), "lightmap_metadata"), self.MODULE
+            FbxMedia.record(self._fbx(own=False), "lightmaps"), self.MODULE
         )
-        self.assertIsNone(FbxMedia.record(self._fbx(module=False), "audio_manifest"))
+        self.assertIsNone(FbxMedia.record(self._fbx(module=False), "audio"))
+
+    def test_records_reads_every_applied_record_in_one_read(self):
+        """Every record a reader applies -- the scene's own copy over a
+        module's -- what ``record`` gives one key at a time, in one parse of
+        the file. Added: 2026-10-20"""
+        self.assertEqual(
+            FbxMedia.records(self._fbx()),
+            {"lightmaps": self.OWN, "shadows": {"planes": []}},
+        )
+        self.assertEqual(
+            FbxMedia.records(self._fbx(own=False)), {"lightmaps": self.MODULE}
+        )
+        self.assertEqual(FbxMedia.records(self._fbx(), keys=["audio"]), {})
+
+    def test_a_modules_handoff_is_never_the_files(self):
+        """A ``handoff`` on a module's carrier describes that module, not the
+        file (the FBX handoff's own rule): a file whose own carrier holds none
+        has none, where every other record falls back to a module's copy.
+        Added: 2026-10-20"""
+        src = build_carrier_fbx(
+            os.path.join(self.dir, "assembly.fbx"),
+            {"shadows": {"planes": []}},
+            others={"MOD:data_export": {"handoff": {"version": 3}, "lightmaps": self.MODULE}},
+        )
+        self.assertIsNone(FbxMedia.record(src, "handoff"))
+        self.assertEqual(
+            FbxMedia.records(src),
+            {"shadows": {"planes": []}, "lightmaps": self.MODULE},
+        )
 
     def test_set_record_replaces_the_applied_copy_and_embeds_in_one_write(self):
         src = self._fbx()
@@ -2536,19 +2598,19 @@ class RecordTestCase(unittest.TestCase):
             fh.write(b"#?RADIANCE\nhighlight bytes")
         payload = dict(self.OWN, probe={"map": "Room_Probe.exr", "highlights": [
             {"map": "Room_Probe_Highlight1.hdr", "objects": [{"name": "Crate"}]}]})
-        report = FbxMedia.set_record(src, "lightmap_metadata", payload, files=[hdr])
+        report = FbxMedia.set_record(src, "lightmaps", payload, files=[hdr])
         self.assertTrue(report["replaced"])
         self.assertEqual(report["embedded"], ["Room_Probe_Highlight1.hdr"])
-        self.assertEqual(FbxMedia.record(src, "lightmap_metadata"), payload)
+        self.assertEqual(FbxMedia.record(src, "lightmaps"), payload)
         loaded = FbxFile.load(src)
         # The other channels and the module's copy are as they were.
         carried = dict(
             (owner, json.loads(value))
-            for owner, value in loaded.user_properties("lightmap_metadata", named=True)
+            for owner, value in loaded.user_properties("lightmaps", named=True)
         )
         self.assertEqual(carried["MOD:data_export"], self.MODULE)
         self.assertEqual(
-            [json.loads(v) for v in loaded.user_properties("shadow_metadata")],
+            [json.loads(v) for v in loaded.user_properties("shadows")],
             [{"planes": []}],
         )
         # The copy the record now names rides in the file.
@@ -2561,10 +2623,109 @@ class RecordTestCase(unittest.TestCase):
         src = self._fbx(own=False, module=False)
         with open(src, "rb") as fh:
             before = fh.read()
-        report = FbxMedia.set_record(src, "lightmap_metadata", self.OWN)
+        report = FbxMedia.set_record(src, "lightmaps", self.OWN)
         self.assertFalse(report["replaced"])
         with open(src, "rb") as fh:
             self.assertEqual(fh.read(), before)
+
+
+class ExtractTestCase(unittest.TestCase):
+    """``extract``: named media out of the file, byte for byte."""
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_extract", policy="scoped")
+        self.addCleanup(self.temp.cleanup)
+        self.dir = self.temp.dir_path()
+
+    def test_each_named_file_the_fbx_embeds_is_written_under_the_asked_spelling(self):
+        from PIL import Image
+
+        color = encoded(Image.new("RGB", (8, 8), (200, 10, 10)))
+        rough = encoded(Image.new("L", (8, 8), 77))
+        src = build_stingray_fbx(
+            os.path.join(self.dir, "maps.fbx"),
+            {"color": ("Crate_BaseColor.png", color), "roughness": ("Crate_Roughness.png", rough)},
+        )
+        out = os.path.join(self.dir, "out")
+        os.makedirs(out)
+        written = FbxMedia.extract(src, out, ["crate_basecolor.png", "Missing.png"])
+        self.assertEqual(list(written), ["crate_basecolor.png"])
+        with open(written["crate_basecolor.png"], "rb") as fh:
+            self.assertEqual(fh.read(), color)
+
+
+class FbxFileMaterialsTestCase(unittest.TestCase):
+    """``FbxFile.materials``: each material's model, properties and files."""
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_materials", policy="scoped")
+        self.addCleanup(self.temp.cleanup)
+        self.dir = self.temp.dir_path()
+
+    def test_each_slot_names_the_file_its_texture_reads(self):
+        from PIL import Image
+
+        src = build_stingray_fbx(
+            os.path.join(self.dir, "mat.fbx"),
+            {
+                "color": ("Crate_BaseColor.png", encoded(Image.new("RGB", (4, 4), (9, 9, 9)))),
+                "emissive": ("Crate_Emissive.png", encoded(Image.new("RGB", (4, 4), (255, 0, 0)))),
+            },
+            props={"base_color": (0.5, 0.5, 0.5), "emissive_intensity": 0.75},
+        )
+        (material,) = FbxFile.load(src).materials()
+        self.assertEqual(material["name"], "orm")
+        self.assertEqual(material["shading_model"], "unknown")
+        self.assertEqual(
+            material["textures"],
+            {
+                "Maya|TEX_color_map": "Crate_BaseColor.png",
+                "Maya|TEX_emissive_map": "Crate_Emissive.png",
+            },
+        )
+        self.assertEqual(material["props"]["Maya|use_emissive_map"], 1.0)
+        self.assertAlmostEqual(material["props"]["Maya|emissive_intensity"], 0.75, places=6)
+        self.assertEqual(material["props"]["Maya|base_color"], (0.5, 0.5, 0.5))
+
+    def test_a_layered_texture_slot_reads_its_first_layer(self):
+        """A slot fed through a ``LayeredTexture`` names the first layer's file
+        -- the one FBX2glTF reads -- rather than nothing, which a reader would
+        take as "no map" and unbind."""
+
+        def p(*values):
+            return ("P", list(values), [])
+
+        def texture(uid, name):
+            return (
+                "Texture",
+                [uid, name.encode() + b"\x00\x01Texture", b""],
+                [("FileName", [b"C:/tex/" + name.encode() + b".png"], [])],
+            )
+
+        objects = [
+            (
+                "Material",
+                [3001, b"Layered\x00\x01Material", b""],
+                [
+                    ("ShadingModel", [b"phong"], []),
+                    ("Properties70", [], [p(b"DiffuseFactor", b"Number", b"", b"A", 1.0)]),
+                ],
+            ),
+            ("LayeredTexture", [3002, b"Layers\x00\x01LayeredTexture", b""], []),
+            texture(3003, "Top"),
+            texture(3004, "Under"),
+        ]
+        connections = [
+            ("C", [b"OO", 3003, 3002], []),
+            ("C", [b"OO", 3004, 3002], []),
+            ("C", [b"OP", 3002, 3001, b"DiffuseColor"], []),
+        ]
+        path = _write_fbx(
+            os.path.join(self.dir, "layered.fbx"),
+            [("Objects", [], objects), ("Connections", [], connections)],
+        )
+        (material,) = FbxFile.load(path).materials()
+        self.assertEqual(material["textures"], {"DiffuseColor": "Top.png"})
 
 
 def _definition_counts(path):
@@ -2698,7 +2859,7 @@ class DropHostLightingTestCase(unittest.TestCase):
                 "TEX_brdf_lut": ("ibl_brdf_lut.png", png_bytes((8, 8))),
                 "color": ("studio.png", b""),  # the SDK's later Video of a file
             },
-            records={"lightmap_metadata": {"version": 1, "probe": {"map": "Room_Probe.png"}}},
+            records={"lightmaps": {"version": 1, "probe": {"map": "Room_Probe.png"}}},
         )
         report = FbxMedia.drop_host_lighting_media(path)
         self.assertEqual(report["textures"], 3)

@@ -17,6 +17,7 @@ Zero-dep and DCC-agnostic, like everything in ``pythontk``.
 import contextlib
 import json
 import logging
+import os
 from typing import (
     Any,
     Callable,
@@ -43,8 +44,10 @@ logger = logging.getLogger(__name__)
 class SceneStoreBase:
     """The storage contract a DCC implements -- strings per scope, nothing more.
 
-    Subclass with the four primitives as classmethods (a store is a namespace
-    over the scene, like the DCC ``DataNodes`` classes) and ``name``.  The
+    Subclass with the primitives as classmethods (``read`` / ``write`` /
+    ``values``, and ``remove`` where a clear keeps the channel; a store is a
+    namespace over the scene, like the DCC ``DataNodes`` classes) and
+    ``name``.  The
     inspection surface (:meth:`dump` / :meth:`format_dump`) is inherited, so
     the "Scene Metadata" viewer and the sidecar snapshot read every mirror the
     same way.  Records never call anything else on a store.
@@ -69,6 +72,16 @@ class SceneStoreBase:
         return cls.NAMES[Scope(scope)]
 
     @classmethod
+    def is_carrier(cls, node_name: Any, scope: Scope = Scope.DELIVERABLE) -> bool:
+        """Whether a node named *node_name* is a carrier of *scope* in a
+        written file: the scene's own (:meth:`name`), a referenced module's
+        (``NS:data_export``), or a numbered copy an import made
+        (``data_export1``) -- a DAG path and a namespace aside."""
+        base = str(node_name or "").rsplit("|", 1)[-1].rsplit(":", 1)[-1]
+        own = cls.name(scope)
+        return base == own or (base.startswith(own) and base[len(own) :].isdigit())
+
+    @classmethod
     def read(cls, scope: Scope, key: str) -> Optional[str]:
         """The string channel *key* in *scope*, or ``None`` when the carrier,
         the channel or a value is absent (a cleared channel reads as ``None``;
@@ -80,6 +93,48 @@ class SceneStoreBase:
         """Store *text* on *key*; ``None`` clears without creating a carrier.
         Returns the carrier's name, or ``None`` when a clear had nothing to do."""
         raise NotImplementedError
+
+    @classmethod
+    def remove(cls, scope: Scope, key: str) -> bool:
+        """Delete channel *key* from *scope*'s carrier outright -- not cleared
+        to ``""`` but gone -- and say whether there was one. A store whose
+        clear already deletes inherits this; one that keeps an emptied channel
+        (an attribute set to ``""``) deletes it here."""
+        if cls.read(scope, key) is None:
+            return False
+        cls.write(scope, key, None)
+        return True
+
+    @classmethod
+    def migrate(cls) -> List[str]:
+        """Bring this scene's records to the current keys, once: a record a
+        scene stored under a key it has since been renamed from
+        (:attr:`RecordSpec.renamed_from`) is moved to its key -- a value
+        already under the key wins -- and a record retired whole
+        (:attr:`SceneRecords.RETIRED`) is removed. Run when a scene is opened
+        and before every export commit; a migrated scene has nothing to move.
+
+        Returns:
+            The retired keys this scene held, in the order handled.
+        """
+        found: List[str] = []
+        for spec in SceneRecords.all():
+            for old in spec.renamed_from:
+                text = cls.read(spec.scope, old)
+                if text is not None and cls.read(spec.scope, spec.key) is None:
+                    cls.write(spec.scope, spec.key, text)
+                # Removed whatever it held: a channel a clear emptied reads
+                # None, and a store that keeps one deletes it here.
+                if cls.remove(spec.scope, old):
+                    found.append(old)
+        for key in SceneRecords.RETIRED:
+            if cls.remove(Scope.DELIVERABLE, key):
+                found.append(key)
+        if found:
+            logger.info(
+                "Scene records moved to their current keys: %s.", ", ".join(found)
+            )
+        return found
 
     @classmethod
     def values(cls, scope: Scope) -> Dict[str, Any]:
@@ -96,6 +151,17 @@ class SceneStoreBase:
     def channels(cls, scope: Scope) -> Dict[str, str]:
         """The non-empty STRING channels of *scope* -- what a handoff describes."""
         return {k: v for k, v in cls.values(scope).items() if isinstance(v, str) and v}
+
+    @classmethod
+    def discard_if_empty(cls, scope: Scope) -> bool:
+        """Remove *scope*'s carrier when it holds nothing at all, and say
+        whether it did -- what an export leaves that made the carrier only for
+        a record it then cleared (a transient one: every export states its
+        materials), so the scene is left as the export found it. Only ever the
+        deliverable carrier: the private one is the scene's own bookkeeping.
+        A store whose carriers are not nodes of their own has nothing to
+        remove (the default)."""
+        return False
 
     @staticmethod
     def _decode(raw: str) -> Any:
@@ -213,7 +279,11 @@ class SceneStoreBase:
 
     @classmethod
     def respell_for_write(
-        cls, target: str, old_base: Optional[str], first_save: bool = False
+        cls,
+        target: str,
+        old_base: Optional[str],
+        first_save: bool = False,
+        saved_from: Optional[str] = None,
     ) -> Dict[Tuple[Scope, str], Optional[str]]:
         """Ready the path records for this scene written as *target* -- a
         save, a copy, an export into a scene file -- and return them as they
@@ -222,16 +292,23 @@ class SceneStoreBase:
         Re-spelled from *old_base*, the project they are spelled from now, to
         *target*'s (:meth:`rebase_paths`), so the written file resolves them
         from where IT lives; on the scene's *first_save* every ``""`` writer
-        stamp is given *target*'s (:meth:`SceneRecords.stamp_unsaved`).  What
-        both DCCs' save hooks call; a write that leaves the open scene where
-        it was -- a copy, an autosave, a failed save -- hands the returned
-        snapshot to :meth:`restore_path_records` afterwards.
+        stamp is given *target*'s (:meth:`SceneRecords.stamp_unsaved`); on a
+        save of the open scene (*saved_from*) every stamp naming a scene file
+        that is gone is given that scene's (:meth:`SceneRecords.adopt_gone_stamps`).
+        What both DCCs' save hooks call; a write that leaves the open scene
+        where it was -- a copy, an autosave, a failed save -- hands the
+        returned snapshot to :meth:`restore_path_records` afterwards.
 
         Parameters:
             target: The file being written.
             old_base: The project the records are spelled from now (``None``
                 while the scene was unsaved: its entries are absolute).
             first_save: Whether this write gives an unsaved scene its file.
+            saved_from: The open scene's file before this write (``""`` while
+                unsaved) when the write saves the open scene; ``None`` for a
+                copy, which adopts nothing. A gone writer's stamps go to it
+                while it is still on disk -- after a Save As it reads them as
+                its own, so the new file must name it -- else to *target*.
 
         Returns:
             The path records' stored text before the write
@@ -243,6 +320,18 @@ class SceneStoreBase:
             cls.rebase_paths(old_base, new_base)
         if first_save:
             SceneRecords.stamp_unsaved(cls, cls.writer_stamp_of(target))
+        if saved_from is not None:
+            from pythontk.file_utils._file_utils import FileUtils
+
+            base = new_base if new_base is not None else old_base
+            heir = target
+            if saved_from and os.path.isfile(saved_from):
+                heir = saved_from
+            stamp = cls.writer_stamp_of(heir)
+            heir_base = cls.project_root_of(heir)
+            if heir_base != base:
+                stamp = FileUtils.rebase_portable_path(stamp, heir_base, base)
+            SceneRecords.adopt_gone_stamps(cls, stamp, base)
         return snapshot
 
     @classmethod

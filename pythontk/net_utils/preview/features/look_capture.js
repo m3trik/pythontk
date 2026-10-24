@@ -80,7 +80,7 @@ export function status() {
  *   images?: Object<string, {width: number, height: number, b64: string}>,
  *   probe?: {width: number, height: number, b64: string, position: number[], box?: any} | null,
  *   emissive?: {pattern: string, intensity: number} | null,
- *   highlights?: {width: number, height: number, b64: string, materials: string[], receivers?: string}[] | null,
+ *   highlights?: {width: number, height: number, b64: string, materials: string[]}[] | null,
  * }} payload `highlights`: the bake's lights as the deliverable draws them into
  *   the probe's copies (`viewer.lighting.relight`); absent, none.
  * @returns {number} How many materials took a map.

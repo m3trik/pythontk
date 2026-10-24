@@ -1,5 +1,6 @@
 import { el } from './dom.js';
 import { plural } from './format.js';
+import { bakedMaterials } from './lightmaps.js';
 import { materialsOf, modelBounds } from './model.js';
 import { probeEnvironment, probeState } from './probe.js';
 
@@ -25,11 +26,14 @@ import { probeEnvironment, probeState } from './probe.js';
 //     and it is counted in objects -- the unit the bake is made in, and the one
 //     the DCC panel's push report (`PreviewBridge.lightmap_summary`) uses.
 //
-// Where the file says which objects were BAKED -- each carries its bake's
-// `lightmapInfo` marker in its node extras -- intent and outcome are compared,
-// and every disagreement is an issue: a baked object with no lightmap bound
-// renders unlit, an object with one it was never baked with renders someone
-// else's lighting, and both look like a plausible, merely-wrong room.
+// What the bake meant to light is held against what bound. A finished file
+// states its bake in its lightmaps block alone -- each object's `lightmapInfo`
+// marker leaves it on the way out -- so a baked file is one whose extras carry
+// that block, and an object of it was BAKED when it wears a material the block
+// names (the applier gives each baked object its own copy, `<name>~lm<N>`;
+// bindLightmaps collects them, `bakedMaterials`). A baked object with no
+// lightmap bound renders unlit, exactly like one never baked -- a plausible,
+// merely-wrong room -- so it is an issue, by name.
 export let specs = null;
 // The first frame after a load compiles its programs and uploads its textures;
 // the loop times it into `specs.load.firstFrameMs` (see the render loop).
@@ -61,15 +65,23 @@ function nameOf(object) {
   return object.userData?.name || object.name || '(unnamed)';
 }
 
-// Whether the file marks *object* as baked: the bake's per-object marker, in
-// either shape it rides (FBX2glTF nests user properties under `fromFBX`; a
-// native glTF export writes them at the top of the node's extras), read the way
-// MeshConvert._reconcile_node_markers reads them. A cleared marker is empty.
-function carriesBakeMarker(object) {
-  const data = object.userData || {};
-  const raw = data.fromFBX?.userProperties?.lightmapInfo ?? data.lightmapInfo;
-  const value = raw && typeof raw === 'object' && 'value' in raw ? raw.value : raw;
-  return typeof value === 'string' ? value.trim().length > 0 : Boolean(value);
+// Retired 2026-10-24 (removed in pythontk 0.18.0, which bumps API_VERSION):
+// `lightmaps.foreign`, the objects wearing a bake they were never in, read
+// each object's bake marker, which a finished GLB no longer carries -- so it
+// was always empty. Kept one window, warning once, as `kernel/api.js`
+// promises of a published member; not enumerable, so it reports nothing.
+let foreignWarned = false;
+function retireForeign(coverage) {
+  Object.defineProperty(coverage, 'foreign', {
+    enumerable: false,
+    get() {
+      if (!foreignWarned) {
+        foreignWarned = true;
+        console.warn('preview: viewer.specs.lightmaps.foreign is retired and removed in pythontk 0.18.0 -- a finished GLB marks no foreign bake, so it is always empty');
+      }
+      return [];
+    },
+  });
 }
 
 // Measure *gltf* as loaded. `load` carries what only the load path knows: the
@@ -98,22 +110,20 @@ export function measureModel(gltf, load, issues) {
     const owner = objectOf(node, associations);
     let entry = objects.get(owner);
     if (!entry) {
-      entry = { name: nameOf(owner), baked: carriesBakeMarker(owner), lit: false };
+      entry = { name: nameOf(owner), baked: false, lit: false };
       objects.set(owner, entry);
     }
-    // The primitive too: a marker on mesh DATA (a native glTF export's mesh
-    // extras) lands on each primitive's Mesh rather than on the node's Group.
-    if (node !== owner && carriesBakeMarker(node)) entry.baked = true;
     for (const material of materialsOf(node)) {
       instances.add(material);
       materials.add(associations?.get(material)?.materials ?? material);
+      if (bakedMaterials.has(material)) entry.baked = true;
       if (!material.lightMap) continue;
       entry.lit = true;
       lightmaps.add(material.lightMap.source ?? material.lightMap);
       // three.js samples a lightMap on the UV set its channel names -- `uv`
-      // for 0, `uvN` past it -- and applyLightmaps sets that channel from the
-      // manifest (`uv`, the second set unless it says otherwise). Without that
-      // attribute every fragment reads one texel -- flat, plausible, wrong.
+      // for 0, `uvN` past it -- which the loader set from the bound
+      // texture's own texCoord. Without that attribute every fragment reads
+      // one texel -- flat, plausible, wrong.
       bakeChannel = material.lightMap.channel;
       if (!geometry.attributes[bakeChannel ? `uv${bakeChannel}` : 'uv']) noBakeUv.add(entry.name);
     }
@@ -126,28 +136,21 @@ export function measureModel(gltf, load, issues) {
     ? {
       lit: lit.length,
       objects: all.length,
-      // null where the file marks nothing: intent unknown, so unclaimed.
+      // null where the file's block names no material the model wears.
       baked: baked.length || null,
       unlit: baked.filter((object) => !object.lit).map((object) => object.name),
-      foreign: baked.length ? lit.filter((object) => !object.baked).map((object) => object.name) : [],
       maps: lightmaps.size,
       // Whether the room the bake lit is on screen as the environment
       // (probe.js): the light on every unbaked object and every reflection.
       probe: Boolean(probeEnvironment()),
     }
     : null;
+  if (coverage) retireForeign(coverage);
   if (coverage?.unlit.length) {
     issues.push({
       level: 'warning',
       text: `${plural(coverage.unlit.length, 'baked object')} ${coverage.unlit.length === 1 ? 'renders' : 'render'} unlit — no lightmap bound`,
       names: coverage.unlit,
-    });
-  }
-  if (coverage?.foreign.length) {
-    issues.push({
-      level: 'warning',
-      text: `${plural(coverage.foreign.length, 'object')} ${coverage.foreign.length === 1 ? 'wears a lightmap it was' : 'wear a lightmap they were'} never baked with`,
-      names: coverage.foreign,
     });
   }
   if (noBakeUv.size) {

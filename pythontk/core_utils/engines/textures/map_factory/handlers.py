@@ -119,10 +119,12 @@ class ORMMapHandler(WorkflowHandler):
             if context.logger:
                 context.logger.warning("No AO map, using white for ORM red channel")
 
-        # AO is exempt from the rule below — its fill is neutral white. An
-        # absent roughness or metallic fills BLACK, which reads downstream as a
-        # mirror-smooth surface, so those only ship when the Missing Maps rule
-        # tolerates them.
+        # An absent channel stores its type's absent value
+        # (MapRegistry.absent_fills: AO white, roughness white, metallic
+        # black -- unoccluded, matte, dielectric). AO is exempt from the rule
+        # below: white IS an unbaked surface. A flat roughness or metallic is
+        # indistinguishable downstream from an authored one, so those only
+        # ship when the Missing Maps rule tolerates them.
         allow_incomplete = MapRegistry.allow_incomplete_pack(
             context.config, [ao, roughness, metallic]
         )
@@ -138,13 +140,13 @@ class ORMMapHandler(WorkflowHandler):
                 return None
             if context.logger:
                 context.logger.warning(
-                    f"No {name} map for ORM {channel} channel, using black "
-                    "(Missing Maps rule)"
+                    f"No {name} map for ORM {channel} channel, using its absent "
+                    "value (Missing Maps rule)"
                 )
 
         try:
-            # The packer owns the channel order and the neutral fills for
-            # absent inputs (R=255 white AO, G/B=0) — shared with the
+            # The packer owns the channel order and the fills for absent
+            # inputs (each channel's absent value) — shared with the
             # standalone pack/unpack pair the DCC bridges call. save=False
             # returns the PIL image so save_map keeps routing the write.
             orm_map = _factory().pack_orm_texture(ao, roughness, metallic, save=False)
@@ -208,8 +210,9 @@ class MRAOMapHandler(WorkflowHandler):
         if not any([metallic, roughness, ao]):
             return None
 
-        # As with ORM: AO fills white (neutral), metallic/roughness fill black,
-        # so only the latter two gate on the Missing Maps rule.
+        # As with ORM: an absent channel stores its absent value, and only
+        # metallic and roughness -- whose flat fill reads as authored -- gate
+        # on the Missing Maps rule.
         allow_incomplete = MapRegistry.allow_incomplete_pack(
             context.config, [metallic, roughness, ao]
         )
@@ -294,9 +297,9 @@ class MaskMapHandler(WorkflowHandler):
         ao = context.resolve_map("Ambient_Occlusion", allow_conversion=False)
 
         # Resolve the smoothness channel with inversion tracking. When nothing
-        # resolves, leave None — pack_msao_texture fills the alpha with neutral
-        # white; substituting another map's data (e.g. metallic) would bake
-        # wrong smoothness values into the Mask Map.
+        # resolves, leave None — pack_msao_texture fills the alpha with the
+        # absent smoothness (0, matte); substituting another map's data (e.g.
+        # metallic) would bake wrong smoothness values into the Mask Map.
         smoothness, invert = context.resolve_smoothness_channel()
 
         # Ensure we have at least one component
@@ -321,13 +324,13 @@ class MaskMapHandler(WorkflowHandler):
                 )
 
         # Counting resolved channels cannot express the rule above, because the
-        # count is 2 for all three pairs and only ONE of them is unsafe.
-        # Smoothness is the single channel here whose absent fill is not neutral:
-        # pack_msao_texture fills it WHITE, i.e. every surface mirror-smooth. An
-        # absent AO also fills white (unoccluded) and an absent metallic fills
-        # black (dielectric), so both stay exempt — the same shape as ORM/MRAO,
-        # which name their non-neutral channels instead of counting. Undetectable
-        # downstream: a flat smoothness channel is what a real mirror looks like.
+        # count is 2 for all three pairs and only ONE of them hides authoring.
+        # An absent smoothness fills matte (its absent value, 0) -- never a
+        # mirror -- but a flat smoothness reads downstream as an authored one,
+        # so it gates on the Missing Maps rule; an absent AO (white,
+        # unoccluded) and an absent metallic (black, dielectric) are what an
+        # unbaked, non-metal surface IS, so both stay exempt — the same shape
+        # as ORM/MRAO, which name their gated channels instead of counting.
         if not smoothness:
             if not allow_incomplete:
                 if context.logger:
@@ -339,7 +342,7 @@ class MaskMapHandler(WorkflowHandler):
             if context.logger:
                 context.logger.warning(
                     "No smoothness/roughness/glossiness map for the Mask Map "
-                    "smoothness channel, using white (Missing Maps rule)"
+                    "smoothness channel, using matte (Missing Maps rule)"
                 )
 
         if not metallic:

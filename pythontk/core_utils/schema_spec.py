@@ -28,7 +28,10 @@ glTF runtime binds).  There the field annotations ARE the contract, so such a
 spec sets :attr:`SchemaSpec.TYPED` and :meth:`validate` also checks every
 present value against its annotation; a template spec leaves it off, because
 its annotations describe the parsed object (a ``Tuple`` built from a list)
-rather than the file.
+rather than the file.  A key a producer leaves out when it has nothing to say
+is typed plainly and not ``required``; ``Optional[...]`` is for a key whose
+producer writes ``null`` (a root joint's parent), so a ``null`` nothing writes
+is refused.
 
 Design note — errors vs. warnings
     :meth:`validate` deliberately splits *errors* (unknown method, wrong
@@ -49,6 +52,7 @@ import enum
 import logging
 import types
 import typing
+import weakref
 from dataclasses import dataclass, field, fields
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Type
 
@@ -144,6 +148,11 @@ class ValidationResult:
         self.warnings.extend(f"{path}{w}" for w in other.warnings)
 
 
+#: Each spec class's resolved annotations (:meth:`_SchemaSpecInternal._hints`),
+#: weakly keyed so a class defined and dropped (a test's) is not kept alive.
+_HINTS: "weakref.WeakKeyDictionary[type, Dict[str, Any]]" = weakref.WeakKeyDictionary()
+
+
 class _SchemaSpecInternal(object):
     """Internal helpers for SchemaSpec."""
 
@@ -170,6 +179,20 @@ class _SchemaSpecInternal(object):
             text = str(value)
         text = text.replace("\n", " ")
         return text if len(text) <= limit else text[: limit - 1] + "…"
+
+    @staticmethod
+    def _specs_in(tp: Any) -> List[type]:
+        """The :class:`SchemaSpec` subclasses an annotation names, outermost
+        first -- through ``Optional``, ``List``, ``Dict`` values and the like
+        -- which the JSON Schema defines whether or not ``nested=`` says so."""
+        if isinstance(tp, type) and issubclass(tp, SchemaSpec):
+            return [tp]
+        found: List[type] = []
+        for arg in typing.get_args(tp):
+            for spec in _SchemaSpecInternal._specs_in(arg):
+                if spec not in found:
+                    found.append(spec)
+        return found
 
     @staticmethod
     def _nested_of(m: dict) -> "tuple[Optional[Type['SchemaSpec']], bool]":
@@ -213,15 +236,24 @@ class _SchemaSpecInternal(object):
     def _hints(spec: type) -> Dict[str, Any]:
         """``{field: annotation}`` for *spec*'s fields, string annotations (a
         module under ``from __future__ import annotations``) resolved. One that
-        cannot be resolved -- a name local to a function -- reads as ``Any``."""
+        cannot be resolved -- a name local to a function -- reads as ``Any``.
+        Resolved once per class (a spec does not change once defined): a
+        payload of thousands of entries asks for the same few."""
+        cached = _HINTS.get(spec)
+        if cached is not None:
+            return cached
         try:
             hints = typing.get_type_hints(spec)
+            final = True
         except Exception:  # noqa: BLE001 -- NameError, or an exotic annotation
-            hints = {}
+            # Not kept: a name its module defines later resolves on a later ask.
+            hints, final = {}, False
         resolved: Dict[str, Any] = {}
         for f in fields(spec):
             tp = hints.get(f.name, f.type)
             resolved[f.name] = Any if isinstance(tp, str) else tp
+        if final:
+            _HINTS[spec] = resolved
         return resolved
 
     @staticmethod
@@ -357,6 +389,46 @@ class _SchemaSpecInternal(object):
         if required:
             schema["required"] = required
         return schema
+
+    @classmethod
+    def _pruned(cls, spec: type, data: Any, path: str, dropped: List[str]) -> Any:
+        """*data* as *spec* declares it (:meth:`SchemaSpec.prune`), the path
+        of each key it leaves out appended to *dropped*."""
+        if not isinstance(data, dict):
+            return data
+        declared = spec._specs()
+        hints = cls._hints(spec)
+        out: Dict[str, Any] = {}
+        for key, value in data.items():
+            if key not in declared:
+                dropped.append(f"{path}{key}")
+                continue
+            out[key] = cls._pruned_value(hints.get(key), value, f"{path}{key}", dropped)
+        return out
+
+    @classmethod
+    def _pruned_value(cls, tp: Any, value: Any, path: str, dropped: List[str]) -> Any:
+        """*value* pruned by the spec the annotation *tp* names -- through
+        ``Optional``, ``List`` and ``Dict`` values -- or as it is where it
+        names none."""
+        if isinstance(tp, type) and issubclass(tp, SchemaSpec):
+            return cls._pruned(tp, value, f"{path}.", dropped)
+        origin, args = typing.get_origin(tp), typing.get_args(tp)
+        if origin is list and args and isinstance(value, list):
+            return [
+                cls._pruned_value(args[0], v, f"{path}[{i}]", dropped)
+                for i, v in enumerate(value)
+            ]
+        if origin is dict and len(args) == 2 and isinstance(value, dict):
+            return {
+                k: cls._pruned_value(args[1], v, f"{path}.{k}", dropped)
+                for k, v in value.items()
+            }
+        if origin is typing.Union:
+            for arg in args:
+                if arg is not type(None) and cls._specs_in(arg):
+                    return cls._pruned_value(arg, value, path, dropped)
+        return value
 
     @staticmethod
     def _strip_specs(node: Any) -> Any:
@@ -519,6 +591,22 @@ class SchemaSpec(_SchemaSpecInternal):
                 kwargs[name] = copy.deepcopy(value)
         return cls(**kwargs)
 
+    @classmethod
+    def prune(cls, data: Any, dropped: Optional[List[str]] = None) -> Any:
+        """*data* with only what this spec declares: each key it does not
+        name left out, and each value a nested spec names (through
+        ``Optional``, ``List`` and ``Dict`` values) pruned by that spec in
+        turn -- the payload a reader is promised and nothing more. A value
+        that is not a mapping comes back as it is, for :meth:`validate` to
+        report; an annotation key (``_``-prefixed) is left out with the rest.
+
+        Parameters:
+            data: The payload; never modified.
+            dropped: A list to append the path of each key left out to
+                (``"planes[0].name"``), for a caller that says what it cut.
+        """
+        return cls._pruned(cls, data, "", [] if dropped is None else dropped)
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialise to a JSON/YAML-safe ``dict``; unset optionals are omitted."""
         out: Dict[str, Any] = {}
@@ -671,26 +759,36 @@ class SchemaSpec(_SchemaSpecInternal):
         never drift from the enforced shape.  Suitable for committing as a
         ``*_FORMAT.md`` and linking from a tool's help.
         """
-        heading = "#" * _level
+        heading = "#" * min(_level, 6)  # Markdown heads six levels
         head = title or cls.__name__
         lines: List[str] = [f"{heading} {head}", ""]
-        doc = _SchemaSpecInternal._doc_lines(cls)
-        if doc:
-            lines += [doc[0].strip(), ""]
+        summary = _SchemaSpecInternal._summary(cls)
+        if summary:
+            lines += [summary, ""]
         lines += ["| Key | Required | Description | Example |", "|---|---|---|---|"]
         nested_specs: List[Type[SchemaSpec]] = []
+        hints = _SchemaSpecInternal._hints(cls)
         for fd in cls.describe():
             req = "yes" if fd.required else "no"
             desc = fd.help or ""
             if fd.choices is not None:
                 desc = (desc + f" One of: {', '.join(map(str, fd.choices))}.").strip()
-            if fd.nested is not None:
+            # A spec the annotation alone names (a nullable object, a map's
+            # values) is a nested block as much as one ``nested=`` names.
+            annotated = (
+                _SchemaSpecInternal._specs_in(hints.get(fd.name))
+                if fd.nested is None
+                else []
+            )
+            if fd.nested is not None or annotated:
                 # A nested block gets its own table below — pointing there reads
                 # better than cramming a serialised default into one cell.
+                spec = fd.nested or annotated[0]
                 suffix = " (list)" if fd.nested_is_list else ""
-                example = f"see *{fd.nested.__name__}* below{suffix}"
-                if fd.nested not in nested_specs:
-                    nested_specs.append(fd.nested)
+                example = f"see *{spec.__name__}* below{suffix}"
+                for each in [spec] + annotated[1:]:
+                    if each not in nested_specs:
+                        nested_specs.append(each)
             elif fd.example in (None, MISSING):
                 example = ""
             else:

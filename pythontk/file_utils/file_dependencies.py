@@ -186,37 +186,8 @@ class FileDependencies(LoggingMixin):
         Returns:
             The files set aside, as *before* spelled them, in its order.
         """
-
-        def key(path: str) -> str:
-            return os.path.normcase(os.path.abspath(path))
-
-        read: Dict[str, str] = {}
-        lost = set()
-        for _owner, name, path, *_rest in after:
-            path = str(path or "")
-            if FileUtils.is_rooted_path(path):
-                read.setdefault(key(path), path)
-            else:
-                lost.add(os.path.basename(str(name or path)).lower())
-        identities: Optional[set] = None
         removed: List[str] = []
-        seen: set = set()
-        for path in before:
-            path = str(path or "")
-            if not FileUtils.is_rooted_path(path):
-                continue
-            spelled = key(path)
-            if spelled in seen:
-                continue
-            seen.add(spelled)
-            if spelled in read or os.path.basename(path).lower() in lost:
-                continue
-            if os.path.isdir(path):
-                continue
-            if identities is None:  # one stat per file read, and only if needed
-                identities = {cls._identity(p) for p in read.values()} - {None}
-            if cls._identity(path) in identities:
-                continue
+        for path in cls.superseded(before, after):
             try:
                 cls.set_aside(path)
             except FileNotFoundError:
@@ -231,6 +202,51 @@ class FileDependencies(LoggingMixin):
                 continue
             removed.append(path)
         return removed
+
+    @classmethod
+    def superseded(
+        cls, before: Iterable[str], after: Iterable[Sequence[Any]]
+    ) -> List[str]:
+        """The files of *before* that nothing in *after* reads -- what
+        :meth:`remove_superseded` sets aside, by its rule, touching nothing:
+        for a host that sets them aside later (``PendingFiles.retire``).
+
+        Returns:
+            Those files, as *before* spelled them, in its order.
+        """
+
+        def key(path: str) -> str:
+            return os.path.normcase(os.path.abspath(path))
+
+        read: Dict[str, str] = {}
+        lost = set()
+        for _owner, name, path, *_rest in after:
+            path = str(path or "")
+            if FileUtils.is_rooted_path(path):
+                read.setdefault(key(path), path)
+            else:
+                lost.add(os.path.basename(str(name or path)).lower())
+        identities: Optional[set] = None
+        out: List[str] = []
+        seen: set = set()
+        for path in before:
+            path = str(path or "")
+            if not FileUtils.is_rooted_path(path):
+                continue
+            spelled = key(path)
+            if spelled in seen:
+                continue
+            seen.add(spelled)
+            if spelled in read or os.path.basename(path).lower() in lost:
+                continue
+            if os.path.isdir(path) or not os.path.exists(path):
+                continue
+            if identities is None:  # one stat per file read, and only if needed
+                identities = {cls._identity(p) for p in read.values()} - {None}
+            if cls._identity(path) in identities:
+                continue
+            out.append(path)
+        return out
 
     @classmethod
     def set_aside(cls, path: str) -> str:
@@ -348,9 +364,10 @@ class FileDependencies(LoggingMixin):
         copied, a Save As writes the same ``""`` into the copy, and nothing
         tells the two files apart; and when the file it names is gone: the
         scene was renamed or moved, and nothing can open the old one to read
-        the file. Another scene file that is still there (the source of a Save
-        As copy) reads what it wrote; ``None`` -- no record -- and a relative
-        entry with no *base* to read it from are nobody's to delete.
+        the file (:meth:`writer_gone`). Another scene file that is still there
+        (the source of a Save As copy) reads what it wrote; ``None`` -- no
+        record -- a relative entry with no *base* to read it from, and one on
+        a drive this machine cannot reach are nobody's to delete.
 
         Parameters:
             writer: The record's entry (a :meth:`FileUtils.portable_path`
@@ -366,11 +383,41 @@ class FileDependencies(LoggingMixin):
         if not writer:
             return not scene
         written = FileUtils.resolve_portable_path(writer, base)
+        if (
+            scene
+            and FileUtils.is_rooted_path(written)
+            and os.path.normcase(os.path.abspath(scene))
+            == os.path.normcase(os.path.abspath(written))
+        ):
+            return True
+        return FileDependencies.writer_gone(writer, base)
+
+    @staticmethod
+    def writer_gone(writer: Optional[str], base: Optional[str]) -> bool:
+        """Whether *writer* -- a writer record's entry -- names a scene file
+        that is gone: renamed or moved, so nothing can open it again.
+
+        Not gone: ``""`` and ``None`` (no file named), a relative entry with
+        no *base* to read it from, and a file on a drive or share this
+        machine cannot reach -- offline is not renamed, and the scene there
+        still reads what it wrote once it is back.
+
+        Parameters:
+            writer: The record's entry, spelled from *base*.
+            base: The project *writer* is spelled from.
+
+        Returns:
+            bool: True when no file is where *writer* names, on a reachable drive.
+        """
+        if not writer:
+            return False
+        written = FileUtils.resolve_portable_path(writer, base)
         if not FileUtils.is_rooted_path(written):
             return False  # unresolvable, which is not gone
-        written = os.path.normcase(os.path.abspath(written))
-        if scene and os.path.normcase(os.path.abspath(scene)) == written:
-            return True
+        written = os.path.abspath(written)
+        drive = os.path.splitdrive(written)[0]
+        if drive and not os.path.isdir(drive + os.sep):
+            return False  # unreachable, which is not gone
         return not os.path.isfile(written)
 
     @staticmethod

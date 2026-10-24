@@ -211,6 +211,58 @@ class SchemaSpecRegressionTest(unittest.TestCase):
         # constructor signature must not leak into the generated reference.
         self.assertNotIn("NoDoc(", NoDoc.to_markdown())
 
+    def test_markdown_follows_a_spec_its_annotation_names(self):
+        @dataclass
+        class Leaf(SchemaSpec):
+            """A leaf."""
+
+            v: int = SchemaSpec.spec_field(help="A value.")
+
+        @dataclass
+        class Holder(SchemaSpec):
+            """Holds leaves by annotation alone, as the JSON Schema does."""
+
+            maybe: Optional[Leaf] = SchemaSpec.spec_field(help="A leaf, or null.")
+            by_name: Dict[str, Leaf] = SchemaSpec.spec_field(
+                help="Leaves by name.", default_factory=dict
+            )
+
+        # The JSON Schema defines the leaf for both fields; the Markdown
+        # reference followed `nested=` alone and gave it no table.
+        md = Holder.to_markdown()
+        self.assertEqual(md.count("### Leaf"), 1, md)
+        self.assertEqual(md.count("see *Leaf* below"), 2, md)
+
+    def test_markdown_headings_stop_at_the_sixth_level(self):
+        @dataclass
+        class Deep(SchemaSpec):
+            """Nested past what Markdown can head."""
+
+            v: int = SchemaSpec.spec_field(help="A value.")
+
+        self.assertTrue(Deep.to_markdown(_level=7).startswith("###### Deep"))
+
+    def test_markdown_states_the_whole_first_paragraph(self):
+        @dataclass
+        class Wrapped(SchemaSpec):
+            """A summary sentence long enough that it wraps onto
+            a second line of the docstring.
+
+            The body, which is not the summary."""
+
+            a: str = SchemaSpec.spec_field(help="A field.")
+
+        # The JSON Schema states the whole first paragraph; the Markdown
+        # reference stated its first line alone, cutting the sentence.
+        md = Wrapped.to_markdown()
+        self.assertIn("wraps onto a second line of the docstring.", md)
+        self.assertNotIn("The body", md)
+        self.assertEqual(
+            Wrapped.json_schema()["description"],
+            "A summary sentence long enough that it wraps onto a second line "
+            "of the docstring.",
+        )
+
 
 @dataclass
 class Occupant(SchemaSpec):
@@ -407,6 +459,61 @@ class TypedValidateTest(unittest.TestCase):
 
     def test_an_untyped_schema_checks_no_types(self):
         self.assertTrue(Demo.validate({"title": 5, "count": "three"}).ok)
+
+
+class PruneTest(unittest.TestCase):
+    """``prune`` -- a payload with only what its schema declares, the shape a
+    reader is promised (``RecordSpec.make`` ships every record so).
+    Added: 2026-10-20"""
+
+    LEG = {"side": "left", "length": 0.5, "tip": [0, 1, 2]}
+
+    def test_each_key_the_schema_does_not_name_is_left_out_and_said(self):
+        """Through a list of schemas and an optional one; an annotation key
+        goes with the rest. What is left validates without a warning."""
+        doc = {
+            "count": 1,
+            "extra": 1,
+            "_note": "an annotation",
+            "legs": [dict(self.LEG, colour="red")],
+            "lead": dict(self.LEG, spare=True),
+        }
+        dropped = []
+        pruned = Body.prune(doc, dropped)
+        self.assertEqual(pruned, {"count": 1, "legs": [self.LEG], "lead": self.LEG})
+        self.assertEqual(dropped, ["extra", "_note", "legs[0].colour", "lead.spare"])
+        res = Body.validate(pruned)
+        self.assertEqual((res.errors, res.warnings), ([], []))
+
+    def test_a_mapping_of_schemas_prunes_each_value(self):
+        @dataclass
+        class Stable(SchemaSpec):
+            """Bodies by name."""
+
+            TYPED = True
+
+            bodies: Dict[str, Body] = SchemaSpec.spec_field(
+                required=True, default_factory=dict
+            )
+
+        dropped = []
+        doc = {"bodies": {"a": {"count": 0, "legs": [], "x": 1}}}
+        self.assertEqual(
+            Stable.prune(doc, dropped), {"bodies": {"a": {"count": 0, "legs": []}}}
+        )
+        self.assertEqual(dropped, ["bodies.a.x"])
+
+    def test_what_is_not_a_mapping_comes_back_as_it_is(self):
+        """For ``validate`` to report: a pruner never repairs."""
+        self.assertEqual(Body.prune([1, 2]), [1, 2])
+        doc = {"count": 1, "legs": ["not a leg", None], "lead": 5}
+        self.assertEqual(Body.prune(doc), doc)
+
+    def test_the_payload_is_never_modified(self):
+        doc = {"count": 1, "legs": [dict(self.LEG, x=1)], "y": 2}
+        before = json.loads(json.dumps(doc))
+        Body.prune(doc)
+        self.assertEqual(doc, before)
 
 
 class JsonSchemaTest(unittest.TestCase):

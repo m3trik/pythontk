@@ -1,24 +1,21 @@
 # !/usr/bin/python
 # coding=utf-8
-"""Scene data carried into the GLB: the scene-sidecar envelope, the FBX
-handoff, and the ``data_export`` channels.
+"""A GLB's account of itself, and the ``data_export`` channels it is read from.
 
-The sidecar envelope carries what FBX translation drops (the authored
-material state and the rendering policy the deliverable was approved under)
-into the glTF root ``extras``; the handoff is the standalone-reader contract;
-the ``data_export`` channels are the scene records a DCC publishes as FBX user
-properties. :meth:`verify_glb` checks a delivered GLB against the envelope it
-carries.
+A GLB states itself as every deliverable does: ``extras.handoff``, built by
+``HandoffRecord`` (the contract's one declaration) from the FBX's own ``handoff``
+record and named against the blocks the file carries. The ``data_export``
+channels are the scene records a DCC publishes as FBX user properties, which
+the conversion reads and then drops (:meth:`strip_fbx_records`).
+:meth:`verify_glb` checks a delivered GLB against what it says of itself.
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
 the other passes through ``cls``.
 """
 
 import copy
-import hashlib
 import json
 import logging
-import os
 from typing import (
     Any,
     Dict,
@@ -32,29 +29,229 @@ from typing import (
     Union,
 )
 
-# Eager: the channel keys below are SceneRecords' own, read at class
-# definition.
-from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
+# Eager: the channel keys and the retired tables' values below are the
+# registry's and the handoff's own, read at class definition.
+from pythontk.core_utils.deprecation import Deprecation
+from pythontk.core_utils.engines.scene_export.handoff_record import HandoffRecord
+from pythontk.core_utils.engines.scene_export.scene_records import (
+    RecordSpec,
+    Scope,
+    SceneRecords,
+)
+from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
+from pythontk.core_utils.class_property import ClassProperty
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 
 logger = logging.getLogger(__name__)
 
+#: The removal window of every name :class:`MeshConvert` retired 2026-10-20:
+#: the handoff's, now ``HandoffRecord``'s, and those that restated a record's
+#: declaration, now ``SceneRecords``' alone. Passed by name on each call --
+#: the spelling the registry's expiry gate reads (it cannot read a ``**``).
+_REMOVE_IN = "0.18.0"
+_SINCE = "2026-10-24"
+
 
 class _SidecarMixin:
-    """Scene sidecar, FBX handoff, ``data_export`` channels, rendering policy.
+    """A GLB's handoff block and the ``data_export`` channels it is read from.
 
     A private part of :class:`MeshConvert`; call it through the facade.
     """
 
-    #: Schema version of the scene-sidecar envelope
-    #: (:meth:`build_scene_sidecar`). Bump on any change to the envelope's
-    #: top-level shape; adding a *section* is not a bump — sections are the
-    #: extension point and a reader skips ones it does not know.
-    #:
-    #: v2 added ``handoff`` (the standalone-reader contract, written at build
-    #: time) plus ``textures`` and ``validate`` (content-addressed resolution
-    #: and integrity counts, written by :meth:`apply_scene_sidecar`).
-    SIDECAR_VERSION = 2
+    # ---------------------------------------------------- retired 2026-10-20
+    # The handoff's names, now HandoffRecord's.
+    SIDECAR_VERSION = Deprecation.class_attribute(
+        2, "HandoffRecord.VERSION", remove_in=_REMOVE_IN, since=_SINCE
+    )
+    HANDOFF_INSTRUCTIONS = Deprecation.class_attribute(
+        HandoffRecord.instructions("glb"),
+        "HandoffRecord.instructions('glb')",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    FBX_HANDOFF_VERSION = Deprecation.class_attribute(
+        HandoffRecord.VERSION,
+        "HandoffRecord.VERSION",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    FBX_HANDOFF_CHANNEL = Deprecation.class_attribute(
+        HandoffRecord.KEY, "HandoffRecord.KEY", remove_in=_REMOVE_IN, since=_SINCE
+    )
+    FBX_HANDOFF_CHANNELS = Deprecation.class_attribute(
+        {
+            spec.key: spec.description
+            for spec in SceneRecords.deliverable()
+            if spec is not SceneRecords.HANDOFF
+        },
+        "SceneRecords.deliverable() -- each RecordSpec's description",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    FBX_HANDOFF_INSTRUCTIONS = Deprecation.class_attribute(
+        HandoffRecord.instructions("fbx"),
+        "HandoffRecord.instructions('fbx')",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    RENDERING_POLICY = Deprecation.class_attribute(
+        HandoffRecord.RENDERING_POLICY,
+        "HandoffRecord.RENDERING_POLICY",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    RENDERING_CARRIERS = Deprecation.class_attribute(
+        {carrier: {} for carrier in HandoffRecord.CARRIERS},
+        "HandoffRecord.lighting(carrier) -- the policy is values alone",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    HANDOFF_ASSEMBLY = Deprecation.class_attribute(
+        HandoffRecord.CARRIERS["glb"].own,
+        "HandoffRecord.CARRIERS['glb'].own",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    LIGHTING_ASSEMBLY = Deprecation.class_attribute(
+        tuple(HandoffRecord.lighting("glb")),
+        "HandoffRecord.lighting('glb')",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    # Names that restated a record's declaration: a record is read off
+    # SceneRecords alone, and its GLB block takes the record's key.
+    FBX_TAKES_KEY = Deprecation.class_attribute(
+        "fbx_takes",
+        "SceneRecords.SHOTS -- each shot's range rides its clip",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    SHOT_METADATA_KEY = Deprecation.class_attribute(
+        SceneRecords.SHOTS.key,
+        "SceneRecords.SHOTS.key",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    ANIMATION_WEB_KEY = Deprecation.class_attribute(
+        SceneRecords.SHOTS.key,
+        "SceneRecords.SHOTS.key",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    ANIMATION_WEB_VERSION = Deprecation.class_attribute(
+        SceneRecords.SHOTS.glb.version,
+        "SceneRecords.SHOTS.glb.version",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    LIGHTMAP_METADATA_KEY = Deprecation.class_attribute(
+        SceneRecords.LIGHTMAPS.key,
+        "SceneRecords.LIGHTMAPS.key",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    LIGHTMAP_METADATA_VERSION = Deprecation.class_attribute(
+        SceneRecords.LIGHTMAPS.version,
+        "SceneRecords.LIGHTMAPS.version",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    LIGHTMAP_WEB_KEY = Deprecation.class_attribute(
+        SceneRecords.LIGHTMAPS.key,
+        "SceneRecords.LIGHTMAPS.key",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    SHADOW_METADATA_KEY = Deprecation.class_attribute(
+        SceneRecords.SHADOWS.key,
+        "SceneRecords.SHADOWS.key",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    SHADOW_METADATA_VERSION = Deprecation.class_attribute(
+        SceneRecords.SHADOWS.version,
+        "SceneRecords.SHADOWS.version",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    SHADOW_WEB_KEY = Deprecation.class_attribute(
+        SceneRecords.SHADOWS.key,
+        "SceneRecords.SHADOWS.key",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    SHADOW_WEB_NODE_FIELDS = Deprecation.class_attribute(
+        SceneRecords.SHADOWS.glb.node_fields,
+        "SceneRecords.SHADOWS.glb.node_fields",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    ARTICULATION_KEY = Deprecation.class_attribute(
+        SceneRecords.ARTICULATION.key,
+        "SceneRecords.ARTICULATION.key",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    ARTICULATION_VERSION = Deprecation.class_attribute(
+        SceneRecords.ARTICULATION.version,
+        "SceneRecords.ARTICULATION.version",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    ARTICULATION_WEB_KEY = Deprecation.class_attribute(
+        SceneRecords.ARTICULATION.key,
+        "SceneRecords.ARTICULATION.key",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    ARTICULATION_WEB_NODE_FIELDS = Deprecation.class_attribute(
+        SceneRecords.ARTICULATION.glb.node_fields,
+        "SceneRecords.ARTICULATION.glb.node_fields",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    VISIBILITY_TRACKS_KEY = Deprecation.class_attribute(
+        SceneRecords.VISIBILITY.key,
+        "SceneRecords.VISIBILITY.key",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    VISIBILITY_TRACKS_VERSION = Deprecation.class_attribute(
+        SceneRecords.VISIBILITY.version,
+        "SceneRecords.VISIBILITY.version",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    # The lightmap record's folder hints, which no record has carried since
+    # 0.11.0 (the maps' folders ride the private ``lightmap_dirs``).
+    LOCATE_HINT_KEY = Deprecation.class_attribute(
+        "dir",
+        "nothing -- no record carries a folder hint",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    LOCATE_HINT_KEYS = Deprecation.class_attribute(
+        ("dir", "dirs"),
+        "nothing -- no record carries a folder hint",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+
+    @ClassProperty
+    @Deprecation.symbol(
+        "pythontk.geo_utils.shadow_record.ShadowPlane -- every field is required",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    def SHADOW_PLANE_DEFAULTS(cls) -> Dict[str, Any]:
+        """A shadow plane's starting values, as 0.16.1 served them:
+        ``ShadowPlane``'s defaults, ``None`` for no source or contact (the
+        plane spells them ``""``); computed on a read, so no import pays for
+        the retired name."""
+        from pythontk.geo_utils.shadow_record import ShadowPlane
+
+        plane = {k: v for k, v in vars(ShadowPlane()).items() if v is not None}
+        return {**plane, "source": None, "contact": None}
 
     #: Separates the converter's own ``asset.generator`` claim from ours in the
     #: stamped string (:meth:`_stamp_asset_generator`), and is what makes a
@@ -63,536 +260,56 @@ class _SidecarMixin:
     #: string that happened to contain it.
     _GENERATOR_SEP = " via "
 
-    #: The standalone-reader contract embedded in every envelope's ``handoff``
-    #: section. It exists because the deliverable is routinely handed on ALONE —
-    #: to a dev, to a viewer that is not ours, to an agent given one ``.glb`` and
-    #: no conversation — and the single most expensive misunderstanding is
-    #: treating a section's authoring-time texture path as something to resolve
-    #: on disk. Written here once, as data in the artifact, rather than as prose
-    #: in a doc the reader was never given: a rule that only exists in
-    #: documentation is not part of the hand-off.
-    #:
-    #: Kept to declarative sentences about THIS file and the scene it rebuilds
-    #: -- never an action outside the file (no command, no fetch, no tool),
-    #: which is what makes it safe for an agent to read as untrusted content.
-    #: What the approved scene consists of is stated part by part in
-    #: ``handoff.assembly`` (:attr:`HANDOFF_ASSEMBLY`, :attr:`LIGHTING_ASSEMBLY`).
-    #: Phrased to read correctly wherever this envelope lives -- embedded in
-    #: the GLB's ``extras``, and held unscrubbed by the caller that built it --
-    #: so it refers to the asset through the envelope's own ``asset`` key
-    #: rather than saying "this file".
-    HANDOFF_INSTRUCTIONS = (
-        "The glTF 2.0 asset named by 'asset' is self-contained: every texture it "
-        "references is embedded, so it loads and inspects with no external files "
-        "and no filesystem paths. 'extras.scene_sidecar' describes the authoring "
-        "scene's material state for the channels an FBX interchange step cannot "
-        "carry; 'extras.scene_sidecar_applied' reports, per section, how many of "
-        "those entries matched a material in this file. Section entries name "
-        "each texture by its authoring-time FILE NAME. That name is PROVENANCE "
-        "ONLY -- the directory it sat in is deliberately not carried, so it "
-        "is a join token and is not expected to resolve as a path on any "
-        "machine, including the authoring one -- two textures that shared a file "
-        "name carry a '#2'-style suffix so the map stays one-to-one: resolve "
-        "it by "
-        "looking it up in the top-level 'textures' map, which gives the glTF "
-        "'images' index that actually carries those bytes here, their sha256, "
-        "and their size -- several section entries can resolve to one image, "
-        "because a metallic/roughness/occlusion trio is repacked into a single "
-        "ORM image (R=occlusion, G=roughness, B=metallic). 'validate' records "
-        "how many entries each section carries and how many texture references "
-        "resolve, so a truncated envelope is detectable; the per-reference "
-        "sha256 is what verifies the payloads themselves. Passes that run after "
-        "this envelope is written may add further images, so do not expect the "
-        "file's total image count to match anything here. All "
-        "colours are linear glTF factors. When 'extras.lightmap_web' is present, "
-        "the materials it names carry a BAKED LIGHTMAP in occlusionTexture on "
-        "TEXCOORD_1 rather than ambient occlusion, sRGB-encoded, and its "
-        "'intensity' is the multiplier that restores the bake's original range; "
-        "a reader that does not rebind it renders a plausible greyscale "
-        "occlusion instead. When 'extras.animation_web' is present it names "
-        "every animation in this file by its index, says which ones a shot "
-        "declared, and gives the frame range and 'offset' (seconds) each "
-        "declared clip occupied on the authoring timeline, since every clip's "
-        "own keyframe times are rebased to zero; 'default_clip' is the one a "
-        "player opens on, which is not necessarily animations[0] -- an FBX "
-        "interchange step can retain a whole-timeline take alongside the split "
-        "ones. 'handoff.assembly' lists every part of the approved scene with "
-        "the data it is built from (an address beginning 'rendering.' is in "
-        "'handoff.rendering'); a part left out yields a scene other than the "
-        "one approved. 'handoff.rendering' is the lighting the asset was "
-        "approved under and part of its look: the asset carries no lights of "
-        "its own, so lit any other way the same file renders differently. "
-        "Check 'version' against the schema you expect."
-    )
-
-    #: Schema version of the FBX-side handoff block (:meth:`build_fbx_handoff`).
-    #: Separate from :attr:`SIDECAR_VERSION`: that versions the GLB envelope
-    #: this block does not live in, and tying them would force a bump on one
-    #: carrier every time the other changed.
-    FBX_HANDOFF_VERSION = SceneRecords.HANDOFF.version
-
-    #: ``data_export`` channel the FBX handoff block is published on. A channel
-    #: like any other, so it rides into the FBX as a user property with no
-    #: export-path change and no second carrier -- the deliverable has one
-    #: in-band metadata node and this joins it.
-    FBX_HANDOFF_CHANNEL = SceneRecords.HANDOFF.key
-
-    #: What each known ``data_export`` channel holds, for the block's ``reads``
-    #: map -- each record's own declaration (``SceneRecords``), so a producer
-    #: added there is described here with no edit. Descriptions only: the
-    #: channel LIST is taken from the carrier at stamp time, so the block never
-    #: claims a channel the file lacks, nor omits one it has.
-    FBX_HANDOFF_CHANNELS: Dict[str, str] = {
-        spec.key: spec.description
-        for spec in SceneRecords.deliverable()
-        if spec is not SceneRecords.HANDOFF
-    }
-
-    #: The standalone-reader contract for an **FBX** deliverable -- the twin of
-    #: :attr:`HANDOFF_INSTRUCTIONS`, kept beside it so the two carriers'
-    #: accounts of the same pipeline cannot drift.
-    #:
-    #: Same rules as the glTF text and for the same reasons: plain declarative
-    #: sentences about this file's own structure, no instructions to the reader
-    #: about what to do next (which is what makes it safe for an agent to read
-    #: as untrusted content), and it names the asset through the block's own
-    #: ``asset`` key rather than saying "this file".
-    #:
-    #: The load-bearing sentence is the one about the files the records name.
-    #: An FBX embeds what its MATERIALS reference, and a lighting-only bake
-    #: deliberately does not wire its map into a material -- that is the point,
-    #: the PBR material survives the bake -- so until 2026-10-05 the maps the
-    #: manifest names were the one part of the deliverable that did not travel
-    #: with it (measured on a delivered room: 23.0 MB of the 23.5 MB file was
-    #: material textures and not one byte the lightmap). The exporters now
-    #: embed them as media of their own (``FbxMedia.embed_dependencies``), and
-    #: the sentence says the name joins to that embedded copy.
-    #:
-    #: Unlike the glTF text this refers to "the FBX carrying this block" rather
-    #: than to an ``asset`` key. The block is stamped by an export PREPARER,
-    #: which runs before any FBX path is chosen -- the session hook fires for
-    #: File > Export and the Game Exporter too -- so an asset name here could
-    #: only ever have been the SCENE's, naming a ``.ma`` as though it were the
-    #: deliverable. The authoring scene rides under ``source`` instead, where
-    #: it is provenance rather than a false identity.
-    #: The text itself lives with the record declarations
-    #: (``SceneRecords.HANDOFF_INSTRUCTIONS``): the snapshot that commits a
-    #: carrier stamps it, and this name is the GLB-side reference to the same
-    #: sentence.
-    FBX_HANDOFF_INSTRUCTIONS = SceneRecords.HANDOFF_INSTRUCTIONS
-
-    #: What the reflection probe does to the scene, whichever carrier holds
-    #: it: the tail of ``environment.probe`` on every carrier. Only the lead
-    #: -- where the image is, its encoding, its units -- is the carrier's
-    #: (:attr:`RENDERING_CARRIERS`).
-    #:
-    #: The level is stated for both lightmap conventions, not as a bare
-    #: ``probeIntensity``: that number is three.js', whose lightmapped diffuse
-    #: is pi below a renderer that composites the texel as ``albedo x
-    #: texel`` -- unitytk plays the same probe at 1 for exactly that reason
-    #: (``LightmapMetadataController.ApplyProbes``), so a Unity build taking
-    #: 1/pi from the policy would reflect a third of the approved room.
-    _PROBE_LIGHTING = (
-        "PMREM-prefiltered it replaces RoomEnvironment. It holds radiance, "
-        "and a lightmap texel is a white card's radiance (irradiance / pi), "
-        "so the probe plays at the lightmaps' own scale: probeIntensity "
-        "(1/pi) in a renderer that takes a lightmap texel as irradiance -- "
-        "three.js, whose baked diffuse is texel x albedo / pi -- and 1 in one "
-        "that composites it as texel x albedo, as Unity's Standard and URP "
-        "Lit shaders do. Every lookup is made in those axes. A "
-        "reflection is box-projected: followed from the shaded point "
-        "to where it leaves the box, and the probe read toward that "
-        "point from 'position'; diffuse irradiance is read along the "
-        "normal. Lightmapped materials reflect it whole -- "
-        "lightmappedMaterials.envMapIntensity is the studio's level -- "
-        "still under reflectionNormalization; unbaked ones take it "
-        "whole, diffuse and specular."
-    )
-    #: The GLB's alone: the copies are a GLB build's (``_highlights.py``); a
-    #: finished FBX carries the same copies as media its lightmap record's
-    #: ``probe.highlights`` names (``MeshConvert.embed_fbx_highlight_probes``).
-    _PROBE_HIGHLIGHTS = (
-        "'highlights', when present, holds the bake's lights as COPIES of "
-        "the probe for groups of receivers: each of 'copies' is a layer "
-        "(Radiance in its 'bufferView', 'width' x 'height', the probe's "
-        "layout and units) to add to the probe, box-filtered down to the "
-        "layer's size, and prefilter as the probe is; the materials it names "
-        "reflect that copy in the probe's place, box-projected from the same "
-        "'position' and 'box'. A copy draws each light where that projection "
-        "shows it true for its receivers, so the lights themselves never "
-        "ship -- lighting them as well lights the scene twice."
-    )
-
-    #: The reference viewer's lighting setup (``net_utils/preview/viewer.html``),
-    #: published as data so a recipient can reproduce the look the asset was
-    #: signed off in instead of inferring it. A baked asset needs this more than
-    #: an unbaked one, not less: its diffuse lighting is already in its
-    #: textures, so the viewer's own rig has to be withheld exactly where the
-    #: bake already answers (the key light, and the environment's diffuse) and
-    #: kept where it does not (the environment's specular, the only term left
-    #: to show a reflection or a roughness map on a baked surface; a normal map
-    #: shows there through the relief, ``lightmappedMaterials.normalRelief``,
-    #: which is why the key light's direction outlives its intensity). Without
-    #: it a recipient reasonably adds a normal key light, or
-    #: an ambient term, and washes out every baked surface -- which reads as a
-    #: bake regression and sends them back to the baker, where nothing is
-    #: wrong.
-    #:
-    #: ``test_preview_server`` pins these against the viewer's literals, and
-    #: ``test_preview_viewer_live`` against the pixels it draws, so the
-    #: published contract cannot drift from what the viewer actually does.
-    #:
-    #: Written in the GLB's addresses, which is where the viewer reads it; a
-    #: carrier that holds the probe and the lightmaps elsewhere publishes it
-    #: through :attr:`RENDERING_CARRIERS`.
-    RENDERING_POLICY: Dict[str, Any] = {
-        "renderer": {
-            "toneMapping": "ACESFilmic",
-            "toneMappingExposure": 1.0,
-            "outputColorSpace": "srgb",
-        },
-        "environment": {
-            "source": (
-                "the asset's own reflection probe (extras.lightmap_web.probe) "
-                "when it carries one, else three.js RoomEnvironment"
-            ),
-            "prefilter": "PMREM",
-            "prefilterBlur": 0.04,
-            "intensity": 1.0,
-            "probeIntensity": 0.3183099,
-            "probe": (
-                "The room the bake lit, captured by it as an HDR from one "
-                "point: Radiance bytes (mimeType image/vnd.radiance) in "
-                "bufferView 'bufferView', an equirectangular map in the "
-                "asset's own axes (u = 0.5 + atan2(z, x) / 2pi, v = 0.5 + "
-                "asin(y) / pi, its top row +Y); 'position' is where it was "
-                "captured and 'box' ({min, max}, or null for an open scene) "
-                "the box its reflections project onto, both in the asset's "
-                "metres. " + _PROBE_LIGHTING + " " + _PROBE_HIGHLIGHTS
-            ),
-            "note": (
-                "The main light for everything that is not baked, and the "
-                "source of the reflections on everything that is -- scaled "
-                "there by lightmappedMaterials.envMapIntensity while it is the "
-                "studio. The asset's own probe, the room the bake lit, plays "
-                "whole: a baked metal has no diffuse for its lightmap to "
-                "hold, so its reflections are all of it, and every unbaked "
-                "object stands in that room's light rather than the studio's."
-            ),
-        },
-        "keyLight": {
-            "type": "directional",
-            "color": "#ffffff",
-            "intensity": 0.9,
-            "position": [3, 6, 4],
-            "disabled_when": "any material in the asset is lightmapped",
-            "note": (
-                "Scene-wide, so it cannot be spared the baked geometry it would "
-                "contradict; it goes off entirely once anything is baked. Its "
-                "direction still orients lightmappedMaterials.normalRelief."
-            ),
-        },
-        "lightmappedMaterials": {
-            "envMapTerms": "specular",
-            "envMapIntensity": 1.0,
-            "reflectionNormalization": (
-                "A baked material's environment specular (radiance and "
-                "clearcoat radiance) is scaled per texel by clamp(luma(E_bake) "
-                "/ luma(E_env), 0, 1), then by envMapIntensity: E_bake the "
-                "texel's lightmap irradiance (map times its intensity), E_env "
-                "the environment's diffuse irradiance about the surface's own "
-                "normal, luma the Rec. 709 weights. Lightmap-normalized "
-                "reflections, the reflection-probe normalization a runtime "
-                "applies to a lightmapped surface: a shadow reflects next to "
-                "nothing, a lit surface up to the full level."
-            ),
-            "lightMapIntensity": (
-                "per material, from extras.lightmap_web.materials[<name>].intensity"
-            ),
-            "lightMapEnergy": (
-                "The lightmap's irradiance enters as an image-based light's "
-                "irradiance does in the split-sum model (three.js' "
-                "iblIrradiance): the diffuse it lights is weighted by one minus "
-                "the specular's directional albedo -- the Fresnel the surface "
-                "reflects instead, plus multiscatter -- and the multiscatter "
-                "energy comes from it. Added at full weight beside the "
-                "reflection, a surface is lit twice wherever it reflects most."
-            ),
-            "normalRelief": (
-                "Where a baked material carries a normal map, its lightmap "
-                "texel is scaled by (dot(N, L) * 0.5 + 0.5) / "
-                "(dot(Ng, L) * 0.5 + 0.5): N the normal-mapped normal, Ng the "
-                "surface's own, L the unit direction toward keyLight.position "
-                "-- reflected across the surface's plane wherever the surface "
-                "faces away from it, since a bake's light reached the surface "
-                "from its front. Exactly 1 where the map is flat, so "
-                "normalTexture.scale 0 is "
-                "the pure bake. A lightmap carries no direction, and without "
-                "this a normal map on a baked surface shows only in its "
-                "reflections."
-            ),
-            "note": (
-                "The bake already holds the diffuse lighting (every light and "
-                "the sky), so the environment's irradiance is NOT added on top: "
-                "that double-counts it and reads as a washed-out bake. The "
-                "environment keeps only its specular term -- the "
-                "reflection-probe role, and what a native lightmap path such as "
-                "Unity's does with a lightmapped renderer -- at envMapIntensity "
-                "times the environment's own intensity. The environment is a "
-                "studio, brighter than the room the bake lit; unscaled, its "
-                "reflections lift every dark glossy surface (measured on a "
-                "production room: the darkest machine surfaces at display level "
-                "0.06 baked alone, 0.22 with full reflections), and one flat "
-                "level low enough to spare them left lit surfaces with no "
-                "visible reflection -- hence reflectionNormalization, under "
-                "which the full level lifts no shadow. The level is the "
-                "export's choice, and the studio's alone: an asset that carries "
-                "its own reflection probe (environment.probe) is reflecting the "
-                "room the bake lit, at full strength. Un-baked "
-                "materials in the same asset take the environment whole, "
-                "diffuse and specular."
-            ),
-        },
-    }
-
-    #: Where each carrier holds what :attr:`RENDERING_POLICY`'s prose points
-    #: at, laid over the policy by :meth:`rendering_policy` -- ``{carrier:
-    #: {section: {field: text}}}``, prose only: every number is the policy's
-    #: own on every carrier. The policy is written in the GLB's addresses;
-    #: the FBX holds the same probe and lightmaps in ``lightmap_metadata``,
-    #: as an embedded OpenEXR in scene units rather than Radiance bytes in a
-    #: bufferView in metres. Before this, the FBX published the GLB's text and
-    #: sent its reader after an ``extras.lightmap_web.probe`` an FBX cannot
-    #: have: on a delivered assembly whose probe rode
-    #: ``data_export.lightmap_metadata``, embedded, a reader of the FBX could
-    #: find no probe where the policy pointed, and a coworker's build dropped
-    #: the lighting environment (reported 2026-10-14). A new carrier is one
-    #: row.
-    RENDERING_CARRIERS: Dict[str, Dict[str, Dict[str, str]]] = {
-        "glb": {},
-        "fbx": {
-            "environment": {
-                "source": (
-                    "the asset's own reflection probe "
-                    "(data_export.lightmap_metadata.probe) when it carries "
-                    "one, else three.js RoomEnvironment"
-                ),
-                "probe": (
-                    "The room the bake lit, captured by it as an HDR from one "
-                    "point: 'map' names a linear equirectangular OpenEXR "
-                    "image by FILE NAME, which a delivered file embeds as "
-                    "media no material uses, in the scene's own Y-up axes (u = 0.5 + "
-                    "atan2(z, x) / 2pi, v = 0.5 + asin(y) / pi, its top row "
-                    "+Y); 'position' is where it was captured and 'box' "
-                    "([min, max], or null for an open scene) the box its "
-                    "reflections project onto, both in the units the file's "
-                    "geometry is written in, 'unit_scale' metres per unit: "
-                    "each converts into a receiving engine exactly as a "
-                    "vertex of the file does. " + _PROBE_LIGHTING
-                ),
-            },
-            "lightmappedMaterials": {
-                "lightMapIntensity": (
-                    "1: a map applies as stored -- each object's 'intensity' "
-                    "in data_export.lightmap_metadata is the multiplier its "
-                    "texels already carry, and informational"
-                ),
-            },
-        },
-    }
-
-    #: The lighting rows of every handoff's ``assembly``, written once beside
-    #: the policy they summarize. Each points into ``rendering`` (an address
-    #: relative to the handoff block, on every carrier) rather than restating
-    #: a number, so an export's override and the row cannot disagree; what
-    #: differs per carrier -- where the probe is -- the policy's own prose
-    #: says (:attr:`RENDERING_CARRIERS`). Stated as what the approved scene
-    #: HAS, because the failure they exist for is a reader treating the
-    #: policy as background: building the geometry faithfully and lighting it
-    #: with whatever its engine defaults to.
-    LIGHTING_ASSEMBLY: Tuple[Dict[str, Any], ...] = (
-        {
-            "part": "environment",
-            "data": ["rendering.environment"],
-            "spec": (
-                "The scene's only ambient and reflected light: the reflection "
-                "probe 'source' names when the asset carries one ('probe' "
-                "says where it is, how it projects and at what level), else a "
-                "neutral studio room at 'intensity'. Every unbaked surface "
-                "takes it whole, diffuse and specular; a lightmapped one only "
-                "its reflections. No sky, ambient colour or other environment "
-                "is part of the approved scene."
-            ),
-        },
-        {
-            "part": "key_light",
-            "data": ["rendering.keyLight"],
-            "spec": (
-                "One white directional light at 'intensity', shining from "
-                "'position' toward the origin, present only while nothing in "
-                "the asset is lightmapped ('disabled_when'). The asset "
-                "carries no lights of its own, and the approved scene has no "
-                "other."
-            ),
-        },
-        {
-            "part": "lightmapped_materials",
-            "data": ["rendering.lightmappedMaterials"],
-            "spec": (
-                "A lightmapped surface's diffuse light is its lightmap alone: "
-                "no environment diffuse, no realtime light, and not its "
-                "material's own ambient-occlusion map, the bake already "
-                "holding the occlusion. It keeps the environment's specular "
-                "at 'envMapIntensity', scaled per texel by "
-                "'reflectionNormalization'; 'lightMapEnergy' and "
-                "'normalRelief' state how the map enters the shading."
-            ),
-        },
-        {
-            "part": "renderer",
-            "data": ["rendering.renderer"],
-            "spec": (
-                "ACES filmic tone mapping at 'toneMappingExposure', output in sRGB."
-            ),
-        },
-    )
-
-    #: The GLB envelope's own ``assembly`` rows: what the asset is, then each
-    #: ``extras`` manifest a conversion may add. The envelope is built before
-    #: those manifests are applied, so a row for one is phrased "when
-    #: present", like the ``reads`` entries beside it. The lighting rows
-    #: (:attr:`LIGHTING_ASSEMBLY`) close the list.
-    HANDOFF_ASSEMBLY: Tuple[Dict[str, Any], ...] = (
-        {
-            "part": "asset",
-            "data": ["the glTF asset 'asset' names"],
-            "spec": (
-                "Meshes, hierarchy, materials and every texture, embedded and "
-                "as approved. The sections of extras.scene_sidecar are already "
-                "applied to these materials (extras.scene_sidecar_applied "
-                "counts the matches): a record of the repair, not values to "
-                "apply again."
-            ),
-        },
-        {
-            "part": "lightmaps",
-            "data": ["extras.lightmap_web"],
-            "spec": (
-                "When present: each material it names carries a baked "
-                "lightmap in occlusionTexture on TEXCOORD_1, sRGB-encoded, "
-                "times that material's 'intensity' -- the surface's diffuse "
-                "light, direct and indirect, and not ambient occlusion. Node "
-                "extras 'fromFBX.userProperties' (lightmap_metadata, "
-                "lightmapInfo) are the source FBX's records, transcribed: "
-                "the maps they name are bound here through this manifest."
-            ),
-        },
-        {
-            "part": "animation",
-            "data": ["extras.animation_web"],
-            "spec": (
-                "When present: the clips, by glTF animation index, opening on "
-                "'default_clip'; a declared clip's 'zero_frame' and 'offset' "
-                "place it on the authoring timeline. A STEP 'scale' channel "
-                "driving a node to zero is its keyed visibility; "
-                "KHR_animation_pointer channels on a material are its "
-                "authored opacity fade (baseColorFactor alpha) and highlight "
-                "(emissiveFactor, added to the material's own)."
-            ),
-        },
-        {
-            "part": "shadows",
-            "data": ["extras.shadow_web"],
-            "spec": (
-                "When present: projected contact shadows a runtime places "
-                "each frame from their source and contact nodes ('reads'); "
-                "without one, the imported keys and the silhouette in the "
-                "base colour stand."
-            ),
-        },
-        {
-            "part": "articulation",
-            "data": ["extras.articulation_web"],
-            "spec": (
-                "When present: articulated rigs a runtime poses and a hand "
-                "grabs ('reads'); without one, the clips play the joints' own "
-                "keys."
-            ),
-        },
-    )
-
     @classmethod
+    @Deprecation.symbol(
+        "HandoffRecord.rendering_policy", remove_in=_REMOVE_IN, since=_SINCE
+    )
     def rendering_policy(
         cls,
         overrides: Optional[Mapping[str, Mapping[str, Any]]] = None,
         carrier: str = "glb",
     ) -> Dict[str, Any]:
-        """:attr:`RENDERING_POLICY` with a deliverable's own choices laid over it.
+        """The lighting recipe with a deliverable's own choices laid over it
+        (``HandoffRecord.rendering_policy``); *carrier* is checked, its values the
+        same on every carrier."""
+        HandoffRecord.carrier(carrier)
+        return HandoffRecord.rendering_policy(overrides)
 
-        *overrides* is ``{section: {field: value}}`` -- what the export that
-        made the deliverable decided (``ExportRun.rendering``), published in
-        its handoff so any reader, the reference viewer included, lights it
-        the way it was approved. Only a field the policy declares can be
-        overridden: a misspelt one would publish a value no reader looks for
-        while the field it meant kept its default.
-
-        Parameters:
-            overrides: The export's choices, laid over last.
-            carrier: The deliverable the policy is published in -- a key of
-                :attr:`RENDERING_CARRIERS`, whose prose names where THAT file
-                holds the probe and the lightmaps. ``"glb"`` (the viewer's
-                own) by default.
-
-        Raises:
-            ValueError: an override names a section or field the policy does
-                not declare, or *carrier* is not a known carrier.
-        """
-        binding = cls.RENDERING_CARRIERS.get(carrier)
-        if binding is None:
-            raise ValueError(
-                f"Rendering carrier {carrier!r} is not one of "
-                f"MeshConvert.RENDERING_CARRIERS ({', '.join(cls.RENDERING_CARRIERS)})."
-            )
-        policy = copy.deepcopy(cls.RENDERING_POLICY)
-        for layer in (binding, overrides or {}):
-            for section, fields in layer.items():
-                target = policy.get(section)
-                if not isinstance(target, dict):
-                    raise ValueError(
-                        f"Rendering override section {section!r} is not one of "
-                        f"MeshConvert.RENDERING_POLICY's ({', '.join(policy)})."
-                    )
-                unknown = sorted(set(fields or {}) - set(target))
-                if unknown:
-                    raise ValueError(
-                        f"Rendering override {section}.{', '.join(unknown)} is "
-                        "not a field of MeshConvert.RENDERING_POLICY."
-                    )
-                target.update(fields)
-        return policy
-
-    #: Sidecar section -> the writer that applies it to a GLB, in application
-    #: order. This is the applier column of the scene-data grid: a new kind of
-    #: extended scene setup is one more section in the DCC-side reader
-    #: (mayatk/blendertk ``SceneState``) plus one more row here — no method
-    #: edits anywhere else. Both current rows exist because FBX loses the
-    #: channel for every shader that is not the host's own legacy model
-    #: (measured on Maya 2025: an aiStandardSurface arrives with no emissive
-    #: at all and a flat white base colour). Base colour runs first only for
-    #: tidiness; the two touch disjoint fields.
-    SIDECAR_APPLIERS: Dict[str, str] = {
+    #: Sidecar section -> the writer that applied it to a GLB, in application
+    #: order: the repairs a host read off the live scene (``SceneState``) for
+    #: what the FBX mistranslated. Retired 2026-10-20 with those readers --
+    #: the ``materials`` record the FBX carries states every material, and no
+    #: host reads a section any more. Until the removal it still applies the
+    #: sections of an envelope from a host that predates the record
+    #: (:meth:`apply_scene_sidecar`).
+    _SIDECAR_APPLIERS: Dict[str, str] = {
         "base_color": "set_glb_base_color",
         "emissive": "set_glb_emissive",
         "metallic_roughness": "set_glb_metallic_roughness",
         "alpha_mode": "set_glb_alpha_mode",
         "unlit": "set_glb_unlit",
     }
-    #: Root-extras key holding :meth:`apply_scene_sidecar`'s per-section
-    #: outcome. Its presence is also the fact "the envelope has been applied
-    #: to this file", which a later stage reads to avoid applying it twice.
-    SIDECAR_APPLIED_KEY = "scene_sidecar_applied"
+    SIDECAR_APPLIERS = Deprecation.class_attribute(
+        _SIDECAR_APPLIERS,
+        "the FBX's materials record (MeshConvert.apply_glb_materials)",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    #: The per-section outcome a GLB carried beside the envelope -- the
+    #: build's own report, not the file's.
+    SIDECAR_APPLIED_KEY = Deprecation.class_attribute(
+        "scene_sidecar_applied",
+        "nothing -- the build reports what it applied (fbx_to_glb's report)",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
 
     @classmethod
+    @Deprecation.symbol(
+        "HandoffRecord.block('glb', ...) -- a GLB carries extras.handoff, not an envelope",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
     def build_scene_sidecar(
         cls,
         sections: Optional[Dict[str, Any]],
@@ -600,211 +317,264 @@ class _SidecarMixin:
         asset: Optional[str] = None,
         rendering: Optional[Mapping[str, Mapping[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Wrap *sections* in the versioned scene-sidecar envelope.
-
-        The one place the envelope schema exists — every producer (the WebXR
-        preview bridges, the scene exporters' GLB tasks) builds through this
-        rather than shaping the dict itself, so the schema cannot fork between
-        packages. The top level is the frozen contract a standalone reader (a
-        dev tool holding only the deliverable and this data) parses against::
-
-            {
-              "version": 2,              # SIDECAR_VERSION
-              "source": {"application": "maya", "version": "2025"},
-              "asset": "<payload basename>",
-              "color_space": "linear",   # every color below, as the appliers
-                                         #   also expect (glTF factors)
-              "sections": {...},         # the extension point
-              "handoff": {               # the standalone-reader contract
-                "instructions": "<HANDOFF_INSTRUCTIONS>",
-                "reads": {...},          # extras key -> what it holds
-                "assembly": [...],       # the approved scene, part by part
-                "rendering": {...}       # the lighting it was approved under
-              }
-            }
-
-        :meth:`apply_scene_sidecar` adds two more top-level keys when it embeds
-        the envelope, because only it can know them: ``textures`` (each
-        authoring path -> the glTF image index and sha256 actually carrying it)
-        and ``validate`` (the counts the envelope was written against).
-
-        Scope note — this is *not* a second channel registry beside the DCC
-        packages' ``DataNodes``. Tool-authored semantic metadata (shots, audio
-        events, lightmap manifests, ...) rides **inside** the FBX as user
-        properties on the ``data_export`` carrier; the sidecar carries only
-        repairs for what the FBX *format* mistranslates about the scene's
-        literal content, derived scene-read-only at push/export time. A
-        section must never duplicate a ``DataNodes`` channel — one home per
-        section per deliverable.
-
-        Parameters:
-            sections: ``{section: data}`` from a DCC-side ``SceneState``
-                reader. ``None`` or empty still builds an envelope — an empty
-                ``sections`` is itself information (nothing needed repair).
-            source: Producer identity, e.g.
-                ``{"application": "maya", "version": "2025"}``.
-            asset: Basename of the deliverable this envelope belongs to.
-            rendering: The export's choices over the lighting recipe
-                (:meth:`rendering_policy`), published as ``handoff.rendering``.
-                ``None`` publishes the policy as it stands.
-        """
+        """The envelope a host built before the materials record: the GLB's
+        handoff block with the *sections* a converter applies to a file that
+        carries no record (:meth:`fbx_to_glb`)."""
         return {
-            "version": cls.SIDECAR_VERSION,
+            "version": 2,
             "source": source,
             "asset": asset,
-            "color_space": "linear",
             "sections": dict(sections or {}),
-            "handoff": {
-                "instructions": cls.HANDOFF_INSTRUCTIONS,
-                # Where the rest of the self-description lives. Derived from the
-                # registries rather than listed by hand, so a section or a
-                # manifest added later cannot silently fall out of the contract.
-                "reads": {
-                    "extras.scene_sidecar": "this envelope",
-                    "extras.scene_sidecar_applied": "per-section apply outcome",
-                    f"extras.{cls.LIGHTMAP_WEB_KEY}": (
-                        "materials whose occlusion carrier is a baked lightmap"
-                    ),
-                    f"extras.{cls.ANIMATION_WEB_KEY}": (
-                        "the file's animation clips: which are declared shots, "
-                        "their authoring frame ranges, and which to open on. "
-                        "A clip's STEP 'scale' channels driving a node to zero "
-                        "are its VISIBILITY, not authored scale -- glTF has no "
-                        "visibility channel, so keyed visibility is carried "
-                        "that way and plays with no extension. Each clip's "
-                        "'zero_frame' is the authored frame its t=0 sits on "
-                        "(NOT 'start_frame': a take is rebased to its first "
-                        "key, so the two differ by the lead-in) -- it is what "
-                        "converts a playhead to the frame numbers this block "
-                        "quotes. Authored alpha fades are KHR_animation_pointer "
-                        "channels on each faded subtree's own material "
-                        "(extensionsUsed, never required); a runtime without "
-                        "the extension can play them by binding each channel "
-                        "to that material's alpha, which is what the preview "
-                        "page does"
-                    ),
-                    f"extras.{cls.SHADOW_WEB_KEY}": (
-                        "the scene's shadow-rig planes: per plane the glTF node "
-                        "indices of the plane, its source and its contact, the "
-                        "projection model's constants (DCC units; unit_scale is "
-                        "metres per unit), the texture index of its colour map "
-                        "and, when packed or baked, of its atlas and horizon "
-                        "map, with rects in glTF top-left space. A runtime "
-                        "evaluates ShadowProjection.model per frame from the "
-                        "source and contact nodes and places each plane; a "
-                        "reader without one leaves the imported keys and the "
-                        "silhouette in the base colour, which is the fallback"
-                    ),
-                    f"extras.{cls.ARTICULATION_WEB_KEY}": (
-                        "the scene's articulated rigs: per rig its joints -- the "
-                        "glTF node index, the parent joint, the rest translate "
-                        "and rotation in the parent's space, the rotate order "
-                        "and the channels (rx/ry/rz degrees, tx/ty/tz a slide "
-                        "along the rest axes) with their limits -- and the "
-                        "parts a hand grabs, each with its node index and the "
-                        "joint it rides. A runtime poses a joint as rotation = "
-                        "rest (x) Euler(channels), translation = rest + "
-                        "rest.(tx, ty, tz), measures its own unit factor off "
-                        "the rest translations, and solves a grab with "
-                        "pythontk's ArticulationModel (ported in the preview's "
-                        "articulated_rig.js); a reader without one plays the "
-                        "clips, which are the joints' own keys"
-                    ),
-                },
-                "sections": sorted(cls.SIDECAR_APPLIERS),
-                # The approved scene part by part, each with the data it is
-                # built from -- what a reader holding only this file rebuilds.
-                "assembly": copy.deepcopy(
-                    [*cls.HANDOFF_ASSEMBLY, *cls.LIGHTING_ASSEMBLY]
-                ),
-                # How to LIGHT what the sections describe. The rest of this
-                # envelope says what the asset is; without this, a recipient can
-                # rebuild every material correctly and still not reproduce the
-                # look, because the lighting lives in the viewer rather than in
-                # the file. An input like the sections: what the export chose
-                # (a baked-reflection level), never patched on afterwards.
-                "rendering": cls.rendering_policy(rendering),
-            },
+            "handoff": HandoffRecord.block("glb", None, source, rendering),
         }
 
     @classmethod
+    def _handoff_of(
+        cls, given: Optional[Mapping[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """*given* as a GLB handoff block: a block as it is, an envelope from
+        a host that predates the block as the block its source and lighting
+        choices make; ``None`` for nothing."""
+        if not isinstance(given, Mapping):
+            return None
+        if given.get("version") == HandoffRecord.VERSION and "instructions" in given:
+            return copy.deepcopy(dict(given))
+        nested = given.get("handoff")
+        if (
+            isinstance(nested, Mapping)
+            and nested.get("version") == HandoffRecord.VERSION
+        ):
+            return copy.deepcopy(dict(nested))
+        rendering = nested.get("rendering") if isinstance(nested, Mapping) else None
+        return HandoffRecord.block(
+            "glb", None, given.get("source"), HandoffRecord.overrides(rendering) or None
+        )
+
+    @classmethod
+    def _fbx_handoff(
+        cls, gltf: dict, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """The GLB handoff block the FBX's own ``handoff`` record implies, read
+        off the converted file's carrier in the version and shape it declares
+        (:meth:`_current_record`): its source, and each lighting value it
+        chose, with *rendering* laid over them -- the file's blocks not known
+        yet, so the whole recipe (:meth:`_finish_glb_handoff` gates it).
+        ``None`` for a file with no record -- a raw export claims no approved
+        scene -- or one of another version or shape, which is said."""
+        record = cls._current_record(gltf, SceneRecords.HANDOFF)
+        if record is None:
+            return None
+        source = GlbEdit.extras_of(record).get("source")
+        overrides = HandoffRecord.overrides(record.get("rendering"))
+        for section, fields in (rendering or {}).items():
+            overrides.setdefault(section, {}).update(fields)
+        return HandoffRecord.block("glb", None, source, overrides or None)
+
+    @classmethod
+    def strip_fbx_records(cls, gltf: dict) -> int:
+        """Drop what the source FBX's records left in a converted glTF's nodes.
+
+        FBX2glTF transcribes every user property into node extras
+        (``extras.fromFBX.userProperties``; a native glTF export writes them
+        at the top of the node's extras), so a GLB built from an FBX carried
+        the FBX's own account of itself a second time: every channel of the
+        ``data_export`` carrier and each baked object's ``lightmapInfo``
+        marker. The build consumes them -- the materials stated, the
+        lightmaps bound, the clips joined -- and states each in glTF's own
+        terms (the materials, ``extras.handoff`` and its sibling blocks), so
+        what remains is a repeat, and a record of another file: the handoff
+        it held describes the FBX. Run last, once every pass has read them.
+
+        Removes every record of a carrier node and the marker from every
+        other node, and the converter's own notes with them -- what a host
+        writes on every node of its own accord (:attr:`HOST_PROPERTIES`) and
+        FBX2glTF's flags beside the user properties, a material's ``fromFBX``
+        (its shading model and ``isTruePBR``), and the clip origin each
+        animation carried between the passes (``extras.zero_frame``, which
+        ``extras.animation`` states once): nothing reads them once the passes
+        ran. A user property the artist authored is content and stays, under
+        ``fromFBX.userProperties`` as the converter wrote it, as does another
+        program's extras. An extras object left empty goes, and so does a
+        carrier node that holds no content (no mesh, camera, skin or child)
+        (:meth:`_remove_glb_nodes`).
+
+        Returns:
+            How many of the file's objects changed -- nodes, a removed one
+            included, materials and animations.
+        """
+        def ours(key: str, carrier: bool) -> bool:
+            return (
+                key == cls.LIGHTMAP_INFO_KEY
+                or key in cls.HOST_PROPERTIES
+                or (carrier and key in cls._RECORD_KEYS)
+            )
+
+        changed: Set[int] = set()
+        for index, node in enumerate(gltf.get("nodes") or []):
+            extras = node.get("extras")
+            if not isinstance(extras, dict):
+                continue
+            carrier = SceneStoreBase.is_carrier(node.get("name"))
+            # A native glTF export's records and markers sit at the top.
+            drop = [key for key in extras if ours(key, carrier)]
+            for key in drop:
+                del extras[key]
+                changed.add(index)
+            nested = extras.get("fromFBX")
+            if isinstance(nested, dict):
+                props = nested.get("userProperties")
+                kept = (
+                    {k: v for k, v in props.items() if not ours(k, carrier)}
+                    if isinstance(props, dict)
+                    else {}
+                )
+                # Only the artist's attributes: FBX2glTF's flags beside them
+                # are its own notes.
+                if kept:
+                    if nested != {"userProperties": kept}:
+                        extras["fromFBX"] = {"userProperties": kept}
+                        changed.add(index)
+                else:
+                    del extras["fromFBX"]
+                    changed.add(index)
+            if not extras:
+                del node["extras"]
+        notes = 0
+        for kind, key in (("materials", "fromFBX"), ("animations", "zero_frame")):
+            for item in gltf.get(kind) or []:
+                extras = item.get("extras") if isinstance(item, dict) else None
+                if isinstance(extras, dict) and key in extras:
+                    del extras[key]
+                    if not extras:
+                        del item["extras"]
+                    notes += 1
+        bare = {
+            index
+            for index, node in enumerate(gltf.get("nodes") or [])
+            if SceneStoreBase.is_carrier(node.get("name"))
+            and not any(k in node for k in ("mesh", "camera", "skin", "children"))
+        }
+        if bare:
+            cls._remove_glb_nodes(gltf, bare)
+        return len(changed | bare) + notes
+
+    #: Every channel a carrier can hold, read from the declarations: what a
+    #: native glTF export's top-level node extras name on a carrier
+    #: (:meth:`strip_fbx_records`).
+    _RECORD_KEYS = frozenset(spec.key for spec in SceneRecords.deliverable())
+    #: The user properties a host writes on every node of its own accord,
+    #: never an artist's: Maya's current UV set, 3ds Max's object handle.
+    #: Every other user property is content (:meth:`strip_fbx_records`).
+    HOST_PROPERTIES = frozenset({"currentUVSet", "MaxHandle"})
+
+    @classmethod
+    def finish_glb(
+        cls,
+        glb: GlbTarget,
+        rendering: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    ) -> bool:
+        """State a GLB as every deliverable states itself, whatever wrote it.
+
+        What the FBX route's build does at its end, for a GLB a host's own
+        exporter wrote (blendertk's ``LightmapWebExport``), run once the file
+        is: each block of ours it left in its first scene's extras -- where a
+        native exporter puts a scene's custom properties, as JSON text --
+        moves to the root's as an object (:meth:`_lift_scene_blocks`); the
+        handoff its carrier's ``handoff`` record implies is embedded and named
+        against those blocks (:meth:`_fbx_handoff`); and the records leave its
+        nodes (:meth:`strip_fbx_records`). A file whose carrier holds no
+        handoff record gets none -- a raw export claims no approved scene.
+        Idempotent.
+
+        Parameters:
+            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
+            rendering: The export's choices over the lighting recipe, laid
+                over the record's.
+
+        Returns:
+            Whether the file changed.
+        """
+        with cls.open_glb(glb) as edit:
+            changed = cls._lift_scene_blocks(edit.gltf)
+            handoff = cls._fbx_handoff(edit.gltf, rendering)
+            if handoff:
+                cls.embed_glb_handoff(edit, handoff)
+                changed = True
+            elif changed:
+                cls._finish_glb_handoff(edit)
+            changed = bool(cls.strip_fbx_records(edit.gltf)) or changed
+            if changed:
+                edit.dirty = True
+            return changed
+
+    @classmethod
+    def _lift_scene_blocks(cls, gltf: dict) -> bool:
+        """Move each block of ours from the first scene's extras to the
+        root's, as an object: one place and one encoding, whichever exporter
+        wrote the file. A scene property that is no block of ours -- not an
+        object stating its version -- stays where it is."""
+        scenes = gltf.get("scenes") or []
+        first = scenes[0] if scenes and isinstance(scenes[0], dict) else {}
+        held = first.get("extras")
+        if not isinstance(held, dict):
+            return False
+        moved = False
+        for spec in SceneRecords.glb_records():
+            block = held.get(spec.key)
+            if block is None:
+                continue
+            if isinstance(block, str):
+                try:
+                    block = json.loads(block)
+                except ValueError:
+                    continue
+            if not (isinstance(block, dict) and isinstance(block.get("version"), int)):
+                continue
+            root = gltf.get("extras")
+            if not isinstance(root, dict):
+                root = gltf["extras"] = {}
+            root[spec.key] = block
+            del held[spec.key]
+            moved = True
+        if moved and not held:
+            del first["extras"]
+        return moved
+
+    @classmethod
+    @Deprecation.symbol(
+        "MeshConvert.strip_fbx_records -- every record the FBX carried leaves",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
     def strip_fbx_handoff(cls, gltf: dict) -> int:
-        """Drop the FBX's handoff block from a converted glTF's node extras.
-
-        FBX2glTF transcribes every user property on the ``data_export`` carrier
-        into ``nodes[N].extras.fromFBX.userProperties`` (probe-measured), so the
-        block :meth:`build_fbx_handoff` stamps for the FBX arrives inside the
-        GLB as well -- where it is not provenance but a WRONG self-description:
-        it states that no material references the lightmaps the manifest names,
-        which is true of the FBX and false of a GLB that binds them, and its
-        ``reads`` map names ``data_export.<channel>`` paths that do not exist in
-        a glTF. A deliverable carrying two accounts of itself, one of them
-        wrong, is worse than one carrying none -- and the GLB has its own, in
-        ``extras.scene_sidecar.handoff``.
-
-        Removed even when no sidecar was applied (a bare conversion): "no
-        self-description" is a recoverable state, "a confidently wrong one" is
-        not. Every other transcribed channel is left alone -- ``lightmap_metadata``
-        is this applier's own designed input, and the per-object markers are
-        read by consumers outside this repo.
+        """Drop the FBX's handoff block from a converted glTF's node extras --
+        one of the records :meth:`strip_fbx_records` now drops together.
 
         Returns:
             How many nodes were stripped.
         """
         stripped = 0
         for node in gltf.get("nodes") or []:
-            props = ((node.get("extras") or {}).get("fromFBX") or {}).get(
-                "userProperties"
-            )
-            if isinstance(props, dict) and props.pop(cls.FBX_HANDOFF_CHANNEL, None):
+            props = (GlbEdit.extras_of(node).get("fromFBX") or {}).get("userProperties")
+            if isinstance(props, dict) and props.pop(HandoffRecord.KEY, None):
                 stripped += 1
         return stripped
 
     @classmethod
+    @Deprecation.symbol(
+        "HandoffRecord.block('fbx', channels, source)",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
     def build_fbx_handoff(
         cls,
         channels: Union[Iterable[str], Mapping[str, Any]],
         source: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """The standalone-reader contract for an FBX, ready to publish.
-
-        The FBX twin of the ``handoff`` section :meth:`build_scene_sidecar`
-        puts in a GLB. Both deliverables of a pair are routinely handed on
-        alone -- the GLB to a web consumer, the FBX to an engine -- and until
-        now only one of them could be read without a covering note.
-
-        Deliberately NOT the scene-sidecar envelope. That envelope carries
-        repairs for what the FBX *format* mistranslates, which is meaningless
-        inside the FBX itself; and this package's standing split (see
-        :meth:`build_scene_sidecar`'s scope note) is that FBX-side metadata
-        rides as ``data_export`` channels while the sidecar is the GLB's. This
-        is one more channel on the carrier that already exists, not a second
-        carrier and not a companion file.
-
-        The block itself is built by :meth:`SceneRecords.handoff_block`, beside
-        the record declarations it describes; the export snapshot stamps it
-        on every commit, and this name is the GLB-side entry point to the
-        same builder.
-
-        Parameters:
-            channels: The channels actually present on the carrier --
-                normally ``DataNodes.dump()["data_export"]``, a mapping of
-                name to stored value, of which only the STRING values are
-                described (the carrier also holds keyable float attrs, and
-                the block's own text says every channel value is a JSON
-                string); an iterable of names is taken as given.
-            source: Producer identity and provenance, e.g. ``{"application":
-                "maya", "version": "2025", "scene": "PROD_ROOM.ma"}``. No
-                asset name is carried: this is stamped before any FBX path is
-                chosen, so the only name available would be the scene's.
-
-        Returns:
-            The block, JSON-serializable. Empty dict when *channels* holds
-            nothing to describe -- a carrier with no metadata has no handoff
-            to make, and stamping one would put a lone self-referential
-            channel in an otherwise empty node.
-        """
-        return SceneRecords.handoff_block(channels, source)
+        """The FBX's handoff block for a carrier holding *channels*, or ``{}``
+        when it holds no record (``HandoffRecord.block``)."""
+        held = HandoffRecord.carried(channels)
+        return HandoffRecord.block("fbx", channels, source) if held else {}
 
     @staticmethod
     def _sidecar_section_scope(present: Set[str], data: Any) -> Optional[int]:
@@ -824,18 +594,38 @@ class _SidecarMixin:
         return overlap or None
 
     @classmethod
+    @Deprecation.symbol(
+        "MeshConvert.apply_glb_materials -- the FBX's materials record states "
+        "every material, so an envelope repairs none (a GLB's statement of "
+        "itself: MeshConvert.embed_glb_handoff)",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
     def apply_scene_sidecar(
         cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]
     ) -> Dict[str, str]:
-        """Apply a scene-sidecar envelope to a GLB and embed it in its extras.
+        """Apply a scene-sidecar envelope's sections to a GLB and embed it.
 
-        Every section is dispatched through :attr:`SIDECAR_APPLIERS` against
-        **one** open edit session, then the envelope itself (plus the
-        per-section outcome summary) is written into the glTF root ``extras``
-        — so the artifact leaves self-describing: what the scene authored
-        (``extras["scene_sidecar"]``) and what this pass did about it
-        (``extras["scene_sidecar_applied"]``), readable by any glTF tool with
-        no side files. :meth:`read_scene_sidecar` is the counterpart.
+        Retired with the hosts' section readers: what the sections repaired,
+        the ``materials`` record states. It still applies an envelope's
+        sections, as it did, until the removal (:meth:`_apply_scene_sidecar`).
+        """
+        return cls._apply_scene_sidecar(glb, sidecar)
+
+    @classmethod
+    def _apply_scene_sidecar(
+        cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]], *, finish: bool = True
+    ) -> Dict[str, str]:
+        """Apply a scene-sidecar envelope's sections to a GLB and embed the
+        handoff block its source and lighting make.
+
+        What an envelope from a host that predates the ``materials`` record
+        gets, until its sections retire (:attr:`SIDECAR_APPLIERS`). Every
+        section is dispatched through the applier table against **one** open
+        edit session; the images the writers displaced are swept, and the
+        file states itself as any GLB does -- ``extras.handoff``
+        (:meth:`embed_glb_handoff`), :meth:`read_glb_handoff` the counterpart.
+        The per-section outcome is the return value, not the file's.
 
         A section absent from the envelope is simply skipped, and a section
         failure is logged rather than raised: a deliverable missing one
@@ -854,6 +644,9 @@ class _SidecarMixin:
                 anything falsy) is a true no-op; an envelope with empty
                 *sections* still embeds (sidecar was on, the scene had nothing
                 to carry) — the distinction is a real envelope vs no envelope.
+            finish: Name the file's blocks in the handoff now
+                (:meth:`embed_glb_handoff`); ``False`` inside a build that
+                still adds blocks and finishes it last (:meth:`fbx_to_glb`).
 
         Returns:
             ``{section: outcome}`` — ``"N of M"`` (with a
@@ -864,180 +657,263 @@ class _SidecarMixin:
         if not sidecar:
             return {}
         sections = sidecar.get("sections") or {}
-        summary: Dict[str, str] = {}
         try:
             with cls.open_glb(glb) as edit:
-                present = {
-                    str(m.get("name"))
-                    for m in (edit.gltf.get("materials") or [])
-                    if m.get("name")
-                }
-                for section, method in cls.SIDECAR_APPLIERS.items():
-                    data = sections.get(section)
-                    if not data:
-                        continue
-                    apply = getattr(cls, method)
-                    try:
-                        applied = apply(edit, data)
-                    except (OSError, ValueError) as error:
-                        logger.warning("Sidecar %r not applied: %s", section, error)
-                        summary[section] = f"failed ({error})"
-                        continue
-                    # The envelope describes the SCENE and the GLB carries the
-                    # exported subset, so entries naming a material that is not
-                    # in this file were never in scope. Counting them made a
-                    # correct deliverable read "10 of 23" on a production
-                    # assembly -- 13 reference/ID materials that never
-                    # exported, reported as if 13 repairs had failed. The same
-                    # distinction ``apply_glb_lightmaps`` draws with
-                    # ``out_of_scope``; ``None`` means the section is not keyed
-                    # by material name and the plain count is all there is.
-                    in_scope = cls._sidecar_section_scope(present, data)
-                    # Counted by NAME, not by record: a by-name writer lands
-                    # on every material carrying the name (fade clones, the
-                    # converter's own duplicates), and each landing is a
-                    # record. The outcome the panel reads is "how many of the
-                    # scene's materials were repaired", which is names. A
-                    # record without a name -- or not a record at all, from a
-                    # writer that reports differently -- counts as one.
-                    landed = len(
-                        {
-                            record.get("material", index)
-                            if isinstance(record, dict)
-                            else index
-                            for index, record in enumerate(applied)
-                        }
-                    )
-                    if in_scope is not None and landed > in_scope:
-                        # More landed than the exact-name scope allows, so this
-                        # applier does not match on the name alone (a
-                        # namespace-tolerant or fuzzy resolver would do this).
-                        # The scope model does not describe it, and "12 of 10"
-                        # is worse than the plain count -- fall back rather
-                        # than print a number that cannot be true.
-                        in_scope = None
-                    out_of_scope = len(data) - in_scope if in_scope is not None else 0
-                    scope = (
-                        f" ({out_of_scope} not in this export)" if out_of_scope else ""
-                    )
-                    if not applied and (in_scope is None or in_scope):
-                        # The section was read but nothing landed — almost
-                        # always a name mismatch, which the applier has just
-                        # logged in full. Only reported as a miss when
-                        # something WAS in scope to match.
-                        logger.warning(
-                            "Sidecar %r matched none of its %s entr(ies) in the GLB.",
-                            section,
-                            len(data),
-                        )
-                        summary[section] = f"0 of {len(data)} matched"
-                        continue
-                    denominator = len(data) if in_scope is None else in_scope
-                    logger.info(
-                        "Sidecar %r applied to %s of %s in this export%s.",
-                        section,
-                        landed,
-                        denominator,
-                        f"; {out_of_scope} scene material(s) not in it"
-                        if scope
-                        else "",
-                    )
-                    summary[section] = f"{landed} of {denominator}{scope}"
-                # Sweep what the writers above unbound (FBX2glTF's converted
-                # ORM after the repack, most often) BEFORE the texture map
-                # below records image indices -- pruning renumbers them.
+                summary = cls._apply_sidecar_sections(edit, sections)
+                # What the writers unbound (the converter's ORM, displaced by
+                # the repack) must not ship -- nor be decoded by the check.
                 cls.prune_glb_unreferenced_textures(edit)
-                extras = edit.gltf.setdefault("extras", {})
-                # A COPY, with the resolution keys added: the caller's envelope
-                # is theirs to keep (unscrubbed, useful on the authoring machine),
-                # and only this pass can know which glTF image each authoring
-                # path became.
-                embedded = dict(sidecar)
-                embedded["textures"] = cls._sidecar_texture_map(edit)
-                # Deliberately NOT the file's total image/texture counts. Later
-                # passes add images -- the lightmap applier runs after this in
-                # every production path -- so a total stamped here is stale on
-                # arrival, and a reader using it as an integrity check would
-                # reject every lightmapped deliverable. What is stable is what
-                # this envelope itself claims: how many entries each section
-                # carries and how many texture references resolve. Those, plus
-                # the per-reference digests, are the check worth making.
-                # Ship file names, not the authoring machine's directory tree.
-                # Runs BEFORE `validate` is sized and before the digests are
-                # stamped, so both describe the envelope as delivered.
-                cls._scrub_sidecar_paths(embedded)
-                embedded["validate"] = {
-                    "sections": {
-                        name: len(entries)
-                        for name, entries in sections.items()
-                        # A malformed envelope (a null section, say) is skipped
-                        # by the dispatch above; sizing it must not be the thing
-                        # that raises -- the container catch here only handles
-                        # OSError/ValueError, so a TypeError would abort a whole
-                        # apply that was otherwise fine.
-                        if hasattr(entries, "__len__")
-                    },
-                    "textures": len(embedded["textures"]),
-                }
-                extras["scene_sidecar"] = embedded
-                extras[cls.SIDECAR_APPLIED_KEY] = dict(summary)
-                cls._stamp_asset_generator(edit, sidecar)
-                # The materials this envelope did NOT cover still carry the
-                # converter's own packing, which is the one measured to arrive
-                # solid white. Checked here because the session is already open
-                # and the covered names are in hand; a fully-covered export
-                # decodes nothing.
-                #
-                # Only the DESTRUCTIVE finding is raised at export time. The
-                # `unvalidated` half is real coverage information but it is not
-                # a defect on its own, and an export-time warning an artist
-                # cannot act on is how the actionable ones stop being read --
-                # it is reported to the recipient instead, by `verify_glb`.
-                suspect = cls.suspect_orm_materials(
+                cls._warn_destructive_orms(
                     edit, described=sections.get("metallic_roughness") or ()
                 )
-                harmful = sorted(
-                    name
-                    for name, found in suspect.items()
-                    if found["finding"] == cls.ORM_FINDING_METALLIC_FULL
-                )
-                if harmful:
-                    logger.warning(
-                        "Metallic=1 everywhere on %s material(s) not covered by "
-                        "the sidecar: %s. glTF reads metallic from the ORM's blue "
-                        "channel, so these render with no diffuse response (black "
-                        "under a lightmap) -- name them in the scene sidecar's "
-                        "metallic_roughness section, or re-export their source "
-                        "maps as RGB.",
-                        len(harmful),
-                        ", ".join(harmful),
-                        extra={"preset": "highlight"},
-                    )
-                # Every reference is meant to carry a content address; one that
-                # cannot be digested is an entry a verifying reader has no way
-                # to check, so a shortfall is said out loud rather than shipped
-                # as a quietly incomplete map.
-                stamped = cls._stamp_sidecar_digests(edit)
-                if stamped != len(embedded["textures"]):
-                    logger.warning(
-                        "Sidecar: %d of %d texture reference(s) could not be "
-                        "content-addressed (their image payload was unreadable).",
-                        len(embedded["textures"]) - stamped,
-                        len(embedded["textures"]),
-                    )
-                edit.dirty = True
+                write = cls.embed_glb_handoff if finish else cls._write_glb_handoff
+                write(edit, cls._handoff_of(sidecar))
         except (OSError, ValueError) as error:
             logger.warning("Sidecar not applied to %s: %s", glb, error)
             return {
                 section: f"failed ({error})"
-                for section in cls.SIDECAR_APPLIERS
+                for section in cls._SIDECAR_APPLIERS
                 if sections.get(section)
             }
         return summary
 
     @classmethod
+    def _apply_sidecar_sections(
+        cls, edit: "GlbEdit", sections: Mapping[str, Any]
+    ) -> Dict[str, str]:
+        """Each section through its :attr:`SIDECAR_APPLIERS` writer, against
+        *edit*; ``{section: outcome}`` as :meth:`_apply_scene_sidecar` reports."""
+        summary: Dict[str, str] = {}
+        present = {
+            str(m.get("name"))
+            for m in (edit.gltf.get("materials") or [])
+            if m.get("name")
+        }
+        for section, method in cls._SIDECAR_APPLIERS.items():
+            data = sections.get(section)
+            if not data:
+                continue
+            apply = getattr(cls, method)
+            try:
+                applied = apply(edit, data)
+            except (OSError, ValueError) as error:
+                logger.warning("Sidecar %r not applied: %s", section, error)
+                summary[section] = f"failed ({error})"
+                continue
+            # Counted by NAME, not by record: a by-name writer lands on every
+            # material carrying the name (fade clones, the converter's own
+            # duplicates), and each landing is a record. The outcome the panel
+            # reads is "how many of the scene's materials were repaired", which
+            # is names. A record without a name -- or not a record at all, from
+            # a writer that reports differently -- counts as one.
+            landed = {
+                record.get("material", index) if isinstance(record, dict) else index
+                for index, record in enumerate(applied)
+            }
+            summary[section] = cls._sidecar_outcome(section, data, present, landed)
+        return summary
+
+    @classmethod
+    def _sidecar_outcome(
+        cls,
+        section: str,
+        data: Any,
+        present: Set[str],
+        landed: Iterable[Any],
+    ) -> str:
+        """One section's outcome line: ``"N of M"`` (with a ``" (K not in this
+        export)"`` clause), or ``"0 of M matched"`` -- logged as it reads.
+
+        The envelope describes the SCENE and the GLB carries the exported
+        subset, so entries naming a material that is not in this file were
+        never in scope. Counting them made a correct deliverable read "10 of
+        23" on a production assembly -- 13 reference/ID materials that never
+        exported, reported as if 13 repairs had failed. The same distinction
+        ``apply_glb_lightmaps`` draws with ``out_of_scope``; a section that
+        is not keyed by material name reports its plain count.
+        """
+        landed = len(set(landed))
+        in_scope = cls._sidecar_section_scope(present, data)
+        if in_scope is not None and landed > in_scope:
+            # More landed than the exact-name scope allows, so the applier does
+            # not match on the name alone (a namespace-tolerant resolver would
+            # do this): "12 of 10" is worse than the plain count.
+            in_scope = None
+        out_of_scope = len(data) - in_scope if in_scope is not None else 0
+        scope = f" ({out_of_scope} not in this export)" if out_of_scope else ""
+        if not landed and (in_scope is None or in_scope):
+            # Read but nothing landed -- almost always a name mismatch, which
+            # the applier has just logged in full. Only a miss when something
+            # WAS in scope to match.
+            logger.warning(
+                "Sidecar %r matched none of its %s entr(ies) in the GLB.",
+                section,
+                len(data),
+            )
+            return f"0 of {len(data)} matched"
+        denominator = len(data) if in_scope is None else in_scope
+        logger.info(
+            "Sidecar %r applied to %s of %s in this export%s.",
+            section,
+            landed,
+            denominator,
+            f"; {out_of_scope} scene material(s) not in it" if scope else "",
+        )
+        return f"{landed} of {denominator}{scope}"
+
+    @classmethod
+    def embed_glb_handoff(cls, edit: "GlbEdit", handoff: Mapping[str, Any]) -> None:
+        """Write *handoff* (``HandoffRecord.block("glb", ...)``) as the open GLB's
+        ``extras.handoff``, name the root-``extras`` blocks the file carries
+        in it (:meth:`_finish_glb_handoff`), and stamp this pipeline in
+        ``asset.generator``.
+
+        Parameters:
+            edit: The open session; marked dirty.
+            handoff: The block. A copy is written: the caller's stays theirs.
+        """
+        cls._write_glb_handoff(edit, handoff)
+        cls._finish_glb_handoff(edit)
+
+    @classmethod
+    def _write_glb_handoff(cls, edit: "GlbEdit", handoff: Mapping[str, Any]) -> None:
+        """Write *handoff* as the open GLB's ``extras.handoff`` and stamp this
+        pipeline in ``asset.generator``, the blocks it names left to the step
+        that knows them (:meth:`_finish_glb_handoff`): what a build still
+        adding blocks writes first. Gated then, a lighting choice that only a
+        later block calls for -- a lightmapped material's -- would be gone
+        before that block exists."""
+        extras = edit.gltf.setdefault("extras", {})
+        extras[HandoffRecord.KEY] = copy.deepcopy(dict(handoff))
+        cls._stamp_asset_generator(edit, GlbEdit.extras_of(handoff).get("source"))
+        edit.dirty = True
+
+    @classmethod
+    def _finish_fbx_handoff(cls, fbx: str) -> bool:
+        """State the FBX's handoff again from the records it carries now --
+        the twin of :meth:`_finish_glb_handoff`, the last pass of
+        :meth:`finish_fbx_deliverable`.
+
+        The block is written at the commit, from the records the scene
+        published; a pass after the write can change one (the highlight
+        copies add the probe's ``highlights``), and the row that record calls
+        for with it (:meth:`RecordSpec.assembly_for`). Restated from the
+        file's records as a reader applies them, its ``extras.source`` and the
+        export's lighting choices (:meth:`HandoffRecord.overrides`) kept.
+
+        Returns:
+            Whether the handoff changed; ``False`` for a file carrying none.
+        """
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        held = FbxMedia.records(fbx)
+        stated = held.pop(HandoffRecord.KEY, None)
+        if not isinstance(stated, Mapping):
+            return False
+        block = HandoffRecord.block(
+            "fbx",
+            held,
+            GlbEdit.extras_of(stated).get("source"),
+            HandoffRecord.overrides(stated.get("rendering")) or None,
+        )
+        if block == stated:
+            return False
+        FbxMedia.set_record(fbx, HandoffRecord.KEY, block)
+        return True
+
+    @classmethod
+    def _finish_glb_handoff(cls, edit: "GlbEdit") -> bool:
+        """Make the open GLB's handoff name exactly the root-``extras`` blocks
+        the file carries (``HandoffRecord.assembly``).
+
+        A pass that adds a block after the handoff is written calls this
+        again, so the block never names one the file lacks, nor omits one it
+        has. Idempotent.
+
+        Returns:
+            Whether the file carries a handoff to finish.
+        """
+        extras = edit.gltf.get("extras")
+        block = extras.get(HandoffRecord.KEY) if isinstance(extras, dict) else None
+        if not isinstance(block, dict):
+            return False
+        # Each block itself, so its row states what the block calls for and
+        # the lighting recipe what the blocks use -- the export's own choices
+        # read back off what was published.
+        held = {
+            spec.key: extras[spec.key]
+            for spec in SceneRecords.glb_records()
+            if spec.key in extras
+        }
+        block["assembly"] = HandoffRecord.assembly("glb", held)
+        block["rendering"] = HandoffRecord.rendering_policy(
+            HandoffRecord.overrides(block.get("rendering")) or None, held
+        )
+        edit.dirty = True
+        return True
+
+    @classmethod
+    @Deprecation.symbol(
+        "MeshConvert.embed_glb_handoff -- a GLB carries extras.handoff",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    def embed_scene_sidecar(
+        cls,
+        edit: "GlbEdit",
+        sidecar: Dict[str, Any],
+        summary: Mapping[str, str],
+        *,
+        described: Iterable[str] = (),
+    ) -> None:
+        """Embed *sidecar* as the GLB's handoff block (:meth:`embed_glb_handoff`):
+        an envelope from a host that predates the block, as the block its
+        source and lighting make. *summary* is the build's report, no longer
+        the file's."""
+        cls._warn_destructive_orms(edit, described=described)
+        cls.embed_glb_handoff(edit, cls._handoff_of(sidecar))
+
+    @classmethod
+    def _warn_destructive_orms(
+        cls, edit: "GlbEdit", described: Iterable[str] = ()
+    ) -> List[str]:
+        """Warn of the materials the open GLB renders metallic everywhere --
+        the converter's own ORM packing, measured to arrive solid white -- and
+        return their names.
+
+        Only the DESTRUCTIVE finding is raised at export time: the rest of
+        :meth:`suspect_orm_materials`' report is coverage information, read by
+        :meth:`verify_glb` -- an export-time warning an artist cannot act on is
+        how the actionable ones stop being read.
+
+        Parameters:
+            edit: The open session.
+            described: Material names whose metal/roughness packing this
+                pipeline wrote from authored maps -- exempt.
+        """
+        suspect = cls.suspect_orm_materials(edit, described=described)
+        harmful = sorted(
+            name
+            for name, found in suspect.items()
+            if found["finding"] == cls.ORM_FINDING_METALLIC_FULL
+        )
+        if harmful:
+            logger.warning(
+                "Metallic=1 everywhere on %s material(s) the file does not "
+                "state: %s. glTF reads metallic from the ORM's blue channel, "
+                "so these render with no diffuse response (black under a "
+                "lightmap) -- export through a Scene Exporter, whose FBX "
+                "states every material, or re-export their source maps as "
+                "RGB.",
+                len(harmful),
+                ", ".join(harmful),
+                extra={"preset": "highlight"},
+            )
+        return harmful
+
+    @classmethod
     def _stamp_asset_generator(
-        cls, edit: "GlbEdit", sidecar: Optional[Dict[str, Any]] = None
+        cls, edit: "GlbEdit", source: Optional[Mapping[str, Any]] = None
     ) -> str:
         """Name this pipeline in the glTF's own ``asset.generator``; return it.
 
@@ -1048,16 +924,15 @@ class _SidecarMixin:
         produce the geometry, and replacing that claim would lose the fact that
         matters most when a mesh arrives wrong.
 
-        Deliberately coarse -- the authoring app + version the envelope already
-        names, and this package's version. No host, no user, no paths: a
-        generator string travels to whoever gets the file (see
-        :meth:`_scrub_sidecar_paths` for the same rule applied to the envelope).
+        Deliberately coarse -- the authoring app + version the handoff's
+        *source* names, and this package's version. No host, no user, no
+        paths: a generator string travels to whoever gets the file.
 
-        Idempotent: re-applying an envelope to an already-stamped GLB refreshes
-        the stamp rather than appending a second one.
+        Idempotent: re-stamping an already-stamped GLB refreshes the stamp
+        rather than appending a second one.
         """
         parts = []
-        source = (sidecar or {}).get("source") or {}
+        source = source or {}
         # Joined from what is actually present: an f-string over a missing
         # version interpolates the literal "None" into the MIDDLE of the string,
         # where .strip() cannot reach it ("maya None + pythontk 0.9.24"), and a
@@ -1089,162 +964,12 @@ class _SidecarMixin:
         return asset["generator"]
 
     @classmethod
-    def _scrub_sidecar_paths(cls, embedded: Dict[str, Any]) -> int:
-        """Strip authoring directories out of *embedded* in place; return the count.
-
-        The envelope names every texture by the absolute path it had on the
-        authoring machine -- in both the ``textures`` map's keys and the section
-        entries that resolve through them. That is fine locally and is a
-        disclosure in a hand-off: a GLB sent to an external developer spells out
-        the client folder tree it was built from.
-
-        The directory is what leaks; the file name is not, and the join does not
-        need either. Both sides of the join are the SAME string, so rewriting
-        both consistently keeps a plain string lookup working -- no schema
-        version bump, and every existing reader keeps resolving. (The content
-        address stamped by :meth:`_stamp_sidecar_digests` is the identity that
-        actually verifies bytes; this name is only a join token.)
-
-        Two distinct paths CAN share a basename, so a collision is disambiguated
-        with a ``#N`` suffix assigned in sorted-path order -- deterministic, and
-        it keeps the map injective, which a bare basename would not.
-
-        Only the embedded COPY is scrubbed. The caller's own envelope keeps
-        full provenance, which is the half that is useful on the authoring
-        machine.
-        """
-        entries = embedded.get("textures")
-        if not isinstance(entries, dict):
-            return 0
-
-        mapping: Dict[str, str] = {}
-        claimed: Dict[str, str] = {}  # scrubbed name -> the path that took it
-        for path in sorted(entries):
-            if not isinstance(path, str):
-                continue
-            name = os.path.basename(path.replace("\\", "/").rstrip("/")) or path
-            if claimed.get(name, path) != path:
-                stem, dot, ext = name.rpartition(".")
-                suffix = 2
-                while True:
-                    candidate = (
-                        "{}#{}{}{}".format(stem, suffix, dot, ext)
-                        if dot
-                        else "{}#{}".format(name, suffix)
-                    )
-                    if claimed.get(candidate, path) == path:
-                        break
-                    suffix += 1
-                name = candidate
-            claimed[name] = path
-            if name != path:
-                mapping[path] = name
-
-        if not mapping:
-            return 0
-
-        def rewrite(node):
-            """Replace any string that IS one of the mapped paths, anywhere."""
-            if isinstance(node, dict):
-                return {
-                    mapping.get(k, k) if isinstance(k, str) else k: rewrite(v)
-                    for k, v in node.items()
-                }
-            if isinstance(node, list):
-                return [rewrite(v) for v in node]
-            if isinstance(node, str):
-                return mapping.get(node, node)
-            return node
-
-        for key, value in list(embedded.items()):
-            embedded[key] = rewrite(value)
-        return len(mapping)
-
-    @classmethod
-    def _sidecar_texture_map(cls, edit: "GlbEdit") -> Dict[str, Dict[str, Any]]:
-        """``{authoring path: {"image": index}}`` for everything this session embedded.
-
-        The join a standalone reader needs and a path cannot give it: a section
-        entry names a texture by the path it had on the authoring machine, which
-        resolves nowhere else, so the envelope carries the map from that name to
-        the glTF ``images`` index actually holding those bytes.
-        :meth:`_stamp_sidecar_digests` fills in the content address.
-
-        Derived wholly from :attr:`GlbEdit.embedded` (source key -> texture
-        index), which is why it needs no knowledge of any section's shape and a
-        section added later is covered for free. Two wrinkles that shape it:
-
-        * The ORM writer's cache key is the three source paths joined by ``|``,
-          because the trio collapses into ONE packed image. Splitting it back
-          out is what lets each of ``metallic``/``roughness``/``occlusion``
-          resolve -- all three to the same index, which is the truth.
-        * ``None`` appears in that join for a slot with no map (``"a|None|b"``),
-          and is not a path. A real file named ``None`` is indistinguishable
-          here, which costs nothing: it would resolve to the image it is
-          actually part of.
-        """
-        resolved: Dict[str, Dict[str, Any]] = {}
-        for cache_key, texture_index in edit.embedded.items():
-            image_index = edit.image_for_texture(texture_index)
-            if image_index is None:
-                continue
-            for path in str(cache_key).split("|"):
-                if path and path != "None":
-                    # setdefault, not assignment: one path CAN legitimately
-                    # resolve to two images -- embedded whole for one channel
-                    # and folded into an ORM for another -- and a single-valued
-                    # map can only say one. First wins, which is well defined
-                    # because SIDECAR_APPLIERS fixes the order and the whole
-                    # embed is the more direct answer than a channel of a pack.
-                    # Assignment made the winner depend on applier order, which
-                    # is the kind of thing that changes silently.
-                    resolved.setdefault(path, {"image": image_index})
-        return resolved
-
-    @classmethod
-    def _stamp_sidecar_digests(cls, edit: "GlbEdit") -> int:
-        """Refresh the embedded envelope's content addresses; return how many.
-
-        Split from :meth:`_sidecar_texture_map` because the two answer questions
-        with different lifetimes. *Which* image carries a path is decided when
-        the sidecar is applied; a later pass that renumbers images carries the
-        reference along (:meth:`_map_sidecar_image_refs`) without touching its
-        bytes. *What those bytes are* changes afterwards:
-        :meth:`optimize_glb_textures` resizes and re-encodes every image it
-        touches, so a digest taken at apply time describes bytes the delivered
-        file no longer contains. So the digest is stamped by whoever last wrote
-        the payloads, and this is idempotent so both callers can.
-
-        Reads the envelope out of ``extras`` rather than taking it as an
-        argument: the optimize pass has no sidecar in hand and must not need
-        one -- it just refreshes whatever the file already declares.
-        """
-        sidecar = (edit.gltf.get("extras") or {}).get("scene_sidecar")
-        entries = sidecar.get("textures") if isinstance(sidecar, dict) else None
-        if not isinstance(entries, dict):
-            return 0
-        images = edit.images
-        stamped = 0
-        for ref in entries.values():
-            if not isinstance(ref, dict):
-                continue
-            index = ref.get("image")
-            if not isinstance(index, int) or not 0 <= index < len(images):
-                continue
-            payload = edit._image_payload(images[index])
-            if not payload:
-                continue
-            ref["sha256"] = hashlib.sha256(payload).hexdigest()
-            ref["bytes"] = len(payload)
-            mime = images[index].get("mimeType")
-            if mime:
-                ref["mimeType"] = mime
-            stamped += 1
-        if stamped:
-            edit.dirty = True
-        return stamped
-
-    @classmethod
+    @Deprecation.symbol(
+        "MapFactory.foreign_packings over the materials record's maps "
+        "(MaterialFamilies.texture_files)",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
     def sidecar_foreign_packings(
         cls,
         sidecar: Optional[Dict[str, Any]],
@@ -1252,6 +977,10 @@ class _SidecarMixin:
         workflow: Optional[str] = None,
     ) -> Dict[str, str]:
         """``{path: map type}`` for envelope textures authored for another engine.
+
+        Retired with the hosts' section readers: an exporter's check now asks
+        :meth:`MapFactory.foreign_packings` of the maps its materials record
+        names, so no envelope is read for it.
 
         The pre-flight half of the compatibility story: given a built scene
         sidecar, which of the maps it is about to carry into a glTF deliverable
@@ -1296,16 +1025,26 @@ class _SidecarMixin:
         return MapFactory.foreign_packings(paths, target=target, workflow=workflow)
 
     @classmethod
-    def read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
-        """The scene-sidecar envelope embedded in a GLB, or ``None``.
+    def read_glb_handoff(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
+        """The handoff block a GLB carries (``extras.handoff``), or ``None``.
 
-        The consumer half of :meth:`apply_scene_sidecar` — what a downstream
-        tool (or a test) calls to get the scene description back out of a
-        deliverable with no side files. Reads only the JSON chunk; the
+        What a downstream tool (or a test) calls to get the file's account of
+        itself back out with no side files. Reads only the JSON chunk; the
         geometry is never touched.
         """
         with cls.open_glb(glb) as edit:
-            return (edit.gltf.get("extras") or {}).get("scene_sidecar")
+            block = GlbEdit.extras_of(edit.gltf).get(HandoffRecord.KEY)
+        return block if isinstance(block, dict) else None
+
+    @classmethod
+    @Deprecation.symbol(
+        "MeshConvert.read_glb_handoff -- a GLB carries extras.handoff",
+        remove_in=_REMOVE_IN,
+        since=_SINCE,
+    )
+    def read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
+        """The handoff block a GLB carries (:meth:`read_glb_handoff`)."""
+        return cls.read_glb_handoff(glb)
 
     @staticmethod
     def _requirement_note(required: Sequence[str]) -> str:
@@ -1323,39 +1062,29 @@ class _SidecarMixin:
 
     @classmethod
     def verify_glb(cls, glb: GlbTarget) -> Dict[str, Any]:
-        """Check a delivered GLB against the envelope it carries.
+        """Check a delivered GLB against what it says of itself.
 
-        The reader a *recipient* runs. Everything the envelope promises is
-        checkable from the file alone -- that is what ``textures`` (content
-        addresses) and ``validate`` (the counts the envelope claims for itself)
-        are for -- but until this existed nothing in the ecosystem read either
-        back, so a truncated envelope or a payload swapped after the digests
-        were stamped arrived indistinguishable from a good one.
+        The reader a *recipient* runs: read-only and side-file-free, so one on
+        another machine, in another DCC, or holding nothing but the ``.glb``
+        can run it, and it can never be what damages the asset it inspects.
 
-        Read-only and side-file-free by design: a recipient on another machine,
-        in another DCC, or holding nothing but the ``.glb`` can run it, and it
-        can never be what damages the asset it is inspecting.
-
-        Decodes one channel of each ORM image the envelope did not describe
-        (see :meth:`suspect_orm_materials`); everything else reads the JSON
-        chunk and hashes payloads. That cost is deliberate here and nowhere
-        else -- this is an explicit recipient-side call, not an export step.
+        Decodes one channel of each ORM image (see
+        :meth:`suspect_orm_materials`); everything else reads the JSON chunk.
+        That cost is deliberate here and nowhere else -- this is an explicit
+        recipient-side call, not an export step.
 
         Returns:
             A report dict, always carrying ``ok`` (bool), ``problems`` (the
             findings that made ``ok`` False) and ``notes`` (observations that
-            did not), plus what was inspected: ``envelope``
-            (present/version/source/asset), ``textures`` (``checked``,
-            ``verified``, ``mismatched``, ``unresolved``), ``sections``
-            (declared vs applied), ``orm`` (per
-            :meth:`suspect_orm_materials`, when anything was found),
-            ``animation`` (clip counts, rate and default clip, when the file
-            carries that block), ``extensions`` (``required`` / ``used`` --
-            what a reader must SUPPORT to open the file at all), ``lightmap``
-            and ``generator``.
-            ``problems`` and ``ok`` are kept
+            did not), plus what was inspected: ``handoff`` (``version`` and
+            ``source`` of ``extras.handoff``, or ``None``), ``orm`` (per
+            :meth:`suspect_orm_materials`, when it found a destructive
+            packing), ``animation`` (clip counts, rate and default clip, when
+            the file carries that block), ``extensions`` (``required`` /
+            ``used`` -- what a reader must SUPPORT to open the file at all),
+            ``lightmap`` and ``generator``. ``problems`` and ``ok`` are kept
             strictly in step: an empty ``problems`` always means ``ok``. A GLB
-            with no envelope is reported, not raised -- an asset from another
+            with no handoff is reported, not raised -- an asset from another
             producer is a legitimate thing to point this at.
         """
         report: Dict[str, Any] = {"ok": True, "problems": [], "notes": []}
@@ -1365,20 +1094,20 @@ class _SidecarMixin:
             report["problems"].append(message)
 
         with cls.open_glb(glb) as edit:
-            extras = edit.gltf.get("extras") or {}
-            envelope = extras.get("scene_sidecar")
+            extras = GlbEdit.extras_of(edit.gltf)
             report["generator"] = (edit.gltf.get("asset") or {}).get("generator")
-            report["lightmap"] = bool(cls._lightmap_web_manifest(edit.gltf))
+            report["lightmap"] = bool(
+                SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS)
+            )
             # What a reader must SUPPORT to open this at all. `extensionsRequired`
             # is not advice: the spec says a reader that does not implement one
             # of these must refuse the file. A web-delivery GLB requires
             # `EXT_texture_webp` (nothing core-readable survives that pass) and
             # a pure-delivery KTX2 one requires `KHR_texture_basisu`, so the
             # deliverable most likely to reach a third party is exactly the one
-            # with a hard prerequisite -- and this report, which exists to tell
-            # a recipient what they are holding, did not mention it. Reported
-            # rather than failed: the requirement is correct, it just has to be
-            # readable without parsing the JSON chunk by hand.
+            # with a hard prerequisite. Reported rather than failed: the
+            # requirement is correct, it just has to be readable without
+            # parsing the JSON chunk by hand.
             required = sorted(edit.gltf.get("extensionsRequired") or [])
             report["extensions"] = {
                 "required": required,
@@ -1395,17 +1124,20 @@ class _SidecarMixin:
                     f"extensionsRequired names {', '.join(undeclared)}, which "
                     "extensionsUsed does not declare -- invalid glTF"
                 )
-            # Reported before the envelope gate below: an asset can carry
-            # clips and no sidecar (another producer's file, or one converted
-            # before the envelope existed), and "how many clips, how many of
-            # them shots" is exactly what a recipient asks first of an animated
-            # deliverable.
-            animation = extras.get(cls.ANIMATION_WEB_KEY)
+            # Reported before the handoff gate below: an asset can carry clips
+            # and no handoff (another producer's file), and "how many clips,
+            # how many of them shots" is what a recipient asks first of an
+            # animated deliverable.
+            animation = SceneRecords.glb_block(edit.gltf, SceneRecords.SHOTS)
             if isinstance(animation, dict):
                 clips = animation.get("clips") or []
+                shots = {s.get("clip") for s in animation.get("shots") or []}
                 report["animation"] = {
                     "clips": len(clips),
-                    "declared": sum(1 for c in clips if c.get("declared")),
+                    "shots": len(shots),
+                    # The shots that play a clip of their own; the rest play
+                    # their window of the whole-timeline clip.
+                    "declared": sum(1 for c in clips if c.get("name") in shots),
                     "default_clip": animation.get("default_clip"),
                     "fps": animation.get("fps"),
                 }
@@ -1415,7 +1147,7 @@ class _SidecarMixin:
                 # looking for shot names here found none.
                 report["notes"].append(
                     f"{len(edit.gltf['animations'])} animation(s) with no "
-                    f"extras.{cls.ANIMATION_WEB_KEY}: clip identity is names only"
+                    f"extras.{SceneRecords.SHOTS.key}: clip identity is names only"
                 )
 
             hollow = [
@@ -1436,180 +1168,66 @@ class _SidecarMixin:
                     "each, so this file does not validate"
                 )
 
-            # The file's own handoff promising clips the file does not carry.
-            # Measured on a production deliverable (2026-08-30):
-            # the export wrote `data_export.fbx_takes` naming 12 shots while the
-            # FBX itself was written with animation disarmed, so the GLB shipped
-            # 12 declared clips and ZERO animations -- and every check here
-            # passed, because textures, sections and envelope were all sound.
-            # A recipient reading the handoff plans for clips that do not exist,
-            # which makes this a defect of the artifact, not a note.
-            declared_takes = cls._declared_takes(edit.gltf)
-            if declared_takes and not (edit.gltf.get("animations") or []):
-                fail(
-                    f"the handoff declares {len(declared_takes)} take(s) "
-                    "on its data_export carrier but the file carries no "
-                    "animations -- either the FBX was written with animation "
-                    "off (bake/takes disarmed at export) or nothing in the "
-                    "exported set is keyed, so every take was empty and pruned"
-                )
-            if not isinstance(envelope, dict):
-                report["envelope"] = None
-                fail("no scene-sidecar envelope: nothing here declares itself")
-                return report
-
-            version = envelope.get("version")
-            report["envelope"] = {
-                "version": version,
-                "source": envelope.get("source"),
-                "asset": envelope.get("asset"),
+            # Every ORM is decoded: a channel layout no reader can vouch for is
+            # only worth saying when it is destructive -- metallic everywhere,
+            # which renders black under a lightmap.
+            suspect = {
+                material: found
+                for material, found in cls.suspect_orm_materials(edit).items()
+                if found["finding"] == cls.ORM_FINDING_METALLIC_FULL
             }
-            # Newer is the case worth saying out loud: this reader would skip
-            # whatever the newer schema added and report a clean bill on a file
-            # it only partly understood.
-            if version != cls.SIDECAR_VERSION:
-                fail(
-                    f"envelope schema v{version} against this reader's "
-                    f"v{cls.SIDECAR_VERSION}"
-                )
-
-            declared = envelope.get("sections") or {}
-            if not isinstance(declared, dict):
-                # Said out loud rather than normalised to {}: quietly treating a
-                # block this reader cannot parse as an empty one would report a
-                # clean bill on an envelope it never read -- the exact false
-                # green this method exists to end.
-                fail("envelope 'sections' is not an object")
-                declared = {}
-            applied = extras.get(cls.SIDECAR_APPLIED_KEY)
-            report["sections"] = {
-                "declared": {
-                    name: len(entries)
-                    for name, entries in declared.items()
-                    if hasattr(entries, "__len__")
-                },
-                "applied": applied if isinstance(applied, dict) else {},
-            }
-            for name, outcome in report["sections"]["applied"].items():
-                # The apply pass records its own bad news in the artifact; a
-                # verifying reader has to repeat it rather than assume the
-                # recipient read the log of a run on someone else's machine.
-                # Anchored, not `in`: the summary spells a partial apply "10 of
-                # 20", and a bare "0 of" substring test calls that a failure.
-                text = str(outcome)
-                if text.startswith("failed") or text.startswith("0 of"):
-                    fail(f"section {name!r} did not land: {outcome}")
-
-            images = edit.images
-            refs = envelope.get("textures") or {}
-            if not isinstance(refs, dict):
-                fail("envelope 'textures' is not an object")
-                refs = {}
-            checked = verified = 0
-            mismatched: List[str] = []
-            unresolved: List[str] = []
-            for path, ref in refs.items():
-                if not isinstance(ref, dict):
-                    continue
-                checked += 1
-                index, digest = ref.get("image"), ref.get("sha256")
-                payload = (
-                    edit._image_payload(images[index])
-                    if isinstance(index, int) and 0 <= index < len(images)
-                    else None
-                )
-                if not payload or not digest:
-                    unresolved.append(path)
-                elif hashlib.sha256(payload).hexdigest() != digest:
-                    mismatched.append(path)
-                else:
-                    verified += 1
-            report["textures"] = {
-                "checked": checked,
-                "verified": verified,
-                "mismatched": mismatched,
-                "unresolved": unresolved,
-            }
-            if mismatched:
-                fail(
-                    f"{len(mismatched)} texture reference(s) do not match their "
-                    "recorded sha256 -- the payload changed after it was stamped"
-                )
-            if unresolved:
-                fail(
-                    f"{len(unresolved)} texture reference(s) resolve to no image "
-                    "payload in this file"
-                )
-
-            # `validate` is the envelope's claim about ITSELF, so a disagreement
-            # means the envelope was truncated or rewritten, not that a texture
-            # is missing -- worth separating from the digest failures above.
-            claims = envelope.get("validate")
-            if isinstance(claims, dict):
-                if claims.get("sections") != report["sections"]["declared"]:
-                    fail("envelope 'validate' section counts disagree with 'sections'")
-                if claims.get("textures") != checked:
-                    fail(
-                        f"envelope 'validate' claims {claims.get('textures')} texture "
-                        f"reference(s), found {checked}"
-                    )
-            else:
-                fail("envelope carries no 'validate' block to check against")
-
-            # `described` is the envelope's own section, so a deliverable that
-            # documented every ORM it carries reports nothing here -- and one
-            # that carries a binding nothing described says so, which is the
-            # only way a mask map packed for another engine (read channel for
-            # channel as ORM, and perfectly ordinary-looking data) surfaces at
-            # all.
-            suspect = cls.suspect_orm_materials(
-                edit, described=declared.get("metallic_roughness") or {}
-            )
             if suspect:
                 report["orm"] = suspect
-                by_finding: Dict[str, List[str]] = {}
-                for material, found in sorted(suspect.items()):
-                    by_finding.setdefault(found["finding"], []).append(material)
-                harmful = by_finding.get(cls.ORM_FINDING_METALLIC_FULL)
-                unvalidated = by_finding.get(cls.ORM_FINDING_UNVALIDATED)
-                if harmful:
-                    fail(
-                        "metallic=1 everywhere on: "
-                        + ", ".join(harmful)
-                        + " (no diffuse response; black under a lightmap)"
-                    )
-                if unvalidated:
-                    # A NOTE, not a problem: an ORM the producer never had to
-                    # repair is perfectly legitimate, and putting this in
-                    # `problems` would make the obvious `if report["problems"]`
-                    # read as a defect on a sound deliverable. It is said at all
-                    # because nothing here can vouch for its channel layout.
-                    #
-                    # Grouped BY IMAGE, because the finding is a property of the
-                    # image and the lightmap pass clones a material per
-                    # instance: on a production room one unvalidated ORM
-                    # produced 46 identical lines naming 46 clones of one
-                    # material, which is the length that stops a note being
-                    # read at all. The per-material detail stays in
-                    # ``report["orm"]`` for anything that wants it.
-                    by_image: Dict[str, List[str]] = {}
-                    for material in unvalidated:
-                        image = str((suspect[material] or {}).get("image") or "?")
-                        by_image.setdefault(image, []).append(material)
-                    described = []
-                    for image, names in sorted(by_image.items()):
-                        shown = ", ".join(sorted(names)[:3])
-                        more = ", ..." if len(names) > 3 else ""
-                        described.append(
-                            f"{image} ({len(names)} material(s): {shown}{more})"
-                        )
-                    report["notes"].append(
-                        "ORM binding not described by the envelope on "
-                        + "; ".join(described)
-                        + " -- its channel layout is unverified (a mask map "
-                        "packed for another engine reads as ORM here)"
-                    )
+                fail(
+                    "metallic=1 everywhere on: "
+                    + ", ".join(sorted(suspect))
+                    + " (no diffuse response; black under a lightmap)"
+                )
+
+            handoff = extras.get(HandoffRecord.KEY)
+            if not isinstance(handoff, dict):
+                report["handoff"] = None
+                fail("no extras.handoff: nothing here declares itself")
+                return report
+
+            version = handoff.get("version")
+            report["handoff"] = {
+                "version": version,
+                "source": GlbEdit.extras_of(handoff).get("source"),
+            }
+            # The handoff and every block of ours: in the version read and
+            # the shape declared -- a reader would otherwise skip what another
+            # schema says and report a clean bill on a file it only partly
+            # understood.
+            for problem in SceneRecords.problems(SceneRecords.HANDOFF, handoff):
+                fail(f"extras.{problem}")
+            for spec in SceneRecords.glb_records():
+                if spec.key in extras:
+                    for problem in SceneRecords.block_problems(spec, extras[spec.key]):
+                        fail(problem)
         return report
+
+    @classmethod
+    def _current_record(cls, gltf: dict, spec: RecordSpec) -> Optional[Dict[str, Any]]:
+        """*spec*'s record on *gltf*'s carrier in the schema it declares
+        (:meth:`RecordSpec.is_current`); ``None`` when the file carries none,
+        and -- warned -- when it carries another: a reader refuses rather than
+        guesses what another schema's fields mean, and the cure is a
+        re-export. Every pass that applies a record reads it here."""
+        payload = cls.data_export_channel(gltf, spec.key)
+        if payload is None:
+            return None
+        problems = SceneRecords.problems(spec, payload)
+        if not problems:
+            return payload
+        more = f" (+{len(problems) - 3} more)" if len(problems) > 3 else ""
+        logger.warning(
+            "%s record not applied -- %s%s; re-export the file.",
+            spec.key,
+            "; ".join(problems[:3]),
+            more,
+        )
+        return None
 
     @classmethod
     def data_export_channel(cls, gltf: dict, key: str) -> Optional[Any]:
@@ -1622,8 +1240,8 @@ class _SidecarMixin:
         copy is the one that probes only the nested shape and turns its whole
         feature into a silent no-op on a natively exported GLB.
 
-        Split from :meth:`read_glb_lightmap_manifest` so an applier can read from
-        the session it is ALREADY holding -- a second ``open_glb`` on the path
+        Read off a parsed glTF so an applier can read from the session it is
+        ALREADY holding -- a second ``open_glb`` on the path
         would re-read and re-parse the file, which is exactly what
         :class:`GlbEdit` exists to avoid.
 
@@ -1667,9 +1285,8 @@ class _SidecarMixin:
         """
         first = None
         for node in gltf.get("nodes", []) or []:
-            extras = node.get("extras") or {}
-            # The same TWO on-disk shapes :meth:`_reconcile_node_markers` walks,
-            # and for the same reason: FBX2glTF nests user properties under
+            extras = GlbEdit.extras_of(node)
+            # TWO on-disk shapes: FBX2glTF nests user properties under
             # extras.fromFBX.userProperties (the Maya route), a native glTF
             # export writes them as TOP-LEVEL node extras. Probing only the
             # nested shape makes the whole applier a silent no-op on a natively
@@ -1701,9 +1318,28 @@ class _SidecarMixin:
             props.pop(key, None)
         extras[key] = value if isinstance(value, str) else json.dumps(value)
 
+    @staticmethod
+    def _drop_data_export_channel(gltf: dict, key: str) -> List[dict]:
+        """Remove the *key* channel from every node, in both on-disk shapes
+        :meth:`data_export_channel` reads; the nodes that held one, in file
+        order."""
+        held: List[dict] = []
+        for node in gltf.get("nodes") or []:
+            extras = node.get("extras") if isinstance(node, dict) else None
+            if not isinstance(extras, dict):
+                continue
+            found = False
+            for holder in ((extras.get("fromFBX") or {}).get("userProperties"), extras):
+                if isinstance(holder, dict) and key in holder:
+                    del holder[key]
+                    found = True
+            if found:
+                held.append(node)
+        return held
+
     #: What a converted ``data_export`` carrier node is called, and what
-    #: :meth:`overlay_data_export` names one it has to create.
-    DATA_EXPORT_NODE = "data_export"
+    #: :meth:`overlay_data_export` names one it has to create: the store's.
+    DATA_EXPORT_NODE = SceneStoreBase.name(Scope.DELIVERABLE)
 
     @classmethod
     def overlay_data_export(cls, gltf: dict, channels: Dict[str, Any]) -> List[str]:
@@ -1735,16 +1371,10 @@ class _SidecarMixin:
         carrier = None
         nodes = gltf.get("nodes") or []
         for key in channels or {}:
-            for node in nodes:
-                extras = node.get("extras") if isinstance(node, dict) else None
-                if not isinstance(extras, dict):
-                    continue
-                props = (extras.get("fromFBX") or {}).get("userProperties")
-                for holder in (props, extras):
-                    if isinstance(holder, dict) and key in holder:
-                        del holder[key]
-                        changed.add(key)
-                        carrier = carrier or node
+            held = cls._drop_data_export_channel(gltf, key)
+            if held:
+                changed.add(key)
+                carrier = carrier or held[0]
 
         written = {k: v for k, v in (channels or {}).items() if v is not None}
         if written:

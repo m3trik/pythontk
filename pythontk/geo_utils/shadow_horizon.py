@@ -55,6 +55,7 @@ from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 
+from pythontk.core_utils.deprecation import Deprecation
 from pythontk.geo_utils.shadow_projection import ShadowProjection
 
 __all__ = ["HeightFieldMap", "HorizonMap", "ShadowHorizon"]
@@ -134,9 +135,7 @@ class HeightFieldMap(NamedTuple):
     def hull(self) -> Tuple[np.ndarray, np.ndarray]:
         """``(lo, hi)`` ``(S, S)``: each column's outermost span bounds
         (``NaN`` where empty)."""
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            return np.nanmin(self.lo, axis=0), np.nanmax(self.hi, axis=0)
+        return np.fmin.reduce(self.lo, axis=0), np.fmax.reduce(self.hi, axis=0)
 
     def pyramid(self) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
         """Per level ``1 .. levels``, ``(lo, hi, dist)`` over ``(n, n)``
@@ -152,54 +151,35 @@ class HeightFieldMap(NamedTuple):
         (a neighbour pixel's nearest column can lie a cell and a half away).
         ``NaN`` where the cell holds no column: the shader never consults
         the hull there, only the distance."""
-        lo = self._dilate_min(self.near_lo)
-        hi = self._dilate_max(self.near_hi)
+        lo = self._dilate(self.near_lo, np.fmin)
+        hi = self._dilate(self.near_hi, np.fmax)
         dist = self.dist
         out = []
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            while lo.shape[0] > 1:
-                n = lo.shape[0] // 2
-                lo = np.nanmin(lo.reshape(n, 2, n, 2), axis=(1, 3))
-                hi = np.nanmax(hi.reshape(n, 2, n, 2), axis=(1, 3))
-                dist = dist.reshape(n, 2, n, 2).min(axis=(1, 3))
-                column = dist <= 0.0
-                out.append(
-                    (
-                        np.where(column, lo, np.nan),
-                        np.where(column, hi, np.nan),
-                        dist,
-                    )
+        while lo.shape[0] > 1:
+            n = lo.shape[0] // 2
+            lo = np.fmin.reduce(lo.reshape(n, 2, n, 2), axis=(1, 3))
+            hi = np.fmax.reduce(hi.reshape(n, 2, n, 2), axis=(1, 3))
+            dist = dist.reshape(n, 2, n, 2).min(axis=(1, 3))
+            column = dist <= 0.0
+            out.append(
+                (
+                    np.where(column, lo, np.nan),
+                    np.where(column, hi, np.nan),
+                    dist,
                 )
+            )
         return out
 
     @staticmethod
-    def _dilate_min(field: np.ndarray) -> np.ndarray:
+    def _dilate(field: np.ndarray, extreme: np.ufunc) -> np.ndarray:
+        """*field* reduced by *extreme* (``np.fmin`` / ``np.fmax``: a ``NaN``
+        ignored, kept where all are) over each pixel's 3 x 3 neighbourhood."""
+        h, w = field.shape
         p = np.pad(field, 1, constant_values=np.nan)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            stack = np.stack(
-                [
-                    p[i : i + field.shape[0], j : j + field.shape[1]]
-                    for i in range(3)
-                    for j in range(3)
-                ]
-            )
-            return np.nanmin(stack, axis=0)
-
-    @staticmethod
-    def _dilate_max(field: np.ndarray) -> np.ndarray:
-        p = np.pad(field, 1, constant_values=np.nan)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            stack = np.stack(
-                [
-                    p[i : i + field.shape[0], j : j + field.shape[1]]
-                    for i in range(3)
-                    for j in range(3)
-                ]
-            )
-            return np.nanmax(stack, axis=0)
+        return extreme.reduce(
+            np.stack([p[i : i + h, j : j + w] for i in range(3) for j in range(3)]),
+            axis=0,
+        )
 
     # -- encoding ----------------------------------------------------------
     def to_rgba(self) -> np.ndarray:
@@ -513,7 +493,10 @@ class HeightFieldMap(NamedTuple):
             # values would make the penumbra jump a quarter of its width
             # when a boundary-hugging ray lands one pixel over on a GPU's
             # float32 (measured: 0.21 against 0.07 at one viewer sample).
-            # Inside and out alike, so the two meet at zero on the edge.
+            # Inside and out alike, so the two meet at zero on the edge. Each
+            # corner clamps to the tile on its own (clamp-to-edge), so the read
+            # stays continuous across the outermost texel centres: clamped as
+            # a pair, the half pixel inside the low edge read the next texel.
             mx_ = ox + dx * tmid - 0.5
             my_ = oy + dy * tmid - 0.5
             fx_, fy_ = np.floor(mx_), np.floor(my_)
@@ -521,8 +504,8 @@ class HeightFieldMap(NamedTuple):
             wy = np.clip(my_ - fy_, 0.0, 1.0)
             ix0 = np.clip(fx_.astype(np.int64), 0, S - 1)
             iy0 = np.clip(fy_.astype(np.int64), 0, S - 1)
-            ix1 = np.minimum(ix0 + 1, S - 1)
-            iy1 = np.minimum(iy0 + 1, S - 1)
+            ix1 = np.clip(fx_.astype(np.int64) + 1, 0, S - 1)
+            iy1 = np.clip(fy_.astype(np.int64) + 1, 0, S - 1)
 
             def bilerp(field):
                 top = field[iy0, ix0] * (1.0 - wx) + field[iy0, ix1] * wx
@@ -592,8 +575,17 @@ class ShadowHorizon:
     #: falls from: padded by its width alone, a 5 cm pole's penumbra was cut
     #: at 5 mm and drew a quarter of its shadow too light.
     DEFAULT_PADDING = 0.1
-    ENCODING = 2
-    MAPPING = "heightfield"
+    #: Retired 2026-10-20 (removed in 0.18.0): the ``shadows`` record's
+    #: version states the map's one representation and encoding.
+    ENCODING = Deprecation.class_attribute(
+        2, "SceneRecords.SHADOWS.version", remove_in="0.18.0", since="2026-10-24"
+    )
+    MAPPING = Deprecation.class_attribute(
+        "heightfield",
+        "SceneRecords.SHADOWS.version",
+        remove_in="0.18.0",
+        since="2026-10-24",
+    )
     #: Footprint sizes :meth:`bake_adaptive` walks through.
     ADAPTIVE_SIZES = (128, 256)
 
@@ -646,43 +638,50 @@ class ShadowHorizon:
 
     # -- the record ------------------------------------------------------------
     @classmethod
+    @Deprecation.parameter(
+        "levels",
+        remove_in="0.18.0",
+        drop=True,
+        reason="A map's pyramid levels are log2(size).",
+        since="2026-10-24",
+    )
     def record(
         cls,
         *,
         texture: str,
         size: int,
         spans: int,
-        levels: int,
         bounds: Sequence[float],
         height_scale: float,
         frame_a: Sequence[float],
         frame_b: Sequence[float],
         rect: Sequence[float],
     ) -> Dict[str, object]:
-        """The ``horizon`` block of a ``shadow_metadata`` v2 plane record.
+        """The ``horizon`` block of a ``shadows`` plane record
+        (``ShadowPlaneHorizon``).
 
         One builder, in the package whose GLB writer and viewer read the
         block, so the DCC rigs (which stamp these values on the plane and
-        publish them at export) cannot spell the schema two ways.
+        publish them at export) cannot spell the schema two ways. It states
+        the layout and nothing a reader derives: the pyramid's levels are
+        log2(size), and the representation and encoding are the record
+        version's.
 
         Parameters:
             texture: The map's file name -- its atlas when packed.
-            size, spans, levels: The map's layout (:class:`HeightFieldMap`).
+            size, spans: The map's layout (:class:`HeightFieldMap`).
             bounds: ``(a0, a1, b0, b1)`` footprint in the contact frame.
             height_scale: The height a 16-bit value of 65535 stands for.
             frame_a, frame_b: The frame's horizontal axes in exporter axes.
             rect: ``(su, sv, ou, ov)`` UV rect of the map in its texture.
 
         Returns:
-            The block, with :attr:`MAPPING` and :attr:`ENCODING` stamped.
+            The block.
         """
         return {
             "texture": str(texture),
-            "mapping": cls.MAPPING,
-            "encoding": cls.ENCODING,
             "size": int(size),
             "spans": int(spans),
-            "levels": int(levels),
             "bounds": [round(float(v), 6) for v in bounds],
             "height_scale": round(float(height_scale), 6),
             "frame_a": list(frame_a),
@@ -759,10 +758,8 @@ class ShadowHorizon:
             bounds=bounds,
             spans=spans,
         )
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            top = float(np.nanmax(hi)) if np.isfinite(np.nanmax(hi)) else 0.0
-        height_scale = max(top, 1e-3)
+        top = float(np.fmax.reduce(hi, axis=None))  # NaN: no column at all
+        height_scale = max(top, 1e-3) if np.isfinite(top) else 1e-3
         # Quantised as the PNG will hold them, conservatively: bottoms down,
         # tops up, so no span thins out of a ray that met it in float.
         lo_q = np.floor(lo / height_scale * MAX16) / MAX16 * height_scale
@@ -772,10 +769,8 @@ class ShadowHorizon:
         hi_q[gone] = np.nan
         lo_q = lo_q.astype(np.float32)
         hi_q = hi_q.astype(np.float32)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            hull_lo = np.nanmin(lo_q, axis=0)
-            hull_hi = np.nanmax(hi_q, axis=0)
+        hull_lo = np.fmin.reduce(lo_q, axis=0)
+        hull_hi = np.fmax.reduce(hi_q, axis=0)
         solid = ~np.isnan(hull_hi)
         # distances in the smaller pixel pitch, the other axis weighted up
         a0, a1, b0, b1 = (float(v) for v in bounds)

@@ -20,6 +20,8 @@ import { refreshMenus } from './menus.js';
 import { current, disposeModel, layout, loader, measureBounds, setModel } from './model.js';
 import { composite, setParts } from './parts.js';
 import { disposeProbe, loadProbe, releaseProbe, useProbe } from './probe.js';
+import { staleBlocks } from './extras.js';
+import { BLOCKS, HANDOFF } from './records.js';
 import { readExtras, readRenderingPolicy } from './scene.js';
 import { glbJsonBytes, measureModel, setSpecs, showSpecs } from './specs.js';
 import { findStart, homeView } from './start.js';
@@ -135,6 +137,7 @@ export async function load(sources, version) {
   // (see measureModel). Local, not module state: a newer load can start while
   // this one awaits, and must not clear what this one found.
   const issues = [];
+  for (const part of loaded) issues.push(...staleBlocks(part.gltf.parser?.json?.extras, BLOCKS));
   // Before setupAnimation: the mixer binds a clip's tracks when its action is
   // created, so tracks added afterwards would never be played.
   const animated = { tracks: 0, materials: 0 };
@@ -146,7 +149,7 @@ export async function load(sources, version) {
   // Read before applying: the deliverable's own policy is what applyLighting
   // then spends, so a load that read nothing must fall back BEFORE the lights
   // are set rather than after. The first part that publishes one.
-  const recipe = loaded.find((part) => readExtras(part.gltf, 'scene_sidecar')?.handoff?.rendering);
+  const recipe = loaded.find((part) => readExtras(part.gltf, HANDOFF)?.rendering);
   readRenderingPolicy((recipe || loaded[0]).gltf);
   const lightmapped = applyLightmaps(loaded.map((part) => part.gltf), issues);
   // After the lightmaps: the probe's lookup chains onto the baked shader edit.

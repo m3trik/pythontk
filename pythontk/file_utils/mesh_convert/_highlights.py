@@ -46,6 +46,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from pythontk.core_utils.color import Color
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.math_utils._math_utils import MathUtils
 
 logger = logging.getLogger(__name__)
@@ -103,7 +104,7 @@ class _HighlightsMixin:
         Parameters:
             glb: ``.glb`` path or an open :class:`GlbEdit`: the geometry the
                 groups are read from (model space, metres), and -- unless given
-                -- its ``lightmap_web`` manifest's probe and baked materials.
+                -- its ``lightmaps`` manifest's probe and baked materials.
             lights: The bake's lights in metres (:meth:`lights_in_metres`,
                 applied here too: a light it leaves out is left out).
             probe: ``{"position", "box"}`` (metres; ``box`` ``{min, max}`` or
@@ -125,12 +126,12 @@ class _HighlightsMixin:
         if not lights:
             return []
         with cls.open_glb(glb) as edit:
-            web = cls._lightmap_web_manifest(edit.gltf) or {}
-            probe = probe if probe is not None else web.get("probe")
+            block = SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS) or {}
+            probe = probe if probe is not None else block.get("probe")
             if not isinstance(probe, dict) or not probe.get("position"):
                 return []
             baked_names = set(
-                baked if baked is not None else (web.get("materials") or {})
+                baked if baked is not None else (block.get("materials") or {})
             )
             meshes = cls._highlight_meshes(edit)
             if eye is None:
@@ -168,13 +169,16 @@ class _HighlightsMixin:
 
     @classmethod
     def lights_in_metres(
-        cls, lights: Optional[Sequence[Dict[str, Any]]]
+        cls,
+        lights: Optional[Sequence[Dict[str, Any]]],
+        unit_scale: Optional[float] = None,
     ) -> Optional[List[Dict[str, Any]]]:
         """The bake's lights in metres and the viewer's units, or ``None``.
 
-        The lightmap record's ``lights`` (``SceneRecords.LIGHTMAPS``; a host's
-        ``specular_lights``, e.g. mayatk ``LightUtils``) arrive in scene units
-        with ``unit_scale`` (metres per unit) beside each, as the probe does.
+        Lights arrive in scene units: the lightmap record's (``LightmapRecord``)
+        at the record's *unit_scale* (metres per unit), a host's
+        ``specular_lights`` (mayatk ``LightUtils``) with ``unit_scale`` beside
+        each -- a light's own wins, then *unit_scale*, then metres.
         This carries metres: a point or spot light's intensity in candela (its
         irradiance falls over metres, so it scales by ``unit_scale`` squared),
         a rect's radiance as it is. One without a position, a type or a
@@ -190,7 +194,9 @@ class _HighlightsMixin:
             kind = light.get("type")
             position = light.get("position")
             try:
-                unit = float(light.get("unit_scale", 1.0))
+                unit = float(
+                    light.get("unit_scale", 1.0 if unit_scale is None else unit_scale)
+                )
                 intensity = float(light.get("intensity", 0.0))
                 if (
                     kind not in ("point", "spot", "rect")
@@ -235,16 +241,21 @@ class _HighlightsMixin:
         probe: Dict[str, Any],
         baked: Sequence[str],
         lights: Optional[Sequence[Dict[str, Any]]],
-    ) -> Optional[Dict[str, Any]]:
-        """Embed the probe's highlight copies; the probe entry's ``highlights``, or ``None``.
+        unit_scale: Optional[float] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Embed the probe's highlight copies; the probe entry's ``highlights``
+        -- one ``{"bufferView", "materials"}`` per copy: its Radiance bytes and
+        the materials that read it -- or ``None``.
 
-        *probe* is the embedded probe's ``lightmap_web`` entry (its
-        ``bufferView`` is read for the probe's width); *lights* the record's
-        (:meth:`lights_in_metres` is applied here). A layer that cannot be
+        *probe* is the embedded probe's ``lightmaps`` entry (its
+        ``bufferView`` is read for the probe's width); *lights* the record's,
+        at its *unit_scale* (:meth:`lights_in_metres` is applied here). A layer that cannot be
         encoded is warned and left out: its receivers read the probe as
-        captured, as a file without highlights does.
+        captured, as a file without highlights does. A copy's size is its
+        Radiance header's, and the viewpoint and lights it was drawn from are
+        how it was made, not what it is: neither is published.
         """
-        lights = cls.lights_in_metres(lights)
+        lights = cls.lights_in_metres(lights, unit_scale)
         if not lights:
             return None
         from pythontk.img_utils._img_utils import ImgUtils
@@ -258,7 +269,7 @@ class _HighlightsMixin:
         except Exception as error:  # noqa: BLE001 -- never the bake's cost
             logger.warning("Probe highlights not drawn: %s", error)
             return None
-        entries = []
+        entries, drawn = [], []
         for layer in layers:
             try:
                 raw = ImgUtils.encode_hdr_radiance_pixels(layer["image"])
@@ -268,30 +279,19 @@ class _HighlightsMixin:
             views = cls._append_bin_views(edit, [raw])
             if not views:
                 continue
-            height, w = layer["image"].shape[:2]
-            entries.append(
-                {
-                    "bufferView": views[0],
-                    "mimeType": "image/vnd.radiance",
-                    "width": int(w),
-                    "height": int(height),
-                    "receivers": layer["receivers"],
-                    "materials": layer["materials"],
-                }
-            )
+            # Which group a copy was drawn for is how it was made, not what it
+            # is: the entry is its bytes and the materials that read it.
+            entries.append({"bufferView": views[0], "materials": layer["materials"]})
+            drawn.append(f"{layer['receivers']}: {len(layer['materials'])}")
         if not entries:
             return None
         logger.info(
             "Probe highlights: %d light(s) drawn into %d probe copy(ies) (%s).",
             len(lights),
             len(entries),
-            ", ".join(f"{e['receivers']}: {len(e['materials'])}" for e in entries),
+            ", ".join(drawn),
         )
-        return {
-            "eye": [round(float(c), 6) for c in eye],
-            "lights": len(lights),
-            "copies": entries,
-        }
+        return entries
 
     @staticmethod
     def _radiance_width(edit, view: Optional[int]) -> Optional[int]:
@@ -343,9 +343,9 @@ class _HighlightsMixin:
         both deliverables carry the same copies to the byte. Each
         goes inside the FBX as its Radiance bytes, under
         :attr:`FBX_HIGHLIGHT_NAME`, and the record's probe lists them:
-        ``highlights: [{"map", "receivers", "objects": [{"name",
-        "hierarchy"}]}]``. An engine binds a renderer, not a material, so each
-        mesh node is listed under the one copy holding most of its triangles.
+        ``highlights: [{"map", "objects": [{"name", "hierarchy"}]}]``. An
+        engine binds a renderer, not a material, so each mesh node is listed
+        under the one copy holding most of its triangles.
 
         Run on a freshly written FBX: a name the file already embeds keeps its
         bytes (:meth:`FbxMedia.embed`). A no-op on a file whose record has no
@@ -369,17 +369,18 @@ class _HighlightsMixin:
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
         log = logger or logging.getLogger(__name__)
-        key = cls.LIGHTMAP_METADATA_KEY
+        key = SceneRecords.LIGHTMAPS.key
         try:
             record = FbxMedia.record(fbx, key)
         except (OSError, ValueError) as error:
             log.warning("FBX highlight copies: %s not read (%s).", fbx, error)
             return []
-        probe = record.get("probe") if isinstance(record, dict) else None
+        current = record if SceneRecords.LIGHTMAPS.is_current(record) else {}
+        probe = current.get("probe")
         if not (
             isinstance(probe, dict)
             and probe.get("map")
-            and cls.lights_in_metres(record.get("lights"))
+            and cls.lights_in_metres(current.get("lights"), current.get("unit_scale"))
         ):
             return []
         store = TempArtifacts("fbx_highlights", policy="scoped")
@@ -393,9 +394,7 @@ class _HighlightsMixin:
                 with open(path, "wb") as fh:
                     fh.write(copy["bytes"])
                 files.append((name, path))
-                entries.append(
-                    {"map": name, "receivers": copy["receivers"], "objects": copy["objects"]}
-                )
+                entries.append({"map": name, "objects": copy["objects"]})
             if not entries and "highlights" not in probe:
                 return []
             record = dict(record, probe=dict(probe, highlights=entries))
@@ -412,7 +411,7 @@ class _HighlightsMixin:
             log.info(
                 "FBX highlight copies: %d embedded (%s).",
                 len(entries),
-                ", ".join(f"{e['receivers']}: {len(e['objects'])} object(s)" for e in entries),
+                ", ".join(f"{len(e['objects'])} object(s)" for e in entries),
             )
         return [entry["map"] for entry in entries]
 
@@ -422,7 +421,7 @@ class _HighlightsMixin:
     ) -> List[Dict[str, Any]]:
         """*glb*'s probe copies -- built into *store* when ``None``, from *fbx*'s
         scene at rest (:meth:`_fbx_static_scene`) -- each ``{"bytes",
-        "receivers", "objects"}`` (:meth:`_highlight_receivers`)."""
+        "objects"}`` (:meth:`_highlight_receivers`)."""
         if glb is None:
             source = cls._fbx_static_scene(fbx, store)
             glb = cls.fbx_to_glb(
@@ -435,14 +434,14 @@ class _HighlightsMixin:
                 hdr_codec=hdr_codec,
                 # A copy without its takes has no shots to cut: the clip pass
                 # would warn that the export was written with animation off.
-                data_export={cls.FBX_TAKES_KEY: None} if source != fbx else None,
+                data_export={SceneRecords.SHOTS.key: None} if source != fbx else None,
             )
         with cls.open_glb(glb) as edit:
-            web = cls._lightmap_web_manifest(edit.gltf) or {}
-            highlights = (web.get("probe") or {}).get("highlights") or {}
+            block = SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS) or {}
+            highlights = (block.get("probe") or {}).get("highlights")
             entries = [
                 e
-                for e in highlights.get("copies") or []
+                for e in highlights or []
                 if isinstance(e, dict) and isinstance(e.get("bufferView"), int)
             ]
             objects = cls._highlight_receivers(
@@ -452,13 +451,7 @@ class _HighlightsMixin:
             for entry, receivers in zip(entries, objects):
                 data = edit.image_bytes(entry)
                 if data and receivers:
-                    copies.append(
-                        {
-                            "bytes": bytes(data),
-                            "receivers": entry.get("receivers"),
-                            "objects": receivers,
-                        }
-                    )
+                    copies.append({"bytes": bytes(data), "objects": receivers})
         return copies
 
     @staticmethod

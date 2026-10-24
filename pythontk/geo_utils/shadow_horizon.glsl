@@ -291,13 +291,15 @@ float ShMarch(ShField g, vec2 o, vec2 d, float slope, float rho, float cosEl,
                 // width when a boundary-hugging ray lands one pixel over in
                 // float32 (measured in the viewer: 0.21 against 0.07). Inside
                 // and out alike, so the two meet at zero on the edge.
+                // each corner clamped on its own (clamp-to-edge): continuous
+                // across the outermost texel centres
                 vec2 m = o + d * tmid - 0.5;
                 vec2 f = floor(m);
                 vec2 w = clamp(m - f, 0.0, 1.0);
                 int x0 = clamp(int(f.x), 0, g.size - 1);
                 int y0 = clamp(int(f.y), 0, g.size - 1);
-                int x1 = min(x0 + 1, g.size - 1);
-                int y1 = min(y0 + 1, g.size - 1);
+                int x1 = clamp(int(f.x) + 1, 0, g.size - 1);
+                int y1 = clamp(int(f.y) + 1, 0, g.size - 1);
                 if (blocked)
                 {
                     hit = true;

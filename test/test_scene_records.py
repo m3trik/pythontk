@@ -10,6 +10,7 @@ decided here, once.
 
 import json
 import logging
+import math
 import os
 import pathlib
 import unittest
@@ -20,15 +21,20 @@ from pythontk.core_utils.engines.scene_export.export_snapshot import (
     ExportContext,
     ExportSnapshot,
 )
+from pythontk.core_utils.engines.scene_export.handoff_record import HandoffRecord
 from pythontk.core_utils.engines.scene_export.record_transfer import (
     RecordTransfer,
     TransferContext,
 )
 from pythontk.core_utils.engines.scene_export.scene_records import (
+    Clause,
+    GlbBlock,
+    Kind,
     Merge,
     RecordSpec,
     SceneRecords as SR,
     Scope,
+    WebProjection,
 )
 from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
 
@@ -86,18 +92,24 @@ class TestRegistry(SceneRecordsCase):
                 self.assertIn(dep, keys, f"{spec.key} depends on unknown {dep!r}")
 
     def test_by_key_prefers_the_deliverable_when_a_key_exists_in_both(self):
-        """``emissive_groups`` is a manifest on the carrier AND a registry in
-        the scene; the bare key means the shipped one."""
-        self.assertIs(SR.by_key("emissive_groups"), SR.EMISSIVE_GROUPS)
-        self.assertIs(SR.by_key("emissive_groups", Scope.PRIVATE), SR.EMISSIVE_REGISTRY)
+        """A bare key means the shipped record where one key names a record in
+        each scope -- as ``emissive_groups`` did until the scene's registry
+        took a key of its own (2026-10-20); two specs share one here."""
+        private = RecordSpec("k", Scope.PRIVATE, 1, "t", "d")
+        shipped = RecordSpec("k", Scope.DELIVERABLE, 1, "t", "d")
+        with mock.patch.object(SR, "all", return_value=[private, shipped]):
+            self.assertIs(SR.by_key("k"), shipped)
+            self.assertIs(SR.by_key("k", Scope.PRIVATE), private)
+        self.assertIs(SR.by_key(SR.EMISSIVE_GROUPS.key), SR.EMISSIVE_GROUPS)
+        self.assertIs(SR.by_key(SR.EMISSIVE_REGISTRY.key), SR.EMISSIVE_REGISTRY)
         self.assertIsNone(SR.by_key("nope"))
         with self.assertRaises(KeyError):
             SR.resolve("nope")
 
     def test_ordered_puts_a_reader_after_what_it_reads(self):
-        order = [s.key for s in SR.ordered([SR.VISIBILITY, SR.AUDIO, SR.SHOTS])]
-        self.assertLess(order.index("shot_metadata"), order.index("audio_manifest"))
-        self.assertLess(order.index("shot_metadata"), order.index("visibility_tracks"))
+        order = SR.ordered([SR.VISIBILITY, SR.AUDIO, SR.SHOTS])
+        self.assertLess(order.index(SR.SHOTS), order.index(SR.AUDIO))
+        self.assertLess(order.index(SR.SHOTS), order.index(SR.VISIBILITY))
 
     def test_ordered_follows_dependencies_against_declaration_order(self):
         """The registry's own records are DECLARED in dependency order, so they
@@ -107,25 +119,21 @@ class TestRegistry(SceneRecordsCase):
         r = RecordSpec("r", Scope.DELIVERABLE, 1, "t", "d", after=("d",))
         self.assertEqual(SR.ordered([r, d]), [d, r])
 
-    def test_declared_takes_come_from_the_clips_then_the_legacy_list(self):
-        """Every file since 0.11.0: each clip carries its range.  Before it,
-        the clips carried none and the take list rode ``fbx_takes``."""
+    def test_declared_takes_come_from_the_clips_alone(self):
+        """Each clip carries its range (every file since 0.11.0). The take
+        list an older file carried (``fbx_takes``) is no record a reader reads
+        (:attr:`SceneRecords.RETIRED`): such a file is re-exported."""
         legacy = [{"name": "old", "start": 1, "end": 2}]
         clips = {"shots": [{"clip": "A", "start": 1, "end": 2, "objects": []}]}
-        read = {SR.SHOTS.key: clips, SR.FBX_TAKES.key: legacy}.get
+        read = {SR.SHOTS.key: clips, "fbx_takes": legacy}.get
         self.assertEqual(SR.declared_takes(read), [{"name": "A", "start": 1, "end": 2}])
-        # An older file: clips without ranges, or no shot record at all.
-        read = {SR.SHOTS.key: {"shots": [{"clip": "A"}]}, SR.FBX_TAKES.key: legacy}.get
-        self.assertEqual(SR.declared_takes(read), legacy)
-        self.assertEqual(
-            SR.declared_takes({SR.FBX_TAKES.key: legacy + ["x"]}.get), legacy
-        )
+        read = {SR.SHOTS.key: {"shots": [{"clip": "A"}]}, "fbx_takes": legacy}.get
+        self.assertEqual(SR.declared_takes(read), [], "a clip with no range")
+        self.assertEqual(SR.declared_takes({"fbx_takes": legacy}.get), [])
         self.assertEqual(SR.declared_takes({}.get), [])
 
     def test_ordered_does_not_wait_for_a_record_that_is_not_in_the_set(self):
-        self.assertEqual(
-            [s.key for s in SR.ordered([SR.VISIBILITY])], ["visibility_tracks"]
-        )
+        self.assertEqual(SR.ordered([SR.VISIBILITY]), [SR.VISIBILITY])
 
     def test_ordered_refuses_a_cycle(self):
         a = RecordSpec("a", Scope.DELIVERABLE, 1, "t", "d", after=("b",))
@@ -135,9 +143,11 @@ class TestRegistry(SceneRecordsCase):
 
     def test_check_producers_rejects_private_keys_and_the_handoff(self):
         self.assertEqual(
-            SR.check_producers({SR.SHOTS: None, "lightmap_metadata": None}),
+            SR.check_producers({SR.SHOTS: None, SR.LIGHTMAPS.key: None}),
             [SR.SHOTS, SR.LIGHTMAPS],
         )
+        with self.assertRaises(KeyError, msg="a key a record was renamed from"):
+            SR.check_producers({"lightmap_metadata": None})
         with self.assertRaises(ValueError):
             SR.check_producers({SR.SHOT_STORE: None})
         with self.assertRaises(ValueError):
@@ -145,77 +155,315 @@ class TestRegistry(SceneRecordsCase):
         with self.assertRaises(KeyError):
             SR.check_producers({"shot_metadat": None})
 
-    def test_a_retired_record_is_gone_by_its_removal_version(self):
-        """A deprecated record names the release it stops being written in;
-        reaching it without deleting the record fails here, the same way
-        ``Deprecation`` gates a retired name -- a removal nobody enforces
-        never happens."""
-        import pythontk
-
-        def parse(v):
-            return tuple(int(p) for p in str(v).split(".")[:3])
-
-        for spec in SR.all():
-            if spec.remove_in:
-                self.assertIsNotNone(spec.deprecated_by, spec.key)
-                self.assertLess(
-                    parse(pythontk.__version__),
-                    parse(spec.remove_in),
-                    f"{spec.key} was to be removed in {spec.remove_in}",
-                )
+    def test_a_renamed_or_retired_key_is_no_record_of_its_own(self):
+        """Every record takes its GLB block's concept name, and the scene's
+        emissive registry a key of its own beside the manifest's (2026-10-20).
+        A key a scene stored a record under before that (:attr:`RecordSpec.
+        renamed_from`) is no record of that scope's -- it resolves to nothing
+        there and names one record at most, the one a migration moves it to
+        -- and one retired whole (:attr:`SceneRecords.RETIRED`) is no record
+        at all."""
+        renamed = {
+            (spec.scope, old): spec for spec in SR.all() for old in spec.renamed_from
+        }
+        self.assertEqual(
+            renamed,
+            {
+                (Scope.DELIVERABLE, "shot_metadata"): SR.SHOTS,
+                (Scope.DELIVERABLE, "audio_manifest"): SR.AUDIO,
+                (Scope.DELIVERABLE, "lightmap_metadata"): SR.LIGHTMAPS,
+                (Scope.DELIVERABLE, "shadow_metadata"): SR.SHADOWS,
+                (Scope.DELIVERABLE, "visibility_tracks"): SR.VISIBILITY,
+                (Scope.PRIVATE, "emissive_groups"): SR.EMISSIVE_REGISTRY,
+            },
+        )
+        self.assertEqual(sum(len(spec.renamed_from) for spec in SR.all()), 6)
+        for scope, old in renamed:
+            with self.subTest(key=old, scope=scope.value):
+                self.assertIsNone(SR.by_key(old, scope))
+        self.assertEqual(SR.RETIRED, ("fbx_takes",))
+        current = {spec.key for spec in SR.all()}
+        for old in SR.RETIRED:
+            with self.subTest(key=old):
+                self.assertNotIn(old, current)
+                self.assertIsNone(SR.by_key(old))
 
     def test_describe_is_one_row_per_record(self):
         rows = SR.describe()
         self.assertEqual(len(rows), len(SR.all()))
-        self.assertEqual(rows[0]["key"], SR.SHOTS.key)
+        self.assertEqual(rows[0]["key"], SR.MATERIALS.key)
         self.assertIn("description", rows[0])
-        legacy = next(r for r in rows if r["key"] == SR.FBX_TAKES.key)
-        self.assertEqual(legacy["remove_in"], SR.FBX_TAKES.remove_in)
+        self.assertNotIn("fbx_takes", [r["key"] for r in rows], "retired, no record")
         emissive = next(r for r in rows if r["key"] == SR.EMISSIVE_GROUPS.key)
-        self.assertEqual(emissive["version_key"], "schema")
-        self.assertEqual(rows[0]["web"], SR.SHOTS.web.key)
-        self.assertIsNone(legacy["web"])
+        self.assertEqual(emissive["version"], SR.EMISSIVE_GROUPS.version)
+        self.assertNotIn("version_key", emissive, "every record versions alike")
+        shots = next(r for r in rows if r["key"] == SR.SHOTS.key)
+        self.assertEqual(shots["glb"], SR.SHOTS.glb.version)
+        self.assertIsNone(emissive["glb"])
 
 
 # -- the contracts other languages read ------------------------------------------
 
 
 class TestContracts(SceneRecordsCase):
-    """Shapes and web projections: what another language reads is declared here
+    """Shapes and GLB blocks: what another language reads is declared here
     and everything that spelled it reads the declaration."""
 
-    def test_web_keys_are_unique_deliverable_wire_names(self):
-        projected = SR.web_projected()
-        keys = [s.web.key for s in projected]
-        self.assertEqual(len(keys), len(set(keys)))
-        self.assertTrue(all(s.scope is Scope.DELIVERABLE for s in projected))
-        self.assertTrue(all(k.endswith("_web") for k in keys), keys)
+    def test_a_glb_carries_a_records_block_under_the_records_key(self):
+        """One name per record in every file (2026-10-20): the block a GLB
+        carries is the record's, under its key."""
+        records = SR.glb_records()
+        self.assertEqual(
+            [s.key for s in records],
+            ["animation", "lightmaps", "shadows", "articulation"],
+        )
+        self.assertEqual(records, [SR.SHOTS, SR.LIGHTMAPS, SR.SHADOWS, SR.ARTICULATION])
+        self.assertTrue(all(s.scope is Scope.DELIVERABLE for s in records))
+        self.assertTrue(all(isinstance(s.glb, GlbBlock) for s in records))
+        self.assertEqual(
+            SR.SHADOWS.glb.node_fields,
+            (("planes", "node"), ("planes", "source_node"), ("planes", "contact_node")),
+        )
+        self.assertEqual(
+            SR.ARTICULATION.glb.node_fields,
+            (("rigs", "joints", "node"), ("rigs", "grab", "node")),
+        )
+
+    def test_glb_block_reads_the_current_block_alone(self):
+        """``glb_block``: a record's block in a document's root ``extras``,
+        under the record's key, at its block's version -- the block itself,
+        so a pass editing it edits the document. Another version, an older
+        one too, is none: a reader refuses rather than guesses, and the cure
+        is a re-export. Added: 2026-10-20"""
+        spec = SR.LIGHTMAPS
+        block = {"version": spec.glb.version, "materials": {}}
+        gltf = {"extras": {spec.key: block}}
+        self.assertIs(SR.glb_block(gltf, spec), block)
+        self.assertIs(SR.glb_block(gltf, spec.key), block)
+        for version in (spec.glb.version - 1, spec.glb.version + 1, "2", None):
+            with self.subTest(version=version):
+                stale = {"extras": {spec.key: {"version": version, "materials": {}}}}
+                self.assertIsNone(SR.glb_block(stale, spec))
+        for elsewhere in (
+            {"extras": {spec.key: json.dumps(block)}},
+            {"scenes": [{"extras": {spec.key: block}}]},
+            {"extras": None},
+            {},
+            None,
+        ):
+            with self.subTest(gltf=elsewhere):
+                self.assertIsNone(SR.glb_block(elsewhere, spec))
+        self.assertIsNone(
+            SR.glb_block({"extras": {SR.HANDOFF.key: {"version": 3}}}, SR.HANDOFF),
+            "no GLB block of its own",
+        )
+
+    def test_put_glb_block_writes_what_glb_block_reads(self):
+        """``put_glb_block``: a record's block written where ``glb_block``
+        reads it -- the document's root ``extras``, under the record's key
+        -- its block's version stamped (a writer's own wins) and pruned to
+        its declared shape as ``make`` prunes a record, each field it cut
+        warned at the address the file holds it. Added: 2026-10-20"""
+        spec = SR.LIGHTMAPS
+        gltf = {"extras": None}
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ) as logs:
+            written = SR.put_glb_block(
+                gltf,
+                spec,
+                {
+                    "carrier": "occlusion",
+                    "encoding": "srgb",
+                    "materials": {"m": {"intensity": 2.0, "stray": True}},
+                },
+            )
+        self.assertEqual(
+            written,
+            {
+                "version": spec.glb.version,
+                "carrier": "occlusion",
+                "materials": {"m": {"intensity": 2.0}},
+            },
+        )
+        self.assertIs(SR.glb_block(gltf, spec), written)
+        (line,) = logs.output
+        self.assertIn(
+            f"extras.{spec.key}: left out what its shape does not declare "
+            "(encoding, materials.m.stray).",
+            line,
+        )
+        # A writer's own version wins -- and its reader reads none of another.
+        older = SR.put_glb_block(
+            gltf, spec.key, {"version": spec.glb.version - 1, "materials": {}}
+        )
+        self.assertEqual(older["version"], spec.glb.version - 1)
+        self.assertIsNone(SR.glb_block(gltf, spec))
+
+    def test_the_retired_web_names_still_serve(self):
+        """``RecordSpec.web``, ``GlbBlock.key``, ``SceneRecords.web_projected``
+        and ``web_shape``, ``WebProjection`` and ``SceneRecords.FBX_TAKES``
+        (retired 2026-10-20, removed in 0.18.0) warn, and serve what replaced
+        them."""
+        with self.assertWarns(DeprecationWarning):
+            self.assertIs(SR.SHADOWS.web, SR.SHADOWS.glb)
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(SR.SHADOWS.glb.key, SR.SHADOWS.key)
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(SR.web_projected(), SR.glb_records())
+        with self.assertWarns(DeprecationWarning):
+            self.assertIs(SR.web_shape(SR.ARTICULATION), SR.glb_shape(SR.ARTICULATION))
+        with self.assertWarns(DeprecationWarning):
+            block = WebProjection("k", version=3)
+        self.assertIsInstance(block, GlbBlock)
+        self.assertEqual(block.version, 3)
+        with self.assertWarns(DeprecationWarning):
+            takes = SR.FBX_TAKES
+        self.assertIsInstance(takes, RecordSpec)
+        self.assertIn(takes.key, SR.RETIRED)
+        self.assertNotIn(takes, SR.all(), "no record of the registry's")
+
+    def test_the_retired_web_projection_builds_as_it_did(self):
+        """REGRESSION (2026-10-24): ``WebProjection(key, version=1,
+        shape=None)`` -- its 0.16.1 signature -- bound the key to
+        ``version``, refused ``version=`` beside it and ``key=`` at all. It
+        builds as it did, warning, its key the one it was given."""
+        with self.assertWarns(DeprecationWarning):
+            block = WebProjection("animation_web")
+        self.assertEqual((block.version, block.shape), (1, None))
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(block.key, "animation_web")
+        with self.assertWarns(DeprecationWarning):
+            block = WebProjection("x", version=2, shape=("m", "C"))
+        self.assertEqual((block.version, block.shape), (2, ("m", "C")))
+        with self.assertWarns(DeprecationWarning):
+            block = WebProjection(key="x", version=2)
+        self.assertEqual(block.version, 2)
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(block.key, "x")
+
+    def test_a_block_of_no_record_has_no_key(self):
+        """REGRESSION (2026-10-24): the retired ``GlbBlock.key`` raised
+        KeyError on a block no :class:`RecordSpec` holds; it reads empty."""
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(GlbBlock().key, "")
+
+    def test_a_replaced_record_keys_its_own_block(self):
+        """REGRESSION (2026-10-24): a :class:`RecordSpec` stamped its key on
+        the block it was handed, so ``dataclasses.replace(SHOTS, key="x")``
+        re-keyed the registry's own ``SHOTS.glb``. Each record holds a block
+        of its own."""
+        import dataclasses
+
+        original = SR.SHOTS.glb
+        replaced = dataclasses.replace(SR.SHOTS, key="x")
+        self.assertIsNot(replaced.glb, original)
+        self.assertEqual(replaced.glb, original, "the same declaration")
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(replaced.glb.key, "x")
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(SR.SHOTS.glb.key, SR.SHOTS.key)
+        self.assertIs(SR.SHOTS.glb, original)
+        shared = GlbBlock(version=4)
+        first = RecordSpec("a", Scope.DELIVERABLE, 1, "t", "d", glb=shared)
+        second = RecordSpec("b", Scope.DELIVERABLE, 1, "t", "d", glb=shared)
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual((first.glb.key, second.glb.key), ("a", "b"))
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(shared.key, "", "the block handed over is untouched")
 
     def test_every_declared_shape_resolves_to_a_typed_schema(self):
         from pythontk import SchemaSpec
 
         for spec in SR.all():
-            for shape in (SR.shape(spec), SR.web_shape(spec)):
+            for shape in (SR.shape(spec), SR.glb_shape(spec)):
                 if shape is None:
                     continue
                 self.assertTrue(issubclass(shape, SchemaSpec), spec.key)
                 self.assertTrue(shape.TYPED, f"{spec.key}: {shape.__name__}")
                 shape.json_schema()  # one name per schema, annotations agree
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffBlock,
+        )
+        from pythontk.core_utils.engines.textures.region_masks import (
+            EmissiveGroupsRecord,
+        )
+        from pythontk.file_utils.mesh_convert.render_effects_record import (
+            RenderEffectsRecord,
+        )
+
         self.assertIsNotNone(SR.shape(SR.ARTICULATION))
-        self.assertIsNotNone(SR.web_shape("articulation"))
-        self.assertIsNone(SR.shape(SR.HANDOFF))
+        self.assertIsNotNone(SR.glb_shape("articulation"))
+        self.assertIs(SR.shape(SR.HANDOFF), HandoffBlock)
+        self.assertIs(SR.shape(SR.EMISSIVE_GROUPS), EmissiveGroupsRecord)
+        self.assertIs(SR.shape(SR.VISIBILITY), RenderEffectsRecord)
+        undeclared = RecordSpec("x", Scope.DELIVERABLE, 1, "t", "d")
+        self.assertIsNone(SR.shape(undeclared))
 
-    def test_the_glb_appliers_and_the_preview_read_the_declarations(self):
-        from pythontk import MeshConvert, PreviewServer
+    def test_problems_hold_a_payload_to_its_declaration(self):
+        """``SceneRecords.problems``: what a payload breaks of its record's
+        declaration -- the version a reader reads, then the declared shape --
+        a line each, and nothing when a reader reads it. A payload no shape
+        declares is held to its version alone. Added: 2026-10-20"""
+        spec = SR.VISIBILITY
+        current = {"version": spec.version, "tracks": [{"node": "a"}]}
+        self.assertEqual(SR.problems(spec, current), [])
+        self.assertEqual(SR.problems(spec.key, current), [], "a key reads as its spec")
+        self.assertEqual(SR.problems(spec, ["a"]), [f"{spec.key}: not an object"])
+        for version in (spec.version - 1, spec.version + 1, None):
+            with self.subTest(version=version):
+                self.assertEqual(
+                    SR.problems(spec, dict(current, version=version)),
+                    [
+                        f"{spec.key}: v{version} is not the v{spec.version} a reader reads"
+                    ],
+                )
+        # A line names where the problem is, then what it is, behind a colon.
+        self.assertEqual(
+            SR.problems(spec, dict(current, tracks=[{"visibility": []}])),
+            [f"{spec.key}.tracks[0]: missing required key 'node'"],
+        )
+        self.assertEqual(
+            SR.problems(spec, {"version": spec.version}),
+            [f"{spec.key}: missing required key 'tracks'"],
+        )
+        self.assertEqual(
+            SR.problems(spec, dict(current, tracks=["a"])),
+            [f"{spec.key}.tracks[0]: expected a mapping, got str"],
+        )
+        undeclared = RecordSpec("x", Scope.DELIVERABLE, 1, "t", "d")
+        self.assertEqual(SR.problems(undeclared, {"version": 1, "any": [1]}), [])
 
-        self.assertEqual(MeshConvert.ARTICULATION_WEB_KEY, SR.ARTICULATION.web.key)
-        self.assertEqual(MeshConvert.SHADOW_WEB_KEY, SR.SHADOWS.web.key)
-        self.assertEqual(MeshConvert.LIGHTMAP_WEB_KEY, SR.LIGHTMAPS.web.key)
-        self.assertEqual(MeshConvert.ANIMATION_WEB_KEY, SR.SHOTS.web.key)
-        self.assertEqual(MeshConvert.ANIMATION_WEB_VERSION, SR.SHOTS.web.version)
-        # Every key a packaged script is activated on is a declared one.
-        declared = {s.web.key for s in SR.web_projected()}
+    def test_block_problems_hold_a_glb_block_to_its_declaration(self):
+        """``SceneRecords.block_problems`` holds a GLB block as ``problems``
+        holds a record -- to its block's version and shape -- and says each
+        problem where the file holds it (``extras.<key>``); of a record that
+        declares no block, it says so. Added: 2026-10-20"""
+        spec, version = SR.ARTICULATION, SR.ARTICULATION.glb.version
+        where = f"extras.{spec.key}"
+        current = {"version": version, "rigs": []}
+        self.assertEqual(SR.block_problems(spec, current), [])
+        self.assertEqual(SR.block_problems(spec, ["a"]), [f"{where}: not an object"])
+        self.assertEqual(
+            SR.block_problems(spec, dict(current, version=version + 1)),
+            [f"{where}: v{version + 1} is not the v{version} a reader reads"],
+        )
+        (listless,) = SR.block_problems(spec, dict(current, rigs="none"))
+        self.assertTrue(listless.startswith(f"{where}.rigs"), listless)
+        emissive = SR.EMISSIVE_GROUPS
+        self.assertEqual(
+            SR.block_problems(emissive, {"version": emissive.version}),
+            [f"extras.{emissive.key}: {emissive.key!r} declares no GLB block"],
+        )
+
+    def test_the_preview_activates_its_scripts_on_record_keys(self):
+        """Every key a packaged script is activated on is a record's key, the
+        one its block rides under."""
+        from pythontk import PreviewServer
+
+        declared = {s.key for s in SR.glb_records()}
         self.assertLessEqual(set(PreviewServer.AUTO_SCRIPTS.values()), declared)
+        self.assertEqual(PreviewServer.AUTO_SCRIPTS["shadow_rig"], SR.SHADOWS.key)
 
 
 # -- the codec ------------------------------------------------------------------
@@ -235,25 +483,76 @@ class TestCodec(SceneRecordsCase):
         with self.assertRaises(TypeError):
             SR.LIGHTMAPS.make([1, 2])
 
-    def test_a_record_versions_under_its_declared_key(self):
-        """The emissive manifest is a document that versions itself under
-        ``schema`` (what its Unity reader gates on): the declaration stamps
-        and checks THAT key, so the record never carries two versions."""
+    def test_a_record_ships_what_its_shape_declares_and_warns_what_it_cut(self):
+        """A declared record's payload is pruned to its shape: what a
+        producer adds beyond it is left out and warned once, each field named
+        once however many entries carried it -- its drift said, never
+        shipped. A record that declares no shape is taken as given.
+        Added: 2026-10-20"""
+        entry = {
+            "name": "a",
+            "map": "a.exr",
+            "uvIndex": 1,
+            "scaleOffset": [1, 1, 0, 0],
+            "hierarchy": ["a"],
+        }
+        objects = [dict(entry, intensity=1.0), dict(entry, name="b", intensity=2.0)]
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ) as logs:
+            rec = SR.LIGHTMAPS.make({"unit_scale": 1.0, "objects": objects, "x": 1})
+        self.assertEqual(
+            rec.payload,
+            {
+                "version": SR.LIGHTMAPS.version,
+                "unit_scale": 1.0,
+                "objects": [entry, dict(entry, name="b")],
+            },
+        )
+        (line,) = logs.output
+        self.assertIn(
+            "lightmaps: left out what its shape does not declare "
+            "(objects[].intensity, x).",
+            line,
+        )
+        undeclared = RecordSpec("x", Scope.DELIVERABLE, 1, "t", "d")
+        with self.assertNoLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ):
+            rec = undeclared.make({"any": [1]})
+        self.assertEqual(rec.payload, {"version": 1, "any": [1]})
+
+    def test_every_record_versions_under_version(self):
+        """Every enveloped record states its version under ``version`` -- the
+        emissive manifest too, which versioned itself under ``schema`` until
+        2026-10-20, at its document's own (``RegionMaskManifest.VERSION``) --
+        so no record carries two versions."""
         from pythontk.core_utils.engines.textures.region_masks import (
             RegionMaskManifest,
         )
 
-        self.assertEqual(SR.EMISSIVE_GROUPS.version, RegionMaskManifest.SCHEMA_VERSION)
-        rec = SR.EMISSIVE_GROUPS.make({"groups": []})
-        self.assertEqual(rec.payload, {"schema": 1, "groups": []})
-        newer = json.dumps({"schema": 2, "groups": []})
+        for spec in SR.all():
+            if spec.envelope:
+                with self.subTest(record=spec.key):
+                    self.assertEqual(spec.make({}).payload, {"version": spec.version})
+        emissive = SR.EMISSIVE_GROUPS
+        self.assertEqual(emissive.version, RegionMaskManifest.VERSION)
+        rec = emissive.make({"groups": []})
+        self.assertEqual(rec.payload, {"version": emissive.version, "groups": []})
+        newer = json.dumps({"version": emissive.version + 1, "groups": []})
         with self.assertLogs(
             "pythontk.core_utils.engines.scene_export", level="WARNING"
         ):
-            self.assertIsNone(SR.EMISSIVE_GROUPS.decode(newer))
+            self.assertIsNone(emissive.decode(newer))
 
-    def test_legacy_shape_is_stored_as_given(self):
-        rec = SR.FBX_TAKES.make([{"name": "a", "start": 1, "end": 2}])
+    def test_the_retired_version_key_is_version(self):
+        """``RecordSpec.version_key`` (retired 2026-10-20, removed in 0.18.0)
+        warns, and answers the one key every record versions under."""
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(SR.EMISSIVE_GROUPS.version_key, "version")
+
+    def test_a_record_without_an_envelope_is_stored_as_given(self):
+        rec = SR.SHOT_STORE.make([{"name": "a", "start": 1, "end": 2}])
         self.assertEqual(json.loads(rec.text), [{"name": "a", "start": 1, "end": 2}])
 
     def test_decode_tolerates_absent_cleared_and_corrupt(self):
@@ -271,8 +570,8 @@ class TestCodec(SceneRecordsCase):
         self.assertEqual(SR.SHOTS.decode(older)["shots"], [])
 
     def test_non_native_values_encode_as_their_string(self):
-        rec = SR.LIGHTMAPS.make({"dir": pathlib.PurePosixPath("a/b")})
-        self.assertEqual(json.loads(rec.text)["dir"], "a/b")
+        rec = SR.LIGHTMAPS.make({"objects": [{"map": pathlib.PurePosixPath("a/b")}]})
+        self.assertEqual(json.loads(rec.text)["objects"][0]["map"], "a/b")
 
 
 # -- the store contract -----------------------------------------------------------
@@ -306,18 +605,23 @@ class TestStore(SceneRecordsCase):
             data,
             {
                 "data_internal": {"audio_clip_voice": 1},
-                "data_export": {"lightmap_metadata": {"objects": [], "version": 1}},
+                "data_export": {
+                    SR.LIGHTMAPS.key: {
+                        "objects": [],
+                        "version": SR.LIGHTMAPS.version,
+                    }
+                },
             },
         )
         self.assertEqual(
-            DictStore.dump(decode=False)["data_export"]["lightmap_metadata"],
-            json.dumps({"version": 1, "objects": []}),
+            DictStore.dump(decode=False)["data_export"][SR.LIGHTMAPS.key],
+            json.dumps({"version": SR.LIGHTMAPS.version, "objects": []}),
         )
         self.assertEqual(
-            json.loads(DictStore.format_dump())["data_export"]["lightmap_metadata"][
+            json.loads(DictStore.format_dump())["data_export"][SR.LIGHTMAPS.key][
                 "version"
             ],
-            1,
+            SR.LIGHTMAPS.version,
         )
 
     def test_format_dump_is_empty_for_an_empty_scene(self):
@@ -327,105 +631,125 @@ class TestStore(SceneRecordsCase):
         DictStore.data[Scope.DELIVERABLE] = {"a": "x", "b": "", "w": 0.5}
         self.assertEqual(DictStore.channels(Scope.DELIVERABLE), {"a": "x"})
 
+    def test_remove_deletes_a_channel_and_says_whether_there_was_one(self):
+        SR.SHOTS.save(DictStore, {"shots": []})
+        self.assertTrue(DictStore.remove(Scope.DELIVERABLE, SR.SHOTS.key))
+        self.assertFalse(SR.SHOTS.is_present(DictStore))
+        self.assertFalse(DictStore.remove(Scope.DELIVERABLE, SR.SHOTS.key))
+
+
+class TestMigrate(SceneRecordsCase):
+    """``SceneStoreBase.migrate``: a scene's records brought to their current
+    keys, once -- run when a scene opens and before every export commit.
+    Added: 2026-10-20"""
+
+    @staticmethod
+    def _stored(scope, key, payload):
+        DictStore.write(scope, key, json.dumps(payload))
+
+    def test_a_record_under_a_key_it_was_renamed_from_moves_to_its_key(self):
+        renamed = {old: spec for spec in SR.all() for old in spec.renamed_from}
+        for old, spec in renamed.items():
+            self._stored(spec.scope, old, {"version": spec.version, "was": old})
+        self._stored(Scope.DELIVERABLE, "fbx_takes", [{"name": "A", "start": 1}])
+        self.assertEqual(sorted(DictStore.migrate()), sorted([*renamed, *SR.RETIRED]))
+        for old, spec in renamed.items():
+            with self.subTest(key=old):
+                self.assertIsNone(DictStore.read(spec.scope, old))
+                self.assertEqual(spec.load(DictStore)["was"], old)
+        self.assertIsNone(DictStore.read(Scope.DELIVERABLE, "fbx_takes"), "retired")
+        self.assertEqual(
+            DictStore.migrate(), [], "a migrated scene has nothing to move"
+        )
+
+    def test_a_key_renamed_in_one_scope_moves_there_alone(self):
+        """The scene's emissive registry took a key of its own (2026-10-20):
+        the private ``emissive_groups`` it was stored under is the shipped
+        manifest's key still. The registry moves; the manifest stays where
+        every reader reads it."""
+        registry, manifest = SR.EMISSIVE_REGISTRY, SR.EMISSIVE_GROUPS
+        self.assertIn(manifest.key, registry.renamed_from)
+        self._stored(Scope.PRIVATE, manifest.key, {"groups": {"glow": {"slot": 0}}})
+        manifest.save(DictStore, {"encoding": "vertex-color", "groups": []})
+        self.assertEqual(DictStore.migrate(), [manifest.key])
+        self.assertEqual(registry.load(DictStore), {"groups": {"glow": {"slot": 0}}})
+        self.assertIsNone(DictStore.read(Scope.PRIVATE, manifest.key))
+        self.assertEqual(manifest.load(DictStore)["groups"], [])
+
+    def test_an_emptied_old_channel_is_removed_too(self):
+        """REGRESSION (2026-10-24): an old key whose channel a clear emptied
+        (``""``, which both DCC stores keep) reads ``None``, so ``migrate``
+        skipped it and the emptied channel stayed for good -- though each
+        DCC store's ``remove`` deletes one outright. Every renamed and
+        retired key goes through ``remove``."""
+
+        class KeepingStore(DictStore):
+            """Keeps an emptied channel, as the DCC stores do, and deletes
+            one outright in ``remove``, as they do."""
+
+            @classmethod
+            def remove(cls, scope, key):
+                return cls.data.get(Scope(scope), {}).pop(key, None) is not None
+
+        old = SR.LIGHTMAPS.renamed_from[0]
+        KeepingStore.data = {Scope.DELIVERABLE: {old: "", "fbx_takes": ""}}
+        self.assertEqual(KeepingStore.migrate(), [old, "fbx_takes"])
+        self.assertEqual(KeepingStore.data[Scope.DELIVERABLE], {})
+        self.assertIsNone(SR.LIGHTMAPS.load(KeepingStore), "nothing to move")
+
+    def test_a_value_already_under_the_key_wins(self):
+        SR.LIGHTMAPS.save(DictStore, {"objects": ["current"]})
+        self._stored(Scope.DELIVERABLE, "lightmap_metadata", {"objects": ["old"]})
+        self.assertEqual(DictStore.migrate(), ["lightmap_metadata"])
+        self.assertEqual(SR.LIGHTMAPS.load(DictStore)["objects"], ["current"])
+        self.assertIsNone(DictStore.read(Scope.DELIVERABLE, "lightmap_metadata"))
+
+    def test_an_export_commit_migrates_first(self):
+        """The writes and the handoff see current keys alone: a scene written
+        before the rename ships no record twice, nor a handoff naming a key no
+        reader reads."""
+        self._stored(
+            Scope.DELIVERABLE, "visibility_tracks", {"version": 1, "tracks": [1]}
+        )
+        ExportSnapshot.assemble({SR.SHOTS: _shots}).commit(DictStore)
+        self.assertIsNone(DictStore.read(Scope.DELIVERABLE, "visibility_tracks"))
+        self.assertEqual(SR.VISIBILITY.load(DictStore)["tracks"], [1])
+        self.assertEqual(
+            _records(SR.HANDOFF.load(DictStore)),
+            ["data_export.animation", "data_export.render_effects"],
+        )
+
+    def test_a_failed_migration_costs_the_export_nothing(self):
+        class Unmigratable(DictStore):
+            @classmethod
+            def migrate(cls):
+                raise RuntimeError("locked")
+
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ):
+            ExportSnapshot.assemble({SR.SHOTS: _shots}).commit(Unmigratable)
+        self.assertTrue(SR.SHOTS.is_present(DictStore))
+
 
 # -- the handoff --------------------------------------------------------------------
 
 
+def _records(block):
+    """The ``data_export`` records an FBX handoff block names, by address."""
+    return sorted(
+        {
+            row["data"][0]
+            for row in block["assembly"]
+            if row["data"] and row["data"][0].startswith("data_export.")
+        }
+    )
+
+
 class TestHandoff(SceneRecordsCase):
-    def test_describes_exactly_the_string_channels_present(self):
-        block = SR.handoff_block(
-            {
-                "lightmap_metadata": "{}",
-                "emissiveGroup_Neon": 0.5,
-                "future": "{}",
-                "handoff": "{}",
-            }
-        )
-        self.assertEqual(
-            sorted(block["reads"]),
-            ["data_export.future", "data_export.lightmap_metadata"],
-        )
-        self.assertEqual(block["reads"]["data_export.future"], "tool-authored channel")
-        self.assertEqual(
-            block["reads"]["data_export.lightmap_metadata"], SR.LIGHTMAPS.description
-        )
-        self.assertEqual(block["version"], SR.HANDOFF.version)
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-
-        self.assertEqual(
-            block["rendering"],
-            MeshConvert.rendering_policy(carrier="fbx"),
-            "the FBX publishes the viewer's own policy, in its own addresses",
-        )
-
-    def test_the_policy_points_at_this_carriers_probe(self):
-        """The lighting environment a coworker's build dropped (2026-10-14).
-
-        The FBX published the GLB's policy word for word, so its environment
-        named ``extras.lightmap_web.probe`` -- an address no FBX has. On the
-        delivered assembly the probe rode ``data_export.lightmap_metadata``
-        and its image was embedded, yet a reader following the block found
-        nothing there and lit the scene with the fallback studio room. The
-        prose must name the record that holds the probe here, and every
-        number must still be the viewer's own.
-        """
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-
-        policy = SR.handoff_block(["lightmap_metadata"])["rendering"]
-        text = json.dumps(policy)
-        self.assertNotIn("extras.", text, "an FBX has no glTF extras to point at")
-        self.assertNotIn("bufferView", text)
-        self.assertIn(
-            "data_export.lightmap_metadata.probe", policy["environment"]["source"]
-        )
-        self.assertIn("unit_scale", policy["environment"]["probe"])
-
-        def numbers(node, path=()):
-            if isinstance(node, dict):
-                for key, value in node.items():
-                    yield from numbers(value, path + (key,))
-            elif isinstance(node, (int, float, list)):
-                yield path, node
-
-        self.assertEqual(
-            dict(numbers(policy)),
-            dict(numbers(MeshConvert.RENDERING_POLICY)),
-            "the carrier changes where the policy points, never a value",
-        )
-
-    def test_assembly_rebuilds_every_record_present_and_the_lighting(self):
-        """The block is for a reader holding the file and nothing else, so it
-        lists the approved scene part by part: the content, each record the
-        carrier holds (and only those), then the lighting -- the half a
-        faithful geometry build kept dropping."""
-        block = SR.handoff_block(
-            {"lightmap_metadata": "{}", "visibility_tracks": "{}", "future": "{}"}
-        )
-        parts = [row["part"] for row in block["assembly"]]
-        self.assertEqual(parts[0], "geometry")
-        self.assertIn("lightmap_metadata", parts)
-        self.assertIn("visibility_tracks", parts)
-        self.assertIn("future", parts, "an undeclared channel is listed, not lost")
-        self.assertNotIn("shot_metadata", parts, "never a record the file lacks")
-        for lighting in (
-            "environment",
-            "key_light",
-            "lightmapped_materials",
-            "renderer",
-        ):
-            self.assertIn(lighting, parts)
-        for row in block["assembly"]:
-            with self.subTest(part=row["part"]):
-                self.assertTrue(row["spec"].strip())
-                for address in row["data"]:
-                    if address.startswith("rendering."):
-                        section = address.split(".", 1)[1]
-                        self.assertIn(section, block["rendering"], "points at nothing")
-        self.assertIsNot(
-            block["assembly"][0],
-            SR.HANDOFF_ASSEMBLY[0],
-            "a caller editing the block must not edit the class constant",
-        )
+    """The handoff record. What its block says is ``HandoffRecord``'s
+    (``test_handoff_record``); what each record contributes to it is declared
+    here."""
 
     def test_every_shipping_record_declares_its_assembly(self):
         """A record added later rides into the block's ``assembly`` from its
@@ -438,7 +762,7 @@ class TestHandoff(SceneRecordsCase):
                 self.assertTrue(spec.assembly.strip())
 
     def test_the_render_effects_are_described_channel_by_channel(self):
-        """``visibility_tracks`` carried a highlight ramp and its colour stops
+        """The render effects record carried a highlight ramp and its colour stops
         that the record's description never mentioned, so a reader of the
         deliverable had no way to know the scene pulses: every effect the
         glTF channel table knows must be named, stops included."""
@@ -456,45 +780,38 @@ class TestHandoff(SceneRecordsCase):
         (``MeshConvert.embed_fbx_highlight_probes``), while the text told a
         reader only to light the record's 'lights' itself: following it beside
         the copies, the highlights count twice. Every field an entry carries
-        is named, and so is the rule. Added: 2026-10-19"""
-        text = SR.LIGHTMAPS.assembly
-        for key in ("probe.highlights", "map", "receivers", "objects"):
+        is named, and so is the rule -- for a record that holds them. Added:
+        2026-10-19"""
+        text = SR.LIGHTMAPS.assembly_for({"probe": {"highlights": [{"map": "h"}]}})
+        self.assertNotIn("'probe.highlights'", SR.LIGHTMAPS.assembly_for({"probe": {}}))
+        for key in ("probe.highlights", "map", "objects"):
             with self.subTest(key=key):
                 self.assertIn(f"'{key}'", text)
         self.assertIn("lights none of 'lights'", text)
 
-    def test_the_contract_says_which_carrier_wins_and_how_names_join(self):
-        """An assembly ships a referenced module's ``data_export`` beside the
-        scene's own, holding that module's records as it was last exported
-        alone (measured: objects since removed, a map spelled ``_LightMap``
-        where the embedded copy is ``_Lightmap``, no probe, and an older
-        handoff saying the maps are not embedded). Both readers in this repo
-        prefer the scene's own node per record and join without case; the
-        text must say so, or a reader merges the stale copy in."""
-        text = SR.HANDOFF_INSTRUCTIONS
-        self.assertIn("named exactly 'data_export'", text)
-        self.assertIn("read only where the scene's own node carries no record", text)
-        # The handoff is the one record the fallback must NOT reach: a
-        # module's block describes the module, even on a file whose own node
-        # carries none -- and whichever version is newer, so the rule is the
-        # node, never the version (a newer module block would otherwise
-        # outrank the file's own).
-        self.assertIn("describes this file only on the node named exactly", text)
-        self.assertNotIn("lower 'version'", text)
-        self.assertIn("without regard to case", text)
-        self.assertIn("'assembly'", text)
-
-    def test_nothing_to_describe_means_no_block(self):
-        self.assertEqual(SR.handoff_block({}), {})
-        self.assertEqual(SR.handoff_block({"handoff": "{}"}), {})
-        self.assertEqual(SR.handoff_block({"emissiveGroup_Neon": 1.0}), {})
-
-    def test_source_drops_empty_entries(self):
-        block = SR.handoff_block(
-            ["lightmap_metadata"], source={"application": "maya", "scene": None}
+    def test_the_retired_handoff_names_still_serve_the_handoffs(self):
+        """``rendering_policy``, ``HANDOFF_INSTRUCTIONS``, ``HANDOFF_ASSEMBLY``
+        and ``handoff_block`` (retired 2026-10-20 for ``HandoffRecord``,
+        removed in 0.18.0) warn, and answer with what ``HandoffRecord``
+        states now."""
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(SR.rendering_policy(), HandoffRecord.rendering_policy())
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(SR.HANDOFF_INSTRUCTIONS, HandoffRecord.instructions("fbx"))
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(SR.HANDOFF_ASSEMBLY, HandoffRecord.CARRIERS["fbx"].own)
+        channels = {SR.LIGHTMAPS.key: "{}", "emissiveGroup_Neon": 0.5}
+        with self.assertWarns(DeprecationWarning):
+            block = SR.handoff_block(channels, source={"application": "maya"})
+        self.assertEqual(
+            block, HandoffRecord.block("fbx", channels, {"application": "maya"})
         )
-        self.assertEqual(block["source"], {"application": "maya"})
-        self.assertIsNone(SR.handoff_block(["lightmap_metadata"])["source"])
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(
+                SR.handoff_block({"emissiveGroup_Neon": 1.0}),
+                {},
+                "a carrier holding no record has nothing to describe",
+            )
 
 
 # -- the context + snapshot ---------------------------------------------------------
@@ -524,8 +841,13 @@ def _visibility(ctx: ExportContext):
 
 
 def _older_scene_takes():
-    """The legacy take list a scene published before 0.11.0 still holds."""
-    SR.FBX_TAKES.save(DictStore, [{"name": "A", "start": 1, "end": 10}])
+    """The take list a scene published before 0.11.0 still holds -- a record
+    retired whole (:attr:`SceneRecords.RETIRED`)."""
+    DictStore.write(
+        Scope.DELIVERABLE,
+        "fbx_takes",
+        json.dumps([{"name": "A", "start": 1, "end": 10}]),
+    )
 
 
 def _nothing(ctx):
@@ -554,6 +876,104 @@ def _scoped_lightmaps(ctx):
     )
 
 
+def _materials(ctx):
+    """A materials producer: one material, as the scene stages it."""
+    return SR.MATERIALS.make(
+        {
+            "materials": [
+                {
+                    "name": "m",
+                    "baseColorFactor": [1, 1, 1, 1],
+                    "metallicFactor": 0,
+                    "roughnessFactor": 1,
+                    "emissiveFactor": [0, 0, 0],
+                    "alphaMode": "OPAQUE",
+                }
+            ]
+        }
+    )
+
+
+class TestTransientRecords(SceneRecordsCase):
+    """A transient record describes one write: produced for it, carried by
+    the file, never held by the scene. The materials record names the maps
+    an export staged for its write (a texture template's converted copies,
+    which the export's restore deletes), so a copy the scene kept would ship
+    stale from the next File > Export. Added: 2026-10-20"""
+
+    def test_the_materials_record_is_transient_and_produced_like_any_other(self):
+        self.assertTrue(SR.MATERIALS.transient)
+        self.assertIs(SR.MATERIALS.kind, Kind.DERIVED)
+        self.assertEqual(SR.transients(), [SR.MATERIALS])
+        self.assertEqual(SR.check_producers({SR.MATERIALS: _materials}), [SR.MATERIALS])
+
+    def test_a_transient_record_is_declared_derived(self):
+        """Produced for every write, hand-offs included: authored data that
+        only some writes refresh could not be cleared after each."""
+        with self.assertRaises(ValueError):
+            RecordSpec(
+                "x", Scope.DELIVERABLE, 1, owner="T", description="d", transient=True
+            )
+
+    def test_the_write_carries_it_and_the_restore_clears_it(self):
+        snap = ExportSnapshot.assemble(
+            {SR.MATERIALS: _materials, SR.SHOTS: _shots}, ExportContext()
+        )
+        self.assertEqual(snap.scene_wide, {"materials": None})
+        snap.commit(DictStore)
+        self.assertIsNotNone(SR.MATERIALS.load(DictStore), "the write carries it")
+        self.assertIn("data_export.materials", _records(SR.HANDOFF.load(DictStore)))
+        snap.restore_scene_wide(DictStore)
+        self.assertIsNone(SR.MATERIALS.load(DictStore), "the scene never holds it")
+        self.assertNotIn("data_export.materials", _records(SR.HANDOFF.load(DictStore)))
+        self.assertIsNotNone(SR.SHOTS.load(DictStore), "the scene's own records stay")
+
+    def test_a_carrier_the_write_alone_needed_is_discarded(self):
+        """Every export states its materials, so the carrier is made for the
+        write; a restore that leaves it holding nothing asks the store to
+        remove it -- the scene left as the export found it -- and one that
+        leaves the scene's own records asks nothing."""
+        calls = []
+
+        def discard(cls, scope):
+            calls.append(scope)
+            return True
+
+        with mock.patch.object(DictStore, "discard_if_empty", classmethod(discard)):
+            snap = ExportSnapshot.assemble({SR.MATERIALS: _materials}, ExportContext())
+            snap.commit(DictStore)
+            snap.restore_scene_wide(DictStore)
+            self.assertEqual(calls, [Scope.DELIVERABLE])
+            calls.clear()
+            snap = ExportSnapshot.assemble(
+                {SR.MATERIALS: _materials, SR.SHOTS: _shots}, ExportContext()
+            )
+            snap.commit(DictStore)
+            snap.restore_scene_wide(DictStore)
+            self.assertEqual(calls, [], "the shots stay, and the carrier with them")
+
+    def test_a_hand_off_produces_it(self):
+        snap = ExportSnapshot.assemble(
+            {SR.MATERIALS: _materials}, ExportContext(mode=ExportContext.HANDOFF)
+        )
+        self.assertIsNotNone(snap.record(SR.MATERIALS))
+        self.assertEqual(snap.scene_wide, {"materials": None})
+
+    def test_an_authoring_publish_clears_one_it_finds(self):
+        """No write: an import brought it, or a crash left it -- a merge's
+        re-derivation publishes at authoring time, and clears it rather than
+        producing it."""
+        SR.MATERIALS.save(DictStore, {"materials": []})
+        calls = []
+        snap = ExportSnapshot.assemble(
+            {SR.MATERIALS: lambda ctx: calls.append(ctx) or _materials(ctx)},
+            ExportContext(mode=ExportContext.AUTHORING),
+        )
+        self.assertEqual(calls, [], "never produced")
+        snap.commit(DictStore)
+        self.assertIsNone(SR.MATERIALS.load(DictStore))
+
+
 class TestSnapshot(SceneRecordsCase):
     def test_a_scoped_assembly_ships_the_export_set_and_keeps_the_scene_whole(self):
         """An export-scoped record names only what the write ships, and the
@@ -564,14 +984,16 @@ class TestSnapshot(SceneRecordsCase):
         verifier). Added: 2026-10-09"""
         self.assertTrue(SR.LIGHTMAPS.export_scoped)
         self.assertTrue(SR.SHADOWS.export_scoped)
-        self.assertTrue(SR.SHOTS.export_scoped)  # its members (2026-10-11)
+        # A shot names no member since 2026-10-20: every take ships whatever
+        # the export set, so there is nothing to narrow.
+        self.assertFalse(SR.SHOTS.export_scoped)
         producers = {SR.LIGHTMAPS: _scoped_lightmaps, SR.SHOTS: _shots}
         snap = ExportSnapshot.assemble(producers, ExportContext(scope=("|ROOM",)))
         self.assertEqual(
             [o["name"] for o in snap.record(SR.LIGHTMAPS)["objects"]], ["wall"]
         )
         self.assertEqual(
-            list(snap.scene_wide), ["lightmap_metadata"], "only what the scope narrowed"
+            list(snap.scene_wide), [SR.LIGHTMAPS.key], "only what the scope narrowed"
         )
         snap.commit(DictStore)
         self.assertEqual(
@@ -606,7 +1028,7 @@ class TestSnapshot(SceneRecordsCase):
                 {SR.LIGHTMAPS: loud}, ExportContext(scope=("|ROOM",))
             )
         self.assertEqual(logs.output, ["WARNING:pythontk.test.loud:scope=('|ROOM',)"])
-        self.assertIn("lightmap_metadata", snap.scene_wide)
+        self.assertIn(SR.LIGHTMAPS.key, snap.scene_wide)
         self.assertEqual(logging.root.manager.disable, logging.NOTSET)
 
     def test_a_scope_that_ships_none_of_a_records_nodes_restores_the_whole(self):
@@ -627,7 +1049,7 @@ class TestSnapshot(SceneRecordsCase):
         # of shots.
         self.assertEqual(
             list(snap.produced),
-            ["shot_metadata", "lightmap_metadata", "visibility_tracks"],
+            [SR.SHOTS.key, SR.LIGHTMAPS.key, SR.VISIBILITY.key],
         )
         vis = snap.record(SR.VISIBILITY)
         self.assertEqual(
@@ -652,27 +1074,32 @@ class TestSnapshot(SceneRecordsCase):
         self.assertEqual(SR.SHOTS.load(DictStore)["shots"][0]["clip"], "A")
         handoff = SR.HANDOFF.load(DictStore)
         self.assertEqual(
-            sorted(handoff["reads"]),
-            ["data_export.shot_metadata", "data_export.visibility_tracks"],
+            _records(handoff),
+            ["data_export.animation", "data_export.render_effects"],
         )
-        self.assertEqual(handoff["source"], {"application": "test"})
-        self.assertIsNone(written["lightmap_metadata"])
+        self.assertEqual(handoff["extras"]["source"], {"application": "test"})
+        self.assertIsNone(written[SR.LIGHTMAPS.key])
         self.assertIn("handoff", written)
 
     def test_the_handoff_publishes_the_exports_lighting_choices(self):
         """What the export decided about the lighting recipe (a baked-reflection
         level) is an input like the clip mode: the stamped handoff carries it,
-        merged the way the GLB's envelope merges it. Added: 2026-09-21"""
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-
-        rendering = {"lightmappedMaterials": {"envMapIntensity": 1.0}}
-        ExportSnapshot.assemble(PRODUCERS, ExportContext(rendering=rendering)).commit(
+        merged the way the GLB's envelope merges it -- as the file's records
+        use the recipe (a lightmapped material's level, where it carries
+        lightmaps). Added: 2026-09-21"""
+        rendering = {"lightmappedMaterials": {"envMapIntensity": 0.5}}
+        producers = {**PRODUCERS, SR.LIGHTMAPS: _scoped_lightmaps}
+        ExportSnapshot.assemble(producers, ExportContext(rendering=rendering)).commit(
             DictStore
         )
+        published = SR.HANDOFF.load(DictStore)["rendering"]
         self.assertEqual(
-            SR.HANDOFF.load(DictStore)["rendering"],
-            MeshConvert.rendering_policy(rendering, carrier="fbx"),
+            published,
+            HandoffRecord.rendering_policy(
+                rendering, DictStore.channels(Scope.DELIVERABLE)
+            ),
         )
+        self.assertEqual(published["lightmappedMaterials"]["envMapIntensity"], 0.5)
 
     def test_the_same_context_produces_the_same_records_twice(self):
         """Re-running an assembly is harmless by construction -- the defect the
@@ -722,8 +1149,8 @@ class TestSnapshot(SceneRecordsCase):
             "pythontk.core_utils.engines.scene_export", level="WARNING"
         ):
             snap = ExportSnapshot.assemble(table)
-        self.assertEqual(snap.failed, {"lightmap_metadata"})
-        self.assertIn("shot_metadata", snap.records)
+        self.assertEqual(snap.failed, {SR.LIGHTMAPS.key})
+        self.assertIn(SR.SHOTS.key, snap.records)
 
     def test_a_private_record_is_refused_rather_than_clearing_its_deliverable_twin(
         self,
@@ -758,12 +1185,12 @@ class TestSnapshot(SceneRecordsCase):
             "pythontk.core_utils.engines.scene_export", level="WARNING"
         ):
             written = snap.commit(LockedStore)
-        self.assertIn("lightmap_metadata", snap.failed)
-        self.assertNotIn("lightmap_metadata", written)
+        self.assertIn(SR.LIGHTMAPS.key, snap.failed)
+        self.assertNotIn(SR.LIGHTMAPS.key, written)
         self.assertTrue(SR.SHOTS.is_present(DictStore))
         self.assertTrue(SR.HANDOFF.is_present(DictStore))
-        self.assertIn("lightmap_metadata (FAILED", snap.summary())
-        self.assertNotIn("lightmap_metadata (1", snap.summary())
+        self.assertIn(f"{SR.LIGHTMAPS.key} (FAILED", snap.summary())
+        self.assertNotIn(f"{SR.LIGHTMAPS.key} (1", snap.summary())
 
     def test_handoff_is_never_manufactured_onto_an_empty_carrier(self):
         snap = ExportSnapshot.assemble({SR.LIGHTMAPS: _nothing})
@@ -789,12 +1216,12 @@ class TestSnapshot(SceneRecordsCase):
             "pythontk.core_utils.engines.scene_export", level="WARNING"
         ):
             snap = ExportSnapshot.assemble(table)
-        self.assertEqual(snap.failed, {"lightmap_metadata"})
+        self.assertEqual(snap.failed, {SR.LIGHTMAPS.key})
         snap.commit(DictStore)
         self.assertEqual(
             SR.LIGHTMAPS.load(DictStore)["objects"], [1], "left as stored, not cleared"
         )
-        self.assertIn("shot_metadata", snap.records)
+        self.assertIn(SR.SHOTS.key, snap.records)
         self.assertIn("FAILED", snap.summary())
 
     def test_a_handoff_context_refreshes_only_derived_records(self):
@@ -825,45 +1252,46 @@ class TestSnapshot(SceneRecordsCase):
         ExportSnapshot.assemble(table, ExportContext(mode=ExportContext.HANDOFF))
         self.assertEqual(ran, ["audio"])
 
-    def test_a_legacy_record_is_cleared_with_its_successor(self):
-        """``fbx_takes`` is no longer written; a scene published before 0.11.0
-        still holds one, and the next shots publish clears it -- whether the
-        producer returns the shots or nothing (an emptied store must not leave
-        the old takes riding into the next export)."""
-        _older_scene_takes()
-        written = ExportSnapshot.assemble({SR.SHOTS: _shots}).commit(DictStore)
-        self.assertTrue(SR.SHOTS.is_present(DictStore))
-        self.assertFalse(SR.FBX_TAKES.is_present(DictStore))
-        self.assertIsNone(written["fbx_takes"])
-        _older_scene_takes()
-        ExportSnapshot.assemble({SR.SHOTS: _nothing}).commit(DictStore)
-        self.assertFalse(SR.SHOTS.is_present(DictStore))
-        self.assertFalse(SR.FBX_TAKES.is_present(DictStore))
+    def test_a_handoff_ships_the_shots_its_scene_holds_now(self):
+        """The shot store is the one authority on the shots record, and the
+        record depends on the live scene (which shots are stale). Authored, a
+        WebXR or Unity push shipped the shots as the last Scene Exporter run
+        left them, or none at all: measured 2026-10-21, a fresh scene's Maya
+        push and Blender send carried no shot record -- and the audio record,
+        derived, scoped its events against that stale copy."""
+        ran = []
+        table = {
+            SR.SHOTS: lambda c: ran.append("animation"),
+            SR.AUDIO: lambda c: ran.append("audio"),
+        }
+        ExportSnapshot.assemble(table, ExportContext(mode=ExportContext.HANDOFF))
+        self.assertEqual(ran, ["animation", "audio"], "shots first: audio reads them")
 
-    def test_a_failed_successor_leaves_its_legacy_record_alone(self):
-        ExportSnapshot.assemble({SR.SHOTS: _shots}).commit(DictStore)
-        _older_scene_takes()
-        with self.assertLogs(
-            "pythontk.core_utils.engines.scene_export", level="WARNING"
-        ):
-            ExportSnapshot.assemble({SR.SHOTS: _boom}).commit(DictStore)
-        self.assertTrue(SR.SHOTS.is_present(DictStore))
-        self.assertTrue(SR.FBX_TAKES.is_present(DictStore))
+    def test_a_retired_record_never_rides_into_the_next_export(self):
+        """``fbx_takes`` is no record (:attr:`SceneRecords.RETIRED`); a scene
+        published before 0.11.0 still holds one, and the next commit removes
+        it whatever the shots producer does -- returns the shots, nothing, or
+        fails -- so the old takes never ride into the next export."""
+        logger = "pythontk.core_utils.engines.scene_export"
+        for producer in (_shots, _nothing, _boom):
+            with self.subTest(producer=producer.__name__):
+                _older_scene_takes()
+                with self.assertLogs(logger, level="INFO"):
+                    ExportSnapshot.assemble({SR.SHOTS: producer}).commit(DictStore)
+                self.assertIsNone(DictStore.read(Scope.DELIVERABLE, "fbx_takes"))
 
     def test_a_reader_sees_a_record_cleared_in_this_assembly_as_absent(self):
         """The shots producer returns nothing (an emptied store): a reader later
-        in the SAME assembly must not fall back to the stored shot record or
-        take list the commit is about to clear."""
+        in the SAME assembly must not fall back to the stored shot record the
+        commit is about to clear."""
         ExportSnapshot.assemble({SR.SHOTS: _shots}).commit(DictStore)
-        _older_scene_takes()
         seen = {}
 
         def reader(ctx):
             seen["shots"] = ctx.record(SR.SHOTS, DictStore)
-            seen["takes"] = ctx.record(SR.FBX_TAKES, DictStore)
 
         ExportSnapshot.assemble({SR.SHOTS: _nothing, SR.VISIBILITY: reader})
-        self.assertEqual(seen, {"shots": None, "takes": None})
+        self.assertEqual(seen, {"shots": None})
 
     def test_the_envelope_version_leads_and_a_producer_value_wins(self):
         self.assertEqual(
@@ -872,8 +1300,8 @@ class TestSnapshot(SceneRecordsCase):
         self.assertEqual(SR.SHADOWS.make({"version": 1}).payload["version"], 1)
 
     def test_only_narrows_a_pipeline_run(self):
-        snap = ExportSnapshot.assemble(PRODUCERS, only=["shot_metadata"])
-        self.assertEqual(list(snap.produced), ["shot_metadata"])
+        snap = ExportSnapshot.assemble(PRODUCERS, only=[SR.SHOTS.key])
+        self.assertEqual(list(snap.produced), [SR.SHOTS.key])
 
     def test_publish_is_the_one_call_authoring_time_commit(self):
         """A tool republishing its own record hands payloads (or records, or a
@@ -890,13 +1318,14 @@ class TestSnapshot(SceneRecordsCase):
         self.assertEqual(SR.LIGHTMAPS.load(DictStore)["objects"], [1])
         self.assertEqual(SR.SHADOWS.load(DictStore)["version"], SR.SHADOWS.version)
         self.assertEqual(
-            sorted(SR.HANDOFF.load(DictStore)["reads"]),
-            ["data_export.lightmap_metadata", "data_export.shadow_metadata"],
+            _records(SR.HANDOFF.load(DictStore)),
+            ["data_export.lightmaps", "data_export.shadows"],
         )
         ExportSnapshot.publish(DictStore, {SR.LIGHTMAPS: None})
         self.assertIsNone(SR.LIGHTMAPS.load(DictStore))
         self.assertEqual(
-            list(SR.HANDOFF.load(DictStore)["reads"]), ["data_export.shadow_metadata"]
+            _records(SR.HANDOFF.load(DictStore)),
+            ["data_export.shadows"],
         )
 
     def test_the_shot_record_declares_the_clip_mode_under_the_readers_key(self):
@@ -907,11 +1336,9 @@ class TestSnapshot(SceneRecordsCase):
 
     def test_channels_and_summary(self):
         snap = ExportSnapshot.assemble(PRODUCERS)
-        self.assertEqual(
-            sorted(snap.channels()), ["shot_metadata", "visibility_tracks"]
-        )
-        self.assertIn("shot_metadata (1 entry)", snap.summary())
-        self.assertNotIn("lightmap_metadata", snap.summary(), "nothing shipped")
+        self.assertEqual(sorted(snap.channels()), [SR.SHOTS.key, SR.VISIBILITY.key])
+        self.assertIn(f"{SR.SHOTS.key} (1 entry)", snap.summary())
+        self.assertNotIn(SR.LIGHTMAPS.key, snap.summary(), "nothing shipped")
 
     def test_context_record_falls_back_to_the_store_at_authoring_time(self):
         SR.SHOTS.save(DictStore, {"fps": 30.0, "shots": []})
@@ -944,16 +1371,14 @@ class TestRecordTransfer(SceneRecordsCase):
         other = self._other(
             private={"hierarchy_baseline": {"format": 1, "paths": ["a"]}},
             deliverable={
-                "lightmap_metadata": {"version": 1, "objects": [{"name": "a"}]},
+                SR.LIGHTMAPS.key: {"version": 2, "objects": [{"name": "a"}]},
                 "handoff": {"version": 1},
             },
         )
         merge = RecordTransfer.between(DictStore, other)
         self.assertTrue(merge.is_empty)
         self.assertEqual(merge.summary(), [])
-        self.assertEqual(
-            [s.key for s in merge.rederive], ["lightmap_metadata", "handoff"]
-        )
+        self.assertEqual(merge.rederive, [SR.LIGHTMAPS, SR.HANDOFF])
 
     def test_an_empty_carrier_is_empty(self):
         self.assertTrue(RecordTransfer.between(DictStore, {}).is_empty)
@@ -1008,7 +1433,10 @@ class TestRecordTransfer(SceneRecordsCase):
         other = self._other(
             private={
                 "audio_file_map": {"1": "a.wav", "2": "b.wav"},
-                "emissive_groups": {"schema": 1, "groups": {"glow": {"slot": 0}}},
+                SR.EMISSIVE_REGISTRY.key: {
+                    "schema": 1,
+                    "groups": {"glow": {"slot": 0}},
+                },
             }
         )
         merge = RecordTransfer.between(DictStore, other)
@@ -1027,6 +1455,47 @@ class TestRecordTransfer(SceneRecordsCase):
                 self.assertIsNotNone(SR.codec(spec), spec.key)
         for spec in SR.deliverable():
             self.assertIs(spec.merge, Merge.DERIVE, spec.key)
+
+    def test_another_scenes_renamed_keys_are_read_at_their_current_keys(self):
+        """A scene saved before a rename holds a record under the key it was
+        renamed from (:attr:`RecordSpec.renamed_from`). Its records are read
+        as ``SceneStoreBase.migrate`` reads a scene's own -- at the current
+        key, a value already there winning -- so a module's emissive registry
+        merges by its codec instead of crossing as a channel nothing declares
+        (adopted under the old key, then dropped by this scene's next
+        migration). Added: 2026-10-20"""
+        registry = SR.EMISSIVE_REGISTRY
+        (old,) = registry.renamed_from
+        other = self._other(
+            private={old: {"schema": 1, "groups": {"glow": {"slot": 0}}}}
+        )
+        merge = RecordTransfer.between(DictStore, other)
+        self.assertEqual(merge.summary(), ["Emissive Groups: 1 entry"])
+        self.assertEqual(merge.payloads()[registry]["groups"], {"glow": {"slot": 0}})
+        self._merge(other)
+        self.assertIn("glow", registry.load(DictStore)["groups"])
+        self.assertIsNone(DictStore.read(Scope.PRIVATE, old))
+        both = self._other(
+            private={
+                old: {"schema": 1, "groups": {"stale": {"slot": 0}}},
+                registry.key: {"schema": 1, "groups": {"kept": {"slot": 1}}},
+            }
+        )
+        payload = RecordTransfer.between(DictStore, both).payloads()[registry]
+        self.assertEqual(payload["groups"], {"kept": {"slot": 1}}, "the key wins")
+
+    def test_every_codec_record_resolves_its_codec(self):
+        """Each :attr:`Merge.CODEC` record finds its codec, and the table holds
+        exactly those records' keys: keyed by the declarations, a renamed
+        record keeps its codec. (2026-10-20: the scene's emissive registry
+        took its own key while the table still spelled ``"emissive_groups"``,
+        and its merge raised LookupError.) Added: 2026-10-20"""
+        codecs = [spec for spec in SR.all() if spec.merge is Merge.CODEC]
+        self.assertTrue(codecs)
+        for spec in codecs:
+            with self.subTest(record=spec.key):
+                self.assertIsNotNone(SR.codec(spec))
+        self.assertEqual(set(SR.CODECS), {spec.key for spec in codecs})
 
     # ---------------------------------------------------------------- union
     def test_a_record_this_scene_lacks_is_adopted(self):
@@ -1064,9 +1533,9 @@ class TestRecordTransfer(SceneRecordsCase):
 
     def test_a_derived_record_is_left_for_the_producers(self):
         _, ctx = self._merge(
-            self._other(deliverable={"lightmap_metadata": {"objects": []}})
+            self._other(deliverable={SR.LIGHTMAPS.key: {"objects": []}})
         )
-        self.assertIsNone(DictStore.read(Scope.DELIVERABLE, "lightmap_metadata"))
+        self.assertIsNone(DictStore.read(Scope.DELIVERABLE, SR.LIGHTMAPS.key))
         self.assertEqual(ctx.notes, [])
 
     def test_an_undeclared_channel_is_adopted_only_when_absent(self):
@@ -1101,7 +1570,10 @@ class TestRecordTransfer(SceneRecordsCase):
         self._merge(
             self._other(
                 private={
-                    "emissive_groups": {"schema": 1, "groups": {"glow": {"slot": 0}}}
+                    SR.EMISSIVE_REGISTRY.key: {
+                        "schema": 1,
+                        "groups": {"glow": {"slot": 0}},
+                    }
                 }
             ),
             ctx,
@@ -1218,7 +1690,7 @@ class TestRecordTransfer(SceneRecordsCase):
         _, ctx = self._merge(
             self._other(
                 private={
-                    "emissive_groups": {
+                    SR.EMISSIVE_REGISTRY.key: {
                         "schema": 1,
                         "groups": {
                             "glow": {"slot": 0, "default": 0.5},
@@ -1245,7 +1717,7 @@ class TestRecordTransfer(SceneRecordsCase):
         _, ctx = self._merge(
             self._other(
                 private={
-                    "emissive_groups": {
+                    SR.EMISSIVE_REGISTRY.key: {
                         "schema": 1,
                         "groups": {
                             "late": {"slot": None, "default": 0.5},
@@ -1326,10 +1798,10 @@ class TestRecordTransfer(SceneRecordsCase):
 
     def test_payloads_are_the_other_scenes_records_by_declaration(self):
         """Decoded, respelled through a context, and keyed by spec -- the
-        private registry and the deliverable manifest share one key."""
+        private registry and the deliverable manifest each its own."""
         other = self._other(
             private={
-                "emissive_groups": {"schema": 1, "groups": {"g": {"slot": 0}}},
+                SR.EMISSIVE_REGISTRY.key: {"schema": 1, "groups": {"g": {"slot": 0}}},
                 "key_stash": {
                     "schema": 1,
                     "clips": [
@@ -1337,12 +1809,18 @@ class TestRecordTransfer(SceneRecordsCase):
                     ],
                 },
             },
-            deliverable={"emissive_groups": {"schema": 1, "groups": {}}},
+            deliverable={
+                SR.EMISSIVE_GROUPS.key: {
+                    "version": SR.EMISSIVE_GROUPS.version,
+                    "encoding": "vertex-color",
+                    "groups": [],
+                }
+            },
         )
         merge = RecordTransfer.between(DictStore, other)
         payloads = merge.payloads(TransferContext(rename={"a": "a1"}.get))
         self.assertEqual(payloads[SR.EMISSIVE_REGISTRY]["groups"], {"g": {"slot": 0}})
-        self.assertEqual(payloads[SR.EMISSIVE_GROUPS]["groups"], {})
+        self.assertEqual(payloads[SR.EMISSIVE_GROUPS]["groups"], [])
         self.assertEqual(payloads[SR.KEY_STASH]["clips"][0]["objects"], ["a1"])
         self.assertEqual(payloads[SR.KEY_STASH]["clips"][0]["label"], "a")
         self.assertEqual(merge.payloads()[SR.KEY_STASH]["clips"][0]["objects"], ["a"])
@@ -1383,7 +1861,7 @@ class TestRecordHandoff(SceneRecordsCase):
         SR.SHOT_STORE.save(DictStore, {"shots": [{"shot_id": 1, "name": "A"}]})
         out = RecordTransfer.sections(DictStore, TransferContext())
         self.assertEqual(sorted(out), ["records", "shots"])
-        self.assertEqual(list(out["records"]), ["emissive_groups"])
+        self.assertEqual(list(out["records"]), [SR.EMISSIVE_REGISTRY.key])
         # A record with a section of its own ships in that section's wire
         # shape -- the codec's (`ShotTransfer.encode`'s envelope, what every
         # consumer `decode`s), never the bare record.
@@ -1429,7 +1907,10 @@ class TestRecordHandoff(SceneRecordsCase):
         )
         manifest = {
             "records": {
-                "emissive_groups": {"schema": 1, "groups": {"glow": {"slot": 0}}}
+                SR.EMISSIVE_REGISTRY.key: {
+                    "schema": 1,
+                    "groups": {"glow": {"slot": 0}},
+                }
             }
         }
         ctx = RecordTransfer.receive(manifest, DictStore, TransferContext())
@@ -1445,7 +1926,9 @@ class TestRecordHandoff(SceneRecordsCase):
 
         manifest = {
             "shots": {"shots": []},
-            "records": {"emissive_groups": {"schema": 1, "groups": {"g": {"slot": 0}}}},
+            "records": {
+                SR.EMISSIVE_REGISTRY.key: {"schema": 1, "groups": {"g": {"slot": 0}}}
+            },
         }
         ctx = RecordTransfer.receive(
             manifest, DictStore, TransferContext(), {"shot_store": Broken}
@@ -1553,7 +2036,7 @@ class TestStoreCrossings(unittest.TestCase):
         order = []
         carriers = {
             **self._private(audio_file_map={"2": "b.wav"}),
-            Scope.DELIVERABLE: {"lightmap_metadata": json.dumps({"objects": [1]})},
+            Scope.DELIVERABLE: {SR.LIGHTMAPS.key: json.dumps({"objects": [1]})},
         }
         with (
             mock.patch.object(
@@ -1662,7 +2145,7 @@ class TestLightmapDirs(SceneRecordsCase):
 class TestLightmapBakeState(SceneRecordsCase):
     """What each lightmap was baked against (``BakeBaseline``): build-time
     state keyed by this scene's own node names. Never on a deliverable (the
-    marker and ``lightmap_metadata`` ship), never across a hand-off, and
+    marker and ``lightmaps`` ship), never across a hand-off, and
     another scene's copy is dropped."""
 
     def test_it_is_private_its_own_and_never_crosses(self):
@@ -1979,6 +2462,73 @@ class TestWriterStamp(SceneRecordsCase):
         self.assertEqual(self.store.restore_path_records(snapshot), 2)
         self.assertEqual(self.store.path_records(), before)
 
+    # -- a renamed scene's stamps (2026-10-21) ------------------------------------
+
+    def _renamed_records(self):
+        """The open scene is ``copy.ma``, renamed from ``gone.ma``: its records
+        still name the old file, beside one its Save As source wrote."""
+        self.scene = self.copy
+        SR.LIGHTMAP_WRITERS.save(
+            self.store,
+            {
+                "a.exr": "scenes/gone.ma",
+                "b.exr": "scenes/source.ma",
+                "c.exr": "scenes/copy.ma",
+                "d.exr": "",
+            },
+        )
+        SR.HIERARCHY_BASELINE.save(
+            self.store,
+            {"format": 1, "paths": ["|GRP"], "hash": "h", "scene": "scenes/gone.ma"},
+        )
+
+    def test_a_save_gives_a_gone_writers_stamps_to_the_scene_saved(self):
+        """Gone, the old name read as this scene's own -- until a file came
+        back there (a Save As back to it, a restored backup): that file then
+        owned the maps, and its re-bake wrote over what this scene reads.
+        The save writes the ownership down."""
+        self._renamed_records()
+        self.store.respell_for_write(self.copy, self.proj, saved_from=self.copy)
+        self.assertEqual(
+            SR.LIGHTMAP_WRITERS.load(self.store),
+            {
+                "a.exr": "scenes/copy.ma",
+                "b.exr": "scenes/source.ma",
+                "c.exr": "scenes/copy.ma",
+                "d.exr": "",
+            },
+        )
+        self.assertEqual(SR.HIERARCHY_BASELINE.load(self.store)["scene"], "scenes/copy.ma")
+        pathlib.Path(self.proj, "scenes", "gone.ma").write_text("")  # back again
+        self.assertTrue(self.store.written_here("scenes/copy.ma"))
+
+    def test_a_save_as_gives_them_to_the_file_it_was_saved_from(self):
+        """That file, still on disk, reads them as its own (gone): the new
+        file must name it, or both would write in place."""
+        self._renamed_records()
+        new = os.path.join(self.proj, "scenes", "next.ma")
+        self.store.respell_for_write(new, self.proj, saved_from=self.copy)
+        self.assertEqual(SR.LIGHTMAP_WRITERS.load(self.store)["a.exr"], "scenes/copy.ma")
+        self.scene = new
+        self.assertFalse(self.store.written_here("scenes/copy.ma"))
+
+    def test_a_copy_adopts_nothing(self):
+        """An export or autosave (no *saved_from*) leaves the stamps alone."""
+        self._renamed_records()
+        self.store.respell_for_write(os.path.join(self.proj, "scenes", "x.ma"), self.proj)
+        self.assertEqual(SR.LIGHTMAP_WRITERS.load(self.store)["a.exr"], "scenes/gone.ma")
+
+    def test_a_save_as_into_another_project_spells_the_adopted_stamp_from_it(self):
+        self._renamed_records()
+        other = os.path.join(os.path.dirname(self.proj), "other")
+        os.makedirs(os.path.join(other, "scenes"))
+        pathlib.Path(other, "workspace.mel").write_text("")
+        new = os.path.join(other, "scenes", "moved.ma")
+        self.store.respell_for_write(new, self.proj, saved_from=self.copy)
+        self.assertEqual(
+            SR.LIGHTMAP_WRITERS.load(self.store)["a.exr"], "../proj/scenes/copy.ma"
+        )
+
     def test_no_stamp_stamps_nothing(self):
         self._unsaved_records()
         self.assertEqual(SR.stamp_unsaved(self.store, ""), 0)
@@ -2023,6 +2573,350 @@ class TestMovedPaths(unittest.TestCase):
                     any(issubclass(w.category, DeprecationWarning) for w in caught),
                     f"{module}.{name} resolved without a notice",
                 )
+
+
+class TestClause(unittest.TestCase):
+    """A sentence of an assembly that only some payloads call for."""
+
+    PLANES = {"planes": [{"type": "projected"}, {"type": "horizon", "on": True}]}
+
+    def test_a_value_somewhere_down_a_list(self):
+        self.assertTrue(Clause("x", ("planes", "type"), "horizon").applies(self.PLANES))
+        self.assertFalse(Clause("x", ("planes", "type"), "baked").applies(self.PLANES))
+
+    def test_a_value_matches_its_type_too(self):
+        """``True`` is not ``1``: a flag never matches a count."""
+        self.assertTrue(Clause("x", ("planes", "on"), True).applies(self.PLANES))
+        self.assertFalse(
+            Clause("x", ("n",), True).applies({"n": 1}),
+        )
+
+    def test_present_is_anything_but_null_or_empty(self):
+        clause = Clause("x", ("probe",))
+        self.assertTrue(clause.applies({"probe": {"map": "p.exr"}}))
+        self.assertTrue(clause.applies({"probe": 0}))
+        for absent in (
+            {},
+            {"probe": None},
+            {"probe": {}},
+            {"probe": []},
+            {"probe": ""},
+        ):
+            with self.subTest(payload=absent):
+                self.assertFalse(clause.applies(absent))
+
+    def test_an_unknown_payload_and_an_empty_path_always_apply(self):
+        self.assertTrue(Clause("x", ("probe", "highlights")).applies(Clause.UNKNOWN))
+        self.assertTrue(Clause("x").applies({}))
+
+    def test_join_states_every_clause_without_a_payload(self):
+        clauses = (Clause("B.", ("b",)), Clause("C.", ("c",)))
+        self.assertEqual(Clause.join("A.", clauses), "A. B. C.")
+        self.assertEqual(Clause.join("A.", clauses, {"c": 1}), "A. C.")
+        self.assertEqual(Clause.join("", clauses, {}), "")
+
+
+class _TextShadows:
+    """The shadows record's runtime written from its assembly text ALONE --
+    what a reader holding only the file builds -- to score the text against
+    pythontk's own model and march. Reads the map from its RGBA image."""
+
+    @staticmethod
+    def place(plane, C, L):
+        """``(centre (x, z), extent along u, extent along +X)`` of a Y-up quad."""
+        ms, height, radius = plane["max_stretch"], plane["height"], plane["radius"]
+        ground, canvas = plane["ground"], plane["canvas"]
+        d = (C[0] - L[0], C[2] - L[2])
+        dist = math.hypot(*d)
+        u = (d[0] / dist, d[1] / dist) if dist >= 1e-6 else (0.0, 1.0)
+        k_max = 1 + ms
+        k_base = min(max((L[1] - ground) / max(1e-4, L[1] - C[1]), 0), k_max)
+        k_top = min(
+            max((L[1] - ground) / max(1e-4, L[1] - C[1] - height), 0),
+            min(k_max, k_base + ms * height / max(dist, 1e-6)),
+        )
+        reach = max(0.0, dist * (k_top - k_base))
+        width = 2 * radius * max(k_top, k_base)
+        anchor = (L[0] + d[0] * k_base, L[2] + d[1] * k_base)
+        far = max(reach + canvas[1] * radius * k_top, 0)
+        x = (u[1], -u[0])  # +X of a quad along u, normal up: up x u
+        cu = (canvas[0] * far + far) / 2
+        cx = (canvas[2] + canvas[3]) * width / 2
+        centre = (
+            anchor[0] + u[0] * cu + x[0] * cx,
+            anchor[1] + u[1] * cu + x[1] * cx,
+        )
+        return centre, far - canvas[0] * far, (canvas[3] - canvas[2]) * width
+
+    @staticmethod
+    def shadow(img, horizon, P, g, source=None, size=0.0, shines=None, angle=0.0):
+        S, K = horizon["size"], horizon["spans"]
+        a0, a1, b0, b1 = horizon["bounds"]
+        hs = horizon["height_scale"]
+        pa, pb = (a1 - a0) / S, (b1 - b0) / S
+        p = min(pa, pb)
+        aspect = max(pa, pb) / p
+        px = img.astype(int)
+
+        def w(x, y):
+            return 256 * x + y
+
+        def tile(k):
+            return px[:S, k * S : (k + 1) * S]
+
+        spans = [
+            (w(tile(k)[..., 0], tile(k)[..., 1]), w(tile(k)[..., 2], tile(k)[..., 3]))
+            for k in range(K)
+        ]
+        aux = tile(K)
+        D = w(aux[..., 0], aux[..., 1]) / 64.0
+        top, bottom = aux[..., 2] / 255.0 * hs, aux[..., 3] / 255.0 * hs
+        pyramid = tile(K + 1)
+        interior = None
+        if tuple(pyramid[S // 2, S // 2]) == (83, 72, 1, 165):
+            interior = [[0.0] * S for _ in range(S)]
+            for j in range(S):
+                for i in range(S):
+                    interior[j][i] = (
+                        pyramid[j // 2, S // 2 + i // 2][(i % 2) + 2 * (j % 2)] / 4.0
+                    )
+        if shines is not None:
+            n = math.sqrt(sum(v * v for v in shines))
+            Lv = [-v / n for v in shines]
+            rho = angle / 2
+        else:
+            v = (source[0] - P[0], source[1] - g, source[2] - P[1])
+            dist = math.sqrt(sum(c * c for c in v))
+            Lv = [c / dist for c in v]
+            rho = math.asin(min(1.0, size / 2 / dist))
+        c = math.hypot(Lv[0], Lv[2])
+        if Lv[1] <= 0 or c < 1e-9:
+            return 0.0
+        ox, oy = (P[0] - a0) / pa, (P[1] - b0) / pb
+        dx, dy = Lv[0] / c / pa, Lv[2] / c / pb
+
+        def entry_exit(o, dv):
+            if abs(dv) < 1e-12:
+                return (-math.inf, math.inf) if 0 <= o < S else (math.inf, -math.inf)
+            return sorted(((0 - o) / dv, (S - o) / dv))
+
+        (tx0, tx1), (ty0, ty1) = entry_exit(ox, dx), entry_exit(oy, dy)
+        t, t_end = max(tx0, ty0, 0.0), min(tx1, ty1)
+
+        def bilinear(field, tm):
+            mx, my = ox + dx * tm - 0.5, oy + dy * tm - 0.5
+            x0, y0 = math.floor(mx), math.floor(my)
+            fx, fy = mx - x0, my - y0
+
+            def at(x, y):
+                return float(field[min(max(y, 0), S - 1)][min(max(x, 0), S - 1)])
+
+            upper = at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx
+            lower = at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx
+            return upper * (1 - fy) + lower * fy
+
+        rise, side, clear, hit = 0.0, 0.0, math.inf, False
+        while t < t_end - 1e-12:
+            nudge = 1e-9 * (1 + t)
+            ix, iy = (
+                math.floor(ox + dx * (t + nudge)),
+                math.floor(oy + dy * (t + nudge)),
+            )
+            exits = [t_end]
+            if abs(dx) > 1e-12:
+                exits.append((ix + (dx > 0) - ox) / dx)
+            if abs(dy) > 1e-12:
+                exits.append((iy + (dy > 0) - oy) / dy)
+            t1 = min(exits)
+            if 0 <= ix < S and 0 <= iy < S:
+                h0, h1, tm = t * Lv[1] / c, t1 * Lv[1] / c, (t + t1) / 2
+                blocked, solid, gap = False, False, math.inf
+                for lo_w, hi_w in spans:
+                    if hi_w[iy, ix] == 0:
+                        continue
+                    solid = True
+                    lo, hi = lo_w[iy, ix] / 65535 * hs, hi_w[iy, ix] / 65535 * hs
+                    if h1 >= lo and h0 <= hi:
+                        blocked = True
+                    else:
+                        gap = min(gap, max(lo - h1, h0 - hi))
+                    if hi >= h0:
+                        rise = max(rise, (hi - h0) * c * c / tm)
+                if blocked:
+                    hit = True
+                    inner = (
+                        math.inf
+                        if interior is None
+                        else max(bilinear(interior, tm) - aspect / 2, 0) * p * c / tm
+                    )
+                    side = max(side, inner)
+                elif not hit:
+                    if not solid:
+                        b, tp = bilinear(bottom, tm), bilinear(top, tm)
+                        vgap = h0 - tp if h0 > tp else (b - h1 if h1 < b else 0.0)
+                        gap = math.hypot(
+                            max(bilinear(D, tm) - aspect / 2, 0) * p * c, c * c * vgap
+                        )
+                    else:
+                        gap *= c * c
+                    clear = min(clear, gap / tm)
+                if hit and min(rise, side) >= rho:
+                    break
+            t = t1
+        if rho == 0:
+            return 1.0 if hit else 0.0
+        s = min(max(-min(rise, side) / rho if hit else clear / rho, -1.0), 1.0)
+        return (math.acos(s) - s * math.sqrt(1 - s * s)) / math.pi
+
+
+class TestShadowsText(unittest.TestCase):
+    """The shadows record states its runtime in the file: the projection
+    model, the placement and the horizon march -- each only where a plane
+    uses it, exactly as pythontk computes it."""
+
+    def test_a_file_is_told_only_what_its_planes_use(self):
+        still = {"planes": [{"type": "projected", "follow_source": False}]}
+        following = {"planes": [{"type": "projected", "follow_source": True}]}
+        horizon = {"planes": [{"type": "horizon", "follow_source": False}]}
+        for spec in (SR.SHADOWS, SR.SHADOWS.glb):
+            with self.subTest(carrier="glb" if spec is SR.SHADOWS.glb else "fbx"):
+                text = spec.assembly_for(still)
+                self.assertIn("A projected plane's shadow", text)
+                self.assertNotIn("k_base", text)
+                self.assertNotIn("horizon", text)
+                self.assertIn("k_base", spec.assembly_for(following))
+                marched = spec.assembly_for(horizon)
+                self.assertIn("disc(x)", marched)
+                self.assertNotIn("A projected plane's shadow", marched)
+                self.assertNotIn("k_base", marched)
+
+    def test_the_text_quotes_the_codes_constants(self):
+        from pythontk.geo_utils import shadow_horizon as sh
+        from pythontk.geo_utils.shadow_projection import ShadowProjection
+
+        text = SR.SHADOWS.assembly_for()
+        self.assertEqual(ShadowProjection.FAR_FACTOR, 1e6)
+        self.assertIn("s*1e6*max(height, 2*radius)", text)
+        self.assertEqual(ShadowProjection.EPS, 1e-6)
+        self.assertIn("dist < 1e-6", text)
+        self.assertEqual(ShadowProjection.OVERHEAD_BEARING, (0.0, 1.0))
+        self.assertIn("((0, 1) when dist < 1e-6)", text)
+        self.assertIn(str(sh.INTERIOR_MARKER), text)
+        self.assertIn(f"w(R, G)/{int(sh.DIST_SCALE)} in p", text)
+        self.assertIn(f"byte/{int(sh.INTERIOR_SCALE)} in p", text)
+        self.assertIn(f"w/{int(sh.MAX16)}*height_scale", text)
+
+    def test_the_text_rebuilds_the_projection_and_its_placement(self):
+        from pythontk.geo_utils.shadow_projection import ShadowProjection
+
+        rng = __import__("random").Random(11)
+        for _ in range(100):
+            C = (rng.uniform(-2, 2), rng.uniform(0, 0.5), rng.uniform(-2, 2))
+            L = (rng.uniform(-5, 5), rng.uniform(0.2, 6), rng.uniform(-5, 5))
+            plane = {
+                "max_stretch": rng.uniform(2, 8),
+                "height": rng.uniform(0.3, 2),
+                "radius": rng.uniform(0.2, 1),
+                "ground": 0.0,
+                "canvas": [rng.uniform(-1.2, -0.2), rng.uniform(0.5, 1.5), -0.5, 0.6],
+            }
+            model = ShadowProjection.model(
+                C,
+                L,
+                0.0,
+                plane["radius"],
+                plane["height"],
+                max_stretch=plane["max_stretch"],
+            )
+            want = model.placement(plane["canvas"])
+            got = _TextShadows.place(plane, C, L)
+            for a, b in zip((*want[0], want[1], want[2]), (*got[0], got[1], got[2])):
+                self.assertAlmostEqual(a, b, places=9)
+
+    def test_the_text_rebuilds_the_horizon_march(self):
+        """Every fragment as HeightFieldMap.alpha has it -- the edge of the
+        footprint included, where a ray leaving it reads the outermost
+        texels (a read there once jumped to the next texel: three of these
+        fragments, 0.10 off)."""
+        import numpy as np
+
+        from pythontk.geo_utils.shadow_horizon import HeightFieldMap, ShadowHorizon
+
+        def box(x0, x1, y0, y1, z0, z1):
+            pts = [[x, y, z] for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
+            quads = (
+                (0, 1, 3, 2),
+                (4, 6, 7, 5),
+                (0, 4, 5, 1),
+                (2, 3, 7, 6),
+                (0, 2, 6, 4),
+                (1, 5, 7, 3),
+            )
+            return np.array(pts, float), np.array(
+                [t for a, b, c, d in quads for t in ((a, b, c), (a, c, d))]
+            )
+
+        table = [
+            box(-0.5, 0.5, 0.70, 0.75, -0.3, 0.3),
+            box(-0.45, 0.45, 0.25, 0.28, -0.02, 0.02),
+        ]
+        table += [
+            box(x, x + 0.05, 0.0, 0.70, z, z + 0.05)
+            for x in (-0.45, 0.4)
+            for z in (-0.25, 0.2)
+        ]
+        rng = np.random.default_rng(3)
+        cases = [
+            # the edge: rays leaving the footprint through its low edges
+            (
+                32,
+                3,
+                dict(shines=(0.601898, -0.48793, 0.632174), angle=0.1),
+                [(0.264806, 0.658219), (0.200901, 0.611152), (0.859856, 0.478384)],
+            ),
+            (16, 2, dict(source=(2.0, 1.2, -1.5), size=0.3), None),
+            (16, 2, dict(shines=(-0.3, -0.5, 0.8), angle=0.08), None),
+            (16, 2, dict(source=(-1.0, 3.0, 2.0), size=0.0), None),
+        ]
+        for size, spans, light, points in cases:
+            hmap = ShadowHorizon.bake(table, ground=0.0, up=1, size=size, spans=spans)
+            img = hmap.to_rgba()
+            horizon = {
+                "size": hmap.size,
+                "spans": hmap.spans,
+                "bounds": list(hmap.bounds),
+                "height_scale": hmap.height_scale,
+            }
+            reference = HeightFieldMap.from_rgba(
+                img,
+                size=hmap.size,
+                spans=hmap.spans,
+                bounds=hmap.bounds,
+                ground=hmap.ground,
+                up=hmap.up,
+                height_scale=hmap.height_scale,
+            )
+            a0, a1, b0, b1 = hmap.bounds
+            if points is None:
+                points = list(
+                    zip(
+                        rng.uniform(a0 - 0.3, a1 + 0.3, 60),
+                        rng.uniform(b0 - 0.3, b1 + 0.3, 60),
+                    )
+                )
+            frags = np.array([(x, 0.01, z) for x, z in points])
+            if "shines" in light:
+                want = reference.alpha(
+                    frags, direction=light["shines"], source_angle=light["angle"]
+                )
+            else:
+                want = reference.alpha(
+                    frags, light=light["source"], source_size=light["size"]
+                )
+            for (x, z), expected in zip(points, want):
+                got = _TextShadows.shadow(img, horizon, (x, z), 0.0, **light)
+                with self.subTest(size=size, light=light, at=(x, z)):
+                    self.assertAlmostEqual(got, float(expected), places=4)
 
 
 if __name__ == "__main__":

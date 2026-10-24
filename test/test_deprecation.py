@@ -1002,6 +1002,42 @@ class DeprecationClassAttributeTest(BaseTestCase):
         with self.assertRaises(ValueError):
             Deprecation.class_attribute(1, "x", remove_in="soon")
 
+    def test_a_name_reached_through_a_facade_is_reported_as_the_facades(self):
+        """A facade composed of private mixins (``MeshConvert`` of
+        ``_SidecarMixin``) is the class its callers write: the notice names
+        it, never a mixin they never saw -- for a constant, a classmethod and
+        a method alike. Reached through the declaring class, it reads as
+        declared."""
+
+        class _Part:
+            OLD = Deprecation.class_attribute(1, "Facade.NEW", remove_in="9.9.0")
+
+            @classmethod
+            @Deprecation.symbol("Facade.new", remove_in="9.9.0")
+            def old(cls):
+                return 2
+
+            @Deprecation.symbol("Facade.new_method", remove_in="9.9.0")
+            def old_method(self):
+                return 3
+
+        class Facade(_Part):
+            pass
+
+        for read, name in (
+            (lambda: Facade.OLD, "Facade.OLD"),
+            (lambda: Facade.old(), "Facade.old"),
+            (lambda: Facade().old_method(), "Facade.old_method"),
+        ):
+            with self.assertWarns(DeprecationWarning) as caught:
+                read()
+            message = str(caught.warning)
+            self.assertIn(name, message)
+            self.assertNotIn("_Part", message)
+        with self.assertWarns(DeprecationWarning) as caught:
+            _Part.OLD
+        self.assertIn("_Part.OLD", str(caught.warning))
+
 
 class DeprecationSinkTest(BaseTestCase):
     """The extra channel a DCC needs, because ``DeprecationWarning`` is hidden."""

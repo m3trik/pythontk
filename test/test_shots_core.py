@@ -924,10 +924,6 @@ class TestMemberIdentity(_ShotTest):
         self.assertEqual(store.pinned_objects, {"|g|KEYS"})
         self.assertEqual(store.hidden_objects, {"|g|KEYS"})
         self.assertEqual(store.locked_objects, {"|g|KEYS"})
-        self.assertEqual(
-            store.to_export_view()["shot_metadata"]["shots"][0]["objects"],
-            ["KEYS", "lid"],
-        )
 
     def test_rename_members_is_a_no_op_without_a_held_name(self):
         store = _store([])
@@ -1362,29 +1358,22 @@ class TestShotStoreSerialisation(_ShotTest):
     def test_to_export_view_shape(self):
         """One record, one join key: each clip carries its own range, so
         there is no second take list to disagree with it; an empty
-        description or section is left out rather than written as ""."""
+        description is left out rather than written as "". A clip ships what
+        a reader of the file uses -- never its members or its production
+        section (2026-10-20), which the takes and the scene's store hold."""
         s = _store([])
         s.define_shot("Intro_Shot", 0, 10, objects=["|grp|hero"], description="d")
         s.define_shot("Plain", 20, 30)
         view = s.to_export_view()
-        self.assertEqual(list(view), ["shot_metadata"])
-        meta = view["shot_metadata"]
+        self.assertEqual(list(view), [SceneRecords.SHOTS.key])
+        meta = view[SceneRecords.SHOTS.key]
         self.assertNotIn("takes", meta)
         self.assertEqual(
             meta["shots"][0],
-            {
-                "clip": "Intro_Shot",
-                "start": 0,
-                "end": 10,
-                "description": "d",
-                # Objects are reduced to leaf names in the metadata channel.
-                "objects": ["hero"],
-            },
+            {"clip": "Intro_Shot", "start": 0, "end": 10, "description": "d"},
         )
-        # Nothing to say: no description / section keys, objects still an array.
-        self.assertEqual(
-            meta["shots"][1], {"clip": "Plain", "start": 20, "end": 30, "objects": []}
-        )
+        # Nothing to say: no description key.
+        self.assertEqual(meta["shots"][1], {"clip": "Plain", "start": 20, "end": 30})
 
 
 class TestShotNames(_ShotTest):
@@ -1398,7 +1387,7 @@ class TestShotNames(_ShotTest):
 
     def _clips(self, store):
         view = store.to_export_view()
-        return [r["clip"] for r in view["shot_metadata"]["shots"]]
+        return [r["clip"] for r in view[SceneRecords.SHOTS.key]["shots"]]
 
     def test_define_refuses_a_name_the_carrier_would_respell(self):
         s = _store([])
@@ -1970,7 +1959,7 @@ class TestExportViewRefresh(_ShotTest):
         self.assertEqual(
             store.to_export_view(),
             {
-                "shot_metadata": {
+                SceneRecords.SHOTS.key: {
                     "version": 1,
                     "fps": store.scene_fps,
                     "shots": [],
@@ -1991,7 +1980,7 @@ class TestExportViewRefresh(_ShotTest):
         self.assertEqual(
             store.published[0],
             {
-                "shot_metadata": {
+                SceneRecords.SHOTS.key: {
                     "version": 1,
                     "fps": store.scene_fps,
                     "shots": [],
@@ -2010,7 +1999,7 @@ class TestExportViewRefresh(_ShotTest):
         self.assertEqual(len(store.published), 1)
         view = store.published[0]
         self.assertEqual(
-            view["shot_metadata"],
+            view[SceneRecords.SHOTS.key],
             {
                 "version": 1,
                 # The rate the clip frames below are counted in -- without it
@@ -2019,16 +2008,8 @@ class TestExportViewRefresh(_ShotTest):
                 # of the delivered GLB).
                 "fps": store.scene_fps,
                 # Each clip carries its own range: the take list IS the clips
-                # (one record, one join key); no section, so none is written.
-                "shots": [
-                    {
-                        "clip": "Intro",
-                        "start": 0,
-                        "end": 10,
-                        "description": "d",
-                        "objects": ["hero"],
-                    }
-                ],
+                # (one record, one join key); no members or section ship.
+                "shots": [{"clip": "Intro", "start": 0, "end": 10, "description": "d"}],
             },
         )
         self.assertNotIn("fbx_takes", view)
@@ -2062,23 +2043,29 @@ class TestExportViewRefresh(_ShotTest):
         ShotStore.refresh_export_view()
 
         self.assertEqual(len(store.published), 2)
-        self.assertEqual(store.published[0]["shot_metadata"]["shots"], [])
-        self.assertEqual(len(store.published[1]["shot_metadata"]["shots"]), 1)
+        self.assertEqual(store.published[0][SceneRecords.SHOTS.key]["shots"], [])
+        self.assertEqual(len(store.published[1][SceneRecords.SHOTS.key]["shots"]), 1)
 
 
-class TestASplitOffShotIsSectioned(_ShotTest):
-    """Bug: a shot split off a step's shot exported no section -- the split
-    gave it a name and a description and nothing relating it to its step --
-    so Unity's ``ShotMetadataController.section`` was null for 8 of
+class TestASplitOffShotIsLinkedToItsStep(_ShotTest):
+    """Bug: a shot split off a step's shot carried nothing relating it to its
+    step -- the split gave it a name and a description -- for 8 of
     SOL_REPLACE_ASSEMBLY's 28 clips (A01_2, A03_2, B06_2 ...).
     Fixed: 2026-10-11 -- a non-binding step link (``ShotStore.step_links``):
     the split writes it; a tail split before that is linked by its
-    ``<step>_<n>`` name, at read time."""
+    ``<step>_<n>`` name, at read time. The export ships no section
+    (2026-10-20, no reader read it): the link is the store's, read by the
+    manifest."""
 
     @staticmethod
-    def _sections(store):
-        view = store.to_export_view()["shot_metadata"]["shots"]
-        return {e["clip"]: e.get("section") for e in view}
+    def _steps(store):
+        """``{shot name: step}``: the step each shot belongs with -- its own
+        binding, else its link."""
+        links = store.step_links()
+        return {
+            shot.name: (shot.metadata or {}).get("step") or links.get(shot.shot_id)
+            for shot in store.sorted_shots()
+        }
 
     def _sol(self):
         """SOL's shape: built heads renamed ``<step>_1``, unbound tails."""
@@ -2093,19 +2080,22 @@ class TestASplitOffShotIsSectioned(_ShotTest):
         store.define_shot("Extra_2", 1000, 1010)
         return store
 
-    def test_an_old_tail_takes_its_steps_section_by_its_name(self):
+    def test_an_old_tail_is_linked_to_its_step_by_its_name(self):
+        store = self._sol()
         self.assertEqual(
-            self._sections(self._sol()),
+            self._steps(store),
             {
-                "A01_1": "A",
-                "A01_2": "A",
-                "A02": "A",
-                "B06_1": "B",
-                "B06_2": "B",
-                "B06_2_2": "B",  # split again: one ``_<n>`` at a time
+                "A01_1": "A01",
+                "A01_2": "A01",
+                "A02": "A02",
+                "B06_1": "B06",
+                "B06_2": "B06",
+                "B06_2_2": "B06",  # split again: one ``_<n>`` at a time
                 "Extra_2": None,  # no step of that name is bound
             },
         )
+        view = store.to_export_view()[SceneRecords.SHOTS.key]["shots"]
+        self.assertFalse([e for e in view if "section" in e], "no section ships")
 
     def test_the_link_is_read_never_written(self):
         store = self._sol()
@@ -2122,17 +2112,18 @@ class TestASplitOffShotIsSectioned(_ShotTest):
         store = self._sol()
         tail = store.shot_by_name("A01_2")
         store.update_shot(tail.shot_id, metadata={store.STEP_LINK: "B06"})
-        self.assertEqual(self._sections(store)["A01_2"], "B")
+        self.assertEqual(self._steps(store)["A01_2"], "B06")
         store.update_shot(tail.shot_id, metadata={"step": "A01b"})
-        self.assertIsNone(self._sections(store)["A01_2"], "its own step: no section")
+        self.assertEqual(self._steps(store)["A01_2"], "A01b", "its own step")
         self.assertNotIn(tail.shot_id, store.step_links())
 
 
-class TestAScopedExportListsWhatItCarries(_ShotTest):
-    """Bug: the shot record never read ``ExportContext.scope``, so a selected
-    or visible-only export listed shot members its file leaves out.
-    Fixed: 2026-10-11 -- ``SceneRecords.SHOTS`` is export-scoped: each clip
-    names the members the write carries; every take ships."""
+class TestAScopedExportShipsEveryTake(_ShotTest):
+    """A shot is a span of time: every take ships whatever the export set,
+    and the record names no members -- no reader of the file read them; the
+    takes and the scene's store hold them (2026-10-20). Until then each clip
+    named the members the write carried (2026-10-11), the record
+    export-scoped for them."""
 
     def setUp(self):
         super().setUp()
@@ -2140,35 +2131,18 @@ class TestAScopedExportListsWhatItCarries(_ShotTest):
         self.store.define_shot("A", 0, 10, objects=["|set|door", "|tmp|old"])
         self.store.define_shot("B", 10, 20, objects=["|tmp|old"])
 
-    def _objects(self, ctx):
-        (record,) = self.store.export_records(ctx)
-        return {s["clip"]: s["objects"] for s in record.payload["shots"]}
-
-    def test_the_clips_name_only_the_export_sets_members(self):
+    def test_every_take_ships_and_names_no_member(self):
         from pythontk.core_utils.engines.scene_export.export_snapshot import (
             ExportContext,
         )
 
-        self.assertTrue(SceneRecords.SHOTS.export_scoped)
-        self.assertEqual(
-            self._objects(ExportContext(scope=("|set",))), {"A": ["door"], "B": []}
-        )
-        self.assertEqual(
-            self._objects(ExportContext()), {"A": ["door", "old"], "B": ["old"]}
-        )
-
-    def test_a_failing_lookup_lists_every_member_rather_than_none(self):
-        from pythontk.core_utils.engines.scene_export.export_snapshot import (
-            ExportContext,
-        )
-
-        def boom(*_a):
-            raise RuntimeError("scene lookup down")
-
-        self.store._export_set_members = boom
-        with self.assertLogs(shot_model._log, "WARNING"):
-            got = self._objects(ExportContext(scope=("|set",)))
-        self.assertEqual(got, {"A": ["door", "old"], "B": ["old"]})
+        self.assertFalse(SceneRecords.SHOTS.export_scoped)
+        for ctx in (ExportContext(scope=("|set",)), ExportContext()):
+            with self.subTest(scope=ctx.scope):
+                (record,) = self.store.export_records(ctx)
+                shots = record.payload["shots"]
+                self.assertEqual([s["clip"] for s in shots], ["A", "B"])
+                self.assertFalse([s for s in shots if "objects" in s])
 
 
 class _IdStore(ShotStore):
@@ -2198,7 +2172,7 @@ class TestRenamedMembersByTheirSavedId(_ShotTest):
     (``member_ids``, additive) and the export names a renamed member as it
     is now (``_current_names``); the store is not changed."""
 
-    def test_a_save_keeps_each_id_and_the_export_ships_the_name_now(self):
+    def test_a_save_keeps_each_id_through_a_rename(self):
         store = _IdStore()
         store.scene = {"u1": "door", "u2": "lid"}
         store.define_shot("A", 0, 10, objects=["door", "lid"])
@@ -2206,8 +2180,9 @@ class TestRenamedMembersByTheirSavedId(_ShotTest):
         store.scene = {"u1": "door_v2", "u2": "lid"}  # renamed behind its back
         saved = store.to_dict()
         self.assertEqual(saved["member_ids"], {"door": "u1", "lid": "u2"})
-        view = store.to_export_view()["shot_metadata"]["shots"][0]["objects"]
-        self.assertEqual(sorted(view), ["door_v2", "lid"])
+        # Its take ships; the record names no members (2026-10-20).
+        view = store.to_export_view()[SceneRecords.SHOTS.key]["shots"]
+        self.assertEqual([s["clip"] for s in view], ["A"])
         self.assertEqual(store.shot_by_name("A").objects, ["door", "lid"])
         self.assertEqual(_IdStore.from_dict(saved).member_ids, saved["member_ids"])
 
@@ -2290,7 +2265,10 @@ class TestStaleShots(_ShotTest):
     """A shot whose objects AND keys are gone describes nothing in the scene:
     what a Save As copy keeps of animation it deleted (2026-09-24, a module
     forked from an 18-shot assembly declared all 18 as takes and its GLB
-    carried none).  The store keeps it; what an export declares leaves it out."""
+    carried none).  The store keeps it, and so does an export -- a take that
+    holds still, named on the export -- unless ``drop_stale_shots`` leaves
+    the stale shots out (2026-10-21: "we probably shouldn't remove stale
+    shots by default, but that can be an option")."""
 
     def _store(self, shots, held=(), keys=()):
         store = _SceneStore(list(shots))
@@ -2325,18 +2303,39 @@ class TestStaleShots(_ShotTest):
         store = self._store([ShotBlock(0, "Hold", 0, 10)])
         self.assertEqual(store.stale_shots(), [])
 
-    def test_export_records_leave_stale_shots_out_and_say_so(self):
-        from pythontk.core_utils.engines.scene_export.export_snapshot import (
-            ExportContext,
-        )
-
-        store = self._store(
+    def _gone_and_kept(self):
+        return self._store(
             [
                 ShotBlock(0, "Gone", 0, 10, ["lost"]),
                 ShotBlock(1, "Kept", 20, 30, ["x", "lost"]),
             ],
             held={"x"},
         )
+
+    def test_an_export_ships_stale_shots_by_default_and_names_them(self):
+        from pythontk.core_utils.engines.scene_export.export_snapshot import (
+            ExportContext,
+        )
+
+        store = self._gone_and_kept()
+        self.assertFalse(store.drop_stale_shots, "kept unless asked")
+        ctx = ExportContext(clip_mode="shots")
+        (record,) = store.export_records(ctx)
+        self.assertEqual(
+            [e["clip"] for e in record.payload["shots"]], ["Gone", "Kept"]
+        )
+        (note,) = ctx.notes
+        self.assertIn("Gone (0-10)", note)
+        self.assertIn("exported as takes that hold still", note)
+        self.assertNotIn("Kept", note)
+
+    def test_drop_stale_shots_leaves_them_out_and_says_so(self):
+        from pythontk.core_utils.engines.scene_export.export_snapshot import (
+            ExportContext,
+        )
+
+        store = self._gone_and_kept()
+        store.drop_stale_shots = True
         store.clip_name_strategy = "sequence"
         ctx = ExportContext(clip_mode="shots")
         (record,) = store.export_records(ctx)
@@ -2344,22 +2343,49 @@ class TestStaleShots(_ShotTest):
         # Named BEFORE the stale shot is left out: "sequence" numbers clips
         # by position, and the survivor must keep the name it shipped under.
         self.assertEqual(entry["clip"], "020_Kept")
-        self.assertEqual(entry["objects"], ["x"], "a member the scene lost")
         (note,) = ctx.notes
         self.assertIn("Gone (0-10)", note)
-        self.assertNotIn("Kept", note)
+        self.assertIn("left out of the export", note)
         # The store and its plain view are untouched: only the export scopes.
         self.assertEqual(len(store.shots), 2)
-        self.assertEqual(len(store.to_export_view()["shot_metadata"]["shots"]), 2)
+        self.assertEqual(
+            len(store.to_export_view()[SceneRecords.SHOTS.key]["shots"]), 2
+        )
 
-    def test_a_wholly_stale_store_clears_its_record_and_its_range(self):
-        store = self._store([ShotBlock(0, "A", 0, 10, ["lost"])])
+    def test_the_setting_rides_the_saved_store(self):
+        store = self._gone_and_kept()
+        store.drop_stale_shots = True
+        self.assertTrue(ShotStore.from_dict(store.to_dict()).drop_stale_shots)
+        self.assertFalse(ShotStore.from_dict({}).drop_stale_shots)
+
+    def test_an_authoring_publish_checks_the_scene_only_to_leave_shots_out(self):
+        """A publish follows every shot edit: with nothing to leave out it
+        must not walk the scene's curves for an answer it would not use."""
+        store = self._gone_and_kept()
+        asked = []
+        scene_check = store._existing_objects
+        store._existing_objects = lambda names: asked.append(1) or scene_check(names)
+        (record,) = store.export_records()
+        self.assertEqual(len(record.payload["shots"]), 2)
+        self.assertEqual(asked, [], "no scene check while every shot ships")
+        store.drop_stale_shots = True
         with self.assertLogs(shot_model._log, "INFO") as logged:
+            (record,) = store.export_records()
+        self.assertEqual(len(record.payload["shots"]), 1)
+        self.assertEqual(asked, [1])
+        self.assertIn("1 stale shot(s) left out", logged.output[0])
+
+    def test_a_wholly_stale_store_clears_its_record_and_range_only_when_dropping(self):
+        store = self._store([ShotBlock(0, "A", 0, 10, ["lost"])])
+        ShotStore.set_active(store)
+        (record,) = store.export_records()
+        self.assertEqual([e["clip"] for e in record.payload["shots"]], ["A"])
+        self.assertEqual(ShotStore.declared_range(), (0, 10))
+        store.drop_stale_shots = True
+        with self.assertLogs(shot_model._log, "INFO"):
             self.assertIsNone(
                 store.export_records(), "a commit turns None into a clear"
             )
-        self.assertIn("1 shot(s) left out", logged.output[0])
-        ShotStore.set_active(store)
         self.assertIsNone(ShotStore.declared_range())
 
     def test_remove_stale_shots_takes_only_the_stale_and_moves_nothing(self):
@@ -2418,12 +2444,13 @@ class TestStaleShots(_ShotTest):
 
         store = Broken([ShotBlock(0, "A", 0, 10, ["lost"])])
         store.snap_whole_frames = False
+        store.drop_stale_shots = True  # the one publish that asks the scene
         with self.assertLogs(shot_model._log, "WARNING"):
             (record,) = store.export_records()
         (entry,) = record.payload["shots"]
-        self.assertEqual((entry["clip"], entry["objects"]), ("A", ["lost"]))
+        self.assertEqual(entry["clip"], "A")
 
-    def test_the_declared_range_spans_only_the_declared_shots(self):
+    def test_the_declared_range_spans_the_shots_the_export_declares(self):
         store = self._store(
             [
                 ShotBlock(0, "Live", 20, 30, ["x"]),
@@ -2432,6 +2459,8 @@ class TestStaleShots(_ShotTest):
             held={"x"},
         )
         ShotStore.set_active(store)
+        self.assertEqual(ShotStore.declared_range(), (20, 90))
+        store.drop_stale_shots = True
         self.assertEqual(ShotStore.declared_range(), (20, 30))
 
 

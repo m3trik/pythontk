@@ -405,7 +405,7 @@ const share = (part, whole) => (whole ? ` (${Math.round((100 * part) / whole)}%)
 
 function lightmapLine(lightmaps) {
   if (!lightmaps) return 'none';
-  const baked = lightmaps.baked === null ? '' : ` · ${count(lightmaps.baked)} marked baked`;
+  const baked = lightmaps.baked === null ? '' : ` · ${count(lightmaps.baked)} baked`;
   return `${count(lightmaps.lit)} of ${plural(lightmaps.objects, 'object')} lit${baked} · ${plural(lightmaps.maps, 'map')}`;
 }
 

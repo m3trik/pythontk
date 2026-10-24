@@ -1147,6 +1147,101 @@ class FbxFile(_FbxFileInternal):
         """Animation take names — the ``AnimationStack`` display names."""
         return self.object_names("AnimationStack")
 
+    def materials(self) -> List[Dict[str, Any]]:
+        """Every ``Material`` as written: name, shading model, properties and
+        the file bound to each slot.
+
+        A material's slots are its ``Properties70`` names (``DiffuseColor``,
+        StingrayPBS's ``Maya|TEX_color_map``); a texture binds to one through
+        an object-property connection -- a ``LayeredTexture`` there stands for
+        its first layer, the one FBX2glTF reads -- and its file is named by
+        the texture's own ``RelativeFilename`` / ``FileName``, else by the
+        ``Video`` it is connected under -- folder-less, the spelling a
+        delivered file embeds its media under (:meth:`FbxMedia.embedded`).
+
+        Returns:
+            ``[{"name", "shading_model", "props", "textures"}]`` in file
+            order: ``shading_model`` lowercased (``"phong"``, ``"lambert"``,
+            ``"unknown"`` for a host's own model), ``props`` ``{name: value}``
+            -- one value as itself, several as a tuple, text decoded --
+            and ``textures`` ``{slot: file name}``.
+        """
+        objects: Dict[Any, Dict[str, Any]] = {}
+        for record in self.iter_objects():
+            if record["props"]:
+                objects[record["props"][0]] = record
+
+        def text(raw: Any) -> Any:
+            if isinstance(raw, (bytes, bytearray)):
+                return bytes(raw).decode("utf-8", "replace")
+            return raw
+
+        def file_of(record: Dict[str, Any]) -> str:
+            for wanted in ("RelativeFilename", "FileName", "Filename"):
+                for child in record["children"]:
+                    if child["name"] == wanted and child["props"]:
+                        name = os.path.basename(
+                            str(text(child["props"][0])).replace("\\", "/")
+                        )
+                        if name:
+                            return name
+            return ""
+
+        videos: Dict[Any, str] = {}
+        layers: Dict[Any, Any] = {}
+        slots: Dict[Any, Dict[str, Any]] = {}
+        for kind, child, parent, prop in self.connections():
+            source, target = objects.get(child), objects.get(parent)
+            if source is None or target is None:
+                continue
+            if source["name"] == "Video" and target["name"] == "Texture":
+                videos[parent] = file_of(source)
+            elif source["name"] == "Texture" and target["name"] == "LayeredTexture":
+                layers.setdefault(parent, child)
+            elif (
+                source["name"] in ("Texture", "LayeredTexture")
+                and target["name"] == "Material"
+            ):
+                if kind == "OP" and prop:
+                    slots.setdefault(parent, {})[prop] = child
+
+        found: List[Dict[str, Any]] = []
+        for uid, record in objects.items():
+            if record["name"] != "Material":
+                continue
+            shading = ""
+            props: Dict[str, Any] = {}
+            for child in record["children"]:
+                if child["name"] == "ShadingModel" and child["props"]:
+                    shading = str(text(child["props"][0])).lower()
+                elif child["name"] == "Properties70":
+                    for row in child["children"]:
+                        values = row["props"]
+                        if not values:
+                            continue
+                        stored = [text(v) for v in values[4:]]
+                        props[str(text(values[0]))] = (
+                            stored[0] if len(stored) == 1 else tuple(stored)
+                        )
+            textures = {}
+            for slot, texture in slots.get(uid, {}).items():
+                texture = layers.get(texture, texture)
+                bound = objects.get(texture)
+                if bound is None or bound["name"] != "Texture":
+                    continue
+                name = file_of(bound) or videos.get(texture, "")
+                if name:
+                    textures[slot] = name
+            found.append(
+                {
+                    "name": self._object_name(record),
+                    "shading_model": shading,
+                    "props": props,
+                    "textures": textures,
+                }
+            )
+        return found
+
     def user_properties(
         self, name: str, kind: str = "Model", named: bool = False
     ) -> List[Any]:
@@ -1175,6 +1270,32 @@ class FbxFile(_FbxFileInternal):
                     if len(props) >= 5 and props[0] == wanted:
                         value = props[4] if len(props) == 5 else props[4:]
                         found.append((owner, value) if named else value)
+        return found
+
+    def user_property_items(self, kind: str = "Model") -> List[Tuple[str, str, Any]]:
+        """``(object name, property name, value)`` for every user property (a
+        ``P`` record flagged ``U``) a *kind* object carries, in file order and
+        in one pass -- what :meth:`user_properties` reads by name, listed;
+        values as it returns them."""
+        found: List[Tuple[str, str, Any]] = []
+        for record in self.iter_objects():
+            if record["name"] != kind:
+                continue
+            owner = self._object_name(record)
+            for child in record["children"]:
+                if child["name"] != "Properties70":
+                    continue
+                for prop in child["children"]:
+                    props = prop["props"]
+                    flags = props[3] if len(props) > 3 else b""
+                    if (
+                        len(props) >= 5
+                        and isinstance(flags, (bytes, bytearray))
+                        and b"U" in flags
+                    ):
+                        name = bytes(props[0]).decode("utf-8", "replace")
+                        value = props[4] if len(props) == 5 else props[4:]
+                        found.append((owner, name, value))
         return found
 
     #: The ``AnimationCurve`` arrays :meth:`take_layout` reads. Load with

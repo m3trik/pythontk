@@ -2041,8 +2041,9 @@ class FileUtils(HelpMixin):
         file_drive, file_path_without_drive = os.path.splitdrive(file_path)
         base_drive, base_path_without_drive = os.path.splitdrive(base_dir)
 
-        # If the drives are different, keep only the file name
-        if file_drive != base_drive:
+        # If the drives are different, keep only the file name. Case-folded
+        # like is_under: "o:" and "O:" are one drive on Windows.
+        if os.path.normcase(file_drive) != os.path.normcase(base_drive):
             relative_path = os.path.basename(file_path)
         else:
             # Calculate the relative path
@@ -2260,6 +2261,35 @@ class FileUtils(HelpMixin):
             return None
         return ".".join(reversed(parts))
 
+    #: Class names per scanned file, keyed by its identity on disk (path, mtime,
+    #: size) and the scan mode: a Switchboard re-scans every slot file on each
+    #: construction, and parsing + walking the same unchanged files was 95% of
+    #: uitk's switchboard tests (measured 2026-10-21: 22,757 parses in one
+    #: module, 299 of 315 s). An edit changes the key, so it is parsed again.
+    _CLASS_NAMES_CACHE: dict = {}
+
+    @classmethod
+    def _class_names_in(cls, filepath: str, top_level_only: bool) -> Tuple[str, ...]:
+        """The class names *filepath* defines -- top level only, or at any
+        depth -- parsed once per version of the file."""
+        import ast
+
+        stat = os.stat(filepath)
+        key = (
+            os.path.normcase(os.path.abspath(filepath)),
+            stat.st_mtime_ns,
+            stat.st_size,
+            bool(top_level_only),
+        )
+        names = cls._CLASS_NAMES_CACHE.get(key)
+        if names is None:
+            with open(filepath, "r", encoding="utf-8-sig") as file:
+                module_ast = ast.parse(file.read())
+            nodes = module_ast.body if top_level_only else ast.walk(module_ast)
+            names = tuple(node.name for node in nodes if isinstance(node, ast.ClassDef))
+            cls._CLASS_NAMES_CACHE[key] = names
+        return names
+
     @classmethod
     def get_classes_from_path(
         cls,
@@ -2307,7 +2337,6 @@ class FileUtils(HelpMixin):
             FileNotFoundError: If the provided path does not exist or is not a directory or Python file.
             ValueError: If an invalid option is provided in `returned_type`.
         """
-        import ast
         import importlib.util
         import sys
         from pathlib import Path
@@ -2340,21 +2369,7 @@ class FileUtils(HelpMixin):
 
         for filename in filenames:
             filepath = os.path.join(path, filename)
-
-            with open(filepath, "r", encoding="utf-8-sig") as file:
-                module_ast = ast.parse(file.read())
-                if top_level_only:
-                    classes = [
-                        node
-                        for node in module_ast.body
-                        if isinstance(node, ast.ClassDef)
-                    ]
-                else:
-                    classes = [
-                        node
-                        for node in ast.walk(module_ast)
-                        if isinstance(node, ast.ClassDef)
-                    ]
+            classes = cls._class_names_in(filepath, top_level_only)
 
             # A file with no class definition can contribute no row, so it is
             # never imported: importing RUNS it. Slot discovery scans whole
@@ -2409,13 +2424,13 @@ class FileUtils(HelpMixin):
                 if load_failed:
                     continue
 
-            for clss in classes:
+            for class_name in classes:
                 info = {
                     "file": filename,
                     "filename": module_name,
                     "filepath": filepath,
-                    "classobj": module_obj.__dict__.get(clss.name),
-                    "classname": clss.name,
+                    "classobj": module_obj.__dict__.get(class_name),
+                    "classname": class_name,
                     "module": module_obj,
                 }
                 if len(options) == 1 and not force_tuples:

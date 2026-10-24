@@ -1,7 +1,7 @@
 import os
 import re
 from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Optional, Tuple, Any, Union
+from typing import List, Dict, Mapping, Optional, Tuple, Any, Union
 from pythontk.core_utils.singleton_mixin import SingletonMixin
 from pythontk.file_utils.tiled_path import TiledPath
 
@@ -60,12 +60,18 @@ class MapType:
     aliases: List[str]
     color_space: str = "Linear"  # "sRGB" or "Linear"
     mode: Optional[str] = "RGB"  # "RGB", "RGBA", "L"; None = preserve natural mode
+    # What an empty map of this type holds: the value a map that is not
+    # there stands for -- dielectric, matte, unoccluded, opaque. A composite
+    # fills a map's empty area with it, and every packing fills a channel it
+    # has no map for with that channel's type's (MapRegistry.absent_fills),
+    # so an absent channel never reads as a mirror or a metal. A packed
+    # type's own is its channels' (pinned by test_map_registry).
     default_background: Optional[Tuple[int, ...]] = (
         0,
         0,
         0,
         255,
-    )  # Default background color
+    )
     is_packed: bool = False  # Is this a packed map (e.g. ORM, MSAO)?
     scale_as_mask: bool = False  # Should this map be scaled down by mask_map_scale?
     resolution_critical: bool = False  # Surface detail depends on full resolution (color, normals, emissive). Others may be downscaled as a fraction.
@@ -353,7 +359,7 @@ class MapRegistry(SingletonMixin):
             ],
             color_space="sRGB",
             mode="RGBA",
-            default_background=(0, 0, 0, 255),
+            default_background=(127, 127, 127, 255),
             is_packed=True,
             input_fallbacks=["Base_Color"],
             # The albedo it packs and the alpha it packs both drive slots the
@@ -546,7 +552,7 @@ class MapRegistry(SingletonMixin):
             # mode=None: preserve the natural mode produced by pack_msao_texture
             # (RGBA for the default HDRP Mask Map layout, RGB for the 3-channel parallel layout).
             mode=None,
-            default_background=(0, 255, 0, 255),
+            default_background=(0, 255, 0, 0),
             is_packed=True,
             scale_as_mask=True,
             output_fallbacks=[
@@ -596,7 +602,7 @@ class MapRegistry(SingletonMixin):
             # mode=None: preserve the natural mode produced by pack_mrao_texture
             # (RGB for the default 3-channel layout, RGBA for the MSAO mirror).
             mode=None,
-            default_background=(0, 0, 255, 255),
+            default_background=(0, 255, 255, 255),
             is_packed=True,
             scale_as_mask=True,
             output_fallbacks=[
@@ -632,7 +638,7 @@ class MapRegistry(SingletonMixin):
             ],
             color_space="Linear",
             mode="RGBA",
-            default_background=(255, 255, 255, 255),
+            default_background=(0, 0, 0, 0),
             is_packed=True,
             scale_as_mask=True,
             output_fallbacks=["Metallic", "Smoothness"],
@@ -1987,6 +1993,50 @@ class MapRegistry(SingletonMixin):
             for name, m in self._maps.items()
             if m.default_background is not None
         }
+
+    @classmethod
+    def absent_value(cls, map_type: str) -> Optional[float]:
+        """The value (0-1) a map of *map_type* that is not there stands for
+        -- its :attr:`MapType.default_background`, read as the grey the
+        map holds: metallic 0, roughness 1, smoothness 0, occlusion 1. What a
+        packing fills its channel with, and what a reader takes for a map it
+        was promised and cannot find. ``None`` for an unknown type."""
+        found = cls.instance().get(str(map_type).rstrip("?"))
+        if found is None or found.default_background is None:
+            return None
+        return found.default_background[0] / 255.0
+
+    @classmethod
+    def absent_fills(cls, layout: Mapping[str, Optional[str]]) -> Dict[str, int]:
+        """``{channel: 0-255}`` -- what a packing with *layout* fills each
+        channel it has no map for with: each channel's map type's
+        :meth:`absent_value`, so every packing -- ORM, a Mask Map, a
+        Metallic-Smoothness, any layout a tool assigns -- leaves an absent
+        channel dielectric, matte, unoccluded and opaque, never a mirror or a
+        metal.
+
+        Parameters:
+            layout: ``{channel: map type}`` -- ``"R"``, ``"G"``, ``"B"``,
+                ``"A"`` or ``"RGB"`` (each of the three) to a type name; a
+                ``None`` or ``"None"`` type, or an unknown one, fills 0 (255
+                for ``"A"``: opaque).
+
+        Returns:
+            One entry per channel the layout names.
+        """
+        fills: Dict[str, int] = {}
+        for key, map_type in layout.items():
+            value = (
+                cls.absent_value(map_type)
+                if map_type and str(map_type) != "None"
+                else None
+            )
+            for channel in str(key).upper():
+                if value is None:
+                    fills[channel] = 255 if channel == "A" else 0
+                else:
+                    fills[channel] = int(round(value * 255))
+        return fills
 
     def get_map_modes(self) -> Dict[str, str]:
         """Generate the map modes dictionary."""

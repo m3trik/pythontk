@@ -30,6 +30,7 @@ from typing import (
     Union,
 )
 
+from pythontk.core_utils.engines.scene_export.handoff_record import HandoffRecord
 from pythontk.core_utils.engines.scene_export.scene_records import (
     Kind,
     Record,
@@ -55,7 +56,9 @@ class ExportContext:
         mode: :attr:`PIPELINE` (an export pipeline, the authority on every
             record), :attr:`HANDOFF` (a bridge that ships the carrier: only
             :attr:`Kind.DERIVED` records refresh) or :attr:`AUTHORING` (a
-            tool republishing its own record).
+            tool republishing its own record -- no write, so a
+            :attr:`RecordSpec.transient` record named is cleared, never
+            produced).
         clip_mode: The run's Animation Clips mode (``full`` / ``shots`` /
             ``both``), declared on the shot record; ``None`` = undeclared.
         clip_span: The first and last frame the exported stack CARRIES, the
@@ -68,8 +71,8 @@ class ExportContext:
             (``application``, ``version``, ``scene``).
         rendering: The export's choices over the lighting recipe the handoff
             block publishes (``ExportRun.rendering``: ``{section: {field:
-            value}}`` over ``MeshConvert.RENDERING_POLICY``); empty = the
-            policy as it stands.
+            value}}`` over ``HandoffRecord.RENDERING_POLICY``); empty = the policy
+            as it stands.
         records: Every record produced so far in this assembly, by key --
             how a producer reads another's output (the audio manifest scopes
             its events against the takes the shots producer just built).
@@ -78,10 +81,12 @@ class ExportContext:
             so nothing is dropped from a deliverable silently (the shots
             producer names the stale shots it did not declare).  One
             assembly's, like :attr:`records`.
-        scope: The export set, as the host spells its nodes; ``None`` is the
-            whole scene (an authoring publish, a hand-off, a raw export).  The
-            producer of an :attr:`RecordSpec.export_scoped` record keeps only
-            the entries whose node is one of these or sits under one.
+        scope: The export set, as the host spells its nodes -- the roots an
+            export or a hand-off writes; ``None`` is the whole scene (an
+            authoring publish, a raw export).  The producer of an
+            :attr:`RecordSpec.export_scoped` record keeps only the entries
+            whose node is one of these or sits under one (a hand-off refreshes
+            only the DERIVED ones, :meth:`refreshes`).
     """
 
     PIPELINE = "pipeline"
@@ -115,10 +120,6 @@ class ExportContext:
         if spec.key in self.records:
             produced = self.records[spec.key]
             return produced.payload if produced is not None else default
-        if spec.deprecated_by in self.records:
-            # A legacy record lives only beside its successor: its successor
-            # was produced here without it, so the stored copy is stale.
-            return default
         if store is not None:
             return spec.load(store, default)
         return default
@@ -156,10 +157,12 @@ class ExportSnapshot:
         self.noted: Dict[str, List[str]] = {}
         #: What :meth:`commit` wrote, key -> text (``None`` = cleared).
         self.written: Dict[str, Optional[str]] = {}
-        #: For a scoped assembly (``ctx.scope``): each export-scoped record the
-        #: scope narrowed, as the whole scene produces it (``None`` = cleared)
-        #: -- the scene's own copy, which :meth:`restore_scene_wide` puts back
-        #: once the write that needed the narrow one is done.
+        #: The scene's own copy of each record this write's differs from, which
+        #: :meth:`restore_scene_wide` puts back once the write is done: for a
+        #: scoped assembly (``ctx.scope``), each export-scoped record the scope
+        #: narrowed, as the whole scene produces it (``None`` = cleared); and
+        #: ``None`` for every :attr:`RecordSpec.transient` record produced,
+        #: which the scene never holds.
         self.scene_wide: Dict[str, Optional[Record]] = {}
 
     # ---------------------------------------------------------------- assemble
@@ -182,9 +185,8 @@ class ExportSnapshot:
 
         Each producer is isolated: one that raises, or returns something other
         than records, is logged and recorded in :attr:`failed`, and every other
-        still runs.  A producer may return records for keys other than its own
-        (the shots producer also writes the legacy take list); those ride the
-        snapshot like any other.  *ctx* holds ONE assembly's records and
+        still runs.  A producer may return records for keys other than its
+        own; those ride the snapshot like any other.  *ctx* holds ONE assembly's records and
         notes: a reused context starts empty, so no producer reads what an
         earlier assembly produced.  Each note is logged as a warning, and
         stays on ``snapshot.ctx`` for an exporter's own report.
@@ -208,6 +210,12 @@ class ExportSnapshot:
             if (wanted is None or spec.key in wanted) and ctx.refreshes(spec)
         ]
         for spec in SceneRecords.ordered(selected):
+            if spec.transient and ctx.mode == ctx.AUTHORING:
+                # An authoring publish is no write: a transient record is
+                # cleared, never produced -- the scene never holds one (a
+                # merge re-deriving what an import brought clears it here).
+                snapshot.produced[spec.key] = ctx.records[spec.key] = None
+                continue
             before = len(ctx.notes)
             try:
                 records = cls._records_of(spec, table[spec](ctx))
@@ -222,8 +230,7 @@ class ExportSnapshot:
                     snapshot.noted[spec.key] = ctx.notes[before:]
             own = next((r for r in records if r.spec.key == spec.key), None)
             # The producer's own record first, then any it returned for other
-            # keys (the shots producer also writes the legacy take list), so
-            # the snapshot reads in producer order.
+            # keys, so the snapshot reads in producer order.
             snapshot.produced[spec.key] = own
             # Kept even as None: a reader later in this assembly must see
             # "cleared", not fall back to the stored copy the commit is about
@@ -237,6 +244,11 @@ class ExportSnapshot:
             logger.warning(note)
         if ctx.scope is not None:
             snapshot._assemble_scene_wide(table, selected)
+        for key, record in snapshot.produced.items():
+            # A transient record describes this write alone: the scene's own
+            # copy of it is none, which the exporter's restore puts back.
+            if record is not None and record.spec.transient:
+                snapshot.scene_wide[key] = None
         return snapshot
 
     @staticmethod
@@ -276,7 +288,7 @@ class ExportSnapshot:
         the narrow copy (logged)."""
         whole = replace(self.ctx, scope=None, records=dict(self.ctx.records), notes=[])
         for spec in selected:
-            if not spec.export_scoped or spec.key in self.failed:
+            if not spec.export_scoped or spec.transient or spec.key in self.failed:
                 continue
             try:
                 with self._silenced():
@@ -308,14 +320,17 @@ class ExportSnapshot:
             logging.disable(previous)
 
     def restore_scene_wide(self, store) -> Optional["ExportSnapshot"]:
-        """Put the scene's own copy of every record the scope narrowed back on
-        *store* (:attr:`scene_wide`) -- the exporter's restore once the write
-        that shipped the narrow copy is done, so the carrier the scene keeps
-        (and a later hand-off ships as stored) still describes all of it.
+        """Put the scene's own copy of every record this write's differed from
+        back on *store* (:attr:`scene_wide`) -- the exporter's restore once
+        the write is done, so the carrier the scene keeps (and a later
+        hand-off ships as stored) describes all of the scene and nothing of
+        the write: a narrowed record whole again, a transient one cleared,
+        and a carrier left holding nothing removed
+        (:meth:`SceneStoreBase.discard_if_empty`).
 
         Returns:
-            The authoring snapshot committed, or ``None`` when the scope
-            narrowed nothing.
+            The authoring snapshot committed, or ``None`` when the write's
+            records were the scene's own.
         """
         if not self.scene_wide:
             return None
@@ -326,7 +341,12 @@ class ExportSnapshot:
             source=dict(self.ctx.source),
             rendering=dict(self.ctx.rendering),
         )
-        return type(self).publish(store, self.scene_wide, ctx)
+        restored = type(self).publish(store, self.scene_wide, ctx)
+        if not store.channels(Scope.DELIVERABLE):
+            # The write's records were all it held: a carrier the export made
+            # for them goes with them.
+            store.discard_if_empty(Scope.DELIVERABLE)
+        return restored
 
     @classmethod
     def publish(
@@ -349,8 +369,9 @@ class ExportSnapshot:
         Raises:
             ValueError: A PRIVATE record.  The snapshot commits the deliverable
                 carrier, and a private record can share a deliverable one's
-                key (the emissive registry and manifest do), so clearing it
-                here would clear the wrong carrier; use
+                key (the emissive registry and manifest did until the
+                registry took ``emissive_registry``), so clearing it here
+                would clear the wrong carrier; use
                 :meth:`RecordSpec.save`.
         """
         snapshot = cls(ctx or ExportContext(mode=ExportContext.AUTHORING))
@@ -404,6 +425,13 @@ class ExportSnapshot:
                 return
             self.written[spec.key] = text
 
+        # A scene written before a record's rename holds it under the old
+        # key: moved first, so the writes and the handoff see current keys
+        # alone. Never the export's cost.
+        try:
+            store.migrate()
+        except Exception:  # noqa: BLE001
+            logger.warning("Scene records were not migrated.", exc_info=True)
         for key, record in self.produced.items():
             if key in self.failed:
                 continue
@@ -411,23 +439,20 @@ class ExportSnapshot:
                 write(SceneRecords.resolve(key), None)
             else:
                 write(record.spec, record.text)
-        # A deprecated record lives only beside its successor: when the
-        # successor's producer ran and did not also produce the legacy record
-        # (the shots producer returns nothing for an empty store), the legacy
-        # copy is cleared too -- deleting the last shot must not leave the old
-        # take list riding into the next export.
-        for spec in SceneRecords.all():
-            if (
-                spec.deprecated_by in self.produced
-                and spec.key not in self.produced
-                and spec.key not in self.failed
-            ):
-                write(spec, None)
         try:
             handoff = SceneRecords.HANDOFF
             present = store.channels(Scope.DELIVERABLE)
-            block = SceneRecords.handoff_block(
-                present, source=self.ctx.source, rendering=self.ctx.rendering
+            held = HandoffRecord.carried(present)
+            # A carrier holding no record has nothing to describe: no block,
+            # and no carrier made to hold one.
+            # The payloads, not just the keys: each row states what its
+            # record calls for and nothing more.
+            block = (
+                HandoffRecord.block(
+                    "fbx", present, source=self.ctx.source, rendering=self.ctx.rendering
+                )
+                if held
+                else {}
             )
             if block:
                 text = handoff.make(block).text

@@ -86,7 +86,10 @@ Layered so everything pure is separable from everything that touches a scene:
 
 ### `engines/scene_export/` — scene-export engine
 
-The pure half of both DCC Scene Exporters:
+The pure half of both DCC Scene Exporters. The data a deliverable carries --
+every record and GLB block, its versions and fields -- is
+[`DELIVERABLE_FORMAT.md`](engines/scene_export/DELIVERABLE_FORMAT.md),
+generated from these declarations.
 
 - `scene_records` — every tool-authored scene record declared once (`Scope`, `Kind`, `Merge`, `RecordSpec`, the `SceneRecords` catalogue); `scene_store` — `SceneStoreBase`, the string-per-scope contract each DCC's `DataNodes` implements, plus the crossings built on it; `export_snapshot` — `ExportContext` / `ExportSnapshot`, compute every record then commit once; `record_transfer` — `TransferContext` / `RecordTransfer`, records crossing into another scene by declaration.
 - `export_profile` — `ExportProfile` / `ExportRun`: the panels' widget values -> one run configuration (task order, naming, texture and GLB policy).

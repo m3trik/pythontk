@@ -84,6 +84,13 @@ function nodeResolver(gltf, model) {
   };
 }
 
+// glTF node *index*'s name as the file spells it (three.js sanitises its own
+// copy: a Maya namespace's ':' is dropped), else `node <index>` -- what a
+// script names a node by in what it reports, beside nodeResolver's object.
+function nodeName(gltf, index) {
+  return gltf.parser?.json?.nodes?.[index]?.name ?? `node ${index}`;
+}
+
 export const viewer = {
   /** The version of this API (`API_VERSION`): what a script checks it is written against. */
   apiVersion: API_VERSION,
@@ -145,6 +152,11 @@ export const viewer = {
    */
   nodeResolver,
   /**
+   * `nodeName(gltf, index)` -> the glTF node's name as the file spells it, or
+   * `'node <index>'` when it has none: how a script names a node it reports.
+   */
+  nodeName,
+  /**
    * The model currently on screen, or null between loads -- with several
    * parts, the root they all hang under.
    */
@@ -166,11 +178,11 @@ export const viewer = {
    * `triangles`, `vertices`; `size` `{x, y, z}` in metres; `materials`
    * `{file, instances}` (the file's, and the three.js copies made of them);
    * `lightmaps` -- null when nothing is baked -- `{lit, objects, baked,
-   * unlit, foreign, maps, probe}`: objects lit by a lightmap, of all objects;
-   * objects the file marks as baked (null when it marks none), those of them
-   * with no lightmap bound, and objects lit by one they were never baked
-   * with, by name; the distinct lightmap images; and whether the bake's
-   * reflection probe is the environment; `animation` `{clips,
+   * unlit, maps, probe}`: objects lit by a lightmap, of all objects; objects
+   * the file's bake lit -- wearing a material its lightmaps block names --
+   * (null when it names none the model wears), and those of them with no
+   * lightmap bound, by name; the distinct lightmap images; and whether the
+   * bake's reflection probe is the environment; `animation` `{clips,
    * materials, tracks}`; and `issues` `[{level, text, names?}]` -- what the
    * load found wrong, as the HUD's warning line reports the first;
    * `probe` -- null without one -- the bake's reflection probe `{on, width,
@@ -231,9 +243,11 @@ export const viewer = {
     return true;
   },
   /**
-   * The shot covering `seconds` of the whole-timeline clip — the same name the
-   * transport readout shows, `'<name> (hold)'` inside a gap — or null when the
-   * current clip is a single shot rather than the sequence.
+   * The shot the playhead stands in at `seconds` — on the sequence, or on the
+   * file's own whole-timeline clip, where each shot is its window — the same
+   * name the transport readout shows, `'<name> (hold)'` inside a gap; null on
+   * a shot's own clip (the picker names it), before the first shot starts,
+   * or on a clip the deliverable does not place.
    *
    * Reads the segment the last pose resolved to, so it answers for wherever the
    * model is NOW: call it after `poseAt(seconds)` with the same `seconds`, not
@@ -250,7 +264,7 @@ export const viewer = {
    */
   descriptionAt() { return shotDescription(); },
   /**
-   * Play a clip by name (the names `extras.animation_web` lists, which are the
+   * Play a clip by name (the names `extras.animation` lists, which are the
    * DCC's shot names on a shot-split deliverable). Returns whether it matched.
    */
   playClip(name) {

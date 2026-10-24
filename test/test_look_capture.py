@@ -20,16 +20,21 @@ from PIL import Image
 
 from pythontk.net_utils.preview.look_capture import LookCapture
 
+#: A template's ``lightmaps`` block: each lightmapped material's level, and
+#: the probe; a material's map is the texture it binds (:data:`MAPS`).
 MANIFEST = {
-    "materials": {
-        "MAT_ROOM": {"map": "ROOM_Lightmap.png"},
-        "MAT_DESK": {"map": "DESK_Lightmap.png"},
-    },
+    "version": 2,
+    "carrier": "occlusion",
+    "materials": {"MAT_ROOM": {"intensity": 1.0}, "MAT_DESK": {"intensity": 1.0}},
     "probe": {
+        "bufferView": 0,
         "position": [0.0, 1.5, 0.0],
         "box": {"min": [-3, 0, -3], "max": [3, 3, 3]},
     },
 }
+#: The image each of those materials binds in its carrier slot, by stem
+#: (``LookCapture.bound_maps``).
+MAPS = {"MAT_ROOM": "ROOM_Lightmap", "MAT_DESK": "DESK_Lightmap"}
 
 
 def _require_cv2():
@@ -52,7 +57,7 @@ class TestPayload(unittest.TestCase):
                 (2, 2, 3), np.float32
             ),  # no material wears it
         }
-        payload = LookCapture.payload(bakes, MANIFEST)
+        payload = LookCapture.payload(bakes, MANIFEST, maps=MAPS)
         self.assertEqual(
             payload["maps"], {"MAT_ROOM": "ROOM_Lightmap", "MAT_DESK": "DESK_Lightmap"}
         )
@@ -64,9 +69,9 @@ class TestPayload(unittest.TestCase):
 
     def test_images_travel_as_rgba_half_floats(self):
         rgb = np.random.default_rng(0).random((3, 5, 3)).astype(np.float32) * 4
-        image = LookCapture.payload({"ROOM_Lightmap.exr": rgb}, MANIFEST)["images"][
-            "ROOM_Lightmap"
-        ]
+        image = LookCapture.payload({"ROOM_Lightmap.exr": rgb}, MANIFEST, maps=MAPS)[
+            "images"
+        ]["ROOM_Lightmap"]
         half = np.frombuffer(base64.b64decode(image["b64"]), np.float16).reshape(
             3, 5, 4
         )
@@ -81,34 +86,128 @@ class TestPayload(unittest.TestCase):
         unboxed = LookCapture.payload(bakes, MANIFEST, probe={"box": None})
         self.assertIsNone(unboxed["probe"]["box"])
 
-    def test_the_manifest_is_read_where_the_viewer_reads_it(self):
-        """REGRESSION (2026-10-19): the template's manifest was read from the
-        root's extras alone, so a natively exported template -- its
-        ``lightmap_web`` in the first scene's extras, as a JSON string --
-        swapped no map and no probe, and so drew no highlights, while the
-        viewer and the highlight pass both found it. One lookup now."""
+    @staticmethod
+    def _template(artifacts, gltf, name="template.glb"):
+        """A JSON-only GLB of *gltf* in *artifacts*' folder."""
         import struct
 
-        from pythontk import TempArtifacts
-
-        artifacts = TempArtifacts("look_capture_manifest", policy="scoped")
-        self.addCleanup(artifacts.cleanup)
-        gltf = {
-            "asset": {"version": "2.0"},
-            "scenes": [{"nodes": [], "extras": {"lightmap_web": json.dumps(MANIFEST)}}],
-            "scene": 0,
-        }
         payload = json.dumps(gltf).encode("utf-8")
         payload += b" " * (-len(payload) % 4)
-        path = os.path.join(artifacts.dir_path(), "native.glb")
+        path = os.path.join(artifacts.dir_path(), name)
         with open(path, "wb") as f:
             f.write(struct.pack("<4sII", b"glTF", 2, 20 + len(payload)))
             f.write(struct.pack("<I4s", len(payload), b"JSON") + payload)
-        self.assertEqual(LookCapture(path).manifest, MANIFEST)
+        return path
+
+    def test_the_manifest_is_the_templates_current_block(self):
+        """The template's ``lightmaps`` block, read as every reader reads it
+        (``SceneRecords.glb_block``): in the root extras, in the schema it
+        declares. One anywhere else, or of another version, is none -- the
+        template is re-exported. Added: 2026-10-20"""
+        from pythontk import MeshConvert, SceneRecords, TempArtifacts
+
+        artifacts = TempArtifacts("look_capture_manifest", policy="scoped")
+        self.addCleanup(artifacts.cleanup)
+        key = SceneRecords.LIGHTMAPS.key
+        block = MeshConvert.lightmaps_block({"MAT_ROOM": 1.0})
+        current = self._template(
+            artifacts, {"asset": {"version": "2.0"}, "extras": {key: block}}
+        )
+        self.assertEqual(LookCapture(current).manifest, block)
+        for name, gltf in (
+            (
+                "scene.glb",
+                {
+                    "asset": {"version": "2.0"},
+                    "scenes": [{"extras": {key: json.dumps(block)}}],
+                },
+            ),
+            (
+                "older.glb",
+                {"asset": {"version": "2.0"}, "extras": {key: dict(block, version=1)}},
+            ),
+        ):
+            with self.subTest(template=name):
+                self.assertEqual(
+                    LookCapture(self._template(artifacts, gltf, name)).manifest, {}
+                )
+
+    def test_a_current_template_maps_each_material_to_its_bound_lightmap(self):
+        """What a relight swaps on a template built today. A version-2 block
+        names no map -- a material's map is the texture it binds in the
+        block's carrier slot -- so each material's image is found through its
+        binding (``LookCapture.maps``). Until 2026-10-20 ``payload`` read
+        ``materials[name]["map"]``, which a current block never carries, so a
+        relight of any current template swapped nothing."""
+        from pythontk import MeshConvert, SceneRecords, TempArtifacts
+
+        artifacts = TempArtifacts("look_capture_bound", policy="scoped")
+        self.addCleanup(artifacts.cleanup)
+        png = "data:image/png;base64,iVBORw0KGgo="
+        path = self._template(
+            artifacts,
+            {
+                "asset": {"version": "2.0"},
+                "images": [{"name": "ROOM_Lightmap.png", "uri": png}],
+                "textures": [{"source": 0}],
+                "materials": [
+                    {
+                        "name": "MAT_ROOM",
+                        "occlusionTexture": {"index": 0, "texCoord": 1},
+                    }
+                ],
+                "extras": {
+                    SceneRecords.LIGHTMAPS.key: MeshConvert.lightmaps_block(
+                        {"MAT_ROOM": 1.0}
+                    )
+                },
+            },
+        )
+        bakes = {"ROOM_Lightmap.exr": np.ones((2, 2, 3), np.float32)}
+        capture = LookCapture(path)
+        self.assertEqual(capture.maps, {"MAT_ROOM": "ROOM_Lightmap"})
+        payload = LookCapture.payload(bakes, capture.manifest, maps=capture.maps)
+        self.assertEqual(payload["maps"], {"MAT_ROOM": "ROOM_Lightmap"})
+
+    def test_a_materials_map_is_the_image_its_carrier_slot_binds(self):
+        """``bound_maps``: each material the block names, through the slot its
+        ``carrier`` names -- an emissive carrier's ``emissiveTexture`` -- to
+        the image that texture samples, by name or file name, a KTX2 source
+        included; a material the block does not name, or one binding no
+        image, is none. Added: 2026-10-20"""
+        gltf = {
+            "images": [
+                {"name": "ROOM_Lightmap.png"},
+                {"uri": "maps/DESK_Lightmap.ktx2"},
+                {"name": "unrelated.png"},
+            ],
+            "textures": [
+                {"source": 0},
+                {"extensions": {"KHR_texture_basisu": {"source": 1}}},
+                {"source": 2},
+            ],
+            "materials": [
+                {"name": "MAT_ROOM", "emissiveTexture": {"index": 0, "texCoord": 1}},
+                {"name": "MAT_DESK", "emissiveTexture": {"index": 1, "texCoord": 1}},
+                {"name": "MAT_SKY", "emissiveTexture": {"index": 2}},
+                {"name": "MAT_BARE"},
+            ],
+        }
+        block = {
+            "version": 2,
+            "carrier": "emissive",
+            "materials": {"MAT_ROOM": {}, "MAT_DESK": {}, "MAT_BARE": {}},
+        }
+        self.assertEqual(
+            LookCapture.bound_maps(gltf, block),
+            {"MAT_ROOM": "ROOM_Lightmap", "MAT_DESK": "DESK_Lightmap"},
+        )
+        occlusion = dict(block, carrier="occlusion")
+        self.assertEqual(LookCapture.bound_maps(gltf, occlusion), {})
 
     def test_without_a_probe_bake_no_probe_is_sent(self):
         payload = LookCapture.payload(
-            {"ROOM_Lightmap.exr": np.zeros((2, 2, 3), np.float32)}, MANIFEST
+            {"ROOM_Lightmap.exr": np.zeros((2, 2, 3), np.float32)}, MANIFEST, maps=MAPS
         )
         self.assertIsNone(payload["probe"])
 
@@ -728,8 +827,8 @@ class TestLive(unittest.TestCase):
     def test_a_blacked_material_reflects_nothing(self):
         """three r163+ reads a scene-lit material's level off the scene, not the material."""
         lit = {
-            os.path.splitext(e["map"])[0] + ".exr": np.ones((8, 8, 3), np.float32)
-            for e in self.capture.manifest["materials"].values()
+            stem + ".exr": np.ones((8, 8, 3), np.float32)
+            for stem in self.capture.maps.values()
         }
         self.capture.relight(lit)
         before = self.capture.shoot("linear")
@@ -740,8 +839,8 @@ class TestLive(unittest.TestCase):
         """A previewed emissive level is that frame's alone: the next relight
         without one, and the file's own lighting, show the material's own."""
         images = {
-            os.path.splitext(e["map"])[0] + ".exr": np.zeros((8, 8, 3), np.float32)
-            for e in self.capture.manifest["materials"].values()
+            stem + ".exr": np.zeros((8, 8, 3), np.float32)
+            for stem in self.capture.maps.values()
         }
         self.capture.relight(images)
         plain = self.capture.shoot("linear")
@@ -752,10 +851,9 @@ class TestLive(unittest.TestCase):
         np.testing.assert_allclose(self.capture.shoot("linear"), plain, atol=1e-3)
 
     def test_a_black_bake_renders_black_and_a_lit_one_does_not(self):
-        manifest = self.capture.manifest
         images = {
-            os.path.splitext(e["map"])[0] + ".exr": np.zeros((8, 8, 3), np.float32)
-            for e in manifest["materials"].values()
+            stem + ".exr": np.zeros((8, 8, 3), np.float32)
+            for stem in self.capture.maps.values()
         }
         self.assertGreater(self.capture.relight(images), 0)
         dark = self.capture.shoot("linear")

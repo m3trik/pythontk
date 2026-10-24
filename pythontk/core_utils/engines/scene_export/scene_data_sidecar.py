@@ -21,7 +21,7 @@ Format v3::
         "paths": [...], "object_count": N, "hash": "...",
         "last_diff": {"missing": [...], "extra": [...], "reparented": [...]}
       },
-      "data_export": {"shot_metadata": {...}, "lightmap_metadata": {...}, ...}
+      "data_export": {"animation": {...}, "lightmaps": {...}, ...}
     }
 
 - ``hierarchy`` -- change-detection baseline: sorted, cleaned hierarchy paths
@@ -593,10 +593,7 @@ class SceneDataSidecarBase:
         if last_diff:
             payload["hierarchy"]["last_diff"] = last_diff
         if data:
-            # The record of an export is treated as one (module docstring), so
-            # it records no authoring-machine paths (MeshConvert scrubs the
-            # GLB the same way).
-            payload["data_export"] = ptk.MeshConvert.without_locate_hints(data)
+            payload["data_export"] = data
 
         # tmp-then-replace is not just atomicity: a hidden file rejects
         # open('w') outright on Windows, so the manifest can never be written

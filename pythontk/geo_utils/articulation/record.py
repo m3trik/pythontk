@@ -1,15 +1,15 @@
 # !/usr/bin/python
 # coding=utf-8
-"""The ``articulation`` record's payload and its web projection, declared once.
+"""The ``articulation`` record's payload and its GLB block, declared once.
 
 :attr:`pythontk.SceneRecords.ARTICULATION` names these as its shapes:
 
 - :class:`ArticulationRecord` -- what the DCC's ``ArticulatedRig`` publishes on
   the ``data_export`` carrier, and what every runtime builds its
   :class:`~pythontk.ArticulationModel` from (one rig at a time).
-- :class:`ArticulationWeb` -- the ``extras.articulation_web`` manifest
-  ``MeshConvert.apply_glb_articulation`` derives from it for the glTF
-  runtimes: the same rigs, each joint and grabbed part bound to its glTF node.
+- :class:`ArticulationBlock` -- the ``extras.articulation`` block
+  ``MeshConvert.apply_glb_articulation`` derives from it for a GLB: the same
+  rigs, each joint and grabbed part bound to its glTF node.
 
 They are typed :class:`~pythontk.SchemaSpec` declarations, so this one
 definition validates a payload (``ArticulationRecord.validate(payload)``),
@@ -23,6 +23,7 @@ producers, and bump the record's declared version.
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from pythontk.core_utils.deprecation import Deprecation
 from pythontk.core_utils.schema_spec import SchemaSpec
 from pythontk.geo_utils.articulation.model import CHANNELS, ROTATE_ORDERS
 
@@ -57,15 +58,12 @@ class ArticulationChannel(SchemaSpec):
 
 
 @dataclass
-class ArticulationJoint(SchemaSpec):
-    """One joint: its node, its rest frame in its parent's space, its channels."""
+class ArticulationJointPose(SchemaSpec):
+    """A joint's rest frame in its parent's space and its channels, the same
+    on every carrier."""
 
     TYPED = True
 
-    name: str = _field(
-        help="The joint node's name: the join key to the imported transform.",
-        required=True,
-    )
     parent: Optional[int] = _field(
         help="An earlier joint's index, or null for a root (its parent is the rig's space).",
         required=True,
@@ -92,6 +90,16 @@ class ArticulationJoint(SchemaSpec):
         required=True,
         nested=[ArticulationChannel],
         default_factory=list,
+    )
+
+
+@dataclass
+class ArticulationJoint(ArticulationJointPose):
+    """One joint of the record: its pose, joined to its node by name."""
+
+    name: str = _field(
+        help="The joint node's name: the join key to the imported transform.",
+        required=True,
     )
 
 
@@ -147,16 +155,17 @@ class ArticulationRecord(SchemaSpec):
     )
 
 
-# --------------------------------------------------------- the web projection
+# ------------------------------------------------------------- the GLB block
 @dataclass
-class ArticulationWebJoint(ArticulationJoint):
-    """A joint bound to the one glTF node carrying its name."""
+class ArticulationBlockJoint(ArticulationJointPose):
+    """A joint bound to the file: its pose, and the glTF node that carried
+    its name (whose own name it is)."""
 
     node: int = _field(help="The joint's glTF node index.", required=True)
 
 
 @dataclass
-class ArticulationWebGrab(SchemaSpec):
+class ArticulationBlockGrab(SchemaSpec):
     """A grabbed part bound to its glTF node."""
 
     TYPED = True
@@ -166,46 +175,64 @@ class ArticulationWebGrab(SchemaSpec):
         required=True,
     )
     joint: int = _field(help="The index of the joint the part rides.", required=True)
-    name: str = _field(
-        help="The part's node name, as the record spells it.", required=True
-    )
 
 
 @dataclass
-class ArticulationWebRig(ArticulationRig):
+class ArticulationBlockRig(ArticulationRig):
     """One rig bound to the file: its joints and grabbed parts carry node indices."""
 
-    joints: List[ArticulationWebJoint] = _field(
+    joints: List[ArticulationBlockJoint] = _field(
         help="Its joints, each after its parent.",
         required=True,
-        nested=[ArticulationWebJoint],
+        nested=[ArticulationBlockJoint],
         default_factory=list,
     )
-    grab: List[ArticulationWebGrab] = _field(
+    grab: List[ArticulationBlockGrab] = _field(
         help="The parts a hand takes hold of that resolved to a node.",
         required=True,
-        nested=[ArticulationWebGrab],
+        nested=[ArticulationBlockGrab],
         default_factory=list,
     )
 
 
 @dataclass
-class ArticulationWeb(SchemaSpec):
-    """The ``extras.articulation_web`` manifest: the record's rigs, bound to the file's glTF nodes."""
+class ArticulationBlock(SchemaSpec):
+    """The ``extras.articulation`` block: the record's rigs, bound to the
+    file's glTF nodes."""
 
     TYPED = True
 
     version: int = _field(
-        help="The manifest's own schema version (SceneRecords.ARTICULATION.web.version).",
+        help="The block's own schema version (SceneRecords.ARTICULATION.glb.version).",
         required=True,
     )
-    metadata_version: int = _field(
-        help="The version of the articulation record it was bound from.",
-        required=True,
-    )
-    rigs: List[ArticulationWebRig] = _field(
+    rigs: List[ArticulationBlockRig] = _field(
         help="The rigs whose every joint is in the file.",
         required=True,
-        nested=[ArticulationWebRig],
+        nested=[ArticulationBlockRig],
         default_factory=list,
     )
+
+
+@Deprecation.symbol(
+    "ArticulationBlock -- the block is named for the file it rides",
+    remove_in="0.18.0",
+    since="2026-10-24",
+)
+class ArticulationWeb(ArticulationBlock):
+    """Retired 2026-10-20 (removed in 0.18.0): :class:`ArticulationBlock`."""
+
+
+@Deprecation.symbol("ArticulationBlockRig", remove_in="0.18.0", since="2026-10-24")
+class ArticulationWebRig(ArticulationBlockRig):
+    """Retired 2026-10-20 (removed in 0.18.0): :class:`ArticulationBlockRig`."""
+
+
+@Deprecation.symbol("ArticulationBlockJoint", remove_in="0.18.0", since="2026-10-24")
+class ArticulationWebJoint(ArticulationBlockJoint):
+    """Retired 2026-10-20 (removed in 0.18.0): :class:`ArticulationBlockJoint`."""
+
+
+@Deprecation.symbol("ArticulationBlockGrab", remove_in="0.18.0", since="2026-10-24")
+class ArticulationWebGrab(ArticulationBlockGrab):
+    """Retired 2026-10-20 (removed in 0.18.0): :class:`ArticulationBlockGrab`."""

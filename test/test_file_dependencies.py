@@ -474,6 +474,23 @@ class TestWrittenHere(_FilesCase):
         "the writer is gone" would hand its maps to this scene."""
         self.assertFalse(FileDependencies.written_here("scenes/source.ma", "", None))
 
+    @unittest.skipUnless(os.name == "nt", "drive letters")
+    def test_a_writer_on_a_drive_this_machine_cannot_reach_is_not_gone(self):
+        """An offline drive or share is not a renamed scene: called gone, its
+        maps were this scene's to write over, and the scene on that drive
+        read this scene's lighting once it was back."""
+        here = self._file("proj", "scenes", "room.ma")
+        base = os.path.join(self.tmp, "proj")
+        free = next(
+            f"{d}:" for d in "QRSTUVWXYZ" if not os.path.isdir(f"{d}:\\")
+        )
+        writer = f"{free}/proj/scenes/source.ma"
+        self.assertFalse(FileDependencies.written_here(writer, here, base))
+        self.assertFalse(FileDependencies.writer_gone(writer, base))
+        self.assertTrue(FileDependencies.writer_gone("scenes/source.ma", base))
+        self.assertFalse(FileDependencies.writer_gone("scenes/room.ma", base))
+        self.assertFalse(FileDependencies.writer_gone("", base), "unsaved is not gone")
+
 
 class TestResolve(_FilesCase):
     def test_the_hint_then_the_search_folders(self):

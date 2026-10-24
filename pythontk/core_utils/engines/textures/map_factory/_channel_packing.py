@@ -176,6 +176,8 @@ class _ChannelPackingInternal:
         invert_roughness: bool = False,
         output_path: str = None,
         save: bool = True,
+        *,
+        fill_values: Optional[Dict[str, int]] = None,
     ) -> Union[str, "Image.Image"]:
         """Body of :meth:`MapFactory.pack_orm_texture`."""
         if ao_map_path and isinstance(ao_map_path, str):
@@ -228,7 +230,10 @@ class _ChannelPackingInternal:
             output_path=output_path,
             out_mode="RGB",
             invert_channels=["G"] if invert_roughness else None,
-            fill_values={"R": 255, "G": 0, "B": 0},
+            fill_values={
+                **MapRegistry.absent_fills(MapRegistry.instance().get("ORM").channels),
+                **(fill_values or {}),
+            },
             save=save,
         )
 
@@ -301,7 +306,9 @@ class _ChannelPackingInternal:
                 output_path=output_path,
                 out_mode="RGB",
                 invert_channels=["G"] if invert_alpha else None,
-                fill_values={"R": 0, "G": 255, "B": 255},
+                fill_values=MapRegistry.absent_fills(
+                    {"R": "Metallic", "G": "Smoothness", "B": "Ambient_Occlusion"}
+                ),
                 save=save,
             )
 
@@ -316,7 +323,7 @@ class _ChannelPackingInternal:
             output_path=output_path,
             out_mode="RGBA",
             invert_channels=["A"] if invert_alpha else None,
-            fill_values={"G": 255, "B": 0, "A": 255},
+            fill_values=MapRegistry.absent_fills(MapRegistry.instance().get("MSAO").channels),
             save=save,
         )
 
@@ -393,7 +400,14 @@ class _ChannelPackingInternal:
                 output_path=output_path,
                 out_mode="RGBA",
                 invert_channels=["A"] if invert_roughness else None,
-                fill_values={"R": 0, "G": 255, "B": 0, "A": 0},
+                fill_values=MapRegistry.absent_fills(
+                    {
+                        "R": "Metallic",
+                        "G": "Ambient_Occlusion",
+                        "B": "Detail_Mask",
+                        "A": "Roughness",
+                    }
+                ),
                 save=save,
             )
 
@@ -407,7 +421,7 @@ class _ChannelPackingInternal:
             output_path=output_path,
             out_mode="RGB",
             invert_channels=["G"] if invert_roughness else None,
-            fill_values={"R": 0, "G": 0, "B": 255},
+            fill_values=MapRegistry.absent_fills(MapRegistry.instance().get("MRAO").channels),
             save=save,
         )
 

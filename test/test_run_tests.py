@@ -285,6 +285,78 @@ class TestRunLogCapture(RunnerTestCase):
                 self.assertIs(sys.stderr, fake_err)
 
 
+class TestSubsetSelection(RunnerTestCase):
+    """A run can be pointed: named modules, ``-k`` test-id filters, and a name
+    no module answers to reported instead of silently running the rest."""
+
+    PROBES = {
+        "test_probe_alpha.py": (
+            "import unittest\n"
+            "class TestAlpha(unittest.TestCase):\n"
+            "    def test_split_words(self):\n        pass\n"
+            "    def test_join_words(self):\n        pass\n"
+        ),
+        "test_probe_beta.py": (
+            "import unittest\n"
+            "class TestBeta(unittest.TestCase):\n"
+            "    def test_split_lines(self):\n        pass\n"
+        ),
+    }
+
+    def setUp(self):
+        self.artifacts = TempArtifacts(
+            "run_tests_subset_probe", dir=str(TEST_DIR / "temp_tests"), policy="scoped"
+        )
+        self.probe_dir = Path(self.artifacts.dir_path())
+        for name, text in self.PROBES.items():
+            (self.probe_dir / name).write_text(text, encoding="utf-8")
+        self._sys_path = list(sys.path)
+        self._sys_modules = set(sys.modules)
+
+    def tearDown(self):
+        for name in set(sys.modules) - self._sys_modules:
+            sys.modules.pop(name, None)
+        sys.path[:] = self._sys_path
+        self.artifacts.cleanup()
+
+    def ids(self, **kwargs):
+        runner = self.runner.TestRunner(self.probe_dir, verbosity=0, **kwargs)
+
+        def walk(suite):
+            for item in suite:
+                if isinstance(item, unittest.TestSuite):
+                    yield from walk(item)
+                else:
+                    yield item.id().rsplit(".", 1)[-1]
+
+        return sorted(walk(runner.discover_tests()))
+
+    def test_named_modules_run_alone(self):
+        self.assertEqual(self.ids(modules=["probe_beta"]), ["test_split_lines"])
+
+    def test_k_filters_test_ids_across_the_suite(self):
+        self.assertEqual(self.ids(patterns=["split"]), ["test_split_lines", "test_split_words"])
+
+    def test_k_and_modules_compose(self):
+        self.assertEqual(self.ids(modules=["test_probe_alpha"], patterns=["split"]), ["test_split_words"])
+
+    def test_an_unknown_module_name_is_reported(self):
+        stems, unknown = self.runner.TestRunner.resolve_modules(
+            self.probe_dir, ["probe_alpha", "test_probe_alpha.py", "probe_gamma"]
+        )
+        self.assertEqual(stems, ["test_probe_alpha", "test_probe_alpha"])
+        self.assertEqual(unknown, ["probe_gamma"])
+
+    def test_each_status_mark_is_written_once(self):
+        stream = StringIO()
+        sys.path.insert(0, str(self.probe_dir))  # tearDown restores sys.path
+        suite = unittest.defaultTestLoader.loadTestsFromName("test_probe_alpha")
+        unittest.TextTestRunner(
+            stream=stream, verbosity=1, resultclass=self.runner.DetailedTestResult
+        ).run(suite)
+        self.assertEqual(stream.getvalue().splitlines()[0], "..")  # two tests, two dots
+
+
 class TestBadgeWiring(RunnerTestCase):
     """The gate is wired into the badge write, not merely importable."""
 

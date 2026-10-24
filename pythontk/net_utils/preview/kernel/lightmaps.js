@@ -14,7 +14,7 @@ import {
 
 // glTF 2.0 has no lightmap slot, so a baked lightmap reaches us disguised as a real
 // texture slot on TEXCOORD_1 (see blendertk's LightmapWebExport). The scene extras carry
-// a `lightmap_web` manifest naming which materials are wearing the disguise; this puts
+// a `lightmaps` manifest naming which materials are wearing the disguise; this puts
 // them back. Three details decide whether it looks right or subtly wrong:
 //
 //   * colorSpace — GLTFLoader treats occlusion as DATA and loads it linear, but the map
@@ -210,7 +210,8 @@ function patchBakedShader(material) {
 // measureModel): each skip leaves a material rendering unlit, which on screen is
 // indistinguishable from a material that was never baked.
 function bindLightmaps(gltf, issues) {
-  const manifest = readExtras(gltf, LIGHTMAPS.webKey);
+  /** @type {import('./records.js').LightmapsBlock} */
+  const manifest = readExtras(gltf, LIGHTMAPS);
   if (!manifest || !manifest.materials) return 0;
 
   // An unknown carrier is REFUSED rather than defaulted. The previous form special-cased
@@ -229,7 +230,8 @@ function bindLightmaps(gltf, issues) {
     return 0;
   }
 
-  const uv = manifest.uv ?? 1;
+  // The UV set is the bound texture's own texCoord, which the loader has
+  // applied.
   let bound = 0;
   const answered = new Set();  // manifest names some loaded material wears
   const emptied = new Set();   // ... whose map was not in the carrier slot
@@ -242,6 +244,7 @@ function bindLightmaps(gltf, issues) {
       if (!Object.hasOwn(manifest.materials, material.name)) continue;
       const entry = manifest.materials[material.name];
       answered.add(material.name);
+      bakedMaterials.add(material);
       if (!entry || material.userData.lightmapBound) continue;
       const texture = material[slot];
       if (!texture) {
@@ -249,8 +252,9 @@ function bindLightmaps(gltf, issues) {
         continue;
       }
 
-      texture.colorSpace = manifest.encoding === 'srgb' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-      texture.channel = uv;
+      // 8-bit sRGB, the one encoding a carrier holds (the block's `carrier`):
+      // decoded to linear as it is sampled.
+      texture.colorSpace = THREE.SRGBColorSpace;
       // Floors/walls fill the frame at grazing angles, where plain trilinear
       // collapses the atlas to its coarsest mips and rect gutters average into
       // the content as dark tile borders. Anisotropic taps keep fine-mip
@@ -300,10 +304,16 @@ function bindLightmaps(gltf, issues) {
 // read it.
 export let lightmapped = 0;
 export let lightmappedMaterials = [];
+// Every material the file's lightmaps block names, bound or not: what its
+// bake lit, as the file states it, which measureModel holds against what
+// bound (specs.js). A set of its own, never a userData flag: the loader
+// copies a material's glTF extras into its userData, any key included.
+export let bakedMaterials = new WeakSet();
 
 // A load starting over: the materials it binds are its own (see above).
 export function resetLightmaps() {
   lightmappedMaterials = [];
+  bakedMaterials = new WeakSet();
 }
 
 // Bind the deliverable's lightmaps (see bindLightmaps) and keep how many

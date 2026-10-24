@@ -7,7 +7,7 @@
   FBX -> glTF hop as ordinary node animation, so a clip plays with no help;
   what does NOT survive is the rig -- which channels each joint turns on,
   their limits, which parts a hand grabs. `MeshConvert.apply_glb_articulation`
-  (pythontk) writes that as root `extras.articulation_web`: the
+  (pythontk) writes that as root `extras.articulation`: the
   `articulation` scene record with every joint and grabbed part bound to its
   glTF node index. This script is the runtime half:
 
@@ -35,39 +35,43 @@
   imports the model from here.
 
   Activate:  automatic -- PreviewServer.AUTO_SCRIPTS turns it on for any
-             deliverable whose root extras carry `articulation_web`;
+             deliverable whose root extras carry `articulation`;
              or bridge.push(scripts=["articulated_rig"]).
 */
 
+import { readBlock } from '../../kernel/extras.js';
 import { norm, qmul, scale } from '../../kernel/math.js';
 import { ARTICULATION } from '../../kernel/records.js';
 import { ArticulationModel, ROTATE_CHANNELS } from './model.js';
 
 export { ArticulationModel, ROTATE_CHANNELS, ROTATE_ORDERS, TRANSLATE_CHANNELS } from './model.js';
 
-//: The manifest this reads: the articulation record's declared web projection.
-const MANIFEST_KEY = ARTICULATION.webKey;
 //: How often the panel's values refresh while it is shown, in seconds.
 const PANEL_INTERVAL = 0.1;
 
 /* -------------------------------------------------------------- the file --- */
 
+// The articulation record's block (the ROOT's extras, where the conversion
+// writes it and PreviewServer.AUTO_SCRIPTS looks).
+/** @returns {import('../../kernel/records.js').ArticulationBlock | null} */
 function readManifest(parser) {
-  let raw = parser?.json?.extras?.[MANIFEST_KEY];
-  if (typeof raw === 'string') {
-    try { raw = JSON.parse(raw); } catch { return null; }
-  }
-  return raw && typeof raw === 'object' ? raw : null;
+  return readBlock(parser?.json?.extras, ARTICULATION);
 }
 
 /* ------------------------------------------------------------- the rigs --- */
 
 // A rig on screen: its model, its joints' nodes, the space its root joints
 // hang in, the file's unit against the record's, and the state last posed.
-function bindRig(THREE, record, resolve) {
-  const model = new ArticulationModel(record);
+// The block binds each joint and grabbed part by node index alone; *nameOf*
+// names each by its node -- the name the record joined it by.
+/** @param {import('../../kernel/records.js').ArticulationBlockRig} record */
+function bindRig(THREE, record, resolve, nameOf) {
+  const model = new ArticulationModel({
+    ...record,
+    joints: record.joints.map((joint) => ({ ...joint, name: nameOf(joint.node) })),
+  });
   const nodes = record.joints.map((joint) => resolve(joint.node));
-  const missing = record.joints.filter((_joint, i) => !nodes[i]).map((joint) => joint.name);
+  const missing = record.joints.filter((_joint, i) => !nodes[i]).map((joint) => nameOf(joint.node));
   if (missing.length) {
     console.warn(`articulated_rig: ${record.name}: joints not in the scene: ${missing.join(', ')}`);
     return null;
@@ -95,7 +99,7 @@ function bindRig(THREE, record, resolve) {
   };
   for (const entry of record.grab || []) {
     const node = resolve(entry.node);
-    if (node) rig.grab.push({ node, joint: entry.joint, name: entry.name ?? node.name });
+    if (node) rig.grab.push({ node, joint: entry.joint, name: nameOf(entry.node) });
   }
   return rig;
 }
@@ -252,11 +256,12 @@ function build(viewer, model, gltf) {
   const manifest = readManifest(gltf.parser);
   if (!manifest || !Array.isArray(manifest.rigs) || !manifest.rigs.length) return null;
   const resolve = viewer.nodeResolver(gltf, model);
+  const nameOf = (index) => viewer.nodeName(gltf, index);
   const session = { rigs: [], unregister: [], dirty: false, sinceRefresh: 0, wasPlaying: viewer.playing };
   for (const record of manifest.rigs) {
     let rig = null;
     try {
-      rig = bindRig(THREE, record, resolve);
+      rig = bindRig(THREE, record, resolve, nameOf);
     } catch (error) {
       console.warn(`articulated_rig: ${record?.name}: not readable`, error);
     }

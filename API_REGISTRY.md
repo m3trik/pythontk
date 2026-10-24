@@ -6,6 +6,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 
 - [`__init__.py`](#__init__)
 - [`audio_utils/_audio_utils.py`](#audio_utils--_audio_utils)
+- [`audio_utils/audio_record.py`](#audio_utils--audio_record) — The ``audio`` record's payload, declared once.
 - [`core_utils/_core_utils.py`](#core_utils--_core_utils)
 - [`core_utils/app_installer.py`](#core_utils--app_installer)
 - [`core_utils/app_launcher/_app_launcher.py`](#core_utils--app_launcher--_app_launcher) — The :class:`AppLauncher` facade: the three launch shapes, over its job mixins.
@@ -39,12 +40,16 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/engines/scene_export/bake_baseline.py`](#core_utils--engines--scene_export--bake_baseline) — What a lightmap re-bake must redo: the bake baseline and its stale rule.
 - [`core_utils/engines/scene_export/export_profile.py`](#core_utils--engines--scene_export--export_profile) — The Scene Exporter panels' shared contract, written once.
 - [`core_utils/engines/scene_export/export_snapshot.py`](#core_utils--engines--scene_export--export_snapshot) — Export assembly: compute every record once, then commit once.
+- [`core_utils/engines/scene_export/handoff_record.py`](#core_utils--engines--scene_export--handoff_record) — The handoff: how a deliverable states itself, declared once for every carrier.
 - [`core_utils/engines/scene_export/hierarchy_baseline.py`](#core_utils--engines--scene_export--hierarchy_baseline) — The change-detection baseline an exporter diffs a scene's hierarchy against.
+- [`core_utils/engines/scene_export/lightmap_record.py`](#core_utils--engines--scene_export--lightmap_record) — The ``lightmaps`` record and its GLB block: what a bake publishes, declared once.
+- [`core_utils/engines/scene_export/material_record.py`](#core_utils--engines--scene_export--material_record) — The ``materials`` record: its payload, declared once, and the one model that
 - [`core_utils/engines/scene_export/record_transfer.py`](#core_utils--engines--scene_export--record_transfer) — Records crossing between scenes, by declaration (:class:`RecordTransfer`).
 - [`core_utils/engines/scene_export/scene_data_sidecar.py`](#core_utils--engines--scene_export--scene_data_sidecar) — The scene-data record -- what an export shipped, kept off the deliverable.
 - [`core_utils/engines/scene_export/scene_exporter.py`](#core_utils--engines--scene_export--scene_exporter) — The Scene Exporter's orchestration shell, written once for both DCCs.
 - [`core_utils/engines/scene_export/scene_records.py`](#core_utils--engines--scene_export--scene_records) — Scene records -- every piece of tool-authored scene metadata, declared once.
 - [`core_utils/engines/scene_export/scene_store.py`](#core_utils--engines--scene_export--scene_store) — The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
+- [`core_utils/engines/shots/animation_record.py`](#core_utils--engines--shots--animation_record) — The ``animation`` record's payload and its GLB block, declared once.
 - [`core_utils/engines/shots/effect_recipe.py`](#core_utils--engines--shots--effect_recipe) — Effect recipe -- how each render effect and audio clip is keyed, once per scene.
 - [`core_utils/engines/shots/manifest/behaviors/_behaviors.py`](#core_utils--engines--shots--manifest--behaviors--_behaviors) — Behaviors — load JSON keying recipes and resolve them to keyframe math.
 - [`core_utils/engines/shots/manifest/behaviors/_spec.py`](#core_utils--engines--shots--manifest--behaviors--_spec) — Schema for a *behavior* template file, defined as a dataclass.
@@ -135,8 +140,10 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`file_utils/mesh_convert/glb/reader.py`](#file_utils--mesh_convert--glb--reader) — Read-only structured access to a GLB: accessors, animation sampling, worlds.
 - [`file_utils/mesh_convert/glb/skin_weights.py`](#file_utils--mesh_convert--glb--skin_weights) — Restore the skin weights FBX2glTF hands one mesh from another.
 - [`file_utils/mesh_convert/glb/tangents.py`](#file_utils--mesh_convert--glb--tangents) — Repair a GLB's shipped tangents against the UVs they describe.
+- [`file_utils/mesh_convert/render_effects_record.py`](#file_utils--mesh_convert--render_effects_record) — The ``render_effects`` record's payload, declared once.
 - [`file_utils/mesh_ops.py`](#file_utils--mesh_ops) — File-level mesh processing via PyMeshLab (optional dependency).
 - [`file_utils/metadata.py`](#file_utils--metadata)
+- [`file_utils/pending_files.py`](#file_utils--pending_files) — Files written for the open scene, held out of their folders until it is saved.
 - [`file_utils/scene_notes.py`](#file_utils--scene_notes) — Per-scene notes kept with the project -- one file per project, any host.
 - [`file_utils/temp_artifacts.py`](#file_utils--temp_artifacts) — Prefix-scoped temp artifacts with an explicit lifetime policy.
 - [`file_utils/tiled_path.py`](#file_utils--tiled_path) — Tile / frame tokens in a file path -- the one vocabulary every host reads.
@@ -147,7 +154,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`geo_utils/articulation/conformance.py`](#geo_utils--articulation--conformance) — The golden cases every port of :class:`ArticulationModel` is held to.
 - [`geo_utils/articulation/model.py`](#geo_utils--articulation--model) — The articulated-rig joint model and its grab solver -- pure math, no DCC.
 - [`geo_utils/articulation/plan.py`](#geo_utils--articulation--plan) — An articulated rig's PLAN -- what a DCC builds, edited as plain data.
-- [`geo_utils/articulation/record.py`](#geo_utils--articulation--record) — The ``articulation`` record's payload and its web projection, declared once.
+- [`geo_utils/articulation/record.py`](#geo_utils--articulation--record) — The ``articulation`` record's payload and its GLB block, declared once.
 - [`geo_utils/plate_emitter.py`](#geo_utils--plate_emitter) — Emitter geometry for a flat light-fixture plate — pure math, no DCC.
 - [`geo_utils/pointcloud.py`](#geo_utils--pointcloud) — Point-cloud geometry — analyze and group unordered sets of points.
 - [`geo_utils/polyline.py`](#geo_utils--polyline) — Pure polyline / curve geometry — generate, measure, sample, reshape.
@@ -155,6 +162,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`geo_utils/rail_surface.py`](#geo_utils--rail_surface) — Rail-driven parametric surface — a general geometry primitive.
 - [`geo_utils/shadow_horizon.py`](#geo_utils--shadow_horizon) — Height-field shadow maps: a ground shadow that follows the light at runtime.
 - [`geo_utils/shadow_projection.py`](#geo_utils--shadow_projection) — Planar shadow projection — the geometry of a ground shadow, pure numpy, no DCC.
+- [`geo_utils/shadow_record.py`](#geo_utils--shadow_record) — The ``shadows`` record's payload and its GLB block, declared once.
 - [`geo_utils/uv/budget.py`](#geo_utils--uv--budget) — UV texture-budget planning: how many maps, at what texel density (numbers in -> plan out).
 - [`geo_utils/uv/combine.py`](#geo_utils--uv--combine) — Several texture sets' UV islands packed into ONE atlas (arrays in -> arrays out).
 - [`geo_utils/uv/cylinder_seams.py`](#geo_utils--uv--cylinder_seams) — Band-based UV seam placement for cylinder / tube / turned meshes.
@@ -223,6 +231,14 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
   - `AudioUtils.build_audio_map_from_files(cls, audio_files: List[str], cache_dir: Optional[str] = None, logger=None) -> Dict[str, str]` *(class)* — Build an audio map from an explicit list of file paths.
   - `AudioUtils.trim_silence(cls, wav_path: str, output_path: Optional[str] = None, threshold: int = 8) -> str` *(class)* — Trim leading and trailing silence from a 16-bit PCM WAV file.
   - `AudioUtils.compute_waveform_envelope(wav_path: str, num_bins: int = 512) -> List[tuple]` *(static)* — Read a WAV file and return a downsampled min/max envelope.
+
+<a id="audio_utils--audio_record"></a>
+### `audio_utils/audio_record.py`
+
+The ``audio`` record's payload, declared once.
+
+- **[`class AudioCue(SchemaSpec)`](pythontk/pythontk/audio_utils/audio_record.py#L32)** — One audio event: a track that starts on a frame of the clip that plays
+- **[`class AudioRecord(SchemaSpec)`](pythontk/pythontk/audio_utils/audio_record.py#L67)** — The ``audio`` record's payload: the scene's audio events, each scoped
 
 <a id="core_utils--_core_utils"></a>
 ### `core_utils/_core_utils.py`
@@ -403,7 +419,7 @@ Deprecation - retiring public surface through one mechanism, with a clock.
   - `DeprecationRecord.not_before(self) -> str` *(property)* — The earliest date the name may go (``since`` + :data:`MIN_WINDOW_DAYS`),
   - `DeprecationRecord.message(self) -> str` — The warning text: what went, when it goes, what to use instead.
   - `DeprecationRecord.expired(self, version: str, today: Optional[datetime.date] = None) -> bool` — True once the alias has outlived its window: *version* has reached
-- **[`class Deprecation(_DeprecationInternal)`](pythontk/pythontk/core_utils/deprecation.py#L485)** — Retire a public name with a notice and a removal version.
+- **[`class Deprecation(_DeprecationInternal)`](pythontk/pythontk/core_utils/deprecation.py#L507)** — Retire a public name with a notice and a removal version.
   - `Deprecation.window_expired(remove_in: str, version: str, since: str = '', today: Optional[datetime.date] = None) -> bool` *(static)* — Whether a retirement is due -- THE rule, for both gates.
   - `Deprecation.version_key(version: str) -> Tuple[int, int, int]` *(static)* — Comparable key for a ``MAJOR.MINOR[.PATCH]`` release version.
   - `Deprecation.warn(cls, what: str, replacement: str, *, remove_in: str, reason: Optional[str] = None, module: Optional[str] = None, kind: str = 'symbol', stacklevel: int = 1, since: Optional[str] = None) -> DeprecationRecord` *(class)* — Emit a deprecation notice from inside a function body.
@@ -826,7 +842,7 @@ Point-cloud verification for a rebuilt rig -- pure math, no DCC.
 
 What a lightmap re-bake must redo: the bake baseline and its stale rule.
 
-- **[`class BakeBaseline`](pythontk/pythontk/core_utils/engines/scene_export/bake_baseline.py#L69)** — The lightmap bake baseline: pure rules over plain values.
+- **[`class BakeBaseline`](pythontk/pythontk/core_utils/engines/scene_export/bake_baseline.py#L74)** — The lightmap bake baseline: pure rules over plain values.
   - `BakeBaseline.signature(cls, points: Any, counts: Sequence[int], indices: Sequence[int], dims: int = 3) -> Dict[str, Any]` *(class)* — A mesh's fingerprint: ``{"points", "topology", "moments"}``.
   - `BakeBaseline.diff(cls, a: Mapping, b: Mapping, tol: float = 1.0) -> List['BakeBaseline.Reason']` *(class)* — Why state *b* differs from state *a*: :class:`Reason` values, in
   - `BakeBaseline.same(cls, a: Mapping, b: Mapping, tol: float = 1.0) -> bool` *(class)* — Whether states *a* and *b* are the same within tolerance
@@ -843,17 +859,23 @@ What a lightmap re-bake must redo: the bake baseline and its stale rule.
   - `BakeBaseline.encode(cls, record: Mapping[str, Any]) -> Dict[str, Any]` *(class)* — The payload to store for *record*: every key present, reasons and
   - `BakeBaseline.decode(cls, record: Any) -> Dict[str, Any]` *(class)* — *record* as ``{"version", "serial", "objects", "lightings"}``.
   - `BakeBaseline.label(cls, reason: Any) -> str` *(class)* — How a report words *reason* (:attr:`LABELS`).
-- **[`class StaleReport`](pythontk/pythontk/core_utils/engines/scene_export/bake_baseline.py#L1207)** — What a re-bake of the changed objects redoes, and why -- the dry run.
+  - `BakeBaseline.can_bake(cls, participant: Mapping) -> bool` *(class)* — Whether a scene-state *participant* (``{"role", "state"}``) can bake
+- **[`class StaleReport`](pythontk/pythontk/core_utils/engines/scene_export/bake_baseline.py#L1239)** — What a re-bake of the changed objects redoes, and why -- the dry run.
   - `StaleReport.leaf(item: str) -> str` *(static)* — An id's last ``|`` component -- the default display name.
   - `StaleReport.summary(self, name: Optional[Callable[[str], str]] = None) -> str` — One sentence for a panel footer: how many re-bake and why.
   - `StaleReport.lines(self, name: Optional[Callable[[str], str]] = None) -> List[str]` — One line per object, then the lighting, re-packs, the unbakeable
+  - `StaleReport.doc(self, maps: Sequence[Mapping[str, Any]] = (), name: Optional[Callable[[str], str]] = None) -> 'ReportDoc'` — The Bake State breakdown: every map, what re-bakes and why, and
+  - `StaleReport.map_rows(self, maps: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]` — The maps a scene reads, each with its state -- what a panel's
+  - `StaleReport.tally(cls, rows: Sequence[Mapping[str, Any]]) -> str` *(class)* — *rows*' (:meth:`map_rows`) states counted, worst first -- a footer's
+  - `StaleReport.fix_plan(self, rows: Iterable[Mapping[str, Any]]) -> Dict[str, List[str]]` — What a Fix All does about *rows* (:meth:`map_rows`), so none is left
+  - `StaleReport.why(self, k: str, name: Optional[Callable[[str], str]] = None) -> str` — Why object *k* re-bakes, in words: its own changes, else the
 
 <a id="core_utils--engines--scene_export--export_profile"></a>
 ### `core_utils/engines/scene_export/export_profile.py`
 
 The Scene Exporter panels' shared contract, written once.
 
-- **[`class ExportProfile`](pythontk/pythontk/core_utils/engines/scene_export/export_profile.py#L40)** — Pure helpers over Scene Exporter task / check definitions.
+- **[`class ExportProfile`](pythontk/pythontk/core_utils/engines/scene_export/export_profile.py#L33)** — Pure helpers over Scene Exporter task / check definitions.
   - `ExportProfile.legal_name(name: str) -> str` *(static)* — The switchboard's objectName rule, from its owner.
   - `ExportProfile.widget_key(cls, name: str, spec: Mapping[str, Any]) -> str` *(class)* — The objectName the panel gives *name*'s widget (and the preset stores).
   - `ExportProfile.value_method(cls, spec: Mapping[str, Any]) -> str` *(class)* — The read the export button performs on the widget (``b000``'s rule).
@@ -864,8 +886,8 @@ The Scene Exporter panels' shared contract, written once.
   - `ExportProfile.strip_deliverable_extension(name: Optional[str]) -> str` *(static)* — *name* trimmed, without a trailing deliverable extension -- a whitelist
   - `ExportProfile.fold_legacy_regex(cls, name_regex: Optional[str]) -> Optional[str]` *(class)* — The retired free-standing RegEx field's text as an inline modifier spec.
   - `ExportProfile.fold_legacy_naming(cls, pattern: Optional[str], version_format: str = '', timestamp: bool = False, name_regex: Optional[str] = None) -> Optional[str]` *(class)* — Fold the retired Version pattern and Timestamp flag into a name pattern.
-  - `ExportProfile.resolve_output_path(cls, pattern: Optional[str], context: Mapping[str, Any], export_dir: str = '', output_format: str = 'fbx', version_format: str = '', timestamp: bool = False, name_regex: Optional[str] = None) -> Dict[str, Any]` *(class)* — Resolve the Output Filename field into the file(s) an export writes.
-  - `ExportProfile.naming_report(cls, resolved: Mapping[str, Any], tokens: Mapping[str, str], version_suffix=None) -> List[Tuple[str, str]]` *(class)* — ``[(level, message), ...]`` for what :meth:`resolve_output_path` hit.
+  - `ExportProfile.resolve_output_path(cls, pattern: Optional[str], context: Mapping[str, Any], export_dir: str = '', output_format: str = 'fbx') -> Dict[str, Any]` *(class)* — Resolve the Output Filename field into the file(s) an export writes.
+  - `ExportProfile.naming_report(cls, resolved: Mapping[str, Any], tokens: Mapping[str, str]) -> List[Tuple[str, str]]` *(class)* — ``[(level, message), ...]`` for what :meth:`resolve_output_path` hit.
   - `ExportProfile.scoped_tables(cls, manager: type) -> type` *(class)* — Class decorator: give *manager* the shared tables, scoped to it.
   - `ExportProfile.task_order(cls, manager: Any) -> List[str]` *(class)* — :attr:`TASK_ORDER` scoped to the tasks *manager* implements.
   - `ExportProfile.unimplemented(cls, manager: Any) -> Dict[str, List[str]]` *(class)* — The shared tables' names *manager* has no method for.
@@ -875,7 +897,7 @@ The Scene Exporter panels' shared contract, written once.
   - `ExportProfile.glb_options(cls) -> Dict[str, Dict[str, Any]]` *(class)* — ``{row key: {label: value}}`` for :attr:`GLB_ROWS`, as a producer
   - `ExportProfile.glb_defaults(cls) -> Dict[str, Any]` *(class)* — ``{row key: value}`` -- where each :attr:`GLB_ROWS` row starts in
   - `ExportProfile.frame_rate_options(cls) -> Dict[str, Optional[str]]` *(class)* — Frame Rate check -- every ``VidUtils.FRAME_RATES`` entry labelled
-- **[`class ExportRun`](pythontk/pythontk/core_utils/engines/scene_export/export_profile.py#L1137)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
+- **[`class ExportRun`](pythontk/pythontk/core_utils/engines/scene_export/export_profile.py#L1089)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
   - `ExportRun.glb_only(self) -> bool` *(property)* — The GLB is the deliverable;
   - `ExportRun.create_glb(self) -> bool` *(property)* — A ``.glb`` is written this run (alone, or beside the FBX).
   - `ExportRun.usd(self) -> bool` *(property)* — The deliverable is a USD layer.
@@ -894,19 +916,42 @@ The Scene Exporter panels' shared contract, written once.
 
 Export assembly: compute every record once, then commit once.
 
-- **[`class ExportContext`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L45)** — What an export DECIDES, handed to every producer as input.
+- **[`class ExportContext`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L46)** — What an export DECIDES, handed to every producer as input.
   - `ExportContext.note(self, text: str) -> None` — Record one sentence for the report.
   - `ExportContext.record(self, spec: Union[RecordSpec, str], store=None, default: Any = None) -> Any` — The payload of *spec* as produced in THIS assembly, else -- when a
   - `ExportContext.refreshes(self, spec: RecordSpec) -> bool` — Whether this context's mode refreshes *spec*.
-- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L136)** — The records one export ships, assembled once and committed once.
+- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L137)** — The records one export ships, assembled once and committed once.
   - `ExportSnapshot.assemble(cls, producers: Mapping[Union[RecordSpec, str], Producer], ctx: Optional[ExportContext] = None, only: Optional[Iterable[Union[RecordSpec, str]]] = None) -> 'ExportSnapshot'` *(class)* — Run *producers* in dependency order and collect their records.
-  - `ExportSnapshot.restore_scene_wide(self, store) -> Optional['ExportSnapshot']` — Put the scene's own copy of every record the scope narrowed back on
+  - `ExportSnapshot.restore_scene_wide(self, store) -> Optional['ExportSnapshot']` — Put the scene's own copy of every record this write's differed from
   - `ExportSnapshot.publish(cls, store, records: Mapping[Union[RecordSpec, str], Any], ctx: Optional[ExportContext] = None) -> 'ExportSnapshot'` *(class)* — Commit *records* that are already in hand -- the AUTHORING-time
   - `ExportSnapshot.commit(self, store) -> Dict[str, Optional[str]]` — Write every produced record to *store* in one pass, then stamp the
   - `ExportSnapshot.records(self) -> Dict[str, Record]` *(property)* — The produced records by key (no ``None`` entries).
   - `ExportSnapshot.record(self, spec: Union[RecordSpec, str], default: Any = None) -> Any` — The payload produced for *spec*, or *default*.
   - `ExportSnapshot.channels(self, scope: Scope = Scope.DELIVERABLE) -> Dict[str, Any]` — Produced payloads of *scope*, by key -- the sidecar's snapshot.
   - `ExportSnapshot.summary(self) -> str` — One line for the export log: each record that shipped and how
+
+<a id="core_utils--engines--scene_export--handoff_record"></a>
+### `core_utils/engines/scene_export/handoff_record.py`
+
+The handoff: how a deliverable states itself, declared once for every carrier.
+
+- **[`class HandoffPart(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/handoff_record.py#L83)** — One part of the approved scene: where the file holds it and what it
+- **[`class HandoffSource(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/handoff_record.py#L112)** — Where the file came from: provenance, never identity.
+- **[`class HandoffExtras(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/handoff_record.py#L125)** — What a reader may ignore.
+- **[`class HandoffBlock(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/handoff_record.py#L136)** — The ``handoff`` block: how to read the file, the approved scene part by
+- **[`class HandoffCarrier`](pythontk/pythontk/core_utils/engines/scene_export/handoff_record.py#L173)** — How one carrier holds a deliverable's data, as its handoff states it.
+  - `HandoffCarrier.address(self, key: str) -> str` — Where this carrier holds the record *key*: the same key on every
+- **[`class HandoffRecord`](pythontk/pythontk/core_utils/engines/scene_export/handoff_record.py#L214)** — The handoff contract, declared once: the block's shape, its reading
+  - `HandoffRecord.carrier(cls, name: str) -> HandoffCarrier` *(class)* — The :attr:`CARRIERS` row named *name*.
+  - `HandoffRecord.instructions(cls, carrier: str) -> str` *(class)* — The reading contract of *carrier*'s block: its opening, the rules
+  - `HandoffRecord.lighting(cls, carrier: str, held: Union[None, Iterable[str], Mapping[str, Any]] = None) -> List[Dict[str, Any]]` *(class)* — The lighting rows of *carrier*'s ``assembly`` (:attr:`_LIGHTING_ROWS`)
+  - `HandoffRecord.assembly(cls, carrier: str, held: Union[None, Iterable[str], Mapping[str, Any]]) -> List[Dict[str, Any]]` *(class)* — The approved scene part by part, in *carrier*'s addresses: the
+  - `HandoffRecord.payloads(cls, held: Union[Iterable[str], Mapping[str, Any]]) -> Dict[str, Any]` *(class)* — The records a file holds, as ``{key: payload}``: of a mapping of
+  - `HandoffRecord.carried(cls, channels: Union[Iterable[str], Mapping[str, Any]]) -> List[str]` *(class)* — The keys of the records a ``data_export`` carrier holds
+  - `HandoffRecord.block(cls, carrier: str, held: Union[None, Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, Any]] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* — *carrier*'s handoff block for a file holding *held*.
+  - `HandoffRecord.rendering_policy(cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None, held: Union[None, Iterable[str], Mapping[str, Any]] = None) -> Dict[str, Any]` *(class)* — :attr:`RENDERING_POLICY` with a deliverable's own choices laid over
+  - `HandoffRecord.overrides(cls, rendering: Optional[Mapping[str, Any]]) -> Dict[str, Dict[str, Any]]` *(class)* — The settings of a published *rendering* that differ from the
+  - `HandoffRecord.rendering_values(cls, rendering: Optional[Mapping[str, Any]] = None) -> Dict[str, Dict[str, Any]]` *(class)* — The settings of *rendering* -- :attr:`RENDERING_POLICY` by default,
 
 <a id="core_utils--engines--scene_export--hierarchy_baseline"></a>
 ### `core_utils/engines/scene_export/hierarchy_baseline.py`
@@ -932,6 +977,42 @@ The change-detection baseline an exporter diffs a scene's hierarchy against.
   - `HierarchyBaselineStore.compare(cls, current_paths: Set[str], roots: Optional[Sequence[str]] = None) -> Tuple[bool, List[str], List[str], bool]` *(class)* — Diff *current_paths* against the baseline, scoped to what is exporting.
   - `HierarchyBaselineStore.write(cls, current_paths: Set[str], roots: Optional[Sequence[str]] = None) -> bool` *(class)* — Roll the exported scope forward, leaving every other scope intact.
   - `HierarchyBaselineStore.adopt_sidecar(cls, export_path: str, *, base_stem: bool = False) -> bool` *(class)* — Give the scene what *export_path* last shipped, where its own
+
+<a id="core_utils--engines--scene_export--lightmap_record"></a>
+### `core_utils/engines/scene_export/lightmap_record.py`
+
+The ``lightmaps`` record and its GLB block: what a bake publishes, declared once.
+
+- **[`class LightmapBox(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/lightmap_record.py#L41)** — An axis-aligned box, by its least and greatest corners.
+- **[`class LightmapNode(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/lightmap_record.py#L57)** — A mesh node, named as an ``objects`` entry names its object.
+- **[`class LightmapHighlight(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/lightmap_record.py#L74)** — A copy of the probe with the bake's lights drawn in, for one group of
+- **[`class LightmapProbe(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/lightmap_record.py#L101)** — The reflection probe the bake captured: the room it lit, as an HDR seen
+- **[`class LightmapEntry(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/lightmap_record.py#L140)** — One baked object: the node it lights and how its lightmap is read.
+- **[`class LightmapBakedLight(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/lightmap_record.py#L186)** — A light the maps were baked from, for its highlight alone: its diffuse
+- **[`class LightmapRecord(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/lightmap_record.py#L236)** — The ``lightmaps`` record: each baked object's lightmap, the reflection
+  - `LightmapRecord.payload(cls, objects: Iterable[Mapping[str, Any]], probe: Optional[Mapping[str, Any]] = None, lights: Optional[Iterable[Mapping[str, Any]]] = None, unit_scale: Optional[float] = None) -> Optional[Dict[str, Any]]` *(class)* — The record's payload, version stamped;
+  - `LightmapRecord.box(cls, box: Any) -> Optional[Dict[str, List[float]]]` *(class)* — *box* as the record states it, ``{"min", "max"}``: from that shape
+- **[`class LightmapsBlockMaterial(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/lightmap_record.py#L390)** — One lightmapped material: what its lightmap's texels are multiplied by.
+- **[`class LightmapsBlockHighlight(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/lightmap_record.py#L405)** — A highlight copy of the embedded probe: a layer with the bake's lights
+- **[`class LightmapsBlockProbe(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/lightmap_record.py#L430)** — The reflection probe the bake captured, embedded in the file: an
+- **[`class LightmapsBlock(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/lightmap_record.py#L463)** — The ``extras.lightmaps`` block: the bake's lightmaps bound to the file's
+
+<a id="core_utils--engines--scene_export--material_record"></a>
+### `core_utils/engines/scene_export/material_record.py`
+
+The ``materials`` record: its payload, declared once, and the one model that
+
+- [`ALPHA_MODES`](pythontk/pythontk/core_utils/engines/scene_export/material_record.py#L43) — constant
+- **[`class MaterialEntry(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/material_record.py#L47)** — One material as glTF 2.0's metallic-roughness model states it: each
+- **[`class MaterialRecord(SchemaSpec)`](pythontk/pythontk/core_utils/engines/scene_export/material_record.py#L120)** — The ``materials`` record's payload: every material the file's meshes use.
+- **[`class MaterialFamilies`](pythontk/pythontk/core_utils/engines/scene_export/material_record.py#L137)** — A material, read in its shading family's own terms, as the record states it.
+  - `MaterialFamilies.entry(cls, family: str, name: str, props: Optional[Mapping[str, Any]] = None, maps: Optional[Mapping[str, Any]] = None, *, unlit: bool = False, notes: Optional[List[str]] = None) -> Dict[str, Any]` *(class)* — *name*'s record entry, from its *family*'s values.
+  - `MaterialFamilies.payload(cls, entries: Iterable[Mapping[str, Any]]) -> Dict[str, Any]` *(class)* — The record's payload for *entries* (the first of a repeated name
+  - `MaterialFamilies.finish(cls, entry: Mapping[str, Any]) -> Dict[str, Any]` *(class)* — *entry* in the record's shape: every required field, a map or an
+  - `MaterialFamilies.texture_files(cls, record: Optional[Mapping[str, Any]]) -> List[str]` *(class)* — The file names *record* binds, each once, in record order.
+  - `MaterialFamilies.file_name(path: Any) -> str` *(static)* — *path* without its folder (either separator).
+  - `MaterialFamilies.as_float(value: Any, default: float) -> float` *(static)* — *value* as a float; *default* when it is not a number.
+  - `MaterialFamilies.as_floats(value: Any, size: int, default: float) -> List[float]` *(static)* — *value* as *size* floats;
 
 <a id="core_utils--engines--scene_export--record_transfer"></a>
 ### `core_utils/engines/scene_export/record_transfer.py`
@@ -1009,15 +1090,27 @@ The Scene Exporter's orchestration shell, written once for both DCCs.
 
 Scene records -- every piece of tool-authored scene metadata, declared once.
 
-- **[`class Scope(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L72)** — Where a record lives, and therefore what it can never do.
-- **[`class Kind(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L83)** — What a record is a function of, which decides WHEN it is refreshed.
-- **[`class Merge(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L100)** — What happens to a record when another scene's copy arrives beside the
-- **[`class WebProjection`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L128)** — How a deliverable record is published for the glTF runtimes.
-- **[`class Record`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L152)** — One produced value of a :class:`RecordSpec`, ready to store.
+- **[`class Scope(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L77)** — Where a record lives, and therefore what it can never do.
+- **[`class Kind(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L88)** — What a record is a function of, which decides WHEN it is refreshed.
+- **[`class Merge(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L105)** — What happens to a record when another scene's copy arrives beside the
+- **[`class Clause`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L175)** — A sentence of an assembly that only some files need.
+  - `Clause.applies(self, payload: Any) -> bool` — Whether *payload* calls for this clause.
+  - `Clause.holds(payload: Any, path: Tuple[str, ...], value: Any = None) -> bool` *(static)* — Whether *payload* holds *value* at *path* (or, with *value*
+  - `Clause.condition(self) -> str` *(property)* — When the clause applies, in words (for the generated docs).
+  - `Clause.join(text: str, clauses: Iterable['Clause'], payload: Any = None) -> str` *(static)* — *text* and each of *clauses* that *payload* calls for -- every one
+- **[`class GlbBlock`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L250)** — How a deliverable record rides a GLB: a block in its root ``extras``.
+  - `GlbBlock.assembly_for(self, payload: Any = None) -> str` — The assembly a block *payload* needs (:meth:`Clause.join`).
+  - `GlbBlock.key(self) -> str` *(property)* **DEPRECATED (remove in 0.18.0)** — The record's key, which the block is written under;
+- **[`class WebProjection(GlbBlock)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L307)** **DEPRECATED (remove in 0.18.0)** — Retired 2026-10-20 (removed in 0.18.0): :class:`GlbBlock`.
+- **[`class Record`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L322)** — One produced value of a :class:`RecordSpec`, ready to store.
   - `Record.key(self) -> str` *(property)*
   - `Record.text(self) -> str` *(property)* — The stored form (JSON).
   - `Record.save(self, store) -> Optional[str]` — Write this record through *store*;
-- **[`class RecordSpec`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L173)** — The one declaration of a record: identity, contract and codec.
+- **[`class RecordSpec`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L343)** — The one declaration of a record: identity, contract and codec.
+  - `RecordSpec.assembly_for(self, payload: Any = None) -> str` — The assembly a record *payload* needs (:meth:`Clause.join`): every
+  - `RecordSpec.web(self) -> Optional[GlbBlock]` *(property)* **DEPRECATED (remove in 0.18.0)** — The record's GLB block (:attr:`glb`).
+  - `RecordSpec.version_key(self) -> str` *(property)* **DEPRECATED (remove in 0.18.0)** — The key every record's version rides under: ``"version"``.
+  - `RecordSpec.is_current(self, payload: Any) -> bool` — Whether *payload* is this record in the schema this declaration
   - `RecordSpec.path_keys(self) -> Optional[Tuple[str, ...]]` *(property)* — The payload keys whose values are paths (:attr:`paths`): the named
   - `RecordSpec.stamp_keys(self) -> Optional[Tuple[str, ...]]` *(property)* — The payload keys whose values are writer stamps (:attr:`stamps`):
   - `RecordSpec.make(self, payload: Any) -> Record` — A :class:`Record` of *payload*, the envelope's ``version`` applied.
@@ -1029,18 +1122,28 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `RecordSpec.save(self, store, payload: Any) -> Optional[str]` — Publish *payload* (the publish / clear idiom in one call).
   - `RecordSpec.clear(self, store) -> Optional[str]` — Clear the record;
   - `RecordSpec.is_present(self, store) -> bool` — Whether *store* holds a non-empty value for this record.
-- **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L391)** — The registry: every record, declared once, and what derives from it.
+- **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L745)** — The registry: every record, declared once, and what derives from it.
   - `SceneRecords.resolve_class(module: str, name: str) -> Any` *(static)* — The class a ``(module, name)`` row names -- :attr:`CODECS`',
   - `SceneRecords.codec(cls, spec: RecordSpec) -> Optional[Any]` *(class)* — The codec class of a :attr:`Merge.CODEC` record, else ``None``.
   - `SceneRecords.shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]` *(class)* — The :class:`~pythontk.SchemaSpec` declaring *item*'s payload
-  - `SceneRecords.web_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]` *(class)* — The :class:`~pythontk.SchemaSpec` declaring *item*'s web manifest
-  - `SceneRecords.web_projected(cls) -> List[RecordSpec]` *(class)* — The records a GLB conversion publishes for the glTF runtimes
+  - `SceneRecords.glb_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]` *(class)* — The :class:`~pythontk.SchemaSpec` declaring *item*'s GLB block
+  - `SceneRecords.put_glb_block(cls, gltf: Dict[str, Any], item: Union[RecordSpec, str], block: Mapping[str, Any]) -> Dict[str, Any]` *(class)* — Write *block* as *item*'s block in the glTF document *gltf* -- its
+  - `SceneRecords.glb_block(cls, gltf: Any, item: Union[RecordSpec, str]) -> Optional[Dict[str, Any]]` *(class)* — *item*'s block in the glTF document *gltf* -- its root ``extras``,
+  - `SceneRecords.glb_records(cls) -> List[RecordSpec]` *(class)* — The records a GLB carries a block for (:attr:`RecordSpec.glb`), in
+  - `SceneRecords.problems(cls, item: Union[RecordSpec, str], payload: Any) -> List[str]` *(class)* — What *payload* breaks of *item*'s declaration, one line each: a
+  - `SceneRecords.block_problems(cls, item: Union[RecordSpec, str], block: Any) -> List[str]` *(class)* — What *block* -- *item*'s GLB block -- breaks of its declaration
+  - `SceneRecords.web_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]` *(class)* **DEPRECATED (remove in 0.18.0)** — :meth:`glb_shape`.
+  - `SceneRecords.web_projected(cls) -> List[RecordSpec]` *(class)* **DEPRECATED (remove in 0.18.0)** — :meth:`glb_records`.
   - `SceneRecords.portable(cls) -> List[RecordSpec]` *(class)* — The records that cross a DCC hand-off, in declaration order.
-  - `SceneRecords.rendering_policy(overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(static)* — What a deliverable claims about how it should be lit.
+  - `SceneRecords.rendering_policy(overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(static)* **DEPRECATED (remove in 0.18.0)** — What a deliverable claims about how it should be lit
+  - `SceneRecords.HANDOFF_INSTRUCTIONS(cls) -> str` **DEPRECATED (remove in 0.18.0)** — The FBX block's reading contract (``HandoffRecord.instructions``).
+  - `SceneRecords.HANDOFF_ASSEMBLY(cls) -> Tuple[Dict[str, Any], ...]` **DEPRECATED (remove in 0.18.0)** — The FBX block's rows for the file's own content (``HandoffRecord.CARRIERS``).
   - `SceneRecords.all(cls) -> List[RecordSpec]` *(class)* — Every declared record, in declaration order.
   - `SceneRecords.with_paths(cls) -> List[RecordSpec]` *(class)* — The records whose values are project-relative paths
   - `SceneRecords.with_stamps(cls) -> List[RecordSpec]` *(class)* — The records holding writer stamps (:attr:`RecordSpec.stamps`), in
+  - `SceneRecords.transients(cls) -> List[RecordSpec]` *(class)* — The records that describe one write (:attr:`RecordSpec.transient`),
   - `SceneRecords.stamp_unsaved(cls, store, stamp: str) -> int` *(class)* — Give every writer stamp still ``""`` in *store* the file *stamp*
+  - `SceneRecords.adopt_gone_stamps(cls, store, stamp: str, base: Optional[str]) -> int` *(class)* — Give every writer stamp in *store* that names a scene file now gone
   - `SceneRecords.map_paths(payload: Any, spell: Callable[[str], str], keys: Optional[Tuple[str, ...]] = None) -> Any` *(static)* — *payload* (a :attr:`RecordSpec.paths` mapping) with every string
   - `SceneRecords.rebase_paths(cls, store, old_base: Optional[str], new_base: Optional[str]) -> int` *(class)* — Re-spell every :attr:`RecordSpec.paths` record in *store* from
   - `SceneRecords.deliverable(cls) -> List[RecordSpec]` *(class)*
@@ -1049,8 +1152,8 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `SceneRecords.resolve(cls, item: Union[RecordSpec, str]) -> RecordSpec` *(class)* — *item* as a spec: a spec passes through;
   - `SceneRecords.ordered(cls, specs: Iterable[RecordSpec]) -> List[RecordSpec]` *(class)* — *specs* in dependency order: every record after the ones its
   - `SceneRecords.check_producers(cls, table: Mapping[Any, Any]) -> List[RecordSpec]` *(class)* — Validate a DCC producer *table* against the registry.
-  - `SceneRecords.declared_takes(cls, read: Callable[[str], Any]) -> List[Dict[str, Any]]` *(class)* — The take list a deliverable declares, however old the file.
-  - `SceneRecords.handoff_block(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* — The standalone-reader contract for an FBX, ready to store.
+  - `SceneRecords.declared_takes(cls, read: Callable[[str], Any]) -> List[Dict[str, Any]]` *(class)* — The take list a deliverable declares.
+  - `SceneRecords.handoff_block(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* **DEPRECATED (remove in 0.18.0)** — The FBX's handoff block for a carrier holding *channels*, or ``{}``
   - `SceneRecords.describe(cls) -> List[Dict[str, Any]]` *(class)* — One row per record, for the docs generator and the gates.
 
 <a id="core_utils--engines--scene_export--scene_store"></a>
@@ -1058,13 +1161,17 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
 
 The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
 
-- **[`class SceneStoreBase`](pythontk/pythontk/core_utils/engines/scene_export/scene_store.py#L43)** — The storage contract a DCC implements -- strings per scope, nothing more.
+- **[`class SceneStoreBase`](pythontk/pythontk/core_utils/engines/scene_export/scene_store.py#L44)** — The storage contract a DCC implements -- strings per scope, nothing more.
   - `SceneStoreBase.name(cls, scope: Scope) -> str` *(class)* — The carrier name *scope* reports under (:attr:`NAMES`).
+  - `SceneStoreBase.is_carrier(cls, node_name: Any, scope: Scope = Scope.DELIVERABLE) -> bool` *(class)* — Whether a node named *node_name* is a carrier of *scope* in a
   - `SceneStoreBase.read(cls, scope: Scope, key: str) -> Optional[str]` *(class)* — The string channel *key* in *scope*, or ``None`` when the carrier,
   - `SceneStoreBase.write(cls, scope: Scope, key: str, text: Optional[str]) -> Optional[str]` *(class)* — Store *text* on *key*;
+  - `SceneStoreBase.remove(cls, scope: Scope, key: str) -> bool` *(class)* — Delete channel *key* from *scope*'s carrier outright -- not cleared
+  - `SceneStoreBase.migrate(cls) -> List[str]` *(class)* — Bring this scene's records to the current keys, once: a record a
   - `SceneStoreBase.values(cls, scope: Scope) -> Dict[str, Any]` *(class)* — Every user value the carrier holds, strings and otherwise, in a
   - `SceneStoreBase.keys(cls, scope: Scope) -> List[str]` *(class)* — The names of everything :meth:`values` reports for *scope*.
   - `SceneStoreBase.channels(cls, scope: Scope) -> Dict[str, str]` *(class)* — The non-empty STRING channels of *scope* -- what a handoff describes.
+  - `SceneStoreBase.discard_if_empty(cls, scope: Scope) -> bool` *(class)* — Remove *scope*'s carrier when it holds nothing at all, and say
   - `SceneStoreBase.dump(cls, decode: bool = True) -> Dict[str, Dict[str, Any]]` *(class)* — Every channel the scene actually carries, grouped by carrier name.
   - `SceneStoreBase.scene_path(cls) -> str` *(class)* — The open scene's file, ``""`` while it is unsaved -- and in this
   - `SceneStoreBase.project_root(cls) -> Optional[str]` *(class)* — This scene's own project root -- what its :attr:`RecordSpec.paths`
@@ -1073,7 +1180,7 @@ The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
   - `SceneStoreBase.written_here(cls, stamp: Optional[str]) -> bool` *(class)* — Whether a record stamped *stamp* (:meth:`writer_stamp`) is this
   - `SceneStoreBase.project_root_of(scene_path: Optional[str]) -> Optional[str]` *(static)* — The project *scene_path* lives in: its nearest marked ancestor, else
   - `SceneStoreBase.rebase_paths(cls, old_base: Optional[str], new_base: Optional[str]) -> int` *(class)* — Re-spell this scene's path records from *old_base* to *new_base*
-  - `SceneStoreBase.respell_for_write(cls, target: str, old_base: Optional[str], first_save: bool = False) -> Dict[Tuple[Scope, str], Optional[str]]` *(class)* — Ready the path records for this scene written as *target* -- a
+  - `SceneStoreBase.respell_for_write(cls, target: str, old_base: Optional[str], first_save: bool = False, saved_from: Optional[str] = None) -> Dict[Tuple[Scope, str], Optional[str]]` *(class)* — Ready the path records for this scene written as *target* -- a
   - `SceneStoreBase.path_records(cls) -> Dict[Tuple[Scope, str], Optional[str]]` *(class)* — The stored text of every path record (:meth:`SceneRecords.with_paths`),
   - `SceneStoreBase.restore_path_records(cls, snapshot: Mapping[Tuple[Scope, str], Optional[str]]) -> int` *(class)* — Put the path records back as *snapshot* (:meth:`path_records`) holds
   - `SceneStoreBase.format_dump(cls, decode: bool = True) -> str` *(class)* — Pretty JSON of :meth:`dump`, or ``""`` when nothing is stored.
@@ -1085,6 +1192,16 @@ The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
   - `SceneStoreBase.merge_plan(cls, carriers: Mapping[Any, Any]) -> 'RecordTransfer'` *(class)* — *carriers* (another scene's, by scope) against this scene's own:
   - `SceneStoreBase.merge_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None, source_path_base: Optional[str] = None) -> 'TransferContext'` *(class)* — Merge another scene's *carriers* -- an imported reference's, made
   - `SceneStoreBase.discard_carriers(cls, carriers: Mapping[Any, Any], rename=None, source: str = '', adapters: Optional[Mapping[str, Any]] = None, source_path_base: Optional[str] = None) -> 'TransferContext'` *(class)* — Remove another scene's *carriers* without merging their records --
+
+<a id="core_utils--engines--shots--animation_record"></a>
+### `core_utils/engines/shots/animation_record.py`
+
+The ``animation`` record's payload and its GLB block, declared once.
+
+- **[`class AnimationShot(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/animation_record.py#L42)** — One shot: the span of the authoring timeline its take is cut from, and
+- **[`class AnimationRecord(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/animation_record.py#L80)** — The ``animation`` record's payload: the scene's shots, each one take of
+- **[`class AnimationBlockClip(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/animation_record.py#L124)** — One glTF animation: its name, its index, and the authoring frame its
+- **[`class AnimationBlock(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/animation_record.py#L156)** — The ``extras.animation`` block: the scene's shots as the ``animation``
 
 <a id="core_utils--engines--shots--effect_recipe"></a>
 ### `core_utils/engines/shots/effect_recipe.py`
@@ -1700,7 +1817,7 @@ Pure image-compositing engine — alpha-composite layered texture maps
   - `MapFactory.create_roughness_from_spec(cls, specular_map: Union[str, 'Image.Image'], glossiness_map: Union[str, 'Image.Image'] = None) -> 'Image.Image'` *(class)* — Estimates roughness from a specular map.
   - `MapFactory.convert_base_color_to_albedo(cls, base_color: 'Image.Image', metalness: 'Image.Image') -> 'Image.Image'` *(class)* — Converts a Base Color map to a true Albedo map by:
   - `MapFactory.get_converted_map(map_type: str, available: dict) -> Optional[Any]` *(static)* — Get the converted map based on the given map type and available maps.
-  - `MapFactory.pack_orm_texture(cls, ao_map_path: Optional[str], roughness_map_path: Optional[str], metallic_map_path: Optional[str], output_dir: str = None, suffix: str = '_ORM', invert_roughness: bool = False, output_path: str = None, save: bool = True) -> Union[str, 'Image.Image']` *(class)* — Pack AO (R) + Roughness (G) + Metallic (B) into a single ORM texture.
+  - `MapFactory.pack_orm_texture(cls, ao_map_path: Optional[str], roughness_map_path: Optional[str], metallic_map_path: Optional[str], output_dir: str = None, suffix: str = '_ORM', invert_roughness: bool = False, output_path: str = None, save: bool = True, *, fill_values: Optional[Dict[str, int]] = None) -> Union[str, 'Image.Image']` *(class)* — Pack AO (R) + Roughness (G) + Metallic (B) into a single ORM texture.
   - `MapFactory.pack_msao_texture(cls, metallic_map_path: str, ao_map_path: Optional[str], alpha_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MSAO', invert_alpha: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgba') -> Union[str, 'Image.Image']` *(class)* — Pack Metallic + AO + Smoothness (and optional Detail) into a single MSAO texture.
   - `MapFactory.pack_mrao_texture(cls, metallic_map_path: Optional[str], roughness_map_path: Optional[str], ao_map_path: Optional[str], detail_map_path: Optional[str] = None, output_dir: str = None, suffix: str = '_MRAO', invert_roughness: bool = False, output_path: str = None, save: bool = True, layout: str = 'rgb') -> Union[str, 'Image.Image']` *(class)* — Pack Metallic + Roughness + AO (and optional Detail) into a single MRAO texture.
   - `MapFactory.convert_smoothness_to_roughness(cls, smoothness_path: str, output_dir: str = None, save: bool = True, **kwargs) -> Union[str, 'Image.Image']` *(class)* — Convert a Smoothness map to a Roughness map by inverting the grayscale values.
@@ -1740,31 +1857,31 @@ Workflow handlers (Strategy pattern) for the texture MapFactory.
   - `ORMMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `ORMMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `ORMMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L175)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
+- **[`class MRAOMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L177)** — Handles MRAO packing (Metallic R, Roughness G, AO B by default).
   - `MRAOMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MRAOMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MRAOMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L269)** — Handles Unity HDRP Mask Map (MSAO).
+- **[`class MaskMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L272)** — Handles Unity HDRP Mask Map (MSAO).
   - `MaskMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MaskMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MaskMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L395)** — Handles packed Metallic+Smoothness.
+- **[`class MetallicSmoothnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L398)** — Handles packed Metallic+Smoothness.
   - `MetallicSmoothnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `MetallicSmoothnessHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `MetallicSmoothnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L468)** — Handles separate metallic and roughness maps.
+- **[`class SeparateMetallicRoughnessHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L471)** — Handles separate metallic and roughness maps.
   - `SeparateMetallicRoughnessHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `SeparateMetallicRoughnessHandler.process(self, context: TextureProcessor) -> List[str]` — Returns list since this produces multiple maps.
   - `SeparateMetallicRoughnessHandler.get_consumed_types(self) -> List[str]`
-- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L505)** — Handles base color / albedo with optional packing.
+- **[`class BaseColorHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L508)** — Handles base color / albedo with optional packing.
   - `BaseColorHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `BaseColorHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `BaseColorHandler.get_consumed_types(self) -> List[str]`
-- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L657)** — Handles normal map format conversion.
+- **[`class NormalMapHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L660)** — Handles normal map format conversion.
   - `NormalMapHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `NormalMapHandler.process(self, context: TextureProcessor) -> Optional[str]`
   - `NormalMapHandler.get_consumed_types(self) -> List[str]`
-- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L835)** — Handles outputting fallback maps for failed requests.
+- **[`class OutputFallbackHandler(WorkflowHandler)`](pythontk/pythontk/core_utils/engines/textures/map_factory/handlers.py#L838)** — Handles outputting fallback maps for failed requests.
   - `OutputFallbackHandler.can_handle(self, context: TextureProcessor) -> bool`
   - `OutputFallbackHandler.process(self, context: TextureProcessor) -> List[str]`
   - `OutputFallbackHandler.get_consumed_types(self) -> List[str]`
@@ -1852,7 +1969,7 @@ Plan, assess, and apply map (texture) optimizations.
 - **[`class MapType`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L56)** — Defines the properties of a texture map type.
   - `MapType.compose_aliases(stems: Tuple[str, ...], tags: Tuple[str, ...], separators: Tuple[str, ...] = ('_', '')) -> List[str]` *(static)* — Every ``<stem><separator><tag>`` spelling, order-preserving and de-duped.
   - `MapType.carried_types(self, include_optional: bool = False) -> List[str]` — The map types this packed map's channels carry.
-- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L200)** — Central registry for map type definitions.
+- **[`class MapRegistry(SingletonMixin)`](pythontk/pythontk/core_utils/engines/textures/map_registry.py#L206)** — Central registry for map type definitions.
   - `MapRegistry.get(self, name: str) -> Optional[MapType]` — Get a map type by name.
   - `MapRegistry.register(self, map_type: MapType, overwrite: bool = False) -> MapType` — Register a new map type (or replace an existing one) at runtime.
   - `MapRegistry.counterpart_normal_spelling(cls, spelling: str, dst_type: str) -> str` *(class)* — The same normal-map spelling, written for the other handedness convention.
@@ -1878,6 +1995,8 @@ Plan, assess, and apply map (texture) optimizations.
   - `MapRegistry.estimate_gpu_bytes(self, width: int, height: int, name: Optional[str] = None, tiles: int = 1) -> Tuple[float, float]` — Estimated GPU memory of a *width* x *height* map of type *name*.
   - `MapRegistry.get_passthrough_maps(self) -> List[str]` — Get list of maps that should be passed through if not consumed.
   - `MapRegistry.get_map_backgrounds(self) -> Dict[str, Tuple[int, int, int, int]]` — Generate the map backgrounds dictionary.
+  - `MapRegistry.absent_value(cls, map_type: str) -> Optional[float]` *(class)* — The value (0-1) a map of *map_type* that is not there stands for
+  - `MapRegistry.absent_fills(cls, layout: Mapping[str, Optional[str]]) -> Dict[str, int]` *(class)* — ``{channel: 0-255}`` -- what a packing with *layout* fills each
   - `MapRegistry.get_map_modes(self) -> Dict[str, str]` — Generate the map modes dictionary.
   - `MapRegistry.resolve_missing_map_rule(cls, config: Dict[str, Any] = None) -> str` *(class)* — The 'Missing Maps' policy ``config`` asks for.
   - `MapRegistry.allow_incomplete_pack(cls, config: Dict[str, Any], components: List[Any]) -> bool` *(class)* — Whether an incomplete packed map may still be written.
@@ -1925,23 +2044,26 @@ Per-map output-format templates — the "export preset" layer.
 
 Region-mask engine — named face-group masks that gate texture regions at runtime.
 
-- [`ENCODING_VERTEX_COLOR`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L59) — constant
-- [`ENCODING_CHANNELS`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L60) — constant
-- [`ENCODING_ID`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L61) — constant
-- [`SLOT_CHANNELS`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L64) — constant
-- **[`class RegionGroup`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L68)** — One named region group.
+- [`ENCODING_VERTEX_COLOR`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L63) — constant
+- [`ENCODING_CHANNELS`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L64) — constant
+- [`ENCODING_ID`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L65) — constant
+- [`SLOT_CHANNELS`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L68) — constant
+- **[`class RegionGroup`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L72)** — One named region group.
   - `RegionGroup.to_dict(self) -> dict`
   - `RegionGroup.coerce(cls, group: Union['RegionGroup', dict]) -> 'RegionGroup'` *(class)* — Accept a ``RegionGroup`` or its plain-dict form.
-- **[`class RegionMaskManifest`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L111)** — The wire schema joining DCC-authored groups to their game-engine consumer.
+- **[`class RegionMaskManifest`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L115)** — The wire schema joining DCC-authored groups to their game-engine consumer.
+  - `RegionMaskManifest.schema(self) -> int` *(property)* **DEPRECATED (remove in 0.18.0)** — The document's version (:attr:`version`).
   - `RegionMaskManifest.vertex_color(cls, groups: Sequence[Union[RegionGroup, dict]], color_set: str = 'emissiveGroups') -> 'RegionMaskManifest'` *(class)* — Manifest for membership riding in a mesh color set.
-  - `RegionMaskManifest.channels(cls, groups: Sequence[Union[RegionGroup, dict]], mask: str, resolution: int, uv_channel: int = 0) -> 'RegionMaskManifest'` *(class)* — Manifest for membership rasterized into an RGBA mask texture.
+  - `RegionMaskManifest.channels(cls, groups: Sequence[Union[RegionGroup, dict]], mask: str, resolution: Optional[int] = None, uv_channel: int = 0) -> 'RegionMaskManifest'` *(class)* — Manifest for membership rasterized into an RGBA mask texture.
   - `RegionMaskManifest.to_dict(self) -> dict` — Wire form: encoding-irrelevant fields are omitted, not null.
   - `RegionMaskManifest.to_json(self, indent: Optional[int] = None) -> str`
-  - `RegionMaskManifest.from_dict(cls, data: dict) -> 'RegionMaskManifest'` *(class)*
+  - `RegionMaskManifest.from_dict(cls, data: dict) -> 'RegionMaskManifest'` *(class)* — *data* read as the document of the version a reader reads
   - `RegionMaskManifest.from_json(cls, text: str) -> 'RegionMaskManifest'` *(class)*
   - `RegionMaskManifest.save(self, path: str) -> str`
   - `RegionMaskManifest.load(cls, path: str) -> 'RegionMaskManifest'` *(class)*
-- **[`class RegionGroupRegistry`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L229)** — Slot-assignment model for region groups — persistence injected.
+- **[`class EmissiveGroupsEntry(SchemaSpec)`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L291)** — One region group: the mask channel it gates and its weight.
+- **[`class EmissiveGroupsRecord(SchemaSpec)`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L323)** — The ``emissive_groups`` record's payload: named emissive regions and
+- **[`class RegionGroupRegistry`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L358)** — Slot-assignment model for region groups — persistence injected.
   - `RegionGroupRegistry.merge_record(cls, own: Optional[dict], other: Optional[dict], ctx: Any = None) -> Optional[dict]` *(class)* — The emissive registry's merge (``SceneRecords.CODECS``).
   - `RegionGroupRegistry.empty(self) -> dict`
   - `RegionGroupRegistry.read(self) -> dict` — The stored registry, or a fresh empty one (never raises).
@@ -1956,7 +2078,7 @@ Region-mask engine — named face-group masks that gate texture regions at runti
   - `RegionGroupRegistry.compact(self) -> List[int]` — Reclaim retired slots.
   - `RegionGroupRegistry.set_encoding(self, encoding: str, **info) -> None` — Record the encoding the last bake produced (plus mask info).
   - `RegionGroupRegistry.manifest(self, color_set: Optional[str] = None) -> Optional[RegionMaskManifest]` — The manifest for the current registry, or None when it has no groups.
-- **[`class RegionMaskPacker(pythontk.LoggingMixin, _RegionMaskPackerInternal)`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L551)** — Rasterize named UV face-groups into a channel-packed RGBA mask texture.
+- **[`class RegionMaskPacker(pythontk.LoggingMixin, _RegionMaskPackerInternal)`](pythontk/pythontk/core_utils/engines/textures/region_masks.py#L681)** — Rasterize named UV face-groups into a channel-packed RGBA mask texture.
   - `RegionMaskPacker.groups(self) -> List[RegionGroup]` *(property)*
   - `RegionMaskPacker.add_group(self, name: str, uv_triangles, *, slot: Optional[int] = None, default: float = 1.0, attr: Optional[str] = None) -> RegionGroup` — Register a group and its UV coverage.
   - `RegionMaskPacker.validate(self) -> List[str]` — Non-fatal authoring warnings (hard errors raise in ``add_group``).
@@ -2273,10 +2395,10 @@ Monospace text layout: display widths, wrapping, box and table geometry.
   - `LoggerExt.register_html_preset(cls, name: str, format_str: str) -> None` *(class)* — Register a new HTML preset.
   - `LoggerExt.get_html_preset(cls, name: str) -> str` *(class)* — Get an HTML preset by name.
   - `LoggerExt.format_message_as_html(cls, message: str, level: str, preset: str = None) -> str` *(class)* — Format a message using HTML presets.
-- **[`class DefaultTextLogHandler(logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin/logger_ext.py#L1281)** — A generic logging handler that writes logs to any widget supporting
+- **[`class DefaultTextLogHandler(logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin/logger_ext.py#L1289)** — A generic logging handler that writes logs to any widget supporting
   - `DefaultTextLogHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `DefaultTextLogHandler.get_color(self, level: str) -> str`
-- **[`class RingBufferHandler(logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin/logger_ext.py#L1342)** — In-memory capped ring buffer of log records.
+- **[`class RingBufferHandler(logging.Handler)`](pythontk/pythontk/core_utils/logging_mixin/logger_ext.py#L1350)** — In-memory capped ring buffer of log records.
   - `RingBufferHandler.emit(self, record: internal_logging.LogRecord) -> None`
   - `RingBufferHandler.clear(self) -> None`
   - `RingBufferHandler.format_records(self, formatter: internal_logging.Formatter = None) -> str` — Render buffered records to a single plain-text string.
@@ -2594,16 +2716,17 @@ Structured run logs and threshold-based acceptance gates for pipeline
 
 Declarative schema for JSON/YAML *template* files, defined as a dataclass.
 
-- [`MISSING`](pythontk/pythontk/core_utils/schema_spec.py#L61) — constant
-- **[`class SchemaError(ValueError)`](pythontk/pythontk/core_utils/schema_spec.py#L84)** — Raised by :meth:`ValidationResult.raise_if_errors` when a file is invalid.
-- **[`class FieldDoc`](pythontk/pythontk/core_utils/schema_spec.py#L89)** — One row of a schema's generated reference.
-- **[`class ValidationResult`](pythontk/pythontk/core_utils/schema_spec.py#L102)** — Outcome of :meth:`SchemaSpec.validate` — separated errors and warnings.
+- [`MISSING`](pythontk/pythontk/core_utils/schema_spec.py#L65) — constant
+- **[`class SchemaError(ValueError)`](pythontk/pythontk/core_utils/schema_spec.py#L88)** — Raised by :meth:`ValidationResult.raise_if_errors` when a file is invalid.
+- **[`class FieldDoc`](pythontk/pythontk/core_utils/schema_spec.py#L93)** — One row of a schema's generated reference.
+- **[`class ValidationResult`](pythontk/pythontk/core_utils/schema_spec.py#L106)** — Outcome of :meth:`SchemaSpec.validate` — separated errors and warnings.
   - `ValidationResult.ok(self) -> bool` *(property)* — ``True`` when there are no errors (warnings are tolerable).
   - `ValidationResult.raise_if_errors(self, prefix: str = '') -> None` — Raise :class:`SchemaError` joining all errors, or do nothing.
   - `ValidationResult.raise_or_warn(self, *, prefix: str = '', logger: Optional[logging.Logger] = None, strict: bool = False) -> None` — Enforce a validated file: raise on errors, log (or, if *strict*, raise on) warnings.
   - `ValidationResult.merge(self, other: 'ValidationResult', path: str = '') -> None` — Fold *other* in, prefixing each message with *path* (e.g.
-- **[`class SchemaSpec(_SchemaSpecInternal)`](pythontk/pythontk/core_utils/schema_spec.py#L466)** — Base for declarative template schemas (see module docstring).
+- **[`class SchemaSpec(_SchemaSpecInternal)`](pythontk/pythontk/core_utils/schema_spec.py#L538)** — Base for declarative template schemas (see module docstring).
   - `SchemaSpec.from_dict(cls, data: Dict[str, Any]) -> 'SchemaSpec'` *(class)* — Build an instance from a raw ``dict``, recursing into nested schemas.
+  - `SchemaSpec.prune(cls, data: Any, dropped: Optional[List[str]] = None) -> Any` *(class)* — *data* with only what this spec declares: each key it does not
   - `SchemaSpec.to_dict(self) -> Dict[str, Any]` — Serialise to a JSON/YAML-safe ``dict``;
   - `SchemaSpec.validate(cls, data: Any) -> ValidationResult` *(class)* — Validate a raw ``dict`` against this schema.
   - `SchemaSpec.skeleton(cls) -> Dict[str, Any]` *(class)* — A fully-populated example ``dict`` to model a new file after.
@@ -2847,8 +2970,10 @@ File dependencies -- files a record names by *name*, found where they are NOW.
 - **[`class FileDependencies(LoggingMixin)`](pythontk/pythontk/file_utils/file_dependencies.py#L58)** — The rules over files that records name by name;
   - `FileDependencies.claims(refs: Iterable[Sequence[str]]) -> Dict[str, FrozenSet[str]]` *(static)* — ``{file name: owners}`` -- which owners read which file name.
   - `FileDependencies.remove_superseded(cls, before: Iterable[str], after: Iterable[Sequence[Any]]) -> List[str]` *(class)* — Set aside the files of *before* that nothing in *after* reads;
+  - `FileDependencies.superseded(cls, before: Iterable[str], after: Iterable[Sequence[Any]]) -> List[str]` *(class)* — The files of *before* that nothing in *after* reads -- what
   - `FileDependencies.set_aside(cls, path: str) -> str` *(class)* — Take the file *path* out of its folder without destroying it.
   - `FileDependencies.written_here(writer: Optional[str], scene: str, base: Optional[str]) -> bool` *(static)* — Whether a file whose writer record says *writer* is *scene*'s own to delete.
+  - `FileDependencies.writer_gone(writer: Optional[str], base: Optional[str]) -> bool` *(static)* — Whether *writer* -- a writer record's entry -- names a scene file
   - `FileDependencies.find_files(names: Iterable[str], root: str) -> List[str]` *(static)* — Every file under *root*, recursively, whose name is one of *names*.
   - `FileDependencies.walk(cls, root: str) -> Iterator[Tuple[str, List[str], List[str]]]` *(class)* — ``os.walk(root)``, top-down, that never enters a folder of stale
   - `FileDependencies.resolve(cls, refs: Iterable[Sequence[str]], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, resolve_hint: Optional[Callable[[str, str], str]] = None) -> List[Dict[str, Any]]` *(class)* — Every file *refs* name, resolved on disk NOW;
@@ -2900,8 +3025,8 @@ A folder of JSON jobs that one worker process takes in order.
 
 The FBX2glTF CLI driver behind :meth:`MeshConvert.fbx_to_glb`, and the
 
-- [`FBX2GLTF_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L45) — constant
-- [`FBX2GLTF_PLATFORMS`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L46) — constant
+- [`FBX2GLTF_VERSION`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L46) — constant
+- [`FBX2GLTF_PLATFORMS`](pythontk/pythontk/file_utils/mesh_convert/_fbx2gltf.py#L47) — constant
 
 <a id="file_utils--mesh_convert--_fbx_writer"></a>
 ### `file_utils/mesh_convert/_fbx_writer.py`
@@ -2937,13 +3062,13 @@ glTF -> FBX with no DCC in the loop: :meth:`MeshConvert.gltf_to_fbx`.
 
 FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
 
-- **[`class MeshConvert(_Fbx2GltfMixin, _Gltf2FbxMixin, _SidecarMixin, _LightmapsMixin, _HighlightsMixin, _ShadowRigsMixin, _ArticulationMixin, _AnimationMixin, _VisibilityMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L56)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
+- **[`class MeshConvert(_Fbx2GltfMixin, _Gltf2FbxMixin, _SidecarMixin, _LightmapsMixin, _HighlightsMixin, _ShadowRigsMixin, _ArticulationMixin, _AnimationMixin, _VisibilityMixin, _FbxMaterialsMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`](pythontk/pythontk/file_utils/mesh_convert/_mesh_convert.py#L59)** — 3D mesh format conversion via the godotengine/FBX2glTF CLI.
   - `MeshConvert.open_glb(cls, glb: GlbTarget)` *(class)* — Yield an open :class:`GlbEdit` for *glb*, writing once on close.
   - `MeshConvert.finish_fbx_deliverable(cls, fbx: str, glb: Optional[str] = None, *, search_dirs: Sequence[str] = (), walk_root: str = '', files: Iterable[Any] = (), hdr_codec: Any = None, logger: Optional[logging.Logger] = None) -> Dict[str, Any]` *(class)* — The passes a written FBX deliverable takes, so it reads as its GLB twin does.
   - `MeshConvert.conversion_timeout(cls, src: str, fbx: Optional['FbxFile'] = None) -> float` *(class)* — Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
   - `MeshConvert.bake_node_frames(cls, src: str, fbx: Optional['FbxFile'] = None) -> int` *(class)* — Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
   - `MeshConvert.resolve_binary(cls, required: bool = True, auto_install: bool = False, prompt: Union[bool, Callable[[str], bool]] = True) -> Optional[str]` *(class)* — Resolve the FBX2glTF executable from PATH or managed installs.
-  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None, hdr_codec: Any = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
+  - `MeshConvert.fbx_to_glb(cls, src: str, dst: Optional[str] = None, *, overwrite: bool = False, auto_install: bool = True, prompt: Union[bool, Callable[[str], bool]] = True, timeout: Optional[float] = AUTO_TIMEOUT, extra_args: Optional[List[str]] = None, sidecar: Optional[Dict[str, Any]] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None, data_export: Optional[Dict[str, Any]] = None, lightmaps: bool = True, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), clip_mode: str = 'both', report: Optional[Dict[str, Any]] = None, hdr_codec: Any = None) -> str` *(class)* — Convert an FBX file to a binary glTF 2.0 (GLB) file.
   - `MeshConvert.strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]` *(class)* — Remove every curve-proxy node (and its channels) from a GLB.
   - `MeshConvert.prune_glb_unused_skins(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Drop the skinning data no node binds.
   - `MeshConvert.fix_glb_skin_skeletons(cls, glb: GlbTarget) -> List[str]` *(class)* — Point every ``skin.skeleton`` at a common root of the skin's joints.
@@ -2951,39 +3076,49 @@ FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
   - `MeshConvert.fix_glb_tangents(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Point every shipped TANGENT the way its UVs run, and give a
   - `MeshConvert.restore_glb_skin_weights(cls, glb: GlbTarget, fbx: str) -> Dict[str, int]` *(class)* — Give every skinned mesh the weights its FBX clusters hold.
   - `MeshConvert.gltf_to_fbx(cls, src: str, dst: Optional[str] = None, *, texture_dir: Optional[str] = None, include_animation: bool = True, fps: Optional[float] = None, manifest: bool = True, overwrite: bool = False, report: Optional[Dict[str, Any]] = None) -> str` *(class)* — Convert a ``.glb`` / ``.gltf`` to a binary FBX -- no DCC involved.
-  - `MeshConvert.rendering_policy(cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None, carrier: str = 'glb') -> Dict[str, Any]` *(class)* — :attr:`RENDERING_POLICY` with a deliverable's own choices laid over it.
-  - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* — Wrap *sections* in the versioned scene-sidecar envelope.
-  - `MeshConvert.strip_fbx_handoff(cls, gltf: dict) -> int` *(class)* — Drop the FBX's handoff block from a converted glTF's node extras.
-  - `MeshConvert.build_fbx_handoff(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]` *(class)* — The standalone-reader contract for an FBX, ready to publish.
-  - `MeshConvert.apply_scene_sidecar(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]` *(class)* — Apply a scene-sidecar envelope to a GLB and embed it in its extras.
-  - `MeshConvert.sidecar_foreign_packings(cls, sidecar: Optional[Dict[str, Any]], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]` *(class)* — ``{path: map type}`` for envelope textures authored for another engine.
-  - `MeshConvert.read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The scene-sidecar envelope embedded in a GLB, or ``None``.
-  - `MeshConvert.verify_glb(cls, glb: GlbTarget) -> Dict[str, Any]` *(class)* — Check a delivered GLB against the envelope it carries.
+  - `MeshConvert.SHADOW_PLANE_DEFAULTS(cls) -> Dict[str, Any]` **DEPRECATED (remove in 0.18.0)** — A shadow plane's starting values, as 0.16.1 served them:
+  - `MeshConvert.rendering_policy(cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None, carrier: str = 'glb') -> Dict[str, Any]` *(class)* **DEPRECATED (remove in 0.18.0)** — The lighting recipe with a deliverable's own choices laid over it
+  - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* **DEPRECATED (remove in 0.18.0)** — The envelope a host built before the materials record: the GLB's
+  - `MeshConvert.strip_fbx_records(cls, gltf: dict) -> int` *(class)* — Drop what the source FBX's records left in a converted glTF's nodes.
+  - `MeshConvert.finish_glb(cls, glb: GlbTarget, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> bool` *(class)* — State a GLB as every deliverable states itself, whatever wrote it.
+  - `MeshConvert.strip_fbx_handoff(cls, gltf: dict) -> int` *(class)* **DEPRECATED (remove in 0.18.0)** — Drop the FBX's handoff block from a converted glTF's node extras --
+  - `MeshConvert.build_fbx_handoff(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]` *(class)* **DEPRECATED (remove in 0.18.0)** — The FBX's handoff block for a carrier holding *channels*, or ``{}``
+  - `MeshConvert.apply_scene_sidecar(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]` *(class)* **DEPRECATED (remove in 0.18.0)** — Apply a scene-sidecar envelope's sections to a GLB and embed it.
+  - `MeshConvert.embed_glb_handoff(cls, edit: 'GlbEdit', handoff: Mapping[str, Any]) -> None` *(class)* — Write *handoff* (``HandoffRecord.block("glb", ...)``) as the open GLB's
+  - `MeshConvert.embed_scene_sidecar(cls, edit: 'GlbEdit', sidecar: Dict[str, Any], summary: Mapping[str, str], *, described: Iterable[str] = ()) -> None` *(class)* **DEPRECATED (remove in 0.18.0)** — Embed *sidecar* as the GLB's handoff block (:meth:`embed_glb_handoff`):
+  - `MeshConvert.sidecar_foreign_packings(cls, sidecar: Optional[Dict[str, Any]], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]` *(class)* **DEPRECATED (remove in 0.18.0)** — ``{path: map type}`` for envelope textures authored for another engine.
+  - `MeshConvert.read_glb_handoff(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The handoff block a GLB carries (``extras.handoff``), or ``None``.
+  - `MeshConvert.read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* **DEPRECATED (remove in 0.18.0)** — The handoff block a GLB carries (:meth:`read_glb_handoff`).
+  - `MeshConvert.verify_glb(cls, glb: GlbTarget) -> Dict[str, Any]` *(class)* — Check a delivered GLB against what it says of itself.
   - `MeshConvert.data_export_channel(cls, gltf: dict, key: str) -> Optional[Any]` *(class)* — Decoded value of one ``data_export`` channel in a parsed glTF, or ``None``.
   - `MeshConvert.overlay_data_export(cls, gltf: dict, channels: Dict[str, Any]) -> List[str]` *(class)* — Replace ``data_export`` channels in a parsed glTF, ahead of every reader.
-  - `MeshConvert.without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]` *(class)* — Copy of a ``data_export`` snapshot with build-time locate hints removed.
-  - `MeshConvert.read_glb_lightmap_manifest(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The ``lightmap_metadata`` manifest riding a GLB's node extras, or ``None``.
-  - `MeshConvert.fix_glb_lightmap_metadata(cls, glb: GlbTarget) -> int` *(class)* — Make every lightmap copy inside a GLB say what the GLB ships.
+  - `MeshConvert.lightmaps_block(cls, materials: Dict[str, float], carrier: str = 'occlusion', probe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]` *(class)* — The ``lightmaps`` block a GLB carries (``SceneRecords.LIGHTMAPS.glb``),
+  - `MeshConvert.without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]` *(class)* **DEPRECATED (remove in 0.18.0)** — *data_export* as given: the folder hints this removed went with
+  - `MeshConvert.read_glb_lightmap_manifest(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* **DEPRECATED (remove in 0.18.0)** — The ``lightmaps`` record riding a GLB's carrier node, or ``None`` --
+  - `MeshConvert.fix_glb_lightmap_metadata(cls, glb: GlbTarget) -> int` *(class)* **DEPRECATED (remove in 0.18.0)** — Leave a GLB its one statement of its lightmaps: ``extras.lightmaps``.
   - `MeshConvert.lightmap_manifest_coverage(cls, glb: GlbTarget) -> Dict[str, List[str]]` *(class)* — Split a GLB's bake manifest by whether this GLB actually carries each object.
   - `MeshConvert.lightmap_report(coverage: Dict[str, List[str]], bound: Sequence[Dict[str, Any]]) -> Dict[str, Any]` *(static)* — ``{"expected", "bound", "unbound", "out_of_scope"}`` for one bind.
-  - `MeshConvert.embed_glb_lightmap_probe(cls, glb: GlbTarget, probe: Dict[str, Any], search_dirs: Sequence[str], hdr_codec: Any = None) -> Optional[Dict[str, Any]]` *(class)* — Embed a bake's reflection probe in a GLB that ships its lightmaps;
+  - `MeshConvert.embed_glb_lightmap_probe(cls, glb: GlbTarget, probe: Optional[Dict[str, Any]], search_dirs: Sequence[str], hdr_codec: Any = None) -> Optional[Dict[str, Any]]` *(class)* — Embed a bake's reflection probe in a GLB that ships its lightmaps;
   - `MeshConvert.strip_glb_baked_lights(cls, glb: GlbTarget) -> List[str]` *(class)* — Drop every ``KHR_lights_punctual`` light from a lightmapped GLB.
   - `MeshConvert.apply_glb_lightmaps(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True, hdr_codec: Any = None) -> List[Dict[str, Any]]` *(class)* — Wire a host DCC's committed lightmaps into a GLB for the web viewer.
   - `MeshConvert.highlight_probe_layers(cls, glb, lights: Optional[Sequence[Dict[str, Any]]], probe: Optional[Dict[str, Any]] = None, width: Optional[int] = None, baked: Optional[Sequence[str]] = None, eye: Optional[Sequence[float]] = None) -> List[Dict[str, Any]]` *(class)* — The probe's highlight copies: for each receiver group, the lights it is shown.
-  - `MeshConvert.lights_in_metres(cls, lights: Optional[Sequence[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]` *(class)* — The bake's lights in metres and the viewer's units, or ``None``.
+  - `MeshConvert.lights_in_metres(cls, lights: Optional[Sequence[Dict[str, Any]]], unit_scale: Optional[float] = None) -> Optional[List[Dict[str, Any]]]` *(class)* — The bake's lights in metres and the viewer's units, or ``None``.
   - `MeshConvert.embed_fbx_highlight_probes(cls, fbx: str, glb: Optional[str] = None, *, search_dirs: Sequence[str] = (), hdr_codec: Any = None, logger: Optional[logging.Logger] = None) -> List[str]` *(class)* — Give an FBX deliverable's probe the highlight copies its GLB ships.
   - `MeshConvert.apply_glb_shadows(cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()) -> Optional[Dict[str, Any]]` *(class)* — Bind a scene's shadow-rig maps into a GLB;
-  - `MeshConvert.apply_glb_articulation(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Publish ``extras.articulation_web``: the scene's articulated rigs,
+  - `MeshConvert.apply_glb_articulation(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Publish ``extras.articulation``: the scene's articulated rigs,
   - `MeshConvert.apply_glb_clips(cls, glb: GlbTarget, *, mode: str = 'both') -> Optional[Dict[str, Any]]` *(class)* — Rebuild the declared shot clips as exact slices of the whole timeline.
   - `MeshConvert.clip_spans(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None, key_spans: Optional[Callable[[List[Tuple[Optional[float], Optional[float]]]], Sequence[Optional[Sequence[float]]]]] = None) -> Dict[str, List[float]]` *(class)* — Per take, the first and last authored frame inside its window.
   - `MeshConvert.prune_glb_animations(cls, glb: GlbTarget) -> List[str]` *(class)* — Drop every animation that carries no channels or no samplers.
   - `MeshConvert.compact_glb_animations(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Collapse every animation channel that never moves to two keys.
   - `MeshConvert.reduce_glb_animations(cls, glb: GlbTarget, tolerance: float, rotation_tolerance: Optional[float] = None) -> Dict[str, int]` *(class)* — Drop the keys a GLB's samplers do not need to reproduce their motion.
-  - `MeshConvert.apply_glb_animations(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Publish the GLB's clips as ``extras.animation_web``, joined to the shots.
+  - `MeshConvert.apply_glb_animations(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Publish ``extras.animation``: the FBX's shots, inherited whole, and
   - `MeshConvert.effect_preview_channels(cls, nodes: Sequence[str], channel: str, keys: Sequence[Sequence[float]], colors: Optional[Sequence[Optional[Sequence[float]]]] = None, fps: float = 30.0) -> Dict[str, Any]` *(class)* — The :meth:`overlay_data_export` channels that preview ONE render effect.
   - `MeshConvert.apply_glb_visibility(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Realize keyed visibility as STEP ``scale`` channels the file can play.
-  - `MeshConvert.build_visibility_tracks(cls, tracks: Sequence[Dict[str, Any]], fps: Optional[float] = None, clip_spans: Optional[Dict[str, List[float]]] = None) -> Optional[Dict[str, Any]]` *(class)* — Wrap *tracks* in the versioned ``visibility_tracks`` envelope.
+  - `MeshConvert.build_visibility_tracks(cls, tracks: Sequence[Dict[str, Any]], fps: Optional[float] = None, clip_spans: Optional[Dict[str, List[float]]] = None) -> Optional[Dict[str, Any]]` *(class)* — Wrap *tracks* in the versioned ``render_effects`` envelope.
   - `MeshConvert.apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Realize authored opacity ramps as animated material alpha.
+  - `MeshConvert.fbx_materials(cls, fbx: FbxSource, *, logger: Optional[logging.Logger] = None) -> Dict[str, Any]` *(class)* — The ``materials`` record for *fbx*: every material it carries.
+  - `MeshConvert.read_fbx_materials(cls, fbx: FbxSource, *, logger: Optional[logging.Logger] = None) -> Dict[str, Any]` *(class)* — *fbx*'s own materials read into the record, whatever it carries.
+  - `MeshConvert.apply_glb_materials(cls, glb: GlbTarget, record: Optional[Mapping[str, Any]], textures: Optional[Mapping[str, str]] = None) -> List[Dict[str, Any]]` *(class)* — Set each GLB material *record* states to exactly what it states.
   - `MeshConvert.check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
   - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb: GlbTarget) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
   - `MeshConvert.set_glb_metallic_roughness(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
@@ -3008,13 +3143,13 @@ FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
 
 Deliverable verification for exported FBX / GLB pairs.
 
-- **[`class Finding`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L40)** — One verification outcome row.
-- **[`class VerificationReport`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L49)** — Every finding from one :meth:`ExportVerifier.run`.
+- **[`class Finding`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L43)** — One verification outcome row.
+- **[`class VerificationReport`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L52)** — Every finding from one :meth:`ExportVerifier.run`.
   - `VerificationReport.ok(self) -> bool` *(property)* — True when no finding FAILed (WARN and SKIP do not fail a report).
   - `VerificationReport.counts(self) -> Dict[str, int]`
   - `VerificationReport.summary(self) -> str` — Human-readable table plus a one-line verdict.
   - `VerificationReport.to_json(self) -> str`
-- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L195)** — Run file-level gates over an exported GLB and/or FBX.
+- **[`class ExportVerifier(_ExportVerifierInternal)`](pythontk/pythontk/file_utils/mesh_convert/export_verify.py#L201)** — Run file-level gates over an exported GLB and/or FBX.
   - `ExportVerifier.reader(self) -> Optional[GlbReader]` *(property)*
   - `ExportVerifier.fbx(self) -> Optional[FbxFile]` *(property)* — The FBX, parsed once: no gate reads its embedded media, and the take
   - `ExportVerifier.gate_names(self) -> List[str]` — Every registered gate, in run order.
@@ -3026,11 +3161,13 @@ Deliverable verification for exported FBX / GLB pairs.
   - `ExportVerifier.check_glb_skin_weights(self) -> List[Finding]` — Every skinned mesh carries the weights its FBX clusters hold.
   - `ExportVerifier.check_glb_skins(self) -> List[Finding]` — Referenced skins need inverseBindMatrices and a real skeleton root.
   - `ExportVerifier.check_glb_animation_integrity(self) -> List[Finding]` — Channels resolve to real nodes/samplers;
-  - `ExportVerifier.check_glb_envelope(self) -> List[Finding]` — Delegate to :meth:`MeshConvert.verify_glb` when an envelope rides.
+  - `ExportVerifier.check_glb_handoff(self) -> List[Finding]` — Delegate to :meth:`MeshConvert.verify_glb` when a handoff rides.
+  - `ExportVerifier.check_glb_envelope(self) -> List[Finding]` **DEPRECATED (remove in 0.18.0)** — Retired 2026-10-20 (removed in 0.18.0): :meth:`check_glb_handoff`.
   - `ExportVerifier.check_clips_vs_takes(self) -> List[Finding]` — Each GLB clip's length matches its declared take (±1 frame).
   - `ExportVerifier.check_clip_origin(self) -> List[Finding]` — The stack is as long as the span its clips were cut against.
   - `ExportVerifier.check_fbx_container(self) -> List[Finding]` — The FBX parses;
   - `ExportVerifier.check_fbx_dependencies(self) -> List[Finding]` — Every file the FBX's records name by file name is inside it.
+  - `ExportVerifier.check_fbx_records(self) -> List[Finding]` — Every record the FBX carries is one the standard declares, in the
   - `ExportVerifier.check_fbx_takes(self) -> List[Finding]` — Declared sidecar takes all exist as AnimationStacks.
   - `ExportVerifier.check_fbx_take_channels(self) -> List[Finding]` — Every declared take is an exact slice of the animation: it animates
   - `ExportVerifier.check_cross_clips(self) -> List[Finding]` — GLB clip names exist as FBX stacks (the conversion kept them).
@@ -3050,7 +3187,9 @@ Zero-dependency binary-FBX reader: header, node records, objects, takes.
   - `FbxFile.objects_census(self) -> Dict[str, int]` — ``{record name: count}`` over the Objects section.
   - `FbxFile.object_names(self, kind: str) -> List[str]` — Display names of every Objects child whose record name is *kind*.
   - `FbxFile.take_names(self) -> List[str]` — Animation take names — the ``AnimationStack`` display names.
+  - `FbxFile.materials(self) -> List[Dict[str, Any]]` — Every ``Material`` as written: name, shading model, properties and
   - `FbxFile.user_properties(self, name: str, kind: str = 'Model', named: bool = False) -> List[Any]` — Every value a *kind* object carries for the user property *name*.
+  - `FbxFile.user_property_items(self, kind: str = 'Model') -> List[Tuple[str, str, Any]]` — ``(object name, property name, value)`` for every user property (a
   - `FbxFile.take_curves(self) -> Dict[str, Dict[Tuple[str, str, str], Tuple[Any, ...]]]` — What each take animates: ``{take: {(target, property, channel):
   - `FbxFile.take_spans(self) -> Dict[str, Tuple[float, float]]` — Each take's ``(first, last)`` key in SECONDS, over every curve in it.
   - `FbxFile.take_keys(self, properties: Collection[str] = (), user: bool = False, kind: str = 'Model') -> Dict[str, Dict[Tuple[str, str, str], List[List[Any]]]]` — Every key of the chosen channels, take by take.
@@ -3062,21 +3201,24 @@ Zero-dependency binary-FBX reader: header, node records, objects, takes.
 
 Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 
-- **[`class FbxMedia(_FbxMediaInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_media.py#L1270)** — Read and rewrite the media a binary FBX embeds.
+- **[`class FbxMedia(_FbxMediaInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_media.py#L1282)** — Read and rewrite the media a binary FBX embeds.
   - `FbxMedia.embedded(cls, path: str) -> List[Dict[str, Any]]` *(class)* — Every embedded image: ``{"name", "format", "size", "bytes"}``.
   - `FbxMedia.downsize(cls, src: str, dst: Optional[str] = None, *, max_size: int, exempt: Iterable[str] = (), png_compress_level: int = 1, jpeg_quality: int = 90, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Resize every embedded PNG/JPEG whose longest edge exceeds *max_size*.
   - `FbxMedia.expand_grayscale(cls, src: str, dst: Optional[str] = None, *, png_compress_level: int = 1, jpeg_quality: int = 95, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Re-encode every embedded grayscale PNG/JPEG with colour channels.
   - `FbxMedia.reader_records(cls, channels: Iterable[Tuple[Optional[str], str, Any]], nodes: Optional[Iterable[str]] = None) -> Dict[str, Any]` *(class)* — Each scene record as a reader of the file applies it.
   - `FbxMedia.named_files(cls, payloads: Mapping[str, Iterable[Any]]) -> List[str]` *(class)* — The file names decoded scene records name (:attr:`DEPENDENCY_FIELDS`).
   - `FbxMedia.dependencies(cls, path: str) -> List[str]` *(class)* — The file names the FBX's scene records name (:attr:`DEPENDENCY_FIELDS`).
-  - `FbxMedia.audio_events(cls, path: str) -> List[str]` *(class)* — The tracks the FBX's ``audio_manifest`` events play, by event name.
+  - `FbxMedia.audio_events(cls, path: str) -> List[str]` *(class)* — The tracks the FBX's ``audio`` events play, by event name.
   - `FbxMedia.embed(cls, src: str, dst: Optional[str] = None, *, files: Iterable[Any]) -> Dict[str, Any]` *(class)* — Embed each of *files* in the FBX as media no material uses.
   - `FbxMedia.record(cls, path: str, key: str) -> Optional[Any]` *(class)* — The scene record *key* the FBX carries, as a reader applies it.
+  - `FbxMedia.records(cls, path: str, keys: Optional[Iterable[str]] = None) -> Dict[str, Any]` *(class)* — Every scene record the FBX carries, as a reader applies it
   - `FbxMedia.set_record(cls, src: str, key: str, payload: Any, dst: Optional[str] = None, *, files: Iterable[Any] = ()) -> Dict[str, Any]` *(class)* — Replace the scene record *key* the FBX carries, embedding *files* in the same write.
   - `FbxMedia.split_pivot_instances(cls, src: str, dst: Optional[str] = None, *, tolerance: float = 0.001) -> Dict[str, Any]` *(class)* — Give each pivot set among a geometry's instances a geometry of its own.
+  - `FbxMedia.drop_redundant_properties(cls, src: str, markers: Iterable[str] = (), dst: Optional[str] = None) -> Dict[str, int]` *(class)* — Remove the user properties a delivered FBX carries that state
   - `FbxMedia.drop_host_lighting_media(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]` *(class)* — Remove the textures only :attr:`HOST_LIGHTING_SLOTS` sample, with their media.
   - `FbxMedia.embed_dependencies(cls, src: str, dst: Optional[str] = None, *, search_dirs: Sequence[str] = (), walk_root: str = '', files: Iterable[Any] = (), logger: Any = None) -> Dict[str, Any]` *(class)* — Embed every file the FBX's scene records name, so nothing ships beside it.
   - `FbxMedia.extract_dependencies(cls, src: str, dst_dir: str) -> Dict[str, str]` *(class)* — Write each file the FBX's records name AND embeds into *dst_dir*.
+  - `FbxMedia.extract(cls, src: str, dst_dir: str, names: Optional[Iterable[str]] = None) -> Dict[str, str]` *(class)* — Write each of *names* the FBX embeds into *dst_dir*, byte for byte.
   - `FbxMedia.drop_takes(cls, src: str, dst: Optional[str] = None, *, names: Optional[Iterable[str]] = None) -> Dict[str, Any]` *(class)* — Remove the named animation takes, and everything only they own.
   - `FbxMedia.merge_takes(cls, src: str, dst: Optional[str] = None, *, takes: Optional[Iterable[str]] = None, name: Optional[str] = MERGED_TAKE, tolerance: float = 0.0001, keep: Iterable[str] = ()) -> Dict[str, Any]` *(class)* — Rewrite the file's animation as ONE take: the union of *takes*.
   - `FbxMedia.drop_apparatus(cls, src: str, dst: Optional[str] = None, *, section: Mapping[str, str], separator: str = '|') -> Dict[str, Any]` *(class)* — Remove the rig apparatus *section* names, and everything only it owns.
@@ -3095,7 +3237,7 @@ Rebuild a GLB's shot clips from its one whole-timeline animation.
 
 The GLB container every ``mesh_convert`` pass edits: :class:`GlbEdit`.
 
-- **[`class GlbEdit`](pythontk/pythontk/file_utils/mesh_convert/glb/edit.py#L31)** — A GLB parsed once and held open: read the JSON, edit, write once.
+- **[`class GlbEdit`](pythontk/pythontk/file_utils/mesh_convert/glb/edit.py#L32)** — A GLB parsed once and held open: read the JSON, edit, write once.
   - `GlbEdit.rest(self) -> bytes` *(property)* — Every byte after the JSON chunk, read on first use and cached.
   - `GlbEdit.replace_rest(self, new_bin: bytes) -> None` — Swap the BIN chunk's payload for *new_bin* (repack support).
   - `GlbEdit.bin_data(self) -> Optional[memoryview]` *(property)* — The BIN chunk's payload as a read-only view, or ``None``.
@@ -3118,6 +3260,7 @@ The GLB container every ``mesh_convert`` pass edits: :class:`GlbEdit`.
   - `GlbEdit.compact_bin(edit: 'GlbEdit') -> int` *(static)* — Reclaim every bufferView nothing references, and repack the BIN.
   - `GlbEdit.relocate_embedded_images(cls, edit: 'GlbEdit') -> int` *(class)* — Move this session's embedded images from the JSON chunk into the BIN.
   - `GlbEdit.bin_view(gltf: Dict[str, Any], accessor: Dict[str, Any]) -> Optional[dict]` *(static)* — The bufferView *accessor* reads, when its bytes are this GLB's BIN.
+  - `GlbEdit.extras_of(owner: Any) -> Mapping` *(static)* — The ``extras`` object of *owner* -- a glTF object, or a block of
   - `GlbEdit.accessor_elements(cls, edit: 'GlbEdit', index: int) -> Optional[List[bytes]]` *(class)* — One accessor's elements as raw byte strings, or None if unreadable.
   - `GlbEdit.map_accessor_refs(cls, gltf: Dict[str, Any], visit) -> None` *(class)* — Apply *visit* to every CORE accessor reference in *gltf*.
   - `GlbEdit.referenced_accessors(cls, gltf: Dict[str, Any]) -> set` *(class)* — Every accessor index the file still reads, from the core sites.
@@ -3158,10 +3301,10 @@ Reduce a GLB's animation keys to what its interpolation needs.
 
 FBX -> GLB: the one build every GLB deliverable goes through.
 
-- **[`class GlbPipeline(LoggingMixin)`](pythontk/pythontk/file_utils/mesh_convert/glb/pipeline.py#L65)** — FBX -> GLB, with every deliverable's passes, for every deliverable.
-  - `GlbPipeline.envelope(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Dict[str, Dict[str, Any]]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* — The scene-sidecar envelope a build applies, from a host's reader.
+- **[`class GlbPipeline(LoggingMixin)`](pythontk/pythontk/file_utils/mesh_convert/glb/pipeline.py#L66)** — FBX -> GLB, with every deliverable's passes, for every deliverable.
+  - `GlbPipeline.envelope(cls, read_sections: Callable[[], Optional[Dict[str, Any]]], *, source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Dict[str, Dict[str, Any]]] = None, logger: Any = None) -> Dict[str, Any]` *(class)* **DEPRECATED (remove in 0.18.0)** — The scene-sidecar envelope a build applies, from a host's reader.
   - `GlbPipeline.publishes_as_authored(source: str) -> bool` *(static)* — Whether :meth:`build` publishes *source* unchanged: a finished GLB
-  - `GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None, hdr_codec: Any = None) -> Dict[str, Any]` *(class)* — Build the GLB for *src* and report what each stage did.
+  - `GlbPipeline.build(cls, src: str, dst: Optional[str] = None, *, sidecar: Optional[Dict[str, Any]] = None, rendering: Optional[Dict[str, Dict[str, Any]]] = None, data_export: Optional[Dict[str, Any]] = None, lightmap_dirs: Sequence[str] = (), shadow_dirs: Sequence[str] = (), texture_params: Optional[Dict[str, Any]] = None, clip_mode: str = 'both', key_tolerance: Optional[float] = None, downsize: bool = True, scratch_path: Optional[Callable[[str], str]] = None, release_source: Optional[Callable[[str], Any]] = None, progress: Optional[Callable[[str], Any]] = None, logger: Any = None, hdr_codec: Any = None) -> Dict[str, Any]` *(class)* — Build the GLB for *src* and report what each stage did.
 
 <a id="file_utils--mesh_convert--glb--reader"></a>
 ### `file_utils/mesh_convert/glb/reader.py`
@@ -3206,6 +3349,14 @@ Repair a GLB's shipped tangents against the UVs they describe.
 - **[`class GlbTangents(_GlbTangentsInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb/tangents.py#L251)** — Repair for the ``TANGENT`` attributes a GLB ships.
   - `GlbTangents.repair(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Point every shipped tangent the way its UVs run, and give a
 
+<a id="file_utils--mesh_convert--render_effects_record"></a>
+### `file_utils/mesh_convert/render_effects_record.py`
+
+The ``render_effects`` record's payload, declared once.
+
+- **[`class RenderEffectsTrack(SchemaSpec)`](pythontk/pythontk/file_utils/mesh_convert/render_effects_record.py#L29)** — One node's tracks: its presence and the effect ramps it carries.
+- **[`class RenderEffectsRecord(SchemaSpec)`](pythontk/pythontk/file_utils/mesh_convert/render_effects_record.py#L59)** — The ``render_effects`` record's payload: the keyed visibility and the
+
 <a id="file_utils--mesh_ops"></a>
 ### `file_utils/mesh_ops.py`
 
@@ -3235,6 +3386,25 @@ File-level mesh processing via PyMeshLab (optional dependency).
 - **[`class Metadata(MetadataInternal)`](pythontk/pythontk/file_utils/metadata.py#L464)** — Public interface for metadata operations.
   - `Metadata.get(cls, file_path: Any, *keys: str, mode: str = 'metadata') -> Any` *(class)* — Unified get method for metadata and tags.
   - `Metadata.set(cls, file_path: Any, mode: str = 'metadata', **kwargs) -> None` *(class)* — Unified set method for metadata and tags.
+
+<a id="file_utils--pending_files"></a>
+### `file_utils/pending_files.py`
+
+Files written for the open scene, held out of their folders until it is saved.
+
+- **[`class PendingFiles(LoggingMixin)`](pythontk/pythontk/file_utils/pending_files.py#L13)** — The files a tool wrote for the open scene, kept where the scene file on
+  - `PendingFiles.session(cls) -> 'PendingFiles'` *(class)* — The process's ledger, for its open scene.
+  - `PendingFiles.folder(self, home: str) -> str` — The session folder standing in for the folder *home* -- made on
+  - `PendingFiles.stage(self, path: str) -> str` — Where to write the file *path* names: its name, in the session
+  - `PendingFiles.holds(self, path: str) -> bool` — Whether *path* is a session folder or a file in one.
+  - `PendingFiles.home(self, path: str) -> str` — Where a session folder, or a file in one, belongs: the folder it
+  - `PendingFiles.staged(self) -> List[str]` — Every file in the session folders, sorted.
+  - `PendingFiles.retire(self, paths: Iterable[str]) -> None` — Hold *paths* -- home files a write superseded -- for the save to
+  - `PendingFiles.take_retiring(self) -> List[str]` — The files :meth:`retire` held, handed over once.
+  - `PendingFiles.on_save(self, key: str, hook: Callable[[str, bool], None]) -> None` — Run *hook(target, fork)* at every save of the open scene, before
+  - `PendingFiles.saving(self, target: str, saved_from: str = '') -> None` — The open scene is about to be written to *target*: each tool's
+  - `PendingFiles.commit(self, keep: Iterable[str], rename: Optional[Callable[[str], str]] = None) -> Dict[str, str]` — Move each session file in *keep* home -- a hook's half of
+  - `PendingFiles.discard(self) -> None` — Drop every staged file and retirement: the scene they were for is
 
 <a id="file_utils--scene_notes"></a>
 ### `file_utils/scene_notes.py`
@@ -3470,17 +3640,22 @@ An articulated rig's PLAN -- what a DCC builds, edited as plain data.
 <a id="geo_utils--articulation--record"></a>
 ### `geo_utils/articulation/record.py`
 
-The ``articulation`` record's payload and its web projection, declared once.
+The ``articulation`` record's payload and its GLB block, declared once.
 
-- **[`class ArticulationChannel(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L33)** — One channel a joint turns or slides on, with its limits.
-- **[`class ArticulationJoint(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L60)** — One joint: its node, its rest frame in its parent's space, its channels.
-- **[`class ArticulationGrab(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L99)** — A part a hand grabs, and the joint it rides.
-- **[`class ArticulationRig(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L112)** — One rig: its joints, parents first, and the parts a hand grabs.
-- **[`class ArticulationRecord(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L133)** — The ``articulation`` record's payload: every articulated rig in the scene.
-- **[`class ArticulationWebJoint(ArticulationJoint)`](pythontk/pythontk/geo_utils/articulation/record.py#L152)** — A joint bound to the one glTF node carrying its name.
-- **[`class ArticulationWebGrab(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L159)** — A grabbed part bound to its glTF node.
-- **[`class ArticulationWebRig(ArticulationRig)`](pythontk/pythontk/geo_utils/articulation/record.py#L175)** — One rig bound to the file: its joints and grabbed parts carry node indices.
-- **[`class ArticulationWeb(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L193)** — The ``extras.articulation_web`` manifest: the record's rigs, bound to the file's glTF nodes.
+- **[`class ArticulationChannel(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L34)** — One channel a joint turns or slides on, with its limits.
+- **[`class ArticulationJointPose(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L61)** — A joint's rest frame in its parent's space and its channels, the same
+- **[`class ArticulationJoint(ArticulationJointPose)`](pythontk/pythontk/geo_utils/articulation/record.py#L97)** — One joint of the record: its pose, joined to its node by name.
+- **[`class ArticulationGrab(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L107)** — A part a hand grabs, and the joint it rides.
+- **[`class ArticulationRig(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L120)** — One rig: its joints, parents first, and the parts a hand grabs.
+- **[`class ArticulationRecord(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L141)** — The ``articulation`` record's payload: every articulated rig in the scene.
+- **[`class ArticulationBlockJoint(ArticulationJointPose)`](pythontk/pythontk/geo_utils/articulation/record.py#L160)** — A joint bound to the file: its pose, and the glTF node that carried
+- **[`class ArticulationBlockGrab(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L168)** — A grabbed part bound to its glTF node.
+- **[`class ArticulationBlockRig(ArticulationRig)`](pythontk/pythontk/geo_utils/articulation/record.py#L181)** — One rig bound to the file: its joints and grabbed parts carry node indices.
+- **[`class ArticulationBlock(SchemaSpec)`](pythontk/pythontk/geo_utils/articulation/record.py#L199)** — The ``extras.articulation`` block: the record's rigs, bound to the
+- **[`class ArticulationWeb(ArticulationBlock)`](pythontk/pythontk/geo_utils/articulation/record.py#L222)** **DEPRECATED (remove in 0.18.0)** — Retired 2026-10-20 (removed in 0.18.0): :class:`ArticulationBlock`.
+- **[`class ArticulationWebRig(ArticulationBlockRig)`](pythontk/pythontk/geo_utils/articulation/record.py#L227)** **DEPRECATED (remove in 0.18.0)** — Retired 2026-10-20 (removed in 0.18.0): :class:`ArticulationBlockRig`.
+- **[`class ArticulationWebJoint(ArticulationBlockJoint)`](pythontk/pythontk/geo_utils/articulation/record.py#L232)** **DEPRECATED (remove in 0.18.0)** — Retired 2026-10-20 (removed in 0.18.0): :class:`ArticulationBlockJoint`.
+- **[`class ArticulationWebGrab(ArticulationBlockGrab)`](pythontk/pythontk/geo_utils/articulation/record.py#L237)** **DEPRECATED (remove in 0.18.0)** — Retired 2026-10-20 (removed in 0.18.0): :class:`ArticulationBlockGrab`.
 
 <a id="geo_utils--plate_emitter"></a>
 ### `geo_utils/plate_emitter.py`
@@ -3552,13 +3727,13 @@ Rail-driven parametric surface — a general geometry primitive.
 
 Height-field shadow maps: a ground shadow that follows the light at runtime.
 
-- [`MAX16`](pythontk/pythontk/geo_utils/shadow_horizon.py#L64) — constant
-- [`DIST_SCALE`](pythontk/pythontk/geo_utils/shadow_horizon.py#L66) — constant
-- [`DIST_FAR`](pythontk/pythontk/geo_utils/shadow_horizon.py#L68) — constant
-- [`INTERIOR_SCALE`](pythontk/pythontk/geo_utils/shadow_horizon.py#L70) — constant
-- [`INTERIOR_FAR`](pythontk/pythontk/geo_utils/shadow_horizon.py#L73) — constant
-- [`INTERIOR_MARKER`](pythontk/pythontk/geo_utils/shadow_horizon.py#L77) — constant
-- **[`class HeightFieldMap(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_horizon.py#L80)** — A baked height-field shadow map and the frame it was baked in.
+- [`MAX16`](pythontk/pythontk/geo_utils/shadow_horizon.py#L65) — constant
+- [`DIST_SCALE`](pythontk/pythontk/geo_utils/shadow_horizon.py#L67) — constant
+- [`DIST_FAR`](pythontk/pythontk/geo_utils/shadow_horizon.py#L69) — constant
+- [`INTERIOR_SCALE`](pythontk/pythontk/geo_utils/shadow_horizon.py#L71) — constant
+- [`INTERIOR_FAR`](pythontk/pythontk/geo_utils/shadow_horizon.py#L74) — constant
+- [`INTERIOR_MARKER`](pythontk/pythontk/geo_utils/shadow_horizon.py#L78) — constant
+- **[`class HeightFieldMap(NamedTuple)`](pythontk/pythontk/geo_utils/shadow_horizon.py#L81)** — A baked height-field shadow map and the frame it was baked in.
   - `HeightFieldMap.levels(self) -> int` *(property)* — Pyramid levels above level 0: ``log2(S)`` (the top is one cell).
   - `HeightFieldMap.tiles(self) -> int` *(property)* — Tiles across the image: ``K`` spans, the aux tile, the pyramid.
   - `HeightFieldMap.pixel(self) -> Tuple[float, float]` *(property)* — A footprint pixel's extent along the two horizontal axes.
@@ -3569,9 +3744,9 @@ Height-field shadow maps: a ground shadow that follows the light at runtime.
   - `HeightFieldMap.from_rgba(cls, rgba: np.ndarray, *, size: int, spans: int, bounds: Sequence[float], ground: float, up: int, height_scale: float) -> 'HeightFieldMap'` *(class)* — A map decoded from the image :meth:`to_rgba` wrote (or a copy of
   - `HeightFieldMap.alpha(self, points, light=None, *, direction=None, source_size: float = 0.0, source_angle: float = 0.0, intensity: float = 1.0) -> np.ndarray` — Shadow alpha ``(N,)`` at frame *points* for one source -- the
   - `HeightFieldMap.disc(s) -> np.ndarray` *(static)* — The share of a disc source a straight edge hides when the disc's
-- **[`class ShadowHorizon`](pythontk/pythontk/geo_utils/shadow_horizon.py#L578)** — Bake, measure and lay out height-field shadow maps (module doc).
+- **[`class ShadowHorizon`](pythontk/pythontk/geo_utils/shadow_horizon.py#L561)** — Bake, measure and lay out height-field shadow maps (module doc).
   - `ShadowHorizon.shader_source(cls, language: str = 'glsl') -> str` *(class)* — The shared shadow evaluation, spelled for *language*.
-  - `ShadowHorizon.record(cls, *, texture: str, size: int, spans: int, levels: int, bounds: Sequence[float], height_scale: float, frame_a: Sequence[float], frame_b: Sequence[float], rect: Sequence[float]) -> Dict[str, object]` *(class)* — The ``horizon`` block of a ``shadow_metadata`` v2 plane record.
+  - `ShadowHorizon.record(cls, *, texture: str, size: int, spans: int, bounds: Sequence[float], height_scale: float, frame_a: Sequence[float], frame_b: Sequence[float], rect: Sequence[float]) -> Dict[str, object]` *(class)* — The ``horizon`` block of a ``shadows`` plane record
   - `ShadowHorizon.bake(cls, meshes, *, ground: float = 0.0, up: int = 1, size: int = DEFAULT_SIZE, spans: int = DEFAULT_SPANS, bounds=None, padding: float = DEFAULT_PADDING) -> HeightFieldMap` *(class)* — Bake the map of *meshes* in the map's frame.
   - `ShadowHorizon.measure(cls, hmap: HeightFieldMap, meshes, *, samples: int = 8, size: int = 256, seed: int = 0, max_stretch: Optional[float] = None, radius: Optional[float] = None, height: Optional[float] = None) -> Dict[str, float]` *(class)* — Compare :meth:`HeightFieldMap.alpha` with the exact projection at
   - `ShadowHorizon.bake_adaptive(cls, meshes, *, threshold: float = 0.05, max_size: int = 256, measure_samples: int = 6, **kwargs) -> Tuple[HeightFieldMap, Dict[str, float]]` *(class)* — Bake at :attr:`ADAPTIVE_SIZES` in turn until :meth:`measure`'s
@@ -3598,6 +3773,23 @@ Planar shadow projection — the geometry of a ground shadow, pure numpy, no DCC
 - **[`class ShadowConformance`](pythontk/pythontk/geo_utils/shadow_projection.py#L386)** — The golden cases every port of :meth:`ShadowProjection.model` is held to.
   - `ShadowConformance.case(cls, contact: Sequence[float], light: Optional[Sequence[float]] = None, *, direction: Optional[Sequence[float]] = None, ground: float = 0.0, radius: float = 0.5, height: float = 1.0, max_stretch: float = ShadowProjection.DEFAULT_MAX_STRETCH, canvas: Sequence[float] = CANVAS, name: str = '') -> Dict[str, Any]` *(class)* — One case: its inputs and what the reference makes of them.
   - `ShadowConformance.cases(cls, seed: int = 0, per_kind: int = 8) -> Dict[str, Any]` *(class)* — The conformance document: ``{"tolerance", "cases"}``.
+
+<a id="geo_utils--shadow_record"></a>
+### `geo_utils/shadow_record.py`
+
+The ``shadows`` record's payload and its GLB block, declared once.
+
+- [`RIG_TYPES`](pythontk/pythontk/geo_utils/shadow_record.py#L45) — constant
+- [`SOURCE_TYPES`](pythontk/pythontk/geo_utils/shadow_record.py#L47) — constant
+- **[`class ShadowPlaneAtlas(SchemaSpec)`](pythontk/pythontk/geo_utils/shadow_record.py#L61)** — Where a plane's silhouette sits in the shared silhouette atlas.
+- **[`class ShadowHorizonLayout(SchemaSpec)`](pythontk/pythontk/geo_utils/shadow_record.py#L78)** — A horizon map's layout: the footprint it covers and how its one image
+- **[`class ShadowPlaneHorizon(ShadowHorizonLayout)`](pythontk/pythontk/geo_utils/shadow_record.py#L120)** — A horizon plane's height-field shadow map, by file name, and where it
+- **[`class ShadowPlaneModel(SchemaSpec)`](pythontk/pythontk/geo_utils/shadow_record.py#L132)** — What a plane shows and how it is placed: its type, its source, and the
+- **[`class ShadowPlane(ShadowPlaneModel)`](pythontk/pythontk/geo_utils/shadow_record.py#L232)** — One shadow plane of the record, joined to its nodes and images by name.
+- **[`class ShadowRecord(SchemaSpec)`](pythontk/pythontk/geo_utils/shadow_record.py#L283)** — The ``shadows`` record's payload: the export's shadow planes, and the
+- **[`class ShadowBlockHorizon(ShadowHorizonLayout)`](pythontk/pythontk/geo_utils/shadow_record.py#L311)** — A horizon map bound to the file.
+- **[`class ShadowBlockPlane(ShadowPlaneModel)`](pythontk/pythontk/geo_utils/shadow_record.py#L325)** — A plane bound to the file: its node, its source and contact nodes, and
+- **[`class ShadowBlock(ShadowRecord)`](pythontk/pythontk/geo_utils/shadow_record.py#L362)** — The ``extras.shadows`` block of a GLB: the record's planes, each bound
 
 <a id="geo_utils--uv--budget"></a>
 ### `geo_utils/uv/budget.py`
@@ -4072,7 +4264,7 @@ Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 
 The hand-off bridge whose target is a live preview page.
 
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L33)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L32)** — Hand-off bridge whose target is a live preview page rather than an application.
   - `PreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Extra directories the lightmap pass resolves the manifest's EXRs against.
   - `PreviewBridge.hdr_codec(self) -> Any` — What the GLB build encodes the float images with: the lightmaps and
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
@@ -4081,7 +4273,8 @@ The hand-off bridge whose target is a live preview page.
   - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, glb_options: Optional[Dict[str, Any]] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, data_export: Optional[Dict[str, Any]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
   - `PreviewBridge.publish_file(self, path: Union[str, Path], open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Publish a GLB that already exists on disk, unchanged.
   - `PreviewBridge.preview_file(self, path: Union[str, Path], logger: Any = None) -> bool` — :meth:`publish_file` for a click: never raises, and says where it went.
-  - `PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line describing what the scene sidecar did.
+  - `PreviewBridge.materials_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* — One plain-text line: how the preview's materials were stated.
+  - `PreviewBridge.sidecar_summary(result: Optional[Dict[str, Any]]) -> str` *(static)* **DEPRECATED (remove in 0.18.0)** — One plain-text line describing what the scene sidecar did.
   - `PreviewBridge.lightmap_summary(cls, result: Optional[Dict[str, Any]]) -> str` *(class)* — One plain-text line on the lightmaps: bound, or how many came back unlit.
   - `PreviewBridge.timing_summary(cls, result: Optional[Dict[str, Any]]) -> str` *(class)* — One plain-text line on where a push's time went.
   - `PreviewBridge.share(self, provider: Optional[str] = None, alias: Union[str, os.PathLike, Callable[[Optional[str]], Any], bool, None] = None, alias_url: Optional[str] = None, on_step: Optional[Callable[[Any], Any]] = None, private: bool = False) -> Dict[str, Any]` — Give the live preview a link anyone can open -- view-only, and every
@@ -4089,7 +4282,7 @@ The hand-off bridge whose target is a live preview page.
   - `PreviewBridge.share_url(self) -> Optional[str]` *(property)* — The link to send while the preview is shared, else ``None``.
   - `PreviewBridge.ping_share(self, **options: Any) -> Dict[str, Any]` — Whether a guest can reach the share now: see
   - `PreviewBridge.stop(self) -> None` — Stop serving and release the port, ending any share.
-- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L643)** — Preview bridge whose source is a file on disk rather than a host selection.
+- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L700)** — Preview bridge whose source is a file on disk rather than a host selection.
   - `FilePreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Where to look for the EXRs a lightmap manifest names.
 
 <a id="net_utils--preview--deliverer"></a>
@@ -4097,7 +4290,7 @@ The hand-off bridge whose target is a live preview page.
 
 FBX -> GLB -> publish: the hand-off strategy behind every live preview.
 
-- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview/deliverer.py#L35)** — Hand-off strategy: build the GLB and publish it to the preview page.
+- **[`class PreviewDeliverer(Deliverer)`](pythontk/pythontk/net_utils/preview/deliverer.py#L34)** — Hand-off strategy: build the GLB and publish it to the preview page.
   - `PreviewDeliverer.ensure_server(self) -> PreviewServer` — The bridge's server, started, creating it on first use.
   - `PreviewDeliverer.publish(self, glb: Union[str, Path, Sequence[Union[str, Path]]], move: bool = False, open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, labels: Optional[Sequence[Optional[str]]] = None) -> Dict[str, Any]` — Put *glb* on the server and report what the viewer now sees.
   - `PreviewDeliverer.preflight(self, bridge, request: HandoffRequest) -> bool` — Resolve this push's GLB rows BEFORE the export is paid for.
@@ -4108,13 +4301,15 @@ FBX -> GLB -> publish: the hand-off strategy behind every live preview.
 
 Look capture: the real WebXR viewer, headless, for lighting work.
 
-- **[`class LookCapture`](pythontk/pythontk/net_utils/preview/look_capture.py#L58)** — A headless viewer session that relights a template and shoots frames.
+- **[`class LookCapture`](pythontk/pythontk/net_utils/preview/look_capture.py#L59)** — A headless viewer session that relights a template and shoots frames.
   - `LookCapture.available() -> bool` *(static)* — Whether Playwright is installed (the browser is checked on :meth:`start`).
-  - `LookCapture.manifest(self) -> Dict[str, Any]` *(property)* — The template's lightmap manifest (``extras.lightmap_web``): materials, probe.
+  - `LookCapture.manifest(self) -> Dict[str, Any]` *(property)* — The template's ``lightmaps`` block: materials, probe
+  - `LookCapture.maps(self) -> Dict[str, str]` *(property)* — ``{material name: image stem}``: the lightmap each lightmapped
+  - `LookCapture.bound_maps(gltf: Mapping[str, Any], block: Mapping[str, Any]) -> Dict[str, str]` *(static)* — ``{material name: image stem}`` for each material the ``lightmaps``
   - `LookCapture.start(self) -> 'LookCapture'` — Open the browser and load the template;
   - `LookCapture.stop(self) -> None` — Close the browser and the server (safe to call twice).
   - `LookCapture.idle(self, asleep: bool = True) -> None` — Stop the page's frame loop (or restart it).
-  - `LookCapture.payload(cls, bakes: Mapping[str, 'np.ndarray'], manifest: Mapping[str, Any], probe: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]` *(class)* — What a relight sends: each material's image, the images, the probe.
+  - `LookCapture.payload(cls, bakes: Mapping[str, 'np.ndarray'], manifest: Mapping[str, Any], probe: Optional[Mapping[str, Any]] = None, maps: Optional[Mapping[str, str]] = None) -> Dict[str, Any]` *(class)* — What a relight sends: each material's image, the images, the probe.
   - `LookCapture.decode(shot: str) -> 'np.ndarray'` *(static)* — A shot's return value as an array: ``png`` -> uint8 RGB, ``f16`` -> float32 linear RGB.
   - `LookCapture.relight(self, bakes: Mapping[str, 'np.ndarray'], emissive: Optional[Mapping[str, Any]] = None, probe: Optional[Mapping[str, Any]] = None, lights: Optional[Any] = None) -> int` — Swap *bakes* in (see :meth:`payload`, and its *probe*);
   - `LookCapture.shoot(self, mode: str = 'lit', camera: Optional[Mapping[str, Any]] = None, black: Sequence[str] = (), scale: float = 1.0, uncap: Sequence[str] = ()) -> 'np.ndarray'` — One frame: ``lit`` (uint8 RGB, as the screen shows it) or ``linear`` (float32 light).
@@ -4392,7 +4587,7 @@ Portable hotkey-token helpers shared by the ecosystem's macro managers.
   - `ReportDoc.items(self, items: Iterable[Any], tone: Optional[str] = None) -> 'ReportDoc'` — A bullet list;
   - `ReportDoc.extend(self, other: 'ReportDoc') -> 'ReportDoc'` — Append *other*'s blocks to this document.
   - `ReportDoc.color(cls, tone: Optional[str]) -> Optional[str]` *(class)* — The CSS colour for *tone* (a :attr:`TONES` key, else used verbatim).
-  - `ReportDoc.span(cls, text: Any, tone: Optional[str] = None, bold: bool = False) -> Inline` *(class)* — *text* in a tone and/or bold.
+  - `ReportDoc.span(cls, text: Any, tone: Optional[str] = None, bold: bool = False, italic: bool = False) -> Inline` *(class)* — *text* in a tone, bold and/or italic.
   - `ReportDoc.link(cls, text: Any, href: str, tone: Optional[str] = 'link') -> Inline` *(class)* — *text* linked to *href* (any scheme;
   - `ReportDoc.action(cls, text: Any, verb: str, /, **params: Any) -> Inline` *(class)* — An ``action://VERB?k=v`` link -- the host dispatches the verb.
   - `ReportDoc.file(cls, path: str, text: Optional[Any] = None) -> Inline` *(class)* — A ``file:`` link to *path*, shown as *text* (default: the path).

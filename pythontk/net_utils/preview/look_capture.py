@@ -52,6 +52,7 @@ from pythontk.core_utils.engines.lighting.light_layers import (
     LightMix,
 )
 from pythontk.core_utils.engines.lighting.light_predictor import LightPredictor
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.glb.reader import GlbReader
 
 
@@ -91,6 +92,7 @@ class LookCapture:
         self.software = software
         self.timeout = float(timeout)
         self._manifest: Optional[Dict[str, Any]] = None
+        self._maps: Optional[Dict[str, str]] = None
         #: The template's own probe as a payload carries it (:meth:`_file_probe`).
         self._probe_payload: Optional[Dict[str, Any]] = None
         self._server = self._playwright = self._browser = self._page = None
@@ -104,18 +106,71 @@ class LookCapture:
 
     @property
     def manifest(self) -> Dict[str, Any]:
-        """The template's lightmap manifest (``extras.lightmap_web``): materials, probe.
-
-        Read where the viewer and the highlight pass read it
-        (``MeshConvert._lightmap_web_manifest``): the first scene's extras --
-        a native export's, as a JSON string -- then the root's.
-        """
+        """The template's ``lightmaps`` block: materials, probe
+        (``SceneRecords.glb_block``)."""
         if self._manifest is None:
-            from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-
             gltf = GlbReader.load(self.template).gltf
-            self._manifest = MeshConvert._lightmap_web_manifest(gltf) or {}
+            self._manifest = SceneRecords.glb_block(gltf, SceneRecords.LIGHTMAPS) or {}
         return self._manifest
+
+    @property
+    def maps(self) -> Dict[str, str]:
+        """``{material name: image stem}``: the lightmap each lightmapped
+        material of the template binds (:meth:`bound_maps`) -- what a relight
+        swaps."""
+        if self._maps is None:
+            gltf = GlbReader.load(self.template).gltf
+            self._maps = self.bound_maps(gltf, self.manifest)
+        return self._maps
+
+    @staticmethod
+    def bound_maps(gltf: Mapping[str, Any], block: Mapping[str, Any]) -> Dict[str, str]:
+        """``{material name: image stem}`` for each material the ``lightmaps``
+        *block* names: the image its texture in the block's carrier slot
+        (``carrier``: ``occlusionTexture``, or ``emissiveTexture``) samples --
+        its ``source``, or an image extension's -- by name or file name, the
+        extension dropped: the stem a bake's atlas is matched by. A block
+        names no map: a material's is the texture it binds. A material binding
+        no image is left out."""
+        block = block if isinstance(block, Mapping) else {}
+        slot = (
+            "emissiveTexture"
+            if block.get("carrier") == "emissive"
+            else "occlusionTexture"
+        )
+        named = (
+            block.get("materials")
+            if isinstance(block.get("materials"), Mapping)
+            else {}
+        )
+        textures = gltf.get("textures") or []
+        images = gltf.get("images") or []
+        maps: Dict[str, str] = {}
+        for material in gltf.get("materials") or []:
+            name = material.get("name") if isinstance(material, Mapping) else None
+            ref = material.get(slot) if name in named else None
+            index = ref.get("index") if isinstance(ref, Mapping) else None
+            if not isinstance(index, int) or not 0 <= index < len(textures):
+                continue
+            texture = textures[index]
+            source = texture.get("source")
+            if not isinstance(source, int):
+                source = next(
+                    (
+                        ext["source"]
+                        for ext in (texture.get("extensions") or {}).values()
+                        if isinstance(ext, Mapping)
+                        and isinstance(ext.get("source"), int)
+                    ),
+                    None,
+                )
+            if not isinstance(source, int) or not 0 <= source < len(images):
+                continue
+            image = images[source]
+            label = image.get("name") or os.path.basename(str(image.get("uri") or ""))
+            if label and not label.startswith("data:"):
+                maps[name] = os.path.splitext(label)[0]
+        return maps
 
     def start(self) -> "LookCapture":
         """Open the browser and load the template; returns self."""
@@ -201,22 +256,24 @@ class LookCapture:
         bakes: Mapping[str, "np.ndarray"],
         manifest: Mapping[str, Any],
         probe: Optional[Mapping[str, Any]] = None,
+        maps: Optional[Mapping[str, str]] = None,
     ) -> Dict[str, Any]:
         """What a relight sends: each material's image, the images, the probe.
 
         Parameters:
             bakes: ``{file name: (height, width, 3) linear}`` -- atlases matched
                 to the template's images by name stem, the probe by ``_Probe``.
-            manifest: The template's lightmap manifest.
+            manifest: The template's ``lightmaps`` block (its probe).
             probe: ``{"position", "box"}`` overriding the manifest's placement
                 of the probe (a panorama taken elsewhere; ``"box": None``
                 reads it as distant).
+            maps: ``{material name: image stem}`` each lightmapped material
+                binds (:attr:`maps`, :meth:`bound_maps`); a material whose
+                stem no bake carries is left as it is.
         """
         stems = {os.path.splitext(name)[0]: image for name, image in bakes.items()}
         maps = {
-            material: os.path.splitext(entry["map"])[0]
-            for material, entry in (manifest.get("materials") or {}).items()
-            if os.path.splitext(entry.get("map", ""))[0] in stems
+            material: stem for material, stem in (maps or {}).items() if stem in stems
         }
         images = {}
         for stem in sorted(set(maps.values())):
@@ -279,7 +336,7 @@ class LookCapture:
                 swap's probe, or to the template's own when the swap has none;
                 ``None`` or empty: no highlights.
         """
-        payload = self.payload(bakes, self.manifest, probe)
+        payload = self.payload(bakes, self.manifest, probe, self.maps)
         payload["emissive"] = dict(emissive) if emissive else None
         payload["highlights"] = self._highlights(payload, lights) if lights else None
         return int(self._call("setLighting", payload))
@@ -305,7 +362,6 @@ class LookCapture:
         return [
             {
                 "materials": layer["materials"],
-                "receivers": layer["receivers"],
                 "width": int(layer["image"].shape[1]),
                 "height": int(layer["image"].shape[0]),
                 "b64": self._half_b64(layer["image"]),

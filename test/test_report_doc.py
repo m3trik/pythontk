@@ -52,6 +52,12 @@ class TestInline(unittest.TestCase):
         link = ReportDoc.action("copy", "copy", text="payload", verb="x")
         self.assertIn('href="action://copy?text=payload&amp;verb=x"', link.html)
 
+    def test_a_list_param_repeats_its_key(self):
+        """One link selects every reader of a map: a list is one ``node=`` per
+        item (the dispatchers read them all), never its ``str``."""
+        link = ReportDoc.action("2 objects", "select", node=["|a|b", "|c"])
+        self.assertIn("action://select?node=%7Ca%7Cb&amp;node=%7Cc", link.html)
+
     def test_action_url_is_the_log_links(self):
         from pythontk.core_utils.logging_mixin import LoggerExt
 

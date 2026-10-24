@@ -26,11 +26,14 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Union
 
+from pythontk.core_utils.deprecation import Deprecation
 from pythontk.core_utils.engines.scene_export.export_profile import ExportProfile
+from pythontk.core_utils.engines.scene_export.handoff_record import HandoffRecord
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
+from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit
 from pythontk.file_utils.mesh_convert.glb.reader import GlbReader
 
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
@@ -120,9 +123,8 @@ class _ExportVerifierInternal:
 
     @staticmethod
     def _declared_takes(sidecar: Optional[dict]) -> List[dict]:
-        """The takes the exporter declared: ``shot_metadata.takes`` (the shot
-        record carries them since the fold), else the legacy ``fbx_takes``
-        channel a sidecar written before it still holds."""
+        """The takes the exporter declared: each clip of the shots record
+        (``SceneRecords.SHOTS``), with its own range."""
         return SceneRecords.declared_takes(
             ((sidecar or {}).get("data_export") or {}).get
         )
@@ -144,7 +146,7 @@ class _ExportVerifierInternal:
     def _published_fps(sidecar: Optional[dict]) -> Optional[float]:
         """The scene's frame rate, as the exporter recorded it."""
         export = (sidecar or {}).get("data_export") or {}
-        for channel in ("shot_metadata", "visibility_tracks"):
+        for channel in (SceneRecords.SHOTS.key, SceneRecords.VISIBILITY.key):
             rate = (export.get(channel) or {}).get("fps")
             try:
                 if rate and float(rate) > 0:
@@ -162,7 +164,7 @@ class _ExportVerifierInternal:
         silently failed leaves.
         """
         export = (sidecar or {}).get("data_export") or {}
-        meta = export.get(MeshConvert.SHOT_METADATA_KEY)
+        meta = export.get(SceneRecords.SHOTS.key)
         mode = (
             meta.get(MeshConvert.SHOT_CLIP_MODE_KEY) if isinstance(meta, dict) else None
         )
@@ -179,17 +181,21 @@ class _ExportVerifierInternal:
         return list(origin) if origin else None
 
     @staticmethod
-    def _cut_span(gltf: Optional[dict]) -> Optional[List[float]]:
-        """The whole-timeline ``clip_span`` entry the GLB carries: what its
-        clips were cut against -- measured from the FBX the conversion read
-        (``MeshConvert._stamp_clip_spans``), else the producer's as it rode
-        in. The same reader as :meth:`_published_span`."""
-        if not isinstance(gltf, dict):
-            return None
-        origin = MeshConvert._published_origin(
-            lambda key: MeshConvert.data_export_channel(gltf, key)
+    def _cut_origin(gltf: Optional[dict], clip: str) -> Optional[float]:
+        """The authoring frame *clip* was cut from -- its ``zero_frame`` in the
+        file's ``extras.animation`` block, measured from the FBX the
+        conversion read (``MeshConvert._stamp_clip_spans``) -- or ``None``
+        where the file states none. The one place a finished GLB states it."""
+        block = (
+            SceneRecords.glb_block(gltf, SceneRecords.SHOTS)
+            if isinstance(gltf, dict)
+            else None
         )
-        return list(origin) if origin else None
+        for entry in (block or {}).get("clips") or []:
+            if isinstance(entry, dict) and entry.get("name") == clip:
+                value = entry.get("zero_frame")
+                return float(value) if isinstance(value, (int, float)) else None
+        return None
 
 
 class ExportVerifier(_ExportVerifierInternal):
@@ -297,12 +303,16 @@ class ExportVerifier(_ExportVerifierInternal):
         """Every registered gate, in run order.
 
         Named gate_names, NOT check_*: the prefix discovery below
-        would otherwise pick the runner's own helper up as a gate.
+        would otherwise pick the runner's own helper up as a gate. A retired
+        gate (PEP 702 ``__deprecated__``) answers through its successor and
+        is no gate of its own.
         """
         return sorted(
             name
             for name in dir(self)
-            if name.startswith("check_") and callable(getattr(self, name))
+            if name.startswith("check_")
+            and callable(getattr(self, name))
+            and not getattr(getattr(type(self), name, None), "__deprecated__", None)
         )
 
     def run(self, checks: Optional[Sequence[str]] = None) -> VerificationReport:
@@ -343,7 +353,7 @@ class ExportVerifier(_ExportVerifierInternal):
         """``extensionsRequired`` must be a subset of ``extensionsUsed``.
 
         A PASS also names what is required -- a reader without it must refuse
-        the file -- which is why :meth:`check_glb_envelope` does not warn on it.
+        the file -- which is why :meth:`check_glb_handoff` does not warn on it.
         """
         if self.reader is None:
             return [Finding(SKIP, "glb_extensions", "no readable GLB")]
@@ -659,19 +669,20 @@ class ExportVerifier(_ExportVerifierInternal):
             )
         return rows
 
-    def check_glb_envelope(self) -> List[Finding]:
-        """Delegate to :meth:`MeshConvert.verify_glb` when an envelope rides.
+    def check_glb_handoff(self) -> List[Finding]:
+        """Delegate to :meth:`MeshConvert.verify_glb` when a handoff rides.
 
         Its notes WARN, except the extension prerequisite, which
         :meth:`check_glb_extensions` states.
         """
         if self.reader is None:
-            return [Finding(SKIP, "glb_envelope", "no readable GLB")]
-        if not (self.reader.gltf.get("extras") or {}).get("scene_sidecar"):
-            return [Finding(SKIP, "glb_envelope", "no embedded envelope")]
+            return [Finding(SKIP, "glb_handoff", "no readable GLB")]
+        extras = GlbEdit.extras_of(self.reader.gltf)
+        if not extras.get(HandoffRecord.KEY):
+            return [Finding(SKIP, "glb_handoff", "no embedded handoff")]
         result = MeshConvert.verify_glb(self.glb_path)
         rows = [
-            Finding(FAIL, "glb_envelope", problem)
+            Finding(FAIL, "glb_handoff", problem)
             for problem in result.get("problems") or []
         ]
         # A declared requirement is the extension gate's fact, PASSed there as
@@ -680,13 +691,23 @@ class ExportVerifier(_ExportVerifierInternal):
         required = (result.get("extensions") or {}).get("required")
         stated = MeshConvert._requirement_note(required) if required else None
         rows.extend(
-            Finding(WARN, "glb_envelope", note)
+            Finding(WARN, "glb_handoff", note)
             for note in result.get("notes") or []
             if note != stated
         )
         if not rows:
-            rows.append(Finding(PASS, "glb_envelope", "envelope verified"))
+            rows.append(Finding(PASS, "glb_handoff", "handoff verified"))
         return rows
+
+    @Deprecation.symbol(
+        "ExportVerifier.check_glb_handoff -- a GLB carries extras.handoff, "
+        "not an envelope",
+        remove_in="0.18.0",
+        since="2026-10-24",
+    )
+    def check_glb_envelope(self) -> List[Finding]:
+        """Retired 2026-10-20 (removed in 0.18.0): :meth:`check_glb_handoff`."""
+        return self.check_glb_handoff()
 
     # ---- sidecar gates ----------------------------------------------------
 
@@ -694,7 +715,8 @@ class ExportVerifier(_ExportVerifierInternal):
         """Each GLB clip's length matches its declared take (±1 frame).
 
         Exactly one clip with no declared take is treated as the
-        whole-timeline clip, measured from its own ``extras.zero_frame`` and
+        whole-timeline clip, measured from where the file says it was cut from
+        (its ``zero_frame`` in ``extras.animation``, :meth:`_cut_origin`) and
         compared against the takes' overall end -- ending SHORT of them FAILs
         (it cannot play the declared range), while running long is judged on
         the frames it ANIMATES rather than the frames it occupies: a bake pads
@@ -731,13 +753,7 @@ class ExportVerifier(_ExportVerifierInternal):
             # end by however late the export starts. The clip publishes the
             # authoring frame it sits on; measure from there, or a correct
             # file reads as a failure (33 frames on the PROPS assembly).
-            zero = 0.0
-            for anim in self.reader.gltf.get("animations") or []:
-                if anim.get("name") == clip:
-                    value = (anim.get("extras") or {}).get("zero_frame")
-                    if isinstance(value, (int, float)):
-                        zero = float(value)
-                    break
+            zero = self._cut_origin(self.reader.gltf, clip) or 0.0
             end_frame = int(round(spans[clip][2] + zero))
             timeline_end = max(int(t["end"]) for t in takes)
             # The two ends fail for different reasons, so judge them apart.
@@ -845,26 +861,31 @@ class ExportVerifier(_ExportVerifierInternal):
         Compared on the whole-timeline clip, whose length IS the stack's: a
         declared take is cut to its own window and cannot show the drift.
 
-        The span judged is the one the GLB carries, because that is what its
-        clips were cut against: the conversion measures it from the FBX it
-        reads (``MeshConvert._stamp_clip_spans``), so a producer's prediction
-        that is off no longer misplaces a single clip -- and judging that
-        prediction FAILed a file cut right. A published span that disagrees
-        with the file's is a WARN naming both; a GLB carrying none is judged
-        against the published one.
+        The span judged is the one the file was cut against: the
+        conversion measures it from the FBX it reads
+        (``MeshConvert._stamp_clip_spans``) and states where the stack starts
+        -- the whole-timeline clip's ``zero_frame`` in ``extras.animation``
+        (:meth:`_cut_origin`) -- so a producer's prediction that is off no
+        longer misplaces a single clip, and judging that prediction FAILed a
+        file cut right. A published span that disagrees with the file's is a
+        WARN naming both; a GLB stating no origin is judged against the
+        published one, and one stating its origin with no published span to
+        set beside it is a SKIP -- its stack measured from its own origin
+        cannot disagree with itself.
         """
         if self.reader is None:
             return [Finding(SKIP, "clip_origin", "no readable GLB")]
         published = self._published_span(self.sidecar)
-        span = self._cut_span(self.reader.gltf) or published
-        if span is None:
+        spans = self.reader.clip_spans(self.fps)
+        loose = self._undeclared_clips(spans, self.sidecar) if spans else []
+        clip = loose[0] if len(loose) == 1 else None
+        origin = self._cut_origin(self.reader.gltf, clip) if clip else None
+        if origin is None and published is None:
             detail = self.sidecar_error or "no published clip_span"
             return [Finding(SKIP, "clip_origin", detail)]
-        spans = self.reader.clip_spans(self.fps)
         if not spans:
             return [Finding(SKIP, "clip_origin", "no clips")]
-        loose = self._undeclared_clips(spans, self.sidecar)
-        if len(loose) != 1:
+        if clip is None:
             return [
                 Finding(
                     SKIP,
@@ -872,8 +893,21 @@ class ExportVerifier(_ExportVerifierInternal):
                     f"no single whole-timeline clip ({len(loose)} undeclared)",
                 )
             ]
-        clip = loose[0]
         carried = spans[clip][2] - round(spans[clip][0] * self.fps)
+        if origin is not None and published is None:
+            # Measured from where the file says it starts, the stack is its
+            # own length by construction: nothing here judges it.
+            return [
+                Finding(
+                    SKIP,
+                    "clip_origin",
+                    f"{clip}: no independent span -- the file states its origin "
+                    f"({origin:g}) and nothing published one to judge it by",
+                )
+            ]
+        # The file's own stack, from where it says it starts; else the
+        # producer's prediction is all there is to judge it by.
+        span = [origin, origin + carried] if origin is not None else published
         length = span[1] - span[0]
         drift = carried - length
         rows: List[Finding] = []
@@ -928,8 +962,8 @@ class ExportVerifier(_ExportVerifierInternal):
     def check_fbx_dependencies(self) -> List[Finding]:
         """Every file the FBX's records name by file name is inside it.
 
-        ``lightmap_metadata``'s maps and reflection probe, ``shadow_metadata``'s
-        silhouette, atlas and horizon maps: the exporters embed each one
+        ``lightmaps``' maps and reflection probe, ``shadows``' silhouette,
+        atlas and horizon maps: the exporters embed each one
         (``FbxMedia.embed_dependencies``) and ship nothing beside the file, so
         a consumer resolves them from the FBX alone. One the file lacks is a
         Unity import without its lightmap, and a GLB built from the file
@@ -947,6 +981,8 @@ class ExportVerifier(_ExportVerifierInternal):
         channels = []
         for key in FbxMedia.DEPENDENCY_FIELDS:
             for owner, value in self.fbx.user_properties(key, named=True):
+                if not isinstance(value, (bytes, bytearray)):
+                    continue  # a number: no record's text (bytes(n) is n zeros)
                 try:
                     payload = json.loads(bytes(value).decode("utf-8"))
                 except (TypeError, ValueError, UnicodeDecodeError):
@@ -984,6 +1020,46 @@ class ExportVerifier(_ExportVerifierInternal):
             text = bytes(raw).decode("utf-8", "replace").replace("\\", "/")
             names.append(os.path.basename(text))
         return names
+
+    def check_fbx_records(self) -> List[Finding]:
+        """Every record the FBX carries is one the standard declares, in the
+        version a reader reads and the shape it declares
+        (``SceneRecords.problems``).
+
+        Read off the ``data_export`` carriers -- the scene's and any
+        referenced module's. A property there that is a record by its shape
+        (a JSON object stating a ``version``) under a key no record declares
+        is one a reader passes over: an older file's, which is re-exported.
+        A carrier's other properties -- the emissive groups' keyable floats --
+        are not records.
+        """
+        from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
+
+        name = "fbx_records"
+        if self.fbx is None:
+            return [Finding(SKIP, name, "no readable FBX")]
+        declared = {spec.key for spec in SceneRecords.deliverable()}
+        problems: List[str] = []
+        read = 0
+        for owner, key, value in self.fbx.user_property_items():
+            if not SceneStoreBase.is_carrier(owner) or not isinstance(
+                value, (bytes, bytearray)
+            ):
+                continue  # a number is no record's text (bytes(n) is n zeros)
+            try:
+                payload = json.loads(bytes(value).decode("utf-8"))
+            except (TypeError, ValueError, UnicodeDecodeError):
+                continue  # not JSON text: no record (an emissive group's float)
+            if key in declared:
+                read += 1
+                problems += [f"{owner}: {p}" for p in SceneRecords.problems(key, payload)]
+            elif isinstance(payload, dict) and "version" in payload:
+                problems.append(f"{owner}: {key!r} is no declared record")
+        if problems:
+            return [Finding(FAIL, name, problem) for problem in problems]
+        if not read:
+            return [Finding(SKIP, name, "the FBX carries no record")]
+        return [Finding(PASS, name, f"{read} record(s) in their declared version and shape")]
 
     def check_fbx_takes(self) -> List[Finding]:
         """Declared sidecar takes all exist as AnimationStacks."""

@@ -22,7 +22,7 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from pythontk import ShotPlanner, ShotSequencer, ShotStore  # noqa: E402
+from pythontk import SceneRecords, ShotPlanner, ShotSequencer, ShotStore  # noqa: E402
 
 
 class _SequencerTest(unittest.TestCase):
@@ -346,9 +346,10 @@ class TestTopology(_SequencerTest):
 
     def test_a_split_links_the_tail_to_its_heads_step(self):
         """Bug: the tail got a name and a description and nothing relating
-        it to its head's step, so its export carried no section.
-        Fixed: 2026-10-11 -- a non-binding link (``ShotStore.STEP_LINK``),
-        never the head's binding: a step has one shot."""
+        it to its head's step (2026-10-11). The split writes a non-binding
+        link (``ShotStore.STEP_LINK``), never the head's binding: a step has
+        one shot. The export ships no section (2026-10-20, no reader read
+        it): the link is the store's (``ShotStore.step_links``)."""
         b = self.sid("B")
         self.seq.store.update_shot(b, metadata={"step": "B01", "section": "B"})
         tail = self.seq.split_shot(b, 20, name="B01_2")
@@ -356,11 +357,13 @@ class TestTopology(_SequencerTest):
         self.assertEqual(self.seq.store.shot_by_id(b).metadata["step"], "B01")
         again = self.seq.split_shot(tail.shot_id, 25)  # a tail split again
         self.assertEqual(again.metadata, {ShotStore.STEP_LINK: "B01"})
-        clips = self.seq.store.to_export_view()["shot_metadata"]["shots"]
+        store = self.seq.store
         self.assertEqual(
-            {c["clip"]: c.get("section") for c in clips if c["clip"].startswith("B")},
-            {"B": "B", "B01_2": "B", "B01_2_2": "B"},
+            {store.shot_by_id(i).name: step for i, step in store.step_links().items()},
+            {"B01_2": "B01", "B01_2_2": "B01"},
         )
+        clips = store.to_export_view()[SceneRecords.SHOTS.key]["shots"]
+        self.assertFalse([c for c in clips if "section" in c])
         self.assertEqual(self.seq.split_shot(self.sid("A"), 5).metadata, {})
 
 

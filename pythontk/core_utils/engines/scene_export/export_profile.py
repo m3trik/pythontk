@@ -29,13 +29,6 @@ from typing import Any, ClassVar, Dict, Iterable, List, Mapping, Optional, Tuple
 from pythontk.core_utils.deprecation import Deprecation
 from pythontk.str_utils._str_utils import StrUtils
 
-#: What a caller of a retired naming input does instead: the exporters fold
-#: them into the pattern once, at their entry point, and pass only the pattern.
-_FOLD_FIRST = (
-    "Fold it into the name pattern first: "
-    "ExportProfile.fold_legacy_naming(pattern, version_format, timestamp, name_regex)."
-)
-
 
 class ExportProfile:
     """Pure helpers over Scene Exporter task / check definitions."""
@@ -252,9 +245,11 @@ class ExportProfile:
         reflections = stored.get("baked_reflections")
         offered = "baked_reflections" in task_definitions
         if reflections not in (None, "") and not offered:
-            from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+            from pythontk.core_utils.engines.scene_export.handoff_record import (
+                HandoffRecord,
+            )
 
-            policy = MeshConvert.RENDERING_POLICY["lightmappedMaterials"]
+            policy = HandoffRecord.RENDERING_POLICY["lightmappedMaterials"]
             # The row persisted its label (restore_by text); a hand-edited
             # template may carry the token.
             token = str(
@@ -426,11 +421,10 @@ class ExportProfile:
     ) -> Optional[str]:
         """Fold the retired Version pattern and Timestamp flag into a name pattern.
 
-        The one fold for the retired naming inputs. An exporter folds a
-        caller's ``perform_export(timestamp=, name_regex=)`` and
-        ``tasks["version"]`` through it ONCE, at its entry point -- those
-        inputs warn and go in pythontk 0.12.0 (mayatk 0.20.0, blendertk
-        0.12.0) -- and each panel migrates a saved RegEx field through it.
+        The one fold for the retired naming inputs. An exporter folds a saved
+        ``tasks["version"]`` through it ONCE, at its entry point (that input
+        warns and goes in pythontk 0.19.0), and each panel migrates a saved
+        RegEx field through it.
         *name_regex* is the retired
         free-standing RegEx field, which shaped the name token wherever the
         pattern used it; it folds to an inline modifier on that token
@@ -462,18 +456,6 @@ class ExportProfile:
             folded = version_format.replace("{stem}", folded)
         return folded
 
-    @Deprecation.parameter(
-        "version_format",
-        remove_in="0.12.0",
-        since="2026-09-23",
-        reason=_FOLD_FIRST,
-    )
-    @Deprecation.parameter(
-        "timestamp", remove_in="0.12.0", since="2026-09-23", reason=_FOLD_FIRST
-    )
-    @Deprecation.parameter(
-        "name_regex", remove_in="0.12.0", since="2026-09-23", reason=_FOLD_FIRST
-    )
     @classmethod
     def resolve_output_path(
         cls,
@@ -481,9 +463,6 @@ class ExportProfile:
         context: Mapping[str, Any],
         export_dir: str = "",
         output_format: str = "fbx",
-        version_format: str = "",
-        timestamp: bool = False,
-        name_regex: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Resolve the Output Filename field into the file(s) an export writes.
 
@@ -501,26 +480,18 @@ class ExportProfile:
             export_dir: The folder written to; the counter scans it. Blank
                 scans nothing and numbers from 1.
             output_format: An :attr:`OUTPUT_EXTENSIONS` key.
-            version_format: DEPRECATED (warns; removed in 0.12.0) -- fold it
-                into *pattern* first (:meth:`fold_legacy_naming`).
-            timestamp: DEPRECATED (warns; removed in 0.12.0), likewise.
-            name_regex: DEPRECATED (warns; removed in 0.12.0) -- the retired
-                free-standing RegEx field; write
-                ``{scene:PATTERN->REPLACEMENT}`` into the pattern instead.
 
         Returns:
             ``resolve_name_pattern``'s dict plus ``"stem"`` (the final name),
             ``"path"`` (``.usd`` for USD, else ``.fbx`` -- a GLB-only run names
             its temp FBX after it), ``"paths"`` (every file *output_format*
-            ships), ``"n"`` (the counter's value; None without one),
-            ``"folded"`` (the pattern a retired input folded to, else None) and
+            ships), ``"n"`` (the counter's value; None without one) and
             ``"counter_error"`` (why a counter spec was dropped, else None).
         """
         from pythontk.file_utils._file_utils import FileUtils
 
-        folded = cls.fold_legacy_naming(pattern, version_format, timestamp, name_regex)
         result = StrUtils.resolve_name_pattern(
-            cls.strip_deliverable_extension(folded),
+            cls.strip_deliverable_extension(pattern),
             context,
             wildcard=cls.NAME_WILDCARD,
             key=cls.NAME_KEY,
@@ -557,45 +528,22 @@ class ExportProfile:
                 os.path.join(folder, stem + suffix)
                 for suffix in cls._output_extensions(output_format)
             ],
-            "folded": folded if folded != pattern else None,
             "counter_error": counter_error,
         }
 
-    @Deprecation.parameter(
-        "version_suffix", drop=True, remove_in="0.12.0", since="2026-09-23"
-    )
     @classmethod
     def naming_report(
         cls,
         resolved: Mapping[str, Any],
         tokens: Mapping[str, str],
-        version_suffix=None,
     ) -> List[Tuple[str, str]]:
         """``[(level, message), ...]`` for what :meth:`resolve_output_path` hit.
 
         *level* is a logger method name (``"error"`` / ``"warning"``), so a panel
         reports through its own logger at the severity given. *tokens* is the
         vocabulary named when a token had no value.
-
-        *version_suffix* is DEPRECATED (warns; removed in 0.12.0) and ignored.
-        It used to warn that a
-        versioned name not ending in ``_v<N>`` would lose its hierarchy diff
-        baseline across versions -- true while that baseline was keyed by the
-        output file's stem, which is exactly the coupling that made renaming an
-        export reset its history. The baseline is per-SCENE now
-        (``HierarchyBaseline``), so no filename can carry or lose it and the
-        warning has nothing left to warn about.
         """
         report = []
-        if resolved.get("folded"):
-            report.append(
-                (
-                    "warning",
-                    "The Version, Timestamp and RegEx inputs are retired: write "
-                    "them into the Output Filename instead — this export resolves as "
-                    f"{resolved['folded']!r}.",
-                )
-            )
         if resolved["error"]:
             report.append(
                 (
@@ -1053,11 +1001,15 @@ class ExportProfile:
     )
     def baked_reflections_default(cls) -> str:
         """The Baked Reflections token a row starts at: the one whose level the
-        lighting recipe itself declares (``MeshConvert.RENDERING_POLICY``).
+        lighting recipe itself declares (``HandoffRecord.RENDERING_POLICY``).
         Retired with the row (:attr:`BAKED_REFLECTIONS_OPTIONS`)."""
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+        from pythontk.core_utils.engines.scene_export.handoff_record import (
+            HandoffRecord,
+        )
 
-        level = MeshConvert.RENDERING_POLICY["lightmappedMaterials"]["envMapIntensity"]
+        level = HandoffRecord.RENDERING_POLICY["lightmappedMaterials"][
+            "envMapIntensity"
+        ]
         return next(
             token
             for token, value in ExportRun._BAKED_REFLECTION_LEVELS.items()
@@ -1158,7 +1110,7 @@ class ExportRun:
     #: An :attr:`OUTPUT_FORMATS` token.
     output_format: str = "fbx"
     #: The retired Version pattern (a headless ``tasks["version"]``, which
-    #: warns and goes in 0.12.0), carried to the exporter's entry point to be
+    #: warns and goes in 0.19.0), carried to the exporter's entry point to be
     #: folded into the name once (:meth:`ExportProfile.fold_legacy_naming`).
     version_format: str = ""
     #: The Texture File Type dial -- the container every texture the export
@@ -1345,9 +1297,9 @@ class ExportRun:
     def rendering(self) -> Dict[str, Dict[str, Any]]:
         """This run's choices over the lighting recipe its deliverables publish.
 
-        ``{section: {field: value}}`` for ``MeshConvert.rendering_policy`` --
-        what ``GlbPipeline.envelope`` writes into a GLB's handoff and an
-        ``ExportContext`` stamps on an FBX's. Empty -- the policy's own values
+        ``{section: {field: value}}`` for ``HandoffRecord.rendering_policy`` --
+        what every deliverable's handoff publishes: an ``ExportContext``
+        stamps it on the FBX's, and the GLB's is read off that FBX. Empty -- the policy's own values
         -- for every panel run since the one lighting row retired; only the
         deprecated :attr:`baked_reflections` still fills it.
         """
@@ -1570,10 +1522,13 @@ class ExportRun:
 
         version_format = tasks.pop("version", "") or ""
         if version_format:
+            # SAVED data: a profile saved before the retirement still carries
+            # it, so it keeps the longest window (re-dated from 0.12.0 on
+            # 2026-10-24, CODE_STANDARD §0) where the API shims went.
             Deprecation.warn(
                 "tasks['version']",
                 "a {n} counter in the Output Filename, e.g. '*_v{n:03d}'",
-                remove_in="0.12.0",
+                remove_in="0.19.0",
                 kind="parameter",
                 since="2026-09-23",
                 reason="Until then the exporter folds it into the name once.",
