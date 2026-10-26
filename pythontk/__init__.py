@@ -1,11 +1,21 @@
 # !/usr/bin/python
 # coding=utf-8
+import os as _os
+
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
+
+# OpenCV reads this once, when its EXR codec first initializes (often at the
+# first cv2 import). Every module here and in every consumer is imported after
+# this package, so setting it here enables EXR/HDR IO however a process first
+# reaches cv2. It sat in ``img_utils/_img_utils.py``, where the call made the
+# resolver load the image stack (PIL, numpy) at every ``import pythontk``.
+# ``setdefault`` respects an explicit opt-out.
+_os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 
 
 DEFAULT_INCLUDE = {

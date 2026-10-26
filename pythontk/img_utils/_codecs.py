@@ -285,7 +285,7 @@ class _ImgCodecInternal:
 
         Pillow cannot encode these. The source PIL image is 8-bit, so values
         are normalized to 0-1 float32 (the inverse of :meth:`_load_via_cv2`).
-        OpenEXR is enabled at module import (``OPENCV_IO_ENABLE_OPENEXR``);
+        OpenEXR is enabled when pythontk is imported (``OPENCV_IO_ENABLE_OPENEXR``);
         written with :meth:`cv2_write`, so any path will do.
 
         Raises:
@@ -329,7 +329,7 @@ class _ImgCodecInternal:
         Values are clipped to 0-1 and scaled to 8-bit, so the result is
         preview-grade — lossy for true HDR data. Consumers needing float
         precision (e.g. lightmap baking) should read with :meth:`cv2_read`.
-        OpenEXR is enabled at module import (``OPENCV_IO_ENABLE_OPENEXR``).
+        OpenEXR is enabled when pythontk is imported (``OPENCV_IO_ENABLE_OPENEXR``).
         """
         try:
             import cv2

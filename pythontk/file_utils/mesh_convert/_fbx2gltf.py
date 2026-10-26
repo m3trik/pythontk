@@ -888,7 +888,7 @@ class _Fbx2GltfMixin:
                             faded["channels"],
                         )
                         # A highlighted material gives up its emissive map
-                        # (``glb_fades._uncover_emissive``); when that material
+                        # (``glb.fades._uncover_emissive``); when that material
                         # was the map's only user the image is dead payload now.
                         try:
                             cls.prune_glb_unreferenced_textures(edit)

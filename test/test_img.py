@@ -19,6 +19,8 @@ Run with:
 
 import ast
 import os
+import subprocess
+import sys
 import unittest
 import shutil
 import tempfile
@@ -1553,41 +1555,71 @@ class TestImgUtilsMemory(unittest.TestCase):
 
 
 class OpenExrFlagTest(unittest.TestCase):
-    """OpenCV reads ``OPENCV_IO_ENABLE_OPENEXR`` once, when cv2 loads: a module
-    that imports cv2 at its top without setting it first leaves OpenEXR off
-    for the whole process (measured, opencv-python 4.13), and every later EXR
-    read or write in the session fails -- a DCC that loaded a photogrammetry
-    panel before a lightmap bake could no longer encode its maps.
-    Fixed: 2026-10-04."""
+    """OpenCV reads ``OPENCV_IO_ENABLE_OPENEXR`` once, when cv2 loads: a cv2
+    imported before it is set leaves OpenEXR off for the whole process
+    (measured, opencv-python 4.13), and every later EXR read or write in the
+    session fails -- a DCC that loaded a photogrammetry panel before a lightmap
+    bake could no longer encode its maps. Fixed: 2026-10-04.
+
+    The package root sets it, before any module here or in a consumer can load
+    cv2. Every module that imported cv2 set it again, and the copy at the top of
+    ``img_utils/_img_utils.py`` made the resolver load ImgUtils, PIL and numpy
+    at every ``import pythontk``. Moved: 2026-10-25."""
 
     @staticmethod
-    def _module_statements(tree):
-        """Module-level statements, a top-level ``try``'s body included."""
-        for node in tree.body:
-            if isinstance(node, ast.Try):
-                yield from node.body
-            else:
-                yield node
+    def _flag_after_importing_pythontk(preset=None):
+        """The flag once a fresh interpreter imports pythontk, from *preset*."""
+        env = {k: v for k, v in os.environ.items() if k != "OPENCV_IO_ENABLE_OPENEXR"}
+        if preset is not None:
+            env["OPENCV_IO_ENABLE_OPENEXR"] = preset
+        env["PYTHONPATH"] = os.pathsep.join(path for path in sys.path if path)
+        code = "import os, pythontk; print(os.environ.get('OPENCV_IO_ENABLE_OPENEXR'))"
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=300,
+        )
+        if proc.returncode:
+            raise AssertionError(proc.stderr[-2000:])
+        return proc.stdout.strip().splitlines()[-1]
 
-    def test_every_top_level_cv2_import_sets_the_exr_flag_first(self):
+    def test_importing_pythontk_enables_openexr(self):
+        self.assertEqual(self._flag_after_importing_pythontk(), "1")
+
+    def test_an_explicit_opt_out_is_kept(self):
+        self.assertEqual(self._flag_after_importing_pythontk("0"), "0")
+
+    def test_the_package_root_is_the_one_place_that_sets_it(self):
         import pythontk
 
         root = Path(pythontk.__file__).parent
-        offenders = []
-        for path in sorted(root.rglob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
-            flag = cv2_line = None
-            for node in self._module_statements(tree):
-                if cv2_line is None and isinstance(node, ast.Import):
-                    if any(alias.name == "cv2" for alias in node.names):
-                        cv2_line = node.lineno
-                if flag is None and "OPENCV_IO_ENABLE_OPENEXR" in ast.unparse(node):
-                    flag = node.lineno
-            if cv2_line is not None and (flag is None or flag > cv2_line):
-                offenders.append(f"{path.relative_to(root).as_posix()}:{cv2_line}")
-        self.assertEqual(
-            offenders, [], "cv2 imported before OPENCV_IO_ENABLE_OPENEXR is set"
-        )
+        setters = [
+            path.relative_to(root).as_posix()
+            for path in sorted(root.rglob("*.py"))
+            if any(
+                isinstance(node, ast.Constant)
+                and node.value == "OPENCV_IO_ENABLE_OPENEXR"
+                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig")))
+            )
+        ]
+        self.assertEqual(setters, ["__init__.py"])
+
+
+class ImageFormatSurfaceTest(unittest.TestCase):
+    """``ptk.ImageFormat`` was published only because ImgUtils loaded at every
+    import: the resolver's lazy scan reads class statements, and a
+    ``namedtuple(...)`` assignment is not one. Fixed: 2026-10-25."""
+
+    def test_image_format_stays_on_the_package_surface(self):
+        import pythontk
+
+        self.assertIn("ImageFormat", pythontk.__all__)
+        self.assertIs(pythontk.ImageFormat, ImageFormat)
+        fmt = ImageFormat(True, False, "cv2")
+        self.assertEqual(fmt, (True, False, "cv2"))
+        self.assertEqual((fmt.read, fmt.write, fmt.backend), (True, False, "cv2"))
 
 
 class ExtractChannelsCwdTest(unittest.TestCase):

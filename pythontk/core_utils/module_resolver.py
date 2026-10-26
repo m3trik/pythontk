@@ -3,6 +3,7 @@
 """Reusable module attribute resolver for package-style imports."""
 
 import importlib
+import importlib.util
 import inspect
 import os
 import pkgutil
@@ -14,6 +15,7 @@ from typing import (
     Callable,
     Dict,
     Iterable,
+    List,
     Mapping,
     MutableMapping,
     Optional,
@@ -28,6 +30,7 @@ __all__ = [
     "bootstrap_package",
     "lazy_exports",
     "create_namespace_aliases",
+    "import_footprint",
 ]
 
 IncludeMapping = Mapping[str, Union[Sequence[str], str]]
@@ -79,6 +82,18 @@ class ModuleAttributeResolver:
         self.class_to_module: Dict[str, str] = {}
         self.method_to_module: Dict[str, Tuple[str, str]] = {}
         self.submodules: set[str] = set()
+        #: Declared ``"module->Alias"`` entries not built yet -- see
+        #: :meth:`_register_aliases`.
+        self._pending_aliases: Dict[str, Tuple[str, Tuple[str, ...]]] = {}
+        #: What alias builds published into the package globals (the alias and
+        #: each class it fuses), so the next registration can drop it.
+        self._alias_published: Dict[str, Any] = {}
+        #: Each flat name that two live classes define, with its owners
+        #: (``"module.Class"``): one is reached by module order alone, so a
+        #: package's tests pin this empty -- see :meth:`_register_flat`.
+        self.flat_collisions: Dict[str, List[str]] = {}
+        #: Flat names only a ``Deprecation.symbol`` alias defines (so far).
+        self._deprecated_flat: Dict[str, Tuple[str, str]] = {}
 
     # ------------------------------------------------------------------
     # public API
@@ -88,6 +103,8 @@ class ModuleAttributeResolver:
         self.class_to_module.clear()
         self.method_to_module.clear()
         self.submodules.clear()
+        self.flat_collisions.clear()
+        self._deprecated_flat.clear()
         # Fresh per build: a rebuild is how ModuleReloader picks up an edited
         # file, so trees must never survive into the next one.
         self._ast_cache.clear()
@@ -95,6 +112,9 @@ class ModuleAttributeResolver:
             self._walk_and_register()
         finally:
             self._ast_cache.clear()
+        # A retired door keeps its flat name only while nothing live claims it.
+        for name, owner in self._deprecated_flat.items():
+            self.method_to_module.setdefault(name, owner)
         return self
 
     def _walk_and_register(self) -> None:
@@ -133,8 +153,8 @@ class ModuleAttributeResolver:
                     if scanned_classes or scanned_methods:
                         for class_name in scanned_classes:
                             self.class_to_module[class_name] = modname
-                        for method_name, class_name in scanned_methods.items():
-                            self.method_to_module[method_name] = (modname, class_name)
+                        for method_name, class_name, retired in scanned_methods:
+                            self._register_flat(method_name, modname, class_name, retired)
                         continue
                 except Exception as exc:
                     # If AST scanning fails, import eagerly below
@@ -163,11 +183,51 @@ class ModuleAttributeResolver:
     def resolve(self, name: str):
         """Resolve an attribute using the registered dictionaries."""
         # Check package module itself first for namespace aliases and static attributes
-        if name in self._module.__dict__:
-            return self._module.__dict__[name]
+        module_globals = self._module.__dict__
+        if name in module_globals:
+            return module_globals[name]
 
+        if name in self._pending_aliases:
+            alias = self._build_alias(name)
+            if alias is None:
+                raise AttributeError(
+                    f"module {self.package_name} has no attribute '{name}'"
+                )
+            return alias
+
+        if (
+            self._pending_aliases
+            and not name.startswith("_")
+            and not self._is_registered(name)
+        ):
+            # A build also publishes each class an alias fuses
+            # (``mtk.UvDiagnostics``), so a public name nothing registers may
+            # be one of them.
+            self._build_pending_aliases()
+            if name in module_globals:
+                return module_globals[name]
+
+        return self._resolve_registered(name)
+
+    def _is_registered(self, name: str) -> bool:
+        return (
+            name in self.class_to_module
+            or name in self.method_to_module
+            or name in self.module_to_parent
+            or name in self.submodules
+        )
+
+    def _resolve_registered(self, name: str):
+        """Resolve *name* through the registry alone, without building an alias."""
         # Check classes
         if name in self.class_to_module:
+            if self.class_to_module[name] == self._alias_module:
+                # A declared alias that is not pending: mid-build (a module it
+                # fuses read it at import) or withdrawn. The placeholder names
+                # no real module, so importing it would mask the reason.
+                raise AttributeError(
+                    f"module {self.package_name} has no attribute '{name}'"
+                )
             module = self._import(self.class_to_module[name])
             return getattr(module, name)
 
@@ -232,16 +292,168 @@ class ModuleAttributeResolver:
         """Drop cached module imports managed by the resolver."""
         self.imported_modules.clear()
 
+    # ------------------------------------------------------------------
+    # namespace aliases ("module->Alias" include keys)
+    # ------------------------------------------------------------------
+    def _register_aliases(self, stale: Optional[Mapping[str, Any]] = None) -> None:
+        """Declare each namespace alias; :meth:`_build_alias` fuses it on first use.
+
+        An alias fuses every class of the modules it names, so building one
+        imports them all: building at bootstrap put mayatk's diagnostics
+        package and its MASH module in every ``import mayatk`` (about 100 ms).
+        Registering only declares the name, which the registry and ``__all__``
+        list as before. An alias whose module cannot be found is skipped, as a
+        build that failed always was.
+
+        Parameters:
+            stale (Mapping[str, Any]): What an earlier run's resolver published
+                into these globals (``importlib.reload`` re-runs the bootstrap
+                in the same globals). A name still bound to the object that run
+                published is dropped, as is this resolver's own, so each alias
+                is rebuilt from the modules as they are now.
+        """
+        module_globals = self._module.__dict__
+        for published in (stale or {}, self._alias_published):
+            for name, obj in published.items():
+                if module_globals.get(name) is obj:
+                    del module_globals[name]
+        self._alias_published.clear()
+        self._pending_aliases.clear()
+        for alias_name, (module_key, class_names) in self.namespace_aliases.items():
+            try:
+                spec = importlib.util.find_spec(f"{self.package_name}.{module_key}")
+            except (ImportError, ValueError):
+                spec = None
+            if spec is None:
+                continue
+            self._pending_aliases[alias_name] = (module_key, class_names)
+            self.class_to_module[alias_name] = self._alias_module
+
+    @property
+    def _alias_module(self) -> str:
+        """The registry entry of a declared alias, which names no real module."""
+        return f"{self.package_name}._namespace_aliases"
+
+    def _build_alias(self, alias_name: str) -> Optional[type]:
+        """Fuse a declared namespace alias's classes into one class, now.
+
+        Publishes the alias, and each class it fuses, in the package globals.
+        One that cannot be built (its module fails to import, it has no class
+        to fuse, or a class it lists is missing) is withdrawn from the registry
+        and ``__all__``, as it was never published before.
+
+        Parameters:
+            alias_name (str): A name :meth:`_register_aliases` declared.
+
+        Returns:
+            (type) The alias, or ``None`` when it could not be built.
+        """
+        module_key, class_names = self._pending_aliases.pop(alias_name)
+        try:
+            classes = self._collect_alias_classes(module_key, class_names)
+        except Exception:
+            # Not an ImportError (that withdraws the alias below): a fused
+            # module raised mid-import. Keep the alias pending, so the next
+            # read retries and raises the real error again.
+            self._pending_aliases[alias_name] = (module_key, class_names)
+            raise
+        if not classes:
+            self._withdraw_alias(alias_name)
+            return None
+        try:
+            alias = type(
+                alias_name,
+                tuple(classes.values()),
+                {
+                    "__module__": self.package_name,
+                    "__doc__": "Unified namespace combining: "
+                    + ", ".join(cls.__name__ for cls in classes.values()),
+                },
+            )
+        except TypeError:  # not co-inheritable: an authoring error, so raised
+            self._withdraw_alias(alias_name)
+            raise
+        for name, obj in (*classes.items(), (alias_name, alias)):
+            self._module.__dict__[name] = obj
+            self._alias_published[name] = obj
+        return alias
+
+    def _collect_alias_classes(
+        self, module_key: str, class_names: Tuple[str, ...]
+    ) -> Dict[str, type]:
+        """The classes a declared alias fuses; empty when it cannot be built."""
+        try:
+            module = self._import(f"{self.package_name}.{module_key}")
+        except ImportError:
+            # An explicit class list may still resolve through the registry.
+            module = None
+        if class_names == ("*",):
+            return self._alias_classes(module) if module is not None else {}
+        classes: Dict[str, type] = {}
+        for class_name in class_names:
+            cls = getattr(module, class_name, None)
+            if cls is None:
+                try:
+                    cls = self._resolve_registered(class_name)
+                except (AttributeError, ImportError):
+                    return {}
+            classes[class_name] = cls
+        return classes
+
+    def _build_pending_aliases(self) -> None:
+        """Build every declared alias not built yet."""
+        for alias_name in list(self._pending_aliases):
+            self._build_alias(alias_name)
+
+    def _alias_classes(self, module: ModuleType) -> Dict[str, type]:
+        """The public classes a ``"*"`` alias fuses: those *module* defines or,
+        for a package, those each of its direct non-package submodules defines
+        -- never one a module merely imports (``typing.Any``, a sibling's
+        utils class, a ``Doc = ReportDoc`` alias)."""
+        sources = [module]
+        if hasattr(module, "__path__"):
+            sources = []
+            for _, modname, ispkg in pkgutil.iter_modules(module.__path__):
+                if ispkg:
+                    continue
+                try:
+                    sources.append(self._import(f"{module.__name__}.{modname}"))
+                except (ImportError, AttributeError):
+                    continue
+        classes: Dict[str, type] = {}
+        for source in sources:
+            for name in dir(source):
+                obj = getattr(source, name)
+                if (
+                    isinstance(obj, type)
+                    and not name.startswith("_")
+                    and obj.__module__ == source.__name__
+                ):
+                    classes.setdefault(name, obj)
+        return classes
+
+    def _withdraw_alias(self, alias_name: str) -> None:
+        self.class_to_module.pop(alias_name, None)
+        published_all = self._module.__dict__.get("__all__")
+        if isinstance(published_all, list) and alias_name in published_all:
+            published_all.remove(alias_name)
+
     def _scan_module_attributes(
         self, module_name: str
-    ) -> Tuple[Sequence[str], Dict[str, str]]:
-        """Statically scan a module for classes and their methods."""
+    ) -> Tuple[Sequence[str], List[Tuple[str, str, bool]]]:
+        """Statically scan a module for classes and their methods.
+
+        Returns:
+            (tuple) The public top-level names, and each public method as
+            ``(name, class, retired)`` -- *retired* for a ``Deprecation.symbol``
+            alias -- in source order, so two classes defining one name both show.
+        """
         tree = self._parse_module(module_name)
         if not tree:
-            return [], {}
+            return [], []
 
         top_level = []
-        methods = {}
+        methods = []
 
         for node in tree.body:
             if isinstance(node, ast.ClassDef):
@@ -250,11 +462,47 @@ class ModuleAttributeResolver:
                     for item in node.body:
                         if isinstance(item, ast.FunctionDef):
                             if self.method_predicate(item.name):
-                                methods[item.name] = node.name
+                                methods.append(
+                                    (item.name, node.name, self._is_retired(item))
+                                )
             elif isinstance(node, ast.FunctionDef):
                 if self.method_predicate(node.name):
                     top_level.append(node.name)
         return top_level, methods
+
+    @staticmethod
+    def _is_retired(func: ast.FunctionDef) -> bool:
+        """True for a ``@Deprecation.symbol(...)`` method: a retired door to a
+        method another class owns, not a second owner of its name."""
+        for decorator in func.decorator_list:
+            call = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if isinstance(call, ast.Attribute) and call.attr == "symbol":
+                owner = call.value
+                name = owner.attr if isinstance(owner, ast.Attribute) else ""
+                if name == "Deprecation" or getattr(owner, "id", "") == "Deprecation":
+                    return True
+        return False
+
+    def _register_flat(
+        self, name: str, module_name: str, class_name: str, retired: bool = False
+    ) -> None:
+        """Publish *name* as the flat ``pkg.<name>`` of *class_name*'s method.
+
+        A flat name has one owner. A second live owner is recorded in
+        :attr:`flat_collisions` (and, as before, wins by module order). A
+        retired alias owns nothing: it takes the name only when no live method
+        does (:meth:`build`), so it never shadows the method it points at.
+        """
+        owner = (module_name, class_name)
+        if retired:
+            self._deprecated_flat.setdefault(name, owner)
+            return
+        previous = self.method_to_module.get(name)
+        if previous is not None and previous != owner:
+            owners = self.flat_collisions.setdefault(name, [".".join(previous)])
+            if ".".join(owner) not in owners:
+                owners.append(".".join(owner))
+        self.method_to_module[name] = owner
 
     def _is_safe_to_lazy_load(self, module_name: str) -> bool:
         """Check if a module is safe to lazy load (no top-level side effects)."""
@@ -424,7 +672,8 @@ class ModuleAttributeResolver:
             else:
                 member = attribute
             if callable(member):
-                self.method_to_module[method_name] = (module_name, class_name)
+                retired = bool(getattr(member, "__deprecated__", None))
+                self._register_flat(method_name, module_name, class_name, retired)
 
     def _handle_import_error(self, modname: str, exc: Exception) -> None:
         if self.on_import_error:
@@ -494,6 +743,11 @@ class PackageResolverHandle:
             declared = None
         self._declared_all: Tuple[str, ...] = tuple(declared or ())
         self._published_all: Optional[list] = None
+        # What the last run's alias builds published into these same globals.
+        stale = getattr(getattr(previous, "resolver", None), "_alias_published", None)
+        self._stale_aliases: Dict[str, Any] = (
+            dict(stale) if isinstance(stale, dict) else {}
+        )
 
         self._default_include = (
             dict(default_include) if default_include is not None else None
@@ -550,14 +804,17 @@ class PackageResolverHandle:
         self.module_globals["_RESOLVER"] = self.resolver
         self.module_globals["PACKAGE_RESOLVER"] = self
 
+        # Declare the namespace aliases: each is built on first use. Without a
+        # module ``__getattr__`` nothing would build one on first read, so
+        # those are built now.
+        self.resolver._register_aliases(self._stale_aliases)
+        if eager_flag or not allow_getattr_flag:
+            self.resolver._build_pending_aliases()
         if eager_flag:
             self.export_all()
 
-        # Create namespace aliases after everything else is set up
-        self._create_namespace_aliases()
-
-        # Publish the resolved public surface as ``__all__`` (after aliases so
-        # fused alias classes are included).
+        # Publish the resolved public surface as ``__all__`` (after the aliases
+        # are declared, so their names are included).
         self._populate_all()
 
     # ------------------------------------------------------------------
@@ -633,132 +890,12 @@ class PackageResolverHandle:
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
-    def _create_namespace_aliases(self) -> None:
-        """Create multi-inheritance namespace classes from resolver's namespace_aliases."""
-        import pkgutil
-
-        for alias_name, (
-            module_key,
-            class_names,
-        ) in self.resolver.namespace_aliases.items():
-            base_classes = []
-            missing_classes = []
-
-            # Build the full module name
-            full_module_name = f"{self.resolver.package_name}.{module_key}"
-
-            # Handle wildcard "*" - expand to all classes in the module/package
-            if class_names == ("*",):
-                try:
-                    module = self.resolver._import(full_module_name)
-                    expanded_class_names = []
-
-                    # Check if this is a package (has __path__)
-                    if hasattr(module, "__path__"):
-                        # It's a package - look in submodules
-                        for importer, modname, ispkg in pkgutil.iter_modules(
-                            module.__path__
-                        ):
-                            if not ispkg:  # Only process modules, not sub-packages
-                                try:
-                                    submodule = self.resolver._import(
-                                        f"{full_module_name}.{modname}"
-                                    )
-                                    for name in dir(submodule):
-                                        obj = getattr(submodule, name)
-                                        # Defined HERE, as _register_all_classes
-                                        # requires: a name the submodule only
-                                        # imports (typing.Any, a sibling utils
-                                        # class, a `Doc = ReportDoc` alias) is
-                                        # no member of the namespace.
-                                        if (
-                                            isinstance(obj, type)
-                                            and not name.startswith("_")
-                                            and obj.__module__ == submodule.__name__
-                                        ):
-                                            if (
-                                                name not in expanded_class_names
-                                            ):  # Avoid duplicates
-                                                expanded_class_names.append(name)
-                                            # Store the class in globals for later resolution
-                                            self.module_globals[name] = obj
-                                except (ImportError, AttributeError):
-                                    continue
-                    else:
-                        # It's a regular module - get classes directly
-                        for name in dir(module):
-                            obj = getattr(module, name)
-                            if (
-                                isinstance(obj, type)
-                                and not name.startswith("_")
-                                and obj.__module__ == module.__name__
-                            ):
-                                expanded_class_names.append(name)
-
-                    if not expanded_class_names:
-                        # No classes found, skip this alias
-                        continue
-
-                    class_names = tuple(expanded_class_names)
-                except (ImportError, AttributeError):
-                    # If we can't expand wildcard, skip this alias
-                    continue
-
-            # Try to import the module to get all classes at once
-            try:
-                module = self.resolver._import(full_module_name)
-                for class_name in class_names:
-                    # Check if already in globals from wildcard expansion
-                    if class_name in self.module_globals:
-                        base_classes.append(self.module_globals[class_name])
-                    elif hasattr(module, class_name):
-                        cls = getattr(module, class_name)
-                        base_classes.append(cls)
-                        # Also register in globals
-                        self.module_globals[class_name] = cls
-                    else:
-                        missing_classes.append(class_name)
-            except (ImportError, AttributeError):
-                # Module import failed, try individual class resolution
-                for class_name in class_names:
-                    if class_name in self.module_globals:
-                        base_classes.append(self.module_globals[class_name])
-                    else:
-                        try:
-                            cls = self.resolver.resolve(class_name)
-                            base_classes.append(cls)
-                            self.module_globals[class_name] = cls
-                        except AttributeError:
-                            missing_classes.append(class_name)
-
-            if missing_classes:
-                # Skip this alias if classes are missing (may be optional)
-                continue
-
-            if base_classes:
-                # Create multi-inheritance namespace class
-                namespace_class = type(
-                    alias_name,
-                    tuple(base_classes),
-                    {
-                        "__module__": self.module_globals.get("__name__", "unknown"),
-                        "__doc__": f"Unified namespace combining: {', '.join([cls.__name__ for cls in base_classes])}",
-                    },
-                )
-
-                # Register in module globals
-                self.module_globals[alias_name] = namespace_class
-                # Store reference so it appears in CLASS_TO_MODULE
-                self.resolver.class_to_module[alias_name] = (
-                    f"{self.resolver.package_name}._namespace_aliases"
-                )
-
     def _populate_all(self) -> None:
         """Assign ``__all__`` from the resolver's registered top-level names.
 
         The exported surface is the union of any ``__all__`` the package
         hand-declared before bootstrap and the resolver's ``class_to_module``
-        keys -- i.e. every module-level class, function, constant, and created
+        keys -- i.e. every module-level class, function, constant, and declared
         namespace alias reachable as ``pkg.Name``. Flat method aliases
         (``method_to_module``) and bare submodule names are intentionally
         excluded: they resolve lazily via ``__getattr__`` but do not belong in
@@ -778,11 +915,13 @@ class PackageResolverHandle:
         self.resolver.rebuild(self.include_spec)
         self.default_eager = eager
 
+        # Re-declare the namespace aliases: what the last builds published is
+        # dropped, so each is rebuilt from the modules as they are now.
+        self.resolver._register_aliases()
+        if eager or not self.allow_getattr:
+            self.resolver._build_pending_aliases()
         if eager:
             self.export_all()
-
-        # Recreate namespace aliases after rebuild
-        self._create_namespace_aliases()
 
         # Keep ``__all__`` in sync with the rebuilt resolver state.
         self._populate_all()
@@ -1192,3 +1331,80 @@ def create_namespace_aliases(
 
         # Register in module globals
         module_globals[alias_name] = namespace_class
+
+
+# What a declaring ``__init__`` may load: this module, and the deprecation hook
+# that declares a package's moved names (``Deprecation.attributes``, section 5).
+_DECLARATION_MODULES = frozenset({__name__, "pythontk.core_utils.deprecation"})
+
+# Run in a fresh interpreter by ``import_footprint``: every module the import
+# loaded, whether it is a package, and whether its root boots through this module.
+_FOOTPRINT_PROBE = """\
+import json, sys
+before = set(sys.modules)
+__import__(sys.argv[1])
+rows = []
+for name in sorted(set(sys.modules) - before):
+    module = sys.modules[name]
+    if module is not None:
+        root = sys.modules.get(name.partition(".")[0])
+        booted = "PACKAGE_RESOLVER" in getattr(root, "__dict__", {})
+        rows.append([name, hasattr(module, "__path__"), booted])
+stdlib = sorted(getattr(sys, "stdlib_module_names", ()))
+print(json.dumps({"rows": rows, "stdlib": stdlib}))
+"""
+
+
+def import_footprint(package: str) -> Dict[str, List[str]]:
+    """What importing *package* loads beyond declarations, in a fresh interpreter.
+
+    CODE_STANDARD section 4: a package ``__init__`` declares its names and
+    imports none of them. Importing a package that keeps to it loads package
+    ``__init__`` files, the declaration machinery (this module, and the
+    ``Deprecation.attributes`` hook for moved names) and the standard library
+    -- nothing else.
+    The import runs in a child process (``sys.executable``, given this
+    process's ``sys.path``), so nothing already loaded here can hide a load. In
+    a DCC GUI, where ``sys.executable`` is the host binary, call it from a
+    headless interpreter.
+
+    Parameters:
+        package (str): The package to import, e.g. ``"pythontk"``.
+
+    Returns:
+        (dict) ``"modules"``: the non-package modules that loaded from
+        *package* or from any package that boots through this module, the
+        declaration machinery excepted. ``"third_party"``: the top-level
+        names of everything else that loaded outside the standard library
+        (named by ``sys.stdlib_module_names``, Python 3.10+; always empty
+        before). Both are empty for an import that only declares.
+
+    Raises:
+        RuntimeError: The child process could not import *package*.
+    """
+    import json
+    import subprocess
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(path for path in sys.path if path)
+    proc = subprocess.run(
+        [sys.executable, "-c", _FOOTPRINT_PROBE, package],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=300,
+    )
+    if proc.returncode:
+        raise RuntimeError(f"importing {package} failed:\n{proc.stderr[-2000:]}")
+    report = json.loads(proc.stdout.strip().splitlines()[-1])
+    own = package.partition(".")[0]
+    stdlib = set(report["stdlib"])
+    modules, third_party = [], set()
+    for name, is_package, booted in report["rows"]:
+        top = name.partition(".")[0]
+        if booted or top == own:
+            if not is_package and name not in _DECLARATION_MODULES:
+                modules.append(name)
+        elif stdlib and top not in stdlib:
+            third_party.add(top)
+    return {"modules": modules, "third_party": sorted(third_party)}

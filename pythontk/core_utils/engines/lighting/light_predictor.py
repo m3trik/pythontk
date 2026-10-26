@@ -179,7 +179,6 @@ class LightPredictor:
             OSError: the file cannot be read as an image.
             ImportError: OpenCV, which reads EXR, is not installed.
         """
-        os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")  # before cv2 is imported
         import cv2  # an optional dependency: only exact frames read bakes
 
         raw = ImgUtils.cv2_read(path, cv2.IMREAD_UNCHANGED)

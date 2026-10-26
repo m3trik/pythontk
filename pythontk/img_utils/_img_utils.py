@@ -6,13 +6,8 @@ import os
 import math
 import logging
 
-# OpenCV reads this once, when its EXR codec first initializes (often at the
-# first cv2 import). Set it here — pythontk is the ecosystem's EXR/HDR IO entry
-# point and imports cv2 only lazily — so EXR/HDR IO works regardless of when a
-# consumer first touches cv2. ``setdefault`` respects an explicit opt-out.
-os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
-
-from collections import namedtuple
+# OpenEXR is enabled by the package root (pythontk/__init__.py): a call here
+# made the resolver load this module, PIL and numpy at every import.
 from contextlib import contextmanager
 from typing import (
     List,
@@ -21,6 +16,7 @@ from typing import (
     Union,
     Any,
     Callable,
+    NamedTuple,
     Optional,
     Sequence,
     TYPE_CHECKING,
@@ -66,10 +62,18 @@ from pythontk.img_utils._rasterize import _ImgRasterizeInternal
 from pythontk.img_utils._color_space import _ImgColorSpaceInternal
 
 
-# Per-format IO capability. ``backend`` selects the library used to read/write:
-#   "pil" — Pillow (the default).
-#   "cv2" — OpenCV, for float formats Pillow cannot handle (EXR, HDR).
-ImageFormat = namedtuple("ImageFormat", "read write backend")
+class ImageFormat(NamedTuple):
+    """Per-format IO capability. ``backend`` selects the library used to read/write:
+    ``"pil"``, Pillow (the default), or ``"cv2"``, OpenCV, for the float formats
+    Pillow cannot handle (EXR, HDR).
+
+    A class statement, not a ``namedtuple(...)`` assignment, so the resolver's
+    lazy scan of this module publishes it as ``ptk.ImageFormat``.
+    """
+
+    read: bool
+    write: bool
+    backend: str
 
 
 class ImgUtils(
