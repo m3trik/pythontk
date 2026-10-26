@@ -12,9 +12,8 @@ import logging
 import os
 from typing import List, Optional
 
-# Before cv2 loads: OpenCV reads OPENCV_IO_ENABLE_OPENEXR once, at import, so a
-# cv2 imported without it leaves OpenEXR off for the whole process.
-os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+# OpenEXR is already enabled: the package root sets OPENCV_IO_ENABLE_OPENEXR
+# before any module here loads.
 try:
     import cv2
 

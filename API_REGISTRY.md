@@ -211,7 +211,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 <a id="__init__"></a>
 ### `__init__.py`
 
-- [`DEFAULT_INCLUDE`](pythontk/pythontk/__init__.py#L11) — constant
+- [`DEFAULT_INCLUDE`](pythontk/pythontk/__init__.py#L21) — constant
 
 <a id="audio_utils--_audio_utils"></a>
 ### `audio_utils/_audio_utils.py`
@@ -2441,10 +2441,11 @@ Helpers for hot-reloading packages and their submodules.
 
 Reusable module attribute resolver for package-style imports.
 
-- [`bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L825) — Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
-- [`lazy_exports(module_globals: MutableMapping[str, Any], sources: IncludeMapping) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L986) — Publish a subpackage's names from its submodules, each loaded on first use.
-- [`create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L1080) — Create multi-inheritance namespace classes from groups of related classes.
-- **[`class ModuleAttributeResolver`](pythontk/pythontk/core_utils/module_resolver.py#L36)** — Discover and resolve attributes exposed from package submodules lazily.
+- [`bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L935) — Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
+- [`lazy_exports(module_globals: MutableMapping[str, Any], sources: IncludeMapping) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L1096) — Publish a subpackage's names from its submodules, each loaded on first use.
+- [`create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L1190) — Create multi-inheritance namespace classes from groups of related classes.
+- [`import_footprint(package: str) -> Dict[str, List[str]]`](pythontk/pythontk/core_utils/module_resolver.py#L1329) — What importing *package* loads beyond declarations, in a fresh interpreter.
+- **[`class ModuleAttributeResolver`](pythontk/pythontk/core_utils/module_resolver.py#L39)** — Discover and resolve attributes exposed from package submodules lazily.
   - `ModuleAttributeResolver.build(self) -> 'ModuleAttributeResolver'` — Populate resolver dictionaries based on current include spec.
   - `ModuleAttributeResolver.rebuild(self, include: Optional[Mapping[str, Union[Sequence[str], str]]] = None) -> 'ModuleAttributeResolver'` — Reset include spec (optional) and rebuild dictionaries.
   - `ModuleAttributeResolver.resolve(self, name: str)` — Resolve an attribute using the registered dictionaries.
@@ -2452,7 +2453,7 @@ Reusable module attribute resolver for package-style imports.
   - `ModuleAttributeResolver.bind_to(self, module_globals: MutableMapping[str, object], *, install_getattr: bool = True, eager: bool = False, names: Optional[Iterable[str]] = None) -> None` — Bind resolver helpers into a module's globals dictionary.
   - `ModuleAttributeResolver.iter_registered_names(self) -> Iterable[str]` — Return an iterable of attribute names known to the resolver.
   - `ModuleAttributeResolver.clear_module_cache(self) -> None` — Drop cached module imports managed by the resolver.
-- **[`class PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L463)** — Facade that wires a :class:`ModuleAttributeResolver` into a package module.
+- **[`class PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L687)** — Facade that wires a :class:`ModuleAttributeResolver` into a package module.
   - `PackageResolverHandle.install(self, *, expose_maps: bool = True, install_helpers: bool = True, allow_getattr: Optional[bool] = None, eager: Optional[bool] = None, custom_getattr: Optional[Callable[[str], Any]] = None) -> None` — Publish resolver artifacts into the target module globals.
   - `PackageResolverHandle.configure(self, *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, merge: bool = True, eager: Optional[bool] = None, custom_getattr: Optional[Callable[[str], Any]] = None) -> ModuleAttributeResolver` — Reconfigure the underlying resolver and optionally re-export symbols.
   - `PackageResolverHandle.build_dictionaries(self, include_override: Optional[IncludeMapping] = None, *, eager: bool = False, custom_getattr: Optional[Callable[[str], Any]] = None) -> ModuleAttributeResolver` — Compatibility wrapper mirroring the legacy ``build_dictionaries`` helper.
@@ -3903,7 +3904,8 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
 <a id="img_utils--_img_utils"></a>
 ### `img_utils/_img_utils.py`
 
-- **[`class ImgUtils(_ImgHeaderInternal, _ImgCodecInternal, _ImgChannelInternal, _ImgFilterInternal, _ImgAtlasInternal, _ImgRasterizeInternal, _ImgColorSpaceInternal, HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L75)** — Helper methods for working with image file formats.
+- **[`class ImageFormat(NamedTuple)`](pythontk/pythontk/img_utils/_img_utils.py#L65)** — Per-format IO capability.
+- **[`class ImgUtils(_ImgHeaderInternal, _ImgCodecInternal, _ImgChannelInternal, _ImgFilterInternal, _ImgAtlasInternal, _ImgRasterizeInternal, _ImgColorSpaceInternal, HelpMixin)`](pythontk/pythontk/img_utils/_img_utils.py#L79)** — Helper methods for working with image file formats.
   - `ImgUtils.encode_workers(cls, requested: Optional[int] = None) -> int` *(class)* — Threads for a batch of encodes: *requested* as given (at least 1),
   - `ImgUtils.effective_mode(cls, mode: str, ext: str) -> str` *(class)* — The mode *ext* will actually store for an image in *mode*.
   - `ImgUtils.dropped_channels(cls, mode: str, ext: str = '', *, target_mode: str = '') -> Tuple[str, ...]` *(class)* — Band names a write or a conversion cannot keep from *mode*.
@@ -4011,7 +4013,7 @@ Texture transfer between two UV layouts of the SAME triangles (arrays in -> arra
 
 Cross-set exposure / white-balance equalization.
 
-- **[`class ExposureEqualizer`](pythontk/pythontk/img_utils/exposure_equalizer.py#L40)** — Equalize exposure / WB across a list of source directories.
+- **[`class ExposureEqualizer`](pythontk/pythontk/img_utils/exposure_equalizer.py#L39)** — Equalize exposure / WB across a list of source directories.
   - `ExposureEqualizer.is_available(self) -> bool`
   - `ExposureEqualizer.equalize_directories(self, source_dirs: Sequence[str], output_root: str, reference_dir: Optional[str] = None, suffix: str = '_eq', sample_count: int = 20, strength: float = 1.0, reference_strategy: str = 'first', quality: int = 100, preserve_exif: bool = True, per_image: bool = False, overwrite_output: bool = True) -> List[str]` — Equalize every image in ``source_dirs`` against the reference set.
 
@@ -4020,7 +4022,7 @@ Cross-set exposure / white-balance equalization.
 
 Perceptual-hash + sharpness curation for large image sets.
 
-- **[`class ImageCurator`](pythontk/pythontk/img_utils/image_curator.py#L49)** — Pre-SfM content-dedup + sharpness culling.
+- **[`class ImageCurator`](pythontk/pythontk/img_utils/image_curator.py#L48)** — Pre-SfM content-dedup + sharpness culling.
   - `ImageCurator.is_available(self) -> bool`
   - `ImageCurator.dhash(image, size: int = 8) -> int` *(static)* — Difference hash.
   - `ImageCurator.hamming(a: int, b: int) -> int` *(static)*
@@ -4626,7 +4628,7 @@ Rich-text tooltip DSL -- :class:`TooltipFormat`.
 
 Extract still frames from a video file via OpenCV.
 
-- **[`class FrameExtractor`](pythontk/pythontk/vid_utils/frame_extractor.py#L32)** — Extract frames from a video file at a configurable step interval.
+- **[`class FrameExtractor`](pythontk/pythontk/vid_utils/frame_extractor.py#L31)** — Extract frames from a video file at a configurable step interval.
   - `FrameExtractor.score_sharpness(frame) -> float` *(static)* — Variance-of-Laplacian sharpness score.
   - `FrameExtractor.extract_frames(self, video_path: str, output_folder: str, step: int = 5, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None) -> List[str]` — Save every ``step``-th frame from ``video_path`` to ``output_folder``.
   - `FrameExtractor.extract_frames_sharpest(self, video_path: str, output_folder: str, window_sec: float = 1.0, quality: int = 95, prefix: str = 'frame', max_frames: Optional[int] = None, min_sharpness: float = 0.0) -> List[str]` — Bucket frames by time window;

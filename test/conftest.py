@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 # Enable OpenCV's EXR codec before any test module imports cv2 (OpenCV caches
-# this flag at first codec init). Mirrors the production setting in ImgUtils.
+# this flag at first codec init). Mirrors the package root's (pythontk/__init__.py).
 os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 
 # Process-level isolation -- no real browser launch, one throwaway temp root --
