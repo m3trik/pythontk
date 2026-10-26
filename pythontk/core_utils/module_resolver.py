@@ -385,9 +385,10 @@ class ModuleAttributeResolver:
         try:
             module = self._import(f"{self.package_name}.{module_key}")
         except ImportError:
-            return {}
+            # An explicit class list may still resolve through the registry.
+            module = None
         if class_names == ("*",):
-            return self._alias_classes(module)
+            return self._alias_classes(module) if module is not None else {}
         classes: Dict[str, type] = {}
         for class_name in class_names:
             cls = getattr(module, class_name, None)

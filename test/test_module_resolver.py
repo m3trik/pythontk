@@ -962,6 +962,18 @@ class LazyNamespaceAliasTests(_TempPackageCase):
         )
         self.assertIsNone(sys.modules["alias_pkg_k.diag.mesh"].PEER)
 
+    def test_an_explicit_class_list_resolves_through_the_registry(self) -> None:
+        """An alias naming its classes still builds when its own module fails to
+        import: each name resolves through the registry instead."""
+        init = self._init_with('"diag->Diag": "*"', '"broken->Fused": ["Helper"]').replace(
+            "include=DEFAULT_INCLUDE)",
+            "include=DEFAULT_INCLUDE, on_import_error=lambda name, exc: None)",
+        )
+        modules = {**self._MODULES, "broken.py": "import no_such_backend_module\n"}
+        pkg = self._package("alias_pkg_l", init=init, modules=modules)
+
+        self.assertEqual([b.__name__ for b in pkg.Fused.__bases__], ["Helper"])
+
     def test_an_alias_that_cannot_build_is_withdrawn(self) -> None:
         """A missing module is never declared, so ``from pkg import *`` still
         works; one that fails to import, or has no class to fuse, leaves the
