@@ -915,6 +915,53 @@ class LazyNamespaceAliasTests(_TempPackageCase):
 
         self.assertIn("Diag", vars(pkg))
 
+    def test_without_a_module_getattr_the_aliases_build_at_import(self) -> None:
+        """``allow_getattr=False`` installs no ``__getattr__`` to build an alias
+        on first read, so the alias stood in ``__all__`` but every read of it
+        raised AttributeError. Found: 2026-10-26 release review."""
+        init = self._init_with(
+            "include=DEFAULT_INCLUDE)", "include=DEFAULT_INCLUDE, allow_getattr=False)"
+        )
+        pkg = self._package("alias_pkg_i", init=init)
+
+        self.assertIn("Diag", pkg.__all__)
+        self.assertEqual(pkg.Diag().check(), "mesh")
+
+    def test_a_module_that_raises_while_building_keeps_its_real_error(self) -> None:
+        """Only an ImportError withdraws an alias. Anything else a fused module
+        raises (a SyntaxError mid-edit, a host API's RuntimeError) surfaced once,
+        and every later read raised ModuleNotFoundError for the alias's internal
+        placeholder module instead. Found: 2026-10-26 release review."""
+        modules = {**self._MODULES, "diag/bad.py": "raise RuntimeError('host not ready')\n"}
+        pkg = self._package("alias_pkg_j", modules=modules)
+
+        for attempt in range(2):
+            with self.subTest(attempt=attempt):
+                with self.assertRaisesRegex(RuntimeError, "host not ready"):
+                    pkg.Diag
+
+    def test_a_fused_module_reading_the_alias_mid_build_gets_attribute_error(
+        self,
+    ) -> None:
+        """While an alias builds it is no longer pending, so a fused module that
+        read it at import (``getattr(pkg, "Diag", None)``) got ModuleNotFoundError
+        for the placeholder module, which dropped that module from the alias.
+        Found: 2026-10-26 release review."""
+        modules = {
+            **self._MODULES,
+            "diag/mesh.py": (
+                "import alias_pkg_k\n\n"
+                "PEER = getattr(alias_pkg_k, 'Diag', None)\n\n"
+                "class MeshDiag:\n    def check(self):\n        return 'mesh'\n"
+            ),
+        }
+        pkg = self._package("alias_pkg_k", modules=modules)
+
+        self.assertEqual(
+            [b.__name__ for b in pkg.Diag.__bases__], ["MeshDiag", "UvDiag"]
+        )
+        self.assertIsNone(sys.modules["alias_pkg_k.diag.mesh"].PEER)
+
     def test_an_alias_that_cannot_build_is_withdrawn(self) -> None:
         """A missing module is never declared, so ``from pkg import *`` still
         works; one that fails to import, or has no class to fuse, leaves the

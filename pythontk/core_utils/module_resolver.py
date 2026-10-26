@@ -221,6 +221,13 @@ class ModuleAttributeResolver:
         """Resolve *name* through the registry alone, without building an alias."""
         # Check classes
         if name in self.class_to_module:
+            if self.class_to_module[name] == self._alias_module:
+                # A declared alias that is not pending: mid-build (a module it
+                # fuses read it at import) or withdrawn. The placeholder names
+                # no real module, so importing it would mask the reason.
+                raise AttributeError(
+                    f"module {self.package_name} has no attribute '{name}'"
+                )
             module = self._import(self.class_to_module[name])
             return getattr(module, name)
 
@@ -320,7 +327,12 @@ class ModuleAttributeResolver:
             if spec is None:
                 continue
             self._pending_aliases[alias_name] = (module_key, class_names)
-            self.class_to_module[alias_name] = f"{self.package_name}._namespace_aliases"
+            self.class_to_module[alias_name] = self._alias_module
+
+    @property
+    def _alias_module(self) -> str:
+        """The registry entry of a declared alias, which names no real module."""
+        return f"{self.package_name}._namespace_aliases"
 
     def _build_alias(self, alias_name: str) -> Optional[type]:
         """Fuse a declared namespace alias's classes into one class, now.
@@ -338,22 +350,13 @@ class ModuleAttributeResolver:
         """
         module_key, class_names = self._pending_aliases.pop(alias_name)
         try:
-            module = self._import(f"{self.package_name}.{module_key}")
-        except ImportError:
-            module = None
-        if class_names == ("*",):
-            classes = self._alias_classes(module) if module is not None else {}
-        else:
-            classes = {}
-            for class_name in class_names:
-                cls = getattr(module, class_name, None)
-                if cls is None:
-                    try:
-                        cls = self._resolve_registered(class_name)
-                    except (AttributeError, ImportError):
-                        classes = {}
-                        break
-                classes[class_name] = cls
+            classes = self._collect_alias_classes(module_key, class_names)
+        except Exception:
+            # Not an ImportError (that withdraws the alias below): a fused
+            # module raised mid-import. Keep the alias pending, so the next
+            # read retries and raises the real error again.
+            self._pending_aliases[alias_name] = (module_key, class_names)
+            raise
         if not classes:
             self._withdraw_alias(alias_name)
             return None
@@ -374,6 +377,27 @@ class ModuleAttributeResolver:
             self._module.__dict__[name] = obj
             self._alias_published[name] = obj
         return alias
+
+    def _collect_alias_classes(
+        self, module_key: str, class_names: Tuple[str, ...]
+    ) -> Dict[str, type]:
+        """The classes a declared alias fuses; empty when it cannot be built."""
+        try:
+            module = self._import(f"{self.package_name}.{module_key}")
+        except ImportError:
+            return {}
+        if class_names == ("*",):
+            return self._alias_classes(module)
+        classes: Dict[str, type] = {}
+        for class_name in class_names:
+            cls = getattr(module, class_name, None)
+            if cls is None:
+                try:
+                    cls = self._resolve_registered(class_name)
+                except (AttributeError, ImportError):
+                    return {}
+            classes[class_name] = cls
+        return classes
 
     def _build_pending_aliases(self) -> None:
         """Build every declared alias not built yet."""
@@ -779,10 +803,13 @@ class PackageResolverHandle:
         self.module_globals["_RESOLVER"] = self.resolver
         self.module_globals["PACKAGE_RESOLVER"] = self
 
-        # Declare the namespace aliases: each is built on first use.
+        # Declare the namespace aliases: each is built on first use. Without a
+        # module ``__getattr__`` nothing would build one on first read, so
+        # those are built now.
         self.resolver._register_aliases(self._stale_aliases)
-        if eager_flag:
+        if eager_flag or not allow_getattr_flag:
             self.resolver._build_pending_aliases()
+        if eager_flag:
             self.export_all()
 
         # Publish the resolved public surface as ``__all__`` (after the aliases
@@ -890,8 +917,9 @@ class PackageResolverHandle:
         # Re-declare the namespace aliases: what the last builds published is
         # dropped, so each is rebuilt from the modules as they are now.
         self.resolver._register_aliases()
-        if eager:
+        if eager or not self.allow_getattr:
             self.resolver._build_pending_aliases()
+        if eager:
             self.export_all()
 
         # Keep ``__all__`` in sync with the rebuilt resolver state.
