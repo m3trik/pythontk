@@ -52,7 +52,7 @@ class _VisibilityMixin:
 
         Parameters:
             nodes: The GLB node names (the DCC's leaf names), deduplicated.
-            channel: A :data:`glb_fades.CHANNELS` key (``"opacity"``, ``"highlight"``).
+            channel: A :data:`glb.fades.CHANNELS` key (``"opacity"``, ``"highlight"``).
             keys: ``[(frame, value), ...]`` -- a :class:`RampKeys` plan.
             colors: One ``(r, g, b)`` or ``None`` per colour stop of the
                 channel, high first; ``None`` leaves that stop to its default.

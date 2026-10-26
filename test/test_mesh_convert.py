@@ -9806,7 +9806,7 @@ class TestFbxToGlbReport(unittest.TestCase):
 
     def test_a_highlighted_materials_orphaned_emissive_map_is_swept(self):
         """The highlight row drops the emissive map from the highlighted copy
-        (`glb_fades._uncover_emissive`); when that material was the map's only
+        (`glb.fades._uncover_emissive`); when that material was the map's only
         user the image is dead payload, and the chain sweeps it after the fades
         pass rather than paying the texture pass to compress it."""
         pixel = "data:image/png;base64,iVBORw0KGgo="
@@ -12861,15 +12861,6 @@ class TestFacadeLayout(unittest.TestCase):
             with self.assertRaises(Reached):
                 MeshConvert.check_glb_materials("x.glb")
         self.assertEqual(seen, ["x.glb"])
-
-    def test_old_glb_fades_path_is_a_deprecated_alias(self):
-        import pythontk as ptk
-        from pythontk.file_utils.mesh_convert import glb_fades
-
-        with self.assertWarns(DeprecationWarning):
-            channels = glb_fades.CHANNELS
-        self.assertIs(channels, ptk.GlbFades.CHANNELS)
-        self.assertIn("highlight", channels)
 
 
 class TestDecodeGlbTextures(unittest.TestCase):

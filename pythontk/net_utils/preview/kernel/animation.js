@@ -151,7 +151,7 @@ function stillShotAt(seconds) {
 // this function deletes and nothing else changes.
 // The material properties a pointer can reach, and how each lane reaches the
 // three.js material. One row per channel the exporter's table writes
-// (pythontk `glb_fades.CHANNELS`): alpha is the fourth lane of the base colour
+// (pythontk `glb.fades.CHANNELS`): alpha is the fourth lane of the base colour
 // factor and lands on `material.opacity`; a highlight is the whole VEC3
 // emissive factor and lands on `material.emissive` as a colour track. Adding a
 // channel there is adding a row here; the wiring below is shared.

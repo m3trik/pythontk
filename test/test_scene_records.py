@@ -2535,46 +2535,6 @@ class TestWriterStamp(SceneRecordsCase):
         self.assertEqual(SR.LIGHTMAP_WRITERS.load(self.store)["a.exr"], "")
 
 
-class TestMovedPaths(unittest.TestCase):
-    """The pre-2026-09-26 deep paths warn and resolve until 0.13.0.
-
-    Delete with the stubs (``core_utils/scene_records.py``,
-    ``export_profile.py``, ``hierarchy_baseline.py``).
-    """
-
-    MOVED = {
-        "pythontk.core_utils.scene_records": (
-            "SceneRecords",
-            "SceneStoreBase",
-            "ExportSnapshot",
-            "RecordTransfer",
-        ),
-        "pythontk.core_utils.export_profile": ("ExportProfile", "ExportRun"),
-        "pythontk.core_utils.hierarchy_baseline": (
-            "HierarchyBaseline",
-            "HierarchyBaselineStore",
-        ),
-    }
-
-    def test_old_paths_warn_and_resolve_to_the_root_objects(self):
-        import importlib
-        import warnings
-
-        import pythontk as ptk
-
-        for module, names in self.MOVED.items():
-            mod = importlib.import_module(module)
-            for name in names:
-                with warnings.catch_warnings(record=True) as caught:
-                    warnings.simplefilter("always")
-                    obj = getattr(mod, name)
-                self.assertIs(obj, getattr(ptk, name), f"{module}.{name}")
-                self.assertTrue(
-                    any(issubclass(w.category, DeprecationWarning) for w in caught),
-                    f"{module}.{name} resolved without a notice",
-                )
-
-
 class TestClause(unittest.TestCase):
     """A sentence of an assembly that only some payloads call for."""
 
