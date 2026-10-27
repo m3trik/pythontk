@@ -1,11 +1,8 @@
 # pythontk — API Changes
 
-_Diff vs the last release (origin/main @ 19ef6ab)._
+_Diff vs the last release (origin/main @ 5cb31cb)._
 
-## Added (2)
-
-- `core_utils/module_resolver.py::import_footprint(package: str) -> Dict[str, List[str]]`
-- `img_utils/_img_utils.py::ImageFormat(class)`
+No public API changes since the last release (origin/main @ 5cb31cb).
 
 ## Deprecations (36)
 
@@ -47,3 +44,4 @@ _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived 
 - **HELD** `core_utils/engines/scene_export/scene_records.py::SceneRecords.web_projected` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `core_utils/engines/scene_export/scene_records.py::SceneRecords.web_shape` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `core_utils/engines/scene_export/scene_records.py::WebProjection` — remove in 0.18.0, not before 2026-11-23
+
