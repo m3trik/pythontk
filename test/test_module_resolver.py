@@ -1150,6 +1150,50 @@ class FlatCollisionTests(_TempPackageCase):
         self.assertEqual(pythontk._RESOLVER.flat_collisions, {})
 
 
+class LazyLoadSafetyTests(BaseTestCase):
+    """A module loads lazily only when its top level has no side effect, and the
+    statements inside a top-level ``if`` or ``try`` are judged by that rule too,
+    not passed whole: a registration call behind ``if`` ran at import before,
+    and lazily it would silently wait for the module's first use."""
+
+    @staticmethod
+    def _safe(source: str) -> bool:
+        import ast
+
+        from pythontk.core_utils.module_resolver import ModuleAttributeResolver
+
+        tree = ast.parse(textwrap.dedent(source))
+        return ModuleAttributeResolver._statements_are_side_effect_free(tree.body)
+
+    def test_a_call_inside_a_top_level_if_or_try_is_a_side_effect(self):
+        self.assertFalse(self._safe("if True:\n    register()\n"))
+        self.assertFalse(self._safe("try:\n    register()\nexcept Exception:\n    pass\n"))
+        self.assertFalse(self._safe("try:\n    import x\nfinally:\n    cleanup()\n"))
+
+    def test_a_guarded_import_and_its_failure_path_are_not(self):
+        self.assertTrue(self._safe(
+            "try:\n    import maya.cmds as cmds\n"
+            "except ImportError as error:\n    print(error)\n    cmds = None\n"
+        ))
+        self.assertTrue(self._safe(
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import a\nelse:\n    b = 1\n"
+        ))
+
+    def test_a_main_block_never_runs_on_import(self):
+        self.assertTrue(self._safe("def main():\n    pass\nif __name__ == '__main__':\n    main()\n"))
+        self.assertTrue(self._safe("if '__main__' == __name__:\n    main()\n"))
+
+    def test_what_runs_on_import_beside_a_main_block_is_judged(self):
+        # ``!=`` and the ``else`` of a main block both run on every import.
+        self.assertFalse(self._safe("if __name__ != '__main__':\n    register()\n"))
+        self.assertFalse(self._safe(
+            "if __name__ == '__main__':\n    main()\nelse:\n    register()\n"
+        ))
+
+    def test_a_top_level_call_is_a_side_effect(self):
+        self.assertFalse(self._safe("register()\n"))
+
+
 class ParseMemoizationTests(BaseTestCase):
     """``build()`` read and parsed every wildcard module twice.
 

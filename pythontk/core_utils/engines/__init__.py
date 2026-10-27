@@ -16,23 +16,18 @@ of **hard rules** — no DCC imports (``maya``, ``bpy``, Qt), zero-dependency
 preferred, no knowledge of any specific consumer. The generality requirement is
 relaxed; the agnosticism requirement is not.
 
-**Why it lives here.** Two downstream packages that cannot import each other
-(mayatk, blendertk) need one shared source of truth for a domain's model and
-math. Duplicating it downstream is a DRY/SSoT violation; pushing a
-non-general document type into ``*_utils`` erodes that layer's charter. A
-charter'd engine namespace is the honest home: pure and agnostic, but openly
-domain-shaped.
+**Why it lived here.** Two downstream packages that cannot import each other
+(mayatk, blendertk) needed one shared source of truth for a domain's model and
+math. Under the split-by-feature layout (CODE_STANDARD section 14) that home is
+tentacle's ``core/<engine>/``: this namespace takes no new tenant, and each
+engine below leaves for tentacle once its last mayatk and blendertk users have
+moved, keeping only its general pieces and the ``SceneRecords`` contract.
 
-**Placement decision rule.**
-
-1. First try to **decompose** the logic into data-type-general primitives and
-   place them in the appropriate ``*_utils`` package (the photogrammetry-ingest
-   precedent). Prefer this whenever a piece is genuinely reusable on its own.
-2. An **irreducible shared domain core** — needed by two-or-more downstream
-   packages that cannot import one another — goes in ``core_utils/engines/<system>/``.
-3. If an engine ever **outgrows the package** (size, or it needs a real
-   dependency), graduate it to its own distribution. The namespace already
-   marks the extraction boundary, so that move is mechanical.
+**Placement decision rule.** First **decompose** the logic into
+data-type-general primitives and place them in the appropriate ``*_utils``
+package (the photogrammetry-ingest precedent) whenever a piece is genuinely
+reusable on its own. A domain core several tools share goes to tentacle's
+``core/<engine>/``, never here.
 
 **Tenants.** ``shots/`` (timeline model + planner + manifest), ``scene_export/``
 (scene records, the export snapshot and profile, the hierarchy baseline, the
