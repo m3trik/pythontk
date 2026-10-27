@@ -506,6 +506,28 @@ class TestProseObjects(unittest.TestCase):
         self.assertIn(os.path.basename(path), " ".join(logs.output))
 
 
+class TestTheMoveKeepsTheSavedNames(unittest.TestCase):
+    """Names a user's files and scenes already hold, pinned before the Shot
+    Manifest engine moves to tentacle (2026-10-27): its template folders stay
+    under ``shots/`` (never the new package's name) and the markers a build
+    writes keep their owner."""
+
+    def test_the_mapping_templates_stay_under_shots(self):
+        self.assertEqual(
+            mapping_mod.Mapping.templates().user_dir.parts[-2:],
+            ("shots", "manifest_mappings"),
+        )
+
+    def test_the_behavior_templates_stay_under_shots(self):
+        self.assertEqual(
+            beh.Behaviors.templates().user_dir.parts[-2:],
+            ("shots", "manifest_behaviors"),
+        )
+
+    def test_a_builds_markers_keep_their_owner(self):
+        self.assertEqual(ShotManifest.MARKER_OWNER, "shot_manifest")
+
+
 class TestTemplateSettings(unittest.TestCase):
     """Settings a mapping template carries."""
 
