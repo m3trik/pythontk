@@ -69,6 +69,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/engines/shots/shot_report.py`](#core_utils--engines--shots--shot_report) — What a shots panel says about the store: pure, one-line summaries.
 - [`core_utils/engines/shots/shot_sequencer.py`](#core_utils--engines--shots--shot_sequencer) — Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
 - [`core_utils/engines/shots/shot_transfer.py`](#core_utils--engines--shots--shot_transfer) — Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
+- [`core_utils/engines/textures/emissive_groups.py`](#core_utils--engines--textures--emissive_groups) — Emissive groups: named face sets that gate emissive regions at runtime.
 - [`core_utils/engines/textures/map_compositor.py`](#core_utils--engines--textures--map_compositor) — Pure image-compositing engine — alpha-composite layered texture maps
 - [`core_utils/engines/textures/map_factory/_map_factory.py`](#core_utils--engines--textures--map_factory--_map_factory) — ``MapFactory`` -- the texture-map workflow orchestrator.
 - [`core_utils/engines/textures/map_factory/conversions.py`](#core_utils--engines--textures--map_factory--conversions) — Map-conversion registry primitives for the texture MapFactory.
@@ -213,7 +214,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 ### `__init__.py`
 
 - [`DEFAULT_INCLUDE`](pythontk/pythontk/__init__.py#L21) — constant
-- [`MOVED_NAMES`](pythontk/pythontk/__init__.py#L588) — constant
+- [`MOVED_NAMES`](pythontk/pythontk/__init__.py#L594) — constant
 
 <a id="audio_utils--_audio_utils"></a>
 ### `audio_utils/_audio_utils.py`
@@ -1758,6 +1759,56 @@ Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
   - `ShotTransfer.section_in(cls, section: Dict[str, Any], ctx: Any) -> Dict[str, Any]` *(class)* — A store dict for a received ``shots`` section with no DCC owner to
   - `ShotTransfer.merge_record(cls, own: Optional[Dict[str, Any]], other: Optional[Dict[str, Any]], ctx: Any = None) -> Optional[Dict[str, Any]]` *(class)* — The ``shot_store`` record's merge (``SceneRecords.CODECS``).
   - `ShotTransfer.respell_record(cls, state: Optional[Dict[str, Any]], ctx: Any) -> Any` *(class)* — *state* (a store dict another scene saved) with the names it holds
+
+<a id="core_utils--engines--textures--emissive_groups"></a>
+### `core_utils/engines/textures/emissive_groups.py`
+
+Emissive groups: named face sets that gate emissive regions at runtime.
+
+- **[`class EmissiveGroupsAdapter(Protocol)`](pythontk/pythontk/core_utils/engines/textures/emissive_groups.py#L50)** — A host's half of Emissive Groups: what :class:`EmissiveGroupsModel` asks of
+  - `EmissiveGroupsAdapter.faces(self, faces=None) -> FaceMap` — *faces* (a ``FaceMap``, or the host's own spelling) or, for ``None``,
+  - `EmissiveGroupsAdapter.add_members(self, store: str, face_map: FaceMap) -> None` — Add *face_map* to *store*, creating it when absent.
+  - `EmissiveGroupsAdapter.remove_members(self, store: str) -> None` — Delete *store* wherever it lives.
+  - `EmissiveGroupsAdapter.members(self, store: str) -> Optional[FaceMap]` — *store*'s faces;
+  - `EmissiveGroupsAdapter.select(self, face_map: FaceMap) -> None` — Select exactly these faces.
+  - `EmissiveGroupsAdapter.membership_stores(self, prefix: str) -> Iterable[Tuple[str, str]]` — ``(where, group name)`` for every store named *prefix*``<name>``,
+  - `EmissiveGroupsAdapter.carrier_weights(self, prefix: str) -> List[str]` — The carrier's weight attrs named *prefix*``<name>``.
+  - `EmissiveGroupsAdapter.weight_exists(self, attr: str) -> bool` — Whether the carrier holds weight *attr*.
+  - `EmissiveGroupsAdapter.ensure_weight(self, attr: str, default: float) -> str` — Create keyable 0-1 weight *attr* (default *default*), or make an
+  - `EmissiveGroupsAdapter.delete_weight(self, attr: str) -> bool` — Delete weight *attr* and its animation;
+  - `EmissiveGroupsAdapter.sync_weight(self, attr: str, value: float) -> None` — Set an un-animated weight *attr* to *value*;
+  - `EmissiveGroupsAdapter.key_weight(self, attr: str, value: Optional[float], frame: Optional[float]) -> str` — Key weight *attr* (at *value*, else its current value;
+  - `EmissiveGroupsAdapter.foreign_color_sets(self, objects: List[str], color_set: str) -> Dict[str, List[str]]` — ``{object: [color set, ...]}`` for the objects carrying sets other
+  - `EmissiveGroupsAdapter.write_colors(self, obj: str, channels: Mapping[int, List[float]], color_set: str) -> None` — Write *color_set* on *obj*: each listed face's corners take its RGBA
+  - `EmissiveGroupsAdapter.uv_triangles(self, obj: str, indices: List[int], uv_set: Optional[str]) -> list` — Triangulated UVs of *obj*'s faces *indices*: ``[[(u, v)] * 3, ...]``.
+  - `EmissiveGroupsAdapter.mask_path(self, suffix: str) -> str` — ``<scene project texture folder>/<scene stem><suffix>``;
+  - `EmissiveGroupsAdapter.object_names(self, objects) -> List[str]` — *objects* named as the ``FaceMap`` keys name them.
+  - `EmissiveGroupsAdapter.face_count(self, obj: str) -> int` — *obj*'s face count.
+  - `EmissiveGroupsAdapter.mesh(self, name: str) -> Optional[str]` — The mesh object *name* resolves to, as a ``FaceMap`` key, or ``None``.
+  - `EmissiveGroupsAdapter.merge_stores(self, stores: List[str], ctx) -> None` — An imported scene's *stores* join this scene's of the same name.
+  - `EmissiveGroupsAdapter.discard_stores(self, stores: List[str], ctx) -> None` — Delete the *stores* an import brought, which nothing describes now.
+  - `EmissiveGroupsAdapter.publish(self, records: Mapping[Any, Any]) -> None` — Commit authored *records* to the export carrier
+  - `EmissiveGroupsAdapter.extra_warnings(self) -> List[str]` — The host's own validation warnings (Blender: leftover curve proxies).
+- **[`class EmissiveGroupsModel(_EmissiveGroupsModelInternal, pythontk.LoggingMixin, pythontk.HelpMixin)`](pythontk/pythontk/core_utils/engines/textures/emissive_groups.py#L264)** — Author, bake, and export named emissive face groups (see module doc).
+  - `EmissiveGroupsModel.add_group(cls, name: str, faces=None, default: float = 1.0) -> str` *(class)* — Create a group from faces (or the selection), or extend one.
+  - `EmissiveGroupsModel.remove_group(cls, name: str) -> None` *(class)* — Delete a group's membership, registry entry and any keyable weight;
+  - `EmissiveGroupsModel.list_groups(cls) -> Dict[str, dict]` *(class)* — ``{name: {"slot", "default", "faces"(count), "missing"(membership
+  - `EmissiveGroupsModel.weight_attrs(cls) -> Dict[str, str]` *(class)* — ``{group: keyable weight attr}`` for the groups that have one, read
+  - `EmissiveGroupsModel.select_group(cls, name: str) -> None` *(class)* — Select the group's faces.
+  - `EmissiveGroupsModel.set_default(cls, name: str, default: float) -> None` *(class)* — Set the group's default gate weight (0-1; clamped).
+  - `EmissiveGroupsModel.compact_slots(cls) -> List[int]` *(class)* — Reclaim retired slots.
+  - `EmissiveGroupsModel.make_weights_keyable(cls, names=None) -> Dict[str, str]` *(class)* — Add a keyable 0-1 weight per group on the ``data_export`` carrier.
+  - `EmissiveGroupsModel.remove_keyable_weights(cls, names=None) -> List[str]` *(class)* — Delete the keyable weights, animation included, and clear the
+  - `EmissiveGroupsModel.key_weight(cls, name: str, value: Optional[float] = None, frame: Optional[float] = None, auto_keyable: bool = True) -> str` *(class)* — Key one group's weight on the carrier.
+  - `EmissiveGroupsModel.validate(cls) -> List[str]` *(class)* — Non-fatal authoring warnings (empty list = clean).
+  - `EmissiveGroupsModel.bake_vertex_colors(cls, force: bool = False) -> dict` *(class)* — Bake membership into the ``emissiveGroups`` RGBA color set.
+  - `EmissiveGroupsModel.bake_mask(cls, output_path: Optional[str] = None, resolution: int = 512, padding_px: int = 4, uv_set: Optional[str] = None) -> dict` *(class)* — Rasterize membership into an ``_EMask`` RGBA texture (channels encoding).
+  - `EmissiveGroupsModel.transfer_out(cls, ctx: 'ptk.TransferContext') -> Optional[dict]` *(class)* — The emissive registry's hand-off payload: the registry, each group's
+  - `EmissiveGroupsModel.transfer_in(cls, payload: dict, ctx: 'ptk.TransferContext') -> None` *(class)* — Land a received payload (:meth:`transfer_out`'s shape, from either
+  - `EmissiveGroupsModel.merge_carrier(cls, carriers, other, ctx) -> None` *(class)* — Another scene's groups merged into the registry: its membership
+  - `EmissiveGroupsModel.discard_carrier(cls, carriers, other, ctx) -> None` *(class)* — Another scene's groups were dropped: the membership stores it brought,
+  - `EmissiveGroupsModel.export_record(cls, ctx: 'ptk.ExportContext') -> Optional['ptk.Record']` *(class)* — The ``emissive_groups`` manifest record, or ``None`` when no group
+  - `EmissiveGroupsModel.refresh_export_metadata(cls) -> Optional[str]` *(class)* — Republish the ``emissive_groups`` channel on the ``data_export``
 
 <a id="core_utils--engines--textures--map_compositor"></a>
 ### `core_utils/engines/textures/map_compositor.py`

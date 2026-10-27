@@ -2,8 +2,8 @@
 # coding=utf-8
 """Region-mask engine — named face-group masks that gate texture regions at runtime.
 
-The SSoT tentacle's Emissive Groups tool (both its Maya and Blender halves) and
-the Unity importer templates (unitytk) share so a group authored in a DCC resolves to
+The SSoT Emissive Groups (pythontk's ``EmissiveGroupsModel``, driven by mayatk's and
+blendertk's halves) and the Unity importer templates (unitytk) share so a group authored in a DCC resolves to
 the same channel slot everywhere. A *region group* is a named set of faces
 that toggles as a unit; the engine models how group membership is encoded
 for the game engine and produces the artifacts:

@@ -2395,6 +2395,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.emissive_groups",
+    "name": "EmissiveGroupsAdapter",
+    "qualname": "EmissiveGroupsAdapter",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.emissive_groups",
+    "name": "EmissiveGroupsModel",
+    "qualname": "EmissiveGroupsModel",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.textures.region_masks",
     "name": "EmissiveGroupsRecord",
     "qualname": "EmissiveGroupsRecord",

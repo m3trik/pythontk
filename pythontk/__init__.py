@@ -395,6 +395,12 @@ DEFAULT_INCLUDE = {
         "RegionMaskPacker",
         "EmissiveGroupsRecord",
     ],
+    # Emissive groups: the host-free model mayatk and blendertk drive through
+    # their own half (``EmissiveGroupsAdapter``).
+    "core_utils.engines.textures.emissive_groups": [
+        "EmissiveGroupsModel",
+        "EmissiveGroupsAdapter",
+    ],
     "core_utils.engines.textures.mat_report": ["MatReport"],
     "core_utils._core_utils": "*",
     "core_utils.help_mixin": "HelpMixin",

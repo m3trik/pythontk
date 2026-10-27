@@ -408,6 +408,12 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class ShotTransfer(_ShotTransferInternal)`
   - methods: swap_up_axis, encode, decode, merge, section_out, section_in, merge_record, respell_record
 
+### `core_utils/engines/textures/emissive_groups.py` — Emissive groups: named face sets that gate emissive regions at runtime.
+- `class EmissiveGroupsAdapter(Protocol)`
+  - methods: faces, add_members, remove_members, members, select, membership_stores, carrier_weights, weight_exists, ensure_weight, delete_weight, sync_weight, key_weight, foreign_color_sets, write_colors, uv_triangles, mask_path, object_names, face_count, mesh, merge_stores, discard_stores, publish, extra_warnings
+- `class EmissiveGroupsModel(_EmissiveGroupsModelInternal, pythontk.LoggingMixin, pythontk.HelpMixin)`
+  - methods: add_group, remove_group, list_groups, weight_attrs, select_group, set_default, compact_slots, make_weights_keyable, remove_keyable_weights, key_weight, validate, bake_vertex_colors, bake_mask, transfer_out, transfer_in, merge_carrier, discard_carrier, export_record, refresh_export_metadata
+
 ### `core_utils/engines/textures/map_compositor.py` — Pure image-compositing engine — alpha-composite layered texture maps
 - `class BatchResult(Enum)`
 - `class NormalOutputMode(Enum)`

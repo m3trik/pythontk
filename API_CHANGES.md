@@ -15,6 +15,53 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column`
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard`
 
+## Added (44)
+
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter(class)`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.add_members(self, store: str, face_map: FaceMap) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.carrier_weights(self, prefix: str) -> List[str]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.delete_weight(self, attr: str) -> bool`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.discard_stores(self, stores: List[str], ctx) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.ensure_weight(self, attr: str, default: float) -> str`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.extra_warnings(self) -> List[str]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.face_count(self, obj: str) -> int`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.faces(self, faces=None) -> FaceMap`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.foreign_color_sets(self, objects: List[str], color_set: str) -> Dict[str, List[str]]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.key_weight(self, attr: str, value: Optional[float], frame: Optional[float]) -> str`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.mask_path(self, suffix: str) -> str`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.members(self, store: str) -> Optional[FaceMap]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.membership_stores(self, prefix: str) -> Iterable[Tuple[str, str]]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.merge_stores(self, stores: List[str], ctx) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.mesh(self, name: str) -> Optional[str]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.object_names(self, objects) -> List[str]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.publish(self, records: Mapping[Any, Any]) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.remove_members(self, store: str) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.select(self, face_map: FaceMap) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.sync_weight(self, attr: str, value: float) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.uv_triangles(self, obj: str, indices: List[int], uv_set: Optional[str]) -> list`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.weight_exists(self, attr: str) -> bool`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.write_colors(self, obj: str, channels: Mapping[int, List[float]], color_set: str) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel(class)`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.add_group(cls, name: str, faces=None, default: float = 1.0) -> str`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.bake_mask(cls, output_path: Optional[str] = None, resolution: int = 512, padding_px: int = 4, uv_set: Optional[str] = None) -> dict`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.bake_vertex_colors(cls, force: bool = False) -> dict`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.compact_slots(cls) -> List[int]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.discard_carrier(cls, carriers, other, ctx) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.export_record(cls, ctx: 'ptk.ExportContext') -> Optional['ptk.Record']`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.key_weight(cls, name: str, value: Optional[float] = None, frame: Optional[float] = None, auto_keyable: bool = True) -> str`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.list_groups(cls) -> Dict[str, dict]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.make_weights_keyable(cls, names=None) -> Dict[str, str]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.merge_carrier(cls, carriers, other, ctx) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.refresh_export_metadata(cls) -> Optional[str]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.remove_group(cls, name: str) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.remove_keyable_weights(cls, names=None) -> List[str]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.select_group(cls, name: str) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.set_default(cls, name: str, default: float) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.transfer_in(cls, payload: dict, ctx: 'ptk.TransferContext') -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.transfer_out(cls, ctx: 'ptk.TransferContext') -> Optional[dict]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.validate(cls) -> List[str]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.weight_attrs(cls) -> Dict[str, str]`
+
 ## Deprecations (34)
 
 _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived its window: delete the alias and its tests rather than moving the date. A **HELD** row is due by version, but its notice has not yet had its calendar window._

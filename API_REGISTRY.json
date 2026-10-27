@@ -23,7 +23,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 588,
+          "line": 594,
           "deprecated": false
         }
       ]
@@ -11049,6 +11049,414 @@
               "signature": "(cls, state: Optional[Dict[str, Any]], ctx: Any) -> Any",
               "summary": "*state* (a store dict another scene saved) with the names it holds",
               "line": 702,
+              "deprecated": false
+            }
+          ]
+        }
+      ],
+      "constants": []
+    },
+    {
+      "relpath": "core_utils/engines/textures/emissive_groups.py",
+      "summary": "Emissive groups: named face sets that gate emissive regions at runtime.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "EmissiveGroupsAdapter",
+          "summary": "A host's half of Emissive Groups: what :class:`EmissiveGroupsModel` asks of",
+          "line": 50,
+          "bases": [
+            "Protocol"
+          ],
+          "members": [
+            {
+              "name": "faces",
+              "qualname": "EmissiveGroupsAdapter.faces",
+              "kind": "method",
+              "signature": "(self, faces=None) -> FaceMap",
+              "summary": "*faces* (a ``FaceMap``, or the host's own spelling) or, for ``None``,",
+              "line": 68,
+              "deprecated": false
+            },
+            {
+              "name": "add_members",
+              "qualname": "EmissiveGroupsAdapter.add_members",
+              "kind": "method",
+              "signature": "(self, store: str, face_map: FaceMap) -> None",
+              "summary": "Add *face_map* to *store*, creating it when absent.",
+              "line": 76,
+              "deprecated": false
+            },
+            {
+              "name": "remove_members",
+              "qualname": "EmissiveGroupsAdapter.remove_members",
+              "kind": "method",
+              "signature": "(self, store: str) -> None",
+              "summary": "Delete *store* wherever it lives.",
+              "line": 79,
+              "deprecated": false
+            },
+            {
+              "name": "members",
+              "qualname": "EmissiveGroupsAdapter.members",
+              "kind": "method",
+              "signature": "(self, store: str) -> Optional[FaceMap]",
+              "summary": "*store*'s faces;",
+              "line": 82,
+              "deprecated": false
+            },
+            {
+              "name": "select",
+              "qualname": "EmissiveGroupsAdapter.select",
+              "kind": "method",
+              "signature": "(self, face_map: FaceMap) -> None",
+              "summary": "Select exactly these faces.",
+              "line": 85,
+              "deprecated": false
+            },
+            {
+              "name": "membership_stores",
+              "qualname": "EmissiveGroupsAdapter.membership_stores",
+              "kind": "method",
+              "signature": "(self, prefix: str) -> Iterable[Tuple[str, str]]",
+              "summary": "``(where, group name)`` for every store named *prefix*``<name>``,",
+              "line": 88,
+              "deprecated": false
+            },
+            {
+              "name": "carrier_weights",
+              "qualname": "EmissiveGroupsAdapter.carrier_weights",
+              "kind": "method",
+              "signature": "(self, prefix: str) -> List[str]",
+              "summary": "The carrier's weight attrs named *prefix*``<name>``.",
+              "line": 94,
+              "deprecated": false
+            },
+            {
+              "name": "weight_exists",
+              "qualname": "EmissiveGroupsAdapter.weight_exists",
+              "kind": "method",
+              "signature": "(self, attr: str) -> bool",
+              "summary": "Whether the carrier holds weight *attr*.",
+              "line": 97,
+              "deprecated": false
+            },
+            {
+              "name": "ensure_weight",
+              "qualname": "EmissiveGroupsAdapter.ensure_weight",
+              "kind": "method",
+              "signature": "(self, attr: str, default: float) -> str",
+              "summary": "Create keyable 0-1 weight *attr* (default *default*), or make an",
+              "line": 100,
+              "deprecated": false
+            },
+            {
+              "name": "delete_weight",
+              "qualname": "EmissiveGroupsAdapter.delete_weight",
+              "kind": "method",
+              "signature": "(self, attr: str) -> bool",
+              "summary": "Delete weight *attr* and its animation;",
+              "line": 104,
+              "deprecated": false
+            },
+            {
+              "name": "sync_weight",
+              "qualname": "EmissiveGroupsAdapter.sync_weight",
+              "kind": "method",
+              "signature": "(self, attr: str, value: float) -> None",
+              "summary": "Set an un-animated weight *attr* to *value*;",
+              "line": 107,
+              "deprecated": false
+            },
+            {
+              "name": "key_weight",
+              "qualname": "EmissiveGroupsAdapter.key_weight",
+              "kind": "method",
+              "signature": "(self, attr: str, value: Optional[float], frame: Optional[float]) -> str",
+              "summary": "Key weight *attr* (at *value*, else its current value;",
+              "line": 110,
+              "deprecated": false
+            },
+            {
+              "name": "foreign_color_sets",
+              "qualname": "EmissiveGroupsAdapter.foreign_color_sets",
+              "kind": "method",
+              "signature": "(self, objects: List[str], color_set: str) -> Dict[str, List[str]]",
+              "summary": "``{object: [color set, ...]}`` for the objects carrying sets other",
+              "line": 116,
+              "deprecated": false
+            },
+            {
+              "name": "write_colors",
+              "qualname": "EmissiveGroupsAdapter.write_colors",
+              "kind": "method",
+              "signature": "(self, obj: str, channels: Mapping[int, List[float]], color_set: str) -> None",
+              "summary": "Write *color_set* on *obj*: each listed face's corners take its RGBA",
+              "line": 120,
+              "deprecated": false
+            },
+            {
+              "name": "uv_triangles",
+              "qualname": "EmissiveGroupsAdapter.uv_triangles",
+              "kind": "method",
+              "signature": "(self, obj: str, indices: List[int], uv_set: Optional[str]) -> list",
+              "summary": "Triangulated UVs of *obj*'s faces *indices*: ``[[(u, v)] * 3, ...]``.",
+              "line": 124,
+              "deprecated": false
+            },
+            {
+              "name": "mask_path",
+              "qualname": "EmissiveGroupsAdapter.mask_path",
+              "kind": "method",
+              "signature": "(self, suffix: str) -> str",
+              "summary": "``<scene project texture folder>/<scene stem><suffix>``;",
+              "line": 127,
+              "deprecated": false
+            },
+            {
+              "name": "object_names",
+              "qualname": "EmissiveGroupsAdapter.object_names",
+              "kind": "method",
+              "signature": "(self, objects) -> List[str]",
+              "summary": "*objects* named as the ``FaceMap`` keys name them.",
+              "line": 133,
+              "deprecated": false
+            },
+            {
+              "name": "face_count",
+              "qualname": "EmissiveGroupsAdapter.face_count",
+              "kind": "method",
+              "signature": "(self, obj: str) -> int",
+              "summary": "*obj*'s face count.",
+              "line": 136,
+              "deprecated": false
+            },
+            {
+              "name": "mesh",
+              "qualname": "EmissiveGroupsAdapter.mesh",
+              "kind": "method",
+              "signature": "(self, name: str) -> Optional[str]",
+              "summary": "The mesh object *name* resolves to, as a ``FaceMap`` key, or ``None``.",
+              "line": 139,
+              "deprecated": false
+            },
+            {
+              "name": "merge_stores",
+              "qualname": "EmissiveGroupsAdapter.merge_stores",
+              "kind": "method",
+              "signature": "(self, stores: List[str], ctx) -> None",
+              "summary": "An imported scene's *stores* join this scene's of the same name.",
+              "line": 142,
+              "deprecated": false
+            },
+            {
+              "name": "discard_stores",
+              "qualname": "EmissiveGroupsAdapter.discard_stores",
+              "kind": "method",
+              "signature": "(self, stores: List[str], ctx) -> None",
+              "summary": "Delete the *stores* an import brought, which nothing describes now.",
+              "line": 145,
+              "deprecated": false
+            },
+            {
+              "name": "publish",
+              "qualname": "EmissiveGroupsAdapter.publish",
+              "kind": "method",
+              "signature": "(self, records: Mapping[Any, Any]) -> None",
+              "summary": "Commit authored *records* to the export carrier",
+              "line": 150,
+              "deprecated": false
+            },
+            {
+              "name": "extra_warnings",
+              "qualname": "EmissiveGroupsAdapter.extra_warnings",
+              "kind": "method",
+              "signature": "(self) -> List[str]",
+              "summary": "The host's own validation warnings (Blender: leftover curve proxies).",
+              "line": 154,
+              "deprecated": false
+            }
+          ]
+        },
+        {
+          "name": "EmissiveGroupsModel",
+          "summary": "Author, bake, and export named emissive face groups (see module doc).",
+          "line": 264,
+          "bases": [
+            "_EmissiveGroupsModelInternal",
+            "pythontk.LoggingMixin",
+            "pythontk.HelpMixin"
+          ],
+          "members": [
+            {
+              "name": "add_group",
+              "qualname": "EmissiveGroupsModel.add_group",
+              "kind": "classmethod",
+              "signature": "(cls, name: str, faces=None, default: float = 1.0) -> str",
+              "summary": "Create a group from faces (or the selection), or extend one.",
+              "line": 281,
+              "deprecated": false
+            },
+            {
+              "name": "remove_group",
+              "qualname": "EmissiveGroupsModel.remove_group",
+              "kind": "classmethod",
+              "signature": "(cls, name: str) -> None",
+              "summary": "Delete a group's membership, registry entry and any keyable weight;",
+              "line": 311,
+              "deprecated": false
+            },
+            {
+              "name": "list_groups",
+              "qualname": "EmissiveGroupsModel.list_groups",
+              "kind": "classmethod",
+              "signature": "(cls) -> Dict[str, dict]",
+              "summary": "``{name: {\"slot\", \"default\", \"faces\"(count), \"missing\"(membership",
+              "line": 321,
+              "deprecated": false
+            },
+            {
+              "name": "weight_attrs",
+              "qualname": "EmissiveGroupsModel.weight_attrs",
+              "kind": "classmethod",
+              "signature": "(cls) -> Dict[str, str]",
+              "summary": "``{group: keyable weight attr}`` for the groups that have one, read",
+              "line": 338,
+              "deprecated": false
+            },
+            {
+              "name": "select_group",
+              "qualname": "EmissiveGroupsModel.select_group",
+              "kind": "classmethod",
+              "signature": "(cls, name: str) -> None",
+              "summary": "Select the group's faces.",
+              "line": 344,
+              "deprecated": false
+            },
+            {
+              "name": "set_default",
+              "qualname": "EmissiveGroupsModel.set_default",
+              "kind": "classmethod",
+              "signature": "(cls, name: str, default: float) -> None",
+              "summary": "Set the group's default gate weight (0-1; clamped).",
+              "line": 352,
+              "deprecated": false
+            },
+            {
+              "name": "compact_slots",
+              "qualname": "EmissiveGroupsModel.compact_slots",
+              "kind": "classmethod",
+              "signature": "(cls) -> List[int]",
+              "summary": "Reclaim retired slots.",
+              "line": 361,
+              "deprecated": false
+            },
+            {
+              "name": "make_weights_keyable",
+              "qualname": "EmissiveGroupsModel.make_weights_keyable",
+              "kind": "classmethod",
+              "signature": "(cls, names=None) -> Dict[str, str]",
+              "summary": "Add a keyable 0-1 weight per group on the ``data_export`` carrier.",
+              "line": 382,
+              "deprecated": false
+            },
+            {
+              "name": "remove_keyable_weights",
+              "qualname": "EmissiveGroupsModel.remove_keyable_weights",
+              "kind": "classmethod",
+              "signature": "(cls, names=None) -> List[str]",
+              "summary": "Delete the keyable weights, animation included, and clear the",
+              "line": 413,
+              "deprecated": false
+            },
+            {
+              "name": "key_weight",
+              "qualname": "EmissiveGroupsModel.key_weight",
+              "kind": "classmethod",
+              "signature": "(cls, name: str, value: Optional[float] = None, frame: Optional[float] = None, auto_keyable: bool = True) -> str",
+              "summary": "Key one group's weight on the carrier.",
+              "line": 438,
+              "deprecated": false
+            },
+            {
+              "name": "validate",
+              "qualname": "EmissiveGroupsModel.validate",
+              "kind": "classmethod",
+              "signature": "(cls) -> List[str]",
+              "summary": "Non-fatal authoring warnings (empty list = clean).",
+              "line": 473,
+              "deprecated": false
+            },
+            {
+              "name": "bake_vertex_colors",
+              "qualname": "EmissiveGroupsModel.bake_vertex_colors",
+              "kind": "classmethod",
+              "signature": "(cls, force: bool = False) -> dict",
+              "summary": "Bake membership into the ``emissiveGroups`` RGBA color set.",
+              "line": 507,
+              "deprecated": false
+            },
+            {
+              "name": "bake_mask",
+              "qualname": "EmissiveGroupsModel.bake_mask",
+              "kind": "classmethod",
+              "signature": "(cls, output_path: Optional[str] = None, resolution: int = 512, padding_px: int = 4, uv_set: Optional[str] = None) -> dict",
+              "summary": "Rasterize membership into an ``_EMask`` RGBA texture (channels encoding).",
+              "line": 553,
+              "deprecated": false
+            },
+            {
+              "name": "transfer_out",
+              "qualname": "EmissiveGroupsModel.transfer_out",
+              "kind": "classmethod",
+              "signature": "(cls, ctx: 'ptk.TransferContext') -> Optional[dict]",
+              "summary": "The emissive registry's hand-off payload: the registry, each group's",
+              "line": 616,
+              "deprecated": false
+            },
+            {
+              "name": "transfer_in",
+              "qualname": "EmissiveGroupsModel.transfer_in",
+              "kind": "classmethod",
+              "signature": "(cls, payload: dict, ctx: 'ptk.TransferContext') -> None",
+              "summary": "Land a received payload (:meth:`transfer_out`'s shape, from either",
+              "line": 644,
+              "deprecated": false
+            },
+            {
+              "name": "merge_carrier",
+              "qualname": "EmissiveGroupsModel.merge_carrier",
+              "kind": "classmethod",
+              "signature": "(cls, carriers, other, ctx) -> None",
+              "summary": "Another scene's groups merged into the registry: its membership",
+              "line": 690,
+              "deprecated": false
+            },
+            {
+              "name": "discard_carrier",
+              "qualname": "EmissiveGroupsModel.discard_carrier",
+              "kind": "classmethod",
+              "signature": "(cls, carriers, other, ctx) -> None",
+              "summary": "Another scene's groups were dropped: the membership stores it brought,",
+              "line": 698,
+              "deprecated": false
+            },
+            {
+              "name": "export_record",
+              "qualname": "EmissiveGroupsModel.export_record",
+              "kind": "classmethod",
+              "signature": "(cls, ctx: 'ptk.ExportContext') -> Optional['ptk.Record']",
+              "summary": "The ``emissive_groups`` manifest record, or ``None`` when no group",
+              "line": 710,
+              "deprecated": false
+            },
+            {
+              "name": "refresh_export_metadata",
+              "qualname": "EmissiveGroupsModel.refresh_export_metadata",
+              "kind": "classmethod",
+              "signature": "(cls) -> Optional[str]",
+              "summary": "Republish the ``emissive_groups`` channel on the ``data_export``",
+              "line": 726,
               "deprecated": false
             }
           ]
