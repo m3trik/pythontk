@@ -582,5 +582,10 @@ DEFAULT_INCLUDE = {
 
 # ``bootstrap_package`` derives ``__all__`` automatically from the resolved
 # public surface (DEFAULT_INCLUDE), so it never has to be hand-maintained here.
-bootstrap_package(globals(), include=DEFAULT_INCLUDE)
+#: Public names that left this package (CODE_STANDARD section 5): no alias, so a
+#: read raises MovedNameError naming the new home. ``{name: (new home, version)}``;
+#: a move adds its names here in the same change set.
+MOVED_NAMES = {}
+
+bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)
 # Test: 222117

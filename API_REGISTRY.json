@@ -16,6 +16,15 @@
           "summary": "",
           "line": 21,
           "deprecated": false
+        },
+        {
+          "name": "MOVED_NAMES",
+          "qualname": "MOVED_NAMES",
+          "kind": "constant",
+          "signature": "",
+          "summary": "",
+          "line": 588,
+          "deprecated": false
         }
       ]
     },
@@ -15896,9 +15905,9 @@
           "name": "bootstrap_package",
           "qualname": "bootstrap_package",
           "kind": "function",
-          "signature": "(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle",
+          "signature": "(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True, moved: Optional[MovedMapping] = None) -> PackageResolverHandle",
           "summary": "Bootstrap a package's ``__init__`` module with dynamic attribute resolution.",
-          "line": 1010,
+          "line": 1036,
           "deprecated": false
         },
         {
@@ -15907,7 +15916,7 @@
           "kind": "function",
           "signature": "(module_globals: MutableMapping[str, Any], sources: IncludeMapping) -> None",
           "summary": "Publish a subpackage's names from its submodules, each loaded on first use.",
-          "line": 1171,
+          "line": 1203,
           "deprecated": false
         },
         {
@@ -15916,7 +15925,7 @@
           "kind": "function",
           "signature": "(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None",
           "summary": "Create multi-inheritance namespace classes from groups of related classes.",
-          "line": 1265,
+          "line": 1297,
           "deprecated": false
         },
         {
@@ -15925,15 +15934,24 @@
           "kind": "function",
           "signature": "(package: str) -> Dict[str, List[str]]",
           "summary": "What importing *package* loads beyond declarations, in a fresh interpreter.",
-          "line": 1404,
+          "line": 1436,
           "deprecated": false
         }
       ],
       "classes": [
         {
+          "name": "MovedNameError",
+          "summary": "A public name that left its package, read at its old home.",
+          "line": 43,
+          "bases": [
+            "AttributeError"
+          ],
+          "members": []
+        },
+        {
           "name": "ModuleAttributeResolver",
           "summary": "Discover and resolve attributes exposed from package submodules lazily.",
-          "line": 39,
+          "line": 59,
           "bases": [],
           "members": [
             {
@@ -15942,7 +15960,7 @@
               "kind": "method",
               "signature": "(self) -> 'ModuleAttributeResolver'",
               "summary": "Populate resolver dictionaries based on current include spec.",
-              "line": 101,
+              "line": 124,
               "deprecated": false
             },
             {
@@ -15951,7 +15969,7 @@
               "kind": "method",
               "signature": "(self, include: Optional[Mapping[str, Union[Sequence[str], str]]] = None) -> 'ModuleAttributeResolver'",
               "summary": "Reset include spec (optional) and rebuild dictionaries.",
-              "line": 174,
+              "line": 197,
               "deprecated": false
             },
             {
@@ -15960,7 +15978,7 @@
               "kind": "method",
               "signature": "(self, name: str)",
               "summary": "Resolve an attribute using the registered dictionaries.",
-              "line": 183,
+              "line": 206,
               "deprecated": false
             },
             {
@@ -15969,7 +15987,7 @@
               "kind": "method",
               "signature": "(self, module_name: str) -> ModuleType",
               "summary": "Import a module managed by the resolver, using the local cache.",
-              "line": 252,
+              "line": 278,
               "deprecated": false
             },
             {
@@ -15978,7 +15996,7 @@
               "kind": "method",
               "signature": "(self, module_globals: MutableMapping[str, object], *, install_getattr: bool = True, eager: bool = False, names: Optional[Iterable[str]] = None) -> None",
               "summary": "Bind resolver helpers into a module's globals dictionary.",
-              "line": 256,
+              "line": 282,
               "deprecated": false
             },
             {
@@ -15987,7 +16005,7 @@
               "kind": "method",
               "signature": "(self) -> Iterable[str]",
               "summary": "Return an iterable of attribute names known to the resolver.",
-              "line": 277,
+              "line": 303,
               "deprecated": false
             },
             {
@@ -15996,7 +16014,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Drop cached module imports managed by the resolver.",
-              "line": 291,
+              "line": 317,
               "deprecated": false
             }
           ]
@@ -16004,7 +16022,7 @@
         {
           "name": "PackageResolverHandle",
           "summary": "Facade that wires a :class:`ModuleAttributeResolver` into a package module.",
-          "line": 758,
+          "line": 784,
           "bases": [],
           "members": [
             {
@@ -16013,7 +16031,7 @@
               "kind": "method",
               "signature": "(self, *, expose_maps: bool = True, install_helpers: bool = True, allow_getattr: Optional[bool] = None, eager: Optional[bool] = None, custom_getattr: Optional[Callable[[str], Any]] = None) -> None",
               "summary": "Publish resolver artifacts into the target module globals.",
-              "line": 811,
+              "line": 837,
               "deprecated": false
             },
             {
@@ -16022,7 +16040,7 @@
               "kind": "method",
               "signature": "(self, *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, merge: bool = True, eager: Optional[bool] = None, custom_getattr: Optional[Callable[[str], Any]] = None) -> ModuleAttributeResolver",
               "summary": "Reconfigure the underlying resolver and optionally re-export symbols.",
-              "line": 869,
+              "line": 895,
               "deprecated": false
             },
             {
@@ -16031,7 +16049,7 @@
               "kind": "method",
               "signature": "(self, include_override: Optional[IncludeMapping] = None, *, eager: bool = False, custom_getattr: Optional[Callable[[str], Any]] = None) -> ModuleAttributeResolver",
               "summary": "Compatibility wrapper mirroring the legacy ``build_dictionaries`` helper.",
-              "line": 898,
+              "line": 924,
               "deprecated": false
             },
             {
@@ -16040,7 +16058,7 @@
               "kind": "method",
               "signature": "(self, module_name: str) -> ModuleType",
               "summary": "",
-              "line": 915,
+              "line": 941,
               "deprecated": false
             },
             {
@@ -16049,7 +16067,7 @@
               "kind": "method",
               "signature": "(self, module: ModuleType, attribute_name: str, class_name: Optional[str] = None)",
               "summary": "",
-              "line": 918,
+              "line": 944,
               "deprecated": false
             },
             {
@@ -16058,7 +16076,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Eagerly publish resolver-managed attributes into the module globals.",
-              "line": 926,
+              "line": 952,
               "deprecated": false
             }
           ]

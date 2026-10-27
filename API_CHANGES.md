@@ -2,8 +2,10 @@
 
 _Diff vs the last release (origin/main @ f97442f)._
 
-## Added (9)
+## Added (11)
 
+- `__init__.py::MOVED_NAMES(constant)`
+- `core_utils/module_resolver.py::MovedNameError(class)`
 - `file_utils/mesh_convert/export_fingerprint.py::ExportFingerprint(class)`
 - `file_utils/mesh_convert/export_fingerprint.py::ExportFingerprint.against(cls, path: str, baseline: str, update: bool = False, tolerance: float = 0.001) -> List[str]`
 - `file_utils/mesh_convert/export_fingerprint.py::ExportFingerprint.diff(cls, baseline: Any, current: Any, tolerance: float = 0.001) -> List[str]`
@@ -54,3 +56,9 @@ _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived 
 - **HELD** `core_utils/engines/scene_export/scene_records.py::SceneRecords.web_projected` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `core_utils/engines/scene_export/scene_records.py::SceneRecords.web_shape` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `core_utils/engines/scene_export/scene_records.py::WebProjection` — remove in 0.18.0, not before 2026-11-23
+
+## Signature changed (1)
+
+- `core_utils/module_resolver.py::bootstrap_package`
+  - was: `(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle`
+  - now: `(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True, moved: Optional[MovedMapping] = None) -> PackageResolverHandle`

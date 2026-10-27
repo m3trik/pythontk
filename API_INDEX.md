@@ -3,7 +3,7 @@
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
 ### `__init__.py`
-- constants: DEFAULT_INCLUDE
+- constants: DEFAULT_INCLUDE, MOVED_NAMES
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -611,10 +611,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: reload
 
 ### `core_utils/module_resolver.py` — Reusable module attribute resolver for package-style imports.
-- `bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle`
+- `bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True, moved: Optional[MovedMapping] = None) -> PackageResolverHandle`
 - `lazy_exports(module_globals: MutableMapping[str, Any], sources: IncludeMapping) -> None`
 - `create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`
 - `import_footprint(package: str) -> Dict[str, List[str]]`
+- `class MovedNameError(AttributeError)`
 - `class ModuleAttributeResolver`
   - methods: build, rebuild, resolve, get_module, bind_to, iter_registered_names, clear_module_cache
 - `class PackageResolverHandle`
