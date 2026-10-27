@@ -7,9 +7,10 @@ deliverable on its own, while a fingerprint pins what an export path wrote so
 the next run of the same scene can be compared against it -- the check a code
 move that must not change any output needs. It holds what a reader of the file
 depends on (hierarchy, transforms, mesh and vertex counts, materials, skins,
-takes and their key spans, the extras and user-property names) and leaves out
-what legitimately differs run over run: generator strings, buffer packing,
-timestamps and paths inside records.
+takes and their key spans, the records an export writes as extras and user
+properties) and leaves out what legitimately differs run over run: generator
+strings, buffer packing, and the text inside a record (a path, a date), which
+reads as ``"text"`` while the record's fields, counts and numbers are kept.
 
 Example:
     >>> fingerprint = ExportFingerprint.of("asset.glb")
@@ -77,7 +78,7 @@ class ExportFingerprint:
         fingerprint: Dict[str, Any] = {
             "format": "glb",
             "extensions_used": sorted(gltf.get("extensionsUsed") or []),
-            "extras": sorted((gltf.get("extras") or {}).keys()),
+            "extras": cls._shape(gltf.get("extras") or {}),
             "images": sorted(i.get("mimeType") or "?" for i in gltf.get("images") or []),
             "nodes": {},
             "meshes": {},
@@ -97,7 +98,7 @@ class ExportFingerprint:
             if "camera" in node:
                 entry["camera"] = True
             if node.get("extras"):
-                entry["extras"] = sorted(node["extras"].keys())
+                entry["extras"] = cls._shape(node["extras"])
             fingerprint["nodes"][node_keys[i]] = entry
         for key, mesh in zip(mesh_keys, gltf.get("meshes") or []):
             fingerprint["meshes"][key] = [
@@ -163,8 +164,8 @@ class ExportFingerprint:
     @classmethod
     def of_fbx(cls, path: str) -> Dict[str, Any]:
         """An FBX's object census, models with their local transforms,
-        geometry sizes, materials, takes with each curve's key span, and
-        user-property names."""
+        geometry sizes, materials, takes with each curve's key span, and user
+        properties (a record stored as JSON text read as its shape)."""
         fbx = FbxFile.load(path, raw_payloads=False, span_arrays=("KeyTime",))
         fingerprint: Dict[str, Any] = {
             "format": "fbx",
@@ -224,7 +225,7 @@ class ExportFingerprint:
                 for key, (first, last, count) in sorted(curves.items())
             }
         for owner, name, value in fbx.user_property_items():
-            fingerprint["user_properties"][f"{owner}.{name}"] = cls._kind_of(value)
+            fingerprint["user_properties"][f"{owner}.{name}"] = cls._shape(value)
         fingerprint["user_properties"] = dict(sorted(fingerprint["user_properties"].items()))
         return fingerprint
 
@@ -348,15 +349,28 @@ class ExportFingerprint:
         return dict(sorted(found.items()))
 
     @classmethod
-    def _kind_of(cls, value: Any) -> Any:
-        """A user property's value as a baseline holds it: a number rounded, a
-        string or record by kind alone (it may carry a path or a date)."""
-        if isinstance(value, bool):
+    def _shape(cls, value: Any) -> Any:
+        """A record as a baseline holds it: every field, list item and number
+        (rounded) kept, every string by kind alone (``"text"``: a path or a
+        date must not break a baseline, a missing field or a wrong count
+        must). A string that is JSON -- a record stored as text, as an FBX
+        user property stores one -- is read as its shape."""
+        if isinstance(value, dict):
+            return {str(k): cls._shape(v) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))}
+        if isinstance(value, (list, tuple)):
+            return [cls._shape(v) for v in value]
+        if value is None or isinstance(value, bool):
             return value
-        if isinstance(value, (int, float)):
-            return round(float(value), cls.DIGITS) + 0.0
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return cls._round(value)
         if isinstance(value, (bytes, bytearray, str)):
-            return "text"
+            try:
+                parsed = json.loads(cls._text(value))
+            except (TypeError, ValueError):
+                return "text"
+            return cls._shape(parsed) if isinstance(parsed, (dict, list)) else "text"
         return type(value).__name__
 
     @staticmethod

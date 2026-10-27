@@ -27,6 +27,7 @@ from typing import (
 __all__ = [
     "ModuleAttributeResolver",
     "MovedNameError",
+    "MovedImportError",
     "PackageResolverHandle",
     "bootstrap_package",
     "lazy_exports",
@@ -46,14 +47,55 @@ class MovedNameError(AttributeError):
     A move gets no alias (no library imports the product it moved to), so the
     old home answers with where the name went and from which release instead.
     An ``AttributeError``, so ``hasattr`` and ``getattr(..., default)`` behave
-    as for any missing name.
+    as for any missing name. Only root names are served: a table key such as
+    ``Class.member`` accounts for a member's move at release
+    (``generate_api_registry.py``) but cannot answer at runtime.
     """
 
     def __init__(self, package: str, name: str, new_home: str, version: str):
-        super().__init__(f"{package}.{name} moved to {new_home} in {package} {version}")
+        super().__init__(_moved_message(package, name, new_home, version))
         self.name = name
         self.new_home = new_home
         self.version = version
+
+
+class MovedImportError(ImportError):
+    """:class:`MovedNameError` for ``from package import Name``.
+
+    CPython turns an ``AttributeError`` raised under that statement into a bare
+    "cannot import name", dropping where the name went, so the statement gets
+    this ``ImportError`` carrying the same message instead.
+    """
+
+    def __init__(self, package: str, name: str, new_home: str, version: str):
+        super().__init__(_moved_message(package, name, new_home, version), name=name)
+        self.new_home = new_home
+        self.version = version
+
+
+def _moved_message(package: str, name: str, new_home: str, version: str) -> str:
+    return f"{package}.{name} moved to {new_home} in {package} {version}"
+
+
+def _from_import_statement() -> bool:
+    """Whether the attribute read under way is a ``from package import name``
+    statement: the first frame above the resolver (and above any module
+    ``__getattr__``) is running ``IMPORT_FROM``. False when that cannot be told,
+    which keeps the plain ``AttributeError``."""
+    import dis
+
+    try:
+        frame = sys._getframe(1)
+        while frame is not None and (
+            frame.f_code.co_filename == __file__
+            or frame.f_code.co_name.endswith("getattr")
+        ):
+            frame = frame.f_back
+        if frame is None:
+            return False
+        return dis.opname[frame.f_code.co_code[frame.f_lasti]] == "IMPORT_FROM"
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return False
 
 
 class ModuleAttributeResolver:
@@ -272,7 +314,8 @@ class ModuleAttributeResolver:
 
         if name in self.moved:
             new_home, version = self.moved[name]
-            raise MovedNameError(self.package_name, name, new_home, version)
+            error = MovedImportError if _from_import_statement() else MovedNameError
+            raise error(self.package_name, name, new_home, version)
         raise AttributeError(f"module {self.package_name} has no attribute '{name}'")
 
     def get_module(self, module_name: str) -> ModuleType:

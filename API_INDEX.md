@@ -616,6 +616,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`
 - `import_footprint(package: str) -> Dict[str, List[str]]`
 - `class MovedNameError(AttributeError)`
+- `class MovedImportError(ImportError)`
 - `class ModuleAttributeResolver`
   - methods: build, rebuild, resolve, get_module, bind_to, iter_registered_names, clear_module_cache
 - `class PackageResolverHandle`

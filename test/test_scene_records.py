@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import pathlib
+import sys
 import unittest
 from typing import Any, Dict
 from unittest import mock
@@ -307,6 +308,36 @@ class TestRegisteredHooks(SceneRecordsCase):
             reg.assert_called_with("maya", "take_stash")
         with mock.patch.object(SR, "registered_hooks", return_value={}):
             self.assertIsNone(SR.hook_row(None, "maya", "take_stash"))
+
+    def test_a_stager_slot_without_a_method_is_skipped(self):
+        hooks = {
+            "half.prepare": ("tentacle.fx", "Fx", None),  # module:Class, no method
+            "half.finish": ("tentacle.fx", "Fx", "finish"),
+        }
+        with mock.patch.object(SR, "registered_hooks", return_value=hooks):
+            with self.assertLogs(level="WARNING"):
+                self.assertEqual(SR.stager_rows({}, "maya"), {})
+
+    def test_one_entry_name_from_two_distributions_keeps_the_first_and_warns(self):
+        with self.assertLogs(level="WARNING") as logs:
+            found = self._hooks(
+                ("maya.producer.lightmaps", "first.mod:Records.export_record"),
+                ("maya.producer.lightmaps", "second.mod:Records.export_record"),
+            )
+        self.assertEqual(found, {"lightmaps": ("first.mod", "Records", "export_record")})
+        self.assertIn("second.mod", "".join(logs.output))
+
+    def test_the_session_read_is_redone_when_the_path_changes(self):
+        SR.forget_registered_hooks()
+        self.addCleanup(SR.forget_registered_hooks)
+        target = "pythontk.core_utils.package_manager.PackageManager.entry_points"
+        with mock.patch(target, return_value=[]) as points:
+            SR.registered_hooks("maya", "producer")
+            SR.registered_hooks("maya", "producer")
+            self.assertEqual(points.call_count, 1)
+            with mock.patch("sys.path", sys.path + ["O:/not/a/real/site"]):
+                SR.registered_hooks("maya", "producer")
+            self.assertEqual(points.call_count, 2)
 
     def test_a_store_merges_registered_owners_under_its_own(self):
         class HostStore(DictStore):

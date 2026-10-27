@@ -1092,23 +1092,23 @@ The Scene Exporter's orchestration shell, written once for both DCCs.
 
 Scene records -- every piece of tool-authored scene metadata, declared once.
 
-- **[`class Scope(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L77)** — Where a record lives, and therefore what it can never do.
-- **[`class Kind(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L88)** — What a record is a function of, which decides WHEN it is refreshed.
-- **[`class Merge(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L105)** — What happens to a record when another scene's copy arrives beside the
-- **[`class Clause`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L175)** — A sentence of an assembly that only some files need.
+- **[`class Scope(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L78)** — Where a record lives, and therefore what it can never do.
+- **[`class Kind(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L89)** — What a record is a function of, which decides WHEN it is refreshed.
+- **[`class Merge(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L106)** — What happens to a record when another scene's copy arrives beside the
+- **[`class Clause`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L176)** — A sentence of an assembly that only some files need.
   - `Clause.applies(self, payload: Any) -> bool` — Whether *payload* calls for this clause.
   - `Clause.holds(payload: Any, path: Tuple[str, ...], value: Any = None) -> bool` *(static)* — Whether *payload* holds *value* at *path* (or, with *value*
   - `Clause.condition(self) -> str` *(property)* — When the clause applies, in words (for the generated docs).
   - `Clause.join(text: str, clauses: Iterable['Clause'], payload: Any = None) -> str` *(static)* — *text* and each of *clauses* that *payload* calls for -- every one
-- **[`class GlbBlock`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L250)** — How a deliverable record rides a GLB: a block in its root ``extras``.
+- **[`class GlbBlock`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L251)** — How a deliverable record rides a GLB: a block in its root ``extras``.
   - `GlbBlock.assembly_for(self, payload: Any = None) -> str` — The assembly a block *payload* needs (:meth:`Clause.join`).
   - `GlbBlock.key(self) -> str` *(property)* **DEPRECATED (remove in 0.18.0)** — The record's key, which the block is written under;
-- **[`class WebProjection(GlbBlock)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L307)** **DEPRECATED (remove in 0.18.0)** — Retired 2026-10-20 (removed in 0.18.0): :class:`GlbBlock`.
-- **[`class Record`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L322)** — One produced value of a :class:`RecordSpec`, ready to store.
+- **[`class WebProjection(GlbBlock)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L308)** **DEPRECATED (remove in 0.18.0)** — Retired 2026-10-20 (removed in 0.18.0): :class:`GlbBlock`.
+- **[`class Record`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L323)** — One produced value of a :class:`RecordSpec`, ready to store.
   - `Record.key(self) -> str` *(property)*
   - `Record.text(self) -> str` *(property)* — The stored form (JSON).
   - `Record.save(self, store) -> Optional[str]` — Write this record through *store*;
-- **[`class RecordSpec`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L343)** — The one declaration of a record: identity, contract and codec.
+- **[`class RecordSpec`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L344)** — The one declaration of a record: identity, contract and codec.
   - `RecordSpec.assembly_for(self, payload: Any = None) -> str` — The assembly a record *payload* needs (:meth:`Clause.join`): every
   - `RecordSpec.web(self) -> Optional[GlbBlock]` *(property)* **DEPRECATED (remove in 0.18.0)** — The record's GLB block (:attr:`glb`).
   - `RecordSpec.version_key(self) -> str` *(property)* **DEPRECATED (remove in 0.18.0)** — The key every record's version rides under: ``"version"``.
@@ -1124,7 +1124,7 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `RecordSpec.save(self, store, payload: Any) -> Optional[str]` — Publish *payload* (the publish / clear idiom in one call).
   - `RecordSpec.clear(self, store) -> Optional[str]` — Clear the record;
   - `RecordSpec.is_present(self, store) -> bool` — Whether *store* holds a non-empty value for this record.
-- **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L745)** — The registry: every record, declared once, and what derives from it.
+- **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L746)** — The registry: every record, declared once, and what derives from it.
   - `SceneRecords.registered_hooks(cls, host: str, role: str) -> Dict[str, Tuple[str, str, Optional[str]]]` *(class)* — The record hooks installed packages register for *host* and *role*.
   - `SceneRecords.forget_registered_hooks(cls) -> None` *(class)* — Read the hook group's metadata again on the next
   - `SceneRecords.hook_row(cls, row: Optional[Tuple[str, str, str]], host: str, role: str) -> Optional[Tuple[str, str, str]]` *(class)* — The row a single-hook seam resolves: *row*, the library's own
@@ -2449,12 +2449,13 @@ Helpers for hot-reloading packages and their submodules.
 
 Reusable module attribute resolver for package-style imports.
 
-- [`bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True, moved: Optional[MovedMapping] = None) -> PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L1036) — Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
-- [`lazy_exports(module_globals: MutableMapping[str, Any], sources: IncludeMapping) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L1203) — Publish a subpackage's names from its submodules, each loaded on first use.
-- [`create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L1297) — Create multi-inheritance namespace classes from groups of related classes.
-- [`import_footprint(package: str) -> Dict[str, List[str]]`](pythontk/pythontk/core_utils/module_resolver.py#L1436) — What importing *package* loads beyond declarations, in a fresh interpreter.
-- **[`class MovedNameError(AttributeError)`](pythontk/pythontk/core_utils/module_resolver.py#L43)** — A public name that left its package, read at its old home.
-- **[`class ModuleAttributeResolver`](pythontk/pythontk/core_utils/module_resolver.py#L59)** — Discover and resolve attributes exposed from package submodules lazily.
+- [`bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True, moved: Optional[MovedMapping] = None) -> PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L1079) — Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
+- [`lazy_exports(module_globals: MutableMapping[str, Any], sources: IncludeMapping) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L1246) — Publish a subpackage's names from its submodules, each loaded on first use.
+- [`create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`](pythontk/pythontk/core_utils/module_resolver.py#L1340) — Create multi-inheritance namespace classes from groups of related classes.
+- [`import_footprint(package: str) -> Dict[str, List[str]]`](pythontk/pythontk/core_utils/module_resolver.py#L1479) — What importing *package* loads beyond declarations, in a fresh interpreter.
+- **[`class MovedNameError(AttributeError)`](pythontk/pythontk/core_utils/module_resolver.py#L44)** — A public name that left its package, read at its old home.
+- **[`class MovedImportError(ImportError)`](pythontk/pythontk/core_utils/module_resolver.py#L62)** — :class:`MovedNameError` for ``from package import Name``.
+- **[`class ModuleAttributeResolver`](pythontk/pythontk/core_utils/module_resolver.py#L101)** — Discover and resolve attributes exposed from package submodules lazily.
   - `ModuleAttributeResolver.build(self) -> 'ModuleAttributeResolver'` — Populate resolver dictionaries based on current include spec.
   - `ModuleAttributeResolver.rebuild(self, include: Optional[Mapping[str, Union[Sequence[str], str]]] = None) -> 'ModuleAttributeResolver'` — Reset include spec (optional) and rebuild dictionaries.
   - `ModuleAttributeResolver.resolve(self, name: str)` — Resolve an attribute using the registered dictionaries.
@@ -2462,7 +2463,7 @@ Reusable module attribute resolver for package-style imports.
   - `ModuleAttributeResolver.bind_to(self, module_globals: MutableMapping[str, object], *, install_getattr: bool = True, eager: bool = False, names: Optional[Iterable[str]] = None) -> None` — Bind resolver helpers into a module's globals dictionary.
   - `ModuleAttributeResolver.iter_registered_names(self) -> Iterable[str]` — Return an iterable of attribute names known to the resolver.
   - `ModuleAttributeResolver.clear_module_cache(self) -> None` — Drop cached module imports managed by the resolver.
-- **[`class PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L784)** — Facade that wires a :class:`ModuleAttributeResolver` into a package module.
+- **[`class PackageResolverHandle`](pythontk/pythontk/core_utils/module_resolver.py#L827)** — Facade that wires a :class:`ModuleAttributeResolver` into a package module.
   - `PackageResolverHandle.install(self, *, expose_maps: bool = True, install_helpers: bool = True, allow_getattr: Optional[bool] = None, eager: Optional[bool] = None, custom_getattr: Optional[Callable[[str], Any]] = None) -> None` — Publish resolver artifacts into the target module globals.
   - `PackageResolverHandle.configure(self, *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, merge: bool = True, eager: Optional[bool] = None, custom_getattr: Optional[Callable[[str], Any]] = None) -> ModuleAttributeResolver` — Reconfigure the underlying resolver and optionally re-export symbols.
   - `PackageResolverHandle.build_dictionaries(self, include_override: Optional[IncludeMapping] = None, *, eager: bool = False, custom_getattr: Optional[Callable[[str], Any]] = None) -> ModuleAttributeResolver` — Compatibility wrapper mirroring the legacy ``build_dictionaries`` helper.
@@ -3154,7 +3155,7 @@ FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
 
 A deterministic structural summary of an exported GLB or FBX, and its diff.
 
-- **[`class ExportFingerprint`](pythontk/pythontk/file_utils/mesh_convert/export_fingerprint.py#L30)** — Fingerprint an exported GLB or FBX, and diff two fingerprints.
+- **[`class ExportFingerprint`](pythontk/pythontk/file_utils/mesh_convert/export_fingerprint.py#L31)** — Fingerprint an exported GLB or FBX, and diff two fingerprints.
   - `ExportFingerprint.of(cls, path: str) -> Dict[str, Any]` *(class)* — The fingerprint of the GLB or FBX at *path*, chosen by extension.
   - `ExportFingerprint.of_glb(cls, path: str) -> Dict[str, Any]` *(class)* — A GLB's nodes (by name path), meshes, materials, skins, animations
   - `ExportFingerprint.of_fbx(cls, path: str) -> Dict[str, Any]` *(class)* — An FBX's object census, models with their local transforms,

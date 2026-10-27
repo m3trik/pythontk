@@ -2273,6 +2273,18 @@ class TestExportFingerprint(_FixtureCase):
             ["animations/Shot_1: removed", "animations/Shot_2: added"],
         )
 
+    def test_a_records_fields_are_pinned_not_just_its_name(self):
+        """A record written with the right key but a wrong value -- a clip's
+        zero frame -- is a difference; its text fields read as "text"."""
+        at3 = ExportFingerprint.of(build_glb(self.path("a.glb"), zero_frame=3.0))
+        at5 = ExportFingerprint.of(build_glb(self.path("b.glb"), zero_frame=5.0))
+        clip = at3["extras"][SceneRecords.SHOTS.key]["clips"][0]
+        self.assertEqual(clip, {"animation": 0, "name": "text", "zero_frame": 3.0})
+        self.assertEqual(
+            ExportFingerprint.diff(at3, at5),
+            [f"extras/{SceneRecords.SHOTS.key}/clips[0]/zero_frame: 3.0 -> 5.0"],
+        )
+
     def test_numbers_within_the_tolerance_are_equal(self):
         self.assertEqual(ExportFingerprint.diff({"a": [1.0]}, {"a": [1.0004]}), [])
         self.assertEqual(

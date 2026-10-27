@@ -2,7 +2,7 @@
 
 _Diff vs the last release (origin/main @ f97442f)._
 
-## Added (18)
+## Added (19)
 
 - `__init__.py::MOVED_NAMES(constant)`
 - `core_utils/engines/scene_export/scene_records.py::SceneRecords.forget_registered_hooks(cls) -> None`
@@ -11,6 +11,7 @@ _Diff vs the last release (origin/main @ f97442f)._
 - `core_utils/engines/scene_export/scene_records.py::SceneRecords.registered_hooks(cls, host: str, role: str) -> Dict[str, Tuple[str, str, Optional[str]]]`
 - `core_utils/engines/scene_export/scene_records.py::SceneRecords.stager_rows(cls, table: Mapping[str, Tuple[str, str, str, Optional[str]]], host: str) -> Dict[str, Tuple[str, str, str, Optional[str]]]`
 - `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.owner_rows(cls) -> Dict[str, Tuple[str, str]]`
+- `core_utils/module_resolver.py::MovedImportError(class)`
 - `core_utils/module_resolver.py::MovedNameError(class)`
 - `core_utils/package_manager.py::PackageManager.entry_points(group: str) -> list`
 - `file_utils/mesh_convert/export_fingerprint.py::ExportFingerprint(class)`

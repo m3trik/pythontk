@@ -52,6 +52,7 @@ import copy
 import json
 import logging
 import re
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
@@ -1421,9 +1422,9 @@ class SceneRecords:
     #: A tool outside a library lists itself there instead of in the library's
     #: tables (:meth:`registered_hooks`).
     HOOK_GROUP = "m3trik.scene_records"
-    #: The group's ``(name, value)`` pairs, read once a session
-    #: (:meth:`registered_hooks`); ``None`` until first asked.
-    _hook_points: ClassVar[Optional[Tuple[Tuple[str, str], ...]]] = None
+    #: The group's ``(name, value)`` pairs and the ``sys.path`` they were read
+    #: under (:meth:`registered_hooks`); ``None`` until first asked.
+    _hook_points: ClassVar[Optional[Tuple[Tuple[str, ...], Tuple[Tuple[str, str], ...]]]] = None
 
     @classmethod
     def registered_hooks(
@@ -1439,26 +1440,46 @@ class SceneRecords:
 
         Parameters:
             host: The DCC the hooks serve (``"maya"``, ``"blender"``).
-            role: ``"producer"``, ``"stager"`` or ``"owner"``.
+            role: ``"producer"``, ``"stager"`` or ``"owner"``, or a single
+                call a library makes into tool code (``FbxUtils.HOOKS``:
+                ``take_stash``, ``offset_fold``, ``dependency_dirs``; see
+                :meth:`hook_row`).
 
         Returns:
             ``{key: (module, class, method)}``, *method* ``None`` for an owner.
             A key keeps any ``.slot`` suffix its entry carries (a stager's
             ``effects.prepare`` / ``effects.finish``).
 
-        The metadata is read once a session -- installed packages do not change
-        under a running DCC, and record owners are asked often -- and
-        :meth:`forget_registered_hooks` reads it again.
+        The metadata is read once per ``sys.path`` -- installed packages do not
+        change under a running DCC, record owners are asked often, and a path
+        that changed (a package put on it) reads it again, as does
+        :meth:`forget_registered_hooks`. Two distributions naming one entry:
+        the first on the path wins, as its import would, and the other is
+        warned about. *method* is a direct attribute of the class; a dotted
+        path past it is not followed.
         """
-        if cls._hook_points is None:
+        path = tuple(sys.path)
+        if cls._hook_points is None or cls._hook_points[0] != path:
             from pythontk.core_utils.package_manager import PackageManager
 
-            cls._hook_points = tuple(
-                (point.name, point.value)
-                for point in PackageManager.entry_points(cls.HOOK_GROUP)
+            cls._hook_points = (
+                path,
+                tuple(
+                    (point.name, point.value)
+                    for point in PackageManager.entry_points(cls.HOOK_GROUP)
+                ),
             )
         rows: Dict[str, Tuple[str, str, Optional[str]]] = {}
-        for name, value in cls._hook_points:
+        seen: Dict[str, str] = {}
+        for name, value in cls._hook_points[1]:
+            if name in seen:
+                if value != seen[name]:
+                    logger.warning(
+                        "Record hook %r is registered twice; %s is used, %s ignored.",
+                        name, seen[name], value,
+                    )
+                continue
+            seen[name] = value
             parts = name.split(".", 2)
             if len(parts) != 3 or parts[0] != host or parts[1] != role:
                 continue
@@ -1557,10 +1578,12 @@ class SceneRecords:
         slots: Dict[str, Dict[str, Tuple[str, str, Optional[str]]]] = {}
         for key, row in cls.registered_hooks(host, "stager").items():
             name, _, slot = key.rpartition(".")
-            if name and slot in ("prepare", "finish"):
+            if name and slot in ("prepare", "finish") and row[2]:
                 slots.setdefault(name, {})[slot] = row
             else:
-                logger.warning("Registered stager %r names no prepare/finish slot; skipped.", key)
+                logger.warning(
+                    "Registered stager %r names no prepare/finish slot or no method; skipped.", key
+                )
         for name, parts in sorted(slots.items()):
             if name in rows:
                 continue

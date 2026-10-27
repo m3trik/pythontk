@@ -1182,6 +1182,19 @@ class MovedNamesTests(_TempPackageCase):
         )
         self.assertEqual(caught.exception.new_home, "tentacle.ui.panels.spin.SpinSlots")
 
+    def test_a_from_import_of_a_moved_name_still_names_its_new_home(self):
+        """CPython turns an AttributeError under ``from pkg import Name`` into a
+        bare 'cannot import name', so that statement gets an ImportError with
+        the same message; plain attribute reads keep the AttributeError."""
+        from pythontk.core_utils.module_resolver import MovedImportError
+
+        self._package()
+        with self.assertRaises(MovedImportError) as caught:
+            exec("from resolver_pkg_moved import SpinSlots", {})
+        self.assertIn("moved to tentacle.ui.panels.spin.SpinSlots", str(caught.exception))
+        self.assertIsInstance(caught.exception, ImportError)
+        self.assertNotIsInstance(caught.exception, AttributeError)
+
     def test_a_moved_name_is_an_attribute_error_and_resolves_nothing(self):
         pkg = self._package()
         self.assertFalse(hasattr(pkg, "SpinSlots"))
