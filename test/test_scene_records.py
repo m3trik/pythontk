@@ -290,6 +290,24 @@ class TestRegisteredHooks(SceneRecordsCase):
             },
         )
 
+    def test_a_single_hook_is_the_librarys_row_else_the_registered_one(self):
+        own = ("mayatk.stash", "KeyStash", "active")
+        hooks = {
+            "key_stash": ("tentacle.stash", "KeyStash", "active"),
+            "other": ("tentacle.other", "Other", "active"),  # second: warned, unused
+        }
+        with mock.patch.object(SR, "registered_hooks", return_value=hooks) as reg:
+            self.assertEqual(SR.hook_row(own, "maya", "take_stash"), own)
+            reg.assert_not_called()
+            with self.assertLogs(level="WARNING"):
+                self.assertEqual(
+                    SR.hook_row(None, "maya", "take_stash"),
+                    ("tentacle.stash", "KeyStash", "active"),
+                )
+            reg.assert_called_with("maya", "take_stash")
+        with mock.patch.object(SR, "registered_hooks", return_value={}):
+            self.assertIsNone(SR.hook_row(None, "maya", "take_stash"))
+
     def test_a_store_merges_registered_owners_under_its_own(self):
         class HostStore(DictStore):
             HOST = "maya"

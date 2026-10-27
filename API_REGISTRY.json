@@ -6329,12 +6329,21 @@
               "deprecated": false
             },
             {
+              "name": "hook_row",
+              "qualname": "SceneRecords.hook_row",
+              "kind": "classmethod",
+              "signature": "(cls, row: Optional[Tuple[str, str, str]], host: str, role: str) -> Optional[Tuple[str, str, str]]",
+              "summary": "The row a single-hook seam resolves: *row*, the library's own",
+              "line": 1479,
+              "deprecated": false
+            },
+            {
               "name": "producer_rows",
               "qualname": "SceneRecords.producer_rows",
               "kind": "classmethod",
               "signature": "(cls, table: Mapping[Any, Tuple[str, str, str]], host: str) -> Dict[Any, Tuple[str, str, str]]",
               "summary": "A host's producer *table* (``FbxUtils.PRODUCERS``: record spec ->",
-              "line": 1479,
+              "line": 1511,
               "deprecated": false
             },
             {
@@ -6343,7 +6352,7 @@
               "kind": "classmethod",
               "signature": "(cls, table: Mapping[str, Tuple[str, str, str, Optional[str]]], host: str) -> Dict[str, Tuple[str, str, str, Optional[str]]]",
               "summary": "A host's stager *table* (``FbxUtils.STAGERS``: name ->",
-              "line": 1510,
+              "line": 1542,
               "deprecated": false
             },
             {
@@ -6352,7 +6361,7 @@
               "kind": "staticmethod",
               "signature": "(module: str, name: str) -> Any",
               "summary": "The class a ``(module, name)`` row names -- :attr:`CODECS`',",
-              "line": 1545,
+              "line": 1577,
               "deprecated": false
             },
             {
@@ -6361,7 +6370,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: RecordSpec) -> Optional[Any]",
               "summary": "The codec class of a :attr:`Merge.CODEC` record, else ``None``.",
-              "line": 1554,
+              "line": 1586,
               "deprecated": false
             },
             {
@@ -6370,7 +6379,7 @@
               "kind": "classmethod",
               "signature": "(cls, item: Union[RecordSpec, str]) -> Optional[Any]",
               "summary": "The :class:`~pythontk.SchemaSpec` declaring *item*'s payload",
-              "line": 1562,
+              "line": 1594,
               "deprecated": false
             },
             {
@@ -6379,7 +6388,7 @@
               "kind": "classmethod",
               "signature": "(cls, item: Union[RecordSpec, str]) -> Optional[Any]",
               "summary": "The :class:`~pythontk.SchemaSpec` declaring *item*'s GLB block",
-              "line": 1570,
+              "line": 1602,
               "deprecated": false
             },
             {
@@ -6388,7 +6397,7 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: Dict[str, Any], item: Union[RecordSpec, str], block: Mapping[str, Any]) -> Dict[str, Any]",
               "summary": "Write *block* as *item*'s block in the glTF document *gltf* -- its",
-              "line": 1577,
+              "line": 1609,
               "deprecated": false
             },
             {
@@ -6397,7 +6406,7 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: Any, item: Union[RecordSpec, str]) -> Optional[Dict[str, Any]]",
               "summary": "*item*'s block in the glTF document *gltf* -- its root ``extras``,",
-              "line": 1601,
+              "line": 1633,
               "deprecated": false
             },
             {
@@ -6406,7 +6415,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> List[RecordSpec]",
               "summary": "The records a GLB carries a block for (:attr:`RecordSpec.glb`), in",
-              "line": 1617,
+              "line": 1649,
               "deprecated": false
             },
             {
@@ -6415,7 +6424,7 @@
               "kind": "classmethod",
               "signature": "(cls, item: Union[RecordSpec, str], payload: Any) -> List[str]",
               "summary": "What *payload* breaks of *item*'s declaration, one line each: a",
-              "line": 1623,
+              "line": 1655,
               "deprecated": false
             },
             {
@@ -6424,7 +6433,7 @@
               "kind": "classmethod",
               "signature": "(cls, item: Union[RecordSpec, str], block: Any) -> List[str]",
               "summary": "What *block* -- *item*'s GLB block -- breaks of its declaration",
-              "line": 1632,
+              "line": 1664,
               "deprecated": false
             },
             {
@@ -6433,7 +6442,7 @@
               "kind": "classmethod",
               "signature": "(cls, item: Union[RecordSpec, str]) -> Optional[Any]",
               "summary": ":meth:`glb_shape`.",
-              "line": 1659,
+              "line": 1691,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -6443,7 +6452,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> List[RecordSpec]",
               "summary": ":meth:`glb_records`.",
-              "line": 1667,
+              "line": 1699,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -6453,7 +6462,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> List[RecordSpec]",
               "summary": "The records that cross a DCC hand-off, in declaration order.",
-              "line": 1672,
+              "line": 1704,
               "deprecated": false
             },
             {
@@ -6462,7 +6471,7 @@
               "kind": "staticmethod",
               "signature": "(overrides: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]",
               "summary": "What a deliverable claims about how it should be lit",
-              "line": 1683,
+              "line": 1715,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -6472,7 +6481,7 @@
               "kind": "method",
               "signature": "(cls) -> str",
               "summary": "The FBX block's reading contract (``HandoffRecord.instructions``).",
-              "line": 1698,
+              "line": 1730,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -6482,7 +6491,7 @@
               "kind": "method",
               "signature": "(cls) -> Tuple[Dict[str, Any], ...]",
               "summary": "The FBX block's rows for the file's own content (``HandoffRecord.CARRIERS``).",
-              "line": 1710,
+              "line": 1742,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -6492,7 +6501,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> List[RecordSpec]",
               "summary": "Every declared record, in declaration order.",
-              "line": 1720,
+              "line": 1752,
               "deprecated": false
             },
             {
@@ -6501,7 +6510,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> List[RecordSpec]",
               "summary": "The records whose values are project-relative paths",
-              "line": 1725,
+              "line": 1757,
               "deprecated": false
             },
             {
@@ -6510,7 +6519,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> List[RecordSpec]",
               "summary": "The records holding writer stamps (:attr:`RecordSpec.stamps`), in",
-              "line": 1731,
+              "line": 1763,
               "deprecated": false
             },
             {
@@ -6519,7 +6528,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> List[RecordSpec]",
               "summary": "The records that describe one write (:attr:`RecordSpec.transient`),",
-              "line": 1737,
+              "line": 1769,
               "deprecated": false
             },
             {
@@ -6528,7 +6537,7 @@
               "kind": "classmethod",
               "signature": "(cls, store, stamp: str) -> int",
               "summary": "Give every writer stamp still ``\"\"`` in *store* the file *stamp*",
-              "line": 1744,
+              "line": 1776,
               "deprecated": false
             },
             {
@@ -6537,7 +6546,7 @@
               "kind": "classmethod",
               "signature": "(cls, store, stamp: str, base: Optional[str]) -> int",
               "summary": "Give every writer stamp in *store* that names a scene file now gone",
-              "line": 1781,
+              "line": 1813,
               "deprecated": false
             },
             {
@@ -6546,7 +6555,7 @@
               "kind": "staticmethod",
               "signature": "(payload: Any, spell: Callable[[str], str], keys: Optional[Tuple[str, ...]] = None) -> Any",
               "summary": "*payload* (a :attr:`RecordSpec.paths` mapping) with every string",
-              "line": 1842,
+              "line": 1874,
               "deprecated": false
             },
             {
@@ -6555,7 +6564,7 @@
               "kind": "classmethod",
               "signature": "(cls, store, old_base: Optional[str], new_base: Optional[str]) -> int",
               "summary": "Re-spell every :attr:`RecordSpec.paths` record in *store* from",
-              "line": 1863,
+              "line": 1895,
               "deprecated": false
             },
             {
@@ -6564,7 +6573,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> List[RecordSpec]",
               "summary": "",
-              "line": 1899,
+              "line": 1931,
               "deprecated": false
             },
             {
@@ -6573,7 +6582,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> List[RecordSpec]",
               "summary": "",
-              "line": 1903,
+              "line": 1935,
               "deprecated": false
             },
             {
@@ -6582,7 +6591,7 @@
               "kind": "classmethod",
               "signature": "(cls, key: str, scope: Optional[Scope] = None) -> Optional[RecordSpec]",
               "summary": "The declaration for *key* (in *scope*, or the deliverable one first",
-              "line": 1907,
+              "line": 1939,
               "deprecated": false
             },
             {
@@ -6591,7 +6600,7 @@
               "kind": "classmethod",
               "signature": "(cls, item: Union[RecordSpec, str]) -> RecordSpec",
               "summary": "*item* as a spec: a spec passes through;",
-              "line": 1918,
+              "line": 1950,
               "deprecated": false
             },
             {
@@ -6600,7 +6609,7 @@
               "kind": "classmethod",
               "signature": "(cls, specs: Iterable[RecordSpec]) -> List[RecordSpec]",
               "summary": "*specs* in dependency order: every record after the ones its",
-              "line": 1933,
+              "line": 1965,
               "deprecated": false
             },
             {
@@ -6609,7 +6618,7 @@
               "kind": "classmethod",
               "signature": "(cls, table: Mapping[Any, Any]) -> List[RecordSpec]",
               "summary": "Validate a DCC producer *table* against the registry.",
-              "line": 1966,
+              "line": 1998,
               "deprecated": false
             },
             {
@@ -6618,7 +6627,7 @@
               "kind": "classmethod",
               "signature": "(cls, read: Callable[[str], Any]) -> List[Dict[str, Any]]",
               "summary": "The take list a deliverable declares.",
-              "line": 1995,
+              "line": 2027,
               "deprecated": false
             },
             {
@@ -6627,7 +6636,7 @@
               "kind": "classmethod",
               "signature": "(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Mapping[str, str]] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]",
               "summary": "The FBX's handoff block for a carrier holding *channels*, or ``{}``",
-              "line": 2024,
+              "line": 2056,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -6637,7 +6646,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> List[Dict[str, Any]]",
               "summary": "One row per record, for the docs generator and the gates.",
-              "line": 2040,
+              "line": 2072,
               "deprecated": false
             }
           ]

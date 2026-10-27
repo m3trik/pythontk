@@ -1476,6 +1476,38 @@ class SceneRecords:
         cls._hook_points = None
 
     @classmethod
+    def hook_row(
+        cls, row: Optional[Tuple[str, str, str]], host: str, role: str
+    ) -> Optional[Tuple[str, str, str]]:
+        """The row a single-hook seam resolves: *row*, the library's own
+        ``(module, class, method)``, while it has one, else the one installed
+        packages register for *host* and *role* (:meth:`registered_hooks`, any
+        key) -- what a library's call into tool code becomes once the tool
+        moves out (``FbxUtils.HOOKS``). Several registered: the first by key
+        is used and the rest warned about. ``None`` when neither names one.
+
+        Parameters:
+            row: The library's own row, or ``None`` once the tool left it.
+            host: The DCC (``"maya"``, ``"blender"``).
+            role: The seam (``"take_stash"``, ``"offset_fold"`` ...).
+        """
+        if row:
+            return row
+        found = {
+            key: hook for key, hook in cls.registered_hooks(host, role).items() if hook[2]
+        }
+        if not found:
+            return None
+        first, *rest = sorted(found)
+        if rest:
+            logger.warning(
+                "%d packages register a %r hook for %s; %r is used, %s ignored.",
+                len(found), role, host, first, ", ".join(map(repr, rest)),
+            )
+        module, owner, method = found[first]
+        return (module, owner, method)
+
+    @classmethod
     def producer_rows(
         cls, table: Mapping[Any, Tuple[str, str, str]], host: str
     ) -> Dict[Any, Tuple[str, str, str]]:

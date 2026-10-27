@@ -1127,6 +1127,7 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
 - **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L745)** — The registry: every record, declared once, and what derives from it.
   - `SceneRecords.registered_hooks(cls, host: str, role: str) -> Dict[str, Tuple[str, str, Optional[str]]]` *(class)* — The record hooks installed packages register for *host* and *role*.
   - `SceneRecords.forget_registered_hooks(cls) -> None` *(class)* — Read the hook group's metadata again on the next
+  - `SceneRecords.hook_row(cls, row: Optional[Tuple[str, str, str]], host: str, role: str) -> Optional[Tuple[str, str, str]]` *(class)* — The row a single-hook seam resolves: *row*, the library's own
   - `SceneRecords.producer_rows(cls, table: Mapping[Any, Tuple[str, str, str]], host: str) -> Dict[Any, Tuple[str, str, str]]` *(class)* — A host's producer *table* (``FbxUtils.PRODUCERS``: record spec ->
   - `SceneRecords.stager_rows(cls, table: Mapping[str, Tuple[str, str, str, Optional[str]]], host: str) -> Dict[str, Tuple[str, str, str, Optional[str]]]` *(class)* — A host's stager *table* (``FbxUtils.STAGERS``: name ->
   - `SceneRecords.resolve_class(module: str, name: str) -> Any` *(static)* — The class a ``(module, name)`` row names -- :attr:`CODECS`',

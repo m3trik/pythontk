@@ -2,10 +2,11 @@
 
 _Diff vs the last release (origin/main @ f97442f)._
 
-## Added (17)
+## Added (18)
 
 - `__init__.py::MOVED_NAMES(constant)`
 - `core_utils/engines/scene_export/scene_records.py::SceneRecords.forget_registered_hooks(cls) -> None`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.hook_row(cls, row: Optional[Tuple[str, str, str]], host: str, role: str) -> Optional[Tuple[str, str, str]]`
 - `core_utils/engines/scene_export/scene_records.py::SceneRecords.producer_rows(cls, table: Mapping[Any, Tuple[str, str, str]], host: str) -> Dict[Any, Tuple[str, str, str]]`
 - `core_utils/engines/scene_export/scene_records.py::SceneRecords.registered_hooks(cls, host: str, role: str) -> Dict[str, Tuple[str, str, Optional[str]]]`
 - `core_utils/engines/scene_export/scene_records.py::SceneRecords.stager_rows(cls, table: Mapping[str, Tuple[str, str, str, Optional[str]]], host: str) -> Dict[str, Tuple[str, str, str, Optional[str]]]`
