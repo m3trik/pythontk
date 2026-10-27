@@ -8012,7 +8012,7 @@
         {
           "name": "ManifestModel",
           "summary": "The shot manifest's data model and CSV parser.",
-          "line": 445,
+          "line": 443,
           "bases": [
             "_ManifestModelInternal"
           ],
@@ -8023,7 +8023,7 @@
               "kind": "classmethod",
               "signature": "(cls, path: str, exc: OSError) -> str",
               "summary": "Explain a CSV that exists but cannot be read, without over-committing.",
-              "line": 460,
+              "line": 458,
               "deprecated": false
             },
             {
@@ -8032,28 +8032,8 @@
               "kind": "staticmethod",
               "signature": "(text: str) -> List[str]",
               "summary": "Return behavior names inferred from descriptive *text*.",
-              "line": 492,
+              "line": 490,
               "deprecated": false
-            },
-            {
-              "name": "asset_column",
-              "qualname": "ManifestModel.asset_column",
-              "kind": "staticmethod",
-              "signature": "(source: str, fills: Dict[str, List[str]], columns: Optional['ColumnMap'] = None) -> List[str]",
-              "summary": "The source sheet's asset column, row for row, with *fills* written",
-              "line": 509,
-              "deprecated": true,
-              "remove_in": "0.14.0"
-            },
-            {
-              "name": "column_clipboard",
-              "qualname": "ManifestModel.column_clipboard",
-              "kind": "staticmethod",
-              "signature": "(cells: List[str]) -> Tuple[str, str]",
-              "summary": "``(tsv, html)`` clipboard forms of one column of *cells*",
-              "line": 571,
-              "deprecated": true,
-              "remove_in": "0.14.0"
             },
             {
               "name": "parse_csv",
@@ -8061,7 +8041,7 @@
               "kind": "staticmethod",
               "signature": "(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]",
               "summary": "Parse a structured CSV into a list of :class:`BuilderStep`.",
-              "line": 581,
+              "line": 501,
               "deprecated": false
             },
             {
@@ -8070,7 +8050,7 @@
               "kind": "staticmethod",
               "signature": "(subject: str, case: str, rule: str) -> str",
               "summary": "The object name a doc's prose *subject* stands for: *case*",
-              "line": 361,
+              "line": 359,
               "deprecated": false
             },
             {
@@ -8079,7 +8059,7 @@
               "kind": "staticmethod",
               "signature": "(value: Any) -> List[str]",
               "summary": "Validate a row-grammar field: a list of regexes that compile.",
-              "line": 370,
+              "line": 368,
               "deprecated": false
             }
           ]
@@ -8087,14 +8067,14 @@
         {
           "name": "BuilderObject",
           "summary": "One asset within a step.",
-          "line": 621,
+          "line": 541,
           "bases": [],
           "members": []
         },
         {
           "name": "BuilderStep",
           "summary": "One step (= one future sequencer shot).",
-          "line": 640,
+          "line": 560,
           "bases": [],
           "members": [
             {
@@ -8103,7 +8083,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "The name this step's shot carries: :attr:`name`, else the step ID.",
-              "line": 669,
+              "line": 586,
               "deprecated": false
             },
             {
@@ -8112,7 +8092,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "Text shown in the tree Description column.",
-              "line": 674,
+              "line": 591,
               "deprecated": false
             },
             {
@@ -8121,7 +8101,7 @@
               "kind": "classmethod",
               "signature": "(cls, candidates: List[Dict]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]",
               "summary": "Convert detection candidates to BuilderSteps + pre-filled ranges.",
-              "line": 679,
+              "line": 596,
               "deprecated": false
             },
             {
@@ -8130,7 +8110,7 @@
               "kind": "classmethod",
               "signature": "(cls, shots: List[Any]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]",
               "summary": "Convert existing store shots back into BuilderSteps + their ranges.",
-              "line": 722,
+              "line": 639,
               "deprecated": false
             }
           ]
@@ -8138,14 +8118,14 @@
         {
           "name": "PlannedShot",
           "summary": "Immutable build instruction computed before any store mutation.",
-          "line": 803,
+          "line": 720,
           "bases": [],
           "members": []
         },
         {
           "name": "PlannedInsert",
           "summary": "Where a step with no shot goes on a built timeline",
-          "line": 823,
+          "line": 740,
           "bases": [],
           "members": [
             {
@@ -8154,7 +8134,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[int]",
               "summary": "The existing shot it goes after (``None``: before every one).",
-              "line": 850,
+              "line": 767,
               "deprecated": false
             },
             {
@@ -8163,7 +8143,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[str]",
               "summary": "The step whose new shot it directly follows -- another insert, or",
-              "line": 856,
+              "line": 773,
               "deprecated": false
             }
           ]
@@ -8171,14 +8151,14 @@
         {
           "name": "ObjectStatus",
           "summary": "Assessment result for one object within a step.",
-          "line": 884,
+          "line": 801,
           "bases": [],
           "members": []
         },
         {
           "name": "StepStatus",
           "summary": "Assessment result for one step.",
-          "line": 906,
+          "line": 823,
           "bases": [],
           "members": [
             {
@@ -8187,7 +8167,7 @@
               "kind": "property",
               "signature": "(self) -> str",
               "summary": "Worst-of-children rollup.",
-              "line": 936,
+              "line": 853,
               "deprecated": false
             },
             {
@@ -8196,7 +8176,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "Whether a Build would change this step: its shot is not built, an",
-              "line": 994,
+              "line": 911,
               "deprecated": false
             },
             {
@@ -8205,7 +8185,7 @@
               "kind": "property",
               "signature": "(self) -> int",
               "summary": "",
-              "line": 1006,
+              "line": 923,
               "deprecated": false
             },
             {
@@ -8214,7 +8194,7 @@
               "kind": "property",
               "signature": "(self) -> int",
               "summary": "",
-              "line": 1010,
+              "line": 927,
               "deprecated": false
             },
             {
@@ -8223,7 +8203,7 @@
               "kind": "staticmethod",
               "signature": "(results: List['StepStatus'], name: str, step_id: Optional[str] = None) -> Optional[ObjectStatus]",
               "summary": "The first assessed :class:`ObjectStatus` named *name* in *results*.",
-              "line": 1014,
+              "line": 931,
               "deprecated": false
             }
           ]
@@ -8231,7 +8211,7 @@
         {
           "name": "ShotPairing",
           "summary": "Which shot each step is -- :meth:`ShotManifest.pair`'s answer.",
-          "line": 1035,
+          "line": 952,
           "bases": [],
           "members": [
             {
@@ -8240,7 +8220,7 @@
               "kind": "method",
               "signature": "(self, steps: List['BuilderStep'], hide_missing: bool = False, orphans: bool = True, keep: Iterable[str] = ()) -> List[Tuple[Optional['BuilderStep'], Optional[Any]]]",
               "summary": "The manifest's rows: ``(step, shot)`` per step in doc order --",
-              "line": 1054,
+              "line": 971,
               "deprecated": false
             }
           ]
@@ -8248,7 +8228,7 @@
         {
           "name": "ColumnMap",
           "summary": "Maps logical fields to CSV header names (case-insensitive), plus the",
-          "line": 1123,
+          "line": 1040,
           "bases": [
             "SchemaSpec"
           ],
@@ -8259,7 +8239,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "Serialise to a JSON-safe dict (tuples → lists).",
-              "line": 1247,
+              "line": 1164,
               "deprecated": false
             },
             {
@@ -8268,7 +8248,7 @@
               "kind": "classmethod",
               "signature": "(cls, data: Dict[str, Any]) -> 'ColumnMap'",
               "summary": "Reconstruct from a dict produced by :meth:`to_dict`.",
-              "line": 1263,
+              "line": 1180,
               "deprecated": false
             }
           ]
@@ -8281,7 +8261,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 868,
+          "line": 785,
           "deprecated": false
         },
         {
@@ -8290,7 +8270,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 869,
+          "line": 786,
           "deprecated": false
         },
         {
@@ -8299,7 +8279,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 875,
+          "line": 792,
           "deprecated": false
         }
       ]
@@ -8390,21 +8370,12 @@
               "deprecated": false
             },
             {
-              "name": "retired",
-              "qualname": "Mapping.retired",
-              "kind": "staticmethod",
-              "signature": "(name: str) -> Optional[Tuple[str, Dict[str, Any]]]",
-              "summary": "``(replacement, option values)`` for a retired template, else ``None``.",
-              "line": 378,
-              "deprecated": false
-            },
-            {
               "name": "load_mapping",
               "qualname": "Mapping.load_mapping",
               "kind": "staticmethod",
               "signature": "(name: str, directory: Optional[str] = None) -> Dict[str, Any]",
               "summary": "Read a mapping JSON by *name*, validate it, and return the parsed dict.",
-              "line": 385,
+              "line": 372,
               "deprecated": false
             },
             {
@@ -8413,7 +8384,7 @@
               "kind": "staticmethod",
               "signature": "(mapping: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]",
               "summary": "The settings *mapping* exposes, one plain dict each, in file order.",
-              "line": 449,
+              "line": 418,
               "deprecated": false
             },
             {
@@ -8422,7 +8393,7 @@
               "kind": "staticmethod",
               "signature": "(mapping: Optional[Dict[str, Any]]) -> List[Tuple[str, List[Dict[str, Any]]]]",
               "summary": "*mapping*'s option specs (:meth:`option_specs`) grouped by their",
-              "line": 491,
+              "line": 460,
               "deprecated": false
             },
             {
@@ -8431,7 +8402,7 @@
               "kind": "staticmethod",
               "signature": "(mapping: Optional[Dict[str, Any]], values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]",
               "summary": "The effective template: *mapping* with each option's patch merged in.",
-              "line": 516,
+              "line": 485,
               "deprecated": false
             },
             {
@@ -8440,7 +8411,7 @@
               "kind": "staticmethod",
               "signature": "(csv_path: str, mapping: Optional[Dict[str, Any]] = None, *, name: Optional[str] = None, directory: Optional[str] = None, options: Optional[Dict[str, Any]] = None) -> List[BuilderStep]",
               "summary": "Parse a CSV through a mapping and return fully resolved steps.",
-              "line": 567,
+              "line": 536,
               "deprecated": false
             },
             {
@@ -8449,7 +8420,7 @@
               "kind": "staticmethod",
               "signature": "(csv_path: str, mapping: Dict[str, Any], built: Dict[str, Iterable[str]], values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]",
               "summary": "The option values *csv_path* reads as a build from it recorded.",
-              "line": 596,
+              "line": 565,
               "deprecated": false
             },
             {

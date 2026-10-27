@@ -1358,37 +1358,35 @@ The Shot Manifest as a table to hand on: a spreadsheet for the sheet's
 
 Pure Shot Manifest data model + CSV parser.
 
-- [`DEFAULT_INITIAL_SHOT_LENGTH`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L868) — constant
-- [`DEFAULT_FIT_MODE`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L869) — constant
-- [`AUDIO_PLACEHOLDER_DURATION`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L875) — constant
-- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L445)** — The shot manifest's data model and CSV parser.
+- [`DEFAULT_INITIAL_SHOT_LENGTH`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L785) — constant
+- [`DEFAULT_FIT_MODE`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L786) — constant
+- [`AUDIO_PLACEHOLDER_DURATION`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L792) — constant
+- **[`class ManifestModel(_ManifestModelInternal)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L443)** — The shot manifest's data model and CSV parser.
   - `ManifestModel.describe_read_failure(cls, path: str, exc: OSError) -> str` *(class)* — Explain a CSV that exists but cannot be read, without over-committing.
   - `ManifestModel.detect_behaviors(text: str) -> List[str]` *(static)* — Return behavior names inferred from descriptive *text*.
-  - `ManifestModel.asset_column(source: str, fills: Dict[str, List[str]], columns: Optional['ColumnMap'] = None) -> List[str]` *(static)* **DEPRECATED (remove in 0.14.0)** — The source sheet's asset column, row for row, with *fills* written
-  - `ManifestModel.column_clipboard(cells: List[str]) -> Tuple[str, str]` *(static)* **DEPRECATED (remove in 0.14.0)** — ``(tsv, html)`` clipboard forms of one column of *cells*
   - `ManifestModel.parse_csv(filepath: str, columns: Optional[ColumnMap] = None, post_process: Optional[Callable[[BuilderStep], None]] = None) -> List[BuilderStep]` *(static)* — Parse a structured CSV into a list of :class:`BuilderStep`.
   - `ManifestModel.prose_name(subject: str, case: str, rule: str) -> str` *(static)* — The object name a doc's prose *subject* stands for: *case*
   - `ManifestModel.validate_patterns(value: Any) -> List[str]` *(static)* — Validate a row-grammar field: a list of regexes that compile.
-- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L621)** — One asset within a step.
-- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L640)** — One step (= one future sequencer shot).
+- **[`class BuilderObject`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L541)** — One asset within a step.
+- **[`class BuilderStep`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L560)** — One step (= one future sequencer shot).
   - `BuilderStep.shot_name(self) -> str` *(property)* — The name this step's shot carries: :attr:`name`, else the step ID.
   - `BuilderStep.display_text(self) -> str` *(property)* — Text shown in the tree Description column.
   - `BuilderStep.from_detection(cls, candidates: List[Dict]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert detection candidates to BuilderSteps + pre-filled ranges.
   - `BuilderStep.from_shots(cls, shots: List[Any]) -> Tuple[List['BuilderStep'], Dict[str, Tuple[float, float]]]` *(class)* — Convert existing store shots back into BuilderSteps + their ranges.
-- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L803)** — Immutable build instruction computed before any store mutation.
-- **[`class PlannedInsert`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L823)** — Where a step with no shot goes on a built timeline
+- **[`class PlannedShot`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L720)** — Immutable build instruction computed before any store mutation.
+- **[`class PlannedInsert`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L740)** — Where a step with no shot goes on a built timeline
   - `PlannedInsert.after_shot_id(self) -> Optional[int]` *(property)* — The existing shot it goes after (``None``: before every one).
   - `PlannedInsert.after_step_id(self) -> Optional[str]` *(property)* — The step whose new shot it directly follows -- another insert, or
-- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L884)** — Assessment result for one object within a step.
-- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L906)** — Assessment result for one step.
+- **[`class ObjectStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L801)** — Assessment result for one object within a step.
+- **[`class StepStatus`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L823)** — Assessment result for one step.
   - `StepStatus.status(self) -> str` *(property)* — Worst-of-children rollup.
   - `StepStatus.needs_build(self) -> bool` *(property)* — Whether a Build would change this step: its shot is not built, an
   - `StepStatus.missing_count(self) -> int` *(property)*
   - `StepStatus.total_count(self) -> int` *(property)*
   - `StepStatus.find_object(results: List['StepStatus'], name: str, step_id: Optional[str] = None) -> Optional[ObjectStatus]` *(static)* — The first assessed :class:`ObjectStatus` named *name* in *results*.
-- **[`class ShotPairing`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L1035)** — Which shot each step is -- :meth:`ShotManifest.pair`'s answer.
+- **[`class ShotPairing`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L952)** — Which shot each step is -- :meth:`ShotManifest.pair`'s answer.
   - `ShotPairing.rows(self, steps: List['BuilderStep'], hide_missing: bool = False, orphans: bool = True, keep: Iterable[str] = ()) -> List[Tuple[Optional['BuilderStep'], Optional[Any]]]` — The manifest's rows: ``(step, shot)`` per step in doc order --
-- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L1123)** — Maps logical fields to CSV header names (case-insensitive), plus the
+- **[`class ColumnMap(SchemaSpec)`](pythontk/pythontk/core_utils/engines/shots/manifest/manifest_model.py#L1040)** — Maps logical fields to CSV header names (case-insensitive), plus the
   - `ColumnMap.to_dict(self) -> Dict[str, Any]` — Serialise to a JSON-safe dict (tuples → lists).
   - `ColumnMap.from_dict(cls, data: Dict[str, Any]) -> 'ColumnMap'` *(class)* — Reconstruct from a dict produced by :meth:`to_dict`.
 
@@ -1412,7 +1410,6 @@ CSV mapping resolver — interprets JSON mapping files.
   - `Mapping.templates() -> TemplateSet` *(static)* — The shared :class:`~pythontk.TemplateSet` backing mapping discovery.
   - `Mapping.seed_user_folder(ts: Optional[TemplateSet] = None) -> bool` *(static)* — Seed an empty user mapping folder with an example + format reference.
   - `Mapping.discover(directory: Optional[str] = None) -> List[str]` *(static)* — List available mapping names (without ``.json``).
-  - `Mapping.retired(name: str) -> Optional[Tuple[str, Dict[str, Any]]]` *(static)* — ``(replacement, option values)`` for a retired template, else ``None``.
   - `Mapping.load_mapping(name: str, directory: Optional[str] = None) -> Dict[str, Any]` *(static)* — Read a mapping JSON by *name*, validate it, and return the parsed dict.
   - `Mapping.option_specs(mapping: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]` *(static)* — The settings *mapping* exposes, one plain dict each, in file order.
   - `Mapping.option_sections(mapping: Optional[Dict[str, Any]]) -> List[Tuple[str, List[Dict[str, Any]]]]` *(static)* — *mapping*'s option specs (:meth:`option_specs`) grouped by their

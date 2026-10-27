@@ -316,7 +316,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/shots/manifest/manifest_model.py` — Pure Shot Manifest data model + CSV parser.
 - constants: DEFAULT_INITIAL_SHOT_LENGTH, DEFAULT_FIT_MODE, AUDIO_PLACEHOLDER_DURATION
 - `class ManifestModel(_ManifestModelInternal)`
-  - methods: describe_read_failure, detect_behaviors, asset_column, column_clipboard, parse_csv, prose_name, validate_patterns
+  - methods: describe_read_failure, detect_behaviors, parse_csv, prose_name, validate_patterns
 - `class BuilderObject`
 - `class BuilderStep`
   - methods: shot_name, display_text, from_detection, from_shots
@@ -338,7 +338,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `core_utils/engines/shots/manifest/mapping/_mapping.py` — CSV mapping resolver — interprets JSON mapping files.
 - constants: DEFAULT_DIR
 - `class Mapping(_MappingInternal)`
-  - methods: templates, seed_user_folder, discover, retired, load_mapping, option_specs, option_sections, apply_options, resolve, infer_options, choice_values
+  - methods: templates, seed_user_folder, discover, load_mapping, option_specs, option_sections, apply_options, resolve, infer_options, choice_values
 
 ### `core_utils/engines/shots/manifest/mapping/_spec.py` — Schema for a CSV *mapping* file, defined as a dataclass.
 - constants: AUDIO_METHODS

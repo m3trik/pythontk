@@ -2,14 +2,23 @@
 
 _Diff vs the last release (origin/main @ 892506a)._
 
-No public API changes since the last release (origin/main @ 892506a).
+## Removed (1)
 
-## Deprecations (36)
+_A break: each owes a `ptk.Deprecation` alias, or a `MOVED_NAMES` entry when the name left for another package._
+
+- `core_utils/engines/shots/manifest/mapping/_mapping.py::Mapping.retired` — was `(name: str) -> Optional[Tuple[str, Dict[str, Any]]]`
+
+## Retired (2)
+
+_Deprecated aliases whose window ran out._
+
+- `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column`
+- `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard`
+
+## Deprecations (34)
 
 _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived its window: delete the alias and its tests rather than moving the date. A **HELD** row is due by version, but its notice has not yet had its calendar window._
 
-- **HELD** `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column` — remove in 0.14.0, not before 2026-11-09
-- **HELD** `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard` — remove in 0.14.0, not before 2026-11-09
 - **HELD** `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.confirm_check_override` — remove in 0.14.0, not before 2026-11-03
 - **HELD** `core_utils/engines/scene_export/export_profile.py::ExportProfile.baked_reflections_default` — remove in 0.17.0, not before 2026-11-18
 - **HELD** `core_utils/engines/scene_export/export_profile.py::ExportRun.baked_reflection_level` — remove in 0.17.0, not before 2026-11-18
@@ -44,4 +53,3 @@ _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived 
 - **HELD** `core_utils/engines/scene_export/scene_records.py::SceneRecords.web_projected` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `core_utils/engines/scene_export/scene_records.py::SceneRecords.web_shape` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `core_utils/engines/scene_export/scene_records.py::WebProjection` — remove in 0.18.0, not before 2026-11-23
-

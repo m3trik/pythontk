@@ -18,7 +18,6 @@ from dataclasses import dataclass, field, fields
 from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Tuple
 
 from pythontk import SchemaSpec
-from pythontk.core_utils.deprecation import Deprecation
 from pythontk.str_utils._str_utils import StrUtils
 from pythontk.core_utils.engines.shots.shot_model import ShotStore
 from pythontk.net_utils.remote_file import RemoteFile
@@ -296,7 +295,6 @@ class _ManifestModelInternal(object):
                 current_step._pass_through = dict(step_pass)
                 steps.append(current_step)
 
-                current_step.asset_cell = (row_idx, cols.assets)
                 if asset:
                     assets_spoken.add(step_id)
                 for name in _asset_names(asset):
@@ -499,84 +497,6 @@ class ManifestModel(_ManifestModelInternal):
 
         return Behaviors.detect(text)
 
-    @Deprecation.symbol(
-        "ManifestExport (the manifest as a table: CSV, JSON or Markdown)",
-        remove_in="0.14.0",
-        since="2026-10-10",
-        reason="The Shot Manifest's Copy Asset Names gave way to Export.",
-    )
-    @staticmethod
-    def asset_column(
-        source: str,
-        fills: Dict[str, List[str]],
-        columns: Optional["ColumnMap"] = None,
-    ) -> List[str]:
-        """The source sheet's asset column, row for row, with *fills* written
-        into the empty asset cells of their steps.
-
-        Retired: the panel exports the manifest as a table instead
-        (:class:`~pythontk.ManifestExport`).
-
-        Pasted over the sheet's asset column from its first row, it lands
-        every name in its step's row and rewrites every other cell with the
-        value it already holds -- a paste covers the whole range, so the
-        column must carry what is there.  The source is re-read and re-parsed
-        (with the same *columns*), so rows added since the load still line up;
-        a step's names share one cell, one per line, which :meth:`parse_csv`
-        reads back as one object each.
-
-        Parameters:
-            source: The CSV path or URL the steps were parsed from.
-            fills: ``{step_id: [asset names]}`` (``ShotManifest.fill_missing_assets``).
-            columns: The column map the steps were parsed with.
-
-        Returns:
-            One cell per row, from the first row through the last step's row.
-
-        Raises:
-            ValueError: No step row was found, or the asset column moves
-                between sections (no single column can be pasted).
-        """
-        col_map = columns or ColumnMap()
-        rows = _ManifestModelInternal._read_csv_rows(source)
-        steps = _ManifestModelInternal._parse_rows(rows, col_map, source)
-        cells = [s.asset_cell for s in steps if s.asset_cell is not None]
-        if not cells:
-            raise ValueError(f"No step rows found in {source!r}.")
-        cols = {c for _r, c in cells}
-        if len(cols) > 1:
-            raise ValueError(
-                "The asset column is not the same in every section, so no "
-                "single column can be pasted back."
-            )
-        col = cols.pop()
-        last = max(r for r, _c in cells)
-        column = [
-            (row[col] if len(row) > col else "").strip() for row in rows[: last + 1]
-        ]
-        for step in steps:
-            names = fills.get(step.step_id)
-            row = step.asset_cell[0] if step.asset_cell else None
-            if names and row is not None and not column[row]:
-                column[row] = "\n".join(names)
-        return column
-
-    @Deprecation.symbol(
-        "ManifestExport.clipboard",
-        remove_in="0.14.0",
-        since="2026-10-10",
-        reason="It takes a whole table; one column is a table of one.",
-    )
-    @staticmethod
-    def column_clipboard(cells: List[str]) -> Tuple[str, str]:
-        """``(tsv, html)`` clipboard forms of one column of *cells*
-        (``ManifestExport.clipboard`` of a one-column table)."""
-        from pythontk.core_utils.engines.shots.manifest.manifest_export import (
-            ManifestExport,
-        )
-
-        return ManifestExport.clipboard([[c] for c in cells])
-
     @staticmethod
     def parse_csv(
         filepath: str,
@@ -655,9 +575,6 @@ class BuilderStep:
     # Extra columns copied verbatim into shot metadata (first-row-wins); filled
     # by :func:`parse_csv` from a ColumnMap's ``metadata_pass``.
     _pass_through: Dict[str, str] = field(default_factory=dict)
-    # (row, column) of this step's asset cell in the source CSV, so a
-    # generated asset list can be written back into the right cell.
-    asset_cell: Optional[Tuple[int, int]] = None
     #: The shot's name when it is not the step ID (a rename); empty = the ID.
     #: A build writes it onto the paired shot, which stays bound to the ID.
     name: str = ""

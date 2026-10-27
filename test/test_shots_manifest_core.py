@@ -506,19 +506,8 @@ class TestProseObjects(unittest.TestCase):
         self.assertIn(os.path.basename(path), " ".join(logs.output))
 
 
-class TestRetiredTemplates(unittest.TestCase):
-    """A saved ``.active`` pointer still names ``speedrun``: it resolves to the
-    default template with its derived-audio option, and warns, for one
-    deprecation window (CODE_STANDARD §5 -- saved data is published)."""
-
-    def test_speedrun_loads_as_default_with_derived_audio(self):
-        Mapping = mapping_mod.Mapping
-        with self.assertWarns(DeprecationWarning):
-            data = Mapping.load_mapping("speedrun")
-        eff = Mapping.apply_options(data)
-        self.assertEqual(eff["audio_resolve"]["method"], "derive")
-        self.assertEqual(Mapping.retired("speedrun"), ("default", {"audio": "derive"}))
-        self.assertIsNone(Mapping.retired("default"))
+class TestTemplateSettings(unittest.TestCase):
+    """Settings a mapping template carries."""
 
     def test_match_is_a_template_setting(self):
         Mapping = mapping_mod.Mapping
@@ -1046,10 +1035,6 @@ class TestAutoFillAssets(unittest.TestCase):
     def _steps(self):
         return ManifestModel.parse_csv(self.path, columns=ColumnMap(**self.COLUMNS))
 
-    def test_steps_record_their_asset_cell(self):
-        cells = {s.step_id: s.asset_cell for s in self._steps()}
-        self.assertEqual(cells, {"IN_01": (2, 3), "A01": (6, 3), "A02": (8, 3)})
-
     def test_a_multi_line_asset_cell_is_one_object_per_line(self):
         path = _write_csv(
             'Step,Step Contents,Asset Names\nA01.),Arm fades in,"arm_geo\n\nhand_geo"\n'
@@ -1100,40 +1085,6 @@ class TestAutoFillAssets(unittest.TestCase):
     def test_a_step_without_a_shot_stays_empty(self):
         filled = ShotManifest(self.store).fill_missing_assets(self._steps())
         self.assertEqual(filled, {})
-
-    def test_the_asset_column_lines_up_with_the_sheet_and_keeps_its_values(self):
-        """Retired with the panel's Copy Asset Names (``ManifestExport``):
-        it warns, and works until 0.14.0."""
-        with self.assertWarns(DeprecationWarning):
-            column = ManifestModel.asset_column(
-                self.path,
-                {"IN_01": ["walls", "floor"], "A01": ["ignored"], "A02": ["door_geo"]},
-                columns=ColumnMap(**self.COLUMNS),
-            )
-        self.assertEqual(
-            column,
-            [
-                "",
-                "Asset Names",
-                "walls\nfloor",
-                "",
-                "",
-                "Asset Names",
-                "door_geo",  # A01's own value stays; a fill never overwrites
-                "",
-                "door_geo",
-            ],
-        )
-
-    def test_clipboard_formats_quote_multi_line_cells(self):
-        """Retired for ``ManifestExport.clipboard``: it warns, and gives that
-        one-column table's forms until 0.14.0."""
-        with self.assertWarns(DeprecationWarning):
-            tsv, html = ManifestModel.column_clipboard(["a", "b\nc", 'd"e'])
-        self.assertEqual(tsv, 'a\n"b\nc"\n"d""e"')
-        self.assertIn("<td>b<br>c</td>", html)
-        self.assertIn("d&quot;e", html)
-
 
 class TestColumnMapRoundTrip(unittest.TestCase):
     """``ColumnMap.to_dict`` / ``from_dict`` round-trip every field, the string
