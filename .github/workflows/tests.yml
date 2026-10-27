@@ -179,3 +179,30 @@ jobs:
         env:
           TSC: npx --yes -p typescript@5 tsc
         run: python m3trik/scripts/check_js_types.py
+
+  layer-rules:
+    # check_layers.py (m3trik): this package's declared layer order and
+    # dependencies, and the product rule -- no library imports tentacle, so
+    # each stays usable without it (CODE_STANDARD section 3). AST-only: no
+    # install, no DCC.
+    name: Layer rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: pythontk
+
+      - uses: actions/checkout@v4
+        with:
+          repository: m3trik/m3trik
+          ref: main
+          path: m3trik
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Layer order, dependencies and the product rule
+        run: python m3trik/scripts/check_layers.py --check pythontk
