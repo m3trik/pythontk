@@ -20957,6 +20957,85 @@
       "constants": []
     },
     {
+      "relpath": "file_utils/mesh_convert/export_fingerprint.py",
+      "summary": "A deterministic structural summary of an exported GLB or FBX, and its diff.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ExportFingerprint",
+          "summary": "Fingerprint an exported GLB or FBX, and diff two fingerprints.",
+          "line": 29,
+          "bases": [],
+          "members": [
+            {
+              "name": "of",
+              "qualname": "ExportFingerprint.of",
+              "kind": "classmethod",
+              "signature": "(cls, path: str) -> Dict[str, Any]",
+              "summary": "The fingerprint of the GLB or FBX at *path*, chosen by extension.",
+              "line": 44,
+              "deprecated": false
+            },
+            {
+              "name": "of_glb",
+              "qualname": "ExportFingerprint.of_glb",
+              "kind": "classmethod",
+              "signature": "(cls, path: str) -> Dict[str, Any]",
+              "summary": "A GLB's nodes (by name path), meshes, materials, skins, animations",
+              "line": 58,
+              "deprecated": false
+            },
+            {
+              "name": "of_fbx",
+              "qualname": "ExportFingerprint.of_fbx",
+              "kind": "classmethod",
+              "signature": "(cls, path: str) -> Dict[str, Any]",
+              "summary": "An FBX's object census, models with their local transforms,",
+              "line": 163,
+              "deprecated": false
+            },
+            {
+              "name": "diff",
+              "qualname": "ExportFingerprint.diff",
+              "kind": "classmethod",
+              "signature": "(cls, baseline: Any, current: Any, tolerance: float = 0.001) -> List[str]",
+              "summary": "Each way *current* differs from *baseline*, one line per leaf:",
+              "line": 231,
+              "deprecated": false
+            },
+            {
+              "name": "against",
+              "qualname": "ExportFingerprint.against",
+              "kind": "classmethod",
+              "signature": "(cls, path: str, baseline: str, update: bool = False, tolerance: float = 0.001) -> List[str]",
+              "summary": ":meth:`diff` of the export at *path* against the fingerprint saved at",
+              "line": 265,
+              "deprecated": false
+            },
+            {
+              "name": "write",
+              "qualname": "ExportFingerprint.write",
+              "kind": "staticmethod",
+              "signature": "(fingerprint: Dict[str, Any], path: str) -> str",
+              "summary": "Save *fingerprint* as sorted, indented JSON (a reviewable diff).",
+              "line": 281,
+              "deprecated": false
+            },
+            {
+              "name": "read",
+              "qualname": "ExportFingerprint.read",
+              "kind": "staticmethod",
+              "signature": "(path: str) -> Dict[str, Any]",
+              "summary": "A fingerprint saved by :meth:`write`.",
+              "line": 289,
+              "deprecated": false
+            }
+          ]
+        }
+      ],
+      "constants": []
+    },
+    {
       "relpath": "file_utils/mesh_convert/export_verify.py",
       "summary": "Deliverable verification for exported FBX / GLB pairs.",
       "functions": [],
@@ -21292,12 +21371,21 @@
               "deprecated": false
             },
             {
+              "name": "object_name",
+              "qualname": "FbxFile.object_name",
+              "kind": "method",
+              "signature": "(self, record: Dict[str, Any]) -> Optional[str]",
+              "summary": "An Objects child's display name (a record :meth:`iter_objects` yields):",
+              "line": 1139,
+              "deprecated": false
+            },
+            {
               "name": "take_names",
               "qualname": "FbxFile.take_names",
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Animation take names — the ``AnimationStack`` display names.",
-              "line": 1146,
+              "line": 1147,
               "deprecated": false
             },
             {
@@ -21306,7 +21394,7 @@
               "kind": "method",
               "signature": "(self) -> List[Dict[str, Any]]",
               "summary": "Every ``Material`` as written: name, shading model, properties and",
-              "line": 1150,
+              "line": 1151,
               "deprecated": false
             },
             {
@@ -21315,7 +21403,7 @@
               "kind": "method",
               "signature": "(self, name: str, kind: str = 'Model', named: bool = False) -> List[Any]",
               "summary": "Every value a *kind* object carries for the user property *name*.",
-              "line": 1245,
+              "line": 1246,
               "deprecated": false
             },
             {
@@ -21324,7 +21412,7 @@
               "kind": "method",
               "signature": "(self, kind: str = 'Model') -> List[Tuple[str, str, Any]]",
               "summary": "``(object name, property name, value)`` for every user property (a",
-              "line": 1275,
+              "line": 1276,
               "deprecated": false
             },
             {
@@ -21333,7 +21421,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Dict[Tuple[str, str, str], Tuple[Any, ...]]]",
               "summary": "What each take animates: ``{take: {(target, property, channel):",
-              "line": 1312,
+              "line": 1313,
               "deprecated": false
             },
             {
@@ -21342,7 +21430,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Tuple[float, float]]",
               "summary": "Each take's ``(first, last)`` key in SECONDS, over every curve in it.",
-              "line": 1404,
+              "line": 1405,
               "deprecated": false
             },
             {
@@ -21351,7 +21439,7 @@
               "kind": "method",
               "signature": "(self, properties: Collection[str] = (), user: bool = False, kind: str = 'Model') -> Dict[str, Dict[Tuple[str, str, str], List[List[Any]]]]",
               "summary": "Every key of the chosen channels, take by take.",
-              "line": 1438,
+              "line": 1439,
               "deprecated": false
             },
             {
@@ -21360,7 +21448,7 @@
               "kind": "method",
               "signature": "(self, tolerance: float = 0.0001) -> Dict[str, Any]",
               "summary": "Which takes, imported together, carry ALL of the file's animation.",
-              "line": 1564,
+              "line": 1565,
               "deprecated": false
             },
             {
@@ -21369,7 +21457,7 @@
               "kind": "method",
               "signature": "(self) -> List[Tuple[str, Any, Any, Optional[str]]]",
               "summary": "Every ``C`` record as ``(kind, child_id, parent_id, property)``.",
-              "line": 1682,
+              "line": 1683,
               "deprecated": false
             }
           ]

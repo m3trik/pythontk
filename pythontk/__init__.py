@@ -52,6 +52,7 @@ DEFAULT_INCLUDE = {
     "file_utils.mesh_convert.fbx_file": ["FbxFile"],
     "file_utils.mesh_convert.fbx_media": ["FbxMedia"],
     "file_utils.mesh_convert.export_verify": ["ExportVerifier"],
+    "file_utils.mesh_convert.export_fingerprint": ["ExportFingerprint"],
     # FBX -> GLB: the one build the Scene Exporters and the WebXR preview share
     "file_utils.mesh_convert.glb.pipeline": ["GlbPipeline"],
     # The fade/highlight channel table (``GlbFades.CHANNELS``) the DCC render

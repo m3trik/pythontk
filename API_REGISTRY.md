@@ -129,6 +129,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`file_utils/mesh_convert/_fbx_writer.py`](#file_utils--mesh_convert--_fbx_writer) — Zero-dependency binary-FBX writer: the encoding half of :class:`FbxFile`.
 - [`file_utils/mesh_convert/_gltf2fbx.py`](#file_utils--mesh_convert--_gltf2fbx) — glTF -> FBX with no DCC in the loop: :meth:`MeshConvert.gltf_to_fbx`.
 - [`file_utils/mesh_convert/_mesh_convert.py`](#file_utils--mesh_convert--_mesh_convert) — FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
+- [`file_utils/mesh_convert/export_fingerprint.py`](#file_utils--mesh_convert--export_fingerprint) — A deterministic structural summary of an exported GLB or FBX, and its diff.
 - [`file_utils/mesh_convert/export_verify.py`](#file_utils--mesh_convert--export_verify) — Deliverable verification for exported FBX / GLB pairs.
 - [`file_utils/mesh_convert/fbx_file.py`](#file_utils--mesh_convert--fbx_file) — Zero-dependency binary-FBX reader: header, node records, objects, takes.
 - [`file_utils/mesh_convert/fbx_media.py`](#file_utils--mesh_convert--fbx_media) — Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
@@ -3139,6 +3140,20 @@ FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
   - `MeshConvert.dedupe_glb_images(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Collapse byte-identical embedded images onto one copy.
   - `MeshConvert.prune_glb_unreferenced_textures(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Drop textures no material samples, and the images/bufferViews only they used.
 
+<a id="file_utils--mesh_convert--export_fingerprint"></a>
+### `file_utils/mesh_convert/export_fingerprint.py`
+
+A deterministic structural summary of an exported GLB or FBX, and its diff.
+
+- **[`class ExportFingerprint`](pythontk/pythontk/file_utils/mesh_convert/export_fingerprint.py#L29)** — Fingerprint an exported GLB or FBX, and diff two fingerprints.
+  - `ExportFingerprint.of(cls, path: str) -> Dict[str, Any]` *(class)* — The fingerprint of the GLB or FBX at *path*, chosen by extension.
+  - `ExportFingerprint.of_glb(cls, path: str) -> Dict[str, Any]` *(class)* — A GLB's nodes (by name path), meshes, materials, skins, animations
+  - `ExportFingerprint.of_fbx(cls, path: str) -> Dict[str, Any]` *(class)* — An FBX's object census, models with their local transforms,
+  - `ExportFingerprint.diff(cls, baseline: Any, current: Any, tolerance: float = 0.001) -> List[str]` *(class)* — Each way *current* differs from *baseline*, one line per leaf:
+  - `ExportFingerprint.against(cls, path: str, baseline: str, update: bool = False, tolerance: float = 0.001) -> List[str]` *(class)* — :meth:`diff` of the export at *path* against the fingerprint saved at
+  - `ExportFingerprint.write(fingerprint: Dict[str, Any], path: str) -> str` *(static)* — Save *fingerprint* as sorted, indented JSON (a reviewable diff).
+  - `ExportFingerprint.read(path: str) -> Dict[str, Any]` *(static)* — A fingerprint saved by :meth:`write`.
+
 <a id="file_utils--mesh_convert--export_verify"></a>
 ### `file_utils/mesh_convert/export_verify.py`
 
@@ -3187,6 +3202,7 @@ Zero-dependency binary-FBX reader: header, node records, objects, takes.
   - `FbxFile.iter_objects(self) -> Iterator[Dict[str, Any]]` — Yield every child record of the ``Objects`` section.
   - `FbxFile.objects_census(self) -> Dict[str, int]` — ``{record name: count}`` over the Objects section.
   - `FbxFile.object_names(self, kind: str) -> List[str]` — Display names of every Objects child whose record name is *kind*.
+  - `FbxFile.object_name(self, record: Dict[str, Any]) -> Optional[str]` — An Objects child's display name (a record :meth:`iter_objects` yields):
   - `FbxFile.take_names(self) -> List[str]` — Animation take names — the ``AnimationStack`` display names.
   - `FbxFile.materials(self) -> List[Dict[str, Any]]` — Every ``Material`` as written: name, shading model, properties and
   - `FbxFile.user_properties(self, name: str, kind: str = 'Model', named: bool = False) -> List[Any]` — Every value a *kind* object carries for the user property *name*.

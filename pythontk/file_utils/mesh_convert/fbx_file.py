@@ -1131,13 +1131,14 @@ class FbxFile(_FbxFileInternal):
         for record in self.iter_objects():
             if record["name"] != kind:
                 continue
-            name = self._object_name(record)
+            name = self.object_name(record)
             if name is not None:
                 names.append(name)
         return names
 
-    def _object_name(self, record: Dict[str, Any]) -> Optional[str]:
-        """An Objects child's display name: the first of its props that is one."""
+    def object_name(self, record: Dict[str, Any]) -> Optional[str]:
+        """An Objects child's display name (a record :meth:`iter_objects` yields):
+        the first of its props that is one."""
         return next(
             (n for n in map(self._display_name, record["props"]) if n is not None),
             None,
@@ -1234,7 +1235,7 @@ class FbxFile(_FbxFileInternal):
                     textures[slot] = name
             found.append(
                 {
-                    "name": self._object_name(record),
+                    "name": self.object_name(record),
                     "shading_model": shading,
                     "props": props,
                     "textures": textures,
@@ -1261,7 +1262,7 @@ class FbxFile(_FbxFileInternal):
         for record in self.iter_objects():
             if record["name"] != kind:
                 continue
-            owner = self._object_name(record) if named else None
+            owner = self.object_name(record) if named else None
             for child in record["children"]:
                 if child["name"] != "Properties70":
                     continue
@@ -1281,7 +1282,7 @@ class FbxFile(_FbxFileInternal):
         for record in self.iter_objects():
             if record["name"] != kind:
                 continue
-            owner = self._object_name(record)
+            owner = self.object_name(record)
             for child in record["children"]:
                 if child["name"] != "Properties70":
                     continue
