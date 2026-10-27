@@ -22,6 +22,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 from pythontk.file_utils.mesh_convert.glb.reader import GlbReader
 
@@ -279,10 +280,9 @@ class ExportFingerprint:
 
     @staticmethod
     def write(fingerprint: Dict[str, Any], path: str) -> str:
-        """Save *fingerprint* as sorted, indented JSON (a reviewable diff)."""
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        with open(path, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(json.dumps(fingerprint, indent=1, sort_keys=True) + "\n")
+        """Save *fingerprint* as sorted, indented JSON (a reviewable diff),
+        atomically (:meth:`FileUtils.write_json`)."""
+        FileUtils.write_json(path, fingerprint, indent=1, sort_keys=True)
         return path
 
     @staticmethod

@@ -2,10 +2,16 @@
 
 _Diff vs the last release (origin/main @ f97442f)._
 
-## Added (11)
+## Added (17)
 
 - `__init__.py::MOVED_NAMES(constant)`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.forget_registered_hooks(cls) -> None`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.producer_rows(cls, table: Mapping[Any, Tuple[str, str, str]], host: str) -> Dict[Any, Tuple[str, str, str]]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.registered_hooks(cls, host: str, role: str) -> Dict[str, Tuple[str, str, Optional[str]]]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.stager_rows(cls, table: Mapping[str, Tuple[str, str, str, Optional[str]]], host: str) -> Dict[str, Tuple[str, str, str, Optional[str]]]`
+- `core_utils/engines/scene_export/scene_store.py::SceneStoreBase.owner_rows(cls) -> Dict[str, Tuple[str, str]]`
 - `core_utils/module_resolver.py::MovedNameError(class)`
+- `core_utils/package_manager.py::PackageManager.entry_points(group: str) -> list`
 - `file_utils/mesh_convert/export_fingerprint.py::ExportFingerprint(class)`
 - `file_utils/mesh_convert/export_fingerprint.py::ExportFingerprint.against(cls, path: str, baseline: str, update: bool = False, tolerance: float = 0.001) -> List[str]`
 - `file_utils/mesh_convert/export_fingerprint.py::ExportFingerprint.diff(cls, baseline: Any, current: Any, tolerance: float = 0.001) -> List[str]`

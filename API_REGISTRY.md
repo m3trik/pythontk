@@ -1125,6 +1125,10 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `RecordSpec.clear(self, store) -> Optional[str]` — Clear the record;
   - `RecordSpec.is_present(self, store) -> bool` — Whether *store* holds a non-empty value for this record.
 - **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L745)** — The registry: every record, declared once, and what derives from it.
+  - `SceneRecords.registered_hooks(cls, host: str, role: str) -> Dict[str, Tuple[str, str, Optional[str]]]` *(class)* — The record hooks installed packages register for *host* and *role*.
+  - `SceneRecords.forget_registered_hooks(cls) -> None` *(class)* — Read the hook group's metadata again on the next
+  - `SceneRecords.producer_rows(cls, table: Mapping[Any, Tuple[str, str, str]], host: str) -> Dict[Any, Tuple[str, str, str]]` *(class)* — A host's producer *table* (``FbxUtils.PRODUCERS``: record spec ->
+  - `SceneRecords.stager_rows(cls, table: Mapping[str, Tuple[str, str, str, Optional[str]]], host: str) -> Dict[str, Tuple[str, str, str, Optional[str]]]` *(class)* — A host's stager *table* (``FbxUtils.STAGERS``: name ->
   - `SceneRecords.resolve_class(module: str, name: str) -> Any` *(static)* — The class a ``(module, name)`` row names -- :attr:`CODECS`',
   - `SceneRecords.codec(cls, spec: RecordSpec) -> Optional[Any]` *(class)* — The codec class of a :attr:`Merge.CODEC` record, else ``None``.
   - `SceneRecords.shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]` *(class)* — The :class:`~pythontk.SchemaSpec` declaring *item*'s payload
@@ -1186,6 +1190,7 @@ The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
   - `SceneStoreBase.path_records(cls) -> Dict[Tuple[Scope, str], Optional[str]]` *(class)* — The stored text of every path record (:meth:`SceneRecords.with_paths`),
   - `SceneStoreBase.restore_path_records(cls, snapshot: Mapping[Tuple[Scope, str], Optional[str]]) -> int` *(class)* — Put the path records back as *snapshot* (:meth:`path_records`) holds
   - `SceneStoreBase.format_dump(cls, decode: bool = True) -> str` *(class)* — Pretty JSON of :meth:`dump`, or ``""`` when nothing is stored.
+  - `SceneStoreBase.owner_rows(cls) -> Dict[str, Tuple[str, str]]` *(class)* — :attr:`OWNERS` with the owners installed packages register for
   - `SceneStoreBase.owner(cls, key: str) -> Optional[Any]` *(class)* — The class :attr:`OWNERS` names for record *key*, or ``None`` when it
   - `SceneStoreBase.owners(cls) -> Dict[str, Any]` *(class)* — :attr:`OWNERS` resolved to classes.
   - `SceneStoreBase.transfer_sections(cls, spell: Optional[Callable[[str], str]] = None, objects=None) -> Dict[str, Any]` *(class)* — What a hand-off producer adds to its sidecar: every portable record
@@ -2542,6 +2547,7 @@ Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 ### `core_utils/package_manager.py`
 
 - **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L564)** — A class that encapsulates package management functionalities using pip.
+  - `PackageManager.entry_points(group: str) -> list` *(static)* — The entry points installed distributions declare in *group*, for the
   - `PackageManager.pip(self, command, output_as_string=False)` — Execute a pip command and return the output.
   - `PackageManager.install_targeted(self, specs, target_dir, upgrade=False) -> List[str]` — Resolver-aware install into a directory an embedded host imports from.
   - `PackageManager.get_local_dependency_order(paths: List[Union[str, Path]]) -> List[Path]` *(static)* — Sort a list of local repository paths based on their pyproject.toml dependencies.
@@ -3147,13 +3153,13 @@ FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
 
 A deterministic structural summary of an exported GLB or FBX, and its diff.
 
-- **[`class ExportFingerprint`](pythontk/pythontk/file_utils/mesh_convert/export_fingerprint.py#L29)** — Fingerprint an exported GLB or FBX, and diff two fingerprints.
+- **[`class ExportFingerprint`](pythontk/pythontk/file_utils/mesh_convert/export_fingerprint.py#L30)** — Fingerprint an exported GLB or FBX, and diff two fingerprints.
   - `ExportFingerprint.of(cls, path: str) -> Dict[str, Any]` *(class)* — The fingerprint of the GLB or FBX at *path*, chosen by extension.
   - `ExportFingerprint.of_glb(cls, path: str) -> Dict[str, Any]` *(class)* — A GLB's nodes (by name path), meshes, materials, skins, animations
   - `ExportFingerprint.of_fbx(cls, path: str) -> Dict[str, Any]` *(class)* — An FBX's object census, models with their local transforms,
   - `ExportFingerprint.diff(cls, baseline: Any, current: Any, tolerance: float = 0.001) -> List[str]` *(class)* — Each way *current* differs from *baseline*, one line per leaf:
   - `ExportFingerprint.against(cls, path: str, baseline: str, update: bool = False, tolerance: float = 0.001) -> List[str]` *(class)* — :meth:`diff` of the export at *path* against the fingerprint saved at
-  - `ExportFingerprint.write(fingerprint: Dict[str, Any], path: str) -> str` *(static)* — Save *fingerprint* as sorted, indented JSON (a reviewable diff).
+  - `ExportFingerprint.write(fingerprint: Dict[str, Any], path: str) -> str` *(static)* — Save *fingerprint* as sorted, indented JSON (a reviewable diff),
   - `ExportFingerprint.read(path: str) -> Dict[str, Any]` *(static)* — A fingerprint saved by :meth:`write`.
 
 <a id="file_utils--mesh_convert--export_verify"></a>

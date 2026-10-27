@@ -275,11 +275,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class RecordSpec`
   - methods: assembly_for, web, version_key, is_current, path_keys, stamp_keys, make, encode, decode, read_text, write_text, load, save, clear, is_present
 - `class SceneRecords`
-  - methods: resolve_class, codec, shape, glb_shape, put_glb_block, glb_block, glb_records, problems, block_problems, web_shape, web_projected, portable, rendering_policy, HANDOFF_INSTRUCTIONS, HANDOFF_ASSEMBLY, all, with_paths, with_stamps, transients, stamp_unsaved, adopt_gone_stamps, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
+  - methods: registered_hooks, forget_registered_hooks, producer_rows, stager_rows, resolve_class, codec, shape, glb_shape, put_glb_block, glb_block, glb_records, problems, block_problems, web_shape, web_projected, portable, rendering_policy, HANDOFF_INSTRUCTIONS, HANDOFF_ASSEMBLY, all, with_paths, with_stamps, transients, stamp_unsaved, adopt_gone_stamps, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
 
 ### `core_utils/engines/scene_export/scene_store.py` — The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
 - `class SceneStoreBase`
-  - methods: name, is_carrier, read, write, remove, migrate, values, keys, channels, discard_if_empty, dump, scene_path, project_root, writer_stamp, writer_stamp_of, written_here, project_root_of, rebase_paths, respell_for_write, path_records, restore_path_records, format_dump, owner, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
+  - methods: name, is_carrier, read, write, remove, migrate, values, keys, channels, discard_if_empty, dump, scene_path, project_root, writer_stamp, writer_stamp_of, written_here, project_root_of, rebase_paths, respell_for_write, path_records, restore_path_records, format_dump, owner_rows, owner, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
 
 ### `core_utils/engines/shots/animation_record.py` — The ``animation`` record's payload and its GLB block, declared once.
 - `class AnimationShot(SchemaSpec)`
@@ -640,7 +640,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/package_manager.py`
 - `class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`
-  - methods: pip, install_targeted, get_local_dependency_order, start_version_check, version_check_running, wait_for_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
+  - methods: entry_points, pip, install_targeted, get_local_dependency_order, start_version_check, version_check_running, wait_for_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
 
 ### `core_utils/presets/library.py` — Whole-root view over the ecosystem's preset stores.
 - constants: BUNDLE_FORMAT, BUNDLE_HEADER, BUNDLE_ROOT, COLLECTIONS_DIR, BACKUPS_DIR, AUTO_BACKUP_KEEP

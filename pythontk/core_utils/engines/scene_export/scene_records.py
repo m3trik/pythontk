@@ -1415,6 +1415,132 @@ class SceneRecords:
         ),
     }
 
+    #: The entry-point group a package registers its record hooks in: each
+    #: entry named ``<host>.<role>.<key>`` (``maya.producer.lightmaps``) and
+    #: pointing at ``module:Class.method``, or at ``module:Class`` for an owner.
+    #: A tool outside a library lists itself there instead of in the library's
+    #: tables (:meth:`registered_hooks`).
+    HOOK_GROUP = "m3trik.scene_records"
+    #: The group's ``(name, value)`` pairs, read once a session
+    #: (:meth:`registered_hooks`); ``None`` until first asked.
+    _hook_points: ClassVar[Optional[Tuple[Tuple[str, str], ...]]] = None
+
+    @classmethod
+    def registered_hooks(
+        cls, host: str, role: str
+    ) -> Dict[str, Tuple[str, str, Optional[str]]]:
+        """The record hooks installed packages register for *host* and *role*.
+
+        Read from entry-point metadata alone, so nothing is imported: an
+        installed tool's hooks are found by a batch export that imports one
+        library and never the tool. A host's producer table, stager table and
+        record owners (``FbxUtils.PRODUCERS``, ``STAGERS``,
+        :attr:`SceneStoreBase.OWNERS`) merge these under their own rows.
+
+        Parameters:
+            host: The DCC the hooks serve (``"maya"``, ``"blender"``).
+            role: ``"producer"``, ``"stager"`` or ``"owner"``.
+
+        Returns:
+            ``{key: (module, class, method)}``, *method* ``None`` for an owner.
+            A key keeps any ``.slot`` suffix its entry carries (a stager's
+            ``effects.prepare`` / ``effects.finish``).
+
+        The metadata is read once a session -- installed packages do not change
+        under a running DCC, and record owners are asked often -- and
+        :meth:`forget_registered_hooks` reads it again.
+        """
+        if cls._hook_points is None:
+            from pythontk.core_utils.package_manager import PackageManager
+
+            cls._hook_points = tuple(
+                (point.name, point.value)
+                for point in PackageManager.entry_points(cls.HOOK_GROUP)
+            )
+        rows: Dict[str, Tuple[str, str, Optional[str]]] = {}
+        for name, value in cls._hook_points:
+            parts = name.split(".", 2)
+            if len(parts) != 3 or parts[0] != host or parts[1] != role:
+                continue
+            module, _, target = value.split("[", 1)[0].strip().partition(":")
+            owner, _, method = target.strip().partition(".")
+            if module and owner:
+                rows[parts[2]] = (module.strip(), owner, method or None)
+        return dict(sorted(rows.items()))
+
+    @classmethod
+    def forget_registered_hooks(cls) -> None:
+        """Read the hook group's metadata again on the next
+        :meth:`registered_hooks` -- after installing a package that registers
+        hooks, in the same session."""
+        cls._hook_points = None
+
+    @classmethod
+    def producer_rows(
+        cls, table: Mapping[Any, Tuple[str, str, str]], host: str
+    ) -> Dict[Any, Tuple[str, str, str]]:
+        """A host's producer *table* (``FbxUtils.PRODUCERS``: record spec ->
+        ``(module, class, method)``) with the producers installed packages
+        register for *host* (:meth:`registered_hooks`).
+
+        A record both name keeps *table*'s row, and an entry naming a record
+        nobody declares, or no method, is skipped with a warning: the library
+        decides what it ships, and a typo must not pass silently.
+
+        Parameters:
+            table: The library's own rows.
+            host: The DCC (``"maya"``, ``"blender"``).
+        """
+        rows: Dict[Any, Tuple[str, str, str]] = dict(table)
+        taken = {cls.resolve(spec).key for spec in rows}
+        for key, (module, owner, method) in cls.registered_hooks(host, "producer").items():
+            try:
+                spec = cls.resolve(key)
+            except KeyError:
+                logger.warning("Registered producer %r names no scene record; skipped.", key)
+                continue
+            if not method:
+                logger.warning("Registered producer %r names no method; skipped.", key)
+                continue
+            if spec.key not in taken:
+                rows[spec] = (module, owner, method)
+        return rows
+
+    @classmethod
+    def stager_rows(
+        cls, table: Mapping[str, Tuple[str, str, str, Optional[str]]], host: str
+    ) -> Dict[str, Tuple[str, str, str, Optional[str]]]:
+        """A host's stager *table* (``FbxUtils.STAGERS``: name ->
+        ``(module, class, prepare, finish)``) with the stagers installed
+        packages register for *host*: two entries per stager,
+        ``<host>.stager.<name>.prepare`` and an optional ``.finish``, on one
+        class. A name both declare keeps *table*'s row; a stager without a
+        ``prepare``, or whose slots name two classes, is skipped with a warning.
+
+        Parameters:
+            table: The library's own rows.
+            host: The DCC (``"maya"``, ``"blender"``).
+        """
+        rows: Dict[str, Tuple[str, str, str, Optional[str]]] = dict(table)
+        slots: Dict[str, Dict[str, Tuple[str, str, Optional[str]]]] = {}
+        for key, row in cls.registered_hooks(host, "stager").items():
+            name, _, slot = key.rpartition(".")
+            if name and slot in ("prepare", "finish"):
+                slots.setdefault(name, {})[slot] = row
+            else:
+                logger.warning("Registered stager %r names no prepare/finish slot; skipped.", key)
+        for name, parts in sorted(slots.items()):
+            if name in rows:
+                continue
+            homes = {(module, owner) for module, owner, _method in parts.values()}
+            if "prepare" not in parts or len(homes) != 1:
+                logger.warning("Registered stager %r needs a prepare on one class; skipped.", name)
+                continue
+            module, owner = homes.pop()
+            finish = parts.get("finish")
+            rows[name] = (module, owner, parts["prepare"][2], finish[2] if finish else None)
+        return rows
+
     @staticmethod
     def resolve_class(module: str, name: str) -> Any:
         """The class a ``(module, name)`` row names -- :attr:`CODECS`',

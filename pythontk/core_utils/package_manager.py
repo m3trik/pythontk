@@ -591,6 +591,30 @@ class PackageManager(
     def __init__(self, python_path=sys.executable):
         self.python_path = python_path
 
+    @staticmethod
+    def entry_points(group: str) -> list:
+        """The entry points installed distributions declare in *group*, for the
+        running interpreter, read from their metadata: nothing is imported.
+
+        One reader across importlib versions -- 3.10+'s ``entry_points(group=)``
+        selector and 3.8/3.9's ``entry_points()`` mapping -- so a plugin group
+        needs no shim of its own.
+
+        Parameters:
+            group: The entry-point group (``"m3trik.scene_records"``).
+
+        Returns:
+            ``importlib.metadata.EntryPoint`` objects; ``[]`` when none declare it.
+        """
+        try:
+            from importlib.metadata import entry_points
+        except ImportError:  # pragma: no cover - present on every 3.8+ runtime
+            return []
+        try:
+            return list(entry_points(group=group))
+        except TypeError:  # pragma: no cover - 3.8/3.9 selector signature
+            return list(entry_points().get(group, []))
+
     def _get_startupinfo(self):
         """Prepare startup information for subprocess on Windows."""
         from pythontk.core_utils.execution_monitor._execution_monitor import (
