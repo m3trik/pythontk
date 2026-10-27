@@ -509,26 +509,63 @@ class ModuleAttributeResolver:
         tree = self._parse_module(module_name)
         if not tree:
             return False  # If we can't parse, assume unsafe
+        return self._statements_are_side_effect_free(tree.body)
 
-        # Allowed top-level nodes
-        SAFE_NODES = (
-            ast.Import,
-            ast.ImportFrom,
-            ast.ClassDef,
-            ast.FunctionDef,
-            ast.Assign,
-            ast.AnnAssign,
-            ast.If,  # Assume if/try are for flow control/imports
-            ast.Try,
-        )
+    #: Top-level statements that run nothing a caller relies on at import.
+    _SIDE_EFFECT_FREE = (
+        ast.Import,
+        ast.ImportFrom,
+        ast.ClassDef,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.Assign,
+        ast.AnnAssign,
+        ast.Pass,
+    )
 
-        for node in tree.body:
+    @classmethod
+    def _statements_are_side_effect_free(cls, statements: Sequence[ast.stmt]) -> bool:
+        """Whether *statements* (a module's top level) run nothing a caller
+        relies on at import. A top-level ``if`` or ``try`` is judged by what it
+        runs, not passed whole: its branches, body, ``else`` and ``finally``.
+        Two parts are skipped: an exception handler, the failure path of a
+        guarded import (``except ImportError: print(error)``), and an
+        ``if __name__ == "__main__"`` block, which never runs on import."""
+        for node in statements:
             if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
                 continue  # Module docstrings / standalone string literals
-            if not isinstance(node, SAFE_NODES):
-                # Found something suspicious (like a top-level function call)
-                return False
+            if isinstance(node, ast.If):
+                if cls._is_main_guard(node):
+                    continue
+                if not (
+                    cls._statements_are_side_effect_free(node.body)
+                    and cls._statements_are_side_effect_free(node.orelse)
+                ):
+                    return False
+                continue
+            if isinstance(node, ast.Try):
+                if not all(
+                    cls._statements_are_side_effect_free(block)
+                    for block in (node.body, node.orelse, node.finalbody)
+                ):
+                    return False
+                continue
+            if not isinstance(node, cls._SIDE_EFFECT_FREE):
+                return False  # e.g. a top-level call
         return True
+
+    @staticmethod
+    def _is_main_guard(node: ast.If) -> bool:
+        test = node.test
+        return (
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == "__name__"
+            and any(
+                isinstance(c, ast.Constant) and c.value == "__main__"
+                for c in test.comparators
+            )
+        )
 
     def _parse_module(self, module_name: str) -> Optional[ast.AST]:
         """Parse a module file into an AST, once per build.
