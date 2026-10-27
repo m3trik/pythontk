@@ -26,6 +26,8 @@ from typing import (
 
 __all__ = [
     "ModuleAttributeResolver",
+    "MovedNameError",
+    "MovedImportError",
     "PackageResolverHandle",
     "bootstrap_package",
     "lazy_exports",
@@ -34,6 +36,66 @@ __all__ = [
 ]
 
 IncludeMapping = Mapping[str, Union[Sequence[str], str]]
+#: A package's moved-names table: public name -> ``(new home, version)``, the
+#: dotted path the name now lives at and the release it left in.
+MovedMapping = Mapping[str, Tuple[str, str]]
+
+
+class MovedNameError(AttributeError):
+    """A public name that left its package, read at its old home.
+
+    A move gets no alias (no library imports the product it moved to), so the
+    old home answers with where the name went and from which release instead.
+    An ``AttributeError``, so ``hasattr`` and ``getattr(..., default)`` behave
+    as for any missing name. Only root names are served: a table key such as
+    ``Class.member`` accounts for a member's move at release
+    (``generate_api_registry.py``) but cannot answer at runtime.
+    """
+
+    def __init__(self, package: str, name: str, new_home: str, version: str):
+        super().__init__(_moved_message(package, name, new_home, version))
+        self.name = name
+        self.new_home = new_home
+        self.version = version
+
+
+class MovedImportError(ImportError):
+    """:class:`MovedNameError` for ``from package import Name``.
+
+    CPython turns an ``AttributeError`` raised under that statement into a bare
+    "cannot import name", dropping where the name went, so the statement gets
+    this ``ImportError`` carrying the same message instead.
+    """
+
+    def __init__(self, package: str, name: str, new_home: str, version: str):
+        super().__init__(_moved_message(package, name, new_home, version), name=name)
+        self.new_home = new_home
+        self.version = version
+
+
+def _moved_message(package: str, name: str, new_home: str, version: str) -> str:
+    return f"{package}.{name} moved to {new_home} in {package} {version}"
+
+
+def _from_import_statement() -> bool:
+    """Whether the attribute read under way is a ``from package import name``
+    statement: the first frame above the resolver (and above any module
+    ``__getattr__``) is running ``IMPORT_FROM``. False when that cannot be told,
+    which keeps the plain ``AttributeError``."""
+    import dis
+
+    try:
+        frame = sys._getframe(1)
+        while frame is not None and (
+            frame.f_code.co_filename == __file__
+            or frame.f_code.co_name.endswith("getattr")
+        ):
+            frame = frame.f_back
+        if frame is None:
+            return False
+        return dis.opname[frame.f_code.co_code[frame.f_lasti]] == "IMPORT_FROM"
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return False
 
 
 class ModuleAttributeResolver:
@@ -48,6 +110,7 @@ class ModuleAttributeResolver:
         on_import_error: Optional[Callable[[str, Exception], None]] = None,
         method_predicate: Optional[Callable[[str], bool]] = None,
         lazy_import: Optional[bool] = None,
+        moved: Optional[MovedMapping] = None,
     ) -> None:
         if isinstance(module, str):
             module = sys.modules[module]
@@ -75,6 +138,8 @@ class ModuleAttributeResolver:
             lambda name: not name.startswith("_")
         )
         self.lazy_import = lazy_import
+        #: The moved-names table (:class:`MovedNameError`).
+        self.moved: Dict[str, Tuple[str, str]] = dict(moved or {})
 
         self.imported_modules: Dict[str, ModuleType] = {}
         #: Parsed trees for the CURRENT build only -- see :meth:`_parse_module`.
@@ -247,6 +312,10 @@ class ModuleAttributeResolver:
         if name in self.submodules:
             return self._import(f"{self.package_name}.{name}")
 
+        if name in self.moved:
+            new_home, version = self.moved[name]
+            error = MovedImportError if _from_import_statement() else MovedNameError
+            raise error(self.package_name, name, new_home, version)
         raise AttributeError(f"module {self.package_name} has no attribute '{name}'")
 
     def get_module(self, module_name: str) -> ModuleType:
@@ -1020,6 +1089,7 @@ def bootstrap_package(
     custom_getattr: Optional[Callable[[str], Any]] = None,
     lazy_import: Optional[bool] = None,
     set_all: bool = True,
+    moved: Optional[MovedMapping] = None,
 ) -> PackageResolverHandle:
     """Bootstrap a package's ``__init__`` module with dynamic attribute resolution.
 
@@ -1028,6 +1098,10 @@ def bootstrap_package(
     by hand or kept in sync with ``DEFAULT_INCLUDE``. Any ``__all__`` the module
     declared before this call is preserved and unioned in. Pass ``set_all=False``
     to manage ``__all__`` manually.
+
+    *moved* is the package's moved-names table, ``{name: (new home, version)}``
+    (the ``MOVED_NAMES`` literal each library's ``__init__`` declares): a read
+    of a listed name raises :class:`MovedNameError` naming where it went.
     """
 
     module_name = module_globals.get("__name__")
@@ -1072,6 +1146,7 @@ def bootstrap_package(
         on_import_error=on_import_error,
         method_predicate=method_predicate,
         lazy_import=lazy_import,
+        moved=moved,
     )
     resolver.build()
 

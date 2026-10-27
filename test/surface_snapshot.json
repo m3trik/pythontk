@@ -2416,6 +2416,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.file_utils.mesh_convert.export_fingerprint",
+    "name": "ExportFingerprint",
+    "qualname": "ExportFingerprint",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.scene_export.export_profile",
     "name": "ExportProfile",
     "qualname": "ExportProfile",

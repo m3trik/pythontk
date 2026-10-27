@@ -32,6 +32,7 @@ from pythontk.file_utils.mesh_convert.export_verify import (
     _main,
 )
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
+from pythontk.file_utils.mesh_convert.export_fingerprint import ExportFingerprint
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 from pythontk.file_utils.mesh_convert.glb.reader import GlbReader
 
@@ -216,6 +217,8 @@ def _fbx_prop(value) -> bytes:
         )
     if isinstance(value, int):
         return b"L" + struct.pack("<q", value)
+    if isinstance(value, float):
+        return b"D" + struct.pack("<d", value)
     raise TypeError(type(value))
 
 
@@ -2228,6 +2231,118 @@ class TestFbxRecordsGate(_FixtureCase):
         glb_only = ExportVerifier(glb=build_glb(self.path("only.glb")), sidecar=None)
         row = glb_only.run(["check_fbx_records"]).rows[0]
         self.assertEqual((row.status, row.detail), (SKIP, "no readable FBX"))
+
+
+class TestExportFingerprint(_FixtureCase):
+    """A fingerprint pins what an export wrote, so the same scene exported
+    again after a code move diffs empty, and any change is named by path."""
+
+    def test_a_glb_fingerprint_names_its_structure(self):
+        found = ExportFingerprint.of(build_glb(self.path("a.glb")))
+        self.assertEqual(sorted(found["nodes"]), ["root", "root/arm"])
+        self.assertEqual(found["nodes"]["root"], {"translation": [0.0, 1.0, 0.0]})
+        self.assertEqual(found["nodes"]["root/arm"], {"mesh": "mesh#0", "skin": "skin#0"})
+        self.assertEqual(found["meshes"]["mesh#0"][0]["attributes"], {"POSITION": 3})
+        self.assertEqual(
+            found["skins"]["skin#0"],
+            {"inverse_bind_matrices": True, "joints": ["root/arm"]},
+        )
+        clip = found["animations"]["Shot_1"]
+        self.assertEqual(clip["span"], [0.0, 0.5])
+        self.assertEqual(
+            clip["channels"],
+            {
+                "root/arm|scale": {"interpolation": "STEP", "keys": 2},
+                "root/arm|translation": {"interpolation": "LINEAR", "keys": 2},
+            },
+        )
+        self.assertEqual(found["images"], ["image/ktx2", "image/png"])
+
+    def test_the_same_export_diffs_empty_and_a_change_is_named(self):
+        before = ExportFingerprint.of(build_glb(self.path("a.glb")))
+        again = ExportFingerprint.of(build_glb(self.path("b.glb")))
+        self.assertEqual(ExportFingerprint.diff(before, again), [])
+        longer = ExportFingerprint.of(build_glb(self.path("c.glb"), clip_end=1.0))
+        self.assertEqual(
+            ExportFingerprint.diff(before, longer),
+            ["animations/Shot_1/span[1]: 0.5 -> 1.0"],
+        )
+        renamed = ExportFingerprint.of(build_glb(self.path("d.glb"), clip_name="Shot_2"))
+        self.assertEqual(
+            ExportFingerprint.diff(before, renamed),
+            ["animations/Shot_1: removed", "animations/Shot_2: added"],
+        )
+
+    def test_a_records_fields_are_pinned_not_just_its_name(self):
+        """A record written with the right key but a wrong value -- a clip's
+        zero frame -- is a difference; its text fields read as "text"."""
+        at3 = ExportFingerprint.of(build_glb(self.path("a.glb"), zero_frame=3.0))
+        at5 = ExportFingerprint.of(build_glb(self.path("b.glb"), zero_frame=5.0))
+        clip = at3["extras"][SceneRecords.SHOTS.key]["clips"][0]
+        self.assertEqual(clip, {"animation": 0, "name": "text", "zero_frame": 3.0})
+        self.assertEqual(
+            ExportFingerprint.diff(at3, at5),
+            [f"extras/{SceneRecords.SHOTS.key}/clips[0]/zero_frame: 3.0 -> 5.0"],
+        )
+
+    def test_numbers_within_the_tolerance_are_equal(self):
+        self.assertEqual(ExportFingerprint.diff({"a": [1.0]}, {"a": [1.0004]}), [])
+        self.assertEqual(
+            ExportFingerprint.diff({"a": [1.0]}, {"a": [1.01, 2.0]}),
+            ["a: 1 item(s) -> 2", "a[0]: 1.0 -> 1.01"],
+        )
+
+    def test_an_fbx_fingerprint_reads_models_geometry_and_takes(self):
+        path = build_take_fbx(self.path("t.fbx"), {"Shot_1": {("cube", "d|X"): (1, 10)}})
+        found = ExportFingerprint.of(path)
+        self.assertEqual(found["models"], {"cube": {"type": "Mesh"}})
+        self.assertEqual(found["census"]["Model"], 1)
+        self.assertEqual(
+            found["takes"]["Shot_1"], {"cube|Lcl Translation|d|X": [0.0333, 0.3333, 10]}
+        )
+
+    def test_an_fbx_models_local_transform_is_pinned(self):
+        """A Model's ``Lcl`` properties, each read off its own record, so two
+        models of one name never trade transforms."""
+        moved = [b"Lcl Translation", b"Lcl Translation", b"", b"A", 1.0, 2.0, 3.0]
+        model = lambda uid, props: (  # noqa: E731
+            "Model",
+            [uid, b"cube\x00\x01Model", b"Mesh"],
+            [("Properties70", [], [("P", props, [])])] if props else [],
+        )
+        roots = [("Objects", [], [model(1001, moved), model(1002, None)])]
+        payload, offset = b"", len(b"Kaydara FBX Binary  \x00\x1a\x00") + 4
+        for name, props, children in roots:
+            chunk = _fbx_record(name, props, children, offset)
+            payload += chunk
+            offset += len(chunk)
+        path = self.path("m.fbx")
+        with open(path, "wb") as handle:
+            handle.write(b"Kaydara FBX Binary  \x00\x1a\x00" + struct.pack("<I", 7700))
+            handle.write(payload + b"\x00" * 25)
+        self.assertEqual(
+            ExportFingerprint.of(path)["models"],
+            {
+                "cube": {"Lcl Translation": [1.0, 2.0, 3.0], "type": "Mesh"},
+                "cube#2": {"type": "Mesh"},
+            },
+        )
+
+    def test_against_needs_a_baseline_and_update_writes_one(self):
+        glb = build_glb(self.path("a.glb"))
+        baseline = self.path(os.path.join("baselines", "a.json"))
+        self.assertEqual(
+            ExportFingerprint.against(glb, baseline),
+            [f"no baseline at {baseline}: write one with update=True"],
+        )
+        self.assertEqual(ExportFingerprint.against(glb, baseline, update=True), [])
+        self.assertEqual(ExportFingerprint.against(glb, baseline), [])
+        with open(baseline, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["format"], "glb")
+
+    def test_another_format_is_refused(self):
+        with self.assertRaises(ValueError):
+            ExportFingerprint.of(self.path("scene.obj"))
 
 
 if __name__ == "__main__":

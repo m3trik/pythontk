@@ -5,7 +5,7 @@ import os as _os
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.18.1"
+__version__ = "0.18.2"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -52,6 +52,7 @@ DEFAULT_INCLUDE = {
     "file_utils.mesh_convert.fbx_file": ["FbxFile"],
     "file_utils.mesh_convert.fbx_media": ["FbxMedia"],
     "file_utils.mesh_convert.export_verify": ["ExportVerifier"],
+    "file_utils.mesh_convert.export_fingerprint": ["ExportFingerprint"],
     # FBX -> GLB: the one build the Scene Exporters and the WebXR preview share
     "file_utils.mesh_convert.glb.pipeline": ["GlbPipeline"],
     # The fade/highlight channel table (``GlbFades.CHANNELS``) the DCC render
@@ -581,5 +582,10 @@ DEFAULT_INCLUDE = {
 
 # ``bootstrap_package`` derives ``__all__`` automatically from the resolved
 # public surface (DEFAULT_INCLUDE), so it never has to be hand-maintained here.
-bootstrap_package(globals(), include=DEFAULT_INCLUDE)
+#: Public names that left this package (CODE_STANDARD section 5): no alias, so a
+#: read raises MovedNameError naming the new home. ``{name: (new home, version)}``;
+#: a move adds its names here in the same change set.
+MOVED_NAMES = {}
+
+bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)
 # Test: 222117

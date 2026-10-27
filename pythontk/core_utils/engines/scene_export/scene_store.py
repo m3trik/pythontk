@@ -393,6 +393,26 @@ class SceneStoreBase:
     #: ``section_in`` (the section's wire shape is the codec's, never the
     #: bare record's), any other as the stored record, respelled.
     OWNERS: Dict[str, Tuple[str, str]] = {}
+    #: The DCC this store serves (``"maya"``, ``"blender"``): the host whose
+    #: registered owners (:meth:`SceneRecords.registered_hooks`) join
+    #: :attr:`OWNERS`. ``None`` reads none.
+    HOST: Optional[str] = None
+
+    @classmethod
+    def owner_rows(cls) -> Dict[str, Tuple[str, str]]:
+        """:attr:`OWNERS` with the owners installed packages register for
+        :attr:`HOST` -- a tool outside the library declares its own row. A key
+        both name keeps the library's row."""
+        rows = dict(cls.OWNERS)
+        if cls.HOST:
+            for key, (module, owner, _method) in SceneRecords.registered_hooks(
+                cls.HOST, "owner"
+            ).items():
+                if key in rows:
+                    logger.debug("Registered owner of %r ignored: %s owns it.", key, rows[key])
+                    continue
+                rows[key] = (module, owner)
+        return rows
 
     @classmethod
     def owner(cls, key: str) -> Optional[Any]:
@@ -403,7 +423,7 @@ class SceneStoreBase:
         upward: the shot store sits above the render-effect and audio tools,
         which read the scene's effect recipe through it.
         """
-        row = cls.OWNERS.get(key)
+        row = cls.owner_rows().get(key)
         if not row:
             return None
         try:
@@ -417,7 +437,7 @@ class SceneStoreBase:
         """:attr:`OWNERS` resolved to classes.  One that does not import is
         left out, and its record then crosses as plain data."""
         resolved: Dict[str, Any] = {}
-        for key, (module, owner) in cls.OWNERS.items():
+        for key, (module, owner) in cls.owner_rows().items():
             try:
                 resolved[key] = SceneRecords.resolve_class(module, owner)
             except Exception:  # noqa: BLE001 - a missing owner never costs a crossing

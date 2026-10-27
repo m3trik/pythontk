@@ -3,7 +3,7 @@
 _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a name; for full signatures/docs, slice [API_REGISTRY.md](API_REGISTRY.md) (never Read it whole)._
 
 ### `__init__.py`
-- constants: DEFAULT_INCLUDE
+- constants: DEFAULT_INCLUDE, MOVED_NAMES
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
@@ -275,11 +275,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class RecordSpec`
   - methods: assembly_for, web, version_key, is_current, path_keys, stamp_keys, make, encode, decode, read_text, write_text, load, save, clear, is_present
 - `class SceneRecords`
-  - methods: resolve_class, codec, shape, glb_shape, put_glb_block, glb_block, glb_records, problems, block_problems, web_shape, web_projected, portable, rendering_policy, HANDOFF_INSTRUCTIONS, HANDOFF_ASSEMBLY, all, with_paths, with_stamps, transients, stamp_unsaved, adopt_gone_stamps, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
+  - methods: registered_hooks, forget_registered_hooks, hook_row, producer_rows, stager_rows, resolve_class, codec, shape, glb_shape, put_glb_block, glb_block, glb_records, problems, block_problems, web_shape, web_projected, portable, rendering_policy, HANDOFF_INSTRUCTIONS, HANDOFF_ASSEMBLY, all, with_paths, with_stamps, transients, stamp_unsaved, adopt_gone_stamps, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
 
 ### `core_utils/engines/scene_export/scene_store.py` — The storage contract every DCC scene store implements (:class:`SceneStoreBase`).
 - `class SceneStoreBase`
-  - methods: name, is_carrier, read, write, remove, migrate, values, keys, channels, discard_if_empty, dump, scene_path, project_root, writer_stamp, writer_stamp_of, written_here, project_root_of, rebase_paths, respell_for_write, path_records, restore_path_records, format_dump, owner, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
+  - methods: name, is_carrier, read, write, remove, migrate, values, keys, channels, discard_if_empty, dump, scene_path, project_root, writer_stamp, writer_stamp_of, written_here, project_root_of, rebase_paths, respell_for_write, path_records, restore_path_records, format_dump, owner_rows, owner, owners, transfer_sections, receive_sections, flush_owners, merge_plan, merge_carriers, discard_carriers
 
 ### `core_utils/engines/shots/animation_record.py` — The ``animation`` record's payload and its GLB block, declared once.
 - `class AnimationShot(SchemaSpec)`
@@ -611,10 +611,12 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: reload
 
 ### `core_utils/module_resolver.py` — Reusable module attribute resolver for package-style imports.
-- `bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True) -> PackageResolverHandle`
+- `bootstrap_package(module_globals: MutableMapping[str, Any], *, include: Optional[IncludeMapping] = None, module_to_parent: Optional[Mapping[str, str]] = None, eager: bool = False, allow_getattr: bool = True, install_legacy_helpers: bool = True, on_import_error: Optional[Callable[[str, Exception], None]] = None, method_predicate: Optional[Callable[[str], bool]] = None, custom_getattr: Optional[Callable[[str], Any]] = None, lazy_import: Optional[bool] = None, set_all: bool = True, moved: Optional[MovedMapping] = None) -> PackageResolverHandle`
 - `lazy_exports(module_globals: MutableMapping[str, Any], sources: IncludeMapping) -> None`
 - `create_namespace_aliases(module_globals: MutableMapping[str, Any], aliases: Mapping[str, Union[str, Sequence[str]]], *, include_spec: Optional[IncludeMapping] = None) -> None`
 - `import_footprint(package: str) -> Dict[str, List[str]]`
+- `class MovedNameError(AttributeError)`
+- `class MovedImportError(ImportError)`
 - `class ModuleAttributeResolver`
   - methods: build, rebuild, resolve, get_module, bind_to, iter_registered_names, clear_module_cache
 - `class PackageResolverHandle`
@@ -639,7 +641,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/package_manager.py`
 - `class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`
-  - methods: pip, install_targeted, get_local_dependency_order, start_version_check, version_check_running, wait_for_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
+  - methods: entry_points, pip, install_targeted, get_local_dependency_order, start_version_check, version_check_running, wait_for_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
 
 ### `core_utils/presets/library.py` — Whole-root view over the ecosystem's preset stores.
 - constants: BUNDLE_FORMAT, BUNDLE_HEADER, BUNDLE_ROOT, COLLECTIONS_DIR, BACKUPS_DIR, AUTO_BACKUP_KEEP
@@ -773,6 +775,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class MeshConvert(_Fbx2GltfMixin, _Gltf2FbxMixin, _SidecarMixin, _LightmapsMixin, _HighlightsMixin, _ShadowRigsMixin, _ArticulationMixin, _AnimationMixin, _VisibilityMixin, _FbxMaterialsMixin, _MaterialsMixin, _TexturesMixin, _ImagesMixin, HelpMixin)`
   - methods: open_glb, finish_fbx_deliverable, conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fbx_media_dirs, fix_glb_tangents, restore_glb_skin_weights, gltf_to_fbx, SHADOW_PLANE_DEFAULTS, rendering_policy, build_scene_sidecar, strip_fbx_records, finish_glb, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, embed_glb_handoff, embed_scene_sidecar, sidecar_foreign_packings, read_glb_handoff, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, lightmaps_block, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, embed_glb_lightmap_probe, strip_glb_baked_lights, apply_glb_lightmaps, highlight_probe_layers, lights_in_metres, embed_fbx_highlight_probes, apply_glb_shadows, apply_glb_articulation, apply_glb_clips, clip_spans, prune_glb_animations, compact_glb_animations, reduce_glb_animations, apply_glb_animations, effect_preview_channels, apply_glb_visibility, build_visibility_tracks, apply_glb_fades, fbx_materials, read_fbx_materials, apply_glb_materials, check_glb_materials, fix_glb_phantom_opaque_alpha, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, set_glb_alpha_mode, set_glb_unlit, set_glb_normal_scale, set_glb_base_color, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, drop_glb_texture_fallbacks, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, decode_glb_textures, dedupe_glb_images, prune_glb_unreferenced_textures
 
+### `file_utils/mesh_convert/export_fingerprint.py` — A deterministic structural summary of an exported GLB or FBX, and its diff.
+- `class ExportFingerprint`
+  - methods: of, of_glb, of_fbx, diff, against, write, read
+
 ### `file_utils/mesh_convert/export_verify.py` — Deliverable verification for exported FBX / GLB pairs.
 - `class Finding`
 - `class VerificationReport`
@@ -783,7 +789,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `file_utils/mesh_convert/fbx_file.py` — Zero-dependency binary-FBX reader: header, node records, objects, takes.
 - constants: FBX_MAGIC
 - `class FbxFile(_FbxFileInternal)`
-  - methods: load, is_fbx, section, iter_objects, objects_census, object_names, take_names, materials, user_properties, user_property_items, take_curves, take_spans, take_keys, take_layout, connections
+  - methods: load, is_fbx, section, iter_objects, objects_census, object_names, object_name, take_names, materials, user_properties, user_property_items, take_curves, take_spans, take_keys, take_layout, connections
 
 ### `file_utils/mesh_convert/fbx_media.py` — Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 - `class FbxMedia(_FbxMediaInternal)`

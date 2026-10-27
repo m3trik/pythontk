@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import pathlib
+import sys
 import unittest
 from typing import Any, Dict
 from unittest import mock
@@ -203,6 +204,161 @@ class TestRegistry(SceneRecordsCase):
 
 
 # -- the contracts other languages read ------------------------------------------
+
+
+class TestRegisteredHooks(SceneRecordsCase):
+    """A tool outside a library registers its record hooks as entry points,
+    so an installed tool is found without being imported, and a batch export
+    that imports only the library still writes its record."""
+
+    @staticmethod
+    def _points(*pairs):
+        """Stand-ins for ``importlib.metadata.EntryPoint``: a name and a value."""
+        return [type("EP", (), {"name": n, "value": v})() for n, v in pairs]
+
+    def _hooks(self, *pairs, host="maya", role="producer"):
+        SR.forget_registered_hooks()
+        self.addCleanup(SR.forget_registered_hooks)
+        with mock.patch(
+            "pythontk.core_utils.package_manager.PackageManager.entry_points",
+            return_value=self._points(*pairs),
+        ) as points:
+            found = SR.registered_hooks(host, role)
+            again = SR.registered_hooks(host, role)
+        points.assert_called_once_with(SR.HOOK_GROUP)  # read once a session
+        self.assertEqual(found, again)
+        return found
+
+    def test_rows_are_read_from_metadata_alone(self):
+        found = self._hooks(
+            ("maya.producer.lightmaps", "tentacle.tools.lightmaps.maya:LightmapRecords.export_record"),
+            ("blender.producer.lightmaps", "tentacle.tools.lightmaps.blender:Records.export_record"),
+            ("maya.owner.shot_store", "tentacle.tools.shots.maya:ShotStore"),
+            ("maya.stager.effects.prepare", "tentacle.fx:Effects.prepare_for_export [web]"),
+            ("not-a-hook", "x:y"),
+        )
+        self.assertEqual(
+            found,
+            {"lightmaps": ("tentacle.tools.lightmaps.maya", "LightmapRecords", "export_record")},
+        )
+
+    def test_an_owner_names_a_class_and_a_stager_keeps_its_slot(self):
+        self.assertEqual(
+            self._hooks(("maya.owner.shot_store", "tentacle.tools.shots.maya:ShotStore"), role="owner"),
+            {"shot_store": ("tentacle.tools.shots.maya", "ShotStore", None)},
+        )
+        self.assertEqual(
+            self._hooks(("maya.stager.effects.prepare", "tentacle.fx:Effects.prepare_for_export [web]"), role="stager"),
+            {"effects.prepare": ("tentacle.fx", "Effects", "prepare_for_export")},
+        )
+
+    def test_a_hosts_producers_take_registered_rows_under_its_own(self):
+        table = {SR.MATERIALS: ("mayatk.mat", "MaterialRecords", "export_record")}
+        hooks = {
+            "materials": ("tentacle.mat", "Other", "export_record"),  # the library's wins
+            "lightmaps": ("tentacle.lm", "LightmapRecords", "export_record"),
+            "no_such_record": ("tentacle.x", "X", "export_record"),  # skipped
+        }
+        with mock.patch.object(SR, "registered_hooks", return_value=hooks) as reg:
+            rows = SR.producer_rows(table, "maya")
+        reg.assert_called_once_with("maya", "producer")
+        self.assertEqual(
+            rows,
+            {
+                SR.MATERIALS: ("mayatk.mat", "MaterialRecords", "export_record"),
+                SR.LIGHTMAPS: ("tentacle.lm", "LightmapRecords", "export_record"),
+            },
+        )
+
+    def test_a_registered_stager_pairs_its_two_slots_on_one_class(self):
+        table = {"effects": ("mayatk.fx", "Effects", "prepare_for_export", "finish_export")}
+        hooks = {
+            "hints.prepare": ("tentacle.lm", "LightmapRecords", "migrate_folder_hints"),
+            "proxies.prepare": ("tentacle.fx", "Proxies", "stage"),
+            "proxies.finish": ("tentacle.fx", "Proxies", "unstage"),
+            "split.prepare": ("tentacle.a", "A", "go"),
+            "split.finish": ("tentacle.b", "B", "stop"),  # two classes: skipped
+            "effects.prepare": ("tentacle.fx", "Effects", "other"),  # the library's wins
+        }
+        with mock.patch.object(SR, "registered_hooks", return_value=hooks):
+            rows = SR.stager_rows(table, "maya")
+        self.assertEqual(
+            rows,
+            {
+                "effects": ("mayatk.fx", "Effects", "prepare_for_export", "finish_export"),
+                "hints": ("tentacle.lm", "LightmapRecords", "migrate_folder_hints", None),
+                "proxies": ("tentacle.fx", "Proxies", "stage", "unstage"),
+            },
+        )
+
+    def test_a_single_hook_is_the_librarys_row_else_the_registered_one(self):
+        own = ("mayatk.stash", "KeyStash", "active")
+        hooks = {
+            "key_stash": ("tentacle.stash", "KeyStash", "active"),
+            "other": ("tentacle.other", "Other", "active"),  # second: warned, unused
+        }
+        with mock.patch.object(SR, "registered_hooks", return_value=hooks) as reg:
+            self.assertEqual(SR.hook_row(own, "maya", "take_stash"), own)
+            reg.assert_not_called()
+            with self.assertLogs(level="WARNING"):
+                self.assertEqual(
+                    SR.hook_row(None, "maya", "take_stash"),
+                    ("tentacle.stash", "KeyStash", "active"),
+                )
+            reg.assert_called_with("maya", "take_stash")
+        with mock.patch.object(SR, "registered_hooks", return_value={}):
+            self.assertIsNone(SR.hook_row(None, "maya", "take_stash"))
+
+    def test_a_stager_slot_without_a_method_is_skipped(self):
+        hooks = {
+            "half.prepare": ("tentacle.fx", "Fx", None),  # module:Class, no method
+            "half.finish": ("tentacle.fx", "Fx", "finish"),
+        }
+        with mock.patch.object(SR, "registered_hooks", return_value=hooks):
+            with self.assertLogs(level="WARNING"):
+                self.assertEqual(SR.stager_rows({}, "maya"), {})
+
+    def test_one_entry_name_from_two_distributions_keeps_the_first_and_warns(self):
+        with self.assertLogs(level="WARNING") as logs:
+            found = self._hooks(
+                ("maya.producer.lightmaps", "first.mod:Records.export_record"),
+                ("maya.producer.lightmaps", "second.mod:Records.export_record"),
+            )
+        self.assertEqual(found, {"lightmaps": ("first.mod", "Records", "export_record")})
+        self.assertIn("second.mod", "".join(logs.output))
+
+    def test_the_session_read_is_redone_when_the_path_changes(self):
+        SR.forget_registered_hooks()
+        self.addCleanup(SR.forget_registered_hooks)
+        target = "pythontk.core_utils.package_manager.PackageManager.entry_points"
+        with mock.patch(target, return_value=[]) as points:
+            SR.registered_hooks("maya", "producer")
+            SR.registered_hooks("maya", "producer")
+            self.assertEqual(points.call_count, 1)
+            with mock.patch("sys.path", sys.path + ["O:/not/a/real/site"]):
+                SR.registered_hooks("maya", "producer")
+            self.assertEqual(points.call_count, 2)
+
+    def test_a_store_merges_registered_owners_under_its_own(self):
+        class HostStore(DictStore):
+            HOST = "maya"
+            OWNERS = {"shot_store": ("mayatk.shots", "ShotStore")}
+
+        hooks = {
+            "shot_store": ("tentacle.shots", "ShotStore", None),
+            "key_stash": ("tentacle.stash", "KeyStash", None),
+        }
+        with mock.patch.object(SR, "registered_hooks", return_value=hooks) as reg:
+            rows = HostStore.owner_rows()
+        reg.assert_called_once_with("maya", "owner")
+        self.assertEqual(
+            rows,
+            {
+                "key_stash": ("tentacle.stash", "KeyStash"),
+                "shot_store": ("mayatk.shots", "ShotStore"),  # the library's own row wins
+            },
+        )
+        self.assertEqual(DictStore.owner_rows(), {})  # no host: nothing registered is read
 
 
 class TestContracts(SceneRecordsCase):

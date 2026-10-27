@@ -864,5 +864,31 @@ class UpdateRequirementsTest(BaseTestCase):
         self.assertEqual(result, ["definitely-not-installed-xyz==1.2.3"])
 
 
+class EntryPointsTests(BaseTestCase):
+    """The running interpreter's entry points in one group, read from
+    installed metadata -- nothing is imported."""
+
+    def test_a_group_nobody_declares_is_empty(self):
+        self.assertEqual(PackageManager.entry_points("m3trik.no_such_group_xyz"), [])
+
+    def test_an_installed_distribution_declares_its_entries(self):
+        with tempfile.TemporaryDirectory() as root:
+            info = os.path.join(root, "fake_hooks-1.0.dist-info")
+            os.makedirs(info)
+            with open(os.path.join(info, "METADATA"), "w", encoding="utf-8") as f:
+                f.write("Metadata-Version: 2.1\nName: fake-hooks\nVersion: 1.0\n")
+            with open(os.path.join(info, "entry_points.txt"), "w", encoding="utf-8") as f:
+                f.write("[m3trik.test_group]\nmaya.producer.x = fake.mod:Thing.make\n")
+            sys.path.insert(0, root)
+            try:
+                found = PackageManager.entry_points("m3trik.test_group")
+            finally:
+                sys.path.remove(root)
+        self.assertEqual(
+            [(e.name, e.value) for e in found],
+            [("maya.producer.x", "fake.mod:Thing.make")],
+        )
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

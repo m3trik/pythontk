@@ -1150,6 +1150,63 @@ class FlatCollisionTests(_TempPackageCase):
         self.assertEqual(pythontk._RESOLVER.flat_collisions, {})
 
 
+class MovedNamesTests(_TempPackageCase):
+    """A name that left a package for another gets no alias: its old home
+    names the new one, and from which version (CODE_STANDARD section 5)."""
+
+    def _package(self):
+        return self._make_package(
+            "resolver_pkg_moved",
+            init_body="""
+                from pythontk.core_utils.module_resolver import bootstrap_package
+
+                MOVED_NAMES = {
+                    "SpinSlots": ("tentacle.ui.panels.spin.SpinSlots", "0.30.0"),
+                }
+
+                bootstrap_package(globals(), include={"alpha": ["Demo"]}, moved=MOVED_NAMES)
+            """,
+            modules={"alpha.py": "class Demo:\n    pass\n"},
+        )
+
+    def test_a_moved_name_raises_naming_its_new_home(self):
+        from pythontk.core_utils.module_resolver import MovedNameError
+
+        pkg = self._package()
+        with self.assertRaises(MovedNameError) as caught:
+            pkg.SpinSlots
+        self.assertEqual(
+            str(caught.exception),
+            "resolver_pkg_moved.SpinSlots moved to "
+            "tentacle.ui.panels.spin.SpinSlots in resolver_pkg_moved 0.30.0",
+        )
+        self.assertEqual(caught.exception.new_home, "tentacle.ui.panels.spin.SpinSlots")
+
+    def test_a_from_import_of_a_moved_name_still_names_its_new_home(self):
+        """CPython turns an AttributeError under ``from pkg import Name`` into a
+        bare 'cannot import name', so that statement gets an ImportError with
+        the same message; plain attribute reads keep the AttributeError."""
+        from pythontk.core_utils.module_resolver import MovedImportError
+
+        self._package()
+        with self.assertRaises(MovedImportError) as caught:
+            exec("from resolver_pkg_moved import SpinSlots", {})
+        self.assertIn("moved to tentacle.ui.panels.spin.SpinSlots", str(caught.exception))
+        self.assertIsInstance(caught.exception, ImportError)
+        self.assertNotIsInstance(caught.exception, AttributeError)
+
+    def test_a_moved_name_is_an_attribute_error_and_resolves_nothing(self):
+        pkg = self._package()
+        self.assertFalse(hasattr(pkg, "SpinSlots"))
+        self.assertNotIn("tentacle.ui.panels.spin", sys.modules)  # no alias import
+        self.assertTrue(hasattr(pkg, "Demo"))
+        from pythontk.core_utils.module_resolver import MovedNameError
+
+        with self.assertRaises(AttributeError) as caught:
+            pkg.Missing
+        self.assertNotIsInstance(caught.exception, MovedNameError)
+
+
 class LazyLoadSafetyTests(BaseTestCase):
     """A module loads lazily only when its top level has no side effect, and the
     statements inside a top-level ``if`` or ``try`` are judged by that rule too,

@@ -5261,7 +5261,9 @@ export default function probe(viewer) {
                 found["export"] = self._menu_items(page, "Export")
                 found["guests_open"] = server.guest_count()
                 self._close_guest_page(page)
-                deadline = time.monotonic() + 10  # the beacon is asynchronous
+                # The beacon is asynchronous, and a loaded machine (a full suite) has
+                # taken over 10 s to deliver it: the loop leaves as soon as it lands.
+                deadline = time.monotonic() + 30
                 while server.guest_count() and time.monotonic() < deadline:
                     time.sleep(0.1)
                 found["guests_closed"] = server.guest_count()
@@ -5339,7 +5341,9 @@ export default function probe(viewer) {
                     )
                     found["guests_open"] = server.guest_count()
                     self._close_guest_page(page)
-                    deadline = time.monotonic() + 10  # the beacon is asynchronous
+                    # The beacon is asynchronous, and a loaded machine (a full suite) has
+                    # taken over 10 s to deliver it: the loop leaves as soon as it lands.
+                    deadline = time.monotonic() + 30
                     while server.guest_count() and time.monotonic() < deadline:
                         time.sleep(0.1)
                     found["guests_closed"] = server.guest_count()
