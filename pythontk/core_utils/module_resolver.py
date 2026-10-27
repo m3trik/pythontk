@@ -536,6 +536,9 @@ class ModuleAttributeResolver:
                 continue  # Module docstrings / standalone string literals
             if isinstance(node, ast.If):
                 if cls._is_main_guard(node):
+                    # Its body runs only as a script; its ``else`` on every import.
+                    if not cls._statements_are_side_effect_free(node.orelse):
+                        return False
                     continue
                 if not (
                     cls._statements_are_side_effect_free(node.body)
@@ -556,15 +559,21 @@ class ModuleAttributeResolver:
 
     @staticmethod
     def _is_main_guard(node: ast.If) -> bool:
+        """``if __name__ == "__main__":``, either way round."""
         test = node.test
-        return (
+        if not (
             isinstance(test, ast.Compare)
-            and isinstance(test.left, ast.Name)
-            and test.left.id == "__name__"
-            and any(
-                isinstance(c, ast.Constant) and c.value == "__main__"
-                for c in test.comparators
-            )
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Eq)
+        ):
+            return False
+        sides = (test.left, test.comparators[0])
+        return any(
+            isinstance(a, ast.Name)
+            and a.id == "__name__"
+            and isinstance(b, ast.Constant)
+            and b.value == "__main__"
+            for a, b in (sides, sides[::-1])
         )
 
     def _parse_module(self, module_name: str) -> Optional[ast.AST]:

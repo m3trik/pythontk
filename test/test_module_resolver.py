@@ -1181,6 +1181,14 @@ class LazyLoadSafetyTests(BaseTestCase):
 
     def test_a_main_block_never_runs_on_import(self):
         self.assertTrue(self._safe("def main():\n    pass\nif __name__ == '__main__':\n    main()\n"))
+        self.assertTrue(self._safe("if '__main__' == __name__:\n    main()\n"))
+
+    def test_what_runs_on_import_beside_a_main_block_is_judged(self):
+        # ``!=`` and the ``else`` of a main block both run on every import.
+        self.assertFalse(self._safe("if __name__ != '__main__':\n    register()\n"))
+        self.assertFalse(self._safe(
+            "if __name__ == '__main__':\n    main()\nelse:\n    register()\n"
+        ))
 
     def test_a_top_level_call_is_a_side_effect(self):
         self.assertFalse(self._safe("register()\n"))
