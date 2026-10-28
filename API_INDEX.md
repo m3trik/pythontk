@@ -259,7 +259,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/scene_export/scene_exporter.py` — The Scene Exporter's orchestration shell, written once for both DCCs.
 - `class SceneExporterBase(LoggingMixin)`
-  - methods: confirm, decide_check_failure, check_label, check_failure_html, confirm_check_override, run_config_from_values, log_file_path, generate_log_file_path, setup_file_logging, close_file_handlers
+  - methods: export_cancelled, confirm, decide_check_failure, check_label, check_failure_html, confirm_check_override, definition_tables, run_config_from_values, note_retired_preset_rows, note_retired_panel_state, migrate_legacy_regex, resolve_export_dir, log_file_path, generate_log_file_path, setup_file_logging, close_file_handlers
 
 ### `core_utils/engines/scene_export/scene_records.py` — Scene records -- every piece of tool-authored scene metadata, declared once.
 - `class Scope(str, Enum)`

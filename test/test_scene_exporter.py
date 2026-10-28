@@ -89,14 +89,62 @@ class TestHooks(unittest.TestCase):
         self.assertIs(exporter.task_manager.logger, exporter.logger)
         self.assertEqual(exporter.logger.name.rsplit(".", 1)[-1], "_Exporter")
 
+    def test_a_panel_passes_its_logger_and_dialogs_in(self):
+        """A panel composes the exporter: its logger is adopted BEFORE the task
+        manager is built (so every task logs into the panel), its dialogs answer
+        the two seams, and ``log_level=None`` leaves the panel's level alone.
+        The class-shared logger and the default seams are untouched."""
+        import logging
+
+        panel_logger = logging.getLogger("test_scene_exporter_panel_logger")
+        panel_logger.setLevel(logging.INFO)
+        asked = []
+
+        def confirm(question):
+            asked.append(question)
+            return True
+
+        def decide(check, messages, remaining):
+            return "override_all"
+
+        exporter = _Exporter(
+            log_level=None,
+            logger=panel_logger,
+            confirm=confirm,
+            decide_check_failure=decide,
+        )
+        self.assertIs(exporter.logger, panel_logger)
+        self.assertIs(exporter.task_manager.logger, panel_logger)
+        self.assertEqual(panel_logger.level, logging.INFO)
+        self.assertIs(exporter.confirm, confirm)
+        self.assertIs(exporter.decide_check_failure, decide)
+        self.assertEqual(
+            exporter.decide_check_failure("check_a", [], []), "override_all"
+        )
+        # The headless default routes through the instance's confirm.
+        self.assertEqual(
+            _Exporter.decide_check_failure(exporter, "check_a", ["bad"], []),
+            "override",
+        )
+        self.assertTrue(asked)
+        plain = _Exporter()
+        self.assertIsNot(plain.logger, panel_logger)
+        self.assertNotIn("confirm", vars(plain))
+
+    def test_export_cancelled_reads_the_last_run(self):
+        exporter = _Exporter()
+        self.assertFalse(exporter.export_cancelled)
+        exporter._export_cancelled = True
+        self.assertTrue(exporter.export_cancelled)
+
     def test_the_export_folder_falls_back_to_the_saved_scene(self):
         exporter = _Exporter()
-        self.assertEqual(exporter._resolve_export_dir(None), "")
+        self.assertEqual(exporter.resolve_export_dir(None), "")
         exporter._saved_scene_path = lambda: os.path.join("proj", "scenes", "a.ma")
         self.assertEqual(
-            exporter._resolve_export_dir(None), os.path.join("proj", "scenes")
+            exporter.resolve_export_dir(None), os.path.join("proj", "scenes")
         )
-        self.assertEqual(exporter._resolve_export_dir("out"), os.path.abspath("out"))
+        self.assertEqual(exporter.resolve_export_dir("out"), os.path.abspath("out"))
 
     def test_the_log_file_records_what_the_run_logs(self):
         """Measured 2026-10-09: a production export's ``.log`` was 0 bytes --
@@ -450,12 +498,12 @@ class TestCheckFailure(unittest.TestCase):
         }
         stored = {"snap_keys_to_frame": False, "check_floating_point_keys": True}
         with self.assertLogs(exporter.logger, level="WARNING") as caught:
-            exporter._note_retired_preset_rows("Unity", stored)
+            exporter.note_retired_preset_rows("Unity", stored)
         self.assertIn("Preset 'Unity'", caught.output[0])
         self.assertIn("Floating Point Keys", caught.output[0])
         with self.assertNoLogs(exporter.logger, level="DEBUG"):
-            exporter._note_retired_preset_rows("Unity", None)
-            exporter._note_retired_preset_rows("", stored)
+            exporter.note_retired_preset_rows("Unity", None)
+            exporter.note_retired_preset_rows("", stored)
 
     def test_saved_panel_state_says_once_what_its_retired_rows_no_longer_do(self):
         """REGRESSION (2026-10-19): the panel's own saved state (not a preset)
@@ -487,7 +535,7 @@ class TestCheckFailure(unittest.TestCase):
             }
         )
         with self.assertLogs(exporter.logger, level="INFO") as caught:
-            exporter._note_retired_panel_state(store)
+            exporter.note_retired_panel_state(store)
         warned = [r.getMessage() for r in caught.records if r.levelname == "WARNING"]
         said = "\n".join(caught.output)
         self.assertTrue(
@@ -502,7 +550,7 @@ class TestCheckFailure(unittest.TestCase):
         )
         self.assertTrue(store.synced, "the removal is flushed, so it holds")
         with self.assertNoLogs(exporter.logger, level="DEBUG"):
-            exporter._note_retired_panel_state(store)
+            exporter.note_retired_panel_state(store)
 
     def test_a_saved_regex_field_folds_into_the_saved_output_filename_once(self):
         """REGRESSION (2026-10-19): both panels read the retired RegEx field as
@@ -525,7 +573,7 @@ class TestCheckFailure(unittest.TestCase):
             store.setValue("txt001/textChanged", pattern)
 
         with self.assertLogs(exporter.logger, level="INFO") as caught:
-            folded = exporter._migrate_legacy_regex(store, "txt001", save)
+            folded = exporter.migrate_legacy_regex(store, "txt001", save)
         self.assertEqual(folded, "WIP_{scene:test_->prod_}")
         self.assertEqual(saved, [folded])
         self.assertIn(folded, caught.output[0])
@@ -536,7 +584,7 @@ class TestCheckFailure(unittest.TestCase):
         )
         self.assertTrue(store.synced, "the removal is flushed, so it holds")
         with self.assertNoLogs(exporter.logger, level="DEBUG"):
-            self.assertIsNone(exporter._migrate_legacy_regex(store, "txt001", save))
+            self.assertIsNone(exporter.migrate_legacy_regex(store, "txt001", save))
         self.assertEqual(saved, [folded], "once")
 
     def test_a_regex_whose_fold_was_not_stored_is_kept_for_the_next_open(self):
@@ -545,7 +593,7 @@ class TestCheckFailure(unittest.TestCase):
         exporter = _Exporter()
         store = _SettingsStore({"txt002/textChanged": "_bar.*"})
         self.assertIsNone(
-            exporter._migrate_legacy_regex(store, "txt001", lambda pattern: None)
+            exporter.migrate_legacy_regex(store, "txt001", lambda pattern: None)
         )
         self.assertEqual(store.data, {"txt002/textChanged": "_bar.*"})
 
@@ -555,7 +603,7 @@ class TestCheckFailure(unittest.TestCase):
         saved = []
         with self.assertNoLogs(exporter.logger, level="INFO"):
             self.assertIsNone(
-                exporter._migrate_legacy_regex(store, "txt001", saved.append)
+                exporter.migrate_legacy_regex(store, "txt001", saved.append)
             )
         self.assertEqual((store.data, saved), ({}, []))
 

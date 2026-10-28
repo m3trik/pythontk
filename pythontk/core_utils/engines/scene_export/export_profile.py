@@ -204,7 +204,7 @@ class ExportProfile:
         Parameters:
             stored: The preset's ``{objectName: value}`` -- or the panel's own
                 saved state, read the same way (``SceneExporterBase.
-                _note_retired_panel_state``).
+                note_retired_panel_state``).
             task_definitions: The panel's task rows.
             check_definitions: The panel's check rows.
 

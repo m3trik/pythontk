@@ -1076,13 +1076,19 @@ The scene-data record -- what an export shipped, kept off the deliverable.
 
 The Scene Exporter's orchestration shell, written once for both DCCs.
 
-- **[`class SceneExporterBase(LoggingMixin)`](pythontk/pythontk/core_utils/engines/scene_export/scene_exporter.py#L44)** — The DCC-free half of a Scene Exporter: progress, consent, run config.
+- **[`class SceneExporterBase(LoggingMixin)`](pythontk/pythontk/core_utils/engines/scene_export/scene_exporter.py#L57)** — The DCC-free half of a Scene Exporter: progress, consent, run config.
+  - `SceneExporterBase.export_cancelled(self) -> bool` *(property)* — Whether the last :meth:`perform_export` stopped on a cancel (Esc held
   - `SceneExporterBase.confirm(self, question: str) -> bool` — Yes/no consent for an export-time side effect (a tool download).
   - `SceneExporterBase.decide_check_failure(self, check: str, messages: List[str], remaining: List[str]) -> str` — Seam: what to do about *check*, which just failed mid-run.
   - `SceneExporterBase.check_label(self, check: str) -> str` — *check*'s name as the panel spells it -- its row's label.
   - `SceneExporterBase.check_failure_html(self, check: str, messages: List[str], remaining: List[str]) -> str` — The check-failure dialog's body: the failure, then what is left.
   - `SceneExporterBase.confirm_check_override(self) -> bool` **DEPRECATED (remove in 0.14.0)** — Ask whether to export despite the failed checks of the last run.
+  - `SceneExporterBase.definition_tables(self) -> Tuple[Dict[str, Any], Dict[str, Any]]` — ``(tasks, checks)`` -- the panel's two definition tables, built once.
   - `SceneExporterBase.run_config_from_values(self, values: Dict[str, Any], override_checks: bool = False, ignore_groups_case_sensitive: bool = False) -> Dict[str, Any]` — Widget values -> the inputs :meth:`perform_export` takes.
+  - `SceneExporterBase.note_retired_preset_rows(self, name: str, stored: Optional[Dict[str, Any]]) -> None` — Log what preset *name* asked of a row that has since retired.
+  - `SceneExporterBase.note_retired_panel_state(self, store: Any) -> None` — Say once what the panel's saved state asked of a row since retired.
+  - `SceneExporterBase.migrate_legacy_regex(self, store: Any, name_row: str, save: Callable[[str], Any]) -> Optional[str]` — Fold the retired RegEx field's saved value into the Output Filename, once.
+  - `SceneExporterBase.resolve_export_dir(self, export_dir: Optional[str]) -> str` — The folder an export writes to: *export_dir* expanded, else the saved
   - `SceneExporterBase.log_file_path(self) -> str` — This scene's run log: ``<scene>_<hash>.log`` in :attr:`LOG_FOLDER`.
   - `SceneExporterBase.generate_log_file_path(self, export_path: Optional[str] = None) -> str` **DEPRECATED (remove in 0.17.0)** — Retired: the run log is the scene's (:meth:`log_file_path`), so
   - `SceneExporterBase.setup_file_logging(self, log_file_path: str, header: Optional[str] = None)` — Tee :attr:`logger` into *log_file_path* for the run in flight.
