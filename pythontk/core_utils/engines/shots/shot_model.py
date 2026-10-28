@@ -1095,6 +1095,21 @@ class ShotStore(_ShotStoreInternal):
         """
         self._flush_dirty()
 
+    class EditHandle:
+        """What :meth:`scene_edit` yields: ``cancel()`` declares the body a
+        no-op, so the edit leaves no restore point (and, in a DCC store, no
+        undo step of its own).  blendertk's ``scene_edit`` yields its undo
+        chunk's handle, which answers the same two names."""
+
+        __slots__ = ("cancelled",)
+
+        def __init__(self):
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            """Declare the edit a no-op."""
+            self.cancelled = True
+
     @contextmanager
     def scene_edit(self, label: str = "edit", snapshot: bool = True):
         """Run a shot edit as one step of the scene's undo (overridable hook).
@@ -1104,16 +1119,29 @@ class ShotStore(_ShotStoreInternal):
         with.  The DCC stores override it to run the body in one named undo
         step and tag the point with that step (``mayatk.ShotStore`` /
         ``blendertk.BlenderShotStore``).  Every one ends by emitting
-        :class:`ShotsEdited` when the body changed the shot records.
+        :class:`ShotsEdited` when the body changed the shot records, and every
+        one yields a handle whose ``cancel()`` declares the body a no-op -- the
+        one idiom a panel shared by both hosts writes for an edit that turned
+        out to change nothing.
 
         Parameters:
             label: The edit's name (the undo step's, and the event's).
             snapshot: Push a restore point before the body; ``False`` for an
                 edit that must not record one.
+
+        Yields:
+            An :class:`EditHandle`.  Cancelled, the restore point is dropped
+            (``discard_boundary_snapshot``: the redo branch comes back) and no
+            :class:`ShotsEdited` is said.
         """
+        edit = self.EditHandle()
         if snapshot:
             self.push_boundary_snapshot()
-        yield None
+        yield edit
+        if edit.cancelled:
+            if snapshot:
+                self.discard_boundary_snapshot()
+            return
         # Every store's scene_edit ends the same way: an edit that changed the
         # records since its restore point says so (ShotsEdited) -- only after
         # a body that did not raise, and never without a point to compare to.

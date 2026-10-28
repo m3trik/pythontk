@@ -1,6 +1,8 @@
 # pythontk — Changelog
 
 ## 2026
+- **2026-10-28 -- `ShotStore.EditHandle` (`core_utils/engines/shots/shot_model.py`).** What `scene_edit` yields: `cancel()` declares the body a no-op, so the edit leaves no restore point and says no `ShotsEdited` -- one idiom for a panel both hosts share.
+  - Test(s): `test_shots_core.py` +1.
 - **2026-10-28 -- `ShotReport` words the shot-removal question both shots panels ask (`core_utils/engines/shots/shot_report.py`).** New `SCOPE_LABELS` (`(label, scope)` rows in `ShotStore.DELETE_SCOPES` order), `SCOPE_CLAUSES`, `LISTED_MAX`, `scope_label(scope)`, `scope_count(shots, scope)` and `removal_question(shots, scope) -> (title, text)`; the Shots panel and the Sequencer's shot menu no longer reach into each other for it.
   - Test(s): `test_shot_report.py` (`TestDeleteScopes`).
 - **2026-10-28 -- `SceneExporterBase` is composed by the shared Scene Exporter panel, not subclassed (`core_utils/engines/scene_export/scene_exporter.py`, `export_profile.py`).** What the two host panels reached for as private members is public: `definition_tables`, `note_retired_preset_rows`, `note_retired_panel_state`, `migrate_legacy_regex`, `resolve_export_dir` (renamed from their `_` names, no alias: the deleted panels were their only callers), plus the `export_cancelled` property. `__init__` takes keyword-only `logger=`, `confirm=` and `decide_check_failure=` (the panel's collaborators), and `log_level` may be `None` (leave the adopted logger's level).

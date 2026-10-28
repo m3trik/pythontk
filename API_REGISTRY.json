@@ -9477,7 +9477,7 @@
               "kind": "method",
               "signature": "(self, label: str = 'edit', snapshot: bool = True)",
               "summary": "Run a shot edit as one step of the scene's undo (overridable hook).",
-              "line": 1099,
+              "line": 1114,
               "deprecated": false
             },
             {
@@ -9486,7 +9486,7 @@
               "kind": "method",
               "signature": "(self, objects: Optional[Iterable[Any]] = None) -> Callable[[Any, Optional[Iterable[float]]], int]",
               "summary": "An ``on_replace(curve, frames)`` for the DCC key edits that land a",
-              "line": 1125,
+              "line": 1153,
               "deprecated": false
             },
             {
@@ -9495,7 +9495,7 @@
               "kind": "method",
               "signature": "(self, objects: Optional[Iterable[Any]] = None) -> Callable[[Any, Iterable[Tuple[float, float]]], int]",
               "summary": "An ``on_move(curve, pairs)`` for the DCC key edits that move keys",
-              "line": 1157,
+              "line": 1185,
               "deprecated": false
             },
             {
@@ -9504,7 +9504,7 @@
               "kind": "method",
               "signature": "(self, objects: Optional[Iterable[Any]] = None) -> Tuple[Callable, Callable]",
               "summary": "``(on_replace, on_move)`` over *objects*: :meth:`release_replaced`",
-              "line": 1183,
+              "line": 1211,
               "deprecated": false
             },
             {
@@ -9513,7 +9513,7 @@
               "kind": "method",
               "signature": "(self, label: str = 'edit', objects: Optional[Iterable[Any]] = None)",
               "summary": "Run a DCC key edit that may replace or move claimed keys.",
-              "line": 1199,
+              "line": 1227,
               "deprecated": false
             },
             {
@@ -9522,7 +9522,7 @@
               "kind": "property",
               "signature": "(self) -> Optional[int]",
               "summary": "The currently selected shot, or ``None``.",
-              "line": 1224,
+              "line": 1252,
               "deprecated": false
             },
             {
@@ -9531,7 +9531,7 @@
               "kind": "method",
               "signature": "(self, shot_id: Optional[int]) -> None",
               "summary": "Set the active shot and notify listeners.",
-              "line": 1228,
+              "line": 1256,
               "deprecated": false
             },
             {
@@ -9540,7 +9540,7 @@
               "kind": "method",
               "signature": "(self) -> bool",
               "summary": "``True`` when the store declares no shots.",
-              "line": 1236,
+              "line": 1264,
               "deprecated": false
             },
             {
@@ -9549,7 +9549,7 @@
               "kind": "method",
               "signature": "(self, **changes: Any) -> bool",
               "summary": "Change fields of the scene's :attr:`effect_recipe`.",
-              "line": 1247,
+              "line": 1275,
               "deprecated": false
             },
             {
@@ -9558,7 +9558,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Fire a ``\"settings_changed\"`` event.",
-              "line": 1272,
+              "line": 1300,
               "deprecated": false
             },
             {
@@ -9567,7 +9567,7 @@
               "kind": "method",
               "signature": "(self, callback: Callable[[StoreEvent], None]) -> None",
               "summary": "Register a listener called on store mutations.",
-              "line": 1281,
+              "line": 1309,
               "deprecated": false
             },
             {
@@ -9576,7 +9576,7 @@
               "kind": "method",
               "signature": "(self, callback: Callable[[StoreEvent], None]) -> None",
               "summary": "Remove a previously registered listener.",
-              "line": 1299,
+              "line": 1327,
               "deprecated": false
             },
             {
@@ -9585,7 +9585,7 @@
               "kind": "method",
               "signature": "(self)",
               "summary": "Defer listener notifications until the block exits.",
-              "line": 1320,
+              "line": 1348,
               "deprecated": false
             },
             {
@@ -9594,7 +9594,7 @@
               "kind": "staticmethod",
               "signature": "(marker: Dict[str, Any]) -> str",
               "summary": "The tool that placed *marker* (its ``data[\"owner\"]``), ``\"\"`` for",
-              "line": 1345,
+              "line": 1373,
               "deprecated": false
             },
             {
@@ -9603,7 +9603,7 @@
               "kind": "method",
               "signature": "(self, markers: Iterable[Dict[str, Any]]) -> bool",
               "summary": "Replace the timeline markers;",
-              "line": 1355,
+              "line": 1383,
               "deprecated": false
             },
             {
@@ -9612,7 +9612,7 @@
               "kind": "method",
               "signature": "(self, left_id: int, right_id: int) -> bool",
               "summary": "Return whether the gap between two adjacent shots is locked.",
-              "line": 1375,
+              "line": 1403,
               "deprecated": false
             },
             {
@@ -9621,7 +9621,7 @@
               "kind": "method",
               "signature": "(self, left_id: int, right_id: int) -> None",
               "summary": "Lock a gap so its width is preserved during global respace.",
-              "line": 1379,
+              "line": 1407,
               "deprecated": false
             },
             {
@@ -9630,7 +9630,7 @@
               "kind": "method",
               "signature": "(self, left_id: int, right_id: int) -> None",
               "summary": "Unlock a gap so it follows the global gap value.",
-              "line": 1386,
+              "line": 1414,
               "deprecated": false
             },
             {
@@ -9639,7 +9639,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Lock every adjacent gap.",
-              "line": 1392,
+              "line": 1420,
               "deprecated": false
             },
             {
@@ -9648,7 +9648,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Unlock every gap.",
-              "line": 1401,
+              "line": 1429,
               "deprecated": false
             },
             {
@@ -9657,7 +9657,7 @@
               "kind": "classmethod",
               "signature": "(cls, backend: Optional[ScenePersistence]) -> None",
               "summary": "Set the persistence backend used by :meth:`active` and :meth:`save`.",
-              "line": 1410,
+              "line": 1438,
               "deprecated": false
             },
             {
@@ -9666,7 +9666,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> 'ShotStore'",
               "summary": "Return the current active store, creating one if needed.",
-              "line": 1419,
+              "line": 1447,
               "deprecated": false
             },
             {
@@ -9675,7 +9675,7 @@
               "kind": "classmethod",
               "signature": "(cls, store: 'ShotStore') -> None",
               "summary": "Replace the active store instance (which follows the DCC's undo",
-              "line": 1448,
+              "line": 1476,
               "deprecated": false
             },
             {
@@ -9684,7 +9684,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Reset the active store and persistence backend, and stop following",
-              "line": 1455,
+              "line": 1483,
               "deprecated": false
             },
             {
@@ -9693,7 +9693,7 @@
               "kind": "classmethod",
               "signature": "(cls, callback: Callable[['StoreInvalidated'], None]) -> None",
               "summary": "Register a callback fired when the active store is discarded.",
-              "line": 1475,
+              "line": 1503,
               "deprecated": false
             },
             {
@@ -9702,7 +9702,7 @@
               "kind": "classmethod",
               "signature": "(cls, callback: Callable[['StoreInvalidated'], None]) -> None",
               "summary": "Remove a previously registered invalidation listener.",
-              "line": 1488,
+              "line": 1516,
               "deprecated": false
             },
             {
@@ -9711,7 +9711,7 @@
               "kind": "classmethod",
               "signature": "(cls, callback: Callable[[], None]) -> Callable[[], None]",
               "summary": "Call *callback* whenever the active store's settings change -- and",
-              "line": 1498,
+              "line": 1526,
               "deprecated": false
             },
             {
@@ -9720,7 +9720,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Drop the active store (the scene changed) and fire the invalidation listeners.",
-              "line": 1546,
+              "line": 1574,
               "deprecated": false
             },
             {
@@ -9729,7 +9729,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Store what the active store holds but has not written yet.",
-              "line": 1558,
+              "line": 1586,
               "deprecated": false
             },
             {
@@ -9738,7 +9738,7 @@
               "kind": "method",
               "signature": "(self, frame: float, direction: str = 'nearest') -> float",
               "summary": "Return *frame* on a whole frame when snapping is on.",
-              "line": 1662,
+              "line": 1690,
               "deprecated": false
             },
             {
@@ -9747,7 +9747,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int, lo: float, hi: float, seam_keyed: Optional[Callable[[float], bool]] = None) -> Tuple[float, float]",
               "summary": "The bounds *shot_id* takes so content landing on ``[lo, hi]`` sits",
-              "line": 1698,
+              "line": 1726,
               "deprecated": false
             },
             {
@@ -9756,7 +9756,7 @@
               "kind": "method",
               "signature": "(self) -> float",
               "summary": "Derive the predominant inter-shot gap from current shot positions.",
-              "line": 1752,
+              "line": 1780,
               "deprecated": false
             },
             {
@@ -9765,7 +9765,7 @@
               "kind": "method",
               "signature": "(self) -> List[ShotBlock]",
               "summary": "Return shots ordered by start time.",
-              "line": 1773,
+              "line": 1801,
               "deprecated": false
             },
             {
@@ -9774,7 +9774,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int) -> Optional[ShotBlock]",
               "summary": "",
-              "line": 1777,
+              "line": 1805,
               "deprecated": false
             },
             {
@@ -9783,7 +9783,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> Optional[ShotBlock]",
               "summary": "Return the first shot whose name matches *name*, or ``None``.",
-              "line": 1783,
+              "line": 1811,
               "deprecated": false
             },
             {
@@ -9792,7 +9792,7 @@
               "kind": "method",
               "signature": "(self, name: Any, shot_id: Optional[int] = None) -> Optional[str]",
               "summary": "Why *name* cannot name a shot in this store, or ``None`` when it can.",
-              "line": 1792,
+              "line": 1820,
               "deprecated": false
             },
             {
@@ -9801,7 +9801,7 @@
               "kind": "staticmethod",
               "signature": "(name: str, taken: Iterable[str], first: Optional[int] = None) -> str",
               "summary": "*name* in its clip spelling, or the first ``name_<n>`` that collides",
-              "line": 1844,
+              "line": 1872,
               "deprecated": false
             },
             {
@@ -9810,7 +9810,7 @@
               "kind": "method",
               "signature": "(self, base: str = 'Shot', first: Optional[int] = None) -> str",
               "summary": "A name :meth:`name_error` accepts, derived from *base* by",
-              "line": 1879,
+              "line": 1907,
               "deprecated": false
             },
             {
@@ -9819,7 +9819,7 @@
               "kind": "method",
               "signature": "(self, wanted: Optional[str] = None) -> str",
               "summary": "*wanted* when :meth:`name_error` accepts it, else the store's next",
-              "line": 1888,
+              "line": 1916,
               "deprecated": false
             },
             {
@@ -9828,7 +9828,7 @@
               "kind": "method",
               "signature": "(self, name: str, start: float, end: float, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock",
               "summary": "Create a new shot and add it to the store.",
-              "line": 1903,
+              "line": 1931,
               "deprecated": false
             },
             {
@@ -9837,7 +9837,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int, *, start: Optional[float] = None, end: Optional[float] = None, name: Optional[str] = None, objects: Optional[List[str]] = None, description: Optional[str] = None, locked: Optional[bool] = None, metadata: Optional[Dict[str, Any]] = None) -> Optional[ShotBlock]",
               "summary": "Update fields on an existing shot.",
-              "line": 1955,
+              "line": 1983,
               "deprecated": false
             },
             {
@@ -9846,7 +9846,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int, names: Iterable[str]) -> List[str]",
               "summary": "Add *names* to a shot's members as the shot system's own additions",
-              "line": 2015,
+              "line": 2043,
               "deprecated": false
             },
             {
@@ -9855,7 +9855,7 @@
               "kind": "method",
               "signature": "(self, shot: ShotBlock) -> set",
               "summary": "The :meth:`member_key` of every member of *shot* the shot system",
-              "line": 2039,
+              "line": 2067,
               "deprecated": false
             },
             {
@@ -9864,7 +9864,7 @@
               "kind": "method",
               "signature": "(self, shot_id: int) -> bool",
               "summary": "Remove a shot by ID.",
-              "line": 2062,
+              "line": 2090,
               "deprecated": false
             },
             {
@@ -9873,7 +9873,7 @@
               "kind": "method",
               "signature": "(self, name: str, duration: float, gap: float = 0, start_frame: Optional[float] = None, objects: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None, locked: bool = False, description: str = '') -> ShotBlock",
               "summary": "Append a shot after the last existing shot, with gap-aware placement.",
-              "line": 2133,
+              "line": 2161,
               "deprecated": false
             },
             {
@@ -9882,7 +9882,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str) -> bool",
               "summary": "Return True if *obj_name* is hidden in the sequencer UI.",
-              "line": 2178,
+              "line": 2206,
               "deprecated": false
             },
             {
@@ -9891,7 +9891,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str, hidden: bool = True) -> None",
               "summary": "Show or hide *obj_name* in the sequencer UI.",
-              "line": 2182,
+              "line": 2210,
               "deprecated": false
             },
             {
@@ -9900,7 +9900,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str) -> bool",
               "summary": "Return True if *obj_name* is pinned (kept even when missing).",
-              "line": 2194,
+              "line": 2222,
               "deprecated": false
             },
             {
@@ -9909,7 +9909,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str, pinned: bool = True) -> None",
               "summary": "Pin or unpin *obj_name*.",
-              "line": 2198,
+              "line": 2226,
               "deprecated": false
             },
             {
@@ -9918,7 +9918,7 @@
               "kind": "method",
               "signature": "(self, obj_name: str) -> None",
               "summary": "Remove *obj_name* from every shot's object list.",
-              "line": 2215,
+              "line": 2243,
               "deprecated": false
             },
             {
@@ -9927,7 +9927,7 @@
               "kind": "method",
               "signature": "(self) -> set",
               "summary": "Every name the store holds an object by -- shot members and the",
-              "line": 2236,
+              "line": 2264,
               "deprecated": false
             },
             {
@@ -9936,7 +9936,7 @@
               "kind": "method",
               "signature": "(self, renames: Dict[str, str]) -> bool",
               "summary": "Re-point every name the store holds an object by: ``{old: new}``.",
-              "line": 2244,
+              "line": 2272,
               "deprecated": false
             },
             {
@@ -9945,7 +9945,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, Any]",
               "summary": "Serialise shots and settings to a plain dict.",
-              "line": 2286,
+              "line": 2314,
               "deprecated": false
             },
             {
@@ -9954,7 +9954,7 @@
               "kind": "method",
               "signature": "(self) -> List[ShotBlock]",
               "summary": "The shots that no longer describe anything in the scene, in order.",
-              "line": 2333,
+              "line": 2361,
               "deprecated": false
             },
             {
@@ -9963,7 +9963,7 @@
               "kind": "method",
               "signature": "(self) -> List[ShotBlock]",
               "summary": "Remove every stale shot (:meth:`stale_shots`);",
-              "line": 2360,
+              "line": 2388,
               "deprecated": false
             },
             {
@@ -9972,7 +9972,7 @@
               "kind": "method",
               "signature": "(self) -> List[ShotBlock]",
               "summary": "The shots that hold nothing, in order: nothing they name is keyed",
-              "line": 2391,
+              "line": 2419,
               "deprecated": false
             },
             {
@@ -9981,7 +9981,7 @@
               "kind": "method",
               "signature": "(self, scope: str) -> List[ShotBlock]",
               "summary": "The shots a delete of *scope* takes, in order.",
-              "line": 2447,
+              "line": 2475,
               "deprecated": false
             },
             {
@@ -9990,7 +9990,7 @@
               "kind": "method",
               "signature": "(self, scope: str) -> List[ShotBlock]",
               "summary": "Remove the shots of *scope* (:meth:`shots_in_scope`);",
-              "line": 2467,
+              "line": 2495,
               "deprecated": false
             },
             {
@@ -9999,7 +9999,7 @@
               "kind": "method",
               "signature": "(self, strategy: str = 'name') -> Dict[str, Any]",
               "summary": "Build the FBX/Unity export view from the current shots.",
-              "line": 2549,
+              "line": 2577,
               "deprecated": false
             },
             {
@@ -10008,7 +10008,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[int, str]",
               "summary": "``{shot_id: step_id}``: the doc step each shot no step is bound to",
-              "line": 2582,
+              "line": 2610,
               "deprecated": false
             },
             {
@@ -10017,7 +10017,7 @@
               "kind": "method",
               "signature": "(self, ctx: Optional[ExportContext] = None, strategy: Optional[str] = None) -> Optional[List[Record]]",
               "summary": "This store's shot records, ready to store -- ``None`` when empty.",
-              "line": 2713,
+              "line": 2741,
               "deprecated": false
             },
             {
@@ -10026,7 +10026,7 @@
               "kind": "classmethod",
               "signature": "(cls, ctx: Optional[ExportContext] = None) -> Optional[List[Record]]",
               "summary": "The Shots PRODUCER: the active store's records, or ``None``.",
-              "line": 2765,
+              "line": 2793,
               "deprecated": false
             },
             {
@@ -10035,7 +10035,7 @@
               "kind": "staticmethod",
               "signature": "()",
               "summary": "Bracket a batch that edits the scene and puts it back -- an",
-              "line": 2788,
+              "line": 2816,
               "deprecated": false
             },
             {
@@ -10044,7 +10044,7 @@
               "kind": "staticmethod",
               "signature": "() -> bool",
               "summary": "Whether a :meth:`transient_edit` bracket is open: a listener that",
-              "line": 2807,
+              "line": 2835,
               "deprecated": false
             },
             {
@@ -10053,7 +10053,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Republish the active store's export view.",
-              "line": 2814,
+              "line": 2842,
               "deprecated": false
             },
             {
@@ -10062,7 +10062,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Opt every export this session into carrying the active store's shots.",
-              "line": 2834,
+              "line": 2862,
               "deprecated": false
             },
             {
@@ -10071,7 +10071,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> None",
               "summary": "Remove the before-export preparer for the rest of the session.",
-              "line": 2847,
+              "line": 2875,
               "deprecated": false
             },
             {
@@ -10080,7 +10080,7 @@
               "kind": "classmethod",
               "signature": "(cls, data: Dict[str, Any]) -> 'ShotStore'",
               "summary": "Restore from serialised data.",
-              "line": 2878,
+              "line": 2906,
               "deprecated": false
             },
             {
@@ -10089,7 +10089,7 @@
               "kind": "method",
               "signature": "(self, new_fps: float) -> None",
               "summary": "Scale all shot timings from the current ``scene_fps`` to *new_fps*.",
-              "line": 2984,
+              "line": 3012,
               "deprecated": false
             },
             {
@@ -10098,7 +10098,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Flag the store as needing a save.",
-              "line": 3012,
+              "line": 3040,
               "deprecated": false
             },
             {
@@ -10107,7 +10107,7 @@
               "kind": "method",
               "signature": "(self) -> None",
               "summary": "Persist via the configured backend (no-op if none set).",
-              "line": 3030,
+              "line": 3058,
               "deprecated": false
             },
             {
@@ -10116,7 +10116,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "True when detection settings are actionable.",
-              "line": 3059,
+              "line": 3087,
               "deprecated": false
             },
             {
@@ -10125,7 +10125,7 @@
               "kind": "method",
               "signature": "(self, overwrite: bool = False) -> List[ShotBlock]",
               "summary": "Detect shot regions and define them in the store.",
-              "line": 3076,
+              "line": 3104,
               "deprecated": false
             },
             {
@@ -10134,7 +10134,7 @@
               "kind": "staticmethod",
               "signature": "(node) -> str",
               "summary": "Leaf name with namespace preserved: ``\"|grp|ns:obj\"`` -> ``\"ns:obj\"``.",
-              "line": 3108,
+              "line": 3136,
               "deprecated": false
             },
             {
@@ -10143,7 +10143,7 @@
               "kind": "staticmethod",
               "signature": "(node) -> str",
               "summary": "The identity a doc name and a shot member are compared by: the leaf",
-              "line": 3118,
+              "line": 3146,
               "deprecated": false
             },
             {
@@ -10152,7 +10152,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> List[str]",
               "summary": "Every scene node answering to a doc object *name* (scene hook).",
-              "line": 3128,
+              "line": 3156,
               "deprecated": false
             },
             {
@@ -10161,7 +10161,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> Tuple[str, str]",
               "summary": "Resolve a doc object *name* to one scene node.",
-              "line": 3137,
+              "line": 3165,
               "deprecated": false
             },
             {
@@ -10170,7 +10170,7 @@
               "kind": "staticmethod",
               "signature": "(shots: List['ShotBlock'], strategy: str = 'name') -> List[Tuple[str, int, int]]",
               "summary": "Resolve ``[(clip_name, start, end), …]`` — the single source of truth for",
-              "line": 3151,
+              "line": 3179,
               "deprecated": false
             },
             {
@@ -10179,7 +10179,7 @@
               "kind": "classmethod",
               "signature": "(cls, strategy: str = 'name') -> Optional[Tuple[int, int]]",
               "summary": "The ``(start, end)`` frames the active store's shots span, or None.",
-              "line": 3175,
+              "line": 3203,
               "deprecated": false
             }
           ]

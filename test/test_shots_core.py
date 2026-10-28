@@ -1910,6 +1910,26 @@ class TestKeyEdit(_ShotTest):
             pass
         self.assertTrue(store.has_boundary_snapshot())
 
+    def test_a_cancelled_scene_edit_leaves_no_restore_point(self):
+        """``cancel()`` declares the body a no-op: its restore point goes, the
+        redo branch the push cleared comes back, and no edit is announced --
+        the one no-op idiom of the Shot Sequencer panel, over every store."""
+        store = ShotStore()
+        shot = store.define_shot("A", 0, 10)
+        with store.scene_edit("Probe"):
+            store.update_shot(shot.shot_id, end=20)
+        self.assertTrue(store.restore_boundary_snapshot())
+        self.assertTrue(store.has_boundary_snapshot(redo=True))
+        heard = []
+        store.add_listener(heard.append)
+        with store.scene_edit("Probe") as edit:
+            edit.cancel()
+        self.assertFalse(store.has_boundary_snapshot())
+        self.assertTrue(store.has_boundary_snapshot(redo=True), "the redo branch stays")
+        self.assertEqual(
+            [e for e in heard if isinstance(e, shot_model.ShotsEdited)], []
+        )
+
 
 class _RecordingStore(ShotStore):
     """Stand-in for a DCC subclass: records what the publish hook was handed.
