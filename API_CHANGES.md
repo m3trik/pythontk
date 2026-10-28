@@ -15,7 +15,7 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column`
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard`
 
-## Added (50)
+## Added (53)
 
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.definition_tables(self) -> Tuple[Dict[str, Any], Dict[str, Any]]`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.export_cancelled(self) -> bool`
@@ -23,6 +23,9 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.note_retired_panel_state(self, store: Any) -> None`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.note_retired_preset_rows(self, name: str, stored: Optional[Dict[str, Any]]) -> None`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.resolve_export_dir(self, export_dir: Optional[str]) -> str`
+- `core_utils/engines/shots/shot_report.py::ShotReport.removal_question(cls, shots: Sequence, scope: str) -> Tuple[str, str]`
+- `core_utils/engines/shots/shot_report.py::ShotReport.scope_count(cls, shots: Sequence, scope: str) -> str`
+- `core_utils/engines/shots/shot_report.py::ShotReport.scope_label(cls, scope: str) -> str`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter(class)`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.add_members(self, store: str, face_map: FaceMap) -> None`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.carrier_weights(self, prefix: str) -> List[str]`

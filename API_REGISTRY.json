@@ -10447,13 +10447,13 @@
     },
     {
       "relpath": "core_utils/engines/shots/shot_report.py",
-      "summary": "What a shots panel says about the store: pure, one-line summaries.",
+      "summary": "What a shots panel says about the store: pure summaries and questions.",
       "functions": [],
       "classes": [
         {
           "name": "ShotReport",
-          "summary": "One-line summaries of a shot sequence and of boundary edits on it.",
-          "line": 16,
+          "summary": "One-line summaries of a shot sequence and of boundary edits on it, and",
+          "line": 18,
           "bases": [],
           "members": [
             {
@@ -10462,7 +10462,7 @@
               "kind": "classmethod",
               "signature": "(cls, shots: Sequence) -> str",
               "summary": "The sequence at a glance: ``\"3 shots · 240f · 5 objects · [1–240]\"``.",
-              "line": 22,
+              "line": 25,
               "deprecated": false
             },
             {
@@ -10471,7 +10471,7 @@
               "kind": "staticmethod",
               "signature": "(deltas: Iterable[Tuple[float, float]]) -> bool",
               "summary": "Whether any ``(head, tail)`` delta actually moved a boundary.",
-              "line": 46,
+              "line": 49,
               "deprecated": false
             },
             {
@@ -10480,7 +10480,34 @@
               "kind": "classmethod",
               "signature": "(cls, label: str, deltas: Sequence[Tuple[float, float]]) -> str",
               "summary": "The outcome of a trim / pad: frames moved at the heads and the tails.",
-              "line": 51,
+              "line": 54,
+              "deprecated": false
+            },
+            {
+              "name": "scope_label",
+              "qualname": "ShotReport.scope_label",
+              "kind": "classmethod",
+              "signature": "(cls, scope: str) -> str",
+              "summary": "The menu word for *scope*: ``\"stale\"`` -> ``\"Stale\"``.",
+              "line": 86,
+              "deprecated": false
+            },
+            {
+              "name": "scope_count",
+              "qualname": "ShotReport.scope_count",
+              "kind": "classmethod",
+              "signature": "(cls, shots: Sequence, scope: str) -> str",
+              "summary": "*shots* counted the way the questions say it: ``\"all 4 shot(s)\"``,",
+              "line": 99,
+              "deprecated": false
+            },
+            {
+              "name": "removal_question",
+              "qualname": "ShotReport.removal_question",
+              "kind": "classmethod",
+              "signature": "(cls, shots: Sequence, scope: str) -> Tuple[str, str]",
+              "summary": "The question asked before the shots of *scope* go, naming them.",
+              "line": 107,
               "deprecated": false
             }
           ]
@@ -10493,7 +10520,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 13,
+          "line": 15,
           "deprecated": false
         }
       ]

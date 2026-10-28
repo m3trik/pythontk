@@ -395,10 +395,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class GapRetime`
   - methods: width, scale, shrinks, grows
 
-### `core_utils/engines/shots/shot_report.py` — What a shots panel says about the store: pure, one-line summaries.
+### `core_utils/engines/shots/shot_report.py` — What a shots panel says about the store: pure summaries and questions.
 - constants: EPSILON
 - `class ShotReport`
-  - methods: summary, moved, delta_summary
+  - methods: summary, moved, delta_summary, scope_label, scope_count, removal_question
 
 ### `core_utils/engines/shots/shot_sequencer.py` — Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
 - `class ShotSequencer(_ShotSequencerHooks)`

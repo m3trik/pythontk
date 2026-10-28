@@ -27,9 +27,10 @@ The core shots layer is complete on its own:
 - :mod:`~pythontk.core_utils.engines.shots.effect_recipe` is how each render
   effect and audio clip is keyed, once per scene (:class:`EffectRecipe`, the
   store's ``effect_recipe``): the panels edit it and the manifest keys with it.
-- :mod:`~pythontk.core_utils.engines.shots.shot_report` words what a Shots
-  panel says about the store -- the sequence at a glance and the outcome of a
-  trim / pad -- once for both hosts (:class:`ShotReport`).
+- :mod:`~pythontk.core_utils.engines.shots.shot_report` words what a shots
+  panel says about the store -- the sequence at a glance, the outcome of a
+  trim / pad, and the Delete Shots scopes with their question -- once for both
+  hosts (:class:`ShotReport`).
 - :mod:`~pythontk.core_utils.engines.shots.manifest` is the production-CSV ->
   shot-plan pipeline (model, mapping files, keying behaviours, range
   resolution, the compute-then-commit :class:`ShotManifest`).

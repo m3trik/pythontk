@@ -66,7 +66,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/engines/shots/shot_ledger.py`](#core_utils--engines--shots--shot_ledger) — Ledger of the edits the shot system authors on a scene's animation.
 - [`core_utils/engines/shots/shot_model.py`](#core_utils--engines--shots--shot_model) — DCC-agnostic shot data model and persistent store.
 - [`core_utils/engines/shots/shot_plan.py`](#core_utils--engines--shots--shot_plan) — Pure planning layer for multi-shot topology transformations.
-- [`core_utils/engines/shots/shot_report.py`](#core_utils--engines--shots--shot_report) — What a shots panel says about the store: pure, one-line summaries.
+- [`core_utils/engines/shots/shot_report.py`](#core_utils--engines--shots--shot_report) — What a shots panel says about the store: pure summaries and questions.
 - [`core_utils/engines/shots/shot_sequencer.py`](#core_utils--engines--shots--shot_sequencer) — Shot sequencer core -- ripple-editing orchestration over a :class:`ShotStore`.
 - [`core_utils/engines/shots/shot_transfer.py`](#core_utils--engines--shots--shot_transfer) — Shot transfer codec -- the shot store as a DCC-neutral hand-off section.
 - [`core_utils/engines/textures/emissive_groups.py`](#core_utils--engines--textures--emissive_groups) — Emissive groups: named face sets that gate emissive regions at runtime.
@@ -1680,13 +1680,16 @@ Pure planning layer for multi-shot topology transformations.
 <a id="core_utils--engines--shots--shot_report"></a>
 ### `core_utils/engines/shots/shot_report.py`
 
-What a shots panel says about the store: pure, one-line summaries.
+What a shots panel says about the store: pure summaries and questions.
 
-- [`EPSILON`](pythontk/pythontk/core_utils/engines/shots/shot_report.py#L13) — constant
-- **[`class ShotReport`](pythontk/pythontk/core_utils/engines/shots/shot_report.py#L16)** — One-line summaries of a shot sequence and of boundary edits on it.
+- [`EPSILON`](pythontk/pythontk/core_utils/engines/shots/shot_report.py#L15) — constant
+- **[`class ShotReport`](pythontk/pythontk/core_utils/engines/shots/shot_report.py#L18)** — One-line summaries of a shot sequence and of boundary edits on it, and
   - `ShotReport.summary(cls, shots: Sequence) -> str` *(class)* — The sequence at a glance: ``"3 shots · 240f · 5 objects · [1–240]"``.
   - `ShotReport.moved(deltas: Iterable[Tuple[float, float]]) -> bool` *(static)* — Whether any ``(head, tail)`` delta actually moved a boundary.
   - `ShotReport.delta_summary(cls, label: str, deltas: Sequence[Tuple[float, float]]) -> str` *(class)* — The outcome of a trim / pad: frames moved at the heads and the tails.
+  - `ShotReport.scope_label(cls, scope: str) -> str` *(class)* — The menu word for *scope*: ``"stale"`` -> ``"Stale"``.
+  - `ShotReport.scope_count(cls, shots: Sequence, scope: str) -> str` *(class)* — *shots* counted the way the questions say it: ``"all 4 shot(s)"``,
+  - `ShotReport.removal_question(cls, shots: Sequence, scope: str) -> Tuple[str, str]` *(class)* — The question asked before the shots of *scope* go, naming them.
 
 <a id="core_utils--engines--shots--shot_sequencer"></a>
 ### `core_utils/engines/shots/shot_sequencer.py`
