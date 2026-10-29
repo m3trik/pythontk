@@ -479,7 +479,7 @@ class HandoffRecord:
     #: only the file actually dropped on a delivered assembly: WHICH carrier
     #: (an assembly ships one ``data_export`` per referenced module beside the
     #: scene's own, each that module's records as it was last exported alone;
-    #: ``MeshConvert._data_export_carrier`` and unitytk's ``CarrierImport``
+    #: ``_Sidecar._data_export_carrier`` and unitytk's ``CarrierImport``
     #: resolve them alike, and the text states the rule), and CASE (a module
     #: spelled a map ``_LightMap`` where the embedded copy is ``_Lightmap``).
     #: Its load-bearing sentence is the one about the files the records name:
@@ -590,7 +590,7 @@ class HandoffRecord:
                 "that material's 'intensity' in {at}, the scalar that restores "
                 "the bake's range"
             ),
-            # The copies are a GLB build's (``MeshConvert._embed_highlight_
+            # The copies are a GLB build's (``_Highlights._embed_highlight_
             # probes``); a finished FBX carries the same copies as media its
             # lightmap record's ``probe.highlights`` names, and that record's
             # own row says so.

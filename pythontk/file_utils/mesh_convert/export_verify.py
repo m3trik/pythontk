@@ -843,7 +843,7 @@ class ExportVerifier(_ExportVerifierInternal):
         ``clip_span["*"]`` is the authoring window the exporter publishes as
         the frame the whole-timeline stack puts at ``t=0``; every clip is cut
         from that stack by offsetting against it
-        (``MeshConvert._clip_zero``). The exporter cannot see the written file,
+        (``_Animation._clip_zero``). The exporter cannot see the written file,
         so it publishes a MEASUREMENT of the curves it is about to serialize --
         and when that measurement is taken from the wrong thing (a bake range
         bounds what the plugin re-bakes, not what an authored curve carries)

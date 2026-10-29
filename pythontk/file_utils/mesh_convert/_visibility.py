@@ -9,7 +9,7 @@ presence as STEP ``scale`` channels and fades/highlights as
 the preview channels one render effect needs.
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
-the other passes through ``cls``.
+the other passes through the facade it holds (``self._mc``).
 """
 
 import logging
@@ -24,48 +24,23 @@ from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 logger = logging.getLogger(__name__)
 
 
-class _VisibilityMixin:
+class _Visibility:
     """Visibility tracks, authored fades/highlights, render-effect previews.
 
     A private part of :class:`MeshConvert`; call it through the facade.
     """
 
-    @classmethod
+    def __init__(self, mc: type) -> None:
+        self._mc = mc  # the facade class: every name it exposes is read through it
+
     def effect_preview_channels(
-        cls,
+        self,
         nodes: Sequence[str],
         channel: str,
         keys: Sequence[Sequence[float]],
         colors: Optional[Sequence[Optional[Sequence[float]]]] = None,
         fps: float = 30.0,
     ) -> Dict[str, Any]:
-        """The :meth:`overlay_data_export` channels that preview ONE render effect.
-
-        What a panel pushes to show an effect at its current settings on the
-        objects it names, whatever they carry already: every node gets the same
-        *keys* on *channel*, the scene's own tracks are replaced rather than
-        merged (an object's existing fade would otherwise play over the
-        highlight being judged), and the take list and shot record are cleared
-        so the ramp rides one clip over its own extent instead of being cut to
-        shots it has nothing to do with. The passes then build exactly what the
-        writers would have produced had the keys been authored.
-
-        Parameters:
-            nodes: The GLB node names (the DCC's leaf names), deduplicated.
-            channel: A :data:`glb.fades.CHANNELS` key (``"opacity"``, ``"highlight"``).
-            keys: ``[(frame, value), ...]`` -- a :class:`RampKeys` plan.
-            colors: One ``(r, g, b)`` or ``None`` per colour stop of the
-                channel, high first; ``None`` leaves that stop to its default.
-            fps: The rate *keys* are quoted in.
-
-        Returns:
-            ``{render_effects: envelope, animation: None}`` -- the record,
-            and no shots to cut.
-
-        Raises:
-            KeyError: For a channel with no pointer row.
-            ValueError: When there are no nodes, or fewer than two keys.
-        """
         from pythontk.file_utils.mesh_convert.glb.fades import CHANNELS
 
         if channel not in CHANNELS:
@@ -92,16 +67,15 @@ class _VisibilityMixin:
                         track[key] = [float(c) for c in list(rgb)[:3]]
             tracks.append(track)
         return {
-            SceneRecords.VISIBILITY.key: cls.build_visibility_tracks(
+            SceneRecords.VISIBILITY.key: self._mc.build_visibility_tracks(
                 tracks,
                 fps=fps,
-                clip_spans={cls.DEFAULT_CLIP_SPAN: [ramp[0][0], ramp[-1][0]]},
+                clip_spans={self._mc.DEFAULT_CLIP_SPAN: [ramp[0][0], ramp[-1][0]]},
             ),
             SceneRecords.SHOTS.key: None,
         }
 
-    @classmethod
-    def _presence_keys(cls, track: Dict[str, Any]) -> List[Sequence[float]]:
+    def _presence_keys(self, track: Dict[str, Any]) -> List[Sequence[float]]:
         """The on/off timeline to GATE this track on: the one definition of presence.
 
         A DCC that keys opacity as a custom attribute (mayatk's ``RenderOpacity``
@@ -132,9 +106,9 @@ class _VisibilityMixin:
         producer has to write a mirror, or run before anything, for a node to
         be gated where it is present.
         """
-        keys = cls._numeric_pairs(track.get("opacity") or [])
+        keys = self._mc._animation._numeric_pairs(track.get("opacity") or [])
         pairs = [(float(k[0]), float(k[1])) for k in keys]
-        if len(pairs) < 2 or not cls._is_fade(pairs):
+        if len(pairs) < 2 or not self._mc._is_fade(pairs):
             authored = track.get("visibility")
             if authored:
                 return authored
@@ -170,9 +144,8 @@ class _VisibilityMixin:
             return True
         return any(a[0] != b[0] and a[1] != b[1] for a, b in zip(pairs, pairs[1:]))
 
-    @classmethod
     def _visibility_runs(
-        cls, keys: Sequence[Sequence[float]], window: Tuple[float, float]
+        self, keys: Sequence[Sequence[float]], window: Tuple[float, float]
     ) -> List[Tuple[float, float]]:
         """Sample a stepped on/off track across *window*, as ``(frame, value)``.
 
@@ -196,7 +169,10 @@ class _VisibilityMixin:
         value as well resolved every such tie to "visible".
         """
         ordered = sorted(
-            ((float(k[0]), float(k[1])) for k in cls._numeric_pairs(keys)),
+            (
+                (float(k[0]), float(k[1]))
+                for k in self._mc._animation._numeric_pairs(keys)
+            ),
             key=lambda key: key[0],
         )
         if not ordered:
@@ -240,58 +216,10 @@ class _VisibilityMixin:
                 runs.append((time, value))
         return runs
 
-    @classmethod
-    def apply_glb_visibility(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
-        """Realize keyed visibility as STEP ``scale`` channels the file can play.
-
-        glTF animates four things -- translation, rotation, scale and morph
-        weights -- and visibility is none of them. So a DCC's keyed visibility
-        survives the FBX (which has a ``Visibility`` property) and dies at the
-        glTF hop, silently: the objects are all present, all visible, all the
-        time. Measured on a production assembly, that one gap produced three
-        separate-looking complaints -- shots that arrived EMPTY (their only
-        content was visibility), objects that never left after their shot, and
-        "broken" animation in the shots that mixed both.
-
-        The repair writes the one presence channel every glTF viewer already
-        plays. Each gated node gets a ``scale`` channel with ``STEP``
-        interpolation, driving the node between its authored scale and zero; a
-        zero-scale node collapses to a point and rasterizes nothing, which is
-        the established glTF idiom for boolean visibility precisely because it
-        needs no extension. Nothing here is optional for the consumer, so the
-        deliverable a developer loads in their own viewer behaves like the
-        preview without being told anything.
-
-        Smooth *fades* are the other half, and they belong to
-        :meth:`apply_glb_fades` -- alpha is a material property, so it needs
-        ``KHR_animation_pointer`` rather than a node channel. The two have to
-        agree about WHEN, and this pass is where that is decided: a node
-        carrying a real ramp is gated on the ramp instead of on the DCC's
-        mirrored boolean, because the mirror hides it for exactly the frames it
-        should be fading over (see :meth:`_presence_keys`). A node without a
-        ramp steps exactly where the DCC's own playback steps.
-
-        Runs BEFORE :meth:`apply_glb_animations`, which reports on what the
-        clips hold: a shot whose content is entirely visibility is empty until
-        this pass has run, and would otherwise be reported empty and skipped
-        as the file's default clip.
-
-        Reads its inputs out of the deliverable itself -- the
-        ``render_effects`` record on the ``data_export`` carrier, joined to
-        the shots record's takes for the clip windows -- so it is
-        self-feeding and needs no argument from a caller that may not know the
-        scene.
-
-        Parameters:
-            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
-
-        Returns:
-            ``{"nodes": n, "channels": n, "clips": n}`` describing what was
-            written, or ``None`` when the file carries no tracks to apply.
-        """
-        with cls.open_glb(glb) as edit:
+    def apply_glb_visibility(self, glb: GlbTarget) -> Optional[Dict[str, Any]]:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
-            channel = cls._current_record(gltf, SceneRecords.VISIBILITY)
+            channel = self._mc._current_record(gltf, SceneRecords.VISIBILITY)
             if channel is None:
                 return None
             # Each track paired with what it is GATED on, resolved once: the one
@@ -301,19 +229,19 @@ class _VisibilityMixin:
             to_gate = []
             for t in channel.get("tracks") or []:
                 if isinstance(t, dict) and t.get("node"):
-                    presence = cls._presence_keys(t)
+                    presence = self._mc._presence_keys(t)
                     if presence:
                         to_gate.append((t, presence))
             if not to_gate:
                 return None
 
-            metadata = cls.data_export_channel(gltf, SceneRecords.SHOTS.key)
+            metadata = self._mc.data_export_channel(gltf, SceneRecords.SHOTS.key)
             # Through the shared resolver, in the session's one order. This
             # read the channel FIRST and fell back to the shots record, so when
             # the two producers disagreed the visibility keys landed at times
             # no other pass in the same conversion agreed with.
             fps = (
-                cls._resolve_clip_fps(
+                self._mc._animation._resolve_clip_fps(
                     metadata if isinstance(metadata, dict) else {}, [], channel
                 )
                 or 0.0
@@ -329,7 +257,7 @@ class _VisibilityMixin:
                 )
                 return None
 
-            windows = cls._take_windows(gltf)
+            windows = self._mc._take_windows(gltf)
             # A clip that is not a declared take -- the exporter's retained
             # whole-timeline stack -- spans every take, which is the range the
             # bake covered. With no takes at all (an animated prop that was
@@ -344,13 +272,13 @@ class _VisibilityMixin:
                 frames = [
                     float(key[0])
                     for _track, presence in to_gate
-                    for key in cls._numeric_pairs(presence)
+                    for key in self._mc._animation._numeric_pairs(presence)
                 ]
                 union = (min(frames), max(frames)) if frames else None
 
-            animations = gltf.get("animations") or cls._synthesize_clips(
-                gltf, windows, union
-            )
+            animations = gltf.get(
+                "animations"
+            ) or self._mc._animation._synthesize_clips(gltf, windows, union)
             if not animations:
                 return None
 
@@ -361,7 +289,7 @@ class _VisibilityMixin:
                     by_name.setdefault(str(name), []).append(index)
 
             spans = channel.get("clip_span")
-            return cls._write_visibility_channels(
+            return self._write_visibility_channels(
                 edit,
                 to_gate,
                 animations,
@@ -372,64 +300,43 @@ class _VisibilityMixin:
                 spans if isinstance(spans, dict) else {},
             )
 
-    @classmethod
     def build_visibility_tracks(
-        cls,
+        self,
         tracks: Sequence[Dict[str, Any]],
         fps: Optional[float] = None,
         clip_spans: Optional[Dict[str, List[float]]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Wrap *tracks* in the versioned ``render_effects`` envelope.
-
-        The one place that schema exists. Both DCC packages publish through it
-        rather than shaping the dict themselves, so the channel
-        :meth:`apply_glb_visibility` reads cannot fork between the toolkit that
-        wrote it and the one that did not -- and the two cannot import each
-        other to share it.
-
-        Every float is rounded to :attr:`VISIBILITY_TRACK_DIGITS` places: the
-        values arrive as float32 attributes read back as doubles
-        (``0.49952034551044694``), and the extra digits are noise, not data
-        -- a millionth of a frame, or of a colour channel, changes nothing a
-        consumer can show.
-
-        Returns ``None`` when there is nothing to publish, which is the
-        producers' signal to CLEAR the channel rather than stamp an empty one.
-        *clip_spans* with no *tracks* is something: the whole-timeline origin
-        a shot scene needs whether or not it keys visibility, since
-        :meth:`apply_glb_clips` cuts no shot without it.
-        """
         if not tracks and not clip_spans:
             return None
         payload: Dict[str, Any] = {
             "version": SceneRecords.VISIBILITY.version,
-            "tracks": cls._rounded(list(tracks), cls.VISIBILITY_TRACK_DIGITS),
+            "tracks": self._rounded(list(tracks), self._mc.VISIBILITY_TRACK_DIGITS),
         }
         if fps:
             payload["fps"] = float(fps)
         if clip_spans:
-            payload["clip_span"] = cls._rounded(clip_spans, cls.VISIBILITY_TRACK_DIGITS)
+            payload["clip_span"] = self._rounded(
+                clip_spans, self._mc.VISIBILITY_TRACK_DIGITS
+            )
         return payload
 
     #: Decimal places a visibility track's floats are published at.
     VISIBILITY_TRACK_DIGITS = 6
 
-    @classmethod
-    def _rounded(cls, value: Any, digits: int) -> Any:
+    def _rounded(self, value: Any, digits: int) -> Any:
         """*value* with every float rounded to *digits* places, containers
         rebuilt, everything else (ints, bools, strings) as given.  ``-0.0``
         comes out as ``0.0``: a sign on nothing is noise too."""
         if isinstance(value, float):
             return round(value, digits) + 0.0
         if isinstance(value, dict):
-            return {k: cls._rounded(v, digits) for k, v in value.items()}
+            return {k: self._rounded(v, digits) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
-            return [cls._rounded(v, digits) for v in value]
+            return [self._rounded(v, digits) for v in value]
         return value
 
-    @classmethod
     def _write_visibility_channels(
-        cls,
+        self,
         edit: "GlbEdit",
         to_gate: List[Tuple[Dict[str, Any], List[Sequence[float]]]],
         animations: List[Dict[str, Any]],
@@ -508,11 +415,11 @@ class _VisibilityMixin:
             window = windows.get(name) or union
             if window is None:
                 continue
-            zero = cls._clip_zero(
+            zero = self._mc._animation._clip_zero(
                 edit.gltf,
                 animation,
                 window,
-                cls._clip_span_for(name, spans, windows),
+                self._mc._animation._clip_span_for(name, spans, windows),
                 fps,
             )
             # Nodes this clip already scales: a second channel on the same
@@ -529,7 +436,7 @@ class _VisibilityMixin:
                 if not indices:
                     missing.add(target)
                     continue
-                runs = cls._visibility_runs(presence, window)
+                runs = self._mc._visibility_runs(presence, window)
                 if not runs or (len(runs) == 1 and runs[0][1]):
                     # Visible for the whole clip: the default, so no channel.
                     continue
@@ -560,7 +467,7 @@ class _VisibilityMixin:
                     # Clamped, because a run can open before the clip's zero --
                     # and then deduplicated, because clamping is what ties two
                     # keys to the same instant.
-                    placed = cls._strictly_increasing(
+                    placed = self._strictly_increasing(
                         [(max(0.0, (f - zero) / fps), v) for f, v in runs]
                     )
                     if not placed or (len(placed) == 1 and placed[0][1]):
@@ -599,7 +506,7 @@ class _VisibilityMixin:
             report_skips()
             return None
 
-        views = cls._append_bin_views(edit, payloads)
+        views = self._mc._append_bin_views(edit, payloads)
         if not views:
             logger.warning(
                 "Visibility: this GLB's buffer is external, so the tracks have "
@@ -654,18 +561,16 @@ class _VisibilityMixin:
         )
         return {"nodes": len(gated), "channels": len(planned), "clips": len(clips)}
 
-    @classmethod
-    def _authored_fades(cls, gltf: Dict[str, Any]) -> Dict[str, List[List[float]]]:
+    def _authored_fades(self, gltf: Dict[str, Any]) -> Dict[str, List[List[float]]]:
         """Per-node alpha ramps from the visibility channel, or ``{}``.
 
         The ``opacity`` slice of :meth:`_authored_ramps`, kept because the
         presence gate reasons about the fade alone.
         """
-        return cls._authored_ramps(gltf)[0].get("opacity", {})
+        return self._authored_ramps(gltf)[0].get("opacity", {})
 
-    @classmethod
     def _authored_ramps(
-        cls, gltf: Dict[str, Any]
+        self, gltf: Dict[str, Any]
     ) -> Tuple[Dict[str, Dict[str, List[List[float]]]], Dict[str, Dict[str, Any]]]:
         """Every published per-node ramp, by channel, plus each channel's colours.
 
@@ -689,7 +594,7 @@ class _VisibilityMixin:
         """
         from pythontk.file_utils.mesh_convert.glb.fades import CHANNELS
 
-        channel = cls.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
+        channel = self._mc.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
         ramps: Dict[str, Dict[str, List[List[float]]]] = {}
         colors: Dict[str, Dict[str, Any]] = {}
         if not isinstance(channel, dict):
@@ -701,11 +606,11 @@ class _VisibilityMixin:
             for name, spec in CHANNELS.items():
                 keys = [
                     [float(k[0]), float(k[1])]
-                    for k in cls._numeric_pairs(track.get(name) or [])
+                    for k in self._mc._animation._numeric_pairs(track.get(name) or [])
                 ]
                 if len(keys) < 2:
                     continue
-                if name == "opacity" and not cls._is_fade(keys):
+                if name == "opacity" and not self._mc._is_fade(keys):
                     continue
                 ramps.setdefault(name, {})[node] = keys
                 if spec.color_stops is None:
@@ -721,40 +626,17 @@ class _VisibilityMixin:
                     )
         return ramps, colors
 
-    @classmethod
-    def apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
-        """Realize authored opacity ramps as animated material alpha.
-
-        The other half of :meth:`apply_glb_visibility`. That pass answers
-        "is it there", which glTF can express as a scale channel every viewer
-        already plays; this one answers "how solid is it", which glTF cannot
-        express at all without ``KHR_animation_pointer`` -- so the ramp is
-        written through that extension, declared in ``extensionsUsed``, and the
-        file fades by itself anywhere the extension is implemented.
-
-        Runs AFTER the gate, and the order is load-bearing in both directions:
-        a node has to be PRESENT during its ramp for the ramp to be visible
-        (see :meth:`_presence_keys`), and the clip has to end up with a channel
-        so it is not reported as an empty shot -- for a shot whose only content
-        was a fade, this pass is that channel.
-
-        Reads its inputs out of the deliverable itself, like its neighbours.
-        :mod:`~pythontk.file_utils.mesh_convert.glb.fades` does the writing.
-
-        Returns:
-            ``{"nodes", "materials", "channels"}``, or ``None`` when the file
-            carries no authored ramp.
-        """
+    def apply_glb_fades(self, glb: GlbTarget) -> Optional[Dict[str, Any]]:
         from pythontk.file_utils.mesh_convert.glb.fades import GlbFades
 
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
-            ramps, colors = cls._authored_ramps(gltf)
+            ramps, colors = self._authored_ramps(gltf)
             if not ramps:
                 return None
-            metadata = cls.data_export_channel(gltf, SceneRecords.SHOTS.key)
-            channel = cls.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
-            fps = cls._resolve_clip_fps(
+            metadata = self._mc.data_export_channel(gltf, SceneRecords.SHOTS.key)
+            channel = self._mc.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
+            fps = self._mc._animation._resolve_clip_fps(
                 metadata if isinstance(metadata, dict) else {}, [], channel
             )
             if not fps:
@@ -765,7 +647,7 @@ class _VisibilityMixin:
                 )
                 return None
 
-            windows = cls._take_windows(gltf)
+            windows = self._mc._take_windows(gltf)
             spans = (channel or {}).get("clip_span")
             if not isinstance(spans, dict):
                 spans = {}
@@ -791,20 +673,20 @@ class _VisibilityMixin:
             # the object appears.
             clip_windows: Dict[str, Tuple[float, float]] = {}
             zeros: Dict[str, float] = {}
-            animations = gltf.get("animations") or cls._synthesize_clips(
-                gltf, windows, union
-            )
+            animations = gltf.get(
+                "animations"
+            ) or self._mc._animation._synthesize_clips(gltf, windows, union)
             for animation in animations:
                 name = str(animation.get("name") or "")
                 window = windows.get(name) or union
                 if window is None:
                     continue
                 clip_windows[name] = window
-                zeros[name] = cls._clip_zero(
+                zeros[name] = self._mc._animation._clip_zero(
                     gltf,
                     animation,
                     window,
-                    cls._clip_span_for(name, spans, windows),
+                    self._mc._animation._clip_span_for(name, spans, windows),
                     float(fps),
                     verify=False,
                 )

@@ -899,7 +899,7 @@ class GlbEdit:
     #: an animation's payload renumbers nothing, but it does decide which
     #: accessors are unreferenced, and one of these could still be reading a
     #: buffer this pass is about to release. Same "bail whole rather than
-    #: guess" contract as :attr:`MeshConvert._IMAGE_REFERRING_EXTENSIONS`.
+    #: guess" contract as :attr:`_Images._IMAGE_REFERRING_EXTENSIONS`.
     _ACCESSOR_REFERRING_EXTENSIONS = frozenset(
         {
             "EXT_mesh_gpu_instancing",

@@ -4,7 +4,7 @@
 
 The record (``MaterialRecord``) rides the file on its ``data_export`` carrier,
 produced from the scene as staged for the write (the hosts'
-``MaterialRecords``): what each material IS, in glTF 2.0's terms. This mixin
+``MaterialRecords``): what each material IS, in glTF 2.0's terms. This part
 reads it (:meth:`fbx_materials`) and applies it to the GLB built from the file
 (:meth:`apply_glb_materials`), so the two deliverables of one export state
 every material alike and a GLB built from the FBX alone (the WebXR preview of
@@ -18,7 +18,7 @@ it. Measured on a production assembly (2026-10-20), that reading of a Maya
 file matched what its export's scene stated, material for material.
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
-the other passes through ``cls``.
+the other passes through the facade it holds (``self._mc``).
 """
 
 import logging
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 FbxSource = Any
 
 
-class _FbxMaterialsMixin:
+class _FbxMaterials:
     """The ``materials`` record: read from an FBX, applied to a GLB.
 
     A private part of :class:`MeshConvert`; call it through the facade.
@@ -82,75 +82,48 @@ class _FbxMaterialsMixin:
         "NormalMap": "normal",
     }
 
+    def __init__(self, mc: type) -> None:
+        self._mc = mc  # the facade class: every name it exposes is read through it
+
     # ------------------------------------------------------------------ read
-    @classmethod
     def fbx_materials(
-        cls, fbx: FbxSource, *, logger: Optional[logging.Logger] = None
+        self, fbx: FbxSource, *, logger: Optional[logging.Logger] = None
     ) -> Dict[str, Any]:
-        """The ``materials`` record for *fbx*: every material it carries.
-
-        The record the file carries states each material it names -- the
-        scene's own ``data_export`` carrier, else a referenced module's, the
-        rule every carrier channel is read by -- and a material it does not
-        name is read from the file's own properties (:meth:`read_fbx_materials`).
-        An entry naming a material the file does not carry is out of scope.
-
-        Parameters:
-            fbx: A binary FBX path, or an :class:`FbxFile` already loaded.
-            logger: Where what a material's reading cannot state is said;
-                this module's otherwise.
-
-        Returns:
-            The record's payload, version stamped; ``{"version", "materials":
-            []}`` for a file with no materials.
-
-        Raises:
-            ValueError: *fbx* is not a binary FBX this reader can parse.
-        """
-        parsed = cls._parsed_fbx(fbx)
-        return cls._stated_materials(
-            cls._carried_record(parsed), cls.read_fbx_materials(parsed, logger=logger)
+        parsed = self._parsed_fbx(fbx)
+        return self._stated_materials(
+            self._mc._carried_record(parsed),
+            self._mc.read_fbx_materials(parsed, logger=logger),
         )
 
-    @classmethod
     def read_fbx_materials(
-        cls, fbx: FbxSource, *, logger: Optional[logging.Logger] = None
+        self, fbx: FbxSource, *, logger: Optional[logging.Logger] = None
     ) -> Dict[str, Any]:
-        """*fbx*'s own materials read into the record, whatever it carries.
-
-        Each by its shading family (:attr:`FBX_FAMILIES`), its maps by the
-        file names the file binds them under -- the reading a file without a
-        record gets, and what a carried record is checked against.
-
-        Parameters:
-            fbx: A binary FBX path, or an :class:`FbxFile` already loaded.
-            logger: Where what a material's reading cannot state is said.
-
-        Raises:
-            ValueError: *fbx* is not a binary FBX this reader can parse.
-        """
         log = logger or globals()["logger"]
         notes: List[str] = []
         entries = []
-        for raw in cls._parsed_fbx(fbx).materials():
+        for raw in self._parsed_fbx(fbx).materials():
             if raw.get("name"):
-                entries.append(cls._read_fbx_material(raw, notes))
+                entries.append(self._read_fbx_material(raw, notes))
         for note in dict.fromkeys(notes):
             log.warning(note)
         return MaterialFamilies.payload(entries)
 
-    @classmethod
-    def _read_fbx_material(cls, raw: Mapping[str, Any], notes: List[str]) -> Dict[str, Any]:
+    def _read_fbx_material(
+        self, raw: Mapping[str, Any], notes: List[str]
+    ) -> Dict[str, Any]:
         """One of the file's materials as its family states it."""
         props = raw.get("props") or {}
         maps = {
-            cls.FBX_MAP_SLOTS[slot]: name
+            self._mc.FBX_MAP_SLOTS[slot]: name
             for slot, name in (raw.get("textures") or {}).items()
-            if slot in cls.FBX_MAP_SLOTS and name
+            if slot in self._mc.FBX_MAP_SLOTS and name
         }
-        for family, marker, method in cls.FBX_FAMILIES:
+        for family, marker, method in self._mc.FBX_FAMILIES:
             if marker in props:
-                values = getattr(cls, method)(props, notes, raw.get("name"))
+                # The row's method on the class read through first, as the row
+                # is (a subclass's dialect), else this part's own.
+                read = getattr(self._mc, method, None) or getattr(self, method)
+                values = read(props, notes, raw.get("name"))
                 break
         else:
             family = "legacy"
@@ -186,8 +159,7 @@ class _FbxMaterialsMixin:
             "opacity": sum(opacity) / 3.0,
         }
 
-    @classmethod
-    def _carried_record(cls, parsed) -> Optional[Dict[str, Any]]:
+    def _carried_record(self, parsed) -> Optional[Dict[str, Any]]:
         """The ``materials`` record a parsed FBX carries, decoded -- the
         scene's own carrier's, else the first module's carrier's
         (``NS:data_export``), the precedence every carrier channel is read by
@@ -196,7 +168,7 @@ class _FbxMaterialsMixin:
 
         own = SceneStoreBase.name(Scope.DELIVERABLE)
         found = None
-        for owner, value in parsed.user_properties(cls.MATERIALS_KEY, named=True):
+        for owner, value in parsed.user_properties(self._mc.MATERIALS_KEY, named=True):
             if not isinstance(value, (bytes, bytearray)) or not value.strip():
                 continue
             if not SceneStoreBase.is_carrier(owner):
@@ -211,9 +183,8 @@ class _FbxMaterialsMixin:
             logger.warning("The file's materials record is unreadable; it is ignored.")
             return None
 
-    @classmethod
     def _stated_materials(
-        cls, carried: Any, read: Mapping[str, Any]
+        self, carried: Any, read: Mapping[str, Any]
     ) -> Dict[str, Any]:
         """*read* (the file's own materials) with each material *carried*
         names taken from it instead -- a record its declaration refuses
@@ -224,7 +195,7 @@ class _FbxMaterialsMixin:
             if carried is not None
             else []
         )
-        stated = cls._record_entries(carried) if carried and not problems else {}
+        stated = self._record_entries(carried) if carried and not problems else {}
         if problems:
             more = f" (+{len(problems) - 3} more)" if len(problems) > 3 else ""
             logger.warning(
@@ -257,55 +228,22 @@ class _FbxMaterialsMixin:
         return entries
 
     # ----------------------------------------------------------------- apply
-    @classmethod
     def apply_glb_materials(
-        cls,
+        self,
         glb: GlbTarget,
         record: Optional[Mapping[str, Any]],
         textures: Optional[Mapping[str, str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Set each GLB material *record* states to exactly what it states.
-
-        Every material carrying a stated name (a converter's duplicates
-        included) takes every field: the factors, the alpha mode, double
-        sidedness, unlit -- and each map, where a slot already sampling a file
-        of the stated name is kept as bound and any other is rebound from
-        *textures*. A stated metal or roughness map is packed with the
-        occlusion map into one ORM image (R occlusion, G roughness, B metal;
-        a channel with no map white, so its factor is its value) and bound as
-        the occlusion map too when the record names one; a slot the record
-        leaves empty is cleared. The lightmap pass that follows takes the
-        occlusion slot of a baked material.
-
-        A map that cannot be found is not trusted to the converter, whose own
-        packing is the one measured to arrive solid white (metal everywhere):
-        its channel reads its map type's absent value, as an absent channel
-        does in every packing (``MapRegistry.absent_value``: a missing metal
-        map dielectric, a missing roughness map matte), and it is warned
-        about.
-
-        Parameters:
-            glb: Path to a binary glTF, modified in place, or an open
-                :class:`GlbEdit` session whose owner will write it.
-            record: The ``materials`` record (:meth:`fbx_materials`).
-            textures: ``{file name: path}`` -- where each named map's bytes
-                are (the FBX's own media, extracted).
-
-        Returns:
-            One record per material written: ``material``, ``maps`` (the
-            file names bound), ``missing`` (those that could not be) and
-            ``orm`` (whether its metal and roughness are a packed map).
-        """
-        entries = cls._record_entries(record)
+        entries = self._record_entries(record)
         if not entries:
             return []
         lookup = {name.casefold(): path for name, path in (textures or {}).items()}
         records: List[Dict[str, Any]] = []
-        with cls.open_glb(glb) as edit:
-            for name, entry, mat in cls._match_glb_materials(
+        with self._mc.open_glb(glb) as edit:
+            for name, entry, mat in self._mc._materials._match_glb_materials(
                 edit.gltf, entries, "apply_glb_materials"
             ):
-                written = cls._write_material(edit, mat, entry, lookup)
+                written = self._write_material(edit, mat, entry, lookup)
                 written.pop("strength")
                 records.append({"material": name, **written})
             if not records:
@@ -315,7 +253,10 @@ class _FbxMaterialsMixin:
             # (a material the record does not name keeps the converter's): an
             # extension a record took off its last material leaves them.
             materials = [m for m in gltf.get("materials") or [] if isinstance(m, dict)]
-            for extension in ("KHR_materials_emissive_strength", cls.UNLIT_EXTENSION):
+            for extension in (
+                "KHR_materials_emissive_strength",
+                self._mc.UNLIT_EXTENSION,
+            ):
                 used = any(extension in (m.get("extensions") or {}) for m in materials)
                 for field in ("extensionsUsed", "extensionsRequired"):
                     listed = list(gltf.get(field) or [])
@@ -327,7 +268,7 @@ class _FbxMaterialsMixin:
                         gltf[field] = listed
                     else:
                         gltf.pop(field, None)
-            cls._prune_empty_containers(gltf)
+            self._mc._images._prune_empty_containers(gltf)
             edit.dirty = True
         missing = sorted({(r["material"], m) for r in records for m in r["missing"]})
         if missing:
@@ -340,9 +281,8 @@ class _FbxMaterialsMixin:
             )
         return records
 
-    @classmethod
     def _apply_fbx_materials(
-        cls,
+        self,
         edit,
         fbx: str,
         search_dirs: Iterable[str] = (),
@@ -374,9 +314,9 @@ class _FbxMaterialsMixin:
         from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
-        record = cls._stated_materials(
-            cls.data_export_channel(edit.gltf, cls.MATERIALS_KEY),
-            read if read is not None else cls.read_fbx_materials(fbx),
+        record = self._stated_materials(
+            self._mc.data_export_channel(edit.gltf, self._mc.MATERIALS_KEY),
+            read if read is not None else self._mc.read_fbx_materials(fbx),
         )
         names = MaterialFamilies.texture_files(record)
         store = TempArtifacts("glb_material_maps", policy="scoped")
@@ -395,16 +335,17 @@ class _FbxMaterialsMixin:
                 )
                 if path:
                     found[name] = path
-            written = cls.apply_glb_materials(edit, record, found)
+            written = self._mc.apply_glb_materials(edit, record, found)
         finally:
             store.cleanup(force=True)
-        if cls._drop_data_export_channel(edit.gltf, cls.MATERIALS_KEY):
+        if self._mc._sidecar._drop_data_export_channel(
+            edit.gltf, self._mc.MATERIALS_KEY
+        ):
             edit.dirty = True
         return record, written
 
-    @classmethod
     def _write_material(
-        cls, edit, mat: dict, entry: Mapping[str, Any], lookup: Mapping[str, str]
+        self, edit, mat: dict, entry: Mapping[str, Any], lookup: Mapping[str, str]
     ) -> Dict[str, Any]:
         """One GLB material set to *entry*; ``{"maps", "missing", "orm",
         "strength"}``."""
@@ -417,11 +358,11 @@ class _FbxMaterialsMixin:
                 return
             current = (container.get(slot) or {}).get("index")
             image = edit.image_for_texture(current) if current is not None else None
-            if image is not None and cls._same_file(edit.image_label(image), name):
+            if image is not None and self._same_file(edit.image_label(image), name):
                 maps.append(name)
                 return
             path = lookup.get(name.casefold())
-            index = cls._embed_image(edit, path) if path else None
+            index = self._mc._images._embed_image(edit, path) if path else None
             if index is None:
                 missing.append(name)
                 return
@@ -447,7 +388,7 @@ class _FbxMaterialsMixin:
         pbr["metallicFactor"], pbr["roughnessFactor"] = metallic, roughness
         packed = None
         if metal or rough:
-            packed = cls._pack_material_orm(
+            packed = self._pack_material_orm(
                 edit,
                 sources.get(occlusion) if occlusion else None,
                 sources.get(rough) if rough else None,
@@ -506,9 +447,9 @@ class _FbxMaterialsMixin:
             mat.pop("alphaCutoff", None)
         mat["doubleSided"] = bool(entry.get("doubleSided"))
         if entry.get("unlit"):
-            extensions[cls.UNLIT_EXTENSION] = {}
+            extensions[self._mc.UNLIT_EXTENSION] = {}
         else:
-            extensions.pop(cls.UNLIT_EXTENSION, None)
+            extensions.pop(self._mc.UNLIT_EXTENSION, None)
         if not extensions:
             mat.pop("extensions", None)
         return {
@@ -518,9 +459,8 @@ class _FbxMaterialsMixin:
             "strength": strength,
         }
 
-    @classmethod
     def _pack_material_orm(
-        cls,
+        self,
         edit,
         occlusion: Optional[str],
         rough: Optional[str],
@@ -547,11 +487,13 @@ class _FbxMaterialsMixin:
                 occlusion, rough, metal, save=False, fill_values={"R": 255, "G": 255, "B": 255}
             )
             buffer = io.BytesIO()
-            image.save(buffer, format="PNG", compress_level=cls.INTERMEDIATE_PNG_LEVEL)
+            image.save(
+                buffer, format="PNG", compress_level=self._mc.INTERMEDIATE_PNG_LEVEL
+            )
         except Exception as error:  # noqa: BLE001 -- a bad map must not cost the material
             logger.warning("Materials: the ORM of %s could not be packed: %s", name, error)
             return None
-        return cls._embed_image_bytes(
+        return self._mc._images._embed_image_bytes(
             edit, key, buffer.getvalue(), "image/png", name=f"orm_{name}"
         )
 

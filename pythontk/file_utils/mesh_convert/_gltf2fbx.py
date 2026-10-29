@@ -1614,13 +1614,6 @@ class _GltfToFbx(object):
             sections[HandoffManifest.INSTANCES] = instances
         return HandoffManifest.build(**sections)
 
-
-class _Gltf2FbxMixin:
-    """glTF -> FBX with no DCC. A private part of :class:`MeshConvert`."""
-
-    GLTF_EXTENSIONS = GLTF_EXTENSIONS
-    GLTF_UNDECODABLE_EXTENSIONS = GLTF_UNDECODABLE_EXTENSIONS
-
     @classmethod
     def gltf_to_fbx(
         cls,
@@ -1634,41 +1627,6 @@ class _Gltf2FbxMixin:
         overwrite: bool = False,
         report: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Convert a ``.glb`` / ``.gltf`` to a binary FBX -- no DCC involved.
-
-        Writes the payload a host imports a glTF through when it has no glTF
-        importer (see the module docstring for what crosses and what does not):
-        the FBX, the material images as files in *texture_dir*, and -- with
-        *manifest* -- the ``.manifest.json`` sidecar beside the FBX.
-
-        Parameters:
-            src: The glTF container.
-            dst: Output FBX path; defaults to *src* with ``.fbx``.
-            texture_dir: Where the images are written, each named for the map
-                type it feeds; defaults to ``<dst stem>_textures`` beside *dst*.
-                KTX2 images are decoded to PNG through KTX-Software's ``ktx``
-                (:meth:`Ktx2Encoder.decode`); without it they are skipped and
-                reported, and the geometry still converts.
-            include_animation: Convert the first animation's translation /
-                rotation / scale channels.
-            fps: The rate keys are resampled at where they must be (cubic
-                splines; slerped rotation between sparse keys), and the clock the
-                manifest records. ``None`` reads it off the key spacing, else 24.
-            manifest: Write the :class:`HandoffManifest` sidecar.
-            overwrite: Replace an existing *dst*.
-            report: Filled with counts: nodes, meshes, materials, textures,
-                textures_missing, skins, animation, fps, keys, skipped.
-
-        Returns:
-            The FBX path.
-
-        Raises:
-            FileNotFoundError: *src* does not exist.
-            FileExistsError: *dst* exists and *overwrite* is False.
-            ValueError: *src* is not a glTF container, or requires an
-                extension whose geometry cannot be decoded here
-                (:data:`GLTF_UNDECODABLE_EXTENSIONS`).
-        """
         src = os.path.abspath(os.path.expanduser(os.path.expandvars(str(src))))
         if not os.path.isfile(src):
             raise FileNotFoundError(f"glTF not found: {src}")
@@ -1685,7 +1643,7 @@ class _Gltf2FbxMixin:
             texture_dir or os.path.splitext(dst)[0] + "_textures"
         )
 
-        build = _GltfToFbx(
+        build = cls(
             _GltfDocument(src),
             texture_dir=texture_dir,
             include_animation=include_animation,

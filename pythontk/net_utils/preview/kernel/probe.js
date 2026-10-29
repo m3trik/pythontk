@@ -1,5 +1,5 @@
 // The deliverable's reflection probe: the room its bake lit, captured by the
-// bake as an HDR from one point (MeshConvert._embed_lightmap_probe ->
+// bake as an HDR from one point (_Lightmaps._embed_lightmap_probe ->
 // `extras.lightmaps.probe`) -- what a lightmap cannot hold.
 //
 // A lightmap is diffuse irradiance with no direction in it, so a baked METAL,
@@ -39,7 +39,7 @@
 // where it hangs; one hanging inside the room (over a bench) is read as if it
 // hung on the wall behind it, so the probe ships COPIES of itself for groups of
 // receivers, each with the lights drawn in where box projection shows them true
-// for that group (MeshConvert._embed_highlight_probes, `probe.highlights`). A
+// for that group (_Highlights._embed_highlight_probes, `probe.highlights`). A
 // copy is the probe plus its layer, prefiltered like the probe, and its
 // materials read it as their own envMap -- one lookup, as every other material
 // reads the probe, so the highlights cost no shader work. The room's shell

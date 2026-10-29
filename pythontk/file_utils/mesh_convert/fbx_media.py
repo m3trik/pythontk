@@ -1512,7 +1512,7 @@ class FbxMedia(_FbxMediaInternal):
         export set. A reader takes each record from the scene's own carrier,
         and a module's only where the scene's carries none, the first in file
         order (unitytk ``CarrierImport.Collect``,
-        ``MeshConvert._data_export_carrier``), so a module's copy beside the
+        ``_Sidecar._data_export_carrier``), so a module's copy beside the
         scene's is never applied. A module's copy read alone keeps only the
         entries whose node the file carries (:attr:`NODE_ENTRIES`; the name
         exactly, else its namespace-stripped leaf -- the appliers' match), and

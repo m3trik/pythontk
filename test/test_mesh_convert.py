@@ -14393,5 +14393,142 @@ class TestMaterialsRecordThroughTheConverter(unittest.TestCase):
             )
 
 
+class TestFacadeComposition(unittest.TestCase):
+    """MeshConvert is a facade over its parts, not a class built from mixins:
+    each job is a collaborator it builds on the class it is read through, and
+    the whole public surface is the facade's own."""
+
+    def test_the_facade_inherits_no_job(self):
+        from pythontk import HelpMixin
+
+        self.assertEqual(MeshConvert.__bases__, (HelpMixin,))
+
+    def test_every_public_name_is_the_facades_own(self):
+        from pythontk import HelpMixin
+
+        inherited = sorted(
+            name
+            for name in dir(MeshConvert)
+            if not name.startswith("_")
+            and name not in vars(MeshConvert)
+            and not hasattr(HelpMixin, name)
+        )
+        self.assertEqual(inherited, [])
+
+    def test_a_subclass_override_reaches_a_parts_own_calls(self):
+        class Stop(Exception):
+            pass
+
+        class Sub(MeshConvert):
+            @classmethod
+            def open_glb(cls, glb):
+                raise Stop(glb)
+
+        with self.assertRaises(Stop):
+            Sub.read_glb_handoff("never_opened.glb")
+
+    def test_a_subclass_dialect_row_reads_with_the_subclass_method(self):
+        """``FBX_FAMILIES``' seam -- a new dialect is one row and its method --
+        holds on a subclass: the row's method is found on the class read
+        through, as the row is."""
+        from test_fbx_media import build_stingray_fbx
+
+        tmp = tempfile.mkdtemp(prefix="mc_dialect_")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = build_stingray_fbx(
+            os.path.join(tmp, "m.fbx"), {}, props={"custom_marker": 1.0}, name="m"
+        )
+
+        class Sub(MeshConvert):
+            FBX_FAMILIES = (
+                ("pbr", "Maya|custom_marker", "_fbx_custom_props"),
+            ) + MeshConvert.FBX_FAMILIES
+
+            @staticmethod
+            def _fbx_custom_props(props, notes, name):
+                return {"base_color": (1.0, 0.0, 0.0), "metallic": 0.0}
+
+        (entry,) = Sub.read_fbx_materials(path)["materials"]
+        self.assertEqual(entry["baseColorFactor"][:3], [1.0, 0.0, 0.0])
+
+    def test_every_delegation_forwards_its_own_signature(self):
+        """Each one-statement delegation hands its part a parameter list the
+        part's method declares the same (names, kinds, defaults), every
+        parameter by its own name: the facade's copy of a signature cannot
+        drift from the implementation's."""
+        import ast
+        import inspect
+
+        from pythontk.core_utils.class_property import ClassProperty
+        from pythontk.file_utils.mesh_convert import _mesh_convert as module
+
+        parts = {
+            name: value.getter
+            for name, value in vars(MeshConvert).items()
+            if isinstance(value, ClassProperty) and isinstance(value.getter, type)
+        }
+        tree = ast.parse(inspect.getsource(module))
+        facade = next(
+            n
+            for n in tree.body
+            if isinstance(n, ast.ClassDef) and n.name == "MeshConvert"
+        )
+        checked, problems = 0, []
+        for fn in facade.body:
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            body = [
+                s
+                for s in fn.body
+                if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))
+            ]
+            if len(body) != 1 or not isinstance(body[0], ast.Return):
+                continue
+            call = body[0].value
+            if not isinstance(call, ast.Call):
+                continue
+            chain, node = [], call.func
+            while isinstance(node, ast.Attribute):
+                chain.insert(0, node.attr)
+                node = node.value
+            if isinstance(node, ast.Name):
+                chain.insert(0, node.id)
+            if len(chain) == 3 and chain[1] in parts:  # cls.<part>.<name>
+                target = getattr(parts[chain[1]], chain[2], None)
+            elif len(chain) == 2 and chain[0] in vars(module) and chain[0] != "cls":
+                target = getattr(vars(module)[chain[0]], chain[1], None)  # Part.name
+            else:
+                continue  # an inlined statement, not a delegation
+            checked += 1
+            if target is None:
+                problems.append(f"{fn.name}: no {'.'.join(chain)}")
+                continue
+            wanted = [
+                (p.name, p.kind, p.default)
+                for p in inspect.signature(target).parameters.values()
+                if p.name not in ("self", "cls")
+            ]
+            given = [
+                (p.name, p.kind, p.default)
+                for p in inspect.signature(
+                    getattr(MeshConvert, fn.name)
+                ).parameters.values()
+            ]
+            if given != wanted:
+                problems.append(f"{fn.name}: signature {given} != {wanted}")
+            names = [p[0] for p in wanted]
+            passed = [
+                (names[i] if i < len(names) else None, ast.unparse(a).lstrip("*"))
+                for i, a in enumerate(call.args)
+            ] + [(k.arg, ast.unparse(k.value)) for k in call.keywords]
+            for name, expr in passed:
+                if name is not None and name != expr:
+                    problems.append(f"{fn.name}: {name} <- {expr}")
+            if sorted(e for _, e in passed) != sorted(names):
+                problems.append(f"{fn.name}: forwards {passed}, declares {names}")
+        self.assertGreater(checked, 80)
+        self.assertEqual(problems, [])
+
+
 if __name__ == "__main__":
     unittest.main()

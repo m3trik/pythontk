@@ -7,7 +7,7 @@ Checks and repairs what the conversion made of the authored materials
 metallic/roughness, emissive, alpha mode and normal scale by material name.
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
-the other passes through ``cls``.
+the other passes through the facade it holds (``self._mc``).
 """
 
 import io
@@ -21,7 +21,7 @@ from pythontk.file_utils.mesh_convert.glb.edit import GlbTarget
 logger = logging.getLogger(__name__)
 
 
-class _MaterialsMixin:
+class _Materials:
     """Materials: sanity checks and the per-channel writers.
 
     A private part of :class:`MeshConvert`; call it through the facade.
@@ -34,32 +34,10 @@ class _MaterialsMixin:
     #: write and every production path re-encodes the result anyway.
     INTERMEDIATE_PNG_LEVEL = 1
 
-    @classmethod
-    def check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]:
-        """Inspect a GLB for materials flagged transparent that should be opaque.
+    def __init__(self, mc: type) -> None:
+        self._mc = mc  # the facade class: every name it exposes is read through it
 
-        Catches the Maya/Stingray/OpenPBR/Standard-Surface failure mode where
-        a color texture happens to carry an alpha channel (often PNG palette
-        transparency) without any actual transparency intent. Maya's FBX
-        exporter writes a TransparencyFactor; FBX2glTF then sets
-        ``alphaMode: BLEND`` and the renderer disables depth-write —
-        producing the "inverted face" / wrong-render-order artifact.
-
-        A material is flagged when its ``alphaMode`` is BLEND or MASK *and*
-        its base-color texture's alpha channel is uniformly 255. Genuine
-        transparency (varying alpha) is not reported.
-
-        Parameters:
-            glb: Path to a binary glTF (.glb) file, or an open
-                :class:`GlbEdit` session to inspect. Read-only either way.
-
-        Returns:
-            List of findings. Each finding is a dict with keys:
-                material   — material name (or '<material[i]>')
-                alpha_mode — "BLEND" or "MASK"
-                image      — image name / uri / fallback id
-                reason     — short human-readable explanation
-        """
+    def check_glb_materials(self, glb: GlbTarget) -> List[Dict[str, str]]:
         try:
             # Presence check only — the session does the decoding. Imported as
             # `from PIL import Image` rather than `import PIL` because the dead
@@ -86,7 +64,7 @@ class _MaterialsMixin:
         }
 
         findings: List[Dict[str, str]] = []
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             for mi, mat in enumerate(edit.materials):
                 alpha_mode = mat.get("alphaMode", "OPAQUE")
                 if alpha_mode not in REASONS:  # OPAQUE or unknown — skip
@@ -119,38 +97,7 @@ class _MaterialsMixin:
 
         return findings
 
-    @classmethod
-    def fix_glb_phantom_opaque_alpha(cls, glb: GlbTarget) -> List[Dict]:
-        """Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
-
-        When a Maya phong/lambert/blinn shader has its ``.transparency`` fed
-        by a file node's ``.outTransparency``, Maya's FBX exporter writes
-        ``TransparencyFactor=1.0`` (the texture is meant to modulate
-        per-pixel). FBX2glTF then computes
-        ``baseColorFactor[3] = 1 - 1 = 0`` — multiplying every fragment's
-        alpha by zero and rendering the mesh fully invisible regardless of
-        texture content.
-
-        A material is fixed when ALL of:
-            - ``alphaMode`` is BLEND or MASK
-            - ``baseColorFactor[3]`` is ~0
-            - ``baseColorTexture`` exists and references an image with
-              *varying* alpha (a real cutout mask, not uniformly 0 or 255)
-
-        On match, ``baseColorFactor[3]`` is reset to 1.0 so per-pixel alpha
-        from the texture controls visibility as intended.
-
-        Parameters:
-            glb: Path to a binary glTF (.glb), modified in place, or an open
-                :class:`GlbEdit` session whose owner will write it.
-
-        Returns:
-            List of fix records. Empty when nothing matched. Each record:
-                material   — material name
-                old_alpha  — original baseColorFactor[3]
-                new_alpha  — 1.0
-                image      — the baseColorTexture image identifier
-        """
+    def fix_glb_phantom_opaque_alpha(self, glb: GlbTarget) -> List[Dict]:
         try:
             # Presence check only — the session does the decoding. Imported as
             # `from PIL import Image` rather than `import PIL` because the dead
@@ -164,7 +111,7 @@ class _MaterialsMixin:
 
         EPSILON = 1e-4
         fixes: List[Dict] = []
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             for mi, mat in enumerate(edit.materials):
                 if mat.get("alphaMode") not in ("BLEND", "MASK"):
                     continue
@@ -205,50 +152,9 @@ class _MaterialsMixin:
 
         return fixes
 
-    @classmethod
     def set_glb_metallic_roughness(
-        cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]
+        self, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]
     ) -> List[Dict]:
-        """Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
-
-        The third sibling of :meth:`set_glb_base_color` / :meth:`set_glb_emissive`,
-        for the most *destructive* form of the same FBX translation gap. Measured on
-        a production room (Maya 2025 StingrayPBS -> FBX2glTF): the converter packed
-        the material's roughness+metallic into a **solid-white** ORM -- and since
-        glTF reads metallic from the blue channel, that renders the whole room
-        metallic=1. A fully metallic surface has no diffuse response, and a baked
-        lightmap contributes *only* to diffuse -- so in a lightmap-lit viewer
-        (which turns its own lights off) the failure compounds to pure black, the
-        single symptom least traceable back to "your roughness texture was lost in
-        translation".
-
-        Packing follows the glTF convention (R=occlusion, G=roughness, B=metallic)
-        through :meth:`MapFactory.pack_orm_texture` -- the registry's one ORM
-        packer -- with R filled white when no AO source resolves, so the
-        occlusion binding below stays neutral. The packed image embeds through
-        the same session cache as every other writer, so two materials naming the
-        same source maps share one embed.
-
-        The packed image is also bound as the material's ``occlusionTexture``
-        (glTF's packed-ORM idiom -- occlusion is read from that slot alone, so
-        an unbound R channel is dead payload) whenever the slot is free or
-        still points at the converted ORM this write replaces; an authored
-        separate AO map is never displaced. A lightmap applied afterwards
-        recognises the ORM binding by its shared texture index and takes the
-        slot silently (:meth:`apply_glb_lightmaps`).
-
-        Parameters:
-            glb: Path to a binary glTF (.glb), modified in place, or an open
-                :class:`GlbEdit` session whose owner will write it.
-            metallic_roughness: ``{material_name: {"metallic": path,
-                "roughness": path, "occlusion": path}}``. All keys optional --
-                a missing metallic fills black (non-metal), missing roughness
-                fills black, missing occlusion fills white -- but an entry with
-                no readable map at all writes nothing.
-
-        Returns:
-            List of records: ``material``, ``metallic``, ``roughness``.
-        """
         if not metallic_roughness:
             return []
 
@@ -262,9 +168,9 @@ class _MaterialsMixin:
         #: `_match_glb_materials` found no match for and maps whose pack failed
         #: -- counting those makes the headline claim work that never happened.
         written: List[str] = []
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
-            for name, spec, mat in cls._match_glb_materials(
+            for name, spec, mat in self._match_glb_materials(
                 gltf, metallic_roughness, "set_glb_metallic_roughness"
             ):
                 sources = tuple(
@@ -283,9 +189,9 @@ class _MaterialsMixin:
                         image.save(
                             buffer,
                             format="PNG",
-                            compress_level=cls.INTERMEDIATE_PNG_LEVEL,
+                            compress_level=self._mc.INTERMEDIATE_PNG_LEVEL,
                         )
-                        tex_index = cls._embed_image_bytes(
+                        tex_index = self._mc._images._embed_image_bytes(
                             edit,
                             "|".join(str(s) for s in sources),
                             buffer.getvalue(),
@@ -387,64 +293,20 @@ class _MaterialsMixin:
     ORM_FINDING_METALLIC_FULL = "metallic=1 everywhere"
     ORM_FINDING_UNVALIDATED = "unvalidated"
 
-    @classmethod
     def suspect_orm_materials(
-        cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None
+        self, glb: GlbTarget, *, described: Optional[Iterable[str]] = None
     ) -> Dict[str, Dict[str, str]]:
-        """Materials whose delivered ORM binding this pipeline never validated.
-
-        Two findings, one walk, because both are the same question asked of the
-        same slot -- *is what a consumer will read here what the scene meant?*
-
-        ``metallic=1 everywhere``
-            The measured production failure. FBX2glTF white-fills a grayscale
-            ("L"-mode) PBR source; glTF reads metallic from **blue**; a
-            solid-white packing therefore renders metallic=1, which has no
-            diffuse response, and a baked lightmap contributes to diffuse
-            alone -- so a lightmapped viewer renders it pure black.
-
-        ``unvalidated``
-            The material carries an ORM binding that the envelope never
-            described, so nothing in this pipeline checked its channel
-            semantics. This is the case a whiteness test cannot see: a mask map
-            packed for another engine (Unity's MaskMap is R=Metallic,
-            G=Occlusion, B=Detail) that reaches the GLB unrepaired is read as
-            ORM and misinterpreted channel for channel, while looking like
-            perfectly ordinary image data. Reported only when the caller says
-            what WAS described, since only they know.
-
-        Parameters:
-            glb: Path to a binary glTF (.glb) or an open :class:`GlbEdit`. Read
-                only -- nothing here marks the session dirty.
-            described: Material names the envelope's ``metallic_roughness``
-                section covers, i.e. the ones a repair pass validated and
-                rewrote. Their packing comes from the authoring maps rather
-                than from the converter, so they are exempt from both findings
-                (any whiteness in them is a source question
-                :meth:`MapFactory.pack_orm_texture` already logs per map).
-                A described material covers its LIGHTMAP CLONES too (see
-                :attr:`LIGHTMAP_CLONE_SUFFIX`): the envelope was written before
-                they existed, so matching literally reports the whole set. Safe
-                by construction rather than by assumption -- a clone is a deep
-                copy of its base that rebinds only the lightmap slot, and the
-                sidecar repair runs BEFORE the lightmap pass, so the binding
-                being exempted here is the repaired one the base was checked on.
-                ``None`` means "nothing is known to be described", which
-                suppresses the ``unvalidated`` finding rather than reporting
-                every material.
-
-        Returns:
-            ``{material name: {"image": label, "finding": str}}``; empty when
-            none, which is the common case and the one that costs no decode.
-        """
         known = set(described) if described is not None else None
         findings: Dict[str, Dict[str, str]] = {}
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             for mat in edit.materials:
                 name = mat.get("name")
                 if not name or (
                     known is not None
-                    and (name in known or cls._lightmap_clone_base(name) in known)
+                    and (
+                        name in known
+                        or self._mc._lightmaps._lightmap_clone_base(name) in known
+                    )
                 ):
                     continue
                 pbr = mat.get("pbrMetallicRoughness") or {}
@@ -457,12 +319,12 @@ class _MaterialsMixin:
                 # A zero factor cancels the texture, so nothing it carries can
                 # be destructive -- but it is still unvalidated data.
                 harmful = pbr.get("metallicFactor", 1.0) != 0 and edit.channel_extrema(
-                    img_idx, cls._ORM_HARMFUL_CHANNEL
+                    img_idx, self._mc._ORM_HARMFUL_CHANNEL
                 ) == (255, 255)
                 if harmful:
-                    finding = cls.ORM_FINDING_METALLIC_FULL
+                    finding = self._mc.ORM_FINDING_METALLIC_FULL
                 elif known is not None:
-                    finding = cls.ORM_FINDING_UNVALIDATED
+                    finding = self._mc.ORM_FINDING_UNVALIDATED
                 else:
                     continue
                 findings[name] = {
@@ -515,55 +377,17 @@ class _MaterialsMixin:
             )
         return matched
 
-    @classmethod
     def set_glb_emissive(
-        cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]
+        self, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]
     ) -> List[Dict]:
-        """Write emissive color / texture into a GLB's materials, by name.
-
-        Repairs the channel Maya's FBX exporter simply drops. It maps emissive
-        only for its own legacy shading models (lambert / blinn / phong via
-        ``incandescence``); ``aiStandardSurface``, ``StingrayPBS`` and openPBR
-        emission never reach the FBX at all, so the GLB has no ``emissiveFactor``
-        to correct and the surface previews as unlit. Measured against Maya
-        2025 + MtoA: lambert and blinn arrive with ``emissiveFactor``, the other
-        two arrive with the key absent entirely.
-
-        Emissive intensity above 1.0 is preserved rather than clipped, by
-        normalizing the color and carrying the magnitude in
-        ``KHR_materials_emissive_strength`` — glTF's base ``emissiveFactor`` is
-        LDR, so a Maya emission of 5.0 would otherwise flatten to 1.0 and lose
-        exactly the over-bright look that motivates using it. The extension is
-        declared in ``extensionsUsed`` only when actually applied; loaders that
-        don't implement it still get a sensible clamped color.
-
-        Textures are embedded as ``data:`` URIs *for the duration of the
-        session*, which keeps every edit inside the JSON chunk — no buffer
-        offsets to recompute, which is the part of GLB surgery that silently
-        corrupts a file. :meth:`_relocate_embedded_images` then appends them to
-        the BIN once on close, so the file that lands pays none of base64's
-        ~33% premium. Repeated paths are embedded once per session, so a map
-        used as both base colour and emissive costs one copy, not one per
-        channel.
-
-        Parameters:
-            glb: Path to a binary glTF (.glb), modified in place, or an open
-                :class:`GlbEdit` session whose owner will write it.
-            emissive: ``{material_name: {"color": (r, g, b), "texture": path}}``.
-                Both keys optional; a texture with no color implies white.
-                Names not present in the GLB are reported, not raised.
-
-        Returns:
-            List of records: ``material``, ``factor``, ``strength``, ``texture``.
-        """
         if not emissive:
             return []
 
         records: List[Dict] = []
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             used_strength = False
-            for name, spec, mat in cls._match_glb_materials(
+            for name, spec, mat in self._match_glb_materials(
                 gltf, emissive, "set_glb_emissive"
             ):
                 color = list(spec.get("color") or (1.0, 1.0, 1.0))[:3]
@@ -603,7 +427,9 @@ class _MaterialsMixin:
                     used_strength = True
 
                 tex_path = spec.get("texture")
-                tex_index = cls._embed_image(edit, tex_path) if tex_path else None
+                tex_index = (
+                    self._mc._images._embed_image(edit, tex_path) if tex_path else None
+                )
                 if tex_index is not None:
                     mat["emissiveTexture"] = {"index": tex_index}
 
@@ -629,44 +455,19 @@ class _MaterialsMixin:
                 if "KHR_materials_emissive_strength" not in used:
                     used.append("KHR_materials_emissive_strength")
 
-            cls._prune_empty_containers(gltf)
+            self._mc._images._prune_empty_containers(gltf)
             edit.dirty = True
 
         return records
 
-    @classmethod
     def set_glb_alpha_mode(
-        cls, glb: GlbTarget, alpha_mode: Dict[str, Dict[str, Any]]
+        self, glb: GlbTarget, alpha_mode: Dict[str, Dict[str, Any]]
     ) -> List[Dict]:
-        """Write ``alphaMode`` / ``alphaCutoff`` into a GLB's materials, by name.
-
-        The sibling of :meth:`set_glb_base_color` for the one material fact
-        FBX2glTF has to guess: it derives ``alphaMode`` from the base colour's
-        alpha channel alone, so an RGBA base colour is always ``BLEND`` -- a
-        cutout material (``MASK``: alpha test, depth writes, the opaque queue)
-        cannot be expressed by the FBX at all, and a solid body wearing a
-        blended material sorts its own back faces through its front in every
-        WebXR viewer. The DCC knows which it authored (Maya's
-        ``SceneState._read_alpha_mode`` reads the StingrayPBS graph) and says
-        so through this section.
-
-        Parameters:
-            glb: Path to a binary glTF (.glb), modified in place, or an open
-                :class:`GlbEdit` session whose owner will write it.
-            alpha_mode: ``{material_name: {"mode": "OPAQUE"|"MASK"|"BLEND",
-                "cutoff": float}}``. ``cutoff`` is written only for ``MASK``
-                (absent = glTF's default 0.5); any other mode drops a stale
-                one. Names absent from the GLB are reported, an unknown mode
-                is skipped with a warning rather than written.
-
-        Returns:
-            List of records: ``material``, ``alphaMode``, ``alphaCutoff``.
-        """
         if not alpha_mode:
             return []
         records: List[Dict] = []
-        with cls.open_glb(glb) as edit:
-            for name, spec, mat in cls._match_glb_materials(
+        with self._mc.open_glb(glb) as edit:
+            for name, spec, mat in self._match_glb_materials(
                 edit.gltf, alpha_mode, "set_glb_alpha_mode"
             ):
                 mode = str(spec.get("mode") or "").upper()
@@ -696,91 +497,34 @@ class _MaterialsMixin:
     #: glTF's unlit shading model (three.js: ``MeshBasicMaterial``).
     UNLIT_EXTENSION = "KHR_materials_unlit"
 
-    @classmethod
     def set_glb_unlit(
-        cls, glb: GlbTarget, unlit: Dict[str, Dict[str, Any]]
+        self, glb: GlbTarget, unlit: Dict[str, Dict[str, Any]]
     ) -> List[Dict]:
-        """Mark a GLB's materials unlit (``KHR_materials_unlit``), by name.
-
-        The one shading fact no FBX can carry: FBX2glTF makes every material it
-        meets lit PBR, whatever the DCC authored -- a Maya ``surfaceShader``, or
-        the black silhouette of a projected contact shadow. Lit, such a
-        surface takes the viewer's environment specular, and a shadow plane
-        measured BRIGHTER than the floor it lies on (2026-10-15, WebXR: 24.4
-        -> 28.3 mean luminance, off -> on). Unlit, its base colour and alpha
-        are what shows. The DCC says which materials it authored unlit
-        (mayatk ``SceneState._read_unlit``) through this section.
-
-        Metallic 0 / roughness 1 ride along for a viewer without the
-        extension, which then falls back to lit PBR at its most diffuse.
-
-        Parameters:
-            glb: Path to a binary glTF (.glb), modified in place, or an open
-                :class:`GlbEdit` session whose owner will write it.
-            unlit: ``{material_name: {}}`` -- the entries carry nothing yet;
-                a dict so the section reads like its siblings. Names absent
-                from the GLB are reported.
-
-        Returns:
-            List of records: ``material``.
-        """
         if not unlit:
             return []
         records: List[Dict] = []
-        with cls.open_glb(glb) as edit:
-            for name, _spec, mat in cls._match_glb_materials(
+        with self._mc.open_glb(glb) as edit:
+            for name, _spec, mat in self._match_glb_materials(
                 edit.gltf, unlit, "set_glb_unlit"
             ):
-                mat.setdefault("extensions", {})[cls.UNLIT_EXTENSION] = {}
+                mat.setdefault("extensions", {})[self._mc.UNLIT_EXTENSION] = {}
                 pbr = mat.setdefault("pbrMetallicRoughness", {})
                 pbr["metallicFactor"] = 0.0
                 pbr["roughnessFactor"] = 1.0
                 records.append({"material": name})
             if records:
                 used = edit.gltf.setdefault("extensionsUsed", [])
-                if cls.UNLIT_EXTENSION not in used:
-                    used.append(cls.UNLIT_EXTENSION)
+                if self._mc.UNLIT_EXTENSION not in used:
+                    used.append(self._mc.UNLIT_EXTENSION)
                 edit.dirty = True
         return records
 
-    @classmethod
     def set_glb_normal_scale(
-        cls, glb: GlbTarget, scale: float, lightmapped_only: bool = True
+        self, glb: GlbTarget, scale: float, lightmapped_only: bool = True
     ) -> int:
-        """Write ``normalTexture.scale`` into a GLB's materials.
-
-        How strongly a normal map reads is a DELIVERY decision, not an
-        authoring one, and it is felt hardest on baked geometry: a lightmap
-        contributes irradiance with no direction in it, so on a lightmapped
-        surface the normal map survives only through the environment term --
-        which the viewer deliberately dims, because that surface's lighting is
-        already in its bake. The result is a correct but flat-looking room, and
-        the dial that brings the detail back without touching the bake is this
-        one.
-
-        Written as ``normalTexture.scale`` because glTF already has the field:
-        it is core (no extension), every runtime honours it, and three.js reads
-        it straight into ``material.normalScale``. So the preview's slider and
-        the delivered file say the same thing in the same place, and a value
-        saved here comes back on the next load with nothing to re-apply it.
-
-        Parameters:
-            glb: Path to a binary glTF (.glb), modified in place, or an open
-                :class:`GlbEdit` session whose owner will write it.
-            scale: The multiplier. ``1.0`` is glTF's default and REMOVES the
-                key rather than writing it, so a reset leaves the file as it
-                would have been had the dial never moved.
-            lightmapped_only: Restrict to the materials
-                ``extras.lightmaps`` names -- the ones the flattening
-                applies to. ``False`` writes every material carrying a normal
-                map. A file with no manifest matches nothing under ``True``.
-
-        Returns:
-            How many materials were changed.
-        """
         scale = float(scale)
         changed = 0
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             named = None
             if lightmapped_only:
                 block = SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS)
@@ -813,47 +557,16 @@ class _MaterialsMixin:
             )
         return changed
 
-    @classmethod
     def set_glb_base_color(
-        cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]
+        self, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]
     ) -> List[Dict]:
-        """Write base colour / texture into a GLB's materials, by name.
-
-        The sibling of :meth:`set_glb_emissive`, for the same underlying gap.
-        Measured against Maya 2025 + MtoA: ``lambert`` / ``blinn`` / ``phong``
-        carry their colour through FBX (scaled by Maya's ``diffuse`` weight),
-        while ``aiStandardSurface`` and ``standardSurface`` arrive with
-        ``baseColorFactor`` at a flat **[1,1,1,1]** -- Maya's exporter does not
-        map them at all, so every modern shader previews as white plastic. That
-        also swamps emissive: a surface already at white leaves no headroom for
-        an additive term to read against.
-
-        Unlike emissive there is no strength extension and no zero-skip: black
-        is a legitimate base colour, so values are clamped into [0,1] rather
-        than normalized, and an all-zero colour is written as authored.
-
-        Parameters:
-            glb: Path to a binary glTF (.glb), modified in place, or an open
-                :class:`GlbEdit` session whose owner will write it.
-            base_color: ``{material_name: {"color": (r, g, b), "texture": path,
-                "alpha": a}}``. All keys optional. ``alpha`` is the material's
-                own opacity factor (``baseColorFactor[3]``, which glTF
-                multiplies into the texture's alpha): a shader whose opacity
-                is ``texture alpha x a scalar`` or a bare constant -- a shadow
-                plane's static fade -- that FBX cannot carry. Absent, the
-                converter's alpha stands. Names absent from the GLB are
-                reported.
-
-        Returns:
-            List of records: ``material``, ``factor``, ``texture``.
-        """
         if not base_color:
             return []
 
         records: List[Dict] = []
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
-            for name, spec, mat in cls._match_glb_materials(
+            for name, spec, mat in self._match_glb_materials(
                 gltf, base_color, "set_glb_base_color"
             ):
                 pbr = mat.setdefault("pbrMetallicRoughness", {})
@@ -862,7 +575,7 @@ class _MaterialsMixin:
                 tex_path = spec.get("texture")
                 tex_index = None
                 if tex_path:
-                    tex_index = cls._embed_image(edit, tex_path)
+                    tex_index = self._mc._images._embed_image(edit, tex_path)
                     if tex_index is not None:
                         pbr["baseColorTexture"] = {"index": tex_index}
                         entry_written = True
@@ -936,7 +649,7 @@ class _MaterialsMixin:
                 # pending edits are not this one's to discard.
                 return []
 
-            cls._prune_empty_containers(gltf)
+            self._mc._images._prune_empty_containers(gltf)
             edit.dirty = True
 
         return records

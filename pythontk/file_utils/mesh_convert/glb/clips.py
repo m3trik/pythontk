@@ -583,7 +583,7 @@ class GlbClips(_GlbClipsInternal):
 
         Shared by both paths, because a file has to describe its own origin
         whether the shots were cut from this stack or it is the only clip
-        shipping -- ``MeshConvert._clip_zero`` and every gate that places a
+        shipping -- ``_Animation._clip_zero`` and every gate that places a
         clip in time read it back from here.
 
         Keeps the stack's own name when a declared shot already claims
