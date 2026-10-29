@@ -4,19 +4,22 @@
 
 The auto-instancer's decision tree, with the config that steers it and the
 strategy it returns. It is scene-free except for one read, the prototype's
-triangle count, which is a hook: a host binding subclasses
-:class:`InstancingStrategy` and overrides :meth:`InstancingStrategy._get_triangle_count`
-to read its own mesh. Callers that already know the count pass it to
-:meth:`InstancingStrategy.evaluate` directly and need no binding at all.
+triangle count, which the host injects (:data:`TriangleCounter`, the
+strategy's ``count_triangles`` adapter). Callers that already know the count
+pass it to :meth:`InstancingStrategy.evaluate` directly and need no adapter.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Any, Callable, Optional
 
-__all__ = ["InstancingStrategy", "StrategyConfig", "StrategyType"]
+__all__ = ["InstancingStrategy", "StrategyConfig", "StrategyType", "TriangleCounter"]
+
+#: The host adapter :class:`InstancingStrategy` is injected with:
+#: ``count(mesh_node) -> int``, the triangle count of the host's prototype.
+TriangleCounter = Callable[[Any], int]
 
 
 class StrategyType(Enum):
@@ -53,6 +56,9 @@ class InstancingStrategy:
 
     Parameters:
         config: The constraints to decide under.
+        count_triangles: The host's read of a prototype's triangle count
+            (:data:`TriangleCounter`), asked when :meth:`evaluate` gets a
+            *mesh_node* and no count; ``None`` reads no scene (0).
     """
 
     # Below this triangle count a mesh is "micro" — cheaper combined than
@@ -67,8 +73,12 @@ class InstancingStrategy:
     HEAVY_TRI_THRESHOLD = 5000
     HEAVY_MIN_GROUP_SIZE = 3
 
-    def __init__(self, config: StrategyConfig):
+    def __init__(
+        self, config: StrategyConfig, count_triangles: Optional[TriangleCounter] = None
+    ):
         self.config = config
+        #: The host adapter (:data:`TriangleCounter`), or ``None``.
+        self.count_triangles = count_triangles
 
     def evaluate(
         self,
@@ -135,11 +145,11 @@ class InstancingStrategy:
         return StrategyType.COMBINE
 
     def _get_triangle_count(self, mesh_node: object) -> int:
-        """Hook: the triangle count of ``mesh_node``, the group's prototype.
+        """The triangle count of ``mesh_node``, the group's prototype.
 
-        A host binding overrides this to read its own mesh, returning 0 when
-        the node has none (a read that fails must not abort the pass). The
-        base reads no scene, so it always returns 0.
+        Read through the injected :attr:`count_triangles` adapter; 0 when there
+        is none, or when the read fails (a node with no mesh must not abort
+        the pass).
 
         Parameters:
             mesh_node: The host's handle on the prototype.
@@ -147,4 +157,9 @@ class InstancingStrategy:
         Returns:
             The triangle count, or 0.
         """
-        return 0
+        if self.count_triangles is None:
+            return 0
+        try:
+            return int(self.count_triangles(mesh_node))
+        except Exception:
+            return 0

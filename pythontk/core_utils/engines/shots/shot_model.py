@@ -3,19 +3,21 @@
 
 Provides :class:`ShotBlock` (the fundamental shot data structure) and
 :class:`ShotStore` (CRUD + observer + pluggable persistence).  This is the
-shared foundation both mayatk and blendertk consume: the model is engine-free,
-and every place that would otherwise reach into a DCC scene is exposed as an
-**overridable hook with a pure default** (see :meth:`ShotStore._scene_fps`,
-:meth:`ShotStore.has_animation`, :meth:`ShotStore.detect_regions`,
-:meth:`ShotStore.assess`, :meth:`ShotStore.publish_export_view`,
-:meth:`ShotStore._resolve_long_names`, :meth:`ShotStore._existing_objects`,
-:meth:`ShotStore._keyed_windows` and :meth:`ShotStore._curve_ledger_keys`).
-DCC toolkits subclass ``ShotStore`` and override those hooks; the pure core
-never imports ``maya`` or ``bpy``.
+shared foundation both mayatk and blendertk consume, and it is ONE store on
+every host: the model is engine-free, and every place that would otherwise
+reach into a DCC scene is a call on the store's injected **host adapter**, a
+:class:`ShotsHost` (mayatk's ``MayaShotsHost``, blendertk's
+``BlenderShotsHost``; :class:`PureShotsHost` holds the pure defaults).  What
+the hosts do alike -- the hand-off transfer, detection dispatch, the export
+publish, persistence install -- is written once here; only the calls that
+differ go through the adapter, so the two hosts cannot drift apart behind an
+override, and a fake host drives the whole store in plain-Python tests.  The
+pure core never imports ``maya`` or ``bpy``.
 
 Persistence is pluggable: call :meth:`ShotStore.set_persistence` with a backend
-that implements ``save(data)`` / ``load() -> dict | None``.  Absent a backend
-the store runs in pure in-memory mode.
+that implements ``save(data)`` / ``load() -> dict | None`` (a host supplies its
+own on first :meth:`ShotStore.active`).  Absent a backend the store runs in
+pure in-memory mode.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from typing import (
     Any,
     Callable,
     ClassVar,
+    ContextManager,
     Dict,
     Iterable,
     List,
@@ -70,6 +73,9 @@ __all__ = [
     "StoreInvalidated",
     "NativeStepFollowed",
     "ScenePersistence",
+    "ShotsHost",
+    "ShotTransferHost",
+    "PureShotsHost",
     "ShotEditLedger",
 ]
 
@@ -86,6 +92,330 @@ class ScenePersistence(Protocol):
     def save(self, data: Dict[str, Any]) -> None: ...
 
     def load(self) -> Optional[Dict[str, Any]]: ...
+
+
+# ---------------------------------------------------------------------------
+# Host adapter protocol
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class ShotTransferHost(Protocol):
+    """How a host's scene meets the hand-off codec (``ShotTransfer``): what
+    :meth:`ShotsHost.transfer` returns.
+
+    Each member is one of the codec's callables, with its signature: the
+    store hands them to ``ShotTransfer.encode`` / ``decode``
+    (:meth:`ShotStore.export_transfer`, :meth:`ShotStore.apply_transfer`).
+    """
+
+    def spell(self, name: str) -> str:
+        """How the carrier spells a scene name by default."""
+
+    def curve_refs(self) -> Callable[[str], Any]:
+        """``curve_ref(ledger key)`` for one encode: the ``(object, channel
+        label)`` (or a list of them) a claim's curve drives."""
+
+    def curve_key(self, node: str, label: str) -> Optional[str]:
+        """The ledger key of the curve on *node*'s channel *label*."""
+
+    def key_exists(self, curve: str, time: float) -> bool:
+        """Whether the curve behind ledger key *curve* holds a key at *time*."""
+
+    def resolve(self, name: str) -> Optional[str]:
+        """The one scene node a carrier name lands on, or ``None``."""
+
+    def channels(
+        self, names: Optional[List[str]]
+    ) -> Optional[Dict[str, Dict[str, Any]]]:
+        """The render-effect channels *names* carry (``None``: every object)."""
+
+    def write_channels(self, node: str, records: Dict[str, Any]) -> int:
+        """Land received render-effect *records* on *node*; returns how many
+        channels were written."""
+
+    def audio(self) -> List[Dict[str, Any]]:
+        """The scene's audio clips as the transfer's ``audio`` payload."""
+
+    def write_audio(self, clips: List[Dict[str, Any]]) -> int:
+        """Land received audio *clips*; returns how many were added."""
+
+
+@runtime_checkable
+class ShotsHost(Protocol):
+    """What the shot store asks of the host it runs in.
+
+    The store is one class on every host (:class:`ShotStore`); everything the
+    hosts do alike is written once on it, and only what a host genuinely
+    differs by comes through this fixed interface -- each DCC implements it
+    (``mtk.MayaShotsHost``, ``btk.BlenderShotsHost``), :class:`PureShotsHost`
+    holds the pure defaults, and a fake stands in for either in a plain-Python
+    test.  A role with several members of its own is one member returning
+    its own object, as :meth:`detection` and :meth:`transfer` do.  A store
+    holds its host as :attr:`ShotStore.host`: injected (``ShotStore(host=...)``,
+    :meth:`ShotStore.set_host`) or resolved from the running host on first ask
+    (:meth:`ShotStore.register_host`).
+
+    A member taking *store* reads or writes that store; the rest ask the host's
+    scene.  Each returns what the pure default (:class:`PureShotsHost`) does
+    when the host's scene cannot be reached.
+    """
+
+    #: Whether a scene's keys keep real TIME when its frame rate changes --
+    #: the shots rescale to follow them (Maya) -- or stay on their FRAMES,
+    #: so the store records the new rate and moves nothing (Blender):
+    #: :meth:`ShotStore.rescale_to_fps`.
+    keys_keep_time: bool
+
+    # ---- the scene and the store's lifecycle -----------------------------
+
+    def available(self) -> bool:
+        """Whether the host's scene can be reached (its API imports)."""
+
+    def persistence(self) -> Optional[ScenePersistence]:
+        """A new scene-persistence backend (:meth:`ShotStore.active` installs
+        it once), or ``None``."""
+
+    def store_state(self) -> Any:
+        """What the host keeps per store, made with each store
+        (:attr:`ShotStore.host_state`): Blender's rename history."""
+
+    def scene_fps(self) -> Optional[float]:
+        """The scene's frame rate, or ``None`` with no scene clock."""
+
+    def schedule_flush(self, store: "ShotStore") -> None:
+        """Have *store*'s pending write made (``store._flush_dirty``): at once,
+        or coalesced into one deferred write."""
+
+    def legacy_prefs(self) -> Optional[Dict[str, Any]]:
+        """The detection prefs the host kept before the prefs file existed,
+        under the file's keys (Maya's QSettings), or ``None``: read once, when
+        the file is absent (:meth:`ShotStore._restore_user_prefs`)."""
+
+    def migrate_ledger(self, store: "ShotStore") -> None:
+        """Bring a loaded *store*'s older-format edit ledger up to date."""
+
+    def follow_renames(self, store: "ShotStore") -> bool:
+        """Re-point every name *store* holds an object by at the name the
+        host now knows it by (:meth:`ShotStore.follow_renames`)."""
+
+    # ---- scene reads -----------------------------------------------------
+
+    def has_animation(self) -> bool:
+        """Whether the scene animates anything (:meth:`ShotStore.has_animation`)."""
+
+    def detection(self) -> Any:
+        """The host's region detection (``Detection``: ``detect_shot_regions``
+        and ``regions_from_selected_keys``), or ``None``."""
+
+    def assess(self, store: "ShotStore") -> Dict[int, str]:
+        """``{shot_id: "valid" | "missing_object"}``: each shot's members by
+        exact name (:meth:`ShotStore.assess`)."""
+
+    def member_nodes(self, name: str) -> List[str]:
+        """Every scene node answering to doc object *name*."""
+
+    def existing_objects(self, store: "ShotStore", names: Iterable[str]) -> set:
+        """Which of *names* the scene still holds -- by name, or the node a
+        rename the store was not told of left them naming
+        (:meth:`ShotStore.stale_shots`)."""
+
+    def member_ids(self, names: Iterable[str]) -> Dict[str, str]:
+        """``{name: stable id}`` for each of *names* naming one node -- what
+        the store saves to find a renamed member again (Maya: node UUIDs)."""
+
+    def keyed_windows(
+        self, store: "ShotStore", windows: List[Tuple[float, float]]
+    ) -> List[bool]:
+        """Per window, whether anything in the scene is keyed inside it."""
+
+    def members_keyed_windows(
+        self, store: "ShotStore", entries: List[Tuple[List[str], Tuple[float, float]]]
+    ) -> List[Optional[bool]]:
+        """Per ``(names, window)``, whether a curve of the named objects keys
+        a frame inside it; ``None`` where none of the names resolves."""
+
+    def audio_spans(self) -> Iterable[Tuple[float, Optional[float]]]:
+        """Every audio clip's ``(start, stop)`` in the scene."""
+
+    def curve_ledger_keys(
+        self, store: "ShotStore", objects: Optional[Iterable[Any]]
+    ) -> Callable[[Any], Iterable[str]]:
+        """``keys_of(curve)``: the edit-ledger keys a host curve is claimed
+        under (:meth:`ShotStore.release_replaced`)."""
+
+    # ---- the host's undo -------------------------------------------------
+
+    def undo_step(
+        self, store: "ShotStore", label: str, snapshot: bool
+    ) -> ContextManager["ShotStore.EditHandle"]:
+        """Run the block as ONE step of the host's undo queue
+        (:meth:`ShotStore.scene_edit` keeps the restore point's books).
+
+        Yields the body's :class:`ShotStore.EditHandle`: ``cancel()`` pushes no
+        step.  Before the block ends the store sets the handle's ``changed``
+        (the edit changed what only the store holds, so a host that drops an
+        empty step keeps this one); when the step closes the host sets its
+        ``tag``, ``(paired, marker)`` -- whether the step reached the queue
+        and what names it there -- or leaves ``None`` with no native queue.
+        *snapshot*: the edit carries a restore point.
+        """
+
+    def step_crossed(self, marker: Any, redo: bool) -> bool:
+        """Whether the native undo (or redo) that just ran passed over the
+        step its tag names *marker* -- ``None``: an untagged (legacy) restore
+        point, which a host with a native queue reads as crossed."""
+
+    def install_undo_sync(self, on_step: Callable[..., None]) -> None:
+        """Have every host undo / redo run ``on_step(redo=...)``; cheap and
+        idempotent per *on_step*."""
+
+    def remove_undo_sync(self, on_step: Callable[..., None]) -> None:
+        """Undo :meth:`install_undo_sync` for *on_step*."""
+
+    # ---- export ----------------------------------------------------------
+
+    def publish_records(self, records: Dict[Any, Any]) -> Optional[str]:
+        """Commit ``{spec: record or None}`` to the deliverable carrier;
+        returns the carrier's name when it holds the shot record."""
+
+    def export_producer(self, enabled: bool) -> None:
+        """Opt the shot record into (or out of) every export this session."""
+
+    # ---- the hand-off transfer -------------------------------------------
+
+    def transfer(self) -> ShotTransferHost:
+        """How this host's scene meets the hand-off codec
+        (:class:`ShotTransferHost`)."""
+
+
+class _PureShotTransfer:
+    """The :class:`ShotTransferHost` with no scene: names pass through, no
+    claim travels, nothing is written."""
+
+    def spell(self, name: str) -> str:
+        return str(name)
+
+    def curve_refs(self) -> Callable[[str], Any]:
+        return lambda key: None
+
+    def curve_key(self, node: str, label: str) -> Optional[str]:
+        return None
+
+    def key_exists(self, curve: str, time: float) -> bool:
+        return False
+
+    def resolve(self, name: str) -> Optional[str]:
+        return name
+
+    def channels(
+        self, names: Optional[List[str]]
+    ) -> Optional[Dict[str, Dict[str, Any]]]:
+        return None
+
+    def write_channels(self, node: str, records: Dict[str, Any]) -> int:
+        return 0
+
+    def audio(self) -> List[Dict[str, Any]]:
+        return []
+
+    def write_audio(self, clips: List[Dict[str, Any]]) -> int:
+        return 0
+
+
+class PureShotsHost:
+    """The :class:`ShotsHost` with no host behind it: the pure defaults.
+
+    What a store runs on when no host registered (plain Python, tests), and
+    the base a fake host overrides a few members of.  It never guesses: no
+    shot is called missing, stale or empty on a lookup it cannot make.
+    """
+
+    keys_keep_time = True
+
+    def available(self) -> bool:
+        return False
+
+    def persistence(self) -> Optional[ScenePersistence]:
+        return None
+
+    def store_state(self) -> Any:
+        return None
+
+    def scene_fps(self) -> Optional[float]:
+        return None
+
+    def schedule_flush(self, store: "ShotStore") -> None:
+        store._flush_dirty()
+
+    def legacy_prefs(self) -> Optional[Dict[str, Any]]:
+        return None
+
+    def migrate_ledger(self, store: "ShotStore") -> None:
+        return None
+
+    def follow_renames(self, store: "ShotStore") -> bool:
+        return False
+
+    def has_animation(self) -> bool:
+        return False
+
+    def detection(self) -> Any:
+        return None
+
+    def assess(self, store: "ShotStore") -> Dict[int, str]:
+        return {s.shot_id: "valid" for s in store.shots}
+
+    def member_nodes(self, name: str) -> List[str]:
+        return [str(name)]
+
+    def existing_objects(self, store: "ShotStore", names: Iterable[str]) -> set:
+        return set(names)
+
+    def member_ids(self, names: Iterable[str]) -> Dict[str, str]:
+        return {}
+
+    def keyed_windows(
+        self, store: "ShotStore", windows: List[Tuple[float, float]]
+    ) -> List[bool]:
+        return [True] * len(windows)
+
+    def members_keyed_windows(
+        self, store: "ShotStore", entries: List[Tuple[List[str], Tuple[float, float]]]
+    ) -> List[Optional[bool]]:
+        return [True] * len(entries)
+
+    def audio_spans(self) -> Iterable[Tuple[float, Optional[float]]]:
+        return ()
+
+    def curve_ledger_keys(
+        self, store: "ShotStore", objects: Optional[Iterable[Any]]
+    ) -> Callable[[Any], Iterable[str]]:
+        # A curve is its own key: Maya claims by anim-curve node name.
+        return lambda curve: (str(curve),)
+
+    @contextmanager
+    def undo_step(self, store: "ShotStore", label: str, snapshot: bool):
+        # No native undo queue: the block is the step, and nothing tags it.
+        yield store.EditHandle()
+
+    def step_crossed(self, marker: Any, redo: bool) -> bool:
+        return False
+
+    def install_undo_sync(self, on_step: Callable[..., None]) -> None:
+        return None
+
+    def remove_undo_sync(self, on_step: Callable[..., None]) -> None:
+        return None
+
+    def publish_records(self, records: Dict[Any, Any]) -> Optional[str]:
+        return None
+
+    def export_producer(self, enabled: bool) -> None:
+        return None
+
+    def transfer(self) -> ShotTransferHost:
+        return _PureShotTransfer()
 
 
 # ---------------------------------------------------------------------------
@@ -428,17 +758,22 @@ class _ShotStoreInternal(object):
 class ShotStore(_ShotStoreInternal):
     """Central store for shot data with pluggable persistence.
 
-    The pure, DCC-agnostic core.  Scene-reaching behaviour lives in the
-    overridable hooks (:meth:`_scene_fps`, :meth:`has_animation`,
-    :meth:`detect_regions`, :meth:`assess`, :meth:`publish_export_view`,
-    :meth:`_resolve_long_names`, :meth:`_existing_objects`,
-    :meth:`_keyed_windows`, :meth:`_members_keyed_windows`,
-    :meth:`_audio_windows`, :meth:`_curve_ledger_keys`, :meth:`member_nodes`,
-    :meth:`scene_edit`, :meth:`_schedule_flush`), each with a pure default;
-    mayatk / blendertk subclass this and override them.
+    The one, DCC-agnostic store every host runs (``mtk.ShotStore`` and
+    ``btk.ShotStore`` are this class).  Scene-reaching behaviour goes through
+    its host adapter (:attr:`host`, a :class:`ShotsHost`): the scene hooks
+    (:meth:`_scene_fps`, :meth:`has_animation`, :meth:`assess`,
+    :meth:`_existing_objects`, :meth:`_keyed_windows`,
+    :meth:`_members_keyed_windows`, :meth:`_audio_windows`,
+    :meth:`_curve_ledger_keys`, :meth:`member_nodes`, :meth:`_schedule_flush`)
+    each ask it, and what the hosts share -- :meth:`scene_edit`'s restore-point
+    books, :meth:`detect_regions`, :meth:`publish_export_view`, the hand-off
+    transfer (:meth:`export_transfer`, :meth:`apply_transfer`), the
+    persistence :meth:`active` installs -- is written here once over it.
 
     Parameters:
         shots: Initial shot list.  Copied on construction.
+        host: The host adapter; ``None`` takes the running host's
+            (:meth:`running_host`).
     """
 
     _active: Optional["ShotStore"] = None
@@ -450,10 +785,18 @@ class ShotStore(_ShotStoreInternal):
     # per subclass: a process has one native undo queue, whichever store
     # class listens to it.
     _native_sync_hold: ClassVar[int] = 0
+    # The process's host adapter, once injected (:meth:`set_host`) or resolved
+    # (:meth:`running_host`); the name of the resolver it came from (``None``:
+    # injected); and the resolvers the host libraries registered, by host
+    # name (:meth:`register_host`).  On THIS class: a process runs in one host.
+    _host: ClassVar[Optional[ShotsHost]] = None
+    _host_source: ClassVar[Optional[str]] = None
+    _host_resolvers: ClassVar[Dict[str, Callable[[], Optional[ShotsHost]]]] = {}
     # Directory for the cross-scene prefs JSON. ``None`` → pythontk's user-config
     # root (see :meth:`_prefs_path`); tests point it at a temp dir so they never
-    # touch the user's real config. A DCC adapter that wants its own store (e.g.
-    # QSettings) overrides :meth:`_restore_user_prefs` / :meth:`_save_user_prefs`.
+    # touch the user's real config. A host that kept them elsewhere before the
+    # file existed (Maya's QSettings) hands them over once:
+    # :meth:`ShotsHost.legacy_prefs`.
     _prefs_dir_override: ClassVar[Optional[str]] = None
     #: What a shot name may hold.  The name IS the clip every carrier writes --
     #: the FBX take, the Unity AnimationClip, the glTF animation and the
@@ -482,7 +825,13 @@ class ShotStore(_ShotStoreInternal):
     def __init__(
         self,
         shots: Optional[List[ShotBlock]] = None,
+        host: Optional[ShotsHost] = None,
     ):
+        #: The host adapter every scene call goes through (:class:`ShotsHost`).
+        self.host: ShotsHost = host if host is not None else self.running_host()
+        #: What the host keeps for this store (:meth:`ShotsHost.store_state`;
+        #: Blender's rename history), opaque to the store.
+        self.host_state: Any = self.host.store_state()
         self.shots: List[ShotBlock] = list(shots) if shots else []
         self.hidden_objects: set = set()
         self.pinned_objects: set = set()
@@ -533,7 +882,7 @@ class ShotStore(_ShotStoreInternal):
         # A stable id per name the store holds an object by (Maya: the node
         # UUID), captured as it is saved (:meth:`_capture_member_ids`) -- what
         # finds a member a rename the store was not told of left behind
-        # (:meth:`_current_names`).  Additive: a reader that does not know
+        # (:meth:`_existing_objects`).  Additive: a reader that does not know
         # the key reads the names as before.
         self.member_ids: Dict[str, str] = {}
         # Export-view projection (opt-in).  When True, every save publishes the
@@ -833,15 +1182,24 @@ class ShotStore(_ShotStoreInternal):
 
     def _native_step_crossed(self, redo: bool = False, first: bool = True) -> bool:
         """Whether the native undo (or redo) that just ran passed over the edit
-        of the restore point next in that direction (overridable hook).
+        of the restore point next in that direction (host hook).
 
-        Pure default: ``False`` -- the pure model has no native queue.  The DCC
-        stores read the pairing their :meth:`scene_edit` tagged the point with
-        (mayatk: the undo chunk's name; blendertk: an edit serial).  *first*:
-        no point has been applied for this step yet -- an untagged point (a
-        legacy push) counts as crossed for the first one only.
+        A point is crossed when its edit put a step on the queue (``paired``)
+        and the host reads its marker as the step that just ran
+        (:meth:`ShotsHost.step_crossed`; mayatk: the undo chunk's name;
+        blendertk: an edit serial).  An UNPAIRED point never is: its edit put
+        nothing on the queue, so whatever the host just undid was somebody
+        else's.  *first*: no point has been applied for this step yet -- an
+        untagged point (a legacy push) counts as crossed for the first one
+        only, on a host with a native queue.  Pure default: ``False``.
         """
-        return False
+        if not self.has_boundary_snapshot(redo=redo):
+            return False
+        tag = self.peek_boundary_tag(redo=redo)
+        if not isinstance(tag, tuple):
+            return first and self.host.step_crossed(None, redo)
+        paired, marker = tag
+        return bool(paired) and self.host.step_crossed(marker, redo)
 
     def follow_native_step(self, redo: bool = False) -> int:
         """Apply every restore point the DCC's own undo (or redo) that just
@@ -946,107 +1304,274 @@ class ShotStore(_ShotStoreInternal):
 
     @classmethod
     def _install_native_undo_sync(cls) -> None:
-        """Subscribe this store class to the DCC's undo and redo (overridable
-        hook): each runs :meth:`_on_native_step`.
+        """Subscribe this store class to the DCC's undo and redo (host hook):
+        each runs :meth:`_on_native_step`.
 
         Pure default: nothing -- no native queue.  :meth:`active` and
-        :meth:`set_active` call it every time, so an override must be cheap
-        and idempotent; :meth:`clear_active` tears it down
-        (:meth:`_remove_native_undo_sync`).
+        :meth:`set_active` call it every time, so a host's
+        :meth:`ShotsHost.install_undo_sync` is cheap and idempotent;
+        :meth:`clear_active` tears it down (:meth:`_remove_native_undo_sync`).
         """
+        cls.running_host().install_undo_sync(cls._on_native_step)
 
     @classmethod
     def _remove_native_undo_sync(cls) -> None:
         """Tear down what :meth:`_install_native_undo_sync` subscribed
-        (overridable hook; pure default: nothing)."""
+        (host hook; pure default: nothing)."""
+        cls.running_host().remove_undo_sync(cls._on_native_step)
 
-    # ---- scene hooks (overridable; pure defaults) ------------------------
+    # ---- the host adapter ------------------------------------------------
+
+    @classmethod
+    def register_host(
+        cls, name: str, resolve: Callable[[], Optional[ShotsHost]]
+    ) -> None:
+        """Register how a host library finds its adapter.
+
+        A host library calls this as its store module is imported (mayatk's
+        and blendertk's ``anim_utils.shots._shots``), so a script that reaches
+        the store through the toolkit -- no entry point ran -- still gets its
+        host: :meth:`running_host` asks each resolver in order on first need.
+
+        A second registration under *name* is the library re-imported (a
+        reload, or a test harness purging it between modules): it replaces the
+        first, and an adapter the first resolved is dropped
+        (:meth:`_drop_host`).  A first host found while the active store runs
+        on the pure default -- made before the host library was imported --
+        takes that store over (:meth:`_rehome_active`).
+
+        Parameters:
+            name: The host (``"maya"``, ``"blender"``).
+            resolve: ``resolve() -> ShotsHost | None``: the adapter when its
+                host is the one this process runs in, else ``None``.
+        """
+        ShotStore._host_resolvers[name] = resolve
+        if ShotStore._host_source == name:
+            cls._drop_host()
+        elif ShotStore._host is None:
+            active = ShotStore._active
+            if active is not None and active.host is _PURE_HOST:
+                host = resolve()
+                if host is not None:
+                    ShotStore._host, ShotStore._host_source = host, name
+                    cls._rehome_active(active, host)
+
+    @classmethod
+    def _drop_host(cls) -> None:
+        """Drop the adapter a re-registered library resolved before.
+
+        Its undo sync goes whatever happens to the store -- left armed, the
+        new adapter's would follow every native undo a second time.  The
+        active store bound to it goes too, as a scene change drops one: what
+        it held but had not written is flushed first, and its backend (the old
+        library's ``persistence()``) is torn down, so the next :meth:`active`
+        loads the scene's record through the new adapter -- a reload made a
+        new store class before there was one store, so its class state
+        started over then too.  A store on another host keeps its state, and
+        follows the native undo through the new adapter.
+        """
+        stale = ShotStore._host
+        ShotStore._host = ShotStore._host_source = None
+        stale.remove_undo_sync(ShotStore._on_native_step)
+        active, persistence = ShotStore._active, ShotStore._persistence
+        if active is not None and active.host is not stale:
+            ShotStore._install_native_undo_sync()
+            return
+        if active is not None:
+            try:
+                active._flush_dirty()
+            except Exception:
+                _log.warning("shot store: unsaved edits not flushed", exc_info=True)
+        ShotStore._active = None
+        ShotStore._persistence = None
+        remove = getattr(persistence, "remove_callbacks", None)
+        if remove is not None:
+            try:
+                remove()
+            except Exception:
+                pass
+        if active is not None:
+            ShotStore._notify_invalidated()
+
+    @classmethod
+    def _rehome_active(cls, active: "ShotStore", host: ShotsHost) -> None:
+        """Hand *active* -- a store made on the pure default before *host*'s
+        library registered -- to *host*, so it reaches the scene.
+
+        A scene that already holds a shot record keeps it: the store never
+        read it, so saving over it would lose the scene's shots, and an empty
+        store has nothing to keep either -- both are dropped and the next
+        :meth:`active` loads the record, as a scene open does.  Otherwise the
+        store moves onto the host with its shots, gains the host's backend
+        and is saved into the scene.
+
+        Its frames were typed against the scene's clock, so the host's rate is
+        recorded as it is, never rescaled to (the pure default's 24 fps saved
+        with them would stretch every shot on a keys-keep-time host's next
+        load).  Its restore points go, as on a scene swap: none paired with a
+        native step, and the host's queue would read an untagged one as
+        crossed by the next unrelated undo.
+        """
+        backend = ShotStore._persistence
+        own_backend = backend is None
+        if own_backend:
+            backend = host.persistence()
+        try:
+            saved = backend.load() if backend is not None else None
+        except Exception:  # an unreadable record is still the scene's: keep it
+            saved = True
+        if saved or not active.shots:
+            ShotStore._active = None
+            if own_backend:
+                ShotStore._persistence = backend
+            ShotStore._notify_invalidated()
+            return
+        active.host = host
+        active.host_state = host.store_state()
+        active.scene_fps = active._scene_fps()
+        active.clear_boundary_snapshots()
+        if own_backend:
+            ShotStore._persistence = backend
+        ShotStore._install_native_undo_sync()
+        active.mark_dirty()
+
+    @classmethod
+    def set_host(cls, host: Optional[ShotsHost]) -> None:
+        """Inject the process's host adapter -- a host's entry point, or a
+        test's fake.  ``None`` resolves it again (:meth:`running_host`).
+
+        Stores made from then on use it, and so do the class-level calls
+        (:meth:`active`, the undo sync, the transfer); a store made before
+        keeps the host it was made with.  The adapter a registered resolver
+        answers with (``set_host(MayaShotsHost.resolve())``) stays that
+        library's: a re-registration of it still drops it
+        (:meth:`register_host`), as when :meth:`running_host` found it.
+        """
+        ShotStore._host = host
+        ShotStore._host_source = next(
+            (
+                name
+                for name, resolve in list(ShotStore._host_resolvers.items())
+                if host is not None and resolve() is host
+            ),
+            None,
+        )
+
+    @classmethod
+    def running_host(cls) -> ShotsHost:
+        """The host adapter this process runs on.
+
+        The injected one (:meth:`set_host`), else the first registered
+        resolver's answer (:meth:`register_host`), kept for later asks; with
+        neither, :class:`PureShotsHost` -- not kept, so a host that registers
+        later is still found.
+        """
+        host = ShotStore._host
+        if host is not None:
+            return host
+        for name, resolve in list(ShotStore._host_resolvers.items()):
+            host = resolve()
+            if host is not None:
+                ShotStore._host, ShotStore._host_source = host, name
+                return host
+        return _PURE_HOST
+
+    # ---- scene hooks (asked of the host; pure defaults) ------------------
 
     def _scene_fps(self) -> float:
-        """Return the current scene framerate (overridable hook).
+        """Return the current scene framerate (host hook).
 
-        Pure default: the last-known :attr:`scene_fps` or :data:`_DEFAULT_FPS`
-        (24.0).  DCC subclasses override to query the live scene's time unit.
-        Reads via ``getattr`` so it is safe to call before ``scene_fps`` is
-        first assigned in ``__init__``.
+        The host's (:meth:`ShotsHost.scene_fps`); with no scene clock -- the
+        pure default -- the last-known :attr:`scene_fps` or
+        :data:`_DEFAULT_FPS` (24.0).  Reads via ``getattr`` so it is safe to
+        call before ``scene_fps`` is first assigned in ``__init__``.
         """
-        return getattr(self, "scene_fps", None) or _DEFAULT_FPS
+        fps = self.host.scene_fps()
+        return fps or getattr(self, "scene_fps", None) or _DEFAULT_FPS
 
     @staticmethod
     def has_animation() -> bool:
-        """Return whether the scene contains animation (overridable hook).
+        """Return whether the scene contains animation (host hook).
 
-        Pure default: ``False`` — the pure model has no scene to inspect.
-        DCC subclasses override to detect animCurves / actions driving transforms.
+        Pure default: ``False`` — the pure model has no scene to inspect; a
+        host detects animCurves / actions driving transforms.
         ``@staticmethod`` (mirroring the Maya original) so a controller's
         class-level ``ShotStore.has_animation()`` call — no instance needed, it
-        queries the live scene — resolves on the class, not just an instance.
+        queries the live scene — resolves on the class, not just an instance:
+        it asks the running host (:meth:`running_host`).
         """
-        return False
+        return ShotStore.running_host().has_animation()
 
     def detect_regions(self) -> List[Dict[str, Any]]:
-        """Detect shot-region candidates from the scene (overridable hook).
+        """Detect shot candidates using the store's detection settings.
+
+        Dispatches to the host's ``Detection`` (:meth:`ShotsHost.detection`):
+        ``regions_from_selected_keys`` for the selected-key filter modes
+        (``all`` / ``skip_zero`` / ``zero_as_end``), ``detect_shot_regions``
+        for ``auto``, with :attr:`detection_mode` and
+        :attr:`detection_threshold`.  Each gathers segments / selected keys
+        from its scene and feeds them to the pure
+        :meth:`~pythontk.ShotDetection.cluster_segments_by_gap` /
+        :meth:`~pythontk.ShotDetection.boundaries_from_key_entries` math.
 
         Pure default: ``[]`` — region detection needs scene acquisition.
-        DCC subclasses override to gather segments / selected keys and feed
-        them to :func:`~pythontk.core_utils.engines.shots.shot_detection.cluster_segments_by_gap`
-        or :func:`~pythontk.core_utils.engines.shots.shot_detection.boundaries_from_key_entries`.
 
         Returns:
             List of candidate dicts with ``"name"``, ``"start"``,
             ``"end"``, and ``"objects"`` keys.
         """
-        return []
+        detection = self.host.detection()
+        if detection is None:
+            return []
+        if self.detection_mode != "auto":
+            return detection.regions_from_selected_keys(
+                gap_threshold=self.detection_threshold,
+                key_filter=self.detection_mode,
+            )
+        return detection.detect_shot_regions(gap_threshold=self.detection_threshold)
 
     def assess(self) -> Dict[int, str]:
-        """Assess whether each shot's objects exist in the scene (hook).
+        """Assess whether each shot's objects exist in the scene (host hook).
 
         Pure default: every shot ``"valid"`` — the pure model can't query a
-        scene, so nothing is flagged missing.  DCC subclasses override to
-        resolve object existence and return ``"missing_object"`` where
-        appropriate.
+        scene, so nothing is flagged missing.  A host resolves object
+        existence and returns ``"missing_object"`` where appropriate.
 
         Returns:
             Dict mapping ``shot_id`` → status string.
         """
-        return {s.shot_id: "valid" for s in self.shots}
-
-    def _resolve_long_names(self, names):
-        """Resolve object names to unique scene paths (overridable hook).
-
-        Pure default: identity — pure / Blender names are already unique, so
-        no disambiguation is needed.  The Maya subclass overrides to resolve
-        to long DAG paths (``cmds.ls(names, long=True)``).  This is the single
-        chokepoint for name disambiguation so per-site copies stay out.
-        """
-        return list(names) if names else []
+        return self.host.assess(self)
 
     def _existing_objects(self, names: Iterable[str]) -> set:
-        """Which of *names* the scene still holds (overridable hook).
+        """Which of *names* the scene still holds (host hook).
 
         Pure default: every one -- the pure model has no scene to lose an
-        object from, so :meth:`stale_shots` never finds one here.  DCC
-        subclasses override to look each name up as the export view names
-        it: a Maya member is a long DAG path, and one whose parent was
-        renamed or reparented is still the object its leaf names.
+        object from, so :meth:`stale_shots` never finds one here.  A host
+        looks each name up as the export view names it: a Maya member is a
+        long DAG path, and one whose parent was renamed or reparented is
+        still the object its leaf names.  A member renamed with the store not
+        told is found too (Maya by its saved node UUID, :attr:`member_ids`;
+        Blender by the rename it follows): a HOLD shot -- nothing keyed in its
+        frames -- is live only through its members, so without that a renamed
+        member made it stale and its take left the export (2026-09-26).
         """
-        return set(names)
+        return self.host.existing_objects(self, names)
 
     def _keyed_windows(self, windows: List[Tuple[float, float]]) -> List[bool]:
         """Per ``(start, end)`` window, whether anything in the scene is keyed
-        inside it (overridable hook).
+        inside it (host hook).
 
         Pure default: every window is -- the pure model cannot tell, and a
-        shot is never called stale on a guess.  DCC subclasses override to
-        ask every animation curve in the scene, whatever it drives.
+        shot is never called stale on a guess.  A host asks every animation
+        curve in the scene, whatever it drives.
         """
-        return [True] * len(windows)
+        return self.host.keyed_windows(self, list(windows))
 
     def _members_keyed_windows(
         self, entries: List[Tuple[List[str], Tuple[float, float]]]
     ) -> List[Optional[bool]]:
         """Per ``(names, (start, end))``, whether a curve of the named objects
-        keys a frame inside the window (overridable hook, :meth:`empty_shots`).
+        keys a frame inside the window (host hook, :meth:`empty_shots`).
 
         ``None`` for an entry none of whose names the scene holds -- the caller
         then asks the whole scene (:meth:`_keyed_windows`).  The shot system's
@@ -1054,57 +1579,95 @@ class ShotStore(_ShotStoreInternal):
         content, and do not count.  Pure default: every window is keyed -- a
         shot is never called empty on a guess.
         """
-        return [True] * len(entries)
+        return self.host.members_keyed_windows(self, entries)
 
     def _audio_windows(self, windows: List[Tuple[float, float]]) -> List[bool]:
         """Per ``(start, end)`` window, whether an audio clip plays in it
-        (overridable hook, :meth:`empty_shots`).
+        (:meth:`empty_shots`): any of the host's clip spans
+        (:meth:`ShotsHost.audio_spans`; ``AudioUtils.read_all_events``)
+        overlapping it.
 
-        Pure default: none -- the pure model holds no audio.  DCC subclasses
-        override to read every clip's span (``AudioUtils.read_all_events``).
+        Pure default: none -- the pure model holds no audio.
         """
-        return [False] * len(windows)
+        return self._spans_overlap(self.host.audio_spans(), list(windows))
 
     def _curve_ledger_keys(self, objects=None) -> Callable[[Any], Iterable[str]]:
         """``keys_of(curve)``: the :attr:`edit_ledger` keys a DCC curve is
-        claimed under (overridable hook; see :meth:`release_replaced`).
+        claimed under (host hook; see :meth:`release_replaced`).
 
         Pure default: a curve is its own key (``str(curve)``) -- Maya claims
-        by anim-curve node name.  A DCC whose curves have no name overrides it:
-        blendertk keys an fcurve by its owner and channel, so it maps through
-        the owners among *objects*.
+        by anim-curve node name.  A DCC whose curves have no name keys them
+        its own way: blendertk keys an fcurve by its identity (action, slot,
+        channel), whichever of *objects* the edit went through.
         """
-        return lambda curve: (str(curve),)
+        return self.host.curve_ledger_keys(self, objects)
+
+    def follow_renames(self) -> bool:
+        """Re-point everything this store names an object by at the name the
+        host knows it by now (:meth:`ShotsHost.follow_renames`).
+
+        Blender keys what the store holds by object NAME and follows a rename
+        by ``ID.session_uid`` (and an action slot's first name); it runs before
+        every shot edit (:meth:`scene_edit`), before a hand-off
+        (:meth:`export_transfer`) and before a save.  A host whose names need
+        no following -- Maya re-resolves a stale path where it reads one --
+        answers ``False``, as does the pure default.
+
+        Returns:
+            ``True`` if anything was re-pointed.
+        """
+        return self.host.follow_renames(self)
 
     def publish_export_view(self, strategy: Optional[str] = None) -> Optional[str]:
-        """Project the export view onto a DCC carrier (overridable hook).
+        """Publish this store's shot records onto the host's ``data_export``
+        carrier.
 
-        Pure default: no-op returning ``None`` — there is no DCC node to write
-        to.  DCC subclasses override to serialise :meth:`to_export_view` onto
-        their shared export node so any FBX export carries the shot takes and
-        metadata.
+        The authoring-time publish: the shot record :meth:`export_records`
+        builds (each clip with its range) committed through the host
+        (:meth:`ShotsHost.publish_records`, ``FbxUtils.publish_authored``),
+        handoff block included.  Idempotent; regenerated from the live store so
+        it can't go stale.  An empty store **clears** the record (never
+        creating the carrier just to hold it) -- deleting the last shot must
+        not leave the previous takes riding into the next export.  An export
+        pipeline does not call this: its ``FbxUtils.PRODUCERS`` row names
+        :meth:`produce_export_records`, and the pipeline's own context (the
+        Animation Clips mode) reaches the record there.
+
+        Returns:
+            The carrier's name, or ``None`` outside a host (the pure default)
+            and when a clear had nothing to do.
         """
-        return None
+        if not self.host.available():
+            return None
+        records = {r.spec: r for r in self.export_records(strategy=strategy) or []}
+        records.setdefault(SceneRecords.SHOTS, None)  # none = clear
+        return self.host.publish_records(records)
 
     def _schedule_flush(self) -> None:
-        """Flush the dirty store to persistence (overridable hook).
+        """Flush the dirty store to persistence (host hook).
 
-        Pure default: flush immediately.  DCC subclasses may override to
-        coalesce rapid mutations into a single deferred write (e.g. Maya's
-        ``cmds.evalDeferred``).
+        Pure default: flush immediately.  A host may coalesce rapid mutations
+        into a single deferred write (Maya's ``cmds.evalDeferred``, Blender's
+        ``bpy.app.timers``).
         """
-        self._flush_dirty()
+        self.host.schedule_flush(self)
 
     class EditHandle:
         """What :meth:`scene_edit` yields: ``cancel()`` declares the body a
-        no-op, so the edit leaves no restore point (and, in a DCC store, no
-        undo step of its own).  blendertk's ``scene_edit`` yields its undo
-        chunk's handle, which answers the same two names."""
+        no-op, so the edit leaves no restore point (and, on a DCC host, no
+        undo step of its own).
 
-        __slots__ = ("cancelled",)
+        It also carries the step's books: the store sets ``changed`` once the
+        body ran (the edit changed what only the store holds), and the host
+        sets ``tag`` when its undo step closes (:meth:`ShotsHost.undo_step`).
+        """
+
+        __slots__ = ("cancelled", "changed", "tag")
 
         def __init__(self):
             self.cancelled = False
+            self.changed = False
+            self.tag = None
 
         def cancel(self) -> None:
             """Declare the edit a no-op."""
@@ -1112,41 +1675,71 @@ class ShotStore(_ShotStoreInternal):
 
     @contextmanager
     def scene_edit(self, label: str = "edit", snapshot: bool = True):
-        """Run a shot edit as one step of the scene's undo (overridable hook).
+        """Run a shot edit as one step of the scene's undo.
 
-        Pure default: push a boundary restore point (*snapshot*) and run the
-        body -- the pure model has no native undo queue to pair the point
-        with.  The DCC stores override it to run the body in one named undo
-        step and tag the point with that step (``mayatk.ShotStore`` /
-        ``blendertk.BlenderShotStore``).  Every one ends by emitting
-        :class:`ShotsEdited` when the body changed the shot records, and every
-        one yields a handle whose ``cancel()`` declares the body a no-op -- the
-        one idiom a panel shared by both hosts writes for an edit that turned
-        out to change nothing.
+        Renames the host follows are followed first (:meth:`follow_renames`),
+        so the edit and its restore point name every object as the scene does
+        now; a boundary restore point is pushed (*snapshot*), and the body runs
+        as ONE step of the host's undo (:meth:`ShotsHost.undo_step`: Maya a
+        named chunk, Blender an undo push; the pure default has no queue).
+        When the step closes the point is settled once, here, for every host:
+
+        * cancelled -- the body changed nothing -- it is dropped
+          (``discard_boundary_snapshot``: the redo branch comes back);
+        * tagged with what the host's queue recorded (Maya: the chunk's name;
+          Blender: an edit serial), which is how a native undo is told to be
+          this edit's (:meth:`_native_step_crossed`) -- unless nothing reached
+          the queue and the store holds what it held (a no-op Snap, a Simplify
+          that removed nothing): that point is dropped too, or the native undo
+          of the edit before it found it in the way and restored nothing
+          (BACKLOG 2026-10-05).  A body that raises takes the same rule: a
+          refused drag that already rippled keeps the point that undoes it.
+
+        An edit that changed the shot records since its restore point says so
+        (:class:`ShotsEdited`), only after a body that did not raise.  Every
+        host yields the same handle, whose ``cancel()`` declares the body a
+        no-op -- the one idiom a panel shared by both hosts writes for an edit
+        that turned out to change nothing.
 
         Parameters:
             label: The edit's name (the undo step's, and the event's).
             snapshot: Push a restore point before the body; ``False`` for an
-                edit that must not record one.
+                edit that must not record one (it then only supplies the step).
 
         Yields:
-            An :class:`EditHandle`.  Cancelled, the restore point is dropped
-            (``discard_boundary_snapshot``: the redo branch comes back) and no
-            :class:`ShotsEdited` is said.
+            An :class:`EditHandle`.
         """
-        edit = self.EditHandle()
+        self.follow_renames()
         if snapshot:
             self.push_boundary_snapshot()
-        yield edit
-        if edit.cancelled:
-            if snapshot:
-                self.discard_boundary_snapshot()
-            return
-        # Every store's scene_edit ends the same way: an edit that changed the
-        # records since its restore point says so (ShotsEdited) -- only after
-        # a body that did not raise, and never without a point to compare to.
-        if snapshot and self.changed_since_snapshot():
+        edit = None
+        try:
+            with self.host.undo_step(self, label, snapshot) as edit:
+                yield edit
+                # Only after a body that did not raise, and never without a
+                # point to compare to.
+                edit.changed = bool(
+                    snapshot and not edit.cancelled and self.changed_since_snapshot()
+                )
+        finally:
+            if snapshot and edit is not None:
+                self._settle_restore_point(edit)
+        if edit.changed:
             self._notify(ShotsEdited(label=label))
+
+    def _settle_restore_point(self, edit: "ShotStore.EditHandle") -> None:
+        """Drop or tag the restore point :meth:`scene_edit` pushed, by what
+        its step recorded (``edit.tag``; ``None``: no native queue)."""
+        if edit.cancelled:
+            self.discard_boundary_snapshot()
+            return
+        if edit.tag is None:
+            return
+        paired, _marker = edit.tag
+        if not paired and not self.changed_since_snapshot():
+            self.discard_boundary_snapshot()
+        else:
+            self.tag_boundary_snapshot(edit.tag)
 
     # ---- claims on keys a DCC key edit replaced or moved ------------------
 
@@ -1447,10 +2040,17 @@ class ShotStore(_ShotStoreInternal):
     def active(cls) -> "ShotStore":
         """Return the current active store, creating one if needed.
 
-        If a persistence backend is configured, saved data is loaded
-        automatically on first access.  With no backend the store runs in
-        pure in-memory mode.
+        With no backend configured, the running host's is installed once
+        (:meth:`ShotsHost.persistence`: Maya's ``MayaScenePersistence``,
+        Blender's ``BlenderScenePersistence``), so the call transparently loads
+        any store saved in the scene.  If a persistence backend is configured,
+        saved data is loaded automatically on first access.  With no backend
+        the store runs in pure in-memory mode.
         """
+        if cls._active is None and cls._persistence is None:
+            backend = cls.running_host().persistence()
+            if backend is not None:
+                cls.set_persistence(backend)
         if cls._active is None:
             persistence = cls._persistence
             data = persistence.load() if persistence is not None else None
@@ -1586,7 +2186,7 @@ class ShotStore(_ShotStoreInternal):
     def flush_pending(cls) -> None:
         """Store what the active store holds but has not written yet.
 
-        A DCC store coalesces its writes (Maya's on idle), so the scene record
+        A DCC host coalesces the writes (Maya's on idle), so the scene record
         can be an edit behind the live store.  A crossing reads the record
         (the owner hook ``SceneStoreBase`` calls first), and so does any
         caller that must see the store as the user does.
@@ -1623,20 +2223,34 @@ class ShotStore(_ShotStoreInternal):
 
         Called when a fresh store is created (no per-scene persistence) so that
         ``detection_mode`` etc. survive scene changes.  Silent no-op when the
-        file is absent or unreadable.  A DCC adapter may override this (and
-        :meth:`_save_user_prefs`) to use its own store — pythontk stays zero-dep.
+        file is absent or unreadable.  With no file, the prefs a host kept
+        before it existed (:meth:`ShotsHost.legacy_prefs`: Maya's QSettings)
+        are applied the same way and written through, so that read runs once
+        — pythontk stays zero-dep.
         """
         import json
 
         try:
             path = self._prefs_path()
-            if not path.exists():
-                return
+            absent = not path.exists()
+        except Exception:
+            return
+        if absent:
+            legacy = self.host.legacy_prefs()
+            if legacy is not None:
+                self._apply_prefs(legacy)
+                self._save_user_prefs()
+            return
+        try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return
-        if not isinstance(data, dict):
-            return
+        if isinstance(data, dict):
+            self._apply_prefs(data)
+
+    def _apply_prefs(self, data: Dict[str, Any]) -> None:
+        """Take each readable value of a prefs document (the file's keys);
+        anything else keeps the store's own."""
         dm = data.get("detection_mode")
         if isinstance(dm, str) and dm in self.DETECTION_MODES:
             self.detection_mode = dm
@@ -2700,9 +3314,9 @@ class ShotStore(_ShotStoreInternal):
 
     def _member_ids(self, names: Iterable[str]) -> Dict[str, str]:
         """``{name: stable id}`` for each of *names* that names ONE node now
-        (overridable hook; Maya: its node UUID).  Pure default: none -- the
-        pure model has no scene to give an id."""
-        return {}
+        (host hook; Maya: its node UUID).  Pure default: none -- the pure
+        model has no scene to give an id."""
+        return self.host.member_ids(names)
 
     def _capture_member_ids(self) -> Dict[str, str]:
         """:attr:`member_ids` brought up to date for :meth:`to_dict`: every
@@ -2719,17 +3333,6 @@ class ShotStore(_ShotStoreInternal):
             _log.debug("Shots: member ids not refreshed.", exc_info=True)
         self.member_ids = ids
         return dict(ids)
-
-    def _current_names(self, names: Iterable[str]) -> Dict[str, str]:
-        """``{name: current name}`` for each of *names* no object answers to
-        any more but whose node is found another way -- a rename the store
-        was not told of (overridable hook; read-only, the store is not
-        changed).  Maya finds the node by its saved UUID
-        (:attr:`member_ids`), Blender by the rename it follows.  Pure default:
-        none.  A HOLD shot -- nothing keyed in its frames -- is live only
-        through its members, so without this a renamed member made it stale
-        and its take left the export (2026-09-26)."""
-        return {}
 
     #: Key on the shot record under which the exporter's Animation Clips mode
     #: is declared (``full`` / ``shots`` / ``both``).  The clips carry their
@@ -2808,7 +3411,7 @@ class ShotStore(_ShotStoreInternal):
         return store.export_records(ctx) if store is not None else None
 
     #: How many :meth:`transient_edit` brackets are open in this process --
-    #: on ``ShotStore`` itself, so every DCC subclass reads the one count.
+    #: on ``ShotStore`` itself, so every subclass reads the one count.
     _transient_depth: int = 0
 
     @staticmethod
@@ -2843,9 +3446,9 @@ class ShotStore(_ShotStoreInternal):
         """Republish the active store's export view.
 
         The canonical, no-arg pre-export refresh for the Shots system.  A no-op
-        when no store is active, and — via the :meth:`publish_export_view`
-        hook — a no-op in the pure core until a DCC subclass supplies a real
-        projection.  An *empty* store still publishes: the projection clears
+        when no store is active, and — via :meth:`publish_export_view` — a
+        no-op in the pure core, with no host carrier to project onto.  An
+        *empty* store still publishes: the projection clears
         any previously published channels (without ever creating a carrier),
         so deleting the last shot can't leave stale takes riding into the
         next export.
@@ -2865,8 +3468,8 @@ class ShotStore(_ShotStoreInternal):
         Registers a before-export preparer (via the :meth:`_register_export_preparer`
         hook) that republishes the export view fresh from whatever store is
         active.  Session-global and idempotent.  Call :meth:`disable_auto_export`
-        to remove it.  In the pure core the preparer registration is a no-op
-        until a DCC subclass overrides the hook.
+        to remove it.  In the pure core the preparer registration is a no-op:
+        no host exporter to hook.
         """
         cls._auto_export_disabled = False
         cls._register_export_preparer()
@@ -2883,24 +3486,27 @@ class ShotStore(_ShotStoreInternal):
 
     @classmethod
     def _register_export_preparer(cls) -> None:
-        """Install the before-export preparer (overridable hook).
+        """Opt the shot record into the any-export session hook unless the
+        user explicitly opted out (host hook).
 
-        Pure default: honour the opt-out flag, then no-op — the pure core has
-        no DCC exporter to hook.  DCC subclasses override to register
-        :meth:`refresh_export_view` with their FBX exporter.
+        The host's ``FbxUtils.PRODUCERS`` already names
+        :meth:`produce_export_records`, so enabling the record is all a File >
+        Export needs to carry fresh shots (:meth:`ShotsHost.export_producer`;
+        Blender has no before-export event and the pure core no exporter, so
+        theirs is a no-op).  Never blocks a save.
         """
         if cls._auto_export_disabled:
             return
-        # No DCC exporter in the pure core — subclasses override.
+        try:
+            cls.running_host().export_producer(True)
+        except Exception:  # hooks unavailable -- never block a save
+            pass
 
     @classmethod
     def _unregister_export_preparer(cls) -> None:
-        """Remove the before-export preparer (overridable hook).
-
-        Pure default: no-op.  DCC subclasses override to unregister from their
-        FBX exporter.
-        """
-        # No DCC exporter in the pure core — subclasses override.
+        """Opt the shot record out of the session hook (host hook; pure
+        default: no-op)."""
+        cls.running_host().export_producer(False)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ShotStore":
@@ -3005,6 +3611,10 @@ class ShotStore(_ShotStoreInternal):
         # disowned them) would pass to the next shot given that id.
         store.edit_ledger.disown_absent(shot.shot_id for shot in store.shots)
         store.effect_recipe = EffectRecipe.from_dict(data.get("effect_recipe"))
+        # An older ledger format is the host's to bring up to date (Blender
+        # re-keys format-1 claims by their curve's identity), in memory only.
+        if store.edit_ledger.source_version < store.edit_ledger.FORMAT_VERSION:
+            store.host.migrate_ledger(store)
         return store
 
     # ---- persistence convenience -----------------------------------------
@@ -3016,7 +3626,20 @@ class ShotStore(_ShotStoreInternal):
         ``scene_fps``, rescales shot boundaries, gap, markers and the edit
         ledger's claims (the keys they name moved with the clock), then
         fires a :class:`BatchComplete` so the UI repaints.
+
+        On a host whose keys stay on their FRAMES when the rate changes
+        (:attr:`ShotsHost.keys_keep_time` false: Blender), the new rate is
+        recorded and nothing moves -- the shots and the ledger's claims stay
+        with the keys they bound (the key stash's rule; Maya's keys keep real
+        time, so its shots rescale to follow them -- either way, shots stay
+        with their keys).
         """
+        if not self.host.keys_keep_time:
+            if abs(float(new_fps) - self.scene_fps) < 0.01:
+                return
+            self.scene_fps = float(new_fps)
+            self.mark_dirty()
+            return
         old_fps = self.scene_fps
         if not old_fps or abs(new_fps - old_fps) < 0.01:
             return
@@ -3042,7 +3665,7 @@ class ShotStore(_ShotStoreInternal):
 
         Inside a :meth:`batch_update` block the flush is deferred to the block
         exit.  Otherwise the flush is scheduled via :meth:`_schedule_flush`
-        (immediate in the pure core; DCC subclasses may coalesce).
+        (immediate in the pure core; a DCC host may coalesce).
         """
         self._dirty = True
         if self._batch_depth > 0:
@@ -3114,8 +3737,8 @@ class ShotStore(_ShotStoreInternal):
 
         Returns:
             List of newly created :class:`ShotBlock` instances.  Empty in the
-            pure core (``detect_regions`` returns ``[]``) until a DCC subclass
-            supplies scene acquisition.
+            pure core (``detect_regions`` returns ``[]``) until a host supplies
+            scene acquisition.
         """
         candidates = self.detect_regions()
         created: List[ShotBlock] = []
@@ -3154,13 +3777,14 @@ class ShotStore(_ShotStoreInternal):
         return ShotStore.leaf_name(node).rsplit(":", 1)[-1]
 
     def member_nodes(self, name: str) -> List[str]:
-        """Every scene node answering to a doc object *name* (scene hook).
+        """Every scene node answering to a doc object *name* (host hook).
 
         Several is a duplicate name the scene must fix, none a missing object.
-        Pure default: the name itself; the DCC stores look it up, namespaces
-        included.
+        Pure default: the name itself; a host looks it up, namespaces included
+        -- a referenced asset, ``AC:door_geo`` for ``door_geo``.
+        :meth:`resolve_member` reads one hit as found, several as ambiguous.
         """
-        return [str(name)]
+        return self.host.member_nodes(name)
 
     def resolve_member(self, name: str) -> Tuple[str, str]:
         """Resolve a doc object *name* to one scene node.
@@ -3234,3 +3858,171 @@ class ShotStore(_ShotStoreInternal):
         if not specs:
             return None
         return min(s for _, s, _ in specs), max(e for _, _, e in specs)
+
+    # ---- hand-off transfer (the manifest's ``shots`` section) ---------------
+    #
+    # Neither FBX nor USD carries a shot, so the bridges' ``.manifest.json``
+    # sidecar does: ``export_transfer`` writes the section every producer ships
+    # (the in-process send and the pull conversion's headless DCC) and
+    # ``apply_transfer`` rebuilds the store from it on every door in (the pull,
+    # the receiving templates, the reference bake). The codec is
+    # ``ShotTransfer``; the host only says how it names a curve and finds a key
+    # (:meth:`ShotsHost.transfer`, a :class:`ShotTransferHost`).
+
+    @classmethod
+    def export_transfer(
+        cls, spell: Optional[Callable[[str], str]] = None, objects=None
+    ) -> Optional[Dict[str, Any]]:
+        """The active store as a hand-off ``shots`` section (``None`` when
+        empty, or outside a host).
+
+        Renames are followed first (:meth:`follow_renames`): the section ships
+        under the names the carrier writes, and a stale one would land its
+        memberships and claims on nothing.
+
+        Parameters:
+            spell: How the carrier spells a scene name -- for FBX the host's
+                default (:meth:`ShotTransferHost.spell`: Maya's short name
+                with its namespace, Blender's name as is; the Maya side
+                respells a Blender name through its importer's ``FBXASC``
+                encoding), the sanitized prim for USD
+                (``BlenderBridge._manifest_spelling``). It must be the spelling
+                the manifest's other sections use, so one resolver serves all.
+            objects: The exported objects (names, or objects with a
+                ``name``); scopes memberships and ledger claims to what
+                actually ships (``None`` = the whole scene).
+        """
+        # Deferred: shot_transfer imports this module.
+        from pythontk.core_utils.engines.shots.shot_transfer import ShotTransfer
+
+        host = cls.running_host()
+        if not host.available():
+            return None
+        names = None
+        if objects is not None:
+            names = [
+                o if isinstance(o, str) else getattr(o, "name", "") for o in objects
+            ]
+        store = cls.active()
+        store.follow_renames()
+        hooks = host.transfer()
+        curve_ref = hooks.curve_refs()
+        return ShotTransfer.encode(
+            store.to_dict(),
+            spell=spell or hooks.spell,
+            curve_ref=curve_ref,
+            objects=names,
+            channels=hooks.channels(names),
+            audio=hooks.audio(),
+        )
+
+    @classmethod
+    def apply_transfer(
+        cls,
+        section: Dict[str, Any],
+        *,
+        resolve: Optional[Callable[[str], Optional[str]]] = None,
+        frame_offset: float = 0.0,
+        replace: bool = False,
+        converted: Optional[Callable[[str], bool]] = None,
+        ctx: Any = None,
+    ) -> Optional["ShotStore"]:
+        """Rebuild the scene's shots from a hand-off ``shots`` section.
+
+        Decodes against this scene (names through *resolve*, claims onto the
+        curves now driving the imported nodes, times onto the scene's clock),
+        folds the result into the scene's own store
+        (:meth:`~pythontk.ShotTransfer.merge_record`: a shot-less scene adopts
+        it whole, one with shots gains the incoming shots after its own, and a
+        shot that arrives renamed is noted in *ctx*), persists the record and
+        reloads the active store from it -- the path a scene open takes, so
+        every panel rebinds as it does then.
+
+        Parameters:
+            section: The manifest's ``shots`` section.
+            resolve: Carrier spelling -> imported node; default: the one scene
+                node of that name (:meth:`ShotTransferHost.resolve`).
+            frame_offset: The importer's frame shift (Blender's FBX
+                ``anim_offset``; none for Maya's importers).
+            replace: Discard the scene's own shots instead of merging.
+            converted: ``converted(node) -> bool``: the importer put *node*
+                through the Y-up / Z-up crossing, so its claims' Y and Z
+                channels are exchanged (``ShotTransfer.swap_up_axis``); the
+                consumers pass "is a root". Default: none was.
+            ctx: The crossing's ``ptk.TransferContext``: gains a note per shot
+                that arrives renamed and the ``shot_id`` renumbering.
+
+        Returns:
+            The active store after the apply, or ``None`` outside a host.
+        """
+        # Deferred: shot_transfer imports this module.
+        from pythontk.core_utils.engines.shots.shot_transfer import ShotTransfer
+
+        host = cls.running_host()
+        if not host.available() or not section:
+            return None
+        store = cls.active()
+        hooks = host.transfer()
+        decoded = ShotTransfer.decode(
+            section,
+            resolve=resolve or hooks.resolve,
+            curve_key=hooks.curve_key,
+            key_exists=hooks.key_exists,
+            scene_fps=store._scene_fps(),
+            frame_offset=frame_offset,
+            converted=converted,
+            write_channels=hooks.write_channels,
+            write_audio=hooks.write_audio,
+        )
+        merged = (
+            decoded
+            if replace
+            else ShotTransfer.merge_record(store.to_dict(), decoded, ctx)
+        )
+        if cls._persistence is None:
+            cls.set_active(cls.from_dict(merged))
+        else:
+            cls._persistence.save(merged)
+            cls.invalidate()
+        return cls.active()
+
+    # ---- scene-record crossings (the hosts' ``DataNodes.OWNERS``) ----------
+
+    @classmethod
+    def transfer_out(cls, ctx: Any) -> Optional[Dict[str, Any]]:
+        """The ``shot_store`` record's hand-off payload: :meth:`export_transfer`
+        in the carrier's spelling (``ctx.rename``), scoped to what ships."""
+        return cls.export_transfer(spell=ctx.rename, objects=ctx.objects)
+
+    @classmethod
+    def transfer_in(cls, payload: Dict[str, Any], ctx: Any) -> None:
+        """Land a received ``shots`` section: :meth:`apply_transfer`, names
+        resolved through ``ctx.rename``, with the importer's ``converted`` /
+        ``frame_offset`` adapters."""
+        cls.apply_transfer(
+            payload,
+            resolve=ctx.rename,
+            frame_offset=float(ctx.adapter("frame_offset", 0.0) or 0.0),
+            converted=ctx.adapter("converted"),
+            ctx=ctx,
+        )
+
+    @classmethod
+    def merge_carrier(cls, carriers, other, ctx) -> None:
+        """Another scene's shots merged into the record: reload the active
+        store from what the record holds now, as a scene open does."""
+        if SceneRecords.SHOT_STORE in other:
+            cls.invalidate()
+
+    @classmethod
+    def discard_carrier(cls, carriers, other, ctx) -> None:
+        """Another scene's shots were dropped with their carrier: the same
+        reload (:meth:`merge_carrier`) -- the active store may hold them, as
+        a carrier the import adopted was this scene's own until then.  The
+        scene-records dispatcher calls it on a discarded import; without it
+        the active store kept the dropped shots."""
+        cls.merge_carrier(carriers, other, ctx)
+
+
+#: The host a store runs on when none is injected or registered.
+_PURE_HOST = PureShotsHost()

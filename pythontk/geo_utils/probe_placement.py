@@ -44,21 +44,29 @@ rays:
    :attr:`ProbePlacement.MAX_HEIGHT_M` above its floor.
 5. **Clear of every surface** by :attr:`ProbePlacement.CLEARANCE_M`.
 
-**A host supplies the scene** by subclassing (the shape of
-:class:`~pythontk.ShotSequencer`): :class:`ProbeRays` with its mesh
-intersection (:meth:`ProbeRays._intersect`, :meth:`ProbeRays._normal`), and
-:class:`ProbePlacement` with :meth:`~ProbePlacement._make_rays`,
-:meth:`~ProbePlacement._bounds`, :meth:`~ProbePlacement._read_lights`, its
-units (:attr:`~ProbePlacement.INTERNAL_M`, :meth:`~ProbePlacement._ui`,
-:meth:`~ProbePlacement._to_internal`) and its up axis
-(:attr:`~ProbePlacement.UP`). Everything inside is in the host's internal
-linear unit; positions cross the boundary in scene units. Nodes are whatever
+**A host supplies the scene** through two short adapters, injected, never by
+subclassing: a :class:`ProbeHost` (its node names, rays, bounds, lights,
+units and up axis) and the :class:`ProbeMesh` its :class:`ProbeRays`
+intersect through (the nearest hit on one mesh, a face's normal). mayatk's and
+blendertk's ``ProbePlacement`` are this class bound to their host's adapter
+class (:attr:`ProbePlacement.HOST_CLASS`, one adapter built per placement).
+Everything inside is in the host's internal linear unit; positions cross the boundary in scene units. Nodes are whatever
 the host names them by (a DAG path, an object name), compared by equality.
 """
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    NamedTuple,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+)
 
 Vec = Tuple[float, float, float]
 Box = List[List[float]]
@@ -74,6 +82,25 @@ class ProbeHit(NamedTuple):
     mesh: int
 
 
+class ProbeMesh(Protocol):
+    """How a host intersects its meshes: what :class:`ProbeRays` asks of each
+    mesh's *payload* (the host's handle on it, given to :meth:`ProbeRays.add`)."""
+
+    def intersect(
+        self,
+        payload: Any,
+        origin: Sequence[float],
+        direction: Sequence[float],
+        far: float,
+    ) -> Optional[Tuple[float, Vec, Any]]:
+        """The nearest hit on one mesh: ``(distance, point, face)``, or
+        ``None``. *face* is what :meth:`normal` reads the winner's normal
+        from; only the nearest hit of a cast pays for one."""
+
+    def normal(self, payload: Any, face: Any) -> Vec:
+        """The world normal of *face* on the mesh *payload* names."""
+
+
 class ProbeRays:
     """The nearest hit of a ray among a set of meshes, in world space.
 
@@ -82,12 +109,17 @@ class ProbeRays:
     first, stopping once the next one starts past the best hit: a production
     room is hundreds of meshes, and a probe is placed with a few thousand rays.
 
-    A host subclasses it: :meth:`add` each mesh (its owner node, world bounds
-    and whatever the host intersects it through), and implement
-    :meth:`_intersect` and :meth:`_normal`.
+    A host :meth:`add` s each mesh (its owner node, world bounds and whatever
+    it intersects the mesh through) and supplies the intersection itself, the
+    injected *mesh* adapter (:class:`ProbeMesh`).
+
+    Parameters:
+        mesh: The host's intersection (:class:`ProbeMesh`).
     """
 
-    def __init__(self):
+    def __init__(self, mesh: Optional[ProbeMesh] = None):
+        #: The host's intersection (:class:`ProbeMesh`).
+        self.mesh = mesh
         #: Each intersectable mesh's node, by index.
         self.owners: List[Any] = []
         self._payloads: List[Any] = []
@@ -115,14 +147,12 @@ class ProbeRays:
         direction: Sequence[float],
         far: float,
     ) -> Optional[Tuple[float, Vec, Any]]:
-        """The host's nearest hit on one mesh: ``(distance, point, face)``, or
-        ``None``. *face* is what :meth:`_normal` reads the winner's normal
-        from; only the nearest hit of a cast pays for one."""
-        raise NotImplementedError
+        """The host's nearest hit on one mesh (:meth:`ProbeMesh.intersect`)."""
+        return self.mesh.intersect(payload, origin, direction, far)
 
     def _normal(self, payload: Any, face: Any) -> Vec:
-        """The world normal of *face* on the mesh *payload* names."""
-        raise NotImplementedError
+        """The world normal of *face* (:meth:`ProbeMesh.normal`)."""
+        return self.mesh.normal(payload, face)
 
     def cast(
         self, origin: Sequence[float], direction: Sequence[float], far: float = 1.0e7
@@ -205,11 +235,48 @@ class _Look(NamedTuple):
     enclosed: bool = False
 
 
+class ProbeHost(Protocol):
+    """What :class:`ProbePlacement` asks of the host scene: a short, fixed
+    interface each DCC implements (``MayaProbeHost``, ``BlenderProbeHost``:
+    each library's ``ProbePlacement.HOST_CLASS``) and a fake stands in for in a
+    plain-Python test. One adapter serves one placement (it may hold what it
+    read)."""
+
+    #: The host's internal linear unit in metres (Maya: 0.01 -- centimetres,
+    #: whatever the scene's UI unit; Blender: the scene's ``scale_length``).
+    internal_m: float
+    #: The up axis, as an index (Maya: Y, 1; Blender: Z, 2).
+    up: int
+
+    def nodes(self, objects: Sequence[Any]) -> List[Any]:
+        """*objects* as the nodes the placement names them by (a DAG path,
+        an object name): what :attr:`ProbeSite.hide` lists."""
+
+    def rays(self, nodes: Sequence[Any]) -> "ProbeRays":
+        """A :class:`ProbeRays` over the meshes of *nodes*."""
+
+    def bounds(self, nodes: Sequence[Any]) -> Box:
+        """``[[min], [max]]`` of *nodes* in world space, internal units."""
+
+    def lights(self) -> Tuple[List[Tuple[Vec, Optional[Any]]], bool]:
+        """The lights that light the render: ``[(world point, own mesh node or
+        None)]`` for each placed one -- a mesh light is in view when its own
+        mesh is -- and whether a sky lights the scene."""
+
+    def to_scene(self, value: float) -> float:
+        """An internal length in scene units."""
+
+    def to_internal(self, point: Sequence[float]) -> List[float]:
+        """A scene-unit point in internal units."""
+
+
 class ProbePlacement:
     """Place a lightmap bake's reflection probe (see the module docstring).
 
-    Host-free: a DCC subclasses it with its scene (the module docstring's
-    hooks). mayatk's and blendertk's ``ProbePlacement`` are those subclasses.
+    Host-free: the scene comes through the injected *host* adapter
+    (:class:`ProbeHost`), else one built from :attr:`HOST_CLASS` -- mayatk's and
+    blendertk's ``ProbePlacement`` are this class with theirs set, and nothing
+    else.
 
     Parameters:
         baked: The visible baked mesh nodes -- the room.
@@ -217,7 +284,15 @@ class ProbePlacement:
             covers the bake's (a sky dome, a ground or terrain nobody baked)
             are the room's surroundings: seen, and walls. The rest move: the
             capture sees through them.
+        host: The host adapter (:class:`ProbeHost`); ``None`` builds one from
+            :attr:`HOST_CLASS`.
     """
+
+    #: The host's adapter class, built once per placement when no *host* is
+    #: passed (``HOST_CLASS() -> ProbeHost``): a FACTORY, unlike
+    #: ``SceneDataSidecarBase.HOST``'s instance, because an adapter holds what
+    #: it read of one placement's scene. ``None``: a host must be passed.
+    HOST_CLASS: Optional[Callable[[], ProbeHost]] = None
 
     #: The cone each face is measured over: rays at these angles (degrees) off
     #: the axis, each ring of twelve, plus the axis itself. Wide, because what
@@ -261,12 +336,6 @@ class ProbePlacement:
     #: for the point to be inside it: an open cupboard, whatever its opening
     #: shows (:meth:`_look`).
     ENCLOSED_SHARE: float = 0.5
-    #: The host's internal linear unit in metres (Maya: 0.01 -- centimetres,
-    #: whatever the scene's UI unit; Blender: the scene's ``scale_length``).
-    INTERNAL_M: float = 1.0
-    #: The up axis, as an index (Maya: Y, 1; Blender: Z, 2).
-    UP: int = 1
-
     #: The 26 directions of a cube's faces, edges and corners: what a point
     #: is looked around with.
     _AROUND: Tuple[Vec, ...] = tuple(
@@ -277,50 +346,39 @@ class ProbePlacement:
         if (i, j, k) != (0, 0, 0)
     )
 
-    def __init__(self, baked: Sequence[Any], unbaked: Sequence[Any] = ()):
+    def __init__(
+        self,
+        baked: Sequence[Any],
+        unbaked: Sequence[Any] = (),
+        host: Optional[ProbeHost] = None,
+    ):
+        if host is None:
+            if self.HOST_CLASS is None:
+                raise TypeError(
+                    "ProbePlacement needs a host adapter (host=, or HOST_CLASS)"
+                )
+            host = self.HOST_CLASS()
+        #: The host adapter every scene read goes through (:class:`ProbeHost`).
+        self.host: ProbeHost = host
         self._extents: Dict[Any, Box] = {}
         self._lights: Optional[Tuple[List[Tuple[Vec, Optional[Any]]], bool]] = None
-        self.up = self.UP
+        #: The host's internal linear unit in metres, and its up axis.
+        self.INTERNAL_M: float = float(host.internal_m)
+        self.up: int = int(host.up)
         self.flat = [a for a in range(3) if a != self.up]
         #: A centimetre in the internal unit: how near two hits are one plane,
         #: and a light is reached.
         self._cm = 0.01 / self.INTERNAL_M
-        self.baked = list(dict.fromkeys(baked))
-        self.span = self._bounds(self.baked) if self.baked else None
+        self.baked = list(dict.fromkeys(host.nodes(baked)))
+        self.span = host.bounds(self.baked) if self.baked else None
         self.surround: List[Any] = []
         self.moving: List[Any] = []
-        for node in dict.fromkeys(unbaked):
+        for node in dict.fromkeys(host.nodes(unbaked)):
             if self.span and self._covers(self._extent(node), self.span):
                 self.surround.append(node)
             else:
                 self.moving.append(node)
-        self.rays = self._make_rays(self.baked + self.surround)
-
-    # ------------------------------------------------------------------
-    # The host's scene (hooks)
-    # ------------------------------------------------------------------
-
-    def _make_rays(self, nodes: Sequence[Any]) -> ProbeRays:
-        """A :class:`ProbeRays` over the meshes of *nodes*."""
-        raise NotImplementedError
-
-    def _bounds(self, nodes: Sequence[Any]) -> Box:
-        """``[[min], [max]]`` of *nodes* in world space, internal units."""
-        raise NotImplementedError
-
-    def _read_lights(self) -> Tuple[List[Tuple[Vec, Optional[Any]]], bool]:
-        """The lights that light the render: ``[(world point, own mesh node or
-        None)]`` for each placed one -- a mesh light is in view when its own
-        mesh is -- and whether a sky lights the scene."""
-        raise NotImplementedError
-
-    def _ui(self, value: float) -> float:
-        """An internal length in scene units (default: the same unit)."""
-        return value
-
-    def _to_internal(self, point: Sequence[float]) -> List[float]:
-        """A scene-unit point in internal units (default: the same unit)."""
-        return [float(c) for c in point]
+        self.rays = host.rays(self.baked + self.surround)
 
     # ------------------------------------------------------------------
     # The placement
@@ -341,12 +399,12 @@ class ProbePlacement:
             if self._holds(reach, self._centre(self._extent(node)))
         ]
         if inside:
-            target, reason = self._centre(self._bounds(inside)), "over what moves"
+            target, reason = self._centre(self.host.bounds(inside)), "over what moves"
         elif all(room[side][a] is not None for side in (0, 1) for a in self.flat):
             target, reason = self._centre(reach), "the room's middle"
         else:
             props = [b for b in self.baked + self.surround if not self._shell(b)]
-            target = self._centre(self._bounds(props or self.baked))
+            target = self._centre(self.host.bounds(props or self.baked))
             reason = "over the baked objects" if props else "the bake's middle"
         # Eye level: half the room's height, at most MAX_HEIGHT_M over its
         # floor -- the floor the room's own cone found, past the furniture,
@@ -428,7 +486,7 @@ class ProbePlacement:
             scene_units: *point* and the result in scene units (else the
                 host's internal unit).
         """
-        origin = self._to_internal(point) if scene_units else list(point)
+        origin = self.host.to_internal(point) if scene_units else list(point)
         result: List[List[Optional[float]]] = [[None] * 3, [None] * 3]
         for axis in range(3):
             u, v = [a for a in range(3) if a != axis]
@@ -473,7 +531,10 @@ class ProbePlacement:
                     )
                 result[side][axis] = wall
         if scene_units:
-            return [[self._ui(c) if c is not None else None for c in r] for r in result]
+            return [
+                [self.host.to_scene(c) if c is not None else None for c in r]
+                for r in result
+            ]
         return result
 
     # ------------------------------------------------------------------
@@ -689,9 +750,9 @@ class ProbePlacement:
         return best
 
     def _light_points(self) -> Tuple[List[Tuple[Vec, Optional[Any]]], bool]:
-        """:meth:`_read_lights`, read once."""
+        """The host's lights (:meth:`ProbeHost.lights`), read once."""
         if self._lights is None:
-            self._lights = self._read_lights()
+            self._lights = self.host.lights()
         return self._lights
 
     # ------------------------------------------------------------------
@@ -765,9 +826,9 @@ class ProbePlacement:
         )
 
     def _extent(self, node: Any) -> Box:
-        """:meth:`_bounds` of one node, read once."""
+        """The host's bounds of one node (:meth:`ProbeHost.bounds`), read once."""
         if node not in self._extents:
-            self._extents[node] = self._bounds([node])
+            self._extents[node] = self.host.bounds([node])
         return self._extents[node]
 
     @staticmethod
@@ -779,7 +840,7 @@ class ProbePlacement:
         return all(lo <= c <= hi for c, lo, hi in zip(point, *bounds))
 
     def _to_scene(self, point: Sequence[float]) -> List[float]:
-        return [self._ui(c) for c in point]
+        return [self.host.to_scene(c) for c in point]
 
     @staticmethod
     def _leaf(node: Any) -> str:

@@ -11,10 +11,10 @@ draped banner, a ribbon, a terrain strip along a path…) lives entirely in the
 ``displace`` callable the caller plugs in.
 
 This is the reusable substrate under curve-driven surface generators such as
-the ``CurtainDrape`` engine vendored in the DCC packages
-(``mayatk``/``blendertk`` ``edit_utils.curtain._curtain_drape``): they resolve their
-own resolution + precompute their own feature state, then hand this primitive
-a displacement closure. A new generator is a new displacement — no new
+:class:`~pythontk.geo_utils.curtain_drape.CurtainDrape` (the drape both DCC
+``CurtainMesh`` classes build from): they resolve their own resolution +
+precompute their own feature state, then hand this primitive a displacement
+closure. A new generator is a new displacement — no new
 machinery.
 
 Pure geometry, no DCC: it emits plain vertex positions; building the mesh from

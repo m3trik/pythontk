@@ -20,7 +20,7 @@ signature buckets into candidate groups, and the run summary a pass reports
 :class:`~pythontk.core_utils.engines.instancing.instancing_strategy.InstancingStrategy`
 decides what a group becomes (GPU instance, combine, keep separate) from a
 :class:`StrategyConfig`; its one scene read, the prototype's triangle count, is
-a hook each DCC binding overrides.
+an adapter each host's ``AutoInstancer`` injects.
 
 **Why only these live here.** The auto-instancing domain was already
 *decomposed* per the charter's first rule: the general point-set math (PCA

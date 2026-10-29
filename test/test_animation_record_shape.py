@@ -31,7 +31,7 @@ from pythontk.core_utils.engines.shots.animation_record import (
     AnimationRecord,
     AnimationShot,
 )
-from pythontk.core_utils.engines.shots.shot_model import ShotStore
+from pythontk.core_utils.engines.shots.shot_model import PureShotsHost, ShotStore
 
 ptk.TestSandbox.activate()
 
@@ -111,19 +111,20 @@ def _edited(payload, path, value=None, drop=False):
     return out
 
 
-def _store(cls=ShotStore, fps=FPS):
+def _store(host=None, fps=FPS):
     """A store holding each kind of shot the record carries, made active: a
     built step's shot (members, a description, a section), a tail split off
     it (no members; its step's section, by its name) and a hold.
 
     Parameters:
-        cls: The store class -- the pure one, or a DCC's stand-in.
+        host: The store's host -- the pure one (``None``), or a DCC's
+            stand-in.
         fps: The scene's frame rate.
 
     Returns:
         The store.
     """
-    store = cls([])
+    store = ShotStore([], host=host)
     store.scene_fps = fps
     store.define_shot(
         "A01_1",
@@ -139,24 +140,20 @@ def _store(cls=ShotStore, fps=FPS):
     return store
 
 
-class _HostStore(ShotStore):
-    """A DCC store's scene lookups -- the hooks mayatk's and blendertk's
-    stores override -- answered from a fixed scene: one member renamed behind
-    the store's back (Maya finds it by its UUID, Blender by the rename it
-    follows), one deleted, and nothing keyed in the frames of the shot whose
-    every member is gone, so that shot is stale."""
+class _HostScene(PureShotsHost):
+    """A DCC host's scene lookups -- what mayatk's and blendertk's hosts
+    answer -- from a fixed scene: one member renamed behind the store's back
+    (Maya finds it by its UUID, Blender by the rename it follows, so it is
+    still held), one deleted, and nothing keyed in the frames of the shot
+    whose every member is gone, so that shot is stale."""
 
-    RENAMED = {"|set|door_geo": "|set|door_main_geo"}
     GONE = {"|set|lamp_geo"}
 
-    def _existing_objects(self, names):
+    def existing_objects(self, store, names):
         return {n for n in names if n not in self.GONE}
 
-    def _keyed_windows(self, windows):
+    def keyed_windows(self, store, windows):
         return [False] * len(windows)
-
-    def _current_names(self, names):
-        return {n: self.RENAMED[n] for n in names if n in self.RENAMED}
 
 
 class _ShotsCase(unittest.TestCase):
@@ -203,7 +200,7 @@ class TestTheRecordIsWhatTheStorePublishes(_ShotsCase):
         """A renamed member, a deleted one, a stale shot, an NTSC rate and an
         export set narrower than the scene: the payload a DCC store
         publishes, through the same producer."""
-        store = _store(_HostStore, fps=30000 / 1001)
+        store = _store(_HostScene(), fps=30000 / 1001)
         payload = self._produced(store, clip_mode="shots", scope=("|set|door_geo",))
         _assert_exact(self, AnimationRecord, payload)
         # The stale "Hold" ships unless the store leaves stale shots out.

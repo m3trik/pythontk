@@ -55,17 +55,20 @@ external companions) load through the same accessors, a surviving ``.prev``
 serves as a read fallback until it is swept, and :meth:`migrate_legacy`
 promotes old-named files to the current name.
 
-Everything here is file I/O and set algebra.  What reaches a scene is four
-hooks a DCC adapter overrides (mayatk / blendertk ``SceneDataSidecar``):
+Everything here is file I/O and set algebra.  What reaches a scene is the
+host adapter, :attr:`SceneDataSidecarBase.HOST` (a :class:`SidecarHost`;
+mayatk's and blendertk's ``SceneDataSidecar`` bind theirs):
 
 =============================  ===============================================
 ``expand_to_descendants``      the export objects plus their descendants
 ``drop_intermediate``          nodes that are construction data, not shipped
-``build_clean_path_set``       host paths -> the recorded spelling
-``_close``                     what a recorded set means on comparison
+``clean_path``                 a host path -> the recorded spelling
+``ships_parent_chain``         the export writes every node's parent chain,
+                               so a recorded set means its closure
 =============================  ===============================================
 
-With the defaults the class takes path strings and records exactly them.
+With the pure host (:class:`PureSidecarHost`) the class takes path strings and
+records exactly them.
 """
 
 import hashlib
@@ -74,9 +77,55 @@ import logging
 import os
 import re
 import shutil
-from typing import Optional, Set, Tuple
+from typing import Any, Iterable, List, Optional, Protocol, Set, Tuple
 
 import pythontk as ptk
+
+
+class SidecarHost(Protocol):
+    """What the scene-data sidecar asks of the host whose exports it records.
+
+    A short, fixed interface each DCC implements (mayatk's ``MayaSidecarHost``,
+    blendertk's ``BlenderSidecarHost``: each ``SceneDataSidecar.HOST``) and
+    :class:`PureSidecarHost` holds with no scene behind it; a fake stands in
+    for either in a plain-Python test.
+    """
+
+    #: Whether the host's export writes every node's parent chain (Maya's
+    #: ``exportSelected``): a recorded set then means its closure under
+    #: ancestors (:meth:`SceneDataSidecarBase.with_ancestors`).  Blender's
+    #: ``use_selection`` drops unselected parents, so the set alone ships.
+    ships_parent_chain: bool
+
+    def expand_to_descendants(self, objects: Iterable[Any]) -> List[str]:
+        """*objects* plus all their descendants, as host paths: the scope the
+        host's export writes."""
+
+    def drop_intermediate(self, nodes: Iterable[str]) -> List[str]:
+        """*nodes* minus construction data the export never ships."""
+
+    def clean_path(self, path: str) -> str:
+        """One host path in the recorded spelling (decoration the deliverable
+        does not carry -- Maya's leading ``|`` and namespaces -- removed)."""
+
+
+class PureSidecarHost:
+    """The :class:`SidecarHost` with no scene: objects are already paths,
+    nothing is construction data, and a path is recorded as given."""
+
+    ships_parent_chain = False
+
+    @staticmethod
+    def expand_to_descendants(objects: Iterable[Any]) -> List[str]:
+        return list(objects)
+
+    @staticmethod
+    def drop_intermediate(nodes: Iterable[str]) -> List[str]:
+        return list(nodes)
+
+    @staticmethod
+    def clean_path(path: str) -> str:
+        return path
 
 
 class SceneDataSidecarBase:
@@ -95,9 +144,13 @@ class SceneDataSidecarBase:
     recent export).  Used when the Scene Exporter's Output Filename carries a
     ``{n}`` version counter (``run.versioned``).
 
-    Subclass per host and override the scene hooks (module docstring); every
-    other method is the one copy both DCC packages share.
+    Every scene read goes through :attr:`HOST`, the host adapter (module
+    docstring); a host binds its own by setting that one attribute, and every
+    method is the one copy both DCC packages share.
     """
+
+    #: The host adapter (:class:`SidecarHost`) every scene read goes through.
+    HOST: SidecarHost = PureSidecarHost()
 
     # The one shared copy (ExportProfile's): anchored to end-of-stem so it
     # only matches genuine version suffixes, not mid-name occurrences like
@@ -368,49 +421,52 @@ class SceneDataSidecarBase:
         return cls._promote_stem(export_path, base_stem=False)
 
     # ------------------------------------------------------------------
-    # Scene hooks (a DCC adapter overrides these) and path algebra
+    # Scene reads (through the host adapter) and path algebra
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def expand_to_descendants(objects) -> list:
-        """Scene hook: *objects* plus all their descendants, as host paths.
+    @classmethod
+    def expand_to_descendants(cls, objects) -> list:
+        """*objects* plus all their descendants, as host paths
+        (:meth:`SidecarHost.expand_to_descendants`).
 
-        The manifest has to capture the scope the host's export writes.  The
-        default has no scene: *objects* are already paths, and they are all
-        there is.
+        The manifest has to capture the scope the host's export writes.  With
+        no scene, *objects* are already paths, and they are all there is.
         """
-        return list(objects)
+        return list(cls.HOST.expand_to_descendants(objects))
 
-    @staticmethod
-    def drop_intermediate(nodes) -> list:
-        """Scene hook: *nodes* minus construction data the export never ships.
+    @classmethod
+    def drop_intermediate(cls, nodes) -> list:
+        """*nodes* minus construction data the export never ships
+        (:meth:`SidecarHost.drop_intermediate`).
 
         Maya parks intermediate shapes (``...ShapeOrig``) beside a deformed
         mesh; FBX writes the evaluated mesh only, so recording one made the
-        hierarchy check fail after an innocuous edit.  The default has no such
-        nodes.
+        hierarchy check fail after an innocuous edit.  With no scene there
+        are no such nodes.
         """
-        return list(nodes)
+        return list(cls.HOST.drop_intermediate(nodes))
 
-    @staticmethod
-    def build_clean_path_set(paths) -> set:
-        """Scene hook: host paths -> the recorded spelling, deduplicated.
-
-        The default records the paths as given; a host whose paths carry
-        decoration the deliverable does not (Maya's leading ``|`` and
-        namespaces) cleans it here.
+    @classmethod
+    def build_clean_path_set(cls, paths) -> set:
+        """Host paths -> the recorded spelling, deduplicated and meaning what
+        ships (:meth:`SidecarHost.clean_path`, then :meth:`_close`): Maya's
+        leading ``|`` and namespaces stripped and the set closed under
+        ancestors; Blender's paths as given.
         """
-        return set(paths)
+        return cls._close({cls.HOST.clean_path(p) for p in paths})
 
     @classmethod
     def _close(cls, paths) -> set:
-        """What a recorded path set means when compared: *paths* by default.
+        """What a recorded path set means when compared: what the host's
+        export ships.
 
-        A host whose export ships more than the selected paths overrides this
-        -- Maya's ``exportSelected`` writes every node's parent chain, so
-        mayatk closes both sides under ancestors (:meth:`with_ancestors`); a
-        host that ships exactly the set (Blender's ``use_selection``) keeps it.
+        Closed under ancestors (:meth:`with_ancestors`) when the export writes
+        every node's parent chain (:attr:`SidecarHost.ships_parent_chain`,
+        Maya's ``exportSelected``), else *paths* as given (Blender's
+        ``use_selection`` ships exactly the set).
         """
+        if cls.HOST.ships_parent_chain:
+            return cls.with_ancestors(paths)
         return set(paths)
 
     @staticmethod
@@ -421,8 +477,8 @@ class SceneDataSidecarBase:
         parent chain applies (Maya's ``exportSelected``, probe-verified for
         FBX and mayaAscii 2026-08-17: a group ships whether the group itself
         or only its leaves are in the export set).  Blender's
-        ``use_selection`` drops unselected parents, so blendertk does not
-        close (see :meth:`_close`).
+        ``use_selection`` drops unselected parents, so blendertk's host does
+        not ship the chain (see :meth:`_close`).
         """
         closed = set()
         for path in paths:

@@ -137,6 +137,33 @@ class TestHooks(unittest.TestCase):
         exporter._export_cancelled = True
         self.assertTrue(exporter.export_cancelled)
 
+    def test_the_saved_scene_is_the_host_scene_stores(self):
+        """The shell reads the open scene's path from the host's scene store
+        (``STORE.scene_path``), configuration a host sets; it overrides
+        nothing."""
+
+        class _Store:
+            path = ""
+
+            @classmethod
+            def scene_path(cls):
+                return cls.path
+
+        class _Bound(_Exporter):
+            STORE = _Store
+
+        self.assertEqual(_Exporter()._saved_scene_path(), "")
+        exporter = _Bound()
+        self.assertEqual(exporter._saved_scene_path(), "")
+        _Store.path = os.path.join("proj", "scenes", "a.ma")
+        self.assertEqual(exporter._saved_scene_path(), _Store.path)
+        self.assertEqual(
+            exporter.resolve_export_dir(None), os.path.join("proj", "scenes")
+        )
+        # A store answering None for an unsaved scene still reads as unsaved.
+        _Store.path = None
+        self.assertEqual(exporter._saved_scene_path(), "")
+
     def test_the_export_folder_falls_back_to_the_saved_scene(self):
         exporter = _Exporter()
         self.assertEqual(exporter.resolve_export_dir(None), "")

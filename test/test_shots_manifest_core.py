@@ -39,7 +39,7 @@ from pythontk.core_utils.engines.shots.manifest import behaviors as beh
 from pythontk.core_utils.engines.shots.manifest import range_resolver as rr
 from pythontk.core_utils.engines.shots.manifest.manifest_engine import ShotManifest
 from pythontk.core_utils.engines.shots.effect_recipe import EffectRecipe
-from pythontk.core_utils.engines.shots.shot_model import ShotStore
+from pythontk.core_utils.engines.shots.shot_model import PureShotsHost, ShotStore
 from pythontk.core_utils.engines.shots.shot_sequencer import ShotSequencer
 from pythontk.core_utils.schema_spec import SchemaError
 
@@ -1734,25 +1734,25 @@ class TestManifestEngine(unittest.TestCase):
         self.assertGreaterEqual(dur, 0.0)
 
 
-class _ScenicStore(ShotStore):
-    """A pure store whose scene holds long, namespaced paths: ``door`` lives
-    at ``|set|AC:door``; names in ``missing`` / ``ambiguous`` resolve so."""
+class _ScenicHost(PureShotsHost):
+    """A host whose scene holds long, namespaced paths: ``door`` lives at
+    ``|set|AC:door``; names in ``missing`` answer to no node, names in
+    ``ambiguous`` to two."""
 
-    missing: set = set()
-    ambiguous: set = set()
+    def __init__(self):
+        self.missing, self.ambiguous = set(), set()
 
-    def resolve_member(self, name):
+    def member_nodes(self, name):
         if name in self.missing:
-            return name, "missing"
+            return []
         if name in self.ambiguous:
-            return name, "ambiguous"
-        return f"|set|AC:{ShotStore.member_key(name)}", "found"
+            return [f"|a|{name}", f"|b|{name}"]
+        return [f"|set|AC:{ShotStore.member_key(name)}"]
 
 
 class _EngineCase(unittest.TestCase):
     def setUp(self):
-        _ScenicStore.missing, _ScenicStore.ambiguous = set(), set()
-        self.store = _ScenicStore()
+        self.store = ShotStore(host=_ScenicHost())
 
     @staticmethod
     def _step(sid, *objs, behaviors=None):
@@ -2136,7 +2136,7 @@ class TestReconcileStatuses(_EngineCase):
     def test_missing_and_ambiguous_objects(self):
         step = self._step("A01", "door", "lid")
         mani = self._built(step)
-        _ScenicStore.missing, _ScenicStore.ambiguous = {"door"}, {"lid"}
+        self.store.host.missing, self.store.host.ambiguous = {"door"}, {"lid"}
         (st,) = mani.assess([step])
         self.assertEqual(
             [o.status for o in st.objects], ["missing_object", "ambiguous_object"]

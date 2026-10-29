@@ -3,23 +3,28 @@
 """The Scene Exporter's orchestration shell, written once for both DCCs.
 
 mayatk's and blendertk's ``SceneExporter`` subclass :class:`SceneExporterBase`
-and keep only what reaches their scene: the export write itself
-(``perform_export``), the object scope, the FBX/USD options and presets, and
-the naming tokens a scene spells.  What they share is here: the logging
-setup, the run's ``(current, total, message)`` progress stream, the task
-pipeline run with its per-check override decision, the export button's
-contract (:meth:`SceneExporterBase.run_config_from_values` over
+for its configuration and add only what reaches their scene: the export write
+itself (``perform_export``), the object scope, the FBX/USD options and presets,
+and the naming tokens a scene spells.  They override none of it: what the
+shell reads of the scene comes through the host's scene store (``STORE``).
+What they share is here: the logging setup, the run's ``(current, total,
+message)`` progress stream, the task pipeline run with its per-check override
+decision, the export button's contract
+(:meth:`SceneExporterBase.run_config_from_values` over
 :class:`~pythontk.ExportProfile`), the export folder, and the run log -- one
 file per scene in the per-user cache (:class:`~pythontk.RunLog`).
 
-Hooks (override in the DCC subclass; defaults describe no scene):
+Configuration (set on the DCC subclass; defaults describe no scene) and the
+two seams a panel answers:
 
 =====================================  ======================================
 ``TASK_MANAGER_CLASS``                 the host's ``TaskManager`` (a
                                        :class:`~pythontk.TaskFactory`), built
                                        with the exporter's logger
-``_saved_scene_path()``                the open scene's saved path, ``""``
-                                       unsaved
+``STORE``                              the host's scene store (a
+                                       :class:`~pythontk.SceneStoreBase`, its
+                                       ``DataNodes``): ``scene_path()`` is the
+                                       open scene's saved path, ``""`` unsaved
 ``KEPT_EDITS_ADVICE``                  what a run that stopped before its
                                        write tells the user about the edits
                                        it kept
@@ -57,14 +62,20 @@ from pythontk.core_utils.logging_mixin import LoggingMixin, RunLog
 class SceneExporterBase(LoggingMixin):
     """The DCC-free half of a Scene Exporter: progress, consent, run config.
 
-    Subclass per host and set :attr:`TASK_MANAGER_CLASS`; see the module
-    docstring for the hooks.  The ``export_dir`` / ``export_path`` attributes
+    Subclass per host to configure it (:attr:`TASK_MANAGER_CLASS`,
+    :attr:`STORE`; see the module docstring) and add the host's export, never
+    to override it.  The ``export_dir`` / ``export_path`` attributes
     the run-log helpers read are stamped by the host's ``perform_export``.
     """
 
     #: The host's task/check pipeline class (a ``ptk.TaskFactory`` subclass),
     #: constructed as ``TASK_MANAGER_CLASS(logger)``; set by the DCC subclass.
     TASK_MANAGER_CLASS: Any = None
+
+    #: The host's scene store (a ``ptk.SceneStoreBase``: its ``DataNodes``),
+    #: what the shell reads the open scene's saved path from; set by the DCC
+    #: subclass. ``None``: no scene.
+    STORE: Any = None
 
     #: Said after the list of edits a run kept when it stopped before its
     #: write -- the host words its own undo story.
@@ -184,9 +195,11 @@ class SceneExporterBase(LoggingMixin):
             self.logger.warning(f"The run log could not be opened ({error}): {path}")
 
     def _saved_scene_path(self) -> str:
-        """Scene hook: the open scene's saved path, ``""`` while it is unsaved
-        (the default: no scene)."""
-        return ""
+        """The open scene's saved path, ``""`` while it is unsaved: the host's
+        scene store's (``STORE.scene_path``); ``""`` with no store."""
+        if self.STORE is None:
+            return ""
+        return self.STORE.scene_path() or ""
 
     def confirm(self, question: str) -> bool:
         """Yes/no consent for an export-time side effect (a tool download).

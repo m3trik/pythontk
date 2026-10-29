@@ -94,7 +94,7 @@ generated from these declarations.
 - `scene_records` — every tool-authored scene record declared once (`Scope`, `Kind`, `Merge`, `RecordSpec`, the `SceneRecords` catalogue); `scene_store` — `SceneStoreBase`, the string-per-scope contract each DCC's `DataNodes` implements, plus the crossings built on it; `export_snapshot` — `ExportContext` / `ExportSnapshot`, compute every record then commit once; `record_transfer` — `TransferContext` / `RecordTransfer`, records crossing into another scene by declaration.
 - `export_profile` — `ExportProfile` / `ExportRun`: the panels' widget values -> one run configuration (task order, naming, texture and GLB policy).
 - `hierarchy_baseline` — `HierarchyBaseline` (per-scene set algebra) and `HierarchyBaselineStore` (its scene-stored half).
-- `scene_exporter` / `scene_data_sidecar` — `SceneExporterBase` (progress stream, check-override consent, run config, log file) and `SceneDataSidecarBase` (the `.scene_data.json` format, naming, migration, diff report): the DCC `SceneExporter` / `SceneDataSidecar` subclass them and supply the scene I/O through hooks.
+- `scene_exporter` / `scene_data_sidecar` — `SceneExporterBase` (progress stream, check-override consent, run config, log file) and `SceneDataSidecarBase` (the `.scene_data.json` format, naming, migration, diff report): the DCC `SceneExporter` / `SceneDataSidecar` bind them to their host -- the sidecar's `HOST` adapter (`SidecarHost`), the exporter's `STORE` (the host's `SceneStoreBase`) -- and override nothing (`check_dcc_twins.py`, host bindings).
 
 ### `engines/instancing/`
 

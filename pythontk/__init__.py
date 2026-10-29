@@ -93,6 +93,13 @@ DEFAULT_INCLUDE = {
         "Workspace",
         "WorkspaceTemplates",
     ],
+    # The workspaces under a root, measured and shaped as a tree (the Workspaces
+    # panel's map); each DCC binds its host adapter (``WorkspaceMapBase.HOST``).
+    "file_utils.workspace_map": [
+        "WorkspaceMapBase",
+        "WorkspaceMapHost",
+        "PureWorkspaceMapHost",
+    ],
     # Per-scene notes kept with the project: one file both DCCs' Reference
     # Manager panels read and write.
     "file_utils.scene_notes": ["SceneNotes"],
@@ -112,6 +119,8 @@ DEFAULT_INCLUDE = {
     "geo_utils.polyline": "Polyline",
     "geo_utils.pointcloud": "PointCloud",
     "geo_utils.rail_surface": "RailSurface",
+    # The curtain drape over RailSurface: both hosts' CurtainMesh subclass it.
+    "geo_utils.curtain_drape": "CurtainDrape",
     "geo_utils.plate_emitter": "PlateEmitter",
     "geo_utils.shadow_projection": [
         "ShadowProjection",
@@ -121,8 +130,15 @@ DEFAULT_INCLUDE = {
     ],
     "geo_utils.shadow_horizon": ["ShadowHorizon", "HeightFieldMap", "HorizonMap"],
     # Where a lightmap bake's reflection probe stands, by ray casts a DCC
-    # hands it (mayatk's and blendertk's ProbePlacement subclass it).
-    "geo_utils.probe_placement": ["ProbePlacement", "ProbeRays", "ProbeSite"],
+    # hands it through its host adapter (mayatk's and blendertk's
+    # ProbePlacement bind theirs).
+    "geo_utils.probe_placement": [
+        "ProbePlacement",
+        "ProbeRays",
+        "ProbeSite",
+        "ProbeHost",
+        "ProbeMesh",
+    ],
     # Articulated rigs: the joint model + grab solver every runtime ports, and
     # the geometry rules that propose a rig from the parts alone.
     "geo_utils.articulation.model": "ArticulationModel",
@@ -215,9 +231,14 @@ DEFAULT_INCLUDE = {
         "RecordTransfer",
     ],
     # The scene-data sidecar's format / naming / migration / diff report, and
-    # the exporter's orchestration shell -- each DCC subclasses both and
-    # supplies its scene hooks.
-    "core_utils.engines.scene_export.scene_data_sidecar": ["SceneDataSidecarBase"],
+    # the exporter's orchestration shell -- each DCC binds both to its host
+    # (the sidecar's HOST adapter, the exporter's STORE), overriding nothing.
+    "core_utils.engines.scene_export.scene_data_sidecar": [
+        "SceneDataSidecarBase",
+        # Its host adapter seam, and the pure host a DCC's adapter builds on.
+        "SidecarHost",
+        "PureSidecarHost",
+    ],
     "core_utils.engines.scene_export.scene_exporter": ["SceneExporterBase"],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [
@@ -237,6 +258,12 @@ DEFAULT_INCLUDE = {
         "NativeStepFollowed",
         "SHOT_PALETTE",
         "SHOT_STATUS_LEVELS",
+        # The store's host adapter seam: the protocol each DCC implements
+        # (``mtk.MayaShotsHost``, ``btk.BlenderShotsHost``) and its pure defaults,
+        # and the hand-off codec its ``transfer()`` returns.
+        "ShotsHost",
+        "PureShotsHost",
+        "ShotTransferHost",
     ],
     # The shot system's record of what IT wrote on scene curves, so those
     # writes can be released when the boundary that caused them moves.

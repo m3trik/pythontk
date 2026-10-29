@@ -61,6 +61,10 @@ Shared project-workspace model plus a `workspace.mel` codec — pure Python, no 
 
 `Workspace.for_scene(scene, session_root)` is the one scene-to-project rule both DCCs use (the scene's nearest marked ancestor, else the session root when it holds the scene, else the scene's folder; an unsaved scene has the session root's workspace or none -- never temp). The permanent-file tree both DCCs write into resolves through rules under Maya's names, so a Maya project stays a normal Maya project and a Blender project gets the same tree: `cache_dir(kind)` (rule `<kind>Cache`, else `cache/<kind>`), `movie_dir()`, `images_dir()`, `export_dir()` (`FBX export`, else `data/`), `source_images_dir` (`sourceimages/`, an existing `textures/` still matched), `backup_dir(scene)` (Maya's `incrementalSave/<scene file>/`). Asking writes nothing (`create=True` makes the folder); `relative(path)` / `absolute(stored)` spell a project file portably.
 
+## Workspace Map (`workspace_map.py`)
+
+The workspaces under a root folder, measured (scene count, scene-file size, recent scenes) and shaped as a folder -> workspace tree for a browser: the map of tentacle's Workspaces tool in both hosts. `WorkspaceMapBase` owns the scan, its cache and the tree; what differs per host is a short adapter, its `HOST` (a `WorkspaceMapHost`: the session's workspace, discovery, a workspace's scenes, the project builders), which mayatk and blendertk each bind (`WorkspaceMap`). `PureWorkspaceMapHost` holds it with no host: marked folders, scenes by extension.
+
 ## Batch renaming (`file_naming.py`)
 
 `RenamePlan` is the host-agnostic executor both DCC naming panels share: it takes a plan of `(item, new_name)` and a `rename` **strategy callable**, applies it entry by entry, and reports what changed — collision handling, dry-run, per-entry failure isolation and the log/link formatting in one place, with no filesystem or DCC call of its own. `FileNaming` is its filesystem tenant: `expand` (paths or directories to files), `find`, `rename`, `set_case` and `strip_chars`, driving `RenamePlan` with an `os.rename` strategy. A DCC layer supplies its own strategy instead (`cmds.rename`, `object.name = …`) and gets the same behaviour for free.
@@ -75,7 +79,7 @@ Shared project-workspace model plus a `workspace.mel` codec — pure Python, no 
 
 ## Dependency gating
 
-No third-party dependencies: `usd`, `workspace`, `temp_artifacts`. Optional, feature-gated: `mesh_ops` (PyMeshLab via the `pythontk[mesh]` extra), `metadata` (pywin32, sidecar fallback), `mesh_convert` (FBX2glTF binary auto-installed; `toktx` for KTX2), `uv_unwrap` (external CLIs, one auto-installable).
+No third-party dependencies: `usd`, `workspace`, `workspace_map`, `temp_artifacts`. Optional, feature-gated: `mesh_ops` (PyMeshLab via the `pythontk[mesh]` extra), `metadata` (pywin32, sidecar fallback), `mesh_convert` (FBX2glTF binary auto-installed; `toktx` for KTX2), `uv_unwrap` (external CLIs, one auto-installable).
 
 ## Links
 

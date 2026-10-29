@@ -32,6 +32,7 @@ if _PKG_PARENT not in sys.path:
 
 from pythontk.core_utils.engines.shots import shot_model
 from pythontk.core_utils.engines.shots.shot_model import ShotBlock, ShotStore
+from pythontk.core_utils.engines.shots.shot_conformance import ShotStoreConformance
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.core_utils.engines.shots.shot_plan import ShotPlanner, ShotMove
 from pythontk.core_utils.engines.shots.shot_apply import ShotApply
@@ -895,13 +896,13 @@ class TestMemberIdentity(_ShotTest):
         self.assertEqual(ShotStore().resolve_member("door"), ("door", "found"))
 
     def test_resolve_member_reads_the_nodes_a_name_answers_to(self):
-        class _Scene(ShotStore):
+        class _Scene(shot_model.PureShotsHost):
             NODES = {"lid": ["|a|lid", "|b|lid"], "door": ["|AC:door"]}
 
             def member_nodes(self, name):
                 return list(self.NODES.get(name, []))
 
-        store = _Scene()
+        store = ShotStore(host=_Scene())
         self.assertEqual(store.resolve_member("door"), ("|AC:door", "found"))
         self.assertEqual(store.resolve_member("lid"), ("lid", "ambiguous"))
         self.assertEqual(store.resolve_member("hinge"), ("hinge", "missing"))
@@ -1376,6 +1377,705 @@ class TestShotStoreSerialisation(_ShotTest):
         self.assertEqual(meta["shots"][1], {"clip": "Plain", "start": 20, "end": 30})
 
 
+class TestPersistedPayloadPinned(_ShotTest):
+    """Characterization pin: what a store saves is a contract older scenes
+    hold, so its spelling and bytes never move with the code."""
+
+    def test_the_saved_record_is_pinned_byte_for_byte(self):
+        store = ShotStoreConformance.fill(ShotStore())
+        self.assertEqual(
+            SceneRecords.SHOT_STORE.encode(store.to_dict()),
+            ShotStoreConformance.payload(),
+        )
+
+    def test_a_reloaded_store_saves_the_same_bytes(self):
+        payload = ShotStoreConformance.payload()
+        restored = ShotStore.from_dict(SceneRecords.SHOT_STORE.decode(payload))
+        self.assertEqual(SceneRecords.SHOT_STORE.encode(restored.to_dict()), payload)
+
+    def test_the_case_document_carries_the_payload(self):
+        doc = ShotStoreConformance.cases()
+        self.assertEqual(
+            [c["payload"] for c in doc["cases"]], [ShotStoreConformance.payload()]
+        )
+        self.assertIn(
+            '"member_ids": {"pin_cube": "U-1"}',
+            ShotStoreConformance.payload({"pin_cube": "U-1"}),
+        )
+
+
+# ===========================================================================
+# The host adapter (``ShotsHost``) -- the one store over a fake host
+# ===========================================================================
+
+
+class _FakeHost(shot_model.PureShotsHost):
+    """A host double over the pure defaults: a scene of plain values, and a
+    record of what the store asked of it."""
+
+    def __init__(self, available=True, keys_keep_time=True):
+        self._available = available
+        self.keys_keep_time = keys_keep_time
+        self.asked = []
+        self.published = []
+        self.producer = []
+        self.synced = []
+        self.backend = None
+        self.undone = None
+
+    def available(self):
+        return self._available
+
+    def persistence(self):
+        self.asked.append("persistence")
+        return self.backend
+
+    def scene_fps(self):
+        return 30.0
+
+    def detection(self):
+        host = self
+
+        class Detection:
+            @staticmethod
+            def detect_shot_regions(gap_threshold):
+                host.asked.append(("auto", gap_threshold))
+                return [{"name": "A", "start": 0, "end": 10, "objects": []}]
+
+            @staticmethod
+            def regions_from_selected_keys(gap_threshold, key_filter):
+                host.asked.append(("keys", gap_threshold, key_filter))
+                return []
+
+        return Detection
+
+    def follow_renames(self, store):
+        self.asked.append("follow_renames")
+        return False
+
+    def audio_spans(self):
+        return [(5.0, 8.0), (40.0, None)]
+
+    @contextmanager
+    def undo_step(self, store, label, snapshot):
+        """A native queue of one named step per edit: paired when the edit
+        changed the records, its marker the label."""
+        self.asked.append(("undo_step", label, snapshot))
+        edit = store.EditHandle()
+        try:
+            yield edit
+        finally:
+            edit.tag = (edit.changed, label)
+
+    def step_crossed(self, marker, redo):
+        return marker is None or marker == self.undone
+
+    def install_undo_sync(self, on_step):
+        self.synced.append(("install", on_step))
+
+    def remove_undo_sync(self, on_step):
+        self.synced.append(("remove", on_step))
+
+    def publish_records(self, records):
+        self.published.append(dict(records))
+        return "data_export"
+
+    def export_producer(self, enabled):
+        self.producer.append(enabled)
+
+    def transfer(self):
+        return _FakeTransfer(self)
+
+
+class _FakeTransfer(object):
+    """The fake host's hand-off naming: names upper-cased on the carrier,
+    every claim on ``HERO``."""
+
+    def __init__(self, host):
+        self.host = host
+
+    def spell(self, name):
+        return name.upper()
+
+    def curve_refs(self):
+        return lambda key: ("HERO", key)
+
+    def curve_key(self, node, label):
+        return label if node == "hero" else None
+
+    def key_exists(self, curve, time):
+        return True
+
+    def resolve(self, name):
+        return name.lower()
+
+    def channels(self, names):
+        self.host.asked.append(("channels", names))
+        return None
+
+    def write_channels(self, node, records):
+        return 0
+
+    def audio(self):
+        return []
+
+    def write_audio(self, clips):
+        return 0
+
+
+class _HostTest(_ShotTest):
+    """Isolates the process-wide host state a test injects or registers."""
+
+    def setUp(self):
+        super().setUp()
+        saved = (
+            ShotStore._host,
+            ShotStore._host_source,
+            dict(ShotStore._host_resolvers),
+        )
+
+        def restore():
+            ShotStore._host, ShotStore._host_source = saved[0], saved[1]
+            ShotStore._host_resolvers.clear()
+            ShotStore._host_resolvers.update(saved[2])
+
+        self.addCleanup(restore)
+        ShotStore._host = ShotStore._host_source = None
+        ShotStore._host_resolvers.clear()
+
+
+class TestShotsHostSeam(_HostTest):
+    """How a store finds its host: injected, registered, or the pure one."""
+
+    def test_with_no_host_a_store_runs_on_the_pure_defaults(self):
+        store = ShotStore()
+        self.assertIsInstance(store.host, shot_model.PureShotsHost)
+        self.assertIsInstance(store.host, shot_model.ShotsHost)
+        self.assertIsNone(store.host_state)
+
+    def test_the_pure_host_answers_every_member_of_the_protocol(self):
+        members = {
+            name for name in vars(shot_model.ShotsHost) if not name.startswith("_")
+        } | set(shot_model.ShotsHost.__annotations__)
+        missing = [m for m in members if not hasattr(shot_model.PureShotsHost, m)]
+        self.assertEqual(missing, [])
+
+    def test_a_registered_host_is_resolved_on_first_ask_and_kept(self):
+        host = _FakeHost()
+        asked = []
+        ShotStore.register_host("fake", lambda: asked.append(1) or host)
+        self.assertIs(ShotStore().host, host)
+        self.assertIs(ShotStore.running_host(), host)
+        self.assertEqual(asked, [1], "resolved once, then kept")
+
+    def test_a_host_not_running_declines_and_the_pure_one_answers(self):
+        ShotStore.register_host("absent", lambda: None)
+        self.assertIsInstance(ShotStore.running_host(), shot_model.PureShotsHost)
+        late = _FakeHost()
+        ShotStore.register_host("late", lambda: late)
+        self.assertIs(ShotStore.running_host(), late, "the pure answer is not kept")
+
+    def test_an_injected_host_wins_and_a_store_can_take_its_own(self):
+        injected, own = _FakeHost(), _FakeHost()
+        ShotStore.register_host("fake", lambda: _FakeHost())
+        ShotStore.set_host(injected)
+        self.assertIs(ShotStore().host, injected)
+        self.assertIs(ShotStore(host=own).host, own)
+
+    def test_a_reregistered_host_drops_its_old_adapter_and_the_store_on_it(self):
+        """A library re-imported (a reload, a test harness's purge) replaces
+        its adapter, and the active store bound to the old one goes, as on a
+        scene change -- the next ``active()`` loads through the new one."""
+        old, new = _FakeHost(), _FakeHost()
+        ShotStore.register_host("fake", lambda: old)
+        ShotStore.set_active(ShotStore())
+        heard = []
+        ShotStore.add_invalidation_listener(heard.append)
+        ShotStore.register_host("fake", lambda: new)
+        self.assertIsNone(ShotStore._active)
+        self.assertEqual(len(heard), 1)
+        self.assertIn(("remove", ShotStore._on_native_step), old.synced)
+        self.assertIs(ShotStore.active().host, new)
+
+    def test_a_reregistered_host_drops_the_old_librarys_backend(self):
+        """With no store active, the backend the old adapter installed goes
+        too (a scene change left it, ``invalidate``): the next ``active()``
+        installs the new library's."""
+
+        class Backend:
+            removed = 0
+
+            def load(self):
+                return None
+
+            def save(self, data):
+                pass
+
+            def remove_callbacks(self):
+                Backend.removed += 1
+
+        old, new = _FakeHost(), _FakeHost()
+        old.backend, new.backend = Backend(), Backend()
+        ShotStore.register_host("fake", lambda: old)
+        ShotStore.active()
+        ShotStore.invalidate()
+        ShotStore.register_host("fake", lambda: new)
+        self.assertIsNone(ShotStore._persistence)
+        self.assertEqual(Backend.removed, 1)
+        ShotStore.active()
+        self.assertIs(ShotStore._persistence, new.backend)
+
+    def test_a_reregistration_flushes_what_the_dropped_store_held(self):
+        class Backend:
+            data = None
+
+            def load(self):
+                return None
+
+            def save(self, data):
+                self.data = data
+
+        class Deferred(_FakeHost):
+            def schedule_flush(self, store):
+                """Writes on idle: the edit below is still pending."""
+
+        old = Deferred()
+        old.backend = Backend()
+        ShotStore.register_host("fake", lambda: old)
+        ShotStore.active().define_shot("Pending", 0, 10)
+        self.assertIsNone(old.backend.data)
+        ShotStore.register_host("fake", lambda: _FakeHost())
+        self.assertEqual([s["name"] for s in old.backend.data["shots"]], ["Pending"])
+
+    def test_a_reregistration_unarms_the_old_adapter_on_both_branches(self):
+        """A store on another host stays, but the replaced adapter's undo
+        sync goes and the new one subscribes: left armed, every native undo
+        was followed twice."""
+        old, new = _FakeHost(), _FakeHost()
+        ShotStore.register_host("fake", lambda: old)
+        ShotStore.running_host()
+        ShotStore.set_active(ShotStore(host=_FakeHost()))  # arms ``old``
+        ShotStore.register_host("fake", lambda: new)
+        self.assertIn(("remove", ShotStore._on_native_step), old.synced)
+        self.assertIn(("install", ShotStore._on_native_step), new.synced)
+
+    def test_a_store_made_before_any_host_is_rehomed_when_one_registers(self):
+        """A store activated on the pure default -- the host library not yet
+        imported -- moves onto the host and into the scene, when the scene
+        holds no shot record of its own."""
+
+        class Backend:
+            data = None
+
+            def load(self):
+                return self.data
+
+            def save(self, data):
+                self.data = data
+
+        store = ShotStore.active()
+        with store.scene_edit("Define"):
+            store.define_shot("Early", 0, 10)
+        self.assertTrue(store.has_boundary_snapshot(), "an untagged pure point")
+        host = _FakeHost()
+        host.backend = Backend()
+        ShotStore.register_host("fake", lambda: host)
+        self.assertIs(ShotStore._active, store)
+        self.assertIs(store.host, host)
+        self.assertIs(ShotStore._persistence, host.backend)
+        self.assertEqual([s["name"] for s in host.backend.data["shots"]], ["Early"])
+        self.assertIn(("install", ShotStore._on_native_step), host.synced)
+        # The pure host's points never paired with a native step: kept, the
+        # next unrelated native undo read the untagged one as crossed and
+        # reverted the shots -- and saved the revert.
+        self.assertFalse(store.has_boundary_snapshot(redo=False))
+        self.assertFalse(store.has_boundary_snapshot(redo=True))
+        ShotStore._on_native_step(redo=False)
+        self.assertEqual([s.name for s in store.shots], ["Early"])
+        self.assertEqual([s["name"] for s in host.backend.data["shots"]], ["Early"])
+
+    def test_a_rehomed_store_takes_its_hosts_clock_without_moving_its_shots(self):
+        """The pure store's frames were typed against the scene's clock: the
+        host's rate is recorded as it is, never rescaled to -- recording the
+        pure 24 fps made a 30 fps scene's next load stretch every shot."""
+
+        class Backend:
+            data = None
+
+            def load(self):
+                return self.data
+
+            def save(self, data):
+                self.data = data
+
+        store = ShotStore.active()
+        store.define_shot("Early", 0, 30)
+        self.assertEqual(store.scene_fps, 24.0)
+        host = _FakeHost(keys_keep_time=True)  # scene_fps() 30
+        host.backend = Backend()
+        ShotStore.register_host("fake", lambda: host)
+        self.assertIs(store.host, host)
+        self.assertEqual(store.scene_fps, 30.0)
+        self.assertEqual(host.backend.data["scene_fps"], 30.0)
+        self.assertEqual([(s.start, s.end) for s in store.shots], [(0, 30)])
+        ShotStore.invalidate()
+        again = ShotStore.active()
+        self.assertIsNot(again, store)
+        self.assertEqual(
+            [(s.name, s.start, s.end) for s in again.shots], [("Early", 0, 30)]
+        )
+
+    def test_a_scenes_own_record_wins_over_a_store_made_before_its_host(self):
+        class Backend:
+            def __init__(self, data):
+                self.data = data
+
+            def load(self):
+                return self.data
+
+            def save(self, data):
+                self.data = data
+
+        ShotStore.active().define_shot("Early", 0, 10)
+        host = _FakeHost()
+        saved = {"shots": [{"shot_id": 0, "name": "Saved", "start": 0, "end": 5}]}
+        host.backend = Backend(saved)
+        ShotStore.register_host("fake", lambda: host)
+        self.assertIsNone(ShotStore._active, "dropped, as a scene open drops one")
+        self.assertEqual([s.name for s in ShotStore.active().shots], ["Saved"])
+
+    def test_an_injected_registered_host_is_still_dropped_on_reregistration(self):
+        """An entry point injects the adapter its library registered
+        (``set_host(MayaShotsHost.resolve())``): a re-import of that library
+        must still replace it, as when the resolver found it."""
+        old, new = _FakeHost(), _FakeHost()
+        ShotStore.register_host("fake", lambda: old)
+        ShotStore.set_host(old)
+        store = ShotStore.active()
+        self.assertIs(store.host, old)
+        ShotStore.register_host("fake", lambda: new)
+        self.assertIs(ShotStore.running_host(), new)
+        self.assertIsNot(ShotStore._active, store)
+        self.assertIn(("remove", ShotStore._on_native_step), old.synced)
+        self.assertIs(ShotStore.active().host, new)
+        self.assertIn(("install", ShotStore._on_native_step), new.synced)
+
+    def test_an_injected_unregistered_host_survives_a_reregistration(self):
+        injected = _FakeHost()
+        ShotStore.register_host("fake", lambda: _FakeHost())
+        ShotStore.set_host(injected)
+        ShotStore.register_host("fake", lambda: _FakeHost())
+        self.assertIs(ShotStore.running_host(), injected)
+
+    def test_an_injected_pure_host_is_never_rehomed(self):
+        ShotStore.set_host(shot_model.PureShotsHost())
+        store = ShotStore.active()
+        store.define_shot("Mine", 0, 10)
+        ShotStore.register_host("fake", lambda: _FakeHost())
+        self.assertIs(ShotStore._active, store)
+        self.assertIsInstance(store.host, shot_model.PureShotsHost)
+
+    def test_a_store_on_another_host_survives_a_reregistration(self):
+        ShotStore.register_host("fake", lambda: _FakeHost())
+        ShotStore.running_host()
+        kept = ShotStore(host=_FakeHost())
+        ShotStore.set_active(kept)
+        ShotStore.register_host("fake", lambda: _FakeHost())
+        self.assertIs(ShotStore._active, kept)
+
+    def test_class_level_calls_ask_the_running_host(self):
+        host = _FakeHost()
+        ShotStore.set_host(host)
+        ShotStore.set_active(ShotStore())
+        self.assertIn(("install", ShotStore._on_native_step), host.synced)
+        ShotStore.enable_auto_export()
+        self.assertEqual(host.producer, [True])
+        ShotStore.disable_auto_export()
+        self.assertEqual(host.producer, [True, False])
+
+    def test_has_animation_asks_the_running_host(self):
+        class Animated(_FakeHost):
+            def has_animation(self):
+                return True
+
+        ShotStore.set_host(Animated())
+        self.assertTrue(ShotStore.has_animation())
+
+
+class TestTheSharedBodiesOverAHost(_HostTest):
+    """What both hosts did alike, written once on the store, over a fake."""
+
+    def test_active_installs_the_hosts_persistence_once(self):
+        class Backend:
+            def __init__(self):
+                self.data = None
+
+            def load(self):
+                return self.data
+
+            def save(self, data):
+                self.data = data
+
+        host = _FakeHost()
+        host.backend = Backend()
+        ShotStore.set_host(host)
+        store = ShotStore.active()
+        self.assertIs(ShotStore._persistence, host.backend)
+        self.assertIs(ShotStore.active(), store)
+        self.assertEqual(host.asked.count("persistence"), 1)
+
+    def test_detect_regions_dispatches_on_the_detection_mode(self):
+        host = _FakeHost()
+        store = ShotStore(host=host)
+        store.detection_threshold = 7.0
+        self.assertEqual([c["name"] for c in store.detect_regions()], ["A"])
+        store.detection_mode = "skip_zero"
+        self.assertEqual(store.detect_regions(), [])
+        self.assertEqual(
+            [a for a in host.asked if isinstance(a, tuple)],
+            [("auto", 7.0), ("keys", 7.0, "skip_zero")],
+        )
+
+    def test_publish_export_view_commits_the_shot_record_or_its_clear(self):
+        host = _FakeHost()
+        store = ShotStore(host=host)
+        store.define_shot("Intro", 1, 50)
+        self.assertEqual(store.publish_export_view(), "data_export")
+        record = host.published[-1][SceneRecords.SHOTS]
+        self.assertEqual(record.payload["shots"][0]["clip"], "Intro")
+        store.remove_shot(store.shots[0].shot_id)
+        store.publish_export_view()
+        self.assertEqual(host.published[-1], {SceneRecords.SHOTS: None})
+
+    def test_publish_export_view_outside_a_host_writes_nothing(self):
+        host = _FakeHost(available=False)
+        store = ShotStore(host=host)
+        store.define_shot("Intro", 1, 50)
+        self.assertIsNone(store.publish_export_view())
+        self.assertEqual(host.published, [])
+
+    def test_scene_edit_settles_its_point_by_what_the_hosts_step_recorded(self):
+        """The restore point's books are the store's, once for every host:
+        tagged with the step's marker; dropped when nothing reached the queue
+        and the records held still, or when the body cancelled."""
+        host = _FakeHost()
+        store = ShotStore(host=host)
+        store.define_shot("A", 0, 10)
+        heard = []
+        store.add_listener(heard.append)
+        with store.scene_edit("Grow"):
+            store.update_shot(0, end=20)
+        with store.scene_edit("Nothing"):
+            pass
+        with store.scene_edit("Cancelled") as edit:
+            edit.cancel()
+        with store.scene_edit("Bare", snapshot=False):
+            store.update_shot(0, end=25)
+        self.assertEqual(
+            [a for a in host.asked if a[0] == "undo_step"],
+            [
+                ("undo_step", "Grow", True),
+                ("undo_step", "Nothing", True),
+                ("undo_step", "Cancelled", True),
+                ("undo_step", "Bare", False),
+            ],
+        )
+        self.assertEqual(len(store._boundary_undo), 1, "only Grow kept a point")
+        self.assertEqual(store.peek_boundary_tag(), (True, "Grow"))
+        self.assertEqual(
+            [e.label for e in heard if isinstance(e, shot_model.ShotsEdited)],
+            ["Grow"],
+        )
+        self.assertIn("follow_renames", host.asked, "renames followed first")
+
+    def test_an_unpaired_step_that_changed_the_records_keeps_its_point(self):
+        """Nothing reached the queue, but the store's records moved: the
+        point stays, so an undo of the edit can still put them back."""
+
+        class Unpaired(_FakeHost):
+            @contextmanager
+            def undo_step(self, store, label, snapshot):
+                edit = store.EditHandle()
+                yield edit
+                edit.tag = (False, "before")
+
+        store = ShotStore(host=Unpaired())
+        store.define_shot("A", 0, 10)
+        with store.scene_edit("Grow"):
+            store.update_shot(0, end=20)
+        self.assertEqual(store.peek_boundary_tag(), (False, "before"))
+
+    def test_a_native_step_is_crossed_by_the_marker_its_point_carries(self):
+        host = _FakeHost()
+        store = ShotStore(host=host)
+        store.define_shot("A", 0, 10)
+        with store.scene_edit("Grow"):
+            store.update_shot(0, end=20)
+        host.undone = "Grow"
+        self.assertTrue(store._native_step_crossed())
+        host.undone = "Other"
+        self.assertFalse(store._native_step_crossed())
+        store.push_boundary_snapshot(tag=(False, "Other"))
+        self.assertFalse(store._native_step_crossed(), "an unpaired point never is")
+        store.push_boundary_snapshot()  # untagged: a legacy push
+        self.assertTrue(store._native_step_crossed(first=True))
+        self.assertFalse(store._native_step_crossed(first=False))
+        self.assertFalse(ShotStore()._native_step_crossed(), "no native queue")
+
+    def test_a_raising_body_says_nothing(self):
+        host = _FakeHost()
+        store = ShotStore(host=host)
+        heard = []
+        store.add_listener(heard.append)
+        with self.assertRaises(RuntimeError):
+            with store.scene_edit("Boom"):
+                raise RuntimeError("refused")
+        self.assertFalse([e for e in heard if isinstance(e, shot_model.ShotsEdited)])
+
+    def test_the_pure_step_keeps_the_pure_rules(self):
+        store = ShotStore()
+        store.define_shot("A", 0, 10)
+        with store.scene_edit("Grow"):
+            store.update_shot(0, end=20)
+        self.assertTrue(store.has_boundary_snapshot())
+        with store.scene_edit("Nothing") as edit:
+            edit.cancel()
+        store.restore_boundary_snapshot()
+        self.assertEqual(store.shot_by_id(0).end, 10.0, "the cancel left one point")
+
+    def test_audio_windows_overlap_the_hosts_clip_spans(self):
+        store = ShotStore(host=_FakeHost())
+        self.assertEqual(
+            store._audio_windows([(0, 4), (6, 7), (50, 60)]), [False, True, True]
+        )
+
+    def test_rescale_follows_the_hosts_clock_rule(self):
+        for keep_time, expected in ((True, (2.0, 20.0)), (False, (1.0, 10.0))):
+            store = ShotStore(host=_FakeHost(keys_keep_time=keep_time))
+            store.scene_fps = 24.0
+            store.define_shot("A", 1, 10)
+            heard = []
+            store.add_listener(heard.append)
+            store.rescale_to_fps(48.0)
+            shot = store.shots[0]
+            self.assertEqual((shot.start, shot.end), expected)
+            self.assertEqual(store.scene_fps, 48.0)
+            self.assertEqual(
+                any(isinstance(e, shot_model.BatchComplete) for e in heard), keep_time
+            )
+
+    def test_a_hosts_legacy_prefs_are_read_once_while_the_file_is_absent(self):
+        """They are taken as the file's are -- an unreadable value keeps the
+        store's own -- and written through, so the file answers next time."""
+
+        class Legacy(_FakeHost):
+            def legacy_prefs(self):
+                self.asked.append("legacy")
+                return {"detection_mode": "all", "fit_mode": "bogus", "gap": 3}
+
+        host = Legacy()
+        store = ShotStore(host=host)
+        store._restore_user_prefs()
+        self.assertEqual((store.detection_mode, store.fit_mode), ("all", "extend_only"))
+        self.assertTrue(ShotStore._prefs_path().exists(), "written through")
+        again = ShotStore(host=host)
+        again._restore_user_prefs()
+        self.assertEqual(again.detection_mode, "all")
+        self.assertEqual(host.asked.count("legacy"), 1)
+
+    def test_an_older_ledger_is_handed_to_the_host_on_load(self):
+        class Migrating(_FakeHost):
+            def migrate_ledger(self, store):
+                self.asked.append(("migrate", store.edit_ledger.source_version))
+
+        host = Migrating()
+        ShotStore.set_host(host)
+        store = ShotStore()
+        store.edit_ledger.record_key("crv", 1.0)
+        data = store.to_dict()
+        ShotStore.from_dict(data)  # the current format: nothing to migrate
+        data["edit_ledger"] = {"version": 1, "steps": {}, "keys": {}}
+        ShotStore.from_dict(data)
+        self.assertEqual([a for a in host.asked if a[0] == "migrate"], [("migrate", 1)])
+
+
+class TestTheHandOffOverAHost(_HostTest):
+    """``export_transfer`` / ``apply_transfer`` and the record crossings: the
+    codec's half written once, the host only naming curves and finding keys."""
+
+    def _source(self):
+        host = _FakeHost()
+        ShotStore.set_host(host)
+        store = ShotStore()
+        ShotStore.set_active(store)
+        store.define_shot("Intro", 1, 20, objects=["hero", "prop"])
+        store.edit_ledger.record_key("translateX", 10.0, owner=0, edge="start")
+        return host, store
+
+    def test_export_transfer_is_the_codec_over_the_hosts_naming(self):
+        from pythontk.core_utils.engines.shots.shot_transfer import ShotTransfer
+
+        host, store = self._source()
+        section = ShotStore.export_transfer(objects=["hero"])
+        hooks = host.transfer()
+        expected = ShotTransfer.encode(
+            store.to_dict(),
+            spell=hooks.spell,
+            curve_ref=hooks.curve_refs(),
+            objects=["hero"],
+            channels=None,
+            audio=[],
+        )
+        self.assertEqual(section, expected)
+        self.assertEqual(section["store"]["shots"][0]["objects"], ["HERO"])
+        self.assertIn("follow_renames", host.asked, "renames followed first")
+        self.assertIn(("channels", ["hero"]), host.asked)
+
+    def test_export_transfer_outside_a_host_is_none(self):
+        ShotStore.set_host(_FakeHost(available=False))
+        ShotStore.active().define_shot("Intro", 1, 20)
+        self.assertIsNone(ShotStore.export_transfer())
+
+    def test_apply_transfer_lands_the_section_in_the_active_store(self):
+        _host, _store = self._source()
+        section = ShotStore.export_transfer()
+        ShotStore.clear_active()
+        landed = ShotStore.apply_transfer(section)
+        self.assertIs(landed, ShotStore._active)
+        self.assertEqual([s.name for s in landed.shots], ["Intro"])
+        self.assertEqual(landed.shots[0].objects, ["hero", "prop"])
+        self.assertTrue(landed.edit_ledger.owns_key("translateX", 10.0))
+        self.assertEqual(landed.scene_fps, 30.0, "onto this scene's clock")
+
+    def test_apply_transfer_needs_a_section_and_a_host(self):
+        ShotStore.set_host(_FakeHost())
+        self.assertIsNone(ShotStore.apply_transfer({}))
+        ShotStore.set_host(_FakeHost(available=False))
+        self.assertIsNone(ShotStore.apply_transfer({"store": {"shots": []}}))
+
+    def test_the_crossing_hooks_read_the_context(self):
+        from pythontk.core_utils.engines.scene_export.record_transfer import (
+            TransferContext,
+        )
+
+        _host, _store = self._source()
+        out = ShotStore.transfer_out(
+            TransferContext(rename=lambda n: f"ns:{n}", objects=["hero"])
+        )
+        self.assertEqual(out["store"]["shots"][0]["objects"], ["ns:hero"])
+        ShotStore.clear_active()
+        ctx = TransferContext(rename=lambda n: n.split(":")[-1])
+        ShotStore.transfer_in(out, ctx)
+        self.assertEqual(ShotStore._active.shots[0].objects, ["hero"])
+
+    def test_a_carrier_merge_or_discard_reloads_the_store(self):
+        _host, store = self._source()
+        ShotStore.merge_carrier({}, {}, None)
+        self.assertIs(ShotStore._active, store, "nothing of the store's merged")
+        ShotStore.discard_carrier({}, {SceneRecords.SHOT_STORE: {}}, None)
+        self.assertIsNone(ShotStore._active)
+
+
 class TestShotNames(_ShotTest):
     """A shot's name is its clip name on every carrier, so the store refuses a
     name the export would have to respell -- instead of respelling it silently
@@ -1500,14 +2200,19 @@ class TestShotNames(_ShotTest):
         ``Shot_2`` the new shots are ``Shot_3`` / ``Shot_4``, not
         ``Shot_1_2`` / ``Shot_2_2``."""
 
-        class Detecting(ShotStore):
-            def detect_regions(self):
+        class Detection:
+            @staticmethod
+            def detect_shot_regions(gap_threshold):
                 return [
                     {"name": "Shot_1", "start": 100, "end": 110},
                     {"name": "Shot_2", "start": 120, "end": 130},
                 ]
 
-        s = Detecting([])
+        class Detecting(shot_model.PureShotsHost):
+            def detection(self):
+                return Detection
+
+        s = ShotStore([], host=Detecting())
         s.define_shot("Shot_1", 0, 10)
         s.define_shot("Shot_2", 20, 30)
         created = s.detect_and_define()
@@ -1597,7 +2302,6 @@ class TestStoreHooks(_ShotTest):
         s = ShotStore([ShotBlock(1, "A", 0, 10, ["x"])])
         self.assertEqual(s.detect_regions(), [])
         self.assertEqual(s.assess(), {1: "valid"})
-        self.assertEqual(s._resolve_long_names(["a", "b"]), ["a", "b"])
         self.assertEqual(s._scene_fps(), s.scene_fps)
         # No scene to lose anything from: every member held, every window
         # keyed, so the pure store never calls a shot stale.
@@ -1619,21 +2323,23 @@ class TestStoreHooks(_ShotTest):
             def save(self, data):
                 self.data, self.saves = data, self.saves + 1
 
-        class Deferred(ShotStore):
-            def _schedule_flush(self):
-                """Writes on idle, as a DCC store does."""
+        class Deferred(shot_model.PureShotsHost):
+            def schedule_flush(self, store):
+                """Writes on idle, as a DCC host does."""
 
         backend = Backend()
-        Deferred._persistence, Deferred._active = backend, None
+        ShotStore._persistence = backend
+        saved_host = ShotStore._host, ShotStore._host_source
+        ShotStore.set_host(Deferred())
         try:
-            Deferred.active().define_shot("A", 0.0, 10.0)
+            ShotStore.active().define_shot("A", 0.0, 10.0)
             self.assertEqual(backend.saves, 0)
-            Deferred.flush_pending()
+            ShotStore.flush_pending()
             self.assertEqual([s["name"] for s in backend.data["shots"]], ["A"])
-            Deferred.flush_pending()
+            ShotStore.flush_pending()
             self.assertEqual(backend.saves, 1)  # nothing pending: nothing written
         finally:
-            Deferred._persistence, Deferred._active = None, None
+            ShotStore._host, ShotStore._host_source = saved_host
 
 
 class TestReleaseReplaced(_ShotTest):
@@ -1676,11 +2382,11 @@ class TestReleaseReplaced(_ShotTest):
         a generator of frames was used up by the first key, so the second
         owner's claim stayed."""
 
-        class TwoOwners(ShotStore):
-            def _curve_ledger_keys(self, objects=None):
+        class TwoOwners(shot_model.PureShotsHost):
+            def curve_ledger_keys(self, store, objects):
                 return lambda curve: [f"a|{curve}", f"b|{curve}"]
 
-        store = TwoOwners()
+        store = ShotStore(host=TwoOwners())
         for owner in "ab":
             store.edit_ledger.record_authored(f"{owner}|x", 20.0, 0, "fade_in", owner)
 
@@ -1724,11 +2430,11 @@ class TestReleaseReplaced(_ShotTest):
         """A DCC whose curves carry no name (Blender) keys a claim by owner and
         channel; the hook maps the curve the edit hands over to those keys."""
 
-        class OwnerKeyed(ShotStore):
-            def _curve_ledger_keys(self, objects=None):
+        class OwnerKeyed(shot_model.PureShotsHost):
+            def curve_ledger_keys(self, store, objects):
                 return lambda curve: [f"{obj}|{curve}" for obj in objects]
 
-        store = OwnerKeyed()
+        store = ShotStore(host=OwnerKeyed())
         led = store.edit_ledger
         for key in ("a|x", "b|x", "a|y"):
             led.record_authored(key, 20.0, 0, "fade_in", key[0])
@@ -1813,11 +2519,11 @@ class TestRemapMoved(_ShotTest):
         self.assertEqual(backend.saves, 1, "the moved claim was never saved")
 
     def test_a_dcc_hook_names_the_keys_a_curve_is_claimed_under(self):
-        class OwnerKeyed(ShotStore):
-            def _curve_ledger_keys(self, objects=None):
+        class OwnerKeyed(shot_model.PureShotsHost):
+            def curve_ledger_keys(self, store, objects):
                 return lambda curve: [f"{obj}|{curve}" for obj in objects]
 
-        store = OwnerKeyed()
+        store = ShotStore(host=OwnerKeyed())
         store.edit_ledger.record_authored("a|x", 15.0, 0, "fade_in", "a")
         store.edit_ledger.record_authored("b|x", 15.0, 0, "fade_in", "b")
 
@@ -1832,36 +2538,38 @@ class TestKeyEdit(_ShotTest):
     claims back with the keys) -- but only when the store claims anything, so
     a scene with no shots gets no restore point."""
 
-    class _Recording(ShotStore):
-        def __init__(self, shots=None):
-            super().__init__(shots)
+    class _Recording(shot_model.PureShotsHost):
+        """A host recording each undo step a scene edit ran."""
+
+        def __init__(self):
             self.edits = []
 
         @contextmanager
-        def scene_edit(self, label="edit", snapshot=True):
+        def undo_step(self, store, label, snapshot):
             self.edits.append(label)
-            with super().scene_edit(label, snapshot):
-                yield None
+            yield store.EditHandle()
 
     def test_a_store_with_claims_runs_the_edit_as_a_scene_edit(self):
-        store = self._Recording()
+        store = ShotStore(host=self._Recording())
         store.edit_ledger.record_authored("crv", 20.0, 0, "fade_in", "door")
 
         with store.key_edit("Align Keys") as (on_replace, on_move):
             on_replace("crv", [20.0])
 
-        self.assertEqual(store.edits, ["Align Keys"])
+        self.assertEqual(store.host.edits, ["Align Keys"])
         self.assertTrue(store.has_boundary_snapshot())
         self.assertFalse(store.edit_ledger.owns_authored("crv", 20.0))
 
     def test_a_store_with_no_claims_pushes_no_restore_point(self):
-        store = self._Recording()
+        store = ShotStore(host=self._Recording())
 
         with store.key_edit("Align Keys") as (on_replace, on_move):
             self.assertEqual(on_replace("crv", [20.0]), 0)
             self.assertEqual(on_move("crv", [(10.0, 20.0)]), 0)
 
-        self.assertEqual(store.edits, [], "a scene with no shots entered a scene edit")
+        self.assertEqual(
+            store.host.edits, [], "a scene with no shots entered a scene edit"
+        )
         self.assertFalse(store.has_boundary_snapshot())
 
     def test_undoing_the_edit_puts_back_the_claim_it_released(self):
@@ -1882,14 +2590,14 @@ class TestKeyEdit(_ShotTest):
         both hooks: a DCC that resolves owners by scanning the scene
         (blendertk) paid that scan once per hook, per edit."""
 
-        class Counting(ShotStore):
+        class Counting(shot_model.PureShotsHost):
             resolutions = 0
 
-            def _curve_ledger_keys(self, objects=None):
+            def curve_ledger_keys(self, store, objects):
                 Counting.resolutions += 1
-                return super()._curve_ledger_keys(objects)
+                return super().curve_ledger_keys(store, objects)
 
-        store = Counting()
+        store = ShotStore(host=Counting())
         store.edit_ledger.record_authored("crv", 20.0, 0, "fade_in", "door")
 
         on_replace, on_move = store.claim_hooks(["door"])
@@ -1931,30 +2639,30 @@ class TestKeyEdit(_ShotTest):
         )
 
 
-class _RecordingStore(ShotStore):
-    """Stand-in for a DCC subclass: records what the publish hook was handed.
+class _PublishHost(shot_model.PureShotsHost):
+    """A host with a carrier: records what each publish committed
+    (``{SceneRecords.SHOTS: record or None}``; ``None`` clears it).
 
-    The pure core's :meth:`publish_export_view` writes nothing and returns
-    ``None``, so overriding it is the only way to observe that the hook fired
-    at all — which is exactly what a real DCC subclass does to serialise the
-    view onto its carrier node.
+    The pure core's host reaches no carrier, so its publish writes nothing
+    and returns ``None``; this one is what a DCC host is to the store.
     """
 
-    def __init__(self, shots=None):
-        super().__init__(shots)
+    def __init__(self):
         self.published = []
 
-    def publish_export_view(self, strategy=None):
-        self.published.append(self.to_export_view(strategy or "name"))
+    def available(self):
+        return True
+
+    def publish_records(self, records):
+        self.published.append(dict(records))
         return "carrier"
 
 
 class TestExportViewRefresh(_ShotTest):
     """``refresh_export_view`` -> ``publish_export_view`` — the pre-export path.
 
-    Note the active store is always driven through ``ShotStore`` (never through
-    ``_RecordingStore``): ``_active`` is a ``ShotStore`` class attribute, so
-    setting it on the subclass would shadow rather than share it.
+    The published payloads are what a host's carrier receives
+    (:class:`_PublishHost`).
     """
 
     def test_pure_publish_hook_is_a_noop_returning_none(self):
@@ -1988,38 +2696,28 @@ class TestExportViewRefresh(_ShotTest):
         )
 
     def test_empty_store_still_publishes(self):
-        # Contract: an empty store MUST reach the hook.  Guarding on
-        # ``store.shots`` skipped it, so deleting the last shot left the
-        # previous publish's takes riding into the next export.
-        store = _RecordingStore([])
+        # Contract: an empty store MUST reach the host -- as the record's
+        # clear.  Guarding on ``store.shots`` skipped it, so deleting the last
+        # shot left the previous publish's takes riding into the next export.
+        store = ShotStore([], host=_PublishHost())
         ShotStore.set_active(store)
 
         ShotStore.refresh_export_view()
 
-        self.assertEqual(len(store.published), 1)
-        self.assertEqual(
-            store.published[0],
-            {
-                SceneRecords.SHOTS.key: {
-                    "version": 1,
-                    "fps": store.scene_fps,
-                    "shots": [],
-                },
-            },
-        )
+        self.assertEqual(store.host.published, [{SceneRecords.SHOTS: None}])
 
     def test_populated_store_publishes_its_takes(self):
-        store = _RecordingStore([])
+        store = ShotStore([], host=_PublishHost())
         store.snap_whole_frames = False
         store.define_shot("Intro", 0, 10, objects=["|grp|hero"], description="d")
         ShotStore.set_active(store)
 
         ShotStore.refresh_export_view()
 
-        self.assertEqual(len(store.published), 1)
-        view = store.published[0]
+        self.assertEqual(len(store.host.published), 1)
+        (record,) = store.host.published[0].values()
         self.assertEqual(
-            view[SceneRecords.SHOTS.key],
+            record.payload,
             {
                 "version": 1,
                 # The rate the clip frames below are counted in -- without it
@@ -2032,7 +2730,7 @@ class TestExportViewRefresh(_ShotTest):
                 "shots": [{"clip": "Intro", "start": 0, "end": 10, "description": "d"}],
             },
         )
-        self.assertNotIn("fbx_takes", view)
+        self.assertNotIn("fbx_takes", record.payload)
 
     def test_export_records_declare_the_context_clip_mode(self):
         """The producer form: the exporter's Animation Clips decision is an
@@ -2042,7 +2740,7 @@ class TestExportViewRefresh(_ShotTest):
             ExportContext,
         )
 
-        store = _RecordingStore([])
+        store = ShotStore([])
         self.assertIsNone(store.export_records(ExportContext(clip_mode="full")))
         store.snap_whole_frames = False
         store.define_shot("Intro", 0, 10)
@@ -2055,16 +2753,16 @@ class TestExportViewRefresh(_ShotTest):
     def test_refresh_republishes_on_every_call(self):
         # The refresh is the canonical *pre-export* step: it must reproject
         # each time, not memoise, or a mutation between exports is lost.
-        store = _RecordingStore([])
+        store = ShotStore([], host=_PublishHost())
         ShotStore.set_active(store)
 
         ShotStore.refresh_export_view()
         store.define_shot("Intro", 0, 10, objects=["hero"])
         ShotStore.refresh_export_view()
 
-        self.assertEqual(len(store.published), 2)
-        self.assertEqual(store.published[0][SceneRecords.SHOTS.key]["shots"], [])
-        self.assertEqual(len(store.published[1][SceneRecords.SHOTS.key]["shots"]), 1)
+        first, second = store.host.published
+        self.assertIsNone(first[SceneRecords.SHOTS])
+        self.assertEqual(len(second[SceneRecords.SHOTS].payload["shots"]), 1)
 
 
 class TestASplitOffShotIsLinkedToItsStep(_ShotTest):
@@ -2165,23 +2863,16 @@ class TestAScopedExportShipsEveryTake(_ShotTest):
                 self.assertFalse([s for s in shots if "objects" in s])
 
 
-class _IdStore(ShotStore):
-    """A DCC stand-in whose scene is :attr:`scene` ``{node id: name now}``:
-    the two id hooks a DCC store supplies (Maya: node UUIDs)."""
+class _IdHost(shot_model.PureShotsHost):
+    """A host whose scene is :attr:`scene` ``{node id: name now}``: the id a
+    host saves per member (Maya: node UUIDs)."""
 
-    scene: dict = {}
+    def __init__(self, scene=None):
+        self.scene = dict(scene or {})
 
-    def _member_ids(self, names):
+    def member_ids(self, names):
         by_name = {name: uid for uid, name in self.scene.items()}
         return {n: by_name[n] for n in names if n in by_name}
-
-    def _current_names(self, names):
-        now = set(self.scene.values())
-        return {
-            n: self.scene[self.member_ids[n]]
-            for n in names
-            if n not in now and self.member_ids.get(n) in self.scene
-        }
 
 
 class TestRenamedMembersByTheirSavedId(_ShotTest):
@@ -2190,25 +2881,23 @@ class TestRenamedMembersByTheirSavedId(_ShotTest):
     stale and its take left the export.
     Fixed: 2026-10-11 -- each held name's node id is saved with the store
     (``member_ids``, additive) and the export names a renamed member as it
-    is now (``_current_names``); the store is not changed."""
+    is now (the host's ``existing_objects``); the store is not changed."""
 
     def test_a_save_keeps_each_id_through_a_rename(self):
-        store = _IdStore()
-        store.scene = {"u1": "door", "u2": "lid"}
+        store = ShotStore(host=_IdHost({"u1": "door", "u2": "lid"}))
         store.define_shot("A", 0, 10, objects=["door", "lid"])
         self.assertEqual(store.to_dict()["member_ids"], {"door": "u1", "lid": "u2"})
-        store.scene = {"u1": "door_v2", "u2": "lid"}  # renamed behind its back
+        store.host.scene = {"u1": "door_v2", "u2": "lid"}  # renamed behind its back
         saved = store.to_dict()
         self.assertEqual(saved["member_ids"], {"door": "u1", "lid": "u2"})
         # Its take ships; the record names no members (2026-10-20).
         view = store.to_export_view()[SceneRecords.SHOTS.key]["shots"]
         self.assertEqual([s["clip"] for s in view], ["A"])
         self.assertEqual(store.shot_by_name("A").objects, ["door", "lid"])
-        self.assertEqual(_IdStore.from_dict(saved).member_ids, saved["member_ids"])
+        self.assertEqual(ShotStore.from_dict(saved).member_ids, saved["member_ids"])
 
     def test_a_name_no_longer_held_drops_its_id(self):
-        store = _IdStore()
-        store.scene = {"u1": "door"}
+        store = ShotStore(host=_IdHost({"u1": "door"}))
         shot = store.define_shot("A", 0, 10, objects=["door"])
         store.to_dict()
         store.update_shot(shot.shot_id, objects=[])
@@ -2250,26 +2939,28 @@ class TestTransientEdit(_ShotTest):
         self.assertEqual(ShotStore._transient_depth, 0)
 
 
-class _SceneStore(ShotStore):
-    """A DCC stand-in whose scene holds :attr:`held` objects and keys the
-    frames in :attr:`keys` -- the two facts ``stale_shots`` asks a DCC for --
-    and keys each held object on :attr:`member_keys` ``{name: frames}``."""
+class _SceneHost(shot_model.PureShotsHost):
+    """A host whose scene holds :attr:`held` objects and keys the frames in
+    :attr:`keys` -- the two facts ``stale_shots`` asks a host for -- keys each
+    held object on :attr:`member_keys` ``{name: frames}`` and plays
+    :attr:`audio` ``(start, stop)`` spans (stop ``None`` plays on)."""
 
-    held: frozenset = frozenset()
-    keys: tuple = ()
-    member_keys: dict = {}
-    audio: tuple = ()  # (start, stop) spans; stop None plays on
+    def __init__(self, held=(), keys=(), member_keys=None, audio=()):
+        self.held = frozenset(held)
+        self.keys = tuple(keys)
+        self.member_keys = dict(member_keys or {})
+        self.audio = tuple(audio)
 
-    def _existing_objects(self, names):
+    def existing_objects(self, store, names):
         return {n for n in names if n in self.held}
 
-    def _keyed_windows(self, windows):
+    def keyed_windows(self, store, windows):
         return [any(a <= t <= b for t in self.keys) for a, b in windows]
 
-    def _audio_windows(self, windows):
-        return self._spans_overlap(self.audio, list(windows))
+    def audio_spans(self):
+        return self.audio
 
-    def _members_keyed_windows(self, entries):
+    def members_keyed_windows(self, store, entries):
         out = []
         for names, (a, b) in entries:
             live = [n for n in names if n in self.held]
@@ -2291,9 +2982,8 @@ class TestStaleShots(_ShotTest):
     shots by default, but that can be an option")."""
 
     def _store(self, shots, held=(), keys=()):
-        store = _SceneStore(list(shots))
+        store = ShotStore(list(shots), host=_SceneHost(held, keys))
         store.snap_whole_frames = False
-        store.held, store.keys = frozenset(held), tuple(keys)
         return store
 
     def test_a_shot_whose_objects_and_keys_are_gone_is_stale(self):
@@ -2458,11 +3148,11 @@ class TestStaleShots(_ShotTest):
         """The check must never cost the shot record: a producer that raised
         would leave the carrier's stored (stale) record to ship instead."""
 
-        class Broken(_SceneStore):
-            def _existing_objects(self, names):
+        class Broken(_SceneHost):
+            def existing_objects(self, store, names):
                 raise RuntimeError("scene unreadable")
 
-        store = Broken([ShotBlock(0, "A", 0, 10, ["lost"])])
+        store = ShotStore([ShotBlock(0, "A", 0, 10, ["lost"])], host=Broken())
         store.snap_whole_frames = False
         store.drop_stale_shots = True  # the one publish that asks the scene
         with self.assertLogs(shot_model._log, "WARNING"):
@@ -2490,10 +3180,8 @@ class TestScopedShotDeletes(_ShotTest):
     empty").  Every scope removes records only -- no key, no other shot."""
 
     def _store(self, shots, held=(), keys=(), member_keys=None):
-        store = _SceneStore(list(shots))
+        store = ShotStore(list(shots), host=_SceneHost(held, keys, member_keys))
         store.snap_whole_frames = False
-        store.held, store.keys = frozenset(held), tuple(keys)
-        store.member_keys = dict(member_keys or {})
         return store
 
     def test_an_empty_shot_names_nothing_and_keys_nothing(self):
@@ -2572,7 +3260,7 @@ class TestScopedShotDeletes(_ShotTest):
             ],
             held={"x"},
         )
-        store.audio = ((10.0, 35.0), (55.0, None))
+        store.host.audio = ((10.0, 35.0), (55.0, None))
         self.assertEqual([s.name for s in store.empty_shots()], ["Before"])
 
     def test_renamed_members_with_keys_in_the_shot_are_not_empty(self):
@@ -3840,27 +4528,24 @@ class TestDiscardRestoresTheRedoBranch(unittest.TestCase):
         self.assertEqual(len(store._boundary_undo), store._BOUNDARY_LEDGER_CAP - 1)
 
 
-class _QueueStore(ShotStore):
-    """A store whose "native queue" is a list of markers, as a DCC's is a
+class _QueueHost(shot_model.PureShotsHost):
+    """A host whose "native queue" is a list of markers, as a DCC's is a
     chunk name (mayatk) or an edit serial (blendertk): ``undone`` names the
     step the last undo moved, which crosses the point tagged with it."""
 
-    undone = None
-    installs = 0
-    removals = 0
+    def __init__(self):
+        self.undone = None
+        self.installs = 0
+        self.removals = 0
 
-    def _native_step_crossed(self, redo=False, first=True):
-        if not self.has_boundary_snapshot(redo=redo):
-            return False
-        return self.peek_boundary_tag(redo=redo) == self.undone
+    def step_crossed(self, marker, redo):
+        return marker is None or marker == self.undone
 
-    @classmethod
-    def _install_native_undo_sync(cls):
-        cls.installs += 1
+    def install_undo_sync(self, on_step):
+        self.installs += 1
 
-    @classmethod
-    def _remove_native_undo_sync(cls):
-        cls.removals += 1
+    def remove_undo_sync(self, on_step):
+        self.removals += 1
 
 
 class TestFollowNativeStep(unittest.TestCase):
@@ -3869,49 +4554,56 @@ class TestFollowNativeStep(unittest.TestCase):
     session was undone in its keys and kept in its shots and claims."""
 
     def setUp(self):
-        _QueueStore.clear_active()
-        _QueueStore.installs = _QueueStore.removals = 0
-        self.store = _QueueStore()
+        saved_host = ShotStore._host, ShotStore._host_source
+        ShotStore.clear_active()
+        self.host = _QueueHost()
+        ShotStore.set_host(self.host)
+        self.store = ShotStore()
         self.store.define_shot("A", 0, 50)
         self.heard = []
         ShotStore.add_native_step_listener(self.heard.append)
         self.addCleanup(ShotStore.remove_native_step_listener, self.heard.append)
-        self.addCleanup(_QueueStore.clear_active)
+
+        def restore():
+            ShotStore.clear_active()
+            ShotStore._host, ShotStore._host_source = saved_host
+
+        self.addCleanup(restore)
 
     def _edit(self, marker, end):
-        self.store.push_boundary_snapshot(tag=marker)
+        self.store.push_boundary_snapshot(tag=(True, marker))
         self.store.update_shot(0, end=end)
 
     def test_the_active_store_follows_an_undo_of_its_own_edit(self):
-        _QueueStore.set_active(self.store)
+        ShotStore.set_active(self.store)
         self._edit("chunk_1", 40)
-        self.store.undone = "chunk_1"
-        _QueueStore._on_native_step()
+        self.host.undone = "chunk_1"
+        ShotStore._on_native_step()
         self.assertEqual(self.store.shot_by_id(0).end, 50.0)
         self.assertEqual(
             [(e.redo, e.applied) for e in self.heard], [(False, 1)], self.heard
         )
-        _QueueStore._on_native_step(redo=True)
+        ShotStore._on_native_step(redo=True)
         self.assertEqual(self.store.shot_by_id(0).end, 40.0)
         self.assertEqual(self.heard[-1].applied, 1)
 
     def test_somebody_elses_undo_applies_nothing_and_is_still_heard(self):
-        _QueueStore.set_active(self.store)
+        ShotStore.set_active(self.store)
         self._edit("chunk_1", 40)
-        self.store.undone = "unrelated"
-        _QueueStore._on_native_step()
+        self.host.undone = "unrelated"
+        ShotStore._on_native_step()
         self.assertEqual(self.store.shot_by_id(0).end, 40.0)
         self.assertEqual([e.applied for e in self.heard], [0])
 
     def test_a_jump_applies_every_point_it_crossed_newest_first(self):
-        class _Jump(_QueueStore):
-            def _native_step_crossed(self, redo=False, first=True):
-                return self.has_boundary_snapshot(redo=redo)
+        class Jump(_QueueHost):
+            def step_crossed(self, marker, redo):
+                return True
 
-        store = _Jump()
+        store = ShotStore(host=Jump())
         store.define_shot("A", 0, 50)
         for end in (40, 30):
-            store.push_boundary_snapshot()
+            store.push_boundary_snapshot(tag=(True, end))
             store.update_shot(0, end=end)
         self.assertEqual(store.follow_native_step(), 2)
         self.assertEqual(store.shot_by_id(0).end, 50.0)
@@ -3919,44 +4611,44 @@ class TestFollowNativeStep(unittest.TestCase):
         self.assertEqual(store.shot_by_id(0).end, 30.0)
 
     def test_held_sync_follows_nothing(self):
-        _QueueStore.set_active(self.store)
+        ShotStore.set_active(self.store)
         self._edit("chunk_1", 40)
-        self.store.undone = "chunk_1"
+        self.host.undone = "chunk_1"
         with ShotStore.native_undo_sync_held():
-            _QueueStore._on_native_step()
+            ShotStore._on_native_step()
         self.assertEqual(self.store.shot_by_id(0).end, 40.0)
         self.assertEqual(self.heard, [])
 
     def test_no_active_store_applies_nothing(self):
         self._edit("chunk_1", 40)
-        self.store.undone = "chunk_1"
-        _QueueStore._on_native_step()  # self.store was never made active
+        self.host.undone = "chunk_1"
+        ShotStore._on_native_step()  # self.store was never made active
         self.assertEqual(self.store.shot_by_id(0).end, 40.0)
         self.assertEqual([e.applied for e in self.heard], [0])
 
     def test_events_raised_while_following_say_so(self):
-        _QueueStore.set_active(self.store)
+        ShotStore.set_active(self.store)
         self._edit("chunk_1", 40)
-        self.store.undone = "chunk_1"
+        self.host.undone = "chunk_1"
         during = []
         self.store.add_listener(
             lambda e: during.append(
                 (type(e).__name__, self.store.following_native_step)
             )
         )
-        _QueueStore._on_native_step()
+        ShotStore._on_native_step()
         self.assertEqual(during, [("BatchComplete", True)])
         self.assertFalse(self.store.following_native_step)
 
     def test_active_and_set_active_install_and_clear_active_removes(self):
-        _QueueStore.set_active(self.store)
-        _QueueStore.active()
-        self.assertEqual(_QueueStore.installs, 2)
-        _QueueStore.clear_active()
-        self.assertEqual(_QueueStore.removals, 1)
+        ShotStore.set_active(self.store)
+        ShotStore.active()
+        self.assertEqual(self.host.installs, 2)
+        ShotStore.clear_active()
+        self.assertEqual(self.host.removals, 1)
 
     def test_the_pure_store_follows_nothing(self):
-        store = ShotStore()
+        store = ShotStore(host=shot_model.PureShotsHost())
         store.define_shot("A", 0, 50)
         store.push_boundary_snapshot()
         store.update_shot(0, end=40)

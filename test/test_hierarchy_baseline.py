@@ -235,10 +235,15 @@ class _FakeStore:
 
 
 class _FakeSidecar:
-    """What each deliverable last shipped, by export path."""
+    """What each deliverable last shipped, by export path; its export ships
+    exactly the recorded set."""
 
     shipped = {}
     migrated = []
+
+    @classmethod
+    def _close(cls, paths):
+        return set(paths)
 
     @classmethod
     def migrate_legacy(cls, export_path, base_stem=False):
@@ -314,14 +319,40 @@ class TestStore(unittest.TestCase):
         self.assertTrue(self.Baseline.is_unreadable())
         self.assertEqual(self.Baseline.read(), set())
 
-    def test_close_hook_runs_on_the_way_out(self):
-        class Closed(self.Baseline):
+    def test_a_set_is_read_back_as_is_where_the_export_ships_exactly_it(self):
+        self.Baseline.write({"grp|leaf"})
+        self.assertEqual(self.Baseline.read(), {"grp|leaf"})
+
+    def test_the_sidecars_rule_closes_it_on_the_way_out(self):
+        # What a recorded set means is the sidecar's rule (Maya's
+        # exportSelected ships the parent chain): one rule for both readers.
+        from pythontk import SceneDataSidecarBase
+
+        class Sidecar(self.Sidecar):
             @classmethod
             def _close(cls, paths):
-                return paths | {"closed"}
+                return SceneDataSidecarBase.with_ancestors(paths)
 
-        Closed.write(A)
-        self.assertEqual(Closed.read(), A | {"closed"})
+        class Closed(self.Baseline):
+            SIDECAR = Sidecar
+
+        Closed.write({"grp|leaf"})
+        self.assertEqual(Closed.read(), {"grp", "grp|leaf"})
+
+    def test_a_real_sidecar_bound_to_a_chain_host_closes_the_same_way(self):
+        from pythontk import PureSidecarHost, SceneDataSidecarBase
+
+        class _ChainHost(PureSidecarHost):
+            ships_parent_chain = True
+
+        class Sidecar(SceneDataSidecarBase):
+            HOST = _ChainHost()
+
+        class Closed(self.Baseline):
+            SIDECAR = Sidecar
+
+        Closed.write({"grp|leaf"})
+        self.assertEqual(Closed.read(), {"grp", "grp|leaf"})
 
     def test_adopt_sidecar_takes_this_deliverable_only(self):
         self.Sidecar.shipped = {"a.fbx": A, "b.fbx": B}

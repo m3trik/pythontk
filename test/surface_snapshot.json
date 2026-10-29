@@ -2325,6 +2325,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.geo_utils.curtain_drape",
+    "name": "CurtainDrape",
+    "qualname": "CurtainDrape",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.math_utils.key_curve",
     "name": "CurveKey",
     "qualname": "CurveKey",
@@ -3404,6 +3411,20 @@
   {
     "kind": "class",
     "module": "pythontk.geo_utils.probe_placement",
+    "name": "ProbeHost",
+    "qualname": "ProbeHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.probe_placement",
+    "name": "ProbeMesh",
+    "qualname": "ProbeMesh",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.probe_placement",
     "name": "ProbePlacement",
     "qualname": "ProbePlacement",
     "tier": "root"
@@ -3448,6 +3469,27 @@
     "module": "pythontk.math_utils.progression",
     "name": "ProgressionCurves",
     "qualname": "ProgressionCurves",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "PureShotsHost",
+    "qualname": "PureShotsHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.scene_data_sidecar",
+    "name": "PureSidecarHost",
+    "qualname": "PureSidecarHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.workspace_map",
+    "name": "PureWorkspaceMapHost",
+    "qualname": "PureWorkspaceMapHost",
     "tier": "root"
   },
   {
@@ -4090,6 +4132,13 @@
   {
     "kind": "class",
     "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "ShotTransferHost",
+    "qualname": "ShotTransferHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
     "name": "ShotUpdated",
     "qualname": "ShotUpdated",
     "tier": "root"
@@ -4099,6 +4148,20 @@
     "module": "pythontk.core_utils.engines.shots.shot_model",
     "name": "ShotsEdited",
     "qualname": "ShotsEdited",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.shot_model",
+    "name": "ShotsHost",
+    "qualname": "ShotsHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.scene_data_sidecar",
+    "name": "SidecarHost",
+    "qualname": "SidecarHost",
     "tier": "root"
   },
   {
@@ -4393,6 +4456,20 @@
     "module": "pythontk.file_utils.workspace",
     "name": "Workspace",
     "qualname": "Workspace",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.workspace_map",
+    "name": "WorkspaceMapBase",
+    "qualname": "WorkspaceMapBase",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.workspace_map",
+    "name": "WorkspaceMapHost",
+    "qualname": "WorkspaceMapHost",
     "tier": "root"
   },
   {

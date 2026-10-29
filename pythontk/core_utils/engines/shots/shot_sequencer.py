@@ -19,7 +19,7 @@ DCC adapters fall back to headless, and what the tests here exercise.
 Hook contract (override in a DCC subclass; defaults describe an empty scene):
 
 ====================================  ========================================
-``STORE_CLASS``                       the :class:`ShotStore` subclass built
+``STORE_CLASS``                       the :class:`ShotStore` class built
                                       when no store is passed
 ``_scene_available()``                a scene can be read/written
 ``_content_batch()``                  context grouping a multi-step scene edit

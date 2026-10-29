@@ -2,11 +2,12 @@
 # coding=utf-8
 """``ProbePlacement`` / ``ProbeRays`` -- where a lightmap bake's reflection probe stands.
 
-Pure Python, no DCC: a host of axis-aligned boxes (analytic ray casts, two-sided,
-each face's normal by its winding) stands in for a DCC's meshes. The DCCs' own
-suites run the twelve golden scenes against real geometry (mayatk's
+Pure Python, no DCC: a fake host of axis-aligned boxes (analytic ray casts,
+two-sided, each face's normal by its winding) stands in for a DCC's meshes,
+through the two adapters a host injects (``ProbeHost``, ``ProbeMesh``). The
+DCCs' own suites run the twelve golden scenes against real geometry (mayatk's
 ``TestProbePlacement``, blendertk's ``test_lightmap_baker``); these pin the
-host-free half and its hooks: the axes and units a host declares, the lights it
+host-free half and its seam: the axes and units a host declares, the lights it
 reads, and the nearest-hit walk.
 """
 
@@ -22,16 +23,14 @@ from pythontk import ProbePlacement, ProbeRays, ProbeSite  # noqa: E402
 ptk.TestSandbox.activate()
 
 
-class _Boxes(ProbeRays):
-    """Rays against boxes ``{name: (lo, hi, inward)}``; *inward* faces turn in."""
+class _BoxMesh:
+    """A fake :class:`ProbeMesh`: analytic hits on a box ``(lo, hi, inward)``;
+    *inward* faces turn in."""
 
-    def __init__(self, boxes):
-        super().__init__()
+    def __init__(self):
         self.intersected = 0
-        for name, (lo, hi, inward) in boxes.items():
-            self.add(name, lo, hi, (lo, hi, inward))
 
-    def _intersect(self, payload, origin, direction, far):
+    def intersect(self, payload, origin, direction, far):
         self.intersected += 1
         lo, hi, inward = payload
         best = None
@@ -52,32 +51,57 @@ class _Boxes(ProbeRays):
                     best = (t, tuple(p), tuple(n))
         return best
 
-    def _normal(self, payload, face):
+    def normal(self, payload, face):
         return face
 
 
-class _Placement(ProbePlacement):
-    """A Z-up host in metres over :class:`_Boxes`."""
+def _Boxes(boxes):
+    """Rays against boxes ``{name: (lo, hi, inward)}``, through :class:`_BoxMesh`."""
+    rays = ProbeRays(_BoxMesh())
+    for name, (lo, hi, inward) in boxes.items():
+        rays.add(name, lo, hi, (lo, hi, inward))
+    return rays
 
-    UP = 2
 
-    def __init__(self, boxes, baked, unbaked=(), lights=(), sky=False, unit=1.0):
-        self.INTERNAL_M = unit
+class _BoxHost:
+    """A fake :class:`ProbeHost`: a Z-up scene of boxes in *unit* metres."""
+
+    up = 2
+
+    def __init__(self, boxes, lights=(), sky=False, unit=1.0):
+        self.internal_m = unit
         self._boxes = boxes
         self._scene_lights = ([(tuple(p), None) for p in lights], sky)
-        super().__init__(baked, unbaked)
 
-    def _make_rays(self, nodes):
+    @staticmethod
+    def nodes(objects):
+        return list(objects)
+
+    def rays(self, nodes):
         return _Boxes({n: self._boxes[n] for n in nodes})
 
-    def _bounds(self, nodes):
+    def bounds(self, nodes):
         return [
             [min(self._boxes[n][0][a] for n in nodes) for a in range(3)],
             [max(self._boxes[n][1][a] for n in nodes) for a in range(3)],
         ]
 
-    def _read_lights(self):
+    def lights(self):
         return self._scene_lights
+
+    @staticmethod
+    def to_scene(value):
+        return value
+
+    @staticmethod
+    def to_internal(point):
+        return [float(c) for c in point]
+
+
+def _Placement(boxes, baked, unbaked=(), lights=(), sky=False, unit=1.0, host=None):
+    """The one ProbePlacement over a fake box host."""
+    host = host or _BoxHost(boxes, lights, sky, unit)
+    return ProbePlacement(baked, unbaked, host=host)
 
 
 def _box(size, at, inward=False):
@@ -167,12 +191,50 @@ class TestProbePlacement(unittest.TestCase):
                 normal = tuple(-c for c in direction)
                 return ProbeHit(1.0, tuple(origin), normal, self.casts % 2)
 
-        class Host(_Placement):
-            def _make_rays(self, nodes):
+        class Host(_BoxHost):
+            def rays(self, nodes):
                 return Tied([3, 5])  # the first ray meets owners[1]
 
         boxes = {n: _box((10, 10, 10), (0, 0, 0)) for n in (3, 5)}
-        self.assertEqual(Host(boxes, [3, 5])._look((0.0, 0.0, 0.0)).solid, 5)
+        placement = _Placement(boxes, [3, 5], host=Host(boxes))
+        self.assertEqual(placement._look((0.0, 0.0, 0.0)).solid, 5)
+
+
+class TestProbeHostSeam(unittest.TestCase):
+    """The scene comes through one injected adapter, never a subclass."""
+
+    def test_no_host_is_refused(self):
+        with self.assertRaises(TypeError):
+            ProbePlacement(["room"])
+
+    def test_a_bound_class_builds_a_fresh_host_per_placement(self):
+        boxes = {"room": _box((10, 10, 4), (0, 0, 2), inward=True)}
+        made = []
+
+        class Bound(ProbePlacement):
+            @staticmethod
+            def HOST_CLASS():
+                made.append(_BoxHost(boxes, lights=[(3, -3, 3.5)]))
+                return made[-1]
+
+        first, second = Bound(["room"]), Bound(["room"])
+        self.assertIs(first.host, made[0])
+        self.assertIs(second.host, made[1])
+        self.assertEqual(first.place().reason, "the room's middle")
+
+    def test_the_hosts_axes_units_and_names_are_what_it_declares(self):
+        class Named(_BoxHost):
+            up = 1
+
+            @staticmethod
+            def nodes(objects):
+                return [str(o).upper() for o in objects]
+
+        boxes = {"ROOM": _box((10, 4, 10), (0, 2, 0), inward=True)}
+        placement = _Placement(boxes, ["room"], host=Named(boxes, unit=0.01))
+        self.assertEqual(placement.baked, ["ROOM"])
+        self.assertEqual((placement.up, placement.flat), (1, [0, 2]))
+        self.assertEqual(placement.INTERNAL_M, 0.01)
 
 
 class TestProbeRays(unittest.TestCase):
@@ -197,7 +259,7 @@ class TestProbeRays(unittest.TestCase):
             }
         )
         rays.cast((0, 0, 0), (1, 0, 0))
-        self.assertEqual(rays.intersected, 1, "the bounds test culls the rest")
+        self.assertEqual(rays.mesh.intersected, 1, "the bounds test culls the rest")
 
     def test_a_ray_that_meets_nothing_within_reach_is_none(self):
         rays = _Boxes({"box": _box((1, 1, 1), (4, 0, 0))})
