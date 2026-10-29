@@ -54,7 +54,7 @@ ptk.ImgUtils.pack_channels(...)     # class-qualified — explicit, collision-pr
 | Package | What it covers |
 |---|---|
 | `audio_utils` | FFmpeg-backed conversion, composite WAV building, silence trimming, waveform envelopes |
-| [`core_utils`](../pythontk/core_utils/README.md) | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), `listify`, package bootstrap, hot-reload, app orchestration (`AppLauncher`, `HandoffBridge`), cooperative cancellation (`CancelScope`), task pipeline, process output streaming, config/template stores, QC gates, `ExecutionMonitor`, hierarchy diffing, color primitives — plus the shared domain engines (`shots`, `instancing`, `textures`) |
+| [`core_utils`](../pythontk/core_utils/README.md) | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), `listify`, package bootstrap, hot-reload, app orchestration (`AppLauncher`, `HandoffBridge`), cooperative cancellation (`CancelScope`), task pipeline, process output streaming, config/template stores, QC gates, `ExecutionMonitor`, hierarchy diffing, color primitives — plus the shared domain engines (`shots`, `scene_export`, `instancing`, `textures`, `rig_graph`, `key_stash`, `lighting`) |
 | [`file_utils`](../pythontk/file_utils/README.md) | Filtered directory traversal, atomic writes, policy-scoped temp artifacts (`TempArtifacts`), cloud-placeholder detection, FBX→GLB conversion + glTF repair (`MeshConvert`), zero-dependency USD/USDZ authoring, UV unwrapping, project workspaces, embedded metadata |
 | `geo_utils` | Pure geometry — `Polyline` (order/resample/smooth/simplify, arc-length sampling), `PointCloud` (PCA, clustering), `RailSurface` (line-pair framing), `PlateEmitter`, and the UV-layout family in `geo_utils/uv/` (`UvPack` island packing, `UvBudget` map-count planning, `UvTransfer` texel remap, `CylinderSeams` tube / turned-part seam placement) |
 | `img_utils` | Pillow-backed image ops, channel packing, atlas layout/assembly, KTX2 encoding (`Ktx2Encoder`), exposure equalization, image curation, mask generation |
@@ -153,7 +153,7 @@ ptk.MapFactory.resolve_map_types(["Hero_Coat_BaseColor.png", "Hero_Coat_Roughnes
 # {"Hero_Coat_BaseColor.png": "Base_Color", "Hero_Coat_Roughness.png": "Roughness"}
 ```
 
-All three surfaces are runtime-extensible — new map types, workflow handlers, and conversions register without touching the engine ([worked example](../examples/texture_factory_extensibility_example.py)). The Qt panels that drive these engines interactively — **Map Converter**, **Map Packer**, **Map Compositor** — ship in the [extapps](https://github.com/m3trik/extapps) repo; pythontk itself stays UI-agnostic.
+All three surfaces are runtime-extensible — new map types, workflow handlers, and conversions register without touching the engine ([worked example](../examples/texture_factory_extensibility_example.py)). The Qt panels that drive these engines interactively — **Map Converter**, **Map Packer**, **Map Compositor** — are [tentacle](https://github.com/m3trik/tentacle)'s standalone panels; pythontk itself stays UI-agnostic.
 
 ### Capture ingest — sharpest-frame extraction & image curation
 
