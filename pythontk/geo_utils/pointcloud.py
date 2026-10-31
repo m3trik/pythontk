@@ -16,6 +16,7 @@ from typing import Callable, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
 from pythontk.core_utils._core_utils import CoreUtils
 from pythontk.iter_utils._iter_utils import IterUtils
+from pythontk.str_utils._str_utils import StrUtils
 
 if TYPE_CHECKING:
     import numpy as np
@@ -812,6 +813,118 @@ class PointCloud:
                             queue.append(cand)
             clusters.append(cluster)
         return clusters
+
+    #: What :meth:`order_points` orders by: ``auto`` (the axis the points are
+    #: most spread along), a world axis (signed position along it), or
+    #: ``distance`` (unsigned, from a reference point).
+    ORDERS = ("auto", "x", "y", "z", "distance")
+
+    @staticmethod
+    def _quantize(value: float, tolerance: float):
+        """*value* on a grid *tolerance* fine (exact when *tolerance* <= 0)."""
+        return round(value / tolerance) if tolerance > 0 else value
+
+    @classmethod
+    def spread_axis(
+        cls, points: Sequence[Sequence[float]], tolerance: float = 1e-3
+    ) -> str:
+        """The world axis the points are most spread along: ``"x"``, ``"y"`` or ``"z"``.
+
+        The axis with the longest extent (max minus min), measured on the same
+        *tolerance* grid as :meth:`order_points`, so float noise cannot pick it;
+        a tie goes to ``x``, then ``y``. An axis, never a diagonal: what it
+        answers is which world axis a row of things is numbered along.
+
+        Example:
+            spread_axis([(0, 9, 0), (0.1, -9, 0)])  # 'y'
+        """
+        pts = [tuple(p) for p in points]
+        if not pts:
+            return "x"
+        extents = []
+        for axis in range(3):
+            values = [cls._quantize(p[axis], tolerance) for p in pts]
+            extents.append(max(values) - min(values))
+        return "xyz"[max(range(3), key=lambda a: (extents[a], -a))]
+
+    @classmethod
+    def order_points(
+        cls,
+        points: Sequence[Tuple[object, Sequence[float]]],
+        order_by: str = "auto",
+        reference: Sequence[float] = (0.0, 0.0, 0.0),
+        tolerance: float = 1e-3,
+        reverse: bool = False,
+    ) -> List[object]:
+        """Order keyed points by position, deterministically -- a row numbered along the row.
+
+        The model behind a "number these by location" tool, host-free: each
+        host reads its objects' positions and hands them over, so every host
+        numbers the same layout the same way.
+
+        - An axis (``"x"`` / ``"y"`` / ``"z"``) orders by SIGNED position along
+          it, so the two sides of the origin never tie. Ties go to the other two
+          axes in x, y, z order.
+        - ``"auto"`` is the axis :meth:`spread_axis` picks: the one the points
+          are most spread along.
+        - ``"distance"`` orders by unsigned distance from *reference*; ties go
+          to the x, then y, then z position.
+
+        Positions and distances are compared on a *tolerance* grid, so float
+        noise (a rotated copy measuring 3.975473492743022 against
+        3.9754734927430215) cannot decide a tie; a remaining tie goes to the
+        key, in natural order (``post2`` before ``post10``) -- never to the
+        order the points arrived in.
+
+        Parameters:
+            points: ``[(key, (x, y, z)), ...]``. A key is anything; its ``str``
+                is the last tiebreak, so it should be stable (a name or a path,
+                not an object's ``repr``).
+            order_by: One of :attr:`ORDERS`.
+            reference: The point ``"distance"`` measures from.
+            tolerance: The comparison grid, in the points' units; ``0`` compares
+                exactly.
+            reverse: Reverse the whole order (the far end first).
+
+        Returns:
+            The keys, ordered.
+
+        Raises:
+            ValueError: *order_by* is not one of :attr:`ORDERS`.
+
+        Example:
+            order_points([("e", (3, 0, 0)), ("w", (-3, 0, 0))], "x")  # ['w', 'e']
+        """
+        mode = (order_by or "auto").lower()
+        if mode not in cls.ORDERS:
+            raise ValueError(f"order_by {order_by!r} is not one of {list(cls.ORDERS)}")
+        entries = [(key, tuple(float(c) for c in pos)) for key, pos in points]
+        if mode == "auto":
+            mode = cls.spread_axis([pos for _key, pos in entries], tolerance)
+
+        def q(value):
+            return cls._quantize(value, tolerance)
+
+        if mode == "distance":
+            ref = tuple(float(c) for c in reference)
+
+            def primary(pos):
+                gap = sum((pos[i] - ref[i]) ** 2 for i in range(3)) ** 0.5
+                return (q(gap),) + tuple(q(c) for c in pos)
+
+        else:
+            first = "xyz".index(mode)
+            axes = [first] + [a for a in range(3) if a != first]
+
+            def primary(pos):
+                return tuple(q(pos[a]) for a in axes)
+
+        ordered = sorted(
+            entries,
+            key=lambda e: (primary(e[1]), StrUtils.natural_sort_key(str(e[0]))),
+        )
+        keys = [key for key, _pos in ordered]
+        return keys[::-1] if reverse else keys
 
     @staticmethod
     def hash_points(points, precision=4):
