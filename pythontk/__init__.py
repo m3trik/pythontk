@@ -632,6 +632,12 @@ MOVED_NAMES = {
     "Kind": ("pythontk.SceneRecords.Kind", "0.19.0"),
     "Merge": ("pythontk.SceneRecords.Merge", "0.19.0"),
     "Op": ("pythontk.MapOptimizer.Op", "0.19.0"),
+    # Removed with the "speedrun" translation (2026-10-27, no replacement): a
+    # retired template name now raises FileNotFoundError in load_mapping.
+    "Mapping.retired": (
+        "pythontk.core_utils.engines.shots.manifest.mapping.Mapping.load_mapping",
+        "0.19.0",
+    ),
     # The Scene Exporter panel reads its own rows (pythontk knows no Qt).
     "ExportProfile.read_values": (
         "tentacle.slots.tools.scene_exporter.SceneExporterSlots",
