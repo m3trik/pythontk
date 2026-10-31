@@ -41,6 +41,9 @@ DEFAULT_INCLUDE = {
         "ExportResult",
         "SequenceEncoder",
         "SequenceExporter",
+        # Its host adapter seam, and the pure host a DCC's adapter builds on.
+        "SequenceHost",
+        "PureSequenceHost",
     ],
     "file_utils._file_utils": "*",
     "file_utils.metadata": "Metadata",

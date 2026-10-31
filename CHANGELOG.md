@@ -1,6 +1,8 @@
 # pythontk — Changelog
 
 ## 2026
+- **2026-10-29 -- `SequenceExporter` reaches its host through `SequenceHost` (`vid_utils/sequence_exporter.py`).** The image-sequence plan and its ffmpeg encode are written once over `SequenceEncoder.HOST` (a `SequenceHost`: frame range, sequence name and fps, the armed audio, path resolution, frame/still/movie capture, a host-only target kind, notices) with `PureSequenceHost`'s defaults; mayatk's and blendertk's `PlayblastExporter` each bind their adapter instead of overriding the base. `frame_padding` is the image capture's own override: it never reaches a host's movie, still or own-kind call.
+  - Test(s): `test_sequence_exporter.py` (fake-host seam, the padding rule red first).
 - **2026-10-29 -- The key stash is one store over a host adapter (`core_utils/engines/key_stash`).** `ptk.KeyStash` gains `HOST` (a `KeyStashHost`: persistence, scene clock, flush, undo chunk, in-step write, reconcile, script jobs, per-store state, `keys_keep_time`) over `PureKeyStashHost`, and the bodies both DCCs wrote twice: `watch_undo`, `merge_carrier`, `reconcile`, the host backend `active()` installs, and the frame-rate rule (rescale where keys keep time, record the rate otherwise). `ATTR_NAME` and `UNDO_EVENTS` move onto it. `KeyStashConformance` pins the saved `key_stash` record byte for byte. `EmissiveGroupsAdapter.faces`: an empty map is no faces on every host.
   - Test(s): `test_key_stash_core.py` (fake-host seam, conformance pin, per-store state).
 - **2026-10-29 -- The README and the Look Match guide name tentacle as the panels' home (docs/README.md, docs/look_match.md).** The core_utils row lists all seven shared engines; CLAUDE.md states the host-adapter rule.

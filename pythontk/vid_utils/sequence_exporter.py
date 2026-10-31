@@ -4,9 +4,27 @@
 
 The half of a "playblast" that is not a viewport: a registry of output targets,
 one shared numbered image sequence, and an ffmpeg encode derived from it. What
-produces the pixels -- a DCC viewport, a browser canvas, a renderer -- is a
-hook, so the same plan, the same target vocabulary and the same encode serve
-every producer.
+produces the pixels -- a DCC viewport, a browser canvas, a renderer -- is the
+host adapter, :attr:`SequenceEncoder.HOST` (a :class:`SequenceHost`; mayatk's
+and blendertk's ``PlayblastExporter`` each bind theirs), so the same plan, the
+same target vocabulary and the same encode serve every producer:
+
+======================  ========================================================
+``frame_range``         the timeline's ``(start, end)`` for a range mode
+``sequence_name``       an output's default basename (the open scene's)
+``sequence_fps``        the frame rate of what the host captures
+``sound_source``        the armed audio source (a node, a track), or None
+``audio_source``        that audio as ``(file, offset in frames)`` for the mux
+``resolve_path``        a host path (Blender's ``//``) as the filesystem reads it
+``capture_frames``      write ``<prefix>.<frame>.<ext>`` over a frame range
+``capture_still``       write one frame to an exact file
+``capture_movie``       write a movie with the host's own writer (``native``)
+``export_target``       produce a target kind only the host has (Maya's Arnold)
+``notify`` / ``warn``   show a notice on the host's message / warning line
+======================  ========================================================
+
+With the pure host (:class:`PureSequenceHost`) there is no timeline, nothing to
+capture and no audio: the encode and the plan's bookkeeping are what remain.
 
 Two classes, because two callers need different amounts of it:
 
@@ -17,12 +35,10 @@ Two classes, because two callers need different amounts of it:
   an LSP violation dressed up as reuse.
 - :class:`SequenceExporter` -- adds the multi-target plan: capture the source
   ONCE per image format and derive every encoded output from it, isolating a
-  per-target failure rather than losing the run. Producers implement
-  :meth:`~SequenceExporter.capture_sequence` / :meth:`~SequenceExporter.capture_still`;
-  a producer with output kinds of its own (Maya's native movie playblast, an
-  Arnold render) registers them in ``TARGETS`` and answers
-  :meth:`~SequenceExporter._export_extra_target`, so the base plan never grows
-  a branch per host (OCP).
+  per-target failure rather than losing the run. Everything both hosts do
+  alike around a capture -- the folder, the range, clearing a prefix's earlier
+  frames, counting what was written, the notices -- is written here once; the
+  host writes the frames.
 
 The one rule worth restating: **the viewport is read once.** Every encoded
 output comes off the same lossless PNG capture, so asking for mp4 + mov costs
@@ -35,7 +51,17 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+    Union,
+)
 
 from pythontk.core_utils.cancel_scope import CancelScope
 from pythontk.core_utils.logging_mixin import LoggingMixin
@@ -52,9 +78,10 @@ class ExportTarget:
         name: Registry key (e.g. ``"mp4"``).
         label: Human-readable label for UI pickers.
         kind: ``"encode"`` (ffmpeg from the shared capture), ``"sequence"``
-            (numbered image frames), ``"still"`` (single frame), or any name a
-            subclass answers in :meth:`SequenceExporter._export_extra_target`
-            (Maya adds ``"native"`` and ``"arnold"``).
+            (numbered image frames), ``"still"`` (single frame), ``"native"``
+            (a movie the host writes itself, :meth:`SequenceHost.capture_movie`),
+            or any name the host answers in :meth:`SequenceHost.export_target`
+            (Maya adds ``"arnold"``).
         image_format: Capture compression for image-based kinds.
         extension: Output extension without the dot.
         encoder_options: Extra ffmpeg options for ``encode`` targets.
@@ -110,20 +137,249 @@ class ExportResult:
         return self.error is None
 
 
+class SequenceHost(Protocol):
+    """What a sequence exporter asks of the host whose frames it captures.
+
+    A short, fixed interface each DCC implements (mayatk's
+    ``MayaPlayblastHost``, blendertk's ``BlenderPlayblastHost``: each
+    ``PlayblastExporter.HOST``) and :class:`PureSequenceHost` holds with no
+    host behind it; a fake stands in for either in a plain-Python test. One
+    adapter serves every exporter of its class and holds no state: a capture
+    is handed the exporter whose settings it reads (``width``, ``height``,
+    ``percent``, ``quality``, ``off_screen``, ``show_ornaments``) and whose
+    ``logger`` it reports on. The exporter has already resolved the path, the
+    frame range and the camera default, made the folder and cleared the
+    prefix's earlier frames; it checks what the host wrote.
+    """
+
+    def frame_range(self, mode: str) -> Tuple[float, float]:
+        """The timeline's ``(start, end)`` for *mode*, one of the modes the
+        exporter's ``RANGE_MODES`` declare beside ``custom`` (``current``: the
+        current frame, twice)."""
+
+    def sequence_name(self) -> Optional[str]:
+        """An output's default basename (the open scene's name); None when
+        the host does not say (the exporter's ``DEFAULT_NAME``)."""
+
+    def sequence_fps(self) -> Optional[float]:
+        """The frame rate of the frames the host captures; None when it does
+        not say (the exporter's ``DEFAULT_FPS``)."""
+
+    def sound_source(self) -> Optional[str]:
+        """The armed audio SOURCE (a node, a track) the host's own movie writer
+        mixes in, or None. Its presence is also what makes an encode ask for
+        audio at all."""
+
+    def audio_source(self) -> Tuple[Optional[str], float]:
+        """``(audio filepath, offset in FRAMES)`` of that source for the ffmpeg
+        mux, ``(None, 0.0)`` with none. The exporter rebases the offset onto
+        the capture's first frame."""
+
+    def resolve_path(self, path: str) -> str:
+        """*path* as the filesystem reads it (Blender's ``//`` is relative to
+        the open file); the exporter makes the result absolute."""
+
+    def capture_frames(
+        self,
+        exporter: "SequenceExporter",
+        directory: str,
+        prefix: str,
+        start: int,
+        end: int,
+        camera: Any,
+        image_format: str,
+        padding: int,
+        overrides: Dict[str, Any],
+    ) -> None:
+        """Write ``<directory>/<prefix>.<frame>.<image_format>`` for every frame
+        of ``start..end``, numbered by the real frame padded to *padding*
+        digits, through *camera* (None: the view as it is). *overrides* are
+        the caller's host-specific capture options."""
+
+    def capture_still(
+        self,
+        exporter: "SequenceExporter",
+        filepath: str,
+        frame: int,
+        camera: Any,
+        image_format: str,
+        overrides: Dict[str, Any],
+    ) -> None:
+        """Write *frame* to exactly *filepath* (its folder exists)."""
+
+    def capture_movie(
+        self,
+        exporter: "SequenceExporter",
+        filepath: str,
+        fmt: str,
+        compression: str,
+        start: int,
+        end: int,
+        camera: Any,
+        sound: Optional[str],
+        overrides: Dict[str, Any],
+    ) -> str:
+        """Write ``start..end`` as a movie with the host's own writer (a
+        ``native`` target: *fmt* / *compression* are its ``native_format`` /
+        ``native_compression``), mixing *sound* in when given. Returns the file
+        written: the host may correct the extension."""
+
+    def export_target(
+        self,
+        exporter: "SequenceExporter",
+        spec: ExportTarget,
+        output_dir: str,
+        name: str,
+        start: int,
+        end: int,
+        camera: Any,
+        sound: Optional[str],
+        overrides: Dict[str, Any],
+    ) -> Union[str, List[str]]:
+        """Produce a target of a kind only this host has (Maya's ``arnold``),
+        registered in its exporter's ``TARGETS``; the shared plan never grows a
+        branch per host."""
+
+    def notify(self, message: str) -> bool:
+        """Show a produced-file notice on the host's message line; False when
+        it has none (the exporter's logger takes it then)."""
+
+    def warn(self, message: str) -> bool:
+        """Show a recoverable failure on the host's warning line; False when
+        it has none (the exporter's logger takes it then)."""
+
+
+class PureSequenceHost:
+    """The :class:`SequenceHost` with no host: no timeline, nothing to capture,
+    no audio, and paths read as given.
+
+    A host adapter builds on it for what it lacks: :meth:`capture_still` is a
+    one-frame :meth:`SequenceExporter.capture_sequence` moved into place, which
+    serves any host without a single-frame capture of its own (Blender's).
+    """
+
+    def frame_range(self, mode: str) -> Tuple[float, float]:
+        raise NotImplementedError(
+            f"{type(self).__name__} has no timeline to resolve range mode {mode!r}."
+        )
+
+    @staticmethod
+    def sequence_name() -> Optional[str]:
+        return None
+
+    @staticmethod
+    def sequence_fps() -> Optional[float]:
+        return None
+
+    @staticmethod
+    def sound_source() -> Optional[str]:
+        return None
+
+    @staticmethod
+    def audio_source() -> Tuple[Optional[str], float]:
+        return None, 0.0
+
+    @staticmethod
+    def resolve_path(path: str) -> str:
+        return path
+
+    def capture_frames(
+        self,
+        exporter: "SequenceExporter",
+        directory: str,
+        prefix: str,
+        start: int,
+        end: int,
+        camera: Any,
+        image_format: str,
+        padding: int,
+        overrides: Dict[str, Any],
+    ) -> None:
+        raise NotImplementedError(
+            f"{type(exporter).__name__} has no host to capture frames from."
+        )
+
+    def capture_still(
+        self,
+        exporter: "SequenceExporter",
+        filepath: str,
+        frame: int,
+        camera: Any,
+        image_format: str,
+        overrides: Dict[str, Any],
+    ) -> None:
+        directory, basename = os.path.split(filepath)
+        capture = exporter.capture_sequence(
+            directory,
+            prefix=f"{os.path.splitext(basename)[0]}_still",
+            start=frame,
+            end=frame,
+            camera=camera,
+            image_format=image_format,
+            **overrides,
+        )
+        os.replace(capture.frames[0], filepath)
+
+    def capture_movie(
+        self,
+        exporter: "SequenceExporter",
+        filepath: str,
+        fmt: str,
+        compression: str,
+        start: int,
+        end: int,
+        camera: Any,
+        sound: Optional[str],
+        overrides: Dict[str, Any],
+    ) -> str:
+        raise NotImplementedError(
+            f"{type(exporter).__name__} has no movie writer of its own ({fmt!r})."
+        )
+
+    def export_target(
+        self,
+        exporter: "SequenceExporter",
+        spec: ExportTarget,
+        output_dir: str,
+        name: str,
+        start: int,
+        end: int,
+        camera: Any,
+        sound: Optional[str],
+        overrides: Dict[str, Any],
+    ) -> Union[str, List[str]]:
+        raise NotImplementedError(
+            f"{type(exporter).__name__} has no producer for target kind "
+            f"{spec.kind!r} ({spec.name})."
+        )
+
+    @staticmethod
+    def notify(message: str) -> bool:
+        return False
+
+    @staticmethod
+    def warn(message: str) -> bool:
+        return False
+
+
 class SequenceEncoder(LoggingMixin):
     """Encode a numbered image sequence to a movie, and clean up after it.
 
-    No capture and no host: everything here operates on files that already
-    exist. Subclass it when you own the capture loop yourself and only want
-    the encode (the preview page's recorder); subclass
-    :class:`SequenceExporter` when you want the plan as well.
+    No capture: everything here operates on files that already exist. Use it
+    as is when you own the capture loop yourself and only want the encode
+    (the preview page's recorder); use :class:`SequenceExporter` when you want
+    the plan as well. What the host knows -- its frame rate, its armed audio,
+    its message line -- comes through :attr:`HOST`.
 
     Parameters:
         quality: 0-100, mapped onto the H.264 CRF scale for encoded outputs.
         frame_padding: Digits in an image sequence's frame numbers.
-        include_audio: Mux the host's audio into movie outputs. Inert until a
-            subclass answers :meth:`_resolve_audio_source`.
+        include_audio: Mux the host's audio into movie outputs. Inert until
+            the host answers :meth:`SequenceHost.audio_source`.
     """
+
+    #: The host adapter (:class:`SequenceHost`): a DCC's exporter binds its own.
+    HOST: SequenceHost = PureSequenceHost()
 
     #: Peak level (dBFS) below which a muxed audio track is reported as
     #: silent. Digital silence measures ~-91 dB; audible content sits far
@@ -144,10 +400,10 @@ class SequenceEncoder(LoggingMixin):
     #: one. A caller that starts to must pass its own ``vf``.
     _EVEN_DIMENSIONS_FILTER: str = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
 
-    #: Frame rate assumed when the producer does not state one.
+    #: Frame rate assumed when the host does not state one.
     DEFAULT_FPS: float = 24.0
 
-    #: Name used when the producer does not state one.
+    #: Name used when the host does not state one.
     DEFAULT_NAME: str = "sequence"
 
     def __init__(
@@ -163,32 +419,25 @@ class SequenceEncoder(LoggingMixin):
         self.include_audio = bool(include_audio)
 
     # ------------------------------------------------------------------
-    # Producer hooks -- what the host knows and this module does not
+    # What the host knows and this module does not
     # ------------------------------------------------------------------
     def sequence_fps(self) -> float:
-        """Frame rate of the frames this producer captures."""
-        return self.DEFAULT_FPS
+        """Frame rate of the frames the host captures."""
+        return self.HOST.sequence_fps() or self.DEFAULT_FPS
 
     def sequence_name(self) -> str:
-        """Default basename for an output this producer writes."""
-        return self.DEFAULT_NAME
-
-    def _resolve_audio_source(self) -> Tuple[Optional[str], float]:
-        """``(audio filepath, offset in FRAMES)`` for the host's audio, if any.
-
-        Separate from :meth:`_resolve_audio` so a host supplies only what it
-        alone knows (which node is armed on its timeline); the frames-to-
-        seconds conversion against the capture's start frame is shared.
-        """
-        return None, 0.0
+        """Default basename for an output the host writes."""
+        return self.HOST.sequence_name() or self.DEFAULT_NAME
 
     def _notify(self, message: str) -> None:
-        """Report a produced file. Hosts with a message line override this."""
-        self.logger.info(message)
+        """Report a produced file: the host's message line, else the logger."""
+        if not self.HOST.notify(message):
+            self.logger.info(message)
 
     def _warn(self, message: str) -> None:
-        """Report a recoverable failure. Hosts with a warning channel override."""
-        self.logger.warning(message)
+        """Report a recoverable failure: the host's warning line, else the logger."""
+        if not self.HOST.warn(message):
+            self.logger.warning(message)
 
     # ------------------------------------------------------------------
     # Encode
@@ -365,14 +614,14 @@ class SequenceEncoder(LoggingMixin):
         """``(audio filepath, offset seconds)`` for an encode; ``(None, 0)`` if
         unresolvable.
 
-        A string is a filepath used as-is; True asks the host through
-        :meth:`_resolve_audio_source` and rebases its frame offset against the
-        capture's first frame, so audio armed against the timeline lands where
-        it belongs in a movie that starts mid-range.
+        A string is a filepath used as-is; True asks the host
+        (:meth:`SequenceHost.audio_source`) and rebases its frame offset
+        against the capture's first frame, so audio armed against the timeline
+        lands where it belongs in a movie that starts mid-range.
         """
         if isinstance(audio, str):
             return (audio if os.path.isfile(audio) else None), 0.0
-        filepath, offset_frames = self._resolve_audio_source()
+        filepath, offset_frames = self.HOST.audio_source()
         if not filepath:
             return None, 0.0
         offset_seconds = (
@@ -384,21 +633,30 @@ class SequenceEncoder(LoggingMixin):
 
 
 class SequenceExporter(SequenceEncoder):
-    """Plan and run several outputs off ONE capture of a producer's frames.
+    """Plan and run several outputs off ONE capture of a host's frames.
 
-    Subclasses supply the pixels (:meth:`capture_sequence`,
-    :meth:`capture_still`) and, where the host has output kinds of its own,
-    answer :meth:`_export_extra_target`. Everything else -- what the targets
-    are, which captures the plan needs, in what order, how failures are
-    isolated and what gets cleaned up -- lives here and is shared.
+    The host adapter (:attr:`HOST`) writes the pixels and answers the target
+    kinds only it has. Everything else -- what the targets are, which captures
+    the plan needs, in what order, the folders and frame bookkeeping around
+    each capture, how failures are isolated and what gets cleaned up -- lives
+    here and is shared. A DCC's ``PlayblastExporter`` is this class bound to
+    its host: configuration (``HOST``, ``TARGETS``, ``RANGE_MODES``) plus the
+    host's own additions, never an override.
 
     Instance attributes hold capture *defaults*; every public method accepts
-    per-call overrides.
+    per-call overrides. Frame ranges are resolved at call time (never cached),
+    so the exporter tracks timeline changes made after construction.
 
     Parameters:
+        camera: Default camera for captures (the host's spelling: a node name,
+            an object). ``None`` keeps whatever the view is looking through.
         width/height: Capture resolution.
+        percent: The host's capture scale percentage.
         quality: 0-100; drives the ffmpeg CRF for encoded targets (and, for a
             host that has one, its own movie quality).
+        off_screen: Capture offscreen where the host can choose (avoids
+            viewport redraw artifacts).
+        show_ornaments: Draw the viewport's HUD / overlays into the capture.
         frame_padding: Digits for image-sequence frame numbers.
         include_audio: Attach the host's audio to movie outputs.
     """
@@ -450,14 +708,14 @@ class SequenceExporter(SequenceEncoder):
         )
     }
 
-    #: Frame-range modes accepted by :meth:`resolve_frame_range`. A host adds
-    #: its own (Maya's timeline modes) and answers them in
-    #: :meth:`_frame_range_for_mode`.
+    #: Frame-range modes accepted by :meth:`resolve_frame_range`. A host with a
+    #: timeline declares its own (``playback``, ``animation``, ``current``) and
+    #: its adapter answers them (:meth:`SequenceHost.frame_range`).
     RANGE_MODES: Tuple[str, ...] = ("custom",)
 
     #: Range :meth:`export` uses when the caller names none. ``custom`` here
     #: because it is the only mode a host-less exporter HAS -- and a host with a
-    #: timeline overrides it rather than leaving the default to whichever mode
+    #: timeline sets its own rather than leaving the default to whichever mode
     #: happens to be listed first, which is how "export the current shot"
     #: quietly becomes "export nothing at all".
     DEFAULT_RANGE_MODE: str = "custom"
@@ -477,11 +735,21 @@ class SequenceExporter(SequenceEncoder):
         "directory",
     )
 
+    #: Override keys the shared image capture reads itself (an image
+    #: sequence's digits): a movie, a still and a host's own kind have none,
+    #: so these never reach the host's call (Maya's playblast refuses a flag
+    #: it does not know).
+    _CAPTURE_ONLY_OVERRIDES: Tuple[str, ...] = ("frame_padding",)
+
     def __init__(
         self,
+        camera: Any = None,
         width: int = 1920,
         height: int = 1080,
+        percent: int = 100,
         quality: int = 100,
+        off_screen: bool = True,
+        show_ornaments: bool = True,
         frame_padding: int = 4,
         include_audio: bool = False,
         **kwargs: Any,
@@ -492,8 +760,12 @@ class SequenceExporter(SequenceEncoder):
             include_audio=include_audio,
             **kwargs,
         )
+        self.camera = camera
         self.width = int(width)
         self.height = int(height)
+        self.percent = int(percent)
+        self.off_screen = bool(off_screen)
+        self.show_ornaments = bool(show_ornaments)
 
     # ------------------------------------------------------------------
     # Queries
@@ -502,6 +774,18 @@ class SequenceExporter(SequenceEncoder):
     def available_targets(cls) -> List[Tuple[str, str]]:
         """(name, label) pairs in registry order — for building UI pickers."""
         return [(t.name, t.label) for t in cls.TARGETS.values()]
+
+    @classmethod
+    def scene_name(cls) -> str:
+        """An output's default basename, class-level (a panel shows it before
+        it builds an exporter): the host scene's name, else
+        :attr:`DEFAULT_NAME`."""
+        return cls.HOST.sequence_name() or cls.DEFAULT_NAME
+
+    @classmethod
+    def scene_fps(cls) -> float:
+        """The host scene's frame rate, class-level, else :attr:`DEFAULT_FPS`."""
+        return cls.HOST.sequence_fps() or cls.DEFAULT_FPS
 
     @classmethod
     def resolve_frame_range(
@@ -513,13 +797,14 @@ class SequenceExporter(SequenceEncoder):
         """Resolve a frame range from a mode, with explicit overrides.
 
         ``custom`` is the only mode every host has (both bounds required);
-        hosts with a timeline register theirs in :attr:`RANGE_MODES` and
-        answer :meth:`_frame_range_for_mode`. Explicit ``start``/``end``
-        override the mode's values individually.
+        a host with a timeline registers its modes in :attr:`RANGE_MODES` and
+        its adapter answers them. Explicit ``start``/``end`` override the
+        mode's values individually.
 
         Raises:
             ValueError: An unknown mode, a ``custom`` call missing a bound, or
                 a resolved range that runs backwards.
+            NotImplementedError: A declared mode the host does not answer.
         """
         if mode not in cls.RANGE_MODES:
             raise ValueError(
@@ -530,7 +815,7 @@ class SequenceExporter(SequenceEncoder):
                 raise ValueError("Custom range mode requires both start and end.")
             mode_start, mode_end = start, end
         else:
-            mode_start, mode_end = cls._frame_range_for_mode(mode)
+            mode_start, mode_end = cls.HOST.frame_range(mode)
 
         resolved_start = int(start if start is not None else mode_start)
         resolved_end = int(end if end is not None else mode_end)
@@ -540,17 +825,8 @@ class SequenceExporter(SequenceEncoder):
             )
         return resolved_start, resolved_end
 
-    @classmethod
-    def _frame_range_for_mode(cls, mode: str) -> Tuple[float, float]:
-        """The host's ``(start, end)`` for a non-``custom`` :attr:`RANGE_MODES`
-        entry. Unreachable unless a subclass widened the modes without
-        answering them."""
-        raise NotImplementedError(
-            f"{cls.__name__} declares range mode {mode!r} but does not resolve it."
-        )
-
     # ------------------------------------------------------------------
-    # Capture primitives -- the producer's half
+    # Capture primitives -- the host writes, this checks
     # ------------------------------------------------------------------
     def capture_sequence(
         self,
@@ -558,52 +834,129 @@ class SequenceExporter(SequenceEncoder):
         prefix: Optional[str] = None,
         start: Optional[int] = None,
         end: Optional[int] = None,
-        camera: Optional[str] = None,
+        camera: Any = None,
         image_format: str = "png",
         **overrides: Any,
     ) -> CaptureResult:
         """Capture the frame range as a numbered image sequence.
 
         Frames keep their real frame numbers (``<prefix>.<frame>.<ext>``).
+        ``frame_padding`` in *overrides* sets this capture's digits; the rest
+        are the host's capture options.
+
+        Raises:
+            RuntimeError: The host wrote fewer frames than the range holds (an
+                interrupted capture stops early).
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement capture_sequence."
+        directory = self._resolve_path(directory)
+        os.makedirs(directory, exist_ok=True)
+        prefix = prefix or self.sequence_name()
+        start, end = self.resolve_frame_range(self.DEFAULT_RANGE_MODE, start, end)
+        padding = int(overrides.pop("frame_padding", self.frame_padding))
+        camera = self.camera if camera is None else camera
+
+        # directory+prefix identifies THIS capture: frames left by an
+        # earlier/wider run would pass the count check below and -- worse --
+        # ffmpeg reads a printf pattern contiguously past ``end``, encoding
+        # stale frames into the movie.
+        self._remove_frames(directory, prefix, image_format)
+        self.HOST.capture_frames(
+            self, directory, prefix, start, end, camera, image_format, padding,
+            overrides,
+        )
+
+        frames = self._collect_frames(directory, prefix, image_format, start, end)
+        expected = end - start + 1
+        if len(frames) < expected:
+            raise RuntimeError(
+                f"The capture wrote {len(frames)}/{expected} frames under "
+                f"{directory!r} (prefix {prefix!r}) -- an interrupted capture "
+                "(Esc) stops early."
+            )
+        return CaptureResult(
+            directory=directory,
+            prefix=prefix,
+            image_format=image_format,
+            start=start,
+            end=end,
+            padding=padding,
+            frames=frames,
+            fps=self.sequence_fps(),
         )
 
     def capture_still(
         self,
         filepath: str,
         frame: Optional[int] = None,
-        camera: Optional[str] = None,
+        camera: Any = None,
         image_format: str = "png",
         **overrides: Any,
     ) -> str:
-        """Capture a single frame to an exact filepath."""
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement capture_still."
-        )
+        """Capture a single frame (default: the current one) to an exact filepath.
 
-    def _export_extra_target(
+        Raises:
+            RuntimeError: No file was written.
+        """
+        filepath = self._resolve_path(filepath)
+        output_dir = os.path.dirname(filepath)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        frame = int(frame if frame is not None else self.HOST.frame_range("current")[0])
+        camera = self.camera if camera is None else camera
+        overrides = self._host_overrides(overrides)
+
+        self.HOST.capture_still(self, filepath, frame, camera, image_format, overrides)
+
+        if not self._is_valid_file(filepath):
+            raise RuntimeError(f"Still capture failed; no file at {filepath!r}.")
+        self._notify(f"Still frame captured: {filepath}")
+        return filepath
+
+    def _capture_movie(
         self,
-        spec: ExportTarget,
-        output_dir: str,
-        name: str,
-        start: int,
-        end: int,
-        camera: Optional[str],
+        filepath: str,
+        fmt: str,
+        compression: str,
+        start: Optional[int],
+        end: Optional[int],
+        camera: Any,
         sound: Optional[str],
         overrides: Dict[str, Any],
-    ) -> Union[str, List[str]]:
-        """Produce a target whose ``kind`` this class does not know.
+    ) -> str:
+        """A movie written by the host's own writer (a ``native`` target): the
+        shared half of each host's ``capture_movie``, which names *fmt* and
+        *compression* in its own vocabulary."""
+        filepath = self._resolve_path(filepath)
+        output_dir = os.path.dirname(filepath)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        start, end = self.resolve_frame_range(self.DEFAULT_RANGE_MODE, start, end)
+        camera = self.camera if camera is None else camera
 
-        The OCP seam: a host registers ``native``/``arnold``/whatever in
-        :attr:`TARGETS` and produces it here, instead of the shared plan
-        growing an ``elif`` per host.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} has no producer for target kind {spec.kind!r} "
-            f"({spec.name})."
+        produced = self.HOST.capture_movie(
+            self, filepath, fmt, compression, start, end, camera, sound,
+            self._host_overrides(overrides),
         )
+
+        if not self._is_valid_file(produced):
+            raise RuntimeError(f"Movie capture failed; no file at {produced!r}.")
+        self._notify(f"Playblast movie created: {produced}")
+        return produced
+
+    @classmethod
+    def _host_overrides(cls, overrides: Dict[str, Any]) -> Dict[str, Any]:
+        """*overrides* less :attr:`_CAPTURE_ONLY_OVERRIDES`: what a host call
+        other than the image capture is handed."""
+        return {
+            key: value
+            for key, value in overrides.items()
+            if key not in cls._CAPTURE_ONLY_OVERRIDES
+        }
+
+    def _resolve_path(self, path: str) -> str:
+        """*path* absolute and normalized, read through the host's own path
+        syntax first (:meth:`SequenceHost.resolve_path`)."""
+        return FileUtils.format_path(os.path.abspath(self.HOST.resolve_path(path)))
 
     # ------------------------------------------------------------------
     # Orchestrator
@@ -616,7 +969,7 @@ class SequenceExporter(SequenceEncoder):
         range_mode: Optional[str] = None,
         start: Optional[int] = None,
         end: Optional[int] = None,
-        camera: Optional[str] = None,
+        camera: Any = None,
         keep_frames: bool = False,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         **overrides: Any,
@@ -631,8 +984,9 @@ class SequenceExporter(SequenceEncoder):
         kept in ``<output_dir>/<name>_png_tmp``.
 
         Outputs: ``<dir>/<name>.<ext>`` for movies and the still;
-        ``<dir>/<name>_<fmt>/`` for sequences. Per-target failures are captured
-        on the returned :class:`ExportResult`\\ s rather than raised.
+        ``<dir>/<name>_<fmt>/`` for sequences. *output_dir* is read through
+        the host's path syntax (Blender's ``//``). Per-target failures are
+        captured on the returned :class:`ExportResult`\\ s rather than raised.
 
         Encoded targets are pre-flighted: with no ffmpeg they fail before any
         frame is captured. Between plan steps the export honours the ambient
@@ -655,14 +1009,16 @@ class SequenceExporter(SequenceEncoder):
         for owned in self._RESERVED_OVERRIDES:
             overrides.pop(owned, None)
 
-        output_dir = FileUtils.format_path(os.path.abspath(output_dir))
+        output_dir = self._resolve_path(output_dir)
         os.makedirs(output_dir, exist_ok=True)
         name = name or self.sequence_name()
         start, end = self.resolve_frame_range(
             range_mode or self.DEFAULT_RANGE_MODE, start, end
         )
 
-        sound_node = self._sound_source() if self.include_audio else None
+        # The host's armed source: a native movie mixes it in itself, and its
+        # presence decides whether an encode asks for audio at all.
+        sound_node = self.HOST.sound_source() if self.include_audio else None
 
         results: Dict[str, ExportResult] = {
             s.name: ExportResult(target=s.name, kind=s.kind) for s in specs
@@ -780,17 +1136,32 @@ class SequenceExporter(SequenceEncoder):
                             image_format=spec.image_format,
                             **overrides,
                         )
+                    elif spec.kind == "native":
+                        # Not off the shared capture: the host's own writer
+                        # makes the container in its own pass.
+                        progress(f"Producing {spec.label}")
+                        result.output = self._capture_movie(
+                            os.path.join(output_dir, f"{name}.{spec.extension}"),
+                            spec.native_format,
+                            spec.native_compression,
+                            start,
+                            end,
+                            camera,
+                            sound_node,
+                            overrides,
+                        )
                     else:
                         progress(f"Producing {spec.label}")
-                        result.output = self._export_extra_target(
+                        result.output = self.HOST.export_target(
+                            self,
                             spec,
-                            output_dir=output_dir,
-                            name=name,
-                            start=start,
-                            end=end,
-                            camera=camera,
-                            sound=sound_node,
-                            overrides=overrides,
+                            output_dir,
+                            name,
+                            start,
+                            end,
+                            camera,
+                            sound_node,
+                            self._host_overrides(overrides),
                         )
                 except Exception as exc:  # noqa: BLE001 - isolate per target
                     result.error = str(exc)
@@ -805,15 +1176,3 @@ class SequenceExporter(SequenceEncoder):
         if progress_callback:
             progress_callback(total_steps, total_steps, "Done")
         return [results[s.name] for s in specs]
-
-    def _sound_source(self) -> Optional[str]:
-        """The host's armed audio SOURCE (a node, a track), or None.
-
-        Distinct from :meth:`_resolve_audio_source`, which answers with a FILE
-        for the ffmpeg mux. A host's own movie target takes the source itself
-        (Maya's native playblast is handed the sound node and does its own
-        mixing), so the plan passes this through to
-        :meth:`_export_extra_target` -- and uses its presence to decide whether
-        an encode should ask for audio at all.
-        """
-        return None
