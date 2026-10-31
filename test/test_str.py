@@ -103,6 +103,15 @@ class StrTest(BaseTestCase):
         with self.assertRaises(ValueError):
             StrUtils.apply_name_rule(text, "shout")
 
+    def test_to_identifier(self):
+        """A scene-node identifier: every other character becomes '_', and a
+        leading digit gets a '_' in front rather than being lost."""
+        self.assertEqual(StrUtils.to_identifier("my box-1"), "my_box_1")
+        self.assertEqual(StrUtils.to_identifier("1box"), "_1box")
+        self.assertEqual(StrUtils.to_identifier("crate_#"), "crate__")
+        self.assertEqual(StrUtils.to_identifier(""), "")
+        self.assertEqual(StrUtils.to_identifier("_ok9"), "_ok9")
+
     def test_set_case_whitespace(self):
         """Test set_case with whitespace strings."""
         self.assertEqual(StrUtils.set_case("   ", "upper"), "   ")

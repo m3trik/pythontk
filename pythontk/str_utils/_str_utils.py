@@ -201,6 +201,23 @@ class StrUtils(
         """
         return _ILLEGAL_NAME_CHAR_RE.sub("_", name)
 
+    @staticmethod
+    def to_identifier(name: str, replacement: str = "_") -> str:
+        """*name* as an identifier: letters, digits and ``_``, not starting with a digit.
+
+        The rule a scene node name follows (Maya's, and every engine an export
+        reaches): each other character becomes *replacement*, one for one as in
+        :meth:`to_legal_name`, and a leading digit gets a ``_`` in front -- kept,
+        not dropped, as Maya's own rename does (``1box`` -> ``box``). An empty
+        name stays empty: whether that is an error is the caller's call.
+
+        Example:
+            to_identifier("my box-1") --> 'my_box_1'
+            to_identifier("1box") --> '_1box'
+        """
+        legal = _ILLEGAL_NAME_CHAR_RE.sub(replacement, name or "")
+        return f"_{legal}" if legal[:1].isdigit() else legal
+
     #: Characters no file name may carry on Windows, and the ones a POSIX tool
     #: is happiest without. Path separators are NOT here: a caller that joins a
     #: name into a directory owns that question, and one that does not has
