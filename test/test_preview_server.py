@@ -9,7 +9,6 @@ no-store caching posture that keeps a warm browser cache from pinning a stale
 asset.
 """
 
-import base64
 import json
 import logging
 import mimetypes
@@ -2656,15 +2655,18 @@ class PreviewDelivererTestCase(unittest.TestCase):
     def test_absent_sidecar_leaves_the_glb_untouched(self):
         """Sidecar off must be a true passthrough — that is what makes it a probe.
 
-        Passthrough of *scene data*: nothing the sidecar would have written is
-        written. The dead-payload sweep above still runs, because it only drops
-        what no material references — it cannot change what the preview shows.
+        Passthrough of *scene data*: no material is written outside the
+        conversion, which states them from the FBX's own record. The
+        dead-payload sweep above still runs, because it only drops what no
+        material references — it cannot change what the preview shows.
         """
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
+        materials_target = (
+            "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.apply_glb_materials"
+        )
         with unittest.mock.patch(target, side_effect=self._fake_convert):
-            with unittest.mock.patch(emissive_target) as applied:
+            with unittest.mock.patch(materials_target) as applied:
                 self.bridge.deliverer.deliver(
                     self.bridge, Payload(primary=self._fbx()), HandoffRequest()
                 )
@@ -3057,250 +3059,6 @@ class PayloadPassTestCase(unittest.TestCase):
                 self.bridge, Payload(primary=original), request
             )
         self.assertEqual(self.converted, [original])
-
-
-class SetGlbEmissiveTestCase(unittest.TestCase):
-    """The GLB-side repair for the emissive channel Maya's FBX exporter drops."""
-
-    def setUp(self):
-        self.temp = TempArtifacts("test_glb_emissive", policy="scoped")
-        self.glb = Path(self.temp.path(extension=".glb"))
-
-    def tearDown(self):
-        self.temp.cleanup()
-
-    def _write_glb(self, gltf, bin_chunk=b"\x01\x02\x03\x04"):
-        payload = json.dumps(gltf).encode("utf-8")
-        payload += b" " * ((4 - (len(payload) % 4)) % 4)
-        rest = struct.pack("<I", len(bin_chunk)) + b"BIN\x00" + bin_chunk
-        with open(self.glb, "wb") as f:
-            f.write(b"glTF")
-            f.write(struct.pack("<I", 2))
-            f.write(struct.pack("<I", 12 + 8 + len(payload) + len(rest)))
-            f.write(struct.pack("<I", len(payload)))
-            f.write(b"JSON")
-            f.write(payload)
-            f.write(rest)
-        return self.glb
-
-    def _read_back(self):
-        edit = MeshConvert._read_glb(str(self.glb))
-        return edit.gltf, edit.rest, edit.bin_data
-
-    def _png(self, name="emis.png"):
-        """A minimal valid 1x1 PNG on disk."""
-        path = Path(self.temp.dir_path()) / name
-        path.write_bytes(
-            base64.b64decode(
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z"
-                "8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-            )
-        )
-        return str(path)
-
-    def test_writes_emissive_factor_by_material_name(self):
-        self._write_glb({"materials": [{"name": "m_arnold"}]})
-        records = MeshConvert.set_glb_emissive(
-            str(self.glb), {"m_arnold": {"color": (1, 0.5, 0)}}
-        )
-        self.assertEqual(len(records), 1)
-        gltf, _rest, _bin = self._read_back()
-        self.assertEqual(gltf["materials"][0]["emissiveFactor"], [1, 0.5, 0])
-
-    def test_bin_chunk_survives_the_edit(self):
-        """The JSON chunk is rewritten; geometry must come back byte-identical."""
-        self._write_glb({"materials": [{"name": "m"}]}, bin_chunk=b"GEOMETRYDATA1234")
-        MeshConvert.set_glb_emissive(str(self.glb), {"m": {"color": (1, 1, 1)}})
-        _gltf, _rest, bin_data = self._read_back()
-        self.assertEqual(bin_data, b"GEOMETRYDATA1234")
-
-    def test_over_unit_emission_becomes_strength_not_clipping(self):
-        """A Maya emission of 5.0 must not flatten to 1.0."""
-        self._write_glb({"materials": [{"name": "m"}]})
-        MeshConvert.set_glb_emissive(str(self.glb), {"m": {"color": (5.0, 2.5, 0.0)}})
-        gltf, _rest, _bin = self._read_back()
-        mat = gltf["materials"][0]
-        self.assertEqual(mat["emissiveFactor"], [1.0, 0.5, 0.0])
-        ext = mat["extensions"]["KHR_materials_emissive_strength"]
-        self.assertEqual(ext["emissiveStrength"], 5.0)
-        self.assertIn("KHR_materials_emissive_strength", gltf["extensionsUsed"])
-
-    def test_sub_unit_emission_declares_no_extension(self):
-        self._write_glb({"materials": [{"name": "m"}]})
-        MeshConvert.set_glb_emissive(str(self.glb), {"m": {"color": (0.5, 0.5, 0.5)}})
-        gltf, _rest, _bin = self._read_back()
-        self.assertNotIn("extensions", gltf["materials"][0])
-        self.assertNotIn("extensionsUsed", gltf)
-
-    def test_texture_is_embedded_into_the_bin(self):
-        self._write_glb({"materials": [{"name": "m"}]})
-        records = MeshConvert.set_glb_emissive(
-            str(self.glb), {"m": {"texture": self._png()}}
-        )
-        self.assertEqual(len(records), 1)
-        gltf, _rest, _bin = self._read_back()
-        self.assertEqual(gltf["materials"][0]["emissiveTexture"]["index"], 0)
-        # Relocated out of the JSON chunk on close — base64 in a deliverable is
-        # a 33% premium on every embedded map.
-        self.assertNotIn("uri", gltf["images"][0])
-        self.assertIn("bufferView", gltf["images"][0])
-        # A texture with no color must still light up, not stay black.
-        self.assertEqual(gltf["materials"][0]["emissiveFactor"], [1.0, 1.0, 1.0])
-
-    def test_repeated_texture_path_is_embedded_once(self):
-        self._write_glb({"materials": [{"name": "a"}, {"name": "b"}]})
-        png = self._png()
-        MeshConvert.set_glb_emissive(
-            str(self.glb), {"a": {"texture": png}, "b": {"texture": png}}
-        )
-        gltf, _rest, _bin = self._read_back()
-        self.assertEqual(len(gltf["images"]), 1)
-        self.assertEqual(len(gltf["textures"]), 1)
-        self.assertEqual(gltf["materials"][0]["emissiveTexture"]["index"], 0)
-        self.assertEqual(gltf["materials"][1]["emissiveTexture"]["index"], 0)
-
-    def test_unreadable_image_is_skipped_not_embedded(self):
-        """A file no decoder can read must be reported, not written as a data URI.
-
-        Junk bytes under a TIFF extension: the Pillow fallback tries and fails
-        to decode it, so it takes the same rejected path as a format with no
-        decoder at all (EXR, or no Pillow installed).
-        """
-        self._write_glb({"materials": [{"name": "m"}]})
-        tif = Path(self.temp.dir_path()) / "e.tif"
-        tif.write_bytes(b"II*\x00")
-        MeshConvert.set_glb_emissive(str(self.glb), {"m": {"texture": str(tif)}})
-        gltf, _rest, _bin = self._read_back()
-        self.assertNotIn("emissiveTexture", gltf["materials"][0])
-        self.assertNotIn("images", gltf)
-
-    def test_tga_texture_is_reencoded_to_png(self):
-        """TGA is everywhere in game art, and glTF cannot hold it natively.
-
-        Rejecting it by extension silently downgraded the material to
-        colour-only; with Pillow present it must arrive as an embedded PNG.
-        """
-        try:
-            from PIL import Image
-        except ImportError:
-            self.skipTest("Pillow not installed")
-        self._write_glb({"materials": [{"name": "m"}]})
-        tga = Path(self.temp.dir_path()) / "emis.tga"
-        Image.new("RGB", (2, 2), (255, 0, 0)).save(tga)
-        records = MeshConvert.set_glb_emissive(
-            str(self.glb), {"m": {"texture": str(tga)}}
-        )
-        self.assertEqual(len(records), 1)
-        gltf, _rest, _bin = self._read_back()
-        image = gltf["images"][0]
-        self.assertEqual(image["mimeType"], "image/png")
-        # The payload really is a PNG, not TGA bytes under a PNG label.
-        view = gltf["bufferViews"][image["bufferView"]]
-        start = view.get("byteOffset", 0)
-        self.assertTrue(
-            bytes(_bin[start : start + view["byteLength"]]).startswith(b"\x89PNG")
-        )
-
-    def test_a_zero_factor_switches_the_emission_off_and_embeds_nothing(self):
-        """A zero colour is the DCC saying the material emits nothing (Maya's
-        reader sends it for a mapped emissive at weight 0): the emission is
-        switched off -- factor 0, no map -- rather than left to the converter,
-        which glows a mapped emissive at 1.0. Nothing is embedded for it.
-        """
-        self._write_glb({"materials": [{"name": "m"}]})
-        records = MeshConvert.set_glb_emissive(
-            str(self.glb), {"m": {"texture": self._png(), "color": (0, 0, 0)}}
-        )
-        self.assertEqual([r["factor"] for r in records], [[0.0, 0.0, 0.0]])
-        gltf, _rest, _bin = self._read_back()
-        mat = gltf["materials"][0]
-        self.assertNotIn("emissiveTexture", mat)
-        self.assertEqual(mat["emissiveFactor"], [0.0, 0.0, 0.0])
-        # Decided before embedding — no orphaned image left in the file.
-        self.assertNotIn("images", gltf)
-
-    def test_unknown_material_name_is_ignored(self):
-        self._write_glb({"materials": [{"name": "present"}]})
-        self.assertEqual(
-            MeshConvert.set_glb_emissive(
-                str(self.glb), {"absent": {"color": (1, 1, 1)}}
-            ),
-            [],
-        )
-
-    def test_empty_mapping_is_a_no_op(self):
-        self._write_glb({"materials": [{"name": "m"}]})
-        before = self.glb.read_bytes()
-        self.assertEqual(MeshConvert.set_glb_emissive(str(self.glb), {}), [])
-        self.assertEqual(self.glb.read_bytes(), before)
-
-    def test_base_color_factor_is_written_preserving_alpha(self):
-        """Colour must not silently turn a transparent material opaque."""
-        self._write_glb(
-            {
-                "materials": [
-                    {
-                        "name": "m",
-                        "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 0.25]},
-                    }
-                ]
-            }
-        )
-        MeshConvert.set_glb_base_color(str(self.glb), {"m": {"color": (0.2, 0.4, 0.8)}})
-        gltf, _rest, _bin = self._read_back()
-        self.assertEqual(
-            gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"],
-            [0.2, 0.4, 0.8, 0.25],
-        )
-
-    def test_base_color_black_is_written_not_skipped(self):
-        """Unlike emissive, black is a legitimate base colour."""
-        self._write_glb({"materials": [{"name": "m"}]})
-        records = MeshConvert.set_glb_base_color(
-            str(self.glb), {"m": {"color": (0, 0, 0)}}
-        )
-        self.assertEqual(len(records), 1)
-        gltf, _rest, _bin = self._read_back()
-        self.assertEqual(
-            gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"],
-            [0.0, 0.0, 0.0, 1.0],
-        )
-
-    def test_base_color_is_clamped_not_normalized(self):
-        """There is no strength extension for base colour — clamp into range."""
-        self._write_glb({"materials": [{"name": "m"}]})
-        MeshConvert.set_glb_base_color(
-            str(self.glb), {"m": {"color": (2.0, -1.0, 0.5)}}
-        )
-        gltf, _rest, _bin = self._read_back()
-        self.assertEqual(
-            gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"],
-            [1.0, 0.0, 0.5, 1.0],
-        )
-        self.assertNotIn("extensions", gltf["materials"][0])
-
-    def test_base_color_texture_embeds(self):
-        self._write_glb({"materials": [{"name": "m"}]})
-        MeshConvert.set_glb_base_color(str(self.glb), {"m": {"texture": self._png()}})
-        gltf, _rest, _bin = self._read_back()
-        pbr = gltf["materials"][0]["pbrMetallicRoughness"]
-        self.assertEqual(pbr["baseColorTexture"]["index"], 0)
-        self.assertNotIn("uri", gltf["images"][0])
-        self.assertIn("bufferView", gltf["images"][0])
-
-    def test_base_color_unknown_material_is_ignored(self):
-        self._write_glb({"materials": [{"name": "present"}]})
-        self.assertEqual(
-            MeshConvert.set_glb_base_color(
-                str(self.glb), {"absent": {"color": (1, 0, 0)}}
-            ),
-            [],
-        )
-
-    def test_non_glb_input_raises(self):
-        self.glb.write_bytes(b"not a glb at all")
-        with self.assertRaises(ValueError):
-            MeshConvert.set_glb_emissive(str(self.glb), {"m": {"color": (1, 1, 1)}})
 
 
 class PublishFileTestCase(unittest.TestCase):

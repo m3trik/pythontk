@@ -664,6 +664,12 @@ MOVED_NAMES = {
     "MeshConvert.SIDECAR_APPLIERS": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
     "MeshConvert.embed_scene_sidecar": ("pythontk.MeshConvert.embed_glb_handoff", "0.19.0"),
     "MeshConvert.sidecar_foreign_packings": ("pythontk.MapFactory.foreign_packings", "0.19.0"),
+    # The per-channel writers those sections ran (removed 2026-10-31).
+    "MeshConvert.set_glb_base_color": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    "MeshConvert.set_glb_emissive": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    "MeshConvert.set_glb_metallic_roughness": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    "MeshConvert.set_glb_alpha_mode": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    "MeshConvert.set_glb_unlit": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
 }
 
 bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)
