@@ -278,7 +278,7 @@ class HandoffBridge(LoggingMixin):
     # Modes whose staged artifacts the run itself CONSUMES, so it may delete
     # them -- a blocking round trip that relocates its real output somewhere
     # durable. See :meth:`_scratch_policy`, which reads this; the panel-side
-    # twin is ``uitk.BridgeSlotsBase.TRANSIENT_OUTPUT_MODES``, which stops the
+    # twin is ``uitk.ParamPanelSlots.TRANSIENT_OUTPUT_MODES``, which stops the
     # same run inheriting a durable Output Dir it would then delete.
     scoped_scratch_modes: Tuple[str, ...] = ()
 
