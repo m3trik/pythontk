@@ -106,6 +106,9 @@ DEFAULT_INCLUDE = {
     # Per-scene notes kept with the project: one file both DCCs' Reference
     # Manager panels read and write.
     "file_utils.scene_notes": ["SceneNotes"],
+    # The Reference Manager's listing rules and Naming conventions (the save
+    # path a script reproduces), over a project's Workspace.
+    "file_utils.scene_listing": ["SceneListing"],
     # A project's bakes of foreign scenes: one slot per source, the record
     # inside each bake (host-read), purged by reference -- both DCC bridges.
     "file_utils.bake_cache": ["BakeCache"],

@@ -610,6 +610,20 @@ class ShotSequencer(_ShotSequencerHooks):
 
     # ---- definition -------------------------------------------------------
 
+    def keyed_transforms(self, start: float, end: float, **kwargs) -> List[str]:
+        """The objects moving inside ``[start, end]``, as the host's adapter
+        reads them (its ``_find_keyed_transforms`` hook; none without a scene):
+        what :meth:`define_shot` takes as a new shot's members and a panel lists
+        for a range.
+
+        Parameters:
+            start: First frame.
+            end: Last frame.
+            **kwargs: The adapter's read options (``evaluated=True`` also counts
+                one key of a curve moving through the window).
+        """
+        return self._find_keyed_transforms(start, end, **kwargs)
+
     def define_shot(
         self,
         name: str,
@@ -840,8 +854,8 @@ class ShotSequencer(_ShotSequencerHooks):
         if new_objs != sorted(shot.objects):
             self.store.update_shot(shot_id, objects=new_objs)
 
-    def _source_shot_id_for(self, seq: Dict[str, Any]) -> Optional[int]:
-        """Return the shot_id that currently contains *seq* (by frame range)."""
+    def source_shot_id(self, seq: Dict[str, Any]) -> Optional[int]:
+        """The shot_id that currently contains *seq* (by frame range), or None."""
         for sh in self.store.shots:
             if sh.start - _EPS <= seq["start"] and seq["end"] <= sh.end + _EPS:
                 return sh.shot_id
@@ -962,7 +976,7 @@ class ShotSequencer(_ShotSequencerHooks):
 
         groups: Dict[Optional[int], List[Dict[str, Any]]] = {}
         for seq in sequences:
-            sid = self._source_shot_id_for(seq)
+            sid = self.source_shot_id(seq)
             if sid == dest_shot_id:
                 continue  # already in destination — skip
             groups.setdefault(sid, []).append(seq)

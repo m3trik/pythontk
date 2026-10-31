@@ -431,9 +431,9 @@ class TestPureQueries(_SequencerTest):
 
     def test_source_shot_by_range(self):
         self.assertEqual(
-            self.seq._source_shot_id_for({"start": 16, "end": 20}), self.sid("B")
+            self.seq.source_shot_id({"start": 16, "end": 20}), self.sid("B")
         )
-        self.assertIsNone(self.seq._source_shot_id_for({"start": 11, "end": 12}))
+        self.assertIsNone(self.seq.source_shot_id({"start": 11, "end": 12}))
 
     def test_point_segment_is_a_marker(self):
         seg = ShotSequencer._point_segment("x", 4.0)
@@ -1607,6 +1607,13 @@ class TestShotEdgeMembers(_SequencerTest):
 
     def objects(self, name):
         return sorted(self.seq.shot_by_name(name).objects)
+
+    def test_keyed_transforms_reads_the_hosts_hook(self):
+        """The public reader a panel lists a range's movers with is the
+        adapter's ``_find_keyed_transforms``, keywords and all."""
+        self.seq.movers = {"b": (21, 30), "a": (1, 5)}
+        self.assertEqual(self.seq.keyed_transforms(20, 40), ["b"])
+        self.assertEqual(self.seq.keyed_transforms(0, 40, evaluated=True), ["a", "b"])
 
     def test_a_push_adopts_what_moves_in_the_frames_taken(self):
         self.seq.movers = {"b": (21, 30), "b_head": (16, 19)}

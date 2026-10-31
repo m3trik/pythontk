@@ -45,7 +45,7 @@ from pythontk.core_utils.engines.shots.shot_detection import (
 class _ShotTest(unittest.TestCase):
     """Base case: isolate the cross-scene prefs file and class state.
 
-    ``_save_user_prefs`` writes the user's real prefs JSON under
+    ``save_user_prefs`` writes the user's real prefs JSON under
     ``user_config_root``; pointing ``ShotStore._prefs_dir_override`` at a temp
     dir keeps every case sandboxed. Class-level singleton state is reset so
     cases can't leak into one another.
@@ -2245,7 +2245,7 @@ class TestUserPrefs(_ShotTest):
         s1.initial_shot_length = 150.0
         s1.snap_whole_frames = False
         s1.select_on_load = True
-        s1._save_user_prefs()
+        s1.save_user_prefs()
 
         # A fresh store starts at defaults (ShotStore() does NOT auto-restore —
         # only ShotStore.active() does), then restores the saved values from disk.
@@ -2278,7 +2278,7 @@ class TestUserPrefs(_ShotTest):
         s.fit_mode = "fit_contents"
         s.define_shot("A", 0, 10)  # mark_dirty -> save
         self.assertFalse(ShotStore._prefs_path().exists())
-        s._save_user_prefs()  # the panel's explicit save still writes
+        s.save_user_prefs()  # the panel's explicit save still writes
         self.assertTrue(ShotStore._prefs_path().exists())
 
     def test_prefs_path_uses_override_dir(self):

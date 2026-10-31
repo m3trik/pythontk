@@ -235,6 +235,11 @@ class PresetStore(_PresetStoreInternal):
             this store (once per process, only when the folder exists).
             ``PresetLibrary`` passes ``False`` for its own stores: a scan never
             writes.
+        info: Stamp each preset's management sidecar (:data:`INFO_EXT`: id,
+            label, created, author) on save and rename. ``False`` for a folder
+            that is not a preset collection -- a project's own files, where a
+            sidecar would only add a dotfile holding the OS login -- so the
+            folder holds the payloads alone; :meth:`info` then reads ``{}``.
     """
 
     def __init__(
@@ -246,6 +251,7 @@ class PresetStore(_PresetStoreInternal):
         user_dir: Optional[Union[str, os.PathLike]] = None,
         codec: Codec = JSON_CODEC,
         mark: bool = True,
+        info: bool = True,
     ):
         self.name = name
         self.package = package
@@ -254,6 +260,7 @@ class PresetStore(_PresetStoreInternal):
         self._codec = codec
         self._ext = codec.ext
         self._mark_enabled = mark
+        self._info_enabled = info
 
     @property
     def ext(self) -> str:
@@ -731,6 +738,8 @@ class PresetStore(_PresetStoreInternal):
         path.parent.mkdir(parents=True, exist_ok=True)
         _PresetStoreInternal._atomic_write_text(path, self._codec.dump(data))
         logger.debug("PresetStore: saved %r -> %s", name, path)
+        if not self._info_enabled:
+            return path
         try:
             if existed:
                 self.ensure_info(name)
@@ -740,18 +749,34 @@ class PresetStore(_PresetStoreInternal):
             logger.debug("PresetStore: could not stamp %r: %s", name, e)
         return path
 
-    def delete(self, name: str, *, force: bool = False) -> bool:
+    def delete(self, name: str, *, force: bool = False, trash: bool = False) -> bool:
         """Delete the *user* preset *name*. Returns ``True`` if a file was removed.
 
         Built-ins are never deleted; deleting a name that exists only as a
         built-in is a no-op returning ``False``, and so is deleting a locked
         user preset unless *force*. The preset's sidecar goes with it.
+
+        *trash* sends the payload to the platform's trash instead
+        (:meth:`FileUtils.move_to_trash`), where the user can restore it. Where
+        its volume keeps no trash that would hold it (a network share, a
+        removable drive) nothing is touched and the answer is ``False``:
+        deleting it for good is the caller's to ask about
+        (:meth:`FileUtils.can_trash` answers first), then a plain delete does it.
+
+        Raises:
+            OSError: The file could not be removed or moved (held open, say).
         """
         path = self.path(name, "user")
         if path.is_file():
             if not force and self._locked(name):
                 return False
-            path.unlink()
+            if trash:
+                from pythontk.file_utils._file_utils import FileUtils
+
+                if FileUtils.move_to_trash(str(path)) is None:
+                    return False
+            else:
+                path.unlink()
             try:
                 self.info_path(name).unlink()
             except FileNotFoundError:
@@ -784,7 +809,10 @@ class PresetStore(_PresetStoreInternal):
         src.rename(self.path(new, "user"))
         old_info = self.info_path(old)
         try:
-            self.write_info(new, {**(info or self._new_info(new)), "label": str(new)})
+            if self._info_enabled:
+                self.write_info(
+                    new, {**(info or self._new_info(new)), "label": str(new)}
+                )
             if old_info.is_file():
                 old_info.unlink()
         except OSError as e:  # payload moved; a stale sidecar is harmless

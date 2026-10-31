@@ -45,6 +45,12 @@ rebuilt from its sources and kept off a synced project drive. Everything else (t
 the regions, the mixes) is authored and travels with the project. A session from before the
 contract -- no version, no id, plain relative paths -- still reads.
 
+Its saved mixes are one `<name>.json` each and nothing else (the file `LightMix.save` writes; a
+name's punctuation other than `-`, `_` and spaces becomes `_`) in the folder its
+`mix` sits in, else `mixes/` beside it: `LookSession.mixes(path, data)` is that folder as a
+`PresetStore`, which lists, saves and deletes them -- `delete(name, trash=True)` to the
+platform's trash, where a mix can be restored.
+
 ## The panel
 
 **Look Match** (a tentacle standalone panel) is the panel over all of this. Open a session from the *Session*

@@ -9,8 +9,10 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
 from pythontk.core_utils.presets.store import PresetStore
+from pythontk.file_utils._file_utils import FileUtils
 from pythontk.core_utils.user_config import UserConfig, CONFIG_ROOT_ENV_VAR
 
 
@@ -191,6 +193,46 @@ class PresetStoreTest(unittest.TestCase):
         self.store.active = "draft (old)"
         self.assertTrue(self.store.delete("draft _old_"))
         self.assertIsNone(self.store.active)
+
+    def test_a_store_without_info_writes_no_sidecar(self):
+        """``info=False``: save and rename write the payload alone; the store
+        still lists, loads and deletes it."""
+        store = PresetStore(
+            "bare", user_dir=os.path.join(self.tmp, "bare"), mark=False, info=False
+        )
+        store.save("a", {"x": 1})
+        store.save("a", {"x": 2})  # a re-save stamps nothing either
+        self.assertTrue(store.rename("a", "b"))
+        self.assertEqual(os.listdir(store.user_dir), ["b.json"])
+        self.assertEqual(store.load("b"), {"x": 2})
+        self.assertEqual(store.info("b"), {})
+        self.assertTrue(store.delete("b"))
+        self.assertEqual(os.listdir(store.user_dir), [])
+
+    def test_delete_to_the_trash_leaves_the_payload_restorable(self):
+        self.store.save("draft", {"x": 1})
+        payload = str(self.store.path("draft"))
+        bin_dir = os.path.join(self.tmp, "bin")
+        os.makedirs(bin_dir)
+
+        def to_bin(path):  # the platform trash: the file moves, restorable
+            return shutil.move(path, os.path.join(bin_dir, os.path.basename(path)))
+
+        with mock.patch.object(FileUtils, "move_to_trash", side_effect=to_bin) as trash:
+            self.assertTrue(self.store.delete("draft", trash=True))
+        trash.assert_called_once_with(payload)
+        self.assertFalse(self.store.exists("draft"))
+        self.assertFalse(self.store.info_path("draft").exists())  # the sidecar goes too
+        with open(os.path.join(bin_dir, "draft.json"), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh), {"x": 1})
+
+    def test_delete_to_the_trash_keeps_a_preset_no_trash_would_take(self):
+        self.store.save("draft", {"x": 1})
+        # A network share or a removable drive: the trash refuses, touching nothing.
+        with mock.patch.object(FileUtils, "move_to_trash", return_value=None):
+            self.assertFalse(self.store.delete("draft", trash=True))
+        self.assertEqual(self.store.load("draft"), {"x": 1})
+        self.assertTrue(self.store.info_path("draft").exists())
 
     def test_a_pointer_written_as_typed_by_an_older_release_still_resolves(self):
         # The pointer used to hold the name as typed; that file outlives the

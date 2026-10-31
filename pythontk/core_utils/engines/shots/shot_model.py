@@ -2239,7 +2239,7 @@ class ShotStore(_ShotStoreInternal):
             legacy = self.host.legacy_prefs()
             if legacy is not None:
                 self._apply_prefs(legacy)
-                self._save_user_prefs()
+                self.save_user_prefs()
             return
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -2274,7 +2274,7 @@ class ShotStore(_ShotStoreInternal):
         if "snap_whole_frames" in data:
             self.snap_whole_frames = bool(data.get("snap_whole_frames"))
 
-    def _save_user_prefs(self) -> None:
+    def save_user_prefs(self) -> None:
         """Persist detection preferences to the cross-scene prefs file (zero-dep JSON).
 
         Called by the panel that changes a preference, never by :meth:`save`.
@@ -3689,7 +3689,7 @@ class ShotStore(_ShotStoreInternal):
         edit from every caller (a build, a sequencer drag, a headless script, a
         test), and writing it here copied whatever store saved last over the
         user's own preferences -- every test run reset them to defaults. The
-        panel that changes a preference saves it (:meth:`_save_user_prefs`).
+        panel that changes a preference saves it (:meth:`save_user_prefs`).
         """
         if self._persistence is not None:
             self._persistence.save(self.to_dict())
