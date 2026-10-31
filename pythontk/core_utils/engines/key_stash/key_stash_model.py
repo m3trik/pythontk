@@ -10,6 +10,15 @@ engine never interprets that payload — it only requires each curve record to
 carry a ``"times"`` list so ranges, envelopes and frame-rate rescales are
 computable without a scene.
 
+The store is one class on every host: everything the hosts do alike (the
+record's lifecycle, the frame-rate rule, the undo subscription, the crossing's
+reload) is written once on :class:`KeyStash`, and what a host genuinely differs
+by comes through :attr:`KeyStash.HOST`, a short fixed :class:`KeyStashHost`
+(:class:`PureKeyStashHost` holds the pure defaults; a fake stands in for a
+DCC in a plain-Python test).  mayatk's and blendertk's ``KeyStash`` bind their
+host's adapter and add the scene operations (``stash`` / ``retrieve`` /
+``drop`` / ``preview``), overriding nothing.
+
 Design constraints the adapters honour:
 
 * A stashed clip must have **zero effect** on evaluation and export until it
@@ -35,8 +44,20 @@ import logging
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, ClassVar, Dict, List, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    ContextManager,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    Tuple,
+    runtime_checkable,
+)
 
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.core_utils.engines.shots.shot_model import ScenePersistence
 
 _log = logging.getLogger(__name__)
@@ -155,6 +176,100 @@ class StashChanged:
 
 
 # ---------------------------------------------------------------------------
+# The host adapter
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class KeyStashHost(Protocol):
+    """What the key stash asks of the host it runs in.
+
+    Each DCC implements it (mayatk's ``MayaKeyStashHost``, blendertk's
+    ``BlenderKeyStashHost``: each library's ``KeyStash.HOST``);
+    :class:`PureKeyStashHost` holds the pure defaults, and a fake stands in for
+    either in a plain-Python test.  Each member answers what the pure default
+    does when the host's scene cannot be reached.
+    """
+
+    #: Whether a scene's keys keep real TIME when its frame rate changes --
+    #: the stashed times rescale to follow them (Maya: curve keys live in
+    #: ticks) -- or stay on their FRAMES, so the store records the new rate and
+    #: moves nothing (Blender): :meth:`KeyStash.rescale_to_fps`.
+    keys_keep_time: bool
+
+    def persistence(self, store_cls: type) -> Optional[ScenePersistence]:
+        """A new backend for *store_cls*'s record (its ``ATTR_NAME``;
+        :meth:`KeyStash.active` installs it once), or ``None``."""
+
+    def store_state(self) -> Any:
+        """What the host keeps per store, made with each store
+        (:attr:`KeyStash.host_state`; Blender: the deferred write's pending
+        flag) -- the shot store's ``ShotsHost.store_state``."""
+
+    def scene_fps(self) -> Optional[float]:
+        """The scene's frame rate, or ``None`` with no scene clock."""
+
+    def schedule_flush(self, store: "KeyStash") -> None:
+        """Have *store*'s pending write made (``store._flush_dirty``): at once,
+        or coalesced into one deferred write."""
+
+    def undo_chunk(self, name: str) -> ContextManager[Any]:
+        """A context manager making its block ONE step of the host's undo
+        queue, labelled *name*."""
+
+    def save_in_step(self, backend: ScenePersistence, data: Dict[str, Any]) -> bool:
+        """Write the record *data* through *backend* so the open undo step
+        records it; ``False`` when the backend's ordinary ``save`` already does
+        (the store then saves as usual)."""
+
+    def reconcile(self, store: "KeyStash") -> List[int]:
+        """Bring *store*'s record in line with the scene -- prune the clips
+        whose parked keys are gone, end a preview the record says runs
+        (:meth:`KeyStash._reconcile_with`) -- and return the pruned ids."""
+
+    def script_jobs(self) -> Any:
+        """The host's event manager (``subscribe(event, callback, owner=)``,
+        ``connect_cleanup(widget, owner=)``) :meth:`KeyStash.watch_undo`
+        subscribes through, or ``None`` with no event system."""
+
+
+class PureKeyStashHost:
+    """The :class:`KeyStashHost` with no host behind it: the pure defaults.
+
+    What a store runs on in plain Python, and the base a fake host overrides a
+    few members of.  It never guesses: no clip is pruned on a lookup it cannot
+    make.
+    """
+
+    keys_keep_time = True
+
+    def persistence(self, store_cls: type) -> Optional[ScenePersistence]:
+        return None
+
+    def store_state(self) -> Any:
+        return None
+
+    def scene_fps(self) -> Optional[float]:
+        return None
+
+    def schedule_flush(self, store: "KeyStash") -> None:
+        store._flush_dirty()
+
+    def undo_chunk(self, name: str) -> ContextManager[Any]:
+        # No undo queue: the block is the step.
+        return nullcontext()
+
+    def save_in_step(self, backend: ScenePersistence, data: Dict[str, Any]) -> bool:
+        return False
+
+    def reconcile(self, store: "KeyStash") -> List[int]:
+        return []
+
+    def script_jobs(self) -> Any:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Store
 # ---------------------------------------------------------------------------
 
@@ -194,17 +309,30 @@ class _KeyStashInternal(object):
 class KeyStash(_KeyStashInternal):
     """Store of parked key clips with pluggable persistence.
 
-    Pure core: CRUD, observer, serialization, the preview record and the
-    class-level active-store singleton.  Scene-reaching behaviour is left to
-    the DCC subclasses (``stash`` / ``retrieve`` / ``drop`` / ``preview`` /
-    ``end_preview``), each of which calls back into these primitives and
-    runs as ONE :meth:`_undo_step`.
+    One class on every host: CRUD, observer, serialization, the preview
+    record, the class-level active-store singleton, the frame-rate rule, the
+    undo subscription and the crossing's reload are written here once, and
+    every place that would reach into a scene is a call on :attr:`HOST` (a
+    :class:`KeyStashHost`).  A host library binds its adapter on a class of its
+    own (``mtk.KeyStash``, ``btk.KeyStash``: configuration) and adds the scene
+    operations (``stash`` / ``retrieve`` / ``drop`` / ``preview`` /
+    ``end_preview``), each of which calls back into these primitives and runs
+    as ONE :meth:`_undo_step`.
 
     Parameters:
         clips: Initial clip list.  Copied on construction.
         scene_fps: Frame rate the recorded times are expressed in.  ``None``
-            asks :meth:`_scene_fps` (the DCC hook; ``24.0`` in the pure core).
+            asks the host (:meth:`KeyStashHost.scene_fps`; ``24.0`` with none).
     """
+
+    #: The host adapter every scene call goes through; a host library's
+    #: binding sets its own (``MayaKeyStashHost``, ``BlenderKeyStashHost``).
+    HOST: ClassVar[KeyStashHost] = PureKeyStashHost()
+    #: The scene record the clip manifest rides (its declaration's key).
+    ATTR_NAME: ClassVar[str] = SceneRecords.KEY_STASH.key
+    #: The host events after which the record may have moved under the loaded
+    #: store (:meth:`watch_undo`).
+    UNDO_EVENTS: ClassVar[Tuple[str, ...]] = ("Undo", "Redo")
 
     _active: ClassVar[Optional["KeyStash"]] = None
     _persistence: ClassVar[Optional[ScenePersistence]] = None
@@ -216,6 +344,8 @@ class KeyStash(_KeyStashInternal):
         scene_fps: Optional[float] = None,
     ):
         self.clips: List[StashedClip] = list(clips or [])
+        #: What the host keeps for this store (:meth:`KeyStashHost.store_state`).
+        self.host_state: Any = self.HOST.store_state()
         self.scene_fps: float = float(scene_fps) if scene_fps else self._scene_fps()
         #: The active preview, or ``None``: ``{"clip_id": int, **adapter payload}``.
         self.active_preview: Optional[Dict[str, Any]] = None
@@ -386,26 +516,38 @@ class KeyStash(_KeyStashInternal):
     # ---- frame rate ------------------------------------------------------
 
     def rescale_to_fps(self, new_fps: float) -> None:
-        """Rescale every recorded key time from :attr:`scene_fps` to *new_fps*.
+        """Bring the record from :attr:`scene_fps` to *new_fps*, the scene's
+        new frame rate, so the stashed times stay with their keys.
 
-        The pure default assumes a frame-rate change MOVES keys in frame
-        space (Maya: curve keys live in ticks, so the frame numbers change).
-        An adapter whose keys stay put in frame space (Blender) overrides this
-        to update :attr:`scene_fps` only.
+        On a host whose keys keep real time (:attr:`KeyStashHost.keys_keep_time`:
+        Maya, whose curve keys live in ticks, and the pure default) the frame
+        numbers moved: every recorded key time rescales and the listeners are
+        told.  On one whose keys stay on their frames (Blender) the new rate is
+        recorded and nothing moves -- the shot store's rule
+        (``ShotStore.rescale_to_fps``).
         """
-        old_fps = self.scene_fps
-        if not old_fps or abs(float(new_fps) - old_fps) < 0.01:
+        new_fps = float(new_fps)
+        if not self.HOST.keys_keep_time:
+            if abs(new_fps - self.scene_fps) < 0.01:
+                return
+            self.scene_fps = new_fps
+            self.mark_dirty()
             return
-        ratio = float(new_fps) / old_fps
+        old_fps = self.scene_fps
+        if not old_fps or abs(new_fps - old_fps) < 0.01:
+            return
+        ratio = new_fps / old_fps
         for clip in self.clips:
             clip.rescale(ratio)
-        self.scene_fps = float(new_fps)
+        self.scene_fps = new_fps
         self.mark_dirty()
         self._notify(StashChanged("reloaded"))
 
     def _scene_fps(self) -> float:
-        """DCC hook: the scene frame rate. Pure default ``24.0``."""
-        return _DEFAULT_FPS
+        """The scene frame rate (:meth:`KeyStashHost.scene_fps`); ``24.0``
+        with no scene clock."""
+        fps = self.HOST.scene_fps()
+        return float(fps) if fps else _DEFAULT_FPS
 
     # ---- persistence -----------------------------------------------------
 
@@ -417,8 +559,9 @@ class KeyStash(_KeyStashInternal):
         self._schedule_flush()
 
     def _schedule_flush(self) -> None:
-        """DCC hook: coalesce writes. Pure default flushes immediately."""
-        self._flush_dirty()
+        """Have the pending write made, at once or coalesced
+        (:meth:`KeyStashHost.schedule_flush`; the pure default writes at once)."""
+        self.HOST.schedule_flush(self)
 
     def _flush_dirty(self) -> None:
         if self._dirty:
@@ -554,28 +697,32 @@ class KeyStash(_KeyStashInternal):
                 if self._dirty:
                     self._save_in_step()
 
-    def _undo_chunk(self, name: str):
-        """DCC hook: a context manager making its block ONE undo step.
-
-        Pure default: no undo system, so a no-op context.
-        """
-        return nullcontext()
+    def _undo_chunk(self, name: str) -> ContextManager[Any]:
+        """A context manager making its block ONE step of the host's undo
+        queue (:meth:`KeyStashHost.undo_chunk`; the pure default has none)."""
+        return self.HOST.undo_chunk(name)
 
     def _save_in_step(self) -> None:
-        """DCC hook: write the record so the open undo step records it.
+        """Write the record so the open undo step records it.
 
-        Pure default: :meth:`save`.  An adapter whose persistence writes
-        outside the undo queue overrides it.
+        Through the host (:meth:`KeyStashHost.save_in_step`) when its backend
+        writes outside the undo queue unless told otherwise (Maya: an undone
+        Retrieve left its keys in a stash node the record no longer named,
+        measured 2026-09-15); else :meth:`save`.
         """
+        backend = type(self)._persistence
+        if backend is not None and self.HOST.save_in_step(backend, self.to_dict()):
+            self._dirty = False  # after the write, as save() clears it
+            return
         self.save()
 
     def _reread_record(self) -> None:
         """Load the backend's record into THIS store and tell its listeners.
 
         In place rather than by replacing the active store: activation runs
-        :meth:`_on_activated`, where the adapters tear down a recorded preview
-        -- right for a scene just opened, wrong here, where it would end the
-        very preview a redo restored.
+        :meth:`reconcile`, where the host tears down a recorded preview --
+        right for a scene just opened, wrong here, where it would end the very
+        preview a redo restored.
         """
         fresh = type(self)._load_record()
         self.clips = fresh.clips
@@ -596,12 +743,17 @@ class KeyStash(_KeyStashInternal):
     def active(cls) -> "KeyStash":
         """The active store, loaded from the backend on first access.
 
-        Reconciles frame rate the way the shot store does: a store saved at a
-        different frame rate is rescaled to the current one on load.  A
-        backend that can tell its record moved under the loaded store (an
-        optional ``record_changed()``: an undo or redo of a scene operation)
-        has it re-read in place (:meth:`_reread_record`).
+        With no backend set, the host's (:meth:`KeyStashHost.persistence`) is
+        installed once.  Reconciles frame rate the way the shot store does: a
+        store saved at a different frame rate is rescaled to the current one
+        on load.  A backend that can tell its record moved under the loaded
+        store (an optional ``record_changed()``: an undo or redo of a scene
+        operation) has it re-read in place (:meth:`_reread_record`).
         """
+        if cls._active is None and cls._persistence is None:
+            backend = cls.HOST.persistence(cls)
+            if backend is not None:
+                cls.set_persistence(backend)
         if cls._active is None:
             store = cls._load_record()
             if store.clips:
@@ -628,12 +780,92 @@ class KeyStash(_KeyStashInternal):
         return cls.from_dict(data) if data else cls()
 
     def _on_activated(self) -> None:
-        """DCC hook: run once when this instance becomes the active store.
+        """Run once when this instance becomes the active store: the record is
+        reconciled against the scene (:meth:`reconcile`)."""
+        self.reconcile()
 
-        Adapters reconcile the record against the scene here — prune clips
-        whose storage nodes are gone, tear down a preview left over from a
-        save made mid-preview.  Pure default does nothing.
+    def reconcile(self) -> List[int]:
+        """Bring the record in line with the scene (the host's half,
+        :meth:`KeyStashHost.reconcile`).
+
+        Drops every clip none of whose parked keys still exist (an undone
+        stash, a manual delete) and ends a preview the record says is active
+        (a scene saved mid-preview must not reopen silently overridden).  The
+        pure default touches nothing.
+
+        Returns:
+            The ids of the pruned clips.
         """
+        return list(self.HOST.reconcile(self))
+
+    def _reconcile_with(
+        self,
+        stash_alive: Callable[[Dict[str, Any]], Any],
+        end_preview: Callable[[Dict[str, Any]], None],
+    ) -> List[int]:
+        """The reconcile every host runs (:meth:`KeyStashHost.reconcile`):
+        drop each clip none of whose curve records *stash_alive* answers truthy
+        for, end the recorded preview's scene side through *end_preview*
+        (given the preview record), and tell the listeners once.
+
+        Returns:
+            The ids of the pruned clips.
+        """
+        gone: List[int] = []
+        for clip in list(self.clips):
+            if not any(stash_alive(rec) for rec in clip.curves):
+                self.clips.remove(clip)
+                gone.append(clip.clip_id)
+        changed = bool(gone)
+        if self.active_preview:
+            end_preview(self.active_preview)
+            self.active_preview = None
+            changed = True
+        if changed:
+            self.mark_dirty()
+            self._notify(StashChanged("reloaded"))
+        return gone
+
+    @classmethod
+    def watch_undo(cls, owner: Any, widget: Any = None) -> List[int]:
+        """Keep the loaded store in step with undo and redo, for *owner*.
+
+        Each operation writes the record inside its undo step, so an undo or
+        redo can move the record under the loaded store.  This subscribes
+        :meth:`active` -- which re-reads a moved record, and the store's change
+        event tells its listeners -- to the host's :attr:`UNDO_EVENTS` through
+        its event manager (:meth:`KeyStashHost.script_jobs`), under *owner*;
+        with *widget*, the subscriptions end when it is destroyed.  An event
+        the host lacks is skipped, never raised: a panel watching the store
+        must still open.  With no event manager nothing is subscribed.
+
+        Parameters:
+            owner: The subscriptions' owner (``ScriptJobManager.unsubscribe_all``).
+            widget: A Qt widget whose destruction ends them.
+
+        Returns:
+            The subscription tokens.
+        """
+        jobs = cls.HOST.script_jobs()
+        if jobs is None:
+            return []
+        tokens: List[int] = []
+        for event in cls.UNDO_EVENTS:
+            try:
+                tokens.append(jobs.subscribe(event, cls.active, owner=owner))
+            except Exception as error:  # noqa: BLE001 -- see the docstring
+                _log.debug("KeyStash.watch_undo: %r unavailable (%s)", event, error)
+        if widget is not None:
+            jobs.connect_cleanup(widget, owner=owner)
+        return tokens
+
+    @classmethod
+    def merge_carrier(cls, carriers: Any, other: Dict[Any, Any], ctx: Any) -> None:
+        """Another scene's parked clips merged into the record (an owner hook,
+        ``SceneStoreBase.OWNERS``): reload the active stash from it -- their
+        parked keys came along with the import."""
+        if SceneRecords.KEY_STASH in other:
+            cls.invalidate()
 
     @classmethod
     def invalidate(cls) -> None:
@@ -671,7 +903,7 @@ class KeyStash(_KeyStashInternal):
         except ValueError:
             pass
 
-    # ---- helpers shared by adapters --------------------------------------
+    # ---- helpers the scene operations share ------------------------------
 
     @staticmethod
     def offset_for(clip: StashedClip, at: Optional[float]) -> float:
@@ -686,3 +918,83 @@ class KeyStash(_KeyStashInternal):
         if clip.start is None or clip.end is None:
             return None
         return (clip.start, clip.end)
+
+
+# ---------------------------------------------------------------------------
+# The golden case
+# ---------------------------------------------------------------------------
+
+
+class KeyStashConformance:
+    """The ``key_stash`` record's golden case: :meth:`fill` and :meth:`payload`.
+
+    The store is one class on every host (:class:`KeyStash` over a
+    :class:`KeyStashHost`), and what it saves -- the ``key_stash`` record a
+    scene carries -- is a contract older scenes hold, so its spelling and bytes
+    never move with the code.  This is that contract once, as data: one store
+    holding one of everything :meth:`KeyStash.to_dict` saves (a clip with a
+    source shot and metadata, one over two objects, a retired id, a running
+    preview) and the exact text it is saved as.  pythontk's tests pin the
+    reference store to it; mayatk's and blendertk's pin their host's store,
+    saved through the scene's own persistence.  Mirror of the shot store's
+    ``ShotStoreConformance``.
+    """
+
+    #: The objects the case's clips name.
+    OBJECTS = ("pin_cube", "pin_sphere")
+
+    #: The record :meth:`fill` saves, byte for byte, every key in the order
+    #: the store writes them.
+    _PAYLOAD = (
+        '{"schema": 1, "scene_fps": 24.0, "clips": [{"clip_id": 1, '
+        '"label": "walk in", "objects": ["pin_cube"], "curves": [{"times": '
+        '[10.0, 20.0], "plug": {"name": "pin_cube", "attr": "translateX"}}], '
+        '"created": "2026-09-02T10:00:00", "source_shot_id": 3, "metadata": '
+        '{"take": "walk"}}, {"clip_id": 2, "label": "pin_cube +1 30-40.5", '
+        '"objects": ["pin_cube", "pin_sphere"], "curves": [{"times": '
+        '[30.0, 40.5], "plug": {"name": "pin_cube", "attr": "rotateY"}}, '
+        '{"times": [35.0], "plug": {"name": "pin_sphere", "attr": "scaleX"}}], '
+        '"created": "2026-09-02T10:00:00", "source_shot_id": null, '
+        '"metadata": {}}], "preview": {"clip_id": 2, "in_context": true, '
+        '"playback": [1.0, 100.0]}, "next_id": 4}'
+    )
+
+    #: When the case's clips were stashed (``add_clip`` stamps the clock).
+    CREATED = "2026-09-02T10:00:00"
+
+    @classmethod
+    def fill(cls, store: "KeyStash") -> "KeyStash":
+        """Give *store* -- a ``KeyStash`` on any host -- one of everything
+        ``to_dict`` saves, as the case does.
+
+        Returns:
+            *store*.
+        """
+        a, b = cls.OBJECTS
+        store.scene_fps = 24.0
+        first = store.add_clip(
+            [a],
+            [{"times": [10.0, 20.0], "plug": {"name": a, "attr": "translateX"}}],
+            label="walk in",
+            source_shot_id=3,
+            metadata={"take": "walk"},
+        )
+        second = store.add_clip(
+            [a, b],
+            [
+                {"times": [30.0, 40.5], "plug": {"name": a, "attr": "rotateY"}},
+                {"times": [35.0], "plug": {"name": b, "attr": "scaleX"}},
+            ],
+        )
+        # A retired id: the saved high-water mark stays past it.
+        store.remove_clip(store.add_clip([b], [{"times": [5.0]}]).clip_id)
+        first.created = second.created = cls.CREATED
+        store.set_preview(
+            second.clip_id, {"in_context": True, "playback": [1.0, 100.0]}
+        )
+        return store
+
+    @classmethod
+    def payload(cls) -> str:
+        """The exact ``key_stash`` text a :meth:`fill`-ed store saves."""
+        return cls._PAYLOAD

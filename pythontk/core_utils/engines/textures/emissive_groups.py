@@ -67,11 +67,8 @@ class EmissiveGroupsAdapter(Protocol):
 
     def faces(self, faces=None) -> FaceMap:
         """*faces* (a ``FaceMap``, or the host's own spelling) or, for ``None``,
-        the selected faces, as a ``FaceMap``; empty when there are none.
-
-        Blender also reads an EMPTY *faces* as the selection, as its engine
-        always did; Maya reads it as no faces.
-        """
+        the selected faces, as a ``FaceMap``; empty when there are none (an
+        empty *faces* is no faces, never the selection)."""
 
     def add_members(self, store: str, face_map: FaceMap) -> None:
         """Add *face_map* to *store*, creating it when absent."""

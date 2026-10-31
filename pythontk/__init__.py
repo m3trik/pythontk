@@ -282,12 +282,15 @@ DEFAULT_INCLUDE = {
         "EffectRecipe",
     ],
     # Key stash engine — clips of keys parked outside the working animation,
-    # inert until retrieved; the DCC adapters (mayatk / blendertk ``KeyStash``)
-    # subclass it and own where the keys physically live.
+    # inert until retrieved; one store on every host, over the host adapter
+    # each DCC implements (``mtk.KeyStash`` / ``btk.KeyStash`` bind theirs and
+    # own where the keys physically live) and its pure defaults.
     "core_utils.engines.key_stash.key_stash_model": [
         "KeyStash",
         "StashedClip",
         "StashChanged",
+        "KeyStashHost",
+        "PureKeyStashHost",
     ],
     # Look match: light a baked scene to match a reference (the engine's own
     # command line is `python -m pythontk.core_utils.engines.lighting.look_match`).
