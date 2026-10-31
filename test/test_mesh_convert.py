@@ -9294,7 +9294,8 @@ class TestFadeClonesInTheConversion(unittest.TestCase):
 
     The production shape: the preview used to apply the scene sidecar in a
     pass of its own AFTER ``fbx_to_glb``, whose chain had already cloned the
-    faded materials. Measured: the metallic-roughness repair reached one
+    faded materials; the ``materials`` record the FBX carries is the by-name
+    statement now. Measured: the metallic-roughness repair reached one
     one-primitive fade clone of ``SCREENS_TEST_CMPTS_MAT`` and the
     eleven-primitive original kept FBX2glTF's packing (roughness and metalness
     255 everywhere). Asserted through ``alphaMode`` because it is the one
@@ -9306,17 +9307,26 @@ class TestFadeClonesInTheConversion(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="meshconvert_fadeorder_")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
-    def test_the_original_takes_the_sidecar_and_the_clone_stays_blend(self):
+    def test_the_original_takes_the_record_and_the_clone_stays_blend(self):
+        """The FBX's record states SKIN cut out; it lands on the original
+        before the fade pass clones it. (Ported 2026-10-31 from the retired
+        sidecar's sections, which no build reads now.)"""
         fixture = TestApplyGlbFades()
         fixture.tmp = self.tmp
         converted = fixture._glb(name="converted.glb")
-        # An older host's envelope: its sections still repair a file that
-        # carries no materials record, said as retired.
-        envelope = {
-            "version": 2,
-            "source": {"application": "test", "version": "0"},
-            "asset": "in.fbx",
-            "sections": {"alpha_mode": {"SKIN": {"mode": "MASK", "cutoff": 0.4}}},
+        record = {
+            "version": 1,
+            "materials": [
+                {
+                    "name": "SKIN",
+                    "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 1.0,
+                    "emissiveFactor": [0.0, 0.0, 0.0],
+                    "alphaMode": "MASK",
+                    "alphaCutoff": 0.4,
+                }
+            ],
         }
 
         def _run(cmd, **kw):
@@ -9325,21 +9335,28 @@ class TestFadeClonesInTheConversion(unittest.TestCase):
             sh.copyfile(converted, cmd[cmd.index("-o") + 1] + ".glb")
             return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 
-        src = os.path.join(self.tmp, "in.fbx")
-        open(src, "wb").write(b"fbx")
+        # The record rides the converted file's carrier, as FBX2glTF
+        # transcribes it, and states the FBX's own SKIN.
+        with MeshConvert.open_glb(converted) as edit:
+            edit.gltf.setdefault("nodes", []).append(
+                {
+                    "name": MeshConvert.DATA_EXPORT_NODE,
+                    "extras": {MeshConvert.MATERIALS_KEY: json.dumps(record)},
+                }
+            )
+            edit.dirty = True
+        src = build_stingray_fbx(os.path.join(self.tmp, "in.fbx"), {}, name="SKIN")
         report = {}
         with (
             unittest.mock.patch.object(
                 MeshConvert, "resolve_binary", return_value="FBX2glTF"
             ),
             unittest.mock.patch("subprocess.run", side_effect=_run),
-            self.assertWarns(DeprecationWarning),
         ):
             out = MeshConvert.fbx_to_glb(
                 src,
                 overwrite=True,
                 prompt=False,
-                sidecar=envelope,
                 lightmaps=False,
                 report=report,
             )
@@ -9350,10 +9367,7 @@ class TestFadeClonesInTheConversion(unittest.TestCase):
         self.assertEqual(skins[0].get("alphaMode"), "MASK", "the original")
         self.assertEqual(skins[0].get("alphaCutoff"), 0.4)
         self.assertEqual(skins[1].get("alphaMode"), "BLEND", "the fade clone")
-        # The outcome is the build's report; the file carries the handoff.
-        self.assertEqual(report["sidecar"], {"alpha_mode": "1 of 1"})
-        self.assertNotIn("scene_sidecar_applied", gltf["extras"])
-        self.assertIn(HandoffRecord.KEY, gltf["extras"])
+        self.assertNotIn("sidecar", report)
 
     def test_a_handoff_that_blows_up_costs_the_handoff_not_the_conversion(self):
         """The preview routes its handoff through the conversion, and a push
@@ -9520,7 +9534,7 @@ class TestFbxToGlbReport(unittest.TestCase):
         report = {}
         self._convert(self._lit_glb({}), report=report)
         self.assertEqual(report["lightmaps"]["expected"], 0)
-        self.assertEqual(report["sidecar"], {}, "no envelope offered, none applied")
+        self.assertNotIn("sidecar", report, "no section is applied, none reported")
 
     def test_the_report_keeps_the_manifest_the_file_no_longer_carries(self):
         """The GLB states its lightmaps once, in its own block: the carrier's

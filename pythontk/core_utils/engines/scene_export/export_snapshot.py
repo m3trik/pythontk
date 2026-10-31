@@ -129,10 +129,13 @@ class ExportContext:
             (scene if options.get("apply_unit_scale", True) else 1.0)
             * float(options.get("global_scale", 1.0))
         ),
-        # Blender's native glTF writer ignores scale_length: one BU is one
-        # metre (measured 2026-10-17: a 1 BU = 1 cm scene's node at 100 BU
-        # wrote 100).
+        # Blender's native glTF and USD writers ignore scale_length: one BU
+        # is one metre (measured: a 1 BU = 1 cm scene's node at 100 BU wrote
+        # 100 to the glTF, 2026-10-17, and 100 m to the USD under every
+        # convert_scene_units, its metersPerUnit and root scale agreeing,
+        # 2026-10-31).
         ("blender", "gltf"): lambda scene, options: 1.0,
+        ("blender", "usd"): lambda scene, options: 1.0,
     }
 
     @classmethod
@@ -616,7 +619,11 @@ class ExportSnapshot:
             except Exception:  # noqa: BLE001 - an unreadable copy ships as it is
                 logger.debug("Scene record %r not read.", spec.key, exc_info=True)
                 continue
-            if stored is None:
+            if not isinstance(stored, Mapping) or not isinstance(
+                stored.get(spec.nodes[0]), list
+            ):
+                # Lists no entry to narrow by: ships as stored, as it always
+                # has (a reader refuses a payload not of its shape on its own).
                 continue
             narrowed = self.ctx.narrowed(spec, stored)
             if narrowed is stored:

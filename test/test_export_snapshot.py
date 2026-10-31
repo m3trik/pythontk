@@ -224,6 +224,16 @@ class TestStoredCopy(_Case):
             self.assertEqual(len(SR.LIGHTMAPS.load(_Store)["objects"]), 2)
             self.assertEqual(snap.scene_wide, {})
 
+    def test_a_stored_copy_that_lists_no_entry_ships_as_stored(self):
+        """Nothing in it names a node to narrow by (a payload of another
+        shape): the write ships it as the scene stored it, as before.
+        Added: 2026-10-31"""
+        SR.LIGHTMAPS.save(_Store, {"version": 1})
+        snap = ExportSnapshot.assemble({}, self._handoff())
+        snap.commit(_Store)
+        self.assertEqual(SR.LIGHTMAPS.load(_Store), {"version": 1})
+        self.assertEqual(snap.scene_wide, {})
+
     def test_an_authoring_publish_never_narrows(self):
         self._stored()
         ExportSnapshot.publish(
@@ -261,6 +271,7 @@ class TestWriterUnits(_Case):
         self.assertEqual(unit("blender", "fbx", 0.01, {"apply_unit_scale": False}), 1.0)
         self.assertAlmostEqual(unit("blender", "fbx", 0.01, {"global_scale": 2.0}), 0.02)
         self.assertEqual(unit("blender", "gltf", 0.01), 1.0)
+        self.assertEqual(unit("blender", "usd", 0.01, {"convert_scene_units": "CENTIMETERS"}), 1.0)
         with self.assertRaises(KeyError):
             unit("maya", "obj", 0.01)
 
