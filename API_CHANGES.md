@@ -2,12 +2,15 @@
 
 _Diff vs the last release (origin/main @ 892506a)._
 
-## Moved out (4)
+## Moved out (7)
 
 - `core_utils/engines/scene_export/export_profile.py::ExportProfile.read_values` → `tentacle.slots.tools.scene_exporter.SceneExporterSlots` (from 0.19.0)
 - `core_utils/engines/scene_export/export_profile.py::ExportProfile.value_method` → `tentacle.slots.tools.scene_exporter.SceneExporterSlots` (from 0.19.0)
 - `core_utils/engines/shots/manifest/mapping/_mapping.py::Mapping.retired` → `pythontk.core_utils.engines.shots.manifest.mapping.Mapping.load_mapping` (from 0.19.0)
 - `core_utils/module_reloader.py::reload_package` → `pythontk.ModuleReloader().reload` (from 0.19.0)
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.apply_scene_sidecar` → `pythontk.MeshConvert.apply_glb_materials` (from 0.19.0)
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.embed_scene_sidecar` → `pythontk.MeshConvert.embed_glb_handoff` (from 0.19.0)
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.sidecar_foreign_packings` → `pythontk.MapFactory.foreign_packings` (from 0.19.0)
 
 ## Retired (2)
 
@@ -16,7 +19,7 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column`
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard`
 
-## Added (270)
+## Added (273)
 
 - `core_utils/engines/key_stash/key_stash_model.py::KeyStash.merge_carrier(cls, carriers: Any, other: Dict[Any, Any], ctx: Any) -> None`
 - `core_utils/engines/key_stash/key_stash_model.py::KeyStash.reconcile(self) -> List[int]`
@@ -50,6 +53,7 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/scene_export/export_snapshot.py::ExportContext.ships(self, name: Any) -> bool`
 - `core_utils/engines/scene_export/export_snapshot.py::ExportContext.unit(self, scene_unit: Callable[[], float]) -> float`
 - `core_utils/engines/scene_export/export_snapshot.py::ExportContext.writer_unit(cls, host: str, writer: str, scene_unit: float, options: Optional[Mapping[str, Any]] = None) -> float`
+- `core_utils/engines/scene_export/material_record.py::MaterialFamilies.opacity_scalar(cls, value: Any, default: float = 1.0) -> float`
 - `core_utils/engines/scene_export/scene_data_sidecar.py::PureSidecarHost(class)`
 - `core_utils/engines/scene_export/scene_data_sidecar.py::PureSidecarHost.clean_path(path: str) -> str`
 - `core_utils/engines/scene_export/scene_data_sidecar.py::PureSidecarHost.drop_intermediate(nodes: Iterable[str]) -> List[str]`
@@ -206,7 +210,9 @@ _Deprecated aliases whose window ran out._
 - `file_utils/file_dependencies.py::FileDependencies.strangers(folder: str, stem: str, ext: str, claims: Mapping[str, Any], wrote: Callable[[str], bool]) -> Set[str]`
 - `file_utils/file_naming.py::RenamePlan.predict(cls, plan: Sequence[PlanEntry], scopes: Callable[[object], Tuple[Sequence[object], Sequence[object]]], names: Callable[[object], Optional[Sequence[str]]], uniquify: Callable[[str, set], str]) -> List[str]`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fix_glb_nonfinite_keys(cls, glb: GlbTarget) -> Dict[str, int]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.legacy_material_values(entry: Mapping[str, Any]) -> Dict[str, Tuple[float, ...]]`
 - `file_utils/mesh_convert/fbx_media.py::FbxMedia.repair_null_normals(cls, src: str, dst: Optional[str] = None) -> Dict[str, int]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.state_materials(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]`
 - `file_utils/scene_listing.py::SceneListing(class)`
 - `file_utils/scene_listing.py::SceneListing.default_save_name(cls, scene_path: Optional[str], case_style: str = 'None', suffix: str = '') -> str`
 - `file_utils/scene_listing.py::SceneListing.display_name(path: str, hide_extension: bool, hide_suffix: str) -> str`
@@ -289,7 +295,7 @@ _Deprecated aliases whose window ran out._
 - `vid_utils/sequence_exporter.py::SequenceHost.sound_source(self) -> Optional[str]`
 - `vid_utils/sequence_exporter.py::SequenceHost.warn(self, message: str) -> bool`
 
-## Deprecations (34)
+## Deprecations (31)
 
 _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived its window: delete the alias and its tests rather than moving the date. A **HELD** row is due by version, but its notice has not yet had its calendar window._
 
@@ -305,15 +311,12 @@ _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived 
 - **HELD** `core_utils/engines/scene_export/scene_records.py::GlbBlock.key` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `file_utils/mesh_convert/glb/pipeline.py::GlbPipeline.envelope` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.SHADOW_PLANE_DEFAULTS` — remove in 0.18.0, not before 2026-11-23
-- **HELD** `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.apply_scene_sidecar` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.build_fbx_handoff` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.build_scene_sidecar` — remove in 0.18.0, not before 2026-11-23
-- **HELD** `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.embed_scene_sidecar` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fix_glb_lightmap_metadata` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.read_glb_lightmap_manifest` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.read_scene_sidecar` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.rendering_policy` — remove in 0.18.0, not before 2026-11-23
-- **HELD** `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.sidecar_foreign_packings` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.strip_fbx_handoff` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.without_locate_hints` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `net_utils/preview/bridge.py::PreviewBridge.sidecar_summary` — remove in 0.18.0, not before 2026-11-23

@@ -1049,6 +1049,7 @@ The ``materials`` record: its payload, declared once, and the one model that
   - `MaterialFamilies.finish(cls, entry: Mapping[str, Any]) -> Dict[str, Any]` *(class)* — *entry* in the record's shape: every required field, a map or an
   - `MaterialFamilies.texture_files(cls, record: Optional[Mapping[str, Any]]) -> List[str]` *(class)* — The file names *record* binds, each once, in record order.
   - `MaterialFamilies.file_name(path: Any) -> str` *(static)* — *path* without its folder (either separator).
+  - `MaterialFamilies.opacity_scalar(cls, value: Any, default: float = 1.0) -> float` *(class)* — An opacity as the record states it, one number: a colour's (or a
   - `MaterialFamilies.as_float(value: Any, default: float) -> float` *(static)* — *value* as a float; *default* when it is not a number.
   - `MaterialFamilies.as_floats(value: Any, size: int, default: float) -> List[float]` *(static)* — *value* as *size* floats;
 
@@ -3300,10 +3301,7 @@ FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
   - `MeshConvert.finish_glb(cls, glb: GlbTarget, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> bool` *(class)* — State a GLB as every deliverable states itself, whatever wrote it.
   - `MeshConvert.strip_fbx_handoff(cls, gltf: dict) -> int` *(class)* **DEPRECATED (remove in 0.18.0)** — Drop the FBX's handoff block from a converted glTF's node extras --
   - `MeshConvert.build_fbx_handoff(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]` *(class)* **DEPRECATED (remove in 0.18.0)** — The FBX's handoff block for a carrier holding *channels*, or ``{}``
-  - `MeshConvert.apply_scene_sidecar(cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]) -> Dict[str, str]` *(class)* **DEPRECATED (remove in 0.18.0)** — Apply a scene-sidecar envelope's sections to a GLB and embed it.
   - `MeshConvert.embed_glb_handoff(cls, edit: 'GlbEdit', handoff: Mapping[str, Any]) -> None` *(class)* — Write *handoff* (``HandoffRecord.block("glb", ...)``) as the open GLB's
-  - `MeshConvert.embed_scene_sidecar(cls, edit: 'GlbEdit', sidecar: Dict[str, Any], summary: Mapping[str, str], *, described: Iterable[str] = ()) -> None` *(class)* **DEPRECATED (remove in 0.18.0)** — Embed *sidecar* as the GLB's handoff block (:meth:`embed_glb_handoff`):
-  - `MeshConvert.sidecar_foreign_packings(cls, sidecar: Optional[Dict[str, Any]], target: str = 'ORM', workflow: Optional[str] = None) -> Dict[str, str]` *(class)* **DEPRECATED (remove in 0.18.0)** — ``{path: map type}`` for envelope textures authored for another engine.
   - `MeshConvert.read_glb_handoff(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — The handoff block a GLB carries (``extras.handoff``), or ``None``.
   - `MeshConvert.read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* **DEPRECATED (remove in 0.18.0)** — The handoff block a GLB carries (:meth:`read_glb_handoff`).
   - `MeshConvert.verify_glb(cls, glb: GlbTarget) -> Dict[str, Any]` *(class)* — Check a delivered GLB against what it says of itself.
@@ -3447,6 +3445,8 @@ Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
   - `FbxMedia.records(cls, path: str, keys: Optional[Iterable[str]] = None) -> Dict[str, Any]` *(class)* — Every scene record the FBX carries, as a reader applies it
   - `FbxMedia.set_record(cls, src: str, key: str, payload: Any, dst: Optional[str] = None, *, files: Iterable[Any] = ()) -> Dict[str, Any]` *(class)* — Replace the scene record *key* the FBX carries, embedding *files* in the same write.
   - `FbxMedia.split_pivot_instances(cls, src: str, dst: Optional[str] = None, *, tolerance: float = 0.001) -> Dict[str, Any]` *(class)* — Give each pivot set among a geometry's instances a geometry of its own.
+  - `FbxMedia.legacy_material_values(entry: Mapping[str, Any]) -> Dict[str, Tuple[float, ...]]` *(static)* — A ``materials`` record entry in FBX's legacy terms -- what a stock
+  - `FbxMedia.state_materials(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]` *(class)* — Write each ``materials`` record entry onto its FBX material's legacy
   - `FbxMedia.drop_redundant_properties(cls, src: str, markers: Iterable[str] = (), dst: Optional[str] = None) -> Dict[str, int]` *(class)* — Remove the user properties a delivered FBX carries that state
   - `FbxMedia.repair_null_normals(cls, src: str, dst: Optional[str] = None) -> Dict[str, int]` *(class)* — Fill the zero-length normals, binormals and tangents a written FBX carries.
   - `FbxMedia.drop_host_lighting_media(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]` *(class)* — Remove the textures only :attr:`HOST_LIGHTING_SLOTS` sample, with their media.
@@ -4587,7 +4587,7 @@ The hand-off bridge whose target is a live preview page.
   - `PreviewBridge.share_url(self) -> Optional[str]` *(property)* — The link to send while the preview is shared, else ``None``.
   - `PreviewBridge.ping_share(self, **options: Any) -> Dict[str, Any]` — Whether a guest can reach the share now: see
   - `PreviewBridge.stop(self) -> None` — Stop serving and release the port, ending any share.
-- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L700)** — Preview bridge whose source is a file on disk rather than a host selection.
+- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L698)** — Preview bridge whose source is a file on disk rather than a host selection.
   - `FilePreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Where to look for the EXRs a lightmap manifest names.
 
 <a id="net_utils--preview--deliverer"></a>

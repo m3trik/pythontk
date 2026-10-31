@@ -251,7 +251,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class MaterialEntry(SchemaSpec)`
 - `class MaterialRecord(SchemaSpec)`
 - `class MaterialFamilies`
-  - methods: entry, payload, finish, texture_files, file_name, as_float, as_floats
+  - methods: entry, payload, finish, texture_files, file_name, opacity_scalar, as_float, as_floats
 
 ### `core_utils/engines/scene_export/record_transfer.py` — Records crossing between scenes, by declaration (:class:`RecordTransfer`).
 - `class TransferContext`
@@ -802,7 +802,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/_mesh_convert.py` — FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
 - `class MeshConvert(HelpMixin)`
-  - methods: open_glb, finish_fbx_deliverable, conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fix_glb_nonfinite_keys, fbx_media_dirs, fix_glb_tangents, restore_glb_skin_weights, SHADOW_PLANE_DEFAULTS, rendering_policy, build_scene_sidecar, strip_fbx_records, finish_glb, strip_fbx_handoff, build_fbx_handoff, apply_scene_sidecar, embed_glb_handoff, embed_scene_sidecar, sidecar_foreign_packings, read_glb_handoff, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, lightmaps_block, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, embed_glb_lightmap_probe, strip_glb_baked_lights, apply_glb_lightmaps, highlight_probe_layers, lights_in_metres, embed_fbx_highlight_probes, apply_glb_shadows, apply_glb_articulation, apply_glb_clips, clip_spans, prune_glb_animations, compact_glb_animations, reduce_glb_animations, apply_glb_animations, effect_preview_channels, apply_glb_visibility, build_visibility_tracks, apply_glb_fades, check_glb_materials, fix_glb_phantom_opaque_alpha, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, set_glb_alpha_mode, set_glb_unlit, set_glb_normal_scale, set_glb_base_color, fbx_materials, read_fbx_materials, apply_glb_materials, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, drop_glb_texture_fallbacks, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, decode_glb_textures, dedupe_glb_images, prune_glb_unreferenced_textures, gltf_to_fbx
+  - methods: open_glb, finish_fbx_deliverable, conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fix_glb_nonfinite_keys, fbx_media_dirs, fix_glb_tangents, restore_glb_skin_weights, SHADOW_PLANE_DEFAULTS, rendering_policy, build_scene_sidecar, strip_fbx_records, finish_glb, strip_fbx_handoff, build_fbx_handoff, embed_glb_handoff, read_glb_handoff, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, lightmaps_block, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, embed_glb_lightmap_probe, strip_glb_baked_lights, apply_glb_lightmaps, highlight_probe_layers, lights_in_metres, embed_fbx_highlight_probes, apply_glb_shadows, apply_glb_articulation, apply_glb_clips, clip_spans, prune_glb_animations, compact_glb_animations, reduce_glb_animations, apply_glb_animations, effect_preview_channels, apply_glb_visibility, build_visibility_tracks, apply_glb_fades, check_glb_materials, fix_glb_phantom_opaque_alpha, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, set_glb_alpha_mode, set_glb_unlit, set_glb_normal_scale, set_glb_base_color, fbx_materials, read_fbx_materials, apply_glb_materials, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, drop_glb_texture_fallbacks, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, decode_glb_textures, dedupe_glb_images, prune_glb_unreferenced_textures, gltf_to_fbx
 
 ### `file_utils/mesh_convert/export_fingerprint.py` — A deterministic structural summary of an exported GLB or FBX, and its diff.
 - `class ExportFingerprint`
@@ -822,7 +822,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/fbx_media.py` — Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 - `class FbxMedia(_FbxMediaInternal)`
-  - methods: embedded, downsize, expand_grayscale, reader_records, named_files, dependencies, audio_events, embed, record, records, set_record, split_pivot_instances, drop_redundant_properties, repair_null_normals, drop_host_lighting_media, embed_dependencies, extract_dependencies, extract, drop_takes, merge_takes, drop_apparatus, rewrite
+  - methods: embedded, downsize, expand_grayscale, reader_records, named_files, dependencies, audio_events, embed, record, records, set_record, split_pivot_instances, legacy_material_values, state_materials, drop_redundant_properties, repair_null_normals, drop_host_lighting_media, embed_dependencies, extract_dependencies, extract, drop_takes, merge_takes, drop_apparatus, rewrite
 
 ### `file_utils/mesh_convert/glb/clips.py` — Rebuild a GLB's shot clips from its one whole-timeline animation.
 - `class GlbClips(_GlbClipsInternal)`
