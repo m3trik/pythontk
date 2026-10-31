@@ -125,6 +125,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/x11.py`](#core_utils--x11) — A minimal, fully typed ctypes Xlib client: windows, pointer, focus, keys,
 - [`file_utils/_file_utils.py`](#file_utils--_file_utils)
 - [`file_utils/bake_cache.py`](#file_utils--bake_cache) — A project's files baked from other files: one slot per source, kept with
+- [`file_utils/file_collect.py`](#file_utils--file_collect) — Collect: gather the files a set of readers use into one folder, keyed by reader.
 - [`file_utils/file_dependencies.py`](#file_utils--file_dependencies) — File dependencies -- files a record names by *name*, found where they are NOW.
 - [`file_utils/file_naming.py`](#file_utils--file_naming) — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - [`file_utils/job_queue.py`](#file_utils--job_queue) — A folder of JSON jobs that one worker process takes in order.
@@ -219,7 +220,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 ### `__init__.py`
 
 - [`DEFAULT_INCLUDE`](pythontk/pythontk/__init__.py#L21) — constant
-- [`MOVED_NAMES`](pythontk/pythontk/__init__.py#L629) — constant
+- [`MOVED_NAMES`](pythontk/pythontk/__init__.py#L633) — constant
 
 <a id="audio_utils--_audio_utils"></a>
 ### `audio_utils/_audio_utils.py`
@@ -232,6 +233,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
   - `AudioUtils.cache_dir_for(cls, audio_path: str, create: bool = False) -> str` *(class)* — Where a playable transcode of *audio_path* is cached -- the one place
   - `AudioUtils.ensure_playable_path(cls, audio_path: str, cache_dir: Optional[str] = None) -> str` *(class)* — Return a playable audio path, converting with ffmpeg if required.
   - `AudioUtils.scope_events(events: Iterable[Tuple[float, str]], takes: Iterable[Mapping[str, Any]], origin: float = 0.0) -> Tuple[List[Dict[str, Any]], List[str]]` *(static)* — Scope timed audio events to the takes that play them.
+  - `AudioUtils.media_digests(cls, events: Iterable[Mapping[str, Any]], files: Mapping[str, bytes]) -> Dict[str, str]` *(class)* — The content digest of each audio file of *files* an event plays,
   - `AudioUtils.build_composite_wav(cls, events: list, audio_map: dict, fps: float, output_path: str, logger=None) -> Optional[str]` *(class)* — Mix source WAV clips into one composite WAV.
   - `AudioUtils.resolve_playable_path(cls, audio_path: str, cache_dir: Optional[str] = None, logger=None) -> Optional[str]` *(class)* — Return a playable path, converting to WAV when required.
   - `AudioUtils.build_audio_map(cls, search_dir: str, extensions: Optional[Set[str]] = None, cache_dir: Optional[str] = None, logger=None) -> Dict[str, str]` *(class)* — Recursively scan a directory for audio files.
@@ -245,8 +247,8 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 
 The ``audio`` record's payload, declared once.
 
-- **[`class AudioCue(SchemaSpec)`](pythontk/pythontk/audio_utils/audio_record.py#L32)** — One audio event: a track that starts on a frame of the clip that plays
-- **[`class AudioRecord(SchemaSpec)`](pythontk/pythontk/audio_utils/audio_record.py#L67)** — The ``audio`` record's payload: the scene's audio events, each scoped
+- **[`class AudioCue(SchemaSpec)`](pythontk/pythontk/audio_utils/audio_record.py#L38)** — One audio event: a track that starts on a frame of the clip that plays
+- **[`class AudioRecord(SchemaSpec)`](pythontk/pythontk/audio_utils/audio_record.py#L73)** — The ``audio`` record's payload: the scene's audio events, each scoped
 
 <a id="core_utils--_core_utils"></a>
 ### `core_utils/_core_utils.py`
@@ -958,7 +960,7 @@ Export assembly: compute every record once, then commit once.
   - `ExportContext.note(self, text: str) -> None` — Record one sentence for the report.
   - `ExportContext.record(self, spec: Union[RecordSpec, str], store=None, default: Any = None) -> Any` — The payload of *spec* as produced in THIS assembly, else -- when a
   - `ExportContext.refreshes(self, spec: RecordSpec) -> bool` — Whether this context's mode refreshes *spec*.
-- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L242)** — The records one export ships, assembled once and committed once.
+- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L245)** — The records one export ships, assembled once and committed once.
   - `ExportSnapshot.assemble(cls, producers: Mapping[Union[RecordSpec, str], Producer], ctx: Optional[ExportContext] = None, only: Optional[Iterable[Union[RecordSpec, str]]] = None) -> 'ExportSnapshot'` *(class)* — Run *producers* in dependency order and collect their records.
   - `ExportSnapshot.restore_scene_wide(self, store) -> Optional['ExportSnapshot']` — Put the scene's own copy of every record this write's differed from
   - `ExportSnapshot.publish(cls, store, records: Mapping[Union[RecordSpec, str], Any], ctx: Optional[ExportContext] = None) -> 'ExportSnapshot'` *(class)* — Commit *records* that are already in hand -- the AUTHORING-time
@@ -2332,27 +2334,27 @@ Sidecar processes for ``ExecutionMonitor``: indicator, dialog and watchdog.
 
 Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
 
-- [`SEND_TO`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L62) — constant
-- [`SAVE_AS`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L63) — constant
-- [`ROUND_TRIP`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L64) — constant
-- [`CARRIER_PARAM`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L67) — constant
-- [`CARRIER_EXTENSIONS`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L74) — constant
-- [`CARRIER_BY_EXTENSION`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L78) — constant
-- [`RIG_MODE_PARAM`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L87) — constant
-- [`RIG_MODES`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L94) — constant
-- **[`class AppSpec`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L99)** — Declarative target-application executable-discovery config (data, not code).
+- [`SEND_TO`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L63) — constant
+- [`SAVE_AS`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L64) — constant
+- [`ROUND_TRIP`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L65) — constant
+- [`CARRIER_PARAM`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L68) — constant
+- [`CARRIER_EXTENSIONS`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L75) — constant
+- [`CARRIER_BY_EXTENSION`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L79) — constant
+- [`RIG_MODE_PARAM`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L88) — constant
+- [`RIG_MODES`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L95) — constant
+- **[`class AppSpec`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L100)** — Declarative target-application executable-discovery config (data, not code).
   - `AppSpec.resolve(self) -> Optional[str]` — Resolve the executable, first hit wins (env -> find_app -> install scan).
   - `AppSpec.path(self) -> Optional[str]` *(property)* — :meth:`resolve`, memoized for this spec instance.
   - `AppSpec.available(self) -> bool` *(property)* — Whether the target app is installed (cached -- see :attr:`path`).
   - `AppSpec.refresh(self) -> Optional[str]` — Discard the memoized :attr:`path` and re-probe.
   - `AppSpec.not_found_message(self) -> str` *(property)* — A user-facing "couldn't find it" message (custom, or a sensible default).
-- **[`class HandoffRequest`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L180)** — The unit of work threaded through the skeleton.
+- **[`class HandoffRequest`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L181)** — The unit of work threaded through the skeleton.
   - `HandoffRequest.get(self, key: str, default: Any = None) -> Any` — Read a per-bridge orchestration knob from :attr:`extras`.
-- **[`class Payload`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L200)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
-- **[`class Deliverer`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L215)** — Strategy: hand a produced :class:`Payload` to the target app.
+- **[`class Payload`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L201)** — What :meth:`HandoffBridge._produce` hands to the deliverer.
+- **[`class Deliverer`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L216)** — Strategy: hand a produced :class:`Payload` to the target app.
   - `Deliverer.preflight(self, bridge: 'HandoffBridge', request: HandoffRequest) -> bool` — Validate *request* before producing the payload.
   - `Deliverer.deliver(self, bridge: 'HandoffBridge', payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]` — Hand *payload* to the target app;
-- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L236)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
+- **[`class HandoffBridge(LoggingMixin)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L237)** — Template-Method base: ``resolve -> preflight -> produce -> deliver``.
   - `HandoffBridge.app_path(self) -> Optional[str]` *(property)* — Resolved target executable (cached), or ``None``.
   - `HandoffBridge.headless_app_path(self) -> Optional[str]` *(property)* — Executable for a BLOCKING/headless run;
   - `HandoffBridge.params_defaults(self) -> Dict[str, Any]` — Return ``{key: default}`` for the bridge's tunable params (default empty).
@@ -2363,17 +2365,18 @@ Generic, Qt-free / DCC-free engine for "export something and hand it to an app".
   - `HandoffBridge.send(self, objects: Optional[List[Any]] = None, *, template: str = 'import', mode: str = SEND_TO, params: Optional[Dict[str, Any]] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects* and hand them to the target app (one-way).
   - `HandoffBridge.import_roots(*packages: str) -> List[str]` *(static)* — ``sys.path`` entries that make *packages* importable in a launched child app.
   - `HandoffBridge.child_sys_path(entries: Optional[Sequence[str]] = None) -> List[str]` *(static)* — The parent's importable set, minus what belongs to the parent's OWN Python.
-- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L813)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
-- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L842)** — Render a template, write it next to the payload, launch a **fresh** app on it.
+  - `HandoffBridge.scope_objects(self, scope: str = HandoffScope.SELECTED) -> List[Any]` — The objects *scope* resolves to, through the host hooks.
+- **[`class ScriptLaunchSpec`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L858)** — Declarative config for the render-a-script-then-launch-a-fresh-app deliverer.
+- **[`class ScriptLaunchDeliverer(Deliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L887)** — Render a template, write it next to the payload, launch a **fresh** app on it.
   - `ScriptLaunchDeliverer.preflight(self, bridge: HandoffBridge, request: HandoffRequest) -> bool`
   - `ScriptLaunchDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
   - `ScriptLaunchDeliverer.render(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[str]` — Return the rendered script body for *request*'s template, or ``None`` on miss.
-- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L997)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
+- **[`class ScriptRunDeliverer(ScriptLaunchDeliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1042)** — Render a template, run a **fresh** app on it ATTACHED, and keep what it wrote.
   - `ScriptRunDeliverer.run(app_exe, script_text, *, artifact, launch_args, timeout, env=None, expect=None)` *(static)*
   - `ScriptRunDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1151)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
+- **[`class ScriptRoundTripDeliverer(ScriptRunDeliverer)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1196)** — Run a **fresh** app headlessly on the payload and let it edit that file in place.
   - `ScriptRoundTripDeliverer.deliver(self, bridge: HandoffBridge, payload: Payload, request: HandoffRequest) -> Optional[Dict[str, Any]]`
-- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1234)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
+- **[`class ScriptLaunchBridge(HandoffBridge)`](pythontk/pythontk/core_utils/handoff/app_handoff.py#L1279)** — A :class:`HandoffBridge` whose delivery is :class:`ScriptLaunchDeliverer`.
   - `ScriptLaunchBridge.render_context(self, params: Dict[str, Any]) -> Dict[str, str]` — Format *params* into a ``__KEY__`` substitution context.
   - `ScriptLaunchBridge.save_as(self, out_path: str, objects: Optional[List[Any]] = None, *, template: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Write *out_path* in the TARGET app's native scene format (blocking).
   - `ScriptLaunchBridge.round_trip(self, objects: Optional[List[Any]] = None, *, template: str = 'import', params: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, out: Optional[str] = None, **extras: Any) -> Optional[Dict[str, Any]]` — Export *objects*, let the target app work on them, and re-ingest the result.
@@ -3178,12 +3181,44 @@ A project's files baked from other files: one slot per source, kept with
   - `BakeCache.referenced_keys(self, project: str, extensions: Iterable[str], live: Iterable[str] = ()) -> Optional[Set[str]]` — The slot keys any file of *extensions* under *project* names (read
   - `BakeCache.purge(self, project: str, extensions: Iterable[str], live: Iterable[str] = (), dry_run: bool = False) -> List[str]` — Remove the bakes in *project*'s cache that nothing references, with
 
+<a id="file_utils--file_collect"></a>
+### `file_utils/file_collect.py`
+
+Collect: gather the files a set of readers use into one folder, keyed by reader.
+
+- **[`class CollectHost(Protocol)`](pythontk/pythontk/file_utils/file_collect.py#L57)** — What a Collect asks of the host whose readers it gathers files for.
+  - `CollectHost.stored_path(self, node: Any) -> str` — The path *node* stores, as stored (``""`` for none).
+  - `CollectHost.resolve_path(self, path: str, file_node: Any = None) -> Tuple[bool, str]` — ``(on disk, absolute path)`` for *path* as *file_node* reads it --
+  - `CollectHost.stored_form(self, path: str, file_node: Any = None) -> str` — The spelling *file_node* would store for the absolute *path* (a
+  - `CollectHost.repath(self, rows: List[Dict[str, Any]]) -> int` — Point the reader of each landed row at its ``destination`` (one undo
+  - `CollectHost.read_elsewhere(self, nodes: Sequence[Any]) -> Iterable[str]` — The files the scene reads through readers OTHER than *nodes* --
+- **[`class PureCollectHost`](pythontk/pythontk/file_utils/file_collect.py#L87)** — The :class:`CollectHost` with no host: a reader is a key of *paths*, its
+  - `PureCollectHost.stored_path(self, node: Any) -> str`
+  - `PureCollectHost.resolve_path(self, path: str, file_node: Any = None) -> Tuple[bool, str]`
+  - `PureCollectHost.stored_form(self, path: str, file_node: Any = None) -> str`
+  - `PureCollectHost.repath(self, rows: List[Dict[str, Any]]) -> int`
+  - `PureCollectHost.read_elsewhere(nodes: Sequence[Any]) -> Iterable[str]` *(static)*
+- **[`class FileCollect(LoggingMixin)`](pythontk/pythontk/file_utils/file_collect.py#L129)** — Resolve, plan and apply a Collect;
+  - `FileCollect.entries(self, nodes: Iterable[Any], search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None) -> List[Dict[str, Any]]` — The Resolve step: what file each of *nodes* reads, or could.
+  - `FileCollect.plan(cls, entries: Iterable[Mapping[str, Any]], dest_dir: str, choices: Optional[Mapping[Hashable, str]] = None, keep: Iterable[str] = ()) -> List[Dict[str, Any]]` *(class)* — The Collect step: where each entry's file lands in *dest_dir*.
+  - `FileCollect.plan_nodes(self, nodes: Iterable[Any], dest_dir: str, search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, choices: Optional[Mapping[Hashable, str]] = None, kind: str = 'file', extra: Iterable[Mapping[str, Any]] = ()) -> List[Dict[str, Any]]` — Resolve *nodes* and plan them, with *extra* entries beside them.
+  - `FileCollect.row_key(row: Mapping[str, Any]) -> Tuple[str, Any]` *(static)* — ``(kind, owner)`` -- what a pick (``plan(choices=)``) names a row by.
+  - `FileCollect.apply(cls, rows: Iterable[Dict[str, Any]], mode: str = 'copy', copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, progress: Optional[Callable[[int, int], Any]] = None) -> List[Dict[str, Any]]` *(class)* — Do a plan's file work;
+  - `FileCollect.kept_files(cls, rows: Iterable[Mapping[str, Any]]) -> Set[str]` *(class)* — The files a move of *rows* copies instead (``keep_source``, decided per
+  - `FileCollect.source_files(path: str) -> Set[str]` *(static)* — The files *path* names (a set: its tiles), normalized.
+  - `FileCollect.run(self, rows: List[Dict[str, Any]], dest_dir: str, mode: str = 'copy', dry_run: bool = False, search_dir: str = '', copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, progress: Optional[Callable[[str], Any]] = None) -> bool` — Report a plan, or commit it and repath: a whole Collect over the host.
+  - `FileCollect.problems(cls, rows: Sequence[Mapping[str, Any]], search_dir: str = '') -> List[Tuple[str, str, List[str]]]` *(class)* — ``[(level, message, items)]`` naming the rows a plan cannot place.
+  - `FileCollect.preview(self, rows: Sequence[Mapping[str, Any]], dest_dir: str, mode: str) -> Tuple[bool, List[Tuple[str, str, List[str]]]]` — ``(anything to do, [(level, message, items)])`` -- what a commit of
+  - `FileCollect.outcome(cls, rows: Sequence[Mapping[str, Any]], landed: Sequence[Mapping[str, Any]], mode: str) -> List[Tuple[str, str, List[str]]]` *(class)* — ``[(level, message, items)]`` -- what a commit did, per kind.
+  - `FileCollect.unresolved(self, rows: Sequence[Mapping[str, Any]]) -> List[Tuple[str, str, List[str]]]` — The honest close: the readers (of *rows* that store a path) whose
+  - `FileCollect.listing(cls, lines: Iterable[str]) -> List[str]` *(class)* — *lines* capped at :attr:`PREVIEW_ROWS`, the remainder counted: a cut
+
 <a id="file_utils--file_dependencies"></a>
 ### `file_utils/file_dependencies.py`
 
 File dependencies -- files a record names by *name*, found where they are NOW.
 
-- **[`class FileDependencies(LoggingMixin)`](pythontk/pythontk/file_utils/file_dependencies.py#L59)** — The rules over files that records name by name;
+- **[`class FileDependencies(LoggingMixin)`](pythontk/pythontk/file_utils/file_dependencies.py#L67)** — The rules over files that records name by name;
   - `FileDependencies.claims(refs: Iterable[Sequence[str]]) -> Dict[str, FrozenSet[str]]` *(static)* — ``{file name: owners}`` -- which owners read which file name.
   - `FileDependencies.strangers(folder: str, stem: str, ext: str, claims: Mapping[str, Any], wrote: Callable[[str], bool]) -> Set[str]` *(static)* — The files in *folder* a write naming ``<stem>`` must not replace:
   - `FileDependencies.remove_superseded(cls, before: Iterable[str], after: Iterable[Sequence[Any]]) -> List[str]` *(class)* — Set aside the files of *before* that nothing in *after* reads;
@@ -3193,10 +3228,15 @@ File dependencies -- files a record names by *name*, found where they are NOW.
   - `FileDependencies.writer_gone(writer: Optional[str], base: Optional[str]) -> bool` *(static)* — Whether *writer* -- a writer record's entry -- names a scene file
   - `FileDependencies.find_files(names: Iterable[str], root: str) -> List[str]` *(static)* — Every file under *root*, recursively, whose name is one of *names*.
   - `FileDependencies.walk(cls, root: str) -> Iterator[Tuple[str, List[str], List[str]]]` *(class)* — ``os.walk(root)``, top-down, that never enters a folder of stale
-  - `FileDependencies.resolve(cls, refs: Iterable[Sequence[str]], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, resolve_hint: Optional[Callable[[str, str], str]] = None) -> List[Dict[str, Any]]` *(class)* — Every file *refs* name, resolved on disk NOW;
+  - `FileDependencies.on_disk(path: str) -> bool` *(static)* — Whether a file is behind *path* -- a tile / frame pattern when any
+  - `FileDependencies.same_content(cls, path_a: str, path_b: str) -> bool` *(class)* — Whether two existing files -- or two tile sets -- hold the same bytes.
+  - `FileDependencies.choose(cls, paths: Iterable[str]) -> Tuple[Optional[str], List[str]]` *(class)* — The one file *paths* mean, or the different files that make them ambiguous.
+  - `FileDependencies.candidates(cls, names: Iterable[str], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None) -> Dict[str, List[str]]` *(class)* — Every file of each name in *search_dirs* and under *walk_root*.
+  - `FileDependencies.resolve(cls, refs: Iterable[Sequence[str]], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, resolve_hint: Optional[Callable[[str, str], str]] = None, key: Optional[Callable[[Any, str], Hashable]] = None) -> List[Dict[str, Any]]` *(class)* — Every file *refs* name, resolved on disk NOW;
   - `FileDependencies.search_dirs(cls, deps: Iterable[Dict[str, Any]], then: Iterable[str] = ()) -> List[str]` *(class)* — The folders a consumer that joins names should try, in priority order.
-  - `FileDependencies.copy_files(cls, sources: Iterable[str], dest_dir: str, mode: str = 'copy') -> List[Tuple[str, str]]` *(class)* — Copy (or, ``mode="move"``, move) *sources* into *dest_dir*, without clobbering.
-  - `FileDependencies.relocate(cls, deps: Sequence[Dict[str, Any]], dest_dir: str, source_dir: str = '', mode: str = 'copy', dry_run: bool = False, find_files: Optional[Callable[[List[str], str], List[str]]] = None, copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None) -> Dict[str, Any]` *(class)* — Gather *deps*' files into *dest_dir*.
+  - `FileDependencies.keep_read_elsewhere(deps: Iterable[Dict[str, Any]], claims: Mapping[str, Any], reader: Any) -> List[str]` *(static)* — Mark each record *reader* also reads ``keep_source`` -- a move copies it
+  - `FileDependencies.copy_files(cls, sources: Iterable[str], dest_dir: str, mode: str = 'copy', progress: Optional[Callable[[int, int], Any]] = None) -> List[Tuple[str, str]]` *(class)* — Copy (or, ``mode="move"``, move) *sources* into *dest_dir*, without clobbering.
+  - `FileDependencies.relocate(cls, deps: Sequence[Dict[str, Any]], dest_dir: str, source_dir: str = '', mode: str = 'copy', dry_run: bool = False, find_files: Optional[Callable[[List[str], str], List[str]]] = None, copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None) -> Dict[str, Any]` *(class)* — Gather *deps*' files into *dest_dir* -- a Collect over records by name.
   - `FileDependencies.reference_bytes(cls, path: str) -> Optional[bytes]` *(class)* — The bytes of the file at *path* that can name the files it
   - `FileDependencies.scan_references(cls, root: str, pattern: Union[bytes, Pattern[bytes]], extensions: Iterable[str], skip: Iterable[str] = ()) -> Optional[Set[str]]` *(class)* — What the files under *root* name: every match of *pattern* (its
   - `FileDependencies.open_decompressed(path: str) -> Optional[BinaryIO]` *(static)* — *path* as a readable binary stream of its uncompressed bytes.
@@ -3333,13 +3373,8 @@ FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
   - `MeshConvert.apply_glb_fades(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]` *(class)* — Realize authored opacity ramps as animated material alpha.
   - `MeshConvert.check_glb_materials(cls, glb: GlbTarget) -> List[Dict[str, str]]` *(class)* — Inspect a GLB for materials flagged transparent that should be opaque.
   - `MeshConvert.fix_glb_phantom_opaque_alpha(cls, glb: GlbTarget) -> List[Dict]` *(class)* — Repair the Maya phong → FBX → FBX2glTF transparency translation bug.
-  - `MeshConvert.set_glb_metallic_roughness(cls, glb: GlbTarget, metallic_roughness: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Pack and write the ORM (metallic/roughness) texture into a GLB, by name.
   - `MeshConvert.suspect_orm_materials(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]` *(class)* — Materials whose delivered ORM binding this pipeline never validated.
-  - `MeshConvert.set_glb_emissive(cls, glb: GlbTarget, emissive: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write emissive color / texture into a GLB's materials, by name.
-  - `MeshConvert.set_glb_alpha_mode(cls, glb: GlbTarget, alpha_mode: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write ``alphaMode`` / ``alphaCutoff`` into a GLB's materials, by name.
-  - `MeshConvert.set_glb_unlit(cls, glb: GlbTarget, unlit: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Mark a GLB's materials unlit (``KHR_materials_unlit``), by name.
   - `MeshConvert.set_glb_normal_scale(cls, glb: GlbTarget, scale: float, lightmapped_only: bool = True) -> int` *(class)* — Write ``normalTexture.scale`` into a GLB's materials.
-  - `MeshConvert.set_glb_base_color(cls, glb: GlbTarget, base_color: Dict[str, Dict[str, Any]]) -> List[Dict]` *(class)* — Write base colour / texture into a GLB's materials, by name.
   - `MeshConvert.fbx_materials(cls, fbx: FbxSource, *, logger: Optional[logging.Logger] = None) -> Dict[str, Any]` *(class)* — The ``materials`` record for *fbx*: every material it carries.
   - `MeshConvert.read_fbx_materials(cls, fbx: FbxSource, *, logger: Optional[logging.Logger] = None) -> Dict[str, Any]` *(class)* — *fbx*'s own materials read into the record, whatever it carries.
   - `MeshConvert.apply_glb_materials(cls, glb: GlbTarget, record: Optional[Mapping[str, Any]], textures: Optional[Mapping[str, str]] = None) -> List[Dict[str, Any]]` *(class)* — Set each GLB material *record* states to exactly what it states.
@@ -4569,12 +4604,11 @@ Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 
 The hand-off bridge whose target is a live preview page.
 
-- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L32)** — Hand-off bridge whose target is a live preview page rather than an application.
+- **[`class PreviewBridge(HandoffBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L31)** — Hand-off bridge whose target is a live preview page rather than an application.
   - `PreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Extra directories the lightmap pass resolves the manifest's EXRs against.
   - `PreviewBridge.hdr_codec(self) -> Any` — What the GLB build encodes the float images with: the lightmaps and
   - `PreviewBridge.params_defaults(self) -> Dict[str, Any]` — glTF-appropriate export defaults, read by both DCC export mixins.
   - `PreviewBridge.url(self) -> Optional[str]` *(property)* — The preview URL, or ``None`` before the first push.
-  - `PreviewBridge.scope_objects(self, scope: str = HandoffScope.SELECTED) -> List[Any]` — The objects *scope* resolves to, through the host hooks.
   - `PreviewBridge.push(self, objects: Optional[List[Any]] = None, scope: str = 'selected', open_browser: Union[bool, str, None] = None, glb_options: Optional[Dict[str, Any]] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None, progress: Optional[Callable[[str], Any]] = None, data_export: Optional[Dict[str, Any]] = None, **params: Any) -> Optional[Dict[str, Any]]` — Export and publish, returning the deliverer's result (``None`` on failure).
   - `PreviewBridge.publish_file(self, path: Union[str, Path], open_browser: Union[bool, str, None] = None, scripts: Optional[Union[Dict[str, Any], List[str], tuple]] = None) -> Dict[str, Any]` — Publish a GLB that already exists on disk, unchanged.
   - `PreviewBridge.preview_file(self, path: Union[str, Path], logger: Any = None) -> bool` — :meth:`publish_file` for a click: never raises, and says where it went.
@@ -4587,7 +4621,7 @@ The hand-off bridge whose target is a live preview page.
   - `PreviewBridge.share_url(self) -> Optional[str]` *(property)* — The link to send while the preview is shared, else ``None``.
   - `PreviewBridge.ping_share(self, **options: Any) -> Dict[str, Any]` — Whether a guest can reach the share now: see
   - `PreviewBridge.stop(self) -> None` — Stop serving and release the port, ending any share.
-- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L698)** — Preview bridge whose source is a file on disk rather than a host selection.
+- **[`class FilePreviewBridge(PreviewBridge)`](pythontk/pythontk/net_utils/preview/bridge.py#L669)** — Preview bridge whose source is a file on disk rather than a host selection.
   - `FilePreviewBridge.lightmap_search_dirs(self) -> Sequence[str]` — Where to look for the EXRs a lightmap manifest names.
 
 <a id="net_utils--preview--deliverer"></a>

@@ -2,7 +2,7 @@
 
 _Diff vs the last release (origin/main @ 892506a)._
 
-## Moved out (7)
+## Moved out (12)
 
 - `core_utils/engines/scene_export/export_profile.py::ExportProfile.read_values` → `tentacle.slots.tools.scene_exporter.SceneExporterSlots` (from 0.19.0)
 - `core_utils/engines/scene_export/export_profile.py::ExportProfile.value_method` → `tentacle.slots.tools.scene_exporter.SceneExporterSlots` (from 0.19.0)
@@ -10,6 +10,11 @@ _Diff vs the last release (origin/main @ 892506a)._
 - `core_utils/module_reloader.py::reload_package` → `pythontk.ModuleReloader().reload` (from 0.19.0)
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.apply_scene_sidecar` → `pythontk.MeshConvert.apply_glb_materials` (from 0.19.0)
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.embed_scene_sidecar` → `pythontk.MeshConvert.embed_glb_handoff` (from 0.19.0)
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.set_glb_alpha_mode` → `pythontk.MeshConvert.apply_glb_materials` (from 0.19.0)
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.set_glb_base_color` → `pythontk.MeshConvert.apply_glb_materials` (from 0.19.0)
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.set_glb_emissive` → `pythontk.MeshConvert.apply_glb_materials` (from 0.19.0)
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.set_glb_metallic_roughness` → `pythontk.MeshConvert.apply_glb_materials` (from 0.19.0)
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.set_glb_unlit` → `pythontk.MeshConvert.apply_glb_materials` (from 0.19.0)
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.sidecar_foreign_packings` → `pythontk.MapFactory.foreign_packings` (from 0.19.0)
 
 ## Retired (2)
@@ -19,8 +24,9 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column`
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard`
 
-## Added (273)
+## Added (306)
 
+- `audio_utils/_audio_utils.py::AudioUtils.media_digests(cls, events: Iterable[Mapping[str, Any]], files: Mapping[str, bytes]) -> Dict[str, str]`
 - `core_utils/engines/key_stash/key_stash_model.py::KeyStash.merge_carrier(cls, carriers: Any, other: Dict[Any, Any], ctx: Any) -> None`
 - `core_utils/engines/key_stash/key_stash_model.py::KeyStash.reconcile(self) -> List[int]`
 - `core_utils/engines/key_stash/key_stash_model.py::KeyStash.watch_undo(cls, owner: Any, widget: Any = None) -> List[int]`
@@ -200,6 +206,7 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.transfer_out(cls, ctx: 'ptk.TransferContext') -> Optional[dict]`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.validate(cls) -> List[str]`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.weight_attrs(cls) -> Dict[str, str]`
+- `core_utils/handoff/app_handoff.py::HandoffBridge.scope_objects(self, scope: str = HandoffScope.SELECTED) -> List[Any]`
 - `core_utils/package_manager.py::PackageManager.metadata_version(name: str) -> Optional[str]`
 - `core_utils/package_requirement.py::PackageRequirement(class)`
 - `core_utils/package_requirement.py::PackageRequirement.contains(self, version: Optional[str]) -> bool`
@@ -207,6 +214,37 @@ _Deprecated aliases whose window ran out._
 - `core_utils/package_requirement.py::PackageRequirement.release(cls, version: Optional[str]) -> Tuple[int, ...]`
 - `core_utils/package_requirement.py::PackageRequirement.version_key(cls, version: str) -> tuple`
 - `file_utils/_file_utils.py::FileUtils.import_files(cls, paths: Iterable[str], folder: Optional[str], mode: str = 'copy', on_conflict: Union[str, Callable[[str], bool]] = 'reuse', validate: Optional[Callable[[str], Tuple[bool, str]]] = None, strict: bool = False) -> dict`
+- `file_utils/file_collect.py::CollectHost(class)`
+- `file_utils/file_collect.py::CollectHost.read_elsewhere(self, nodes: Sequence[Any]) -> Iterable[str]`
+- `file_utils/file_collect.py::CollectHost.repath(self, rows: List[Dict[str, Any]]) -> int`
+- `file_utils/file_collect.py::CollectHost.resolve_path(self, path: str, file_node: Any = None) -> Tuple[bool, str]`
+- `file_utils/file_collect.py::CollectHost.stored_form(self, path: str, file_node: Any = None) -> str`
+- `file_utils/file_collect.py::CollectHost.stored_path(self, node: Any) -> str`
+- `file_utils/file_collect.py::FileCollect(class)`
+- `file_utils/file_collect.py::FileCollect.apply(cls, rows: Iterable[Dict[str, Any]], mode: str = 'copy', copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, progress: Optional[Callable[[int, int], Any]] = None) -> List[Dict[str, Any]]`
+- `file_utils/file_collect.py::FileCollect.entries(self, nodes: Iterable[Any], search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None) -> List[Dict[str, Any]]`
+- `file_utils/file_collect.py::FileCollect.kept_files(cls, rows: Iterable[Mapping[str, Any]]) -> Set[str]`
+- `file_utils/file_collect.py::FileCollect.listing(cls, lines: Iterable[str]) -> List[str]`
+- `file_utils/file_collect.py::FileCollect.outcome(cls, rows: Sequence[Mapping[str, Any]], landed: Sequence[Mapping[str, Any]], mode: str) -> List[Tuple[str, str, List[str]]]`
+- `file_utils/file_collect.py::FileCollect.plan(cls, entries: Iterable[Mapping[str, Any]], dest_dir: str, choices: Optional[Mapping[Hashable, str]] = None, keep: Iterable[str] = ()) -> List[Dict[str, Any]]`
+- `file_utils/file_collect.py::FileCollect.plan_nodes(self, nodes: Iterable[Any], dest_dir: str, search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, choices: Optional[Mapping[Hashable, str]] = None, kind: str = 'file', extra: Iterable[Mapping[str, Any]] = ()) -> List[Dict[str, Any]]`
+- `file_utils/file_collect.py::FileCollect.preview(self, rows: Sequence[Mapping[str, Any]], dest_dir: str, mode: str) -> Tuple[bool, List[Tuple[str, str, List[str]]]]`
+- `file_utils/file_collect.py::FileCollect.problems(cls, rows: Sequence[Mapping[str, Any]], search_dir: str = '') -> List[Tuple[str, str, List[str]]]`
+- `file_utils/file_collect.py::FileCollect.row_key(row: Mapping[str, Any]) -> Tuple[str, Any]`
+- `file_utils/file_collect.py::FileCollect.run(self, rows: List[Dict[str, Any]], dest_dir: str, mode: str = 'copy', dry_run: bool = False, search_dir: str = '', copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, progress: Optional[Callable[[str], Any]] = None) -> bool`
+- `file_utils/file_collect.py::FileCollect.source_files(path: str) -> Set[str]`
+- `file_utils/file_collect.py::FileCollect.unresolved(self, rows: Sequence[Mapping[str, Any]]) -> List[Tuple[str, str, List[str]]]`
+- `file_utils/file_collect.py::PureCollectHost(class)`
+- `file_utils/file_collect.py::PureCollectHost.read_elsewhere(nodes: Sequence[Any]) -> Iterable[str]`
+- `file_utils/file_collect.py::PureCollectHost.repath(self, rows: List[Dict[str, Any]]) -> int`
+- `file_utils/file_collect.py::PureCollectHost.resolve_path(self, path: str, file_node: Any = None) -> Tuple[bool, str]`
+- `file_utils/file_collect.py::PureCollectHost.stored_form(self, path: str, file_node: Any = None) -> str`
+- `file_utils/file_collect.py::PureCollectHost.stored_path(self, node: Any) -> str`
+- `file_utils/file_dependencies.py::FileDependencies.candidates(cls, names: Iterable[str], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None) -> Dict[str, List[str]]`
+- `file_utils/file_dependencies.py::FileDependencies.choose(cls, paths: Iterable[str]) -> Tuple[Optional[str], List[str]]`
+- `file_utils/file_dependencies.py::FileDependencies.keep_read_elsewhere(deps: Iterable[Dict[str, Any]], claims: Mapping[str, Any], reader: Any) -> List[str]`
+- `file_utils/file_dependencies.py::FileDependencies.on_disk(path: str) -> bool`
+- `file_utils/file_dependencies.py::FileDependencies.same_content(cls, path_a: str, path_b: str) -> bool`
 - `file_utils/file_dependencies.py::FileDependencies.strangers(folder: str, stem: str, ext: str, claims: Mapping[str, Any], wrote: Callable[[str], bool]) -> Set[str]`
 - `file_utils/file_naming.py::RenamePlan.predict(cls, plan: Sequence[PlanEntry], scopes: Callable[[object], Tuple[Sequence[object], Sequence[object]]], names: Callable[[object], Optional[Sequence[str]]], uniquify: Callable[[str, set], str]) -> List[str]`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fix_glb_nonfinite_keys(cls, glb: GlbTarget) -> Dict[str, int]`
@@ -331,7 +369,13 @@ _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived 
 - **HELD** `core_utils/engines/scene_export/scene_records.py::SceneRecords.web_shape` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `core_utils/engines/scene_export/scene_records.py::WebProjection` — remove in 0.18.0, not before 2026-11-23
 
-## Signature changed (9)
+## Moved (1)
+
+_Still resolvable at the same call site -- hoisted to a base class or re-exported from another module. NOT a removal: no alias or minor bump is owed._
+
+- `net_utils/preview/bridge.py::PreviewBridge.scope_objects`
+
+## Signature changed (11)
 
 - `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.build_clean_path_set`
   - was: `(paths) -> set`
@@ -345,6 +389,12 @@ _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived 
 - `core_utils/presets/store.py::PresetStore.delete`
   - was: `(self, name: str, *, force: bool = False) -> bool`
   - now: `(self, name: str, *, force: bool = False, trash: bool = False) -> bool`
+- `file_utils/file_dependencies.py::FileDependencies.copy_files`
+  - was: `(cls, sources: Iterable[str], dest_dir: str, mode: str = 'copy') -> List[Tuple[str, str]]`
+  - now: `(cls, sources: Iterable[str], dest_dir: str, mode: str = 'copy', progress: Optional[Callable[[int, int], Any]] = None) -> List[Tuple[str, str]]`
+- `file_utils/file_dependencies.py::FileDependencies.resolve`
+  - was: `(cls, refs: Iterable[Sequence[str]], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, resolve_hint: Optional[Callable[[str, str], str]] = None) -> List[Dict[str, Any]]`
+  - now: `(cls, refs: Iterable[Sequence[str]], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, resolve_hint: Optional[Callable[[str, str], str]] = None, key: Optional[Callable[[Any, str], Hashable]] = None) -> List[Dict[str, Any]]`
 - `file_utils/file_naming.py::RenamePlan.apply`
   - was: `(cls, plan: Sequence[PlanEntry], rename: Callable[[object, str], str], title: str = 'Rename', dry_run: bool = False, logger=None, link: Optional[Callable[[object, str], str]] = None, unit: str = 'item') -> List[Tuple[str, str]]`
   - now: `(cls, plan: Sequence[PlanEntry], rename: Callable[[object, str], str], title: str = 'Rename', dry_run: bool = False, logger=None, link: Optional[Callable[[object, str], str]] = None, unit: str = 'item', park: Optional[Callable[[object, int], object]] = None) -> List[Tuple[str, str]]`

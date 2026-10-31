@@ -7,7 +7,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `audio_utils/_audio_utils.py`
 - `class AudioUtils(HelpMixin)`
-  - methods: resolve_ffmpeg, memo_duration, is_playable_extension, is_supported_source_extension, cache_dir_for, ensure_playable_path, scope_events, build_composite_wav, resolve_playable_path, build_audio_map, build_audio_map_from_file_map, build_audio_map_from_files, trim_silence, compute_waveform_envelope
+  - methods: resolve_ffmpeg, memo_duration, is_playable_extension, is_supported_source_extension, cache_dir_for, ensure_playable_path, scope_events, media_digests, build_composite_wav, resolve_playable_path, build_audio_map, build_audio_map_from_file_map, build_audio_map_from_files, trim_silence, compute_waveform_envelope
 
 ### `audio_utils/audio_record.py` — The ``audio`` record's payload, declared once.
 - `class AudioCue(SchemaSpec)`
@@ -539,7 +539,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class Deliverer`
   - methods: preflight, deliver
 - `class HandoffBridge(LoggingMixin)`
-  - methods: app_path, headless_app_path, params_defaults, merge_params, carrier, payload_extension, carrier_of, send, import_roots, child_sys_path
+  - methods: app_path, headless_app_path, params_defaults, merge_params, carrier, payload_extension, carrier_of, send, import_roots, child_sys_path, scope_objects
 - `class ScriptLaunchSpec`
 - `class ScriptLaunchDeliverer(Deliverer)`
   - methods: preflight, deliver, render
@@ -773,9 +773,17 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class BakeCache(LoggingMixin)`
   - methods: prefix, name_pattern, is_bake, cache_dir, store, slot_key, slot, source_key, current, spell_source, record, source_of, write, rehome, referenced_keys, purge
 
+### `file_utils/file_collect.py` — Collect: gather the files a set of readers use into one folder, keyed by reader.
+- `class CollectHost(Protocol)`
+  - methods: stored_path, resolve_path, stored_form, repath, read_elsewhere
+- `class PureCollectHost`
+  - methods: stored_path, resolve_path, stored_form, repath, read_elsewhere
+- `class FileCollect(LoggingMixin)`
+  - methods: entries, plan, plan_nodes, row_key, apply, kept_files, source_files, run, problems, preview, outcome, unresolved, listing
+
 ### `file_utils/file_dependencies.py` — File dependencies -- files a record names by *name*, found where they are NOW.
 - `class FileDependencies(LoggingMixin)`
-  - methods: claims, strangers, remove_superseded, superseded, set_aside, written_here, writer_gone, find_files, walk, resolve, search_dirs, copy_files, relocate, reference_bytes, scan_references, open_decompressed
+  - methods: claims, strangers, remove_superseded, superseded, set_aside, written_here, writer_gone, find_files, walk, on_disk, same_content, choose, candidates, resolve, search_dirs, keep_read_elsewhere, copy_files, relocate, reference_bytes, scan_references, open_decompressed
 
 ### `file_utils/file_naming.py` — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - `class RenamePlan(LoggingMixin)`
@@ -802,7 +810,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/_mesh_convert.py` — FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
 - `class MeshConvert(HelpMixin)`
-  - methods: open_glb, finish_fbx_deliverable, conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fix_glb_nonfinite_keys, fbx_media_dirs, fix_glb_tangents, restore_glb_skin_weights, SHADOW_PLANE_DEFAULTS, rendering_policy, build_scene_sidecar, strip_fbx_records, finish_glb, strip_fbx_handoff, build_fbx_handoff, embed_glb_handoff, read_glb_handoff, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, lightmaps_block, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, embed_glb_lightmap_probe, strip_glb_baked_lights, apply_glb_lightmaps, highlight_probe_layers, lights_in_metres, embed_fbx_highlight_probes, apply_glb_shadows, apply_glb_articulation, apply_glb_clips, clip_spans, prune_glb_animations, compact_glb_animations, reduce_glb_animations, apply_glb_animations, effect_preview_channels, apply_glb_visibility, build_visibility_tracks, apply_glb_fades, check_glb_materials, fix_glb_phantom_opaque_alpha, set_glb_metallic_roughness, suspect_orm_materials, set_glb_emissive, set_glb_alpha_mode, set_glb_unlit, set_glb_normal_scale, set_glb_base_color, fbx_materials, read_fbx_materials, apply_glb_materials, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, drop_glb_texture_fallbacks, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, decode_glb_textures, dedupe_glb_images, prune_glb_unreferenced_textures, gltf_to_fbx
+  - methods: open_glb, finish_fbx_deliverable, conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fix_glb_nonfinite_keys, fbx_media_dirs, fix_glb_tangents, restore_glb_skin_weights, SHADOW_PLANE_DEFAULTS, rendering_policy, build_scene_sidecar, strip_fbx_records, finish_glb, strip_fbx_handoff, build_fbx_handoff, embed_glb_handoff, read_glb_handoff, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, lightmaps_block, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, embed_glb_lightmap_probe, strip_glb_baked_lights, apply_glb_lightmaps, highlight_probe_layers, lights_in_metres, embed_fbx_highlight_probes, apply_glb_shadows, apply_glb_articulation, apply_glb_clips, clip_spans, prune_glb_animations, compact_glb_animations, reduce_glb_animations, apply_glb_animations, effect_preview_channels, apply_glb_visibility, build_visibility_tracks, apply_glb_fades, check_glb_materials, fix_glb_phantom_opaque_alpha, suspect_orm_materials, set_glb_normal_scale, fbx_materials, read_fbx_materials, apply_glb_materials, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, drop_glb_texture_fallbacks, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, decode_glb_textures, dedupe_glb_images, prune_glb_unreferenced_textures, gltf_to_fbx
 
 ### `file_utils/mesh_convert/export_fingerprint.py` — A deterministic structural summary of an exported GLB or FBX, and its diff.
 - `class ExportFingerprint`
@@ -1134,7 +1142,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `net_utils/preview/bridge.py` — The hand-off bridge whose target is a live preview page.
 - `class PreviewBridge(HandoffBridge)`
-  - methods: lightmap_search_dirs, hdr_codec, params_defaults, url, scope_objects, push, publish_file, preview_file, materials_summary, sidecar_summary, lightmap_summary, timing_summary, share, unshare, share_url, ping_share, stop
+  - methods: lightmap_search_dirs, hdr_codec, params_defaults, url, push, publish_file, preview_file, materials_summary, sidecar_summary, lightmap_summary, timing_summary, share, unshare, share_url, ping_share, stop
 - `class FilePreviewBridge(PreviewBridge)`
   - methods: lightmap_search_dirs
 
