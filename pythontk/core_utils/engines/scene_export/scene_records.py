@@ -972,7 +972,9 @@ class SceneRecords:
             "every clip, its frame counted from the first frame the file's "
             "animation holds. The track's file rides the file as media of its "
             "own, joined to the event's 'name' by file stem without regard "
-            "to case."
+            "to case; 'media' gives each such file's SHA-256 by that name, "
+            "and a same-named file found elsewhere stands in for it only when "
+            "its bytes hash alike."
         ),
     )
     #: The payload's model is ``LightmapRecord``: one ``unit_scale`` for every

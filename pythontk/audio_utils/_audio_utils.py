@@ -317,6 +317,50 @@ class AudioUtils(HelpMixin):
                 dropped.append(f"{name}@{frame}")
         return scoped, dropped
 
+    @staticmethod
+    def media_digests(
+        events: Iterable[Mapping[str, Any]],
+        track_files: Callable[[List[str]], Iterable[Tuple[str, str]]],
+    ) -> Dict[str, str]:
+        """The content digest of each track file *events* play, by their name.
+
+        The ``audio`` record's ``media`` (``SceneRecords.AUDIO``), written by
+        every DCC's producer. An event names its track and a reader finds the
+        clip by that name, so two deliverables can name different files alike
+        -- two models each embedding their own ``door.wav`` -- and the second
+        bound the first's (2026-10-19). A reader stands a same-named clip in
+        for the track only when its bytes hash to this; else it takes the
+        deliverable's own. The file each track resolves to is the one the
+        deliverable embeds: the FBX's dependency pass puts the same
+        ``track_files`` answer inside it byte for byte
+        (``FbxMedia.embed_dependencies``), and Unity extracts it byte for
+        byte, so all three hash one string of bytes.
+
+        Parameters:
+            events: The record's events (``{"name", ...}``; the scoped ones
+                :meth:`scope_events` returns).
+            track_files: The host's ``track_files(track_ids)``: ``(track id +
+                extension, path)`` of each track whose file exists.
+
+        Returns:
+            ``{track name: SHA-256 of the file's bytes, lowercase hex}``, in
+            event order; a track with no file is left out.
+        """
+        from pythontk.file_utils._file_utils import FileUtils
+
+        media: Dict[str, str] = {}
+        asked: Set[str] = set()
+        for event in events:
+            name = event.get("name")
+            if not name or name in asked:
+                continue
+            asked.add(name)
+            for _file_name, path in track_files([name]):
+                digest = FileUtils.get_file_info(path, "hash", hash_algo="sha256")
+                if digest:
+                    media[name] = digest[0]
+        return media
+
     @classmethod
     def build_composite_wav(
         cls,

@@ -7,8 +7,10 @@ mayatk's ``AudioClips.export_record`` and blendertk's
 ``AudioUtils.export_record`` build the record alike: their baked
 ``(frame, track)`` events scoped by ``ptk.AudioUtils.scope_events`` to the
 takes the ``animation`` record declares (``SceneRecords.declared_takes``;
-none in a ``full`` export), made with ``SceneRecords.AUDIO.make({"events",
-"fps"})``. That composition, less the scene reads, runs here in a real
+none in a ``full`` export), each played track file's digest by
+``AudioUtils.media_digests`` over the host's ``track_files``, made with
+``SceneRecords.AUDIO.make({"events", "fps", "media"})``. That composition,
+less the scene reads, runs here in a real
 ``ExportSnapshot`` assembly after the real shots producer, once with each
 host's origin for an unscoped event. Exact both ways: every payload validates
 with no unknown-key warning, and every declared key is one the producers
@@ -16,6 +18,7 @@ write. Added: 2026-10-20
 """
 
 import copy
+import hashlib
 import json
 import os
 import sys
@@ -121,13 +124,15 @@ def _edited(payload, path, value=None, drop=False):
     return out
 
 
-def _audio_producer(origin):
+def _audio_producer(origin, track_files):
     """A DCC's ``audio`` producer over :data:`EVENTS`: the composition both
     hosts' ``export_record`` share, less their scene reads.
 
     Parameters:
         origin: The host's origin for an unscoped event, given the context
             (:data:`ORIGINS`).
+        track_files: The host's ``track_files``: ``(name + extension, path)``
+            of each track that has a file.
 
     Returns:
         The producer, taking the export's context.
@@ -139,9 +144,33 @@ def _audio_producer(origin):
         scoped, _dropped = AudioUtils.scope_events(EVENTS, takes, origin(ctx))
         if not scoped:
             return None
-        return SceneRecords.AUDIO.make({"events": scoped, "fps": FPS})
+        media = AudioUtils.media_digests(scoped, track_files)
+        return SceneRecords.AUDIO.make({"events": scoped, "fps": FPS, "media": media})
 
     return produce
+
+
+def _track_files(tmp):
+    """A host's ``track_files`` over a file per track of :data:`EVENTS` but
+    ``late``, which has none; each file's bytes are its track's name.
+
+    Parameters:
+        tmp: The test's :class:`~pythontk.TempArtifacts`.
+
+    Returns:
+        ``track_files(names) -> [(name + ".wav", path), ...]``.
+    """
+    files = {}
+    for _frame, name in EVENTS:
+        if name != "late":
+            files[name] = tmp.path(".wav")
+            with open(files[name], "wb") as fh:
+                fh.write(name.encode("utf-8"))
+
+    def track_files(names):
+        return [(f"{n}.wav", files[n]) for n in names if n in files]
+
+    return track_files
 
 
 def _shots(shots=True):
@@ -182,13 +211,16 @@ class TestTheRecordIsWhatTheProducersWrite(unittest.TestCase):
     def setUp(self):
         ShotStore.clear_active()
         self.addCleanup(ShotStore.clear_active)
+        tmp = ptk.TempArtifacts("ptk_audio_record_shape", policy="scoped")
+        self.addCleanup(tmp.cleanup)
+        self.track_files = _track_files(tmp)
 
     def _produced(self, host, **decisions):
         """The ``audio`` payload *host*'s producer writes under *decisions*."""
         snapshot = ExportSnapshot.assemble(
             {
                 SceneRecords.SHOTS: ShotStore.produce_export_records,
-                SceneRecords.AUDIO: _audio_producer(ORIGINS[host]),
+                SceneRecords.AUDIO: _audio_producer(ORIGINS[host], self.track_files),
             },
             ExportContext(**decisions),
         )
@@ -224,6 +256,18 @@ class TestTheRecordIsWhatTheProducersWrite(unittest.TestCase):
         events = [event for payload in payloads for event in payload["events"]]
         self.assertEqual(set().union(*events), _declared(AudioCue))
 
+    def test_each_played_track_file_rides_by_its_name_as_its_digest(self):
+        """The reader's reuse rule: a same-named clip stands in for the
+        deliverable's own only when its bytes hash to this (2026-10-31)."""
+        for key, payload in self._payloads().items():
+            with self.subTest(key):
+                played = {e["name"] for e in payload["events"]}
+                self.assertEqual(set(payload["media"]), played - {"late"})
+                for name, digest in payload["media"].items():
+                    self.assertEqual(
+                        digest, hashlib.sha256(name.encode("utf-8")).hexdigest()
+                    )
+
 
 # ============================================================================
 # What no producer writes
@@ -242,8 +286,15 @@ class TestWhatNoProducerWritesIsRefused(unittest.TestCase):
         "fps": 30.0,
     }
 
+    def test_a_record_written_before_the_digests_still_reads(self):
+        """A file exported before 2026-10-31 carries no ``media``: still the
+        current record, read whole; a reader extracts its clips from it."""
+        self.assertNotIn("media", self.RECORD)
+        _assert_exact(self, self.RECORD)
+        self.assertTrue(SceneRecords.AUDIO.is_current(self.RECORD))
+
     def test_the_record_refuses_what_no_producer_writes(self):
-        r = self.RECORD
+        r = dict(self.RECORD, media={"footstep": "ab" * 32})
         self.assertEqual(AudioRecord.validate(r).errors, [])
         cases = {
             "missing required key 'fps'": _edited(r, ["fps"], drop=True),
@@ -266,6 +317,10 @@ class TestWhatNoProducerWritesIsRefused(unittest.TestCase):
             "events: expected a list": _edited(r, ["events"], {}),
             "events[0].expected a mapping": _edited(r, ["events"], ["footstep"]),
             "version: expected integer, got string": _edited(r, ["version"], "2"),
+            "media.footstep: expected string, got integer": _edited(
+                r, ["media", "footstep"], 7
+            ),
+            "media: expected object, got array": _edited(r, ["media"], ["ab"]),
         }
         for expected, payload in cases.items():
             with self.subTest(expected):
@@ -292,6 +347,12 @@ class TestThePublishedForms(unittest.TestCase):
         self.assertEqual(doc["title"], "AudioRecord")
         self.assertEqual(sorted(doc["$defs"]), ["AudioCue"])
         self.assertEqual(doc["required"], ["version", "events", "fps"])
+        # Optional, so a file written before it is still the current record.
+        media = doc["properties"]["media"]
+        self.assertEqual(
+            (media["type"], media["additionalProperties"]),
+            ("object", {"type": "string"}),
+        )
         self.assertEqual(doc["$defs"]["AudioCue"]["required"], ["clip", "frame", "name"])
         self.assertEqual(_required(AudioCue), ["clip", "frame", "name"])
 
