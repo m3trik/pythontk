@@ -595,7 +595,7 @@ class LoggerExt:
 
         Stored on the logger, not on :class:`LoggerExt`. Assigning the class
         attribute made one class's call reconfigure every logger in the
-        process -- which is why extapps' compositor attaches its handler by
+        process -- which is why the Map Compositor panel attaches its handler by
         hand instead of using this seam.
 
         :attr:`LoggerExt._text_handler` remains the process-wide DEFAULT for a
