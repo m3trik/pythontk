@@ -93,6 +93,125 @@ class TestRenamePlan(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIn("locked", warnings[0].getMessage())
 
+    # -- two-phase (park) ------------------------------------------------------
+
+    class _Host:
+        """A uniquifying host: one flat namespace of names, Maya's '1' suffix."""
+
+        def __init__(self, names, locked=()):
+            self.names = dict(names)  # key -> name
+            self.locked = set(locked)
+
+        def rename(self, key, new):
+            if key in self.locked:
+                raise RuntimeError("locked")
+            taken = {n for k, n in self.names.items() if k != key}
+            actual, i = new, 0
+            while actual in taken:
+                i += 1
+                actual = f"{new}{i}"
+            self.names[key] = actual
+            return actual
+
+        def park(self, key, index):
+            self.rename(key, f"__park{index}")
+
+    def test_park_makes_a_swap_order_independent(self):
+        """Regression: obj1 -> obj2 / obj2 -> obj1 came out obj3, obj1 -- the
+        first rename met the second's name still in place."""
+        host = self._Host({"k1": "obj1", "k2": "obj2"})
+        plan = [("k1", "obj1", "obj2"), ("k2", "obj2", "obj1")]
+        result = RenamePlan.apply(plan, host.rename, park=host.park, logger=self.logger)
+        self.assertEqual(host.names, {"k1": "obj2", "k2": "obj1"})
+        self.assertEqual(result, [("obj1", "obj2"), ("obj2", "obj1")])
+
+    def test_park_never_strands_an_item(self):
+        """A batch with a locked item: the locked one fails to park and is
+        reported; nothing is left on a placeholder name."""
+        host = self._Host({"a": "a", "lk": "lk", "b": "b"}, locked={"lk"})
+        plan = [("a", "a", "c_01"), ("lk", "lk", "c_02"), ("b", "b", "c_03")]
+        result = RenamePlan.apply(plan, host.rename, park=host.park, logger=self.logger)
+        self.assertEqual(host.names, {"a": "c_01", "lk": "lk", "b": "c_03"})
+        self.assertEqual(result, [("a", "c_01"), ("lk", "lk"), ("b", "c_03")])
+        failed = [r.getMessage() for r in self.sink.records if r.levelno == logging.WARNING]
+        self.assertEqual(len(failed), 1)
+        self.assertIn("locked", failed[0])
+
+    def test_a_parked_item_whose_rename_fails_gets_its_name_back(self):
+        host = self._Host({"a": "a", "b": "b"})
+        real = host.rename
+
+        def rename(key, new):
+            if new == "bad":
+                raise RuntimeError("no legal characters")
+            return real(key, new)
+
+        plan = [("a", "a", "bad"), ("b", "b", "x")]
+        result = RenamePlan.apply(plan, rename, park=host.park, logger=self.logger)
+        self.assertEqual(host.names, {"a": "a", "b": "x"})
+        self.assertEqual(result, [("a", "a"), ("b", "x")])
+
+    def test_a_dry_run_never_parks(self):
+        park = mock.Mock()
+        RenamePlan.apply(
+            [("k", "a", "b")], mock.Mock(), park=park, dry_run=True, logger=self.logger
+        )
+        park.assert_not_called()
+
+    # -- predict ----------------------------------------------------------------
+
+    @staticmethod
+    def _numbered(name, taken):
+        """Maya's rule: a taken name gets max(existing number) + 1, padded."""
+        import re
+
+        if name not in taken:
+            return name
+        base, digits = re.match(r"^(.*?)(\d*)$", name).groups()
+        rx = re.compile(re.escape(base) + r"(\d+)$")
+        top = max([int(digits or 0)] + [int(m.group(1)) for m in map(rx.match, taken) if m])
+        return f"{base}{str(top + 1).zfill(len(digits))}"
+
+    def test_predict_numbers_a_collision_as_the_host_will(self):
+        """Regression: a dry run previewed 'box, box, box' where the live run
+        gave 'box, box1, box2'."""
+        names = {"world": ["box", "pCube1", "pCube2", "pCube3"]}
+        plan = [("c1", "pCube1", "box"), ("c2", "pCube2", "box"), ("c3", "pCube3", "box")]
+        predicted = RenamePlan.predict(
+            plan, lambda key: (["world"], ["world"]), names.get, self._numbered
+        )
+        self.assertEqual(predicted, ["box1", "box2", "box3"])
+
+    def test_predict_frees_every_changing_items_name(self):
+        """Every changing item is parked first, so a swap predicts no collision
+        and an unchanged item still holds its name."""
+        names = {"w": ["obj1", "obj2", "keep"]}
+        plan = [("k1", "obj1", "obj2"), ("k2", "obj2", "obj1"), ("k3", "keep", "keep")]
+        scopes = lambda key: (["w"], ["w"])  # noqa: E731
+        self.assertEqual(
+            RenamePlan.predict(plan, scopes, names.get, self._numbered),
+            ["obj2", "obj1", "keep"],
+        )
+        plan = [("k1", "obj1", "keep")]
+        self.assertEqual(
+            RenamePlan.predict(plan, scopes, names.get, self._numbered), ["keep1"]
+        )
+
+    def test_predict_checks_and_claims_separate_pools(self):
+        """Maya's shape: a DAG node collides with its siblings and with every DG
+        name; a DG name with every node. Two groups' children never collide."""
+        names = {"g1": ["c"], "g2": ["d"], "dg": ["mat"], "all": ["c", "d", "mat"]}
+        scopes = {
+            "c": (["g1", "dg"], ["g1", "all"]),
+            "d": (["g2", "dg"], ["g2", "all"]),
+            "m": (["all"], ["dg", "all"]),
+        }
+        plan = [("c", "c", "box"), ("d", "d", "box"), ("m", "mat", "box")]
+        self.assertEqual(
+            RenamePlan.predict(plan, scopes.get, lambda p: names.get(p, []), self._numbered),
+            ["box", "box", "box1"],
+        )
+
     def test_uniquified_name_is_reported_and_returned(self):
         result = RenamePlan.apply(
             [("k", "a", "b")], lambda k, n: n + "1", logger=self.logger

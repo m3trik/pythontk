@@ -55,6 +55,7 @@ class RenamePlan(LoggingMixin):
         logger=None,
         link: Optional[Callable[[object, str], str]] = None,
         unit: str = "item",
+        park: Optional[Callable[[object, int], object]] = None,
     ) -> List[Tuple[str, str]]:
         """Execute *plan* (unless ``dry_run``) and emit one report for it.
 
@@ -72,6 +73,16 @@ class RenamePlan(LoggingMixin):
             link: Optional ``link(key, name) -> html`` used to render an item's
                 name in the report (e.g. a ``log_link`` that selects the node).
             unit: Noun for the summary line ("object", "file").
+            park: ``park(key, index)`` -- rename the item onto a placeholder
+                name unique to *index*. Given one, the batch runs in two
+                phases: every changing item is parked first, then each takes
+                its new name, so no item meets a name another item of the batch
+                still holds -- a swap (``a -> b``, ``b -> a``), a cycle or a
+                renumbering comes out as planned in any order instead of
+                uniquified. A park that raises reports the item as failed and
+                leaves it as it was; a parked item whose rename then raises is
+                given its old name back, so nothing is ever left on a
+                placeholder. Never called on a dry run.
 
         Returns:
             ``(old_name, new_name)`` pairs parallel to *plan*. On a live run
@@ -85,17 +96,36 @@ class RenamePlan(LoggingMixin):
         unchanged: List[str] = []
         failed = 0
 
-        for key, old, new in plan:
+        # Phase one (two-phase only): every changing item off its name.
+        parked, refused = set(), {}
+        if park is not None and not dry_run:
+            for index, (key, old, new) in enumerate(plan):
+                if new == old:
+                    continue
+                try:
+                    park(key, index)
+                    parked.add(index)
+                except Exception as e:  # one bad item must not abort the batch
+                    refused[index] = e
+
+        for index, (key, old, new) in enumerate(plan):
             if new == old:
                 unchanged.append(old)
                 results.append((old, old))
                 continue
             actual = new
+            if index in refused:
+                failed += 1
+                log.warning(f"Could not rename '{old}' → '{new}': {refused[index]}")
+                results.append((old, old))
+                continue
             if not dry_run:
                 try:
                     actual = rename(key, new)
                 except Exception as e:  # one bad item must not abort the batch
                     failed += 1
+                    if index in parked:
+                        cls._unpark(rename, key, old)
                     log.warning(f"Could not rename '{old}' → '{new}': {e}")
                     results.append((old, old))
                     continue
@@ -106,6 +136,76 @@ class RenamePlan(LoggingMixin):
 
         cls._report(log, title, plan, changed, unchanged, failed, dry_run, link, unit)
         return results
+
+    @staticmethod
+    def _unpark(rename, key, old: str) -> None:
+        """Give a parked item whose rename failed its old name back."""
+        try:
+            rename(key, old)
+        except Exception:  # the report already says this item failed
+            pass
+
+    @classmethod
+    def predict(
+        cls,
+        plan: Sequence[PlanEntry],
+        scopes: Callable[[object], Tuple[Sequence[object], Sequence[object]]],
+        names: Callable[[object], Optional[Sequence[str]]],
+        uniquify: Callable[[str, set], str],
+    ) -> List[str]:
+        """The names a host that uniquifies on collision will give *plan*, in order.
+
+        So a dry run previews what the live run does: three objects renamed
+        ``box`` preview as ``box, box1, box2`` where the host numbers them,
+        not as three ``box``. Models a two-phase run (:meth:`apply` with
+        ``park``): every changing item's name is free from the start, an
+        unchanged item keeps holding its own, and each item then claims its
+        name in plan order. The host's rules come in as plain callables, so one
+        walk serves every host.
+
+        Parameters:
+            plan: ``(key, old_name, new_name)`` triples.
+            scopes: ``scopes(key) -> (checks, claims)`` -- the name pools (any
+                hashable ids) an item's new name must be free in, and the
+                pools its name is held in. Maya: a DAG node checks its siblings
+                and every DG name and is held in its siblings and the whole
+                namespace; Blender: one pool per datablock type.
+            names: ``names(pool) -> names`` -- every name the pool holds now,
+                the plan's own items included (their old names are released
+                here, as the park releases them).
+            uniquify: ``uniquify(name, taken) -> name`` -- the host's own rule
+                for a taken name (Maya ``box1``, Blender ``box.001``); called
+                only when *name* is in *taken*.
+
+        Returns:
+            The predicted name for each entry, parallel to *plan* (an
+            unchanged entry's own name).
+        """
+        from collections import Counter
+
+        pools = {}
+
+        def pool(pid):
+            if pid not in pools:
+                pools[pid] = Counter(names(pid) or ())
+            return pools[pid]
+
+        entries = [(old, new, scopes(key)) for key, old, new in plan]
+        for old, new, (_checks, claims) in entries:
+            if new != old:  # parked: its old name is free
+                for pid in claims:
+                    pool(pid)[old] -= 1
+        predicted = []
+        for old, new, (checks, claims) in entries:
+            if new != old:
+                # The set is built only on a collision: a batch is mostly free names.
+                if any(pool(pid)[new] > 0 for pid in checks):
+                    taken = {n for pid in checks for n, c in pool(pid).items() if c > 0}
+                    new = uniquify(new, taken)
+                for pid in claims:
+                    pool(pid)[new] += 1
+            predicted.append(new)
+        return predicted
 
     @staticmethod
     def _emit(log, level: str, message: str) -> None:
