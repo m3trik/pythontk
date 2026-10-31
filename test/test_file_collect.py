@@ -338,6 +338,69 @@ class TestApply(_CollectCase):
         FileCollect.apply(rows, mode="move")
         self.assertTrue(os.path.exists(path))
 
+    def test_a_file_a_reader_outside_the_plan_reads_stays_on_a_move(self):
+        """A local and a linked image (or a scoped and an Arnold-only file node)
+        reading one file: the move of the scoped one stranded the other."""
+        shared = self._file("tex", "wood.png")
+
+        class Host(PureCollectHost):
+            def read_elsewhere(self, nodes):
+                return [shared] if "outside" not in nodes else []
+
+        collect = FileCollect(Host({"inside": shared, "outside": shared}))
+        rows = collect.plan_nodes(["inside"], self.dest, kind="texture")
+
+        self.assertEqual([r["keep_source"] for r in rows], [True])
+        landed = FileCollect.apply(rows, mode="move")
+        self.assertEqual(len(landed), 1, "the copy still lands and repaths")
+        self.assertTrue(os.path.exists(shared), "the outside reader was stranded")
+        self.assertTrue(os.path.exists(self._at("wood.png")))
+
+    def test_what_a_move_keeps_is_decided_per_file_in_the_plan(self):
+        """One row's flag is every row's of that file: the view and the move
+        read the one decision."""
+        path = self._file("ext", "shared.exr")
+        rows = FileCollect.plan(
+            [
+                {"owner": "a", "kind": "lightmap", "source": path, "keep_source": True},
+                {"owner": "b", "kind": "texture", "source": path},
+                {"owner": "c", "source": self._file("ext", "own.png")},
+            ],
+            self.dest,
+        )
+        self.assertEqual([r["keep_source"] for r in rows], [True, True, False])
+        self.assertEqual(
+            FileCollect.kept_files(rows), {os.path.normcase(os.path.abspath(path))}
+        )
+
+    def test_a_move_takes_no_source_for_a_file_that_appeared_after_the_copier_looked(
+        self,
+    ):
+        """A destination that appeared between the existence scan and the
+        copier's own test (which reuses on a partial hash) is compared whole."""
+        src = self._file("ext", "d.png", data=b"ours")
+        rows = list(self._plan({"a": src}).values())
+
+        def racing(sources, folder, mode, progress=None):
+            for s in sources:  # someone else's bytes land first, same size
+                with open(os.path.join(folder, os.path.basename(s)), "wb") as fh:
+                    fh.write(b"them")
+            return [(s, os.path.join(folder, os.path.basename(s))) for s in sources]
+
+        landed = FileCollect.apply(rows, mode="move", copy=racing)
+
+        self.assertEqual(landed, [], "the reader would be repathed to their file")
+        self.assertEqual(self._read(src), b"ours")
+
+    def test_a_cancel_says_what_was_already_copied(self):
+        rows = list(
+            self._plan({"a": self._file("one", "a.png"), "b": self._file("two", "b.png")}).values()
+        )
+        with self.assertRaises(ptk.OperationCancelled) as caught:
+            FileCollect.apply(rows, mode="move", progress=lambda done, total: False)
+        copied = len(os.listdir(self.dest))  # the copier stops at the next file
+        self.assertIn(f"after {copied} of 2 file(s) were copied", str(caught.exception))
+
     def test_a_cancel_stops_before_anything_is_taken_away(self):
         a = self._file("one", "a.png")
         b = self._file("two", "b.png")

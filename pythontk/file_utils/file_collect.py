@@ -77,6 +77,12 @@ class CollectHost(Protocol):
         step; a reader already storing its final form left alone). Returns how
         many readers changed."""
 
+    def read_elsewhere(self, nodes: Sequence[Any]) -> Iterable[str]:
+        """The files the scene reads through readers OTHER than *nodes* --
+        every reader the host knows (a node a scope or a filter leaves out, a
+        linked one), absolute; a tile set by its pattern or a tile. A move
+        copies these instead: taken away, they would strand those readers."""
+
 
 class PureCollectHost:
     """The :class:`CollectHost` with no host: a reader is a key of *paths*, its
@@ -114,6 +120,10 @@ class PureCollectHost:
                 self.paths[row["owner"]] = final
                 changed += 1
         return changed
+
+    @staticmethod
+    def read_elsewhere(nodes: Sequence[Any]) -> Iterable[str]:
+        return ()  # plain paths: no readers but the ones handed over
 
 
 class FileCollect(LoggingMixin):
@@ -235,12 +245,18 @@ class FileCollect(LoggingMixin):
         entries: Iterable[Mapping[str, Any]],
         dest_dir: str,
         choices: Optional[Mapping[Hashable, str]] = None,
+        keep: Iterable[str] = (),
     ) -> List[Dict[str, Any]]:
         """The Collect step: where each entry's file lands in *dest_dir*.
 
         THE one call a preview and its commit derive destinations through.
         Every entry keeps its name; see the module docstring for where it goes.
         An ambiguous entry stays unplaced until *choices* names its file.
+
+        What a move keeps is decided here, once, per FILE: every row reading a
+        file in *keep* -- or one any entry marks ``keep_source`` -- is marked
+        ``keep_source``, so the rows of one file can never disagree (what the
+        plan shows is what :meth:`apply` does).
 
         Parameters:
             entries: ``{"owner", "source", "candidates", ...}`` dicts
@@ -251,6 +267,8 @@ class FileCollect(LoggingMixin):
                 keyed by :meth:`row_key` (an owner of one kind is never another
                 kind's: a texture and a lightmap may share a name); normally
                 one of its candidates, any existing file is taken.
+            keep: Files readers outside the plan read
+                (:meth:`CollectHost.read_elsewhere`): a move copies them.
 
         Returns:
             The rows, in entry order (see the class docstring).
@@ -271,7 +289,55 @@ class FileCollect(LoggingMixin):
         _Destinations(FileDependencies._spelled(os.path.abspath(dest_dir))).place(
             [row for row in rows if row["source"]]
         )
+        kept = {f for path in keep for f in cls.source_files(path)}
+        kept.update(
+            f
+            for row in rows
+            if row.get("keep_source") and row["source"]
+            for f in cls.source_files(row["source"])
+        )
+        for row in rows:
+            row["keep_source"] = bool(row["source"]) and not kept.isdisjoint(
+                cls.source_files(row["source"])
+            )
         return rows
+
+    def plan_nodes(
+        self,
+        nodes: Iterable[Any],
+        dest_dir: str,
+        search_dir: str = "",
+        find_files: Optional[Callable[[List[str], str], List[str]]] = None,
+        choices: Optional[Mapping[Hashable, str]] = None,
+        kind: str = "file",
+        extra: Iterable[Mapping[str, Any]] = (),
+    ) -> List[Dict[str, Any]]:
+        """Resolve *nodes* and plan them, with *extra* entries beside them.
+
+        :meth:`entries` (each row's ``kind`` set), then :meth:`plan`, with
+        every file a reader outside the plan reads kept by a move
+        (:meth:`CollectHost.read_elsewhere` over *nodes*).
+
+        Parameters:
+            nodes: The readers, in order.
+            dest_dir: The folder everything is gathered into.
+            search_dir: Where an unresolved reader's file is searched for.
+            find_files: The walk (:meth:`entries`).
+            choices: The picks (:meth:`plan`).
+            kind: The kind of *nodes*' rows (``"texture"``).
+            extra: More entries -- a host's own records (lightmaps).
+
+        Returns:
+            :meth:`plan`'s rows.
+        """
+        nodes = list(dict.fromkeys(nodes))
+        entries = [
+            dict(e, kind=kind) for e in self.entries(nodes, search_dir, find_files)
+        ]
+        entries.extend(extra)
+        return self.plan(
+            entries, dest_dir, choices, keep=self.host.read_elsewhere(nodes) or ()
+        )
 
     @staticmethod
     def row_key(row: Mapping[str, Any]) -> Tuple[str, Any]:
@@ -301,8 +367,11 @@ class FileCollect(LoggingMixin):
         and never for a file any row marks ``keep_source`` (one another reader
         still needs). A row whose copy failed keeps its source and is left out
         of the result; the host repoints only the rows returned (and the
-        :attr:`IN_PLACE` ones). A cancel (*progress* answering False) stops
-        before anything is taken away or repointed: what was copied stays.
+        :attr:`IN_PLACE` ones). In a move every file is compared whole with
+        its source before the source goes -- a file that appeared at the
+        destination after the copier looked is never taken for it. A cancel
+        (*progress* answering False) stops before anything is taken away or
+        repointed: what was copied stays, and the error says how much.
 
         Parameters:
             rows: :meth:`plan`'s rows (the others are ignored).
@@ -356,13 +425,12 @@ class FileCollect(LoggingMixin):
                     landed.add(pair)
             done += len(sources)
             if progress is not None and progress(done, total) is False:
-                raise OperationCancelled("Collect cancelled")
-        kept = {
-            os.path.normcase(os.path.abspath(src))
-            for row in rows
-            if row.get("keep_source") and row["status"] in cls.TRANSFERS
-            for src, _dst in pairs[id(row)]
-        }
+                raise OperationCancelled(
+                    f"Cancelled after {len(landed)} of {total} file(s) were copied "
+                    "-- they stay at the destination; no source was taken away "
+                    "and no reader repathed."
+                )
+        kept = cls.kept_files(rows)
 
         out = []
         for row in rows:
@@ -375,11 +443,12 @@ class FileCollect(LoggingMixin):
             files = pairs[id(row)]
             if status == cls.RELOCATE:
                 ok = bool(files) and all(key(s, d) in landed for s, d in files)
+                if ok and mode == "move":
+                    # Whole bytes before a source goes: a destination that
+                    # appeared after the copier looked passed its own test.
+                    ok = all(cls._holds(s, d) for s, d in files)
             else:
-                ok = bool(files) and all(
-                    os.path.isfile(d) and FileUtils.has_same_content(s, d)
-                    for s, d in files
-                )
+                ok = bool(files) and all(cls._holds(s, d) for s, d in files)
             if not ok:
                 continue
             if mode == "move":
@@ -388,6 +457,31 @@ class FileCollect(LoggingMixin):
                 )
             out.append(row)
         return out
+
+    @classmethod
+    def kept_files(cls, rows: Iterable[Mapping[str, Any]]) -> Set[str]:
+        """The files a move of *rows* copies instead (``keep_source``, decided per
+        file by :meth:`plan`), normalized -- the one set :meth:`apply` and a
+        view of the plan read."""
+        return {
+            f
+            for row in rows
+            if row.get("keep_source") and row.get("source")
+            for f in cls.source_files(row["source"])
+        }
+
+    @staticmethod
+    def source_files(path: str) -> Set[str]:
+        """The files *path* names (a set: its tiles), normalized."""
+        files = TiledPath.tiles(path) if TiledPath.has_token(path) else [path]
+        return {os.path.normcase(os.path.abspath(f)) for f in files}
+
+    @staticmethod
+    def _holds(src: str, dst: str) -> bool:
+        """Whether *dst* holds *src*'s bytes (or IS it, however spelled)."""
+        if FileUtils.is_same_file(src, dst):
+            return True
+        return os.path.isfile(dst) and FileUtils.has_same_content(src, dst)
 
     # ------------------------------------------------------------------ run
     def run(
@@ -441,7 +535,11 @@ class FileCollect(LoggingMixin):
             return False
         verb = "Moving" if mode == "move" else "Copying"
         with self._progress(progress, f"{verb} files…") as tick:
-            landed = self.apply(rows, mode=mode, copy=copy, progress=tick)
+            try:
+                landed = self.apply(rows, mode=mode, copy=copy, progress=tick)
+            except OperationCancelled as cancel:
+                self.report(str(cancel), "warning", [])
+                raise
         self._say(self.outcome(rows, landed, mode))
         self.host.repath(landed)
         self._say(self.unresolved(rows))
@@ -705,15 +803,12 @@ class FileCollect(LoggingMixin):
 
     @classmethod
     def _drop_sources(cls, files: Sequence[Tuple[str, str]]) -> None:
-        """Take away each source a move copied -- one whose destination is not
-        the source itself and holds a file of its size (the copy just landed;
-        a reused one was compared whole)."""
+        """Take away each source a move copied -- compared whole by
+        :meth:`apply` -- unless it IS its destination however spelled."""
         for src, dst in files:
             try:
                 if not os.path.exists(src) or FileUtils.is_same_file(src, dst):
                     continue  # another reader of this file already moved it
-                if os.path.getsize(src) != os.path.getsize(dst):
-                    continue
                 os.remove(src)
             except OSError as error:
                 cls.logger.warning(
