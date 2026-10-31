@@ -981,6 +981,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.file_utils._file_utils",
+    "name": "import_files",
+    "qualname": "FileUtils.import_files",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.iter_utils._iter_utils",
     "name": "indices",
     "qualname": "IterUtils.indices",
@@ -2213,13 +2220,6 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.net_utils.rpc.job",
-    "name": "Call",
-    "qualname": "Call",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
     "module": "pythontk.core_utils.cancel_scope",
     "name": "CancelScope",
     "qualname": "CancelScope",
@@ -2822,9 +2822,9 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.engines.scene_export.scene_records",
-    "name": "Kind",
-    "qualname": "Kind",
+    "module": "pythontk.core_utils.engines.key_stash.key_stash_model",
+    "name": "KeyStashHost",
+    "qualname": "KeyStashHost",
     "tier": "root"
   },
   {
@@ -3130,13 +3130,6 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.engines.scene_export.scene_records",
-    "name": "Merge",
-    "qualname": "Merge",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
     "module": "pythontk.file_utils.mesh_convert._mesh_convert",
     "name": "MeshConvert",
     "qualname": "MeshConvert",
@@ -3217,13 +3210,6 @@
     "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
     "name": "ObjectStatus",
     "qualname": "ObjectStatus",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.core_utils.engines.textures.map_optimizer",
-    "name": "Op",
-    "qualname": "Op",
     "tier": "root"
   },
   {
@@ -3473,6 +3459,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.key_stash.key_stash_model",
+    "name": "PureKeyStashHost",
+    "qualname": "PureKeyStashHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.vid_utils.sequence_exporter",
+    "name": "PureSequenceHost",
+    "qualname": "PureSequenceHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.shots.shot_model",
     "name": "PureShotsHost",
     "qualname": "PureShotsHost",
@@ -3669,13 +3669,6 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.net_utils.rpc.job",
-    "name": "Result",
-    "qualname": "Result",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
     "module": "pythontk.core_utils.engines.rig_graph.rig_capability",
     "name": "RigCapability",
     "qualname": "RigCapability",
@@ -3837,6 +3830,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.file_utils.scene_listing",
+    "name": "SceneListing",
+    "qualname": "SceneListing",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.file_utils.scene_notes",
     "name": "SceneNotes",
     "qualname": "SceneNotes",
@@ -3959,6 +3959,13 @@
     "module": "pythontk.vid_utils.sequence_exporter",
     "name": "SequenceExporter",
     "qualname": "SequenceExporter",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.vid_utils.sequence_exporter",
+    "name": "SequenceHost",
+    "qualname": "SequenceHost",
     "tier": "root"
   },
   {
@@ -4484,13 +4491,6 @@
     "module": "pythontk.core_utils.x11",
     "name": "X11",
     "qualname": "X11",
-    "tier": "root"
-  },
-  {
-    "kind": "function",
-    "module": "pythontk.core_utils.module_reloader",
-    "name": "reload_package",
-    "qualname": "reload_package",
     "tier": "root"
   }
 ]
