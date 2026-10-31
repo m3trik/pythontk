@@ -5,18 +5,21 @@
 The page records a clip through the ``playblast`` routes (the recorder,
 :class:`~pythontk.net_utils.preview.playblast.PreviewPlayblast`, is built on
 first use) and posts a still to ``snapshot``. Both land by one placement rule
-(:meth:`_page_output`): beside the published deliverable when it is still on
-disk and its folder takes the file, else in the serve root, from which the page
-downloads it. Whether the folder takes it is found by writing it -- never a
-probe file in the user's folder. Every name is composed here, never taken from
-the page.
+(:meth:`_PageOutputs.page_output`): beside the published deliverable when it
+is still on disk and its folder takes the file, else in the serve root, from
+which the page downloads it. Whether the folder takes it is found by writing
+it -- never a probe file in the user's folder. Every name is composed here,
+never taken from the page.
 
-One job of :class:`~pythontk.PreviewServer`, composed in ``server.py``; its
-methods reach the rest of the server through ``self``.
+:class:`_PageOutputs` is the server's collaborator that owns the recorder,
+the finished recordings and the still's numbering lock; it reads the server's
+published source, its root and its limits (:attr:`PreviewServer.SNAPSHOT_TYPES`
+...) through it at call time.
 """
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import quote
@@ -27,82 +30,54 @@ from pythontk.str_utils._str_utils import StrUtils
 
 if TYPE_CHECKING:  # the recorder is imported on use -- see playblast
     from pythontk.net_utils.preview.playblast import PreviewPlayblast
+    from pythontk.net_utils.preview.server import PreviewServer
 
 
-class _PageOutputsMixin:
+class _PageOutputs:
     """Page recordings and stills, and where they land.
 
-    A private part of :class:`~pythontk.PreviewServer`; call it through the facade.
+    A private collaborator of :class:`~pythontk.PreviewServer`; call it through
+    the facade, whose methods carry the documentation.
     """
 
-    #: Finished recordings kept addressable for download at once.
-    MAX_RECORDINGS: int = 8
-
-    #: Image types the page may post a still as: MIME -> (extension, the
-    #: signature its bytes must open with). PNG only -- the page's still is
-    #: lossless, and the table is the one place another type would be added.
-    #: The signature is checked because this route writes a file under a name
-    #: the page does not choose, and a body that is not the image it claims to
-    #: be should be refused rather than saved as one.
-    SNAPSHOT_TYPES: Dict[str, Tuple[str, bytes]] = {
-        "image/png": (".png", b"\x89PNG\r\n\x1a\n"),
-    }
-
-    #: Refuse a still larger than this. A 4K PNG of a production scene is tens
-    #: of megabytes at most; this is a guard against a runaway body, the same
-    #: ceiling a recording's frame gets.
-    MAX_SNAPSHOT_BYTES: int = 64 * 1024 * 1024
+    def __init__(self, server: "PreviewServer"):
+        self._server = server
+        #: The page's clip recorder, allocated on first use, and a lock of its
+        #: own for that one allocation -- see :meth:`playblast`.
+        self.recorder: Optional["PreviewPlayblast"] = None
+        self.recorder_lock = threading.Lock()
+        #: Finished recordings, token -> file, so a download can follow.
+        self.recordings: Dict[str, Path] = {}
+        #: Held from choosing a still's number to writing it: two stills posted
+        #: at once (a desktop tab and a headset) would otherwise both pick the
+        #: same free number. Its own lock, so a write never holds up a poll.
+        self.snapshot_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Page recordings
     # ------------------------------------------------------------------
-    @property
     def playblast(self) -> "PreviewPlayblast":
-        """The page's recorder, created on first use.
-
-        Deferred rather than built in ``__init__`` because it allocates a
-        scratch store, and the overwhelming majority of preview servers never
-        record anything.
-        """
-        # Under the lock: this server answers each request on its OWN thread, so
-        # two frame POSTs racing the first access would each build a recorder --
-        # and a frame would then be filed against one the `begin` never reached.
         # Double-checked, on a lock of its OWN. The race being closed is two
         # first-accesses building two recorders (this server answers each
         # request on its own thread), which lasts exactly as long as the first
-        # request -- but this property is read once per FRAME, and taking the
+        # request -- but the recorder is read once per FRAME, and taking the
         # server's lock here put every frame POST of a recording behind the same
         # lock the manifest poll uses. Measured: a 151-frame recording went from
         # 5s to 22s and then died with the accept queue full
         # (ERR_CONNECTION_TIMED_OUT part way through). The common path must not
         # lock at all; the attribute read and write are each atomic.
-        if self._playblast is None:
-            with self._playblast_lock:
-                if self._playblast is None:
+        if self.recorder is None:
+            with self.recorder_lock:
+                if self.recorder is None:
                     from pythontk.net_utils.preview.playblast import PreviewPlayblast
 
-                    self._playblast = PreviewPlayblast()
-        return self._playblast
-
-    def begin_playblast(self, **kwargs: Any) -> Dict[str, Any]:
-        """Open a recording (see :meth:`PreviewPlayblast.begin`)."""
-        return self.playblast.begin(**kwargs)
+                    self.recorder = PreviewPlayblast()
+        return self.recorder
 
     def finish_playblast(
         self, token: str, target: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Encode a recording and report where it went.
-
-        The movie lands beside the file that was published, when that file is
-        still on disk -- an exporter's GLB, or one chosen with External GLB.
-        A scene push has no such file (its GLB is the bridge's own scratch,
-        released the moment it is published), so the movie goes to the serve
-        root instead and the page's ``url`` is how it is collected.
-
-        Returns:
-            :meth:`PreviewPlayblast.finish`'s report plus ``"url"`` -- always
-            present, and always the way to fetch the file from the page.
-        """
+        server = self._server
         # Named for the deliverable rather than for the clip alone: a folder of
         # shot movies from three different pushes is otherwise unreadable.
         #
@@ -110,40 +85,40 @@ class _PageOutputsMixin:
         # is the served page, and a name it chose would reach ``os.path.join``.
         # (``finish`` sanitizes a stem as well -- this is the half that keeps
         # the page from naming the file at all.)
-        output_dir, base = self._page_output()
-        name = self.playblast.clip_name(token)
+        output_dir, base = self.page_output()
+        recorder = server.playblast
+        name = recorder.clip_name(token)
         stem = f"{base}_{name}" if base and base not in name else name
         # Encoded where it can always be written -- the frames go with the
         # encode, so a refused folder cannot be retried -- then delivered.
-        report = self.playblast.finish(
-            token, output_dir=str(self.root), target=target, stem=stem
+        report = recorder.finish(
+            token, output_dir=str(server.root), target=target, stem=stem
         )
         path = Path(report["output"])
-        if output_dir != self.root:
+        if output_dir != server.root:
             placed, reason = FileUtils.deliver_file(
                 str(path), str(output_dir / path.name)
             )
             if Path(placed) == path:
-                self._fell_back(output_dir, reason)
+                self.fell_back(output_dir, reason)
             else:
                 path.unlink(missing_ok=True)
                 path = Path(placed)
             report["output"] = str(path)
-        with self._lock:
-            self._recordings[token] = path
+        with server._lock:
+            self.recordings[token] = path
             # Bounded: the map only exists so a download can follow a finish,
             # and a preview server lives for a whole DCC session.
-            for stale in list(self._recordings)[: -self.MAX_RECORDINGS]:
-                self._recordings.pop(stale, None)
-        report["url"] = f"{self.url}{PLAYBLAST_PATH}/{token}"
-        report["in_serve_root"] = path.parent == self.root
-        self.logger.info("Recording written to %s", path)
+            for stale in list(self.recordings)[: -server.MAX_RECORDINGS]:
+                self.recordings.pop(stale, None)
+        report["url"] = f"{server.url}{PLAYBLAST_PATH}/{token}"
+        report["in_serve_root"] = path.parent == server.root
+        server.logger.info("Recording written to %s", path)
         return report
 
     def recording_path(self, token: str) -> Optional[Path]:
-        """The file a finished recording produced, or None."""
-        with self._lock:
-            path = self._recordings.get(str(token))
+        with self._server._lock:
+            path = self.recordings.get(str(token))
         return path if path is not None and path.is_file() else None
 
     # ------------------------------------------------------------------
@@ -152,62 +127,30 @@ class _PageOutputsMixin:
     def save_snapshot(
         self, data: bytes, content_type: str = "image/png"
     ) -> Dict[str, Any]:
-        """Write a still of the page's view, and report where it went.
-
-        The page renders its current view and posts the image; this decides
-        where it lands, by the rule a recording follows (see
-        :meth:`finish_playblast`): beside the published file when that file is
-        still on disk, else in the serve root, from which the returned ``url``
-        fetches it -- the only copy a scene push's still has.
-
-        Numbered, never overwritten, as ``<deliverable>_view_<NNN>.png``: a
-        still is taken again from another angle, and the second must not
-        replace the first. The name is composed here and not accepted from the
-        page, for the reason a recording's is.
-
-        Parameters:
-            data: The encoded image.
-            content_type: Its MIME type, one of :attr:`SNAPSHOT_TYPES`.
-
-        Returns:
-            ``{"output", "name", "url", "in_serve_root", "bytes"}``. ``url`` is
-            the still's served path RELATIVE to the page, or None when it
-            landed beside the deliverable, off the serve root -- where it is
-            already where its owner keeps it. Relative because the page is the
-            one that follows it: a browser honours ``download`` only on the
-            page's own origin, and the page is as validly open at
-            ``localhost`` as at the ``127.0.0.1`` this server's :attr:`url`
-            spells -- an absolute link navigated a ``localhost`` tab to the
-            bare PNG instead of saving it.
-
-        Raises:
-            ValueError: An unsupported type, an empty or oversized body, or
-                bytes that are not the image they claim to be.
-            OSError: The write itself failed.
-        """
+        server = self._server
         mime = str(content_type or "").split(";", 1)[0].strip().lower()
-        spec = self.SNAPSHOT_TYPES.get(mime)
+        spec = server.SNAPSHOT_TYPES.get(mime)
         if spec is None:
             raise ValueError(
                 f"unsupported image type {content_type!r}; expected one of "
-                f"{', '.join(sorted(self.SNAPSHOT_TYPES))}"
+                f"{', '.join(sorted(server.SNAPSHOT_TYPES))}"
             )
         extension, signature = spec
         if not data:
             raise ValueError("the image arrived empty")
-        if len(data) > self.MAX_SNAPSHOT_BYTES:
+        if len(data) > server.MAX_SNAPSHOT_BYTES:
             raise ValueError(
                 f"the image is {len(data)} bytes; the ceiling is "
-                f"{self.MAX_SNAPSHOT_BYTES}"
+                f"{server.MAX_SNAPSHOT_BYTES}"
             )
         if not data.startswith(signature):
             raise ValueError(f"the body is not a {mime} image")
 
-        directory, base = self._page_output()
+        directory, base = self.page_output()
         stem = f"{base}_view" if base else "view"
 
         def write(folder: Path) -> Path:
-            with self._snapshot_lock:
+            with self.snapshot_lock:
                 path = Path(
                     FileUtils.next_version_path(
                         str(folder / f"{stem}{extension}"),
@@ -229,12 +172,12 @@ class _PageOutputsMixin:
         try:
             path = write(directory)
         except OSError as e:
-            if directory == self.root:
+            if directory == server.root:
                 raise
-            self._fell_back(directory, e)
-            path = write(self.root)
-        in_serve_root = path.parent == self.root
-        self.logger.info("Image written to %s", path)
+            self.fell_back(directory, e)
+            path = write(server.root)
+        in_serve_root = path.parent == server.root
+        server.logger.info("Image written to %s", path)
         return {
             "output": str(path),
             "name": path.name,
@@ -243,7 +186,7 @@ class _PageOutputsMixin:
             "bytes": len(data),
         }
 
-    def _page_output(self) -> Tuple[Path, str]:
+    def page_output(self) -> Tuple[Path, str]:
         """``(directory, base)`` for a file the page asks this server to write.
 
         The one placement rule every page output follows -- a recording and a
@@ -252,7 +195,7 @@ class _PageOutputsMixin:
         :meth:`PreviewPlayblast.resolve_output_dir`'s answer, and *base* the
         name a file there is labelled with. It is where a write is tried
         first; a folder that refuses the write sends it to the serve root
-        (:meth:`_fell_back`).
+        (:meth:`fell_back`).
 
         *base* is the SOURCE's stem, not the served asset's: the asset is
         republished under a stable ``scene.glb`` so a page can keep one URL
@@ -263,24 +206,25 @@ class _PageOutputsMixin:
         """
         from pythontk.net_utils.preview.playblast import PreviewPlayblast
 
-        with self._lock:
-            source = self._source
-        directory = PreviewPlayblast.resolve_output_dir(source, self.root)
+        server = self._server
+        with server._lock:
+            source = server._source
+        directory = PreviewPlayblast.resolve_output_dir(source, server.root)
         # A label only when there IS a deliverable on disk. A scene push's
         # source is the bridge's scratch payload, moved into the serve root on
         # publish: its stem is a random tag, and outputs named after it
         # restarted their numbering under a new unreadable prefix every push.
-        stem = source.stem if source is not None and directory != self.root else ""
+        stem = source.stem if source is not None and directory != server.root else ""
         return directory, StrUtils.to_legal_name(stem)
 
-    def _fell_back(self, directory: Path, reason: Any) -> None:
+    def fell_back(self, directory: Path, reason: Any) -> None:
         """Say that a page output meant for *directory* went to the serve root.
 
         A deliverable on a read-only share: its outputs still belong to the
         page, and the serve root is where the page can collect them. Found by
         the write itself (``os.access`` answers from mode bits alone, and on
         Windows says yes to a read-only share or a denying ACL)."""
-        self.logger.warning(
+        self._server.logger.warning(
             "%s took no file (%s); page output goes to the preview's own "
             "folder instead, from which the page downloads it.",
             directory,

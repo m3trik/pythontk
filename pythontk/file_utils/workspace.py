@@ -702,9 +702,11 @@ class WorkspaceTemplates(object):
     #: Preset-collection name under the ecosystem user-config root.
     STORE_NAME = "workspace_templates"
 
-    #: Pre-2026-08 per-package locations, migrated into the shared store on first
-    #: access (the concept was Blender-only before Maya grew the twin API).
-    _LEGACY_PACKAGES = ("blendertk",)
+    #: Folders under the user-config root that releases before 2026-08 kept
+    #: this store in (the concept was Blender-only before Maya grew the twin
+    #: API), migrated into the shared store on first access. Saved locations,
+    #: spelled as they were saved -- not packages this one knows.
+    _LEGACY_FOLDERS = ("blendertk",)
 
     @classmethod
     def store(cls) -> Any:
@@ -724,7 +726,7 @@ class WorkspaceTemplates(object):
     def _migrate_legacy(cls, store):
         """One-time copy of per-package template dirs into the shared store."""
         store.adopt(
-            *(store.user_dir.parent / p / cls.STORE_NAME for p in cls._LEGACY_PACKAGES)
+            *(store.user_dir.parent / p / cls.STORE_NAME for p in cls._LEGACY_FOLDERS)
         )
 
     @classmethod

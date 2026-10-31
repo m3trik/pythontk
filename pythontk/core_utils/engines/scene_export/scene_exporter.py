@@ -556,9 +556,22 @@ class SceneExporterBase(LoggingMixin):
     # The export button's contract (the panel's b000, written once)
     # ------------------------------------------------------------------
 
-    #: The Output Format row (``cmb004``): label -> ``output_format`` token.
-    #: APPEND-ONLY -- the combo (and every saved preset) persists by index.
+    #: The Output Format row (:attr:`SETTINGS_DEFINITIONS`): label ->
+    #: ``output_format`` token. APPEND-ONLY -- the combo (and every saved
+    #: preset) persists by index.
     OUTPUT_FORMATS = ptk.ExportProfile.OUTPUT_FORMATS
+
+    #: The Settings rows the export reads that are no task or check definition,
+    #: declared as rows: the panel reads them with its task and check rows, and
+    #: :meth:`run_config_from_values` takes each from the values by its
+    #: objectName. That objectName is a saved name every export preset stores,
+    #: so it is never renamed, here or in a host binding: the panel builds its
+    #: widget under the same spelling (tentacle's ``SceneExporterSlots``, held
+    #: to this row by its test). ``output_format``: the Output Format combo,
+    #: whose value ``perform_export`` reads as ``tasks["output_format"]``.
+    SETTINGS_DEFINITIONS: Dict[str, Dict[str, Any]] = {
+        "output_format": {"widget_type": "ComboBox", "object_name": "cmb004"},
+    }
 
     def definition_tables(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """``(tasks, checks)`` -- the panel's two definition tables, built once.
@@ -583,8 +596,15 @@ class SceneExporterBase(LoggingMixin):
 
         The export button's contract, through
         :meth:`pythontk.ExportProfile.run_config` (the one copy both DCC panels
-        read their widgets with); this adds the settings row that is not a task
-        definition: ``output_format`` (``cmb004``) into the tasks.
+        turn their rows' values into a run with); this adds the Settings row
+        that is no task definition (:attr:`SETTINGS_DEFINITIONS`):
+        ``output_format`` into the tasks.
+
+        Parameters:
+            values: ``{objectName: value}`` -- every task, check and
+                :attr:`SETTINGS_DEFINITIONS` row the panel read.
+            override_checks: Override Checks is armed: the checks are dropped.
+            ignore_groups_case_sensitive: The Ignore row's case toggle.
 
         Returns:
             ``{"tasks", "export_mode", "export_visible"}``.
@@ -597,7 +617,8 @@ class SceneExporterBase(LoggingMixin):
             override_checks=override_checks,
             ignore_groups_case_sensitive=ignore_groups_case_sensitive,
         )
-        output_format = values.get("cmb004")
+        row = self.SETTINGS_DEFINITIONS["output_format"]
+        output_format = values.get(ptk.ExportProfile.widget_key("output_format", row))
         if output_format:
             config["tasks"]["output_format"] = output_format
         return config

@@ -4,12 +4,13 @@
 
 Both DCC Scene Exporters (mayatk / blendertk) describe their tasks and checks
 as declarative *definitions* -- ``{name: {"widget_type", "object_name",
-"setChecked", ...}}`` -- from which each panel builds its widgets, and the
-export button reads those widgets back into the ``tasks`` dict
-``perform_export`` takes. That read, and the coupled entries it derives (a
-texture template arms its compatibility check, an optimize choice sets the
-size cap and its check), is the same rule in both panels; this module is the
-one copy of it (:class:`ExportProfile`).
+"setChecked", ...}}`` -- from which the panel builds its widgets, and the
+export button turns what those widgets hold, ``{objectName: value}``, into the
+``tasks`` dict ``perform_export`` takes. The panel reads its widgets (tentacle's
+Slots, through uitk: no Qt here); turning the values into the run, and the
+coupled entries it derives (a texture template arms its compatibility check,
+an optimize choice sets the size cap and its check), is the same rule in both
+hosts, and this module is the one copy of it (:class:`ExportProfile`).
 
 The same goes for what the two pipelines run and in what order -- the task
 order, which tasks each check reads, the combo tables the panels offer
@@ -33,8 +34,6 @@ from pythontk.str_utils._str_utils import StrUtils
 class ExportProfile:
     """Pure helpers over Scene Exporter task / check definitions."""
 
-    CHECKBOX = "QCheckBox"
-
     # ------------------------------------------------------------------ naming
     @staticmethod
     def legal_name(name: str) -> str:
@@ -53,15 +52,6 @@ class ExportProfile:
         """The objectName the panel gives *name*'s widget (and the preset stores)."""
         return spec.get("object_name") or cls.legal_name(name)
 
-    @classmethod
-    def value_method(cls, spec: Mapping[str, Any]) -> str:
-        """The read the export button performs on the widget (``b000``'s rule)."""
-        method = spec.get("value_method")
-        if method:
-            return method
-        widget_type = spec.get("widget_type", cls.CHECKBOX)
-        return "isChecked" if widget_type == cls.CHECKBOX else "currentData"
-
     # ------------------------------------------------------------- run config
     @classmethod
     def run_config(
@@ -75,8 +65,9 @@ class ExportProfile:
     ) -> Dict[str, Any]:
         """The export button's contract: widget values -> ``perform_export`` inputs.
 
-        Exactly what both panels' ``b000`` did inline: read each task / check by
-        its widget key, derive the coupled entries (an optimize choice sets the
+        Exactly what both panels' ``b000`` did inline: take each task / check by
+        its widget key from *values* -- ``{objectName: value}``, as the panel
+        read its rows -- derive the coupled entries (an optimize choice sets the
         size cap; each task in :attr:`VERIFYING_CHECKS` arms the check that
         verifies it), drop what is off, add :attr:`ALWAYS_CHECKS` -- which
         Override Checks keeps -- wrap ``ignore_groups`` with its match mode,
@@ -158,30 +149,6 @@ class ExportProfile:
         if choice is not True:
             tasks["texture_max_size"] = choice
         return tasks
-
-    @classmethod
-    def read_values(
-        cls,
-        widgets: Mapping[str, Any],
-        *tables: Mapping[str, Mapping[str, Any]],
-    ) -> Dict[str, Any]:
-        """Read the panel's live widgets into ``{objectName: value}``.
-
-        *widgets* maps objectName to widget (the panel's ``ui``); each
-        definition's widget is read with :meth:`value_method`, the button's
-        own rule, so :meth:`run_config` reads what the screen shows.
-        """
-        values: Dict[str, Any] = {}
-        for table in tables:
-            for name, spec in table.items():
-                key = cls.widget_key(name, spec)
-                widget = widgets.get(key) if isinstance(widgets, Mapping) else None
-                if widget is None:
-                    widget = getattr(widgets, key, None)
-                method = cls.value_method(spec)
-                if widget is not None and hasattr(widget, method):
-                    values[key] = getattr(widget, method)()
-        return values
 
     @classmethod
     def _retired_row_notes(

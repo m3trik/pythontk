@@ -55,14 +55,12 @@ class TestNaming(unittest.TestCase):
             "texture_output",
         )
 
-    def test_value_method_follows_the_export_buttons_rule(self):
-        self.assertEqual(ExportProfile.value_method({}), "isChecked")
-        self.assertEqual(
-            ExportProfile.value_method({"widget_type": "ComboBox"}), "currentData"
-        )
-        self.assertEqual(
-            ExportProfile.value_method(CHECKS["check_path_length"]), "value"
-        )
+    def test_the_widget_reads_are_the_panels(self):
+        """pythontk knows no Qt: the panel reads its rows (tentacle's
+        SceneExporterSlots, through uitk) and hands ``{objectName: value}`` in.
+        The reading rule and its widget vocabulary left with it (2026-10-29)."""
+        for name in ("read_values", "value_method", "CHECKBOX"):
+            self.assertFalse(hasattr(ExportProfile, name), name)
 
 
 class TestLegacyRegexFold(unittest.TestCase):
@@ -252,57 +250,20 @@ class TestRunConfig(unittest.TestCase):
             tasks["ignore_groups"], {"names": "temp*", "case_sensitive": True}
         )
 
-    def test_live_widgets_are_read_by_the_buttons_rule(self):
-        """Checkbox -> isChecked, combo -> currentData, else the definition's method."""
-
-        class _Combo:
-            def __init__(self, data):
-                self._data = data
-
-            def currentData(self):
-                return self._data
-
-        class _Check:
-            def __init__(self, on):
-                self._on = on
-
-            def isChecked(self):
-                return self._on
-
-        class _Spin:
-            def value(self):
-                return 260
-
-        class _Text:
-            def text(self):
-                return "temp*"
-
-        widgets = {
-            "export_visible_objects": _Combo("visible"),
-            "export_data_node": _Check(True),
-            "texture_output": _Combo(None),
-            "texture_optimize": _Combo(2048),
-            "ignore_groups": _Text(),
-            "smart_bake": _Check(False),
-            "check_default_materials": _Check(True),
-            "check_path_length": _Spin(),
-            "check_with_dash": _Check(False),
+    def test_a_panels_values_become_the_run(self):
+        """What the panel read off its rows -- every row, by objectName -- is
+        the run (the reading itself is the panel's)."""
+        values = {
+            "export_visible_objects": "visible",
+            "export_data_node": True,
+            "texture_output": None,
+            "texture_optimize": 2048,
+            "ignore_groups": "temp*",
+            "smart_bake": False,
+            "check_default_materials": True,
+            "check_path_length": 260,
+            "check_with_dash": False,
         }
-        values = ExportProfile.read_values(widgets, TASKS, CHECKS)
-        self.assertEqual(
-            values,
-            {
-                "export_visible_objects": "visible",
-                "export_data_node": True,
-                "texture_output": None,
-                "texture_optimize": 2048,
-                "ignore_groups": "temp*",
-                "smart_bake": False,
-                "check_default_materials": True,
-                "check_path_length": 260,
-                "check_with_dash": False,
-            },
-        )
         config = ExportProfile.run_config(values, TASKS, CHECKS)
         self.assertEqual(config["export_mode"], "visible")
         self.assertEqual(config["tasks"]["texture_max_size"], 2048)

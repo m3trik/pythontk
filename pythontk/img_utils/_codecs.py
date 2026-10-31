@@ -214,14 +214,14 @@ class _ImgCodecInternal:
             OSError: the OpenCV TIFF write failed.
         """
         if bit_depth != 16:  # only 16 is supported here; 32-bit float = EXR/HDR.
-            print(
-                f"# ImgUtils: {bit_depth}-bit unsupported for {name}; saving as 8-bit."
+            cls.logger.warning(
+                f"{bit_depth}-bit unsupported for {name}; saving as 8-bit."
             )
             return False
 
         ext = os.path.splitext(name)[1].lstrip(".").lower()
         if ext not in ("png", "tiff", "tif"):
-            print(f"# ImgUtils: '{ext}' cannot store 16-bit; saving {name} as 8-bit.")
+            cls.logger.warning(f"'{ext}' cannot store 16-bit; saving {name} as 8-bit.")
             return False
 
         if im.mode in ("L", "P", "1", "I", "I;16"):

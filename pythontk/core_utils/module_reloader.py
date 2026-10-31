@@ -12,7 +12,7 @@ import types
 from types import ModuleType
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
-__all__ = ["ModuleReloader", "ReloadReport", "reload_package"]
+__all__ = ["ModuleReloader", "ReloadReport"]
 
 ModuleRef = Union[str, ModuleType]
 
@@ -445,13 +445,3 @@ class ModuleReloader:
             return name[: -len(".__init__")]
 
         return name
-
-
-def reload_package(
-    package: ModuleRef,
-    **kwargs,
-) -> ReloadReport:
-    """Convenience wrapper around :class:`ModuleReloader`."""
-
-    reloader = ModuleReloader()
-    return reloader.reload(package, **kwargs)

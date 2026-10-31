@@ -50,7 +50,7 @@ Everything here is reachable from the package root (`import pythontk as ptk; ptk
 | Module | Key symbols | What it does |
 |---|---|---|
 | `module_resolver` | `bootstrap_package` *(direct import)* | The lazy attribute-resolution machinery behind every ecosystem package root (`DEFAULT_INCLUDE` → lazy `__getattr__` → derived `__all__`). |
-| `module_reloader` | `ModuleReloader`, `reload_package` | Hot-reload a package and its submodules in dependency order; returns a `ReloadReport`. |
+| `module_reloader` | `ModuleReloader` | Hot-reload a package and its submodules in dependency order; returns a `ReloadReport`. |
 | `package_manager` | `PackageManager` | pip wrapper: install/uninstall/list/update, version checks, concurrent latest-index lookups. |
 | `cli` | `CLI` | Consistent `argparse` builders shared across scripts (e.g. the standard SSH connection argument group). |
 | `symbol_record` | `SymbolRecord` | The shared public-API symbol shape produced by both the static registry generator and the dynamic `HelpMixin`; compared in the runtime-vs-static drift gate. |
@@ -110,7 +110,7 @@ generated from these declarations.
 - `region_masks` — named face-group masks that gate texture regions at runtime: registry, JSON manifest schema, and `RegionMaskPacker` (rasterizes UV triangles into RGBA slot channels).
 - `mat_report` — pure text/HTML formatters over the material/texture record schema both DCCs produce, so they share one report surface.
 
-The Qt panels driving the texture engine interactively (Map Converter / Packer / Compositor) live in [extapps](https://github.com/m3trik/extapps).
+The Qt panels driving the texture engine interactively (Map Converter / Packer / Compositor) are [tentacle](https://github.com/m3trik/tentacle)'s standalone panels.
 
 ## Links
 

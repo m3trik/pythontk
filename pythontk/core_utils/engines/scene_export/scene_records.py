@@ -752,6 +752,12 @@ class SceneRecords:
     Unity importer gate are generated from the same rows.
     """
 
+    #: The vocabularies a :class:`RecordSpec` declares a record with, on the
+    #: registry that holds every record -- ``SceneRecords.Kind.DERIVED`` --
+    #: since their bare names are too generic for the package root.
+    Kind = Kind
+    Merge = Merge
+
     # -- deliverable ---------------------------------------------------------
     #: Produced from the scene as staged for each write (the hosts'
     #: ``MaterialRecords.export_record``, through ``MaterialFamilies``) and

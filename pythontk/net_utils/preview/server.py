@@ -65,16 +65,24 @@ write.
 
 Layout: this module holds the :class:`PreviewServer` facade -- lifecycle, the
 live manifest and viewer liveness, publish and its delivery dials, and the
-browser it opens. Its other jobs are private mixins beside it (``_serve_root``:
-the viewer page, the viewer scripts and the atomic writes; ``_sharing``: the
-guest listener and its tunnel; ``_page_outputs``: recordings and stills;
-``_scene_description``: the scene as data), and the HTTP handler with the
-route names is :mod:`.routes`, re-exported here.
+browser it opens -- and every public method, its signature and its docstring.
+Its other jobs are private collaborators beside it, each owning its own state:
+``_serve_root`` (:class:`_ServeRoot`: the viewer page, the viewer scripts and
+the atomic writes), ``_sharing`` (:class:`_PreviewShare`: the guest listener,
+its admitted names and guests, the tunnel and the private segment -- the
+share's whole security state), ``_page_outputs`` (:class:`_PageOutputs`:
+recordings and stills) and ``_scene_description`` (:class:`_SceneDescription`:
+the scene as data). Each holds the server and reads its tables and its
+published state through it at call time, under the server's one state lock --
+so a manifest is one instant's snapshot -- and calls its public methods through
+it, so an override of one reaches every caller. The HTTP handler with the route
+names is :mod:`.routes`, re-exported here.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 import webbrowser
@@ -93,14 +101,15 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.temp_artifacts import TempArtifacts
 from pythontk.net_utils._net_utils import NetUtils
-from pythontk.net_utils.preview._page_outputs import _PageOutputsMixin
-from pythontk.net_utils.preview._scene_description import _SceneDescriptionMixin
-from pythontk.net_utils.preview._serve_root import _ServeRootMixin
-from pythontk.net_utils.preview._sharing import _SharingMixin
+from pythontk.net_utils.preview._page_outputs import _PageOutputs
+from pythontk.net_utils.preview._scene_description import _SceneDescription
+from pythontk.net_utils.preview._serve_root import _ServeRoot
+from pythontk.net_utils.preview._sharing import _PreviewShare
 
 # The route names are the handler's; re-exported here, where callers and the
 # page's tests have always imported them from.
@@ -132,13 +141,7 @@ def _mesh_convert():
     return MeshConvert
 
 
-class PreviewServer(
-    LoggingMixin,
-    _ServeRootMixin,
-    _SharingMixin,
-    _PageOutputsMixin,
-    _SceneDescriptionMixin,
-):
+class PreviewServer(LoggingMixin):
     """Serve a directory of preview assets on loopback, with a live manifest.
 
     Parameters:
@@ -203,6 +206,143 @@ class PreviewServer(
     #: a cost a DCC session notices.
     POLL_INTERVAL = 0.05
 
+    # -- the serve root (_ServeRoot reads these through the server) ------------
+    #: The web runtime's root, which :attr:`SCRIPTS`' paths resolve under: the
+    #: page (``viewer.html``), its kernel (``kernel/``) and the packaged
+    #: features (``features/``). Served as laid out here, so a module's
+    #: relative imports resolve the same on disk and in the page.
+    SCRIPTS_DIR = Path(__file__).parent
+
+    #: The kernel's folder, under :attr:`SCRIPTS_DIR` and the serve root alike.
+    KERNEL_ROUTE = "kernel"
+
+    #: The packaged features' folder, under :attr:`SCRIPTS_DIR` and the serve
+    #: root alike.
+    FEATURES_ROUTE = "features"
+
+    #: Serve-root subdirectory (and URL prefix) a caller's own scripts live
+    #: under (:meth:`add_script` with a path).
+    SCRIPTS_ROUTE = "scripts"
+
+    #: Built-in viewer scripts -- the packaged features -- registered name ->
+    #: the entry module's path under :attr:`SCRIPTS_DIR`. A feature that is one
+    #: module is a file in ``features/``; one with modules of its own (a
+    #: host-free model beside its three.js adapter) is a folder, every module
+    #: in which is served with its entry. This is the *extension registry*:
+    #: the viewer page itself stays the stable path and gains behaviour by a
+    #: module being activated, never by being edited (OCP). A script is an ES
+    #: module whose default export is called once with the page's viewer API
+    #: -- see ``docs/webxr_preview.md`` for that surface and :meth:`add_script`
+    #: for registering one from outside this package.
+    SCRIPTS: Dict[str, str] = {
+        "turntable": "features/turntable.js",
+        "inspect": "features/inspect.js",
+        "shadow_rig": "features/shadow_rig/shadow_rig.js",
+        "articulated_rig": "features/articulated_rig/articulated_rig.js",
+        "playblast": "features/playblast.js",
+        "snapshot": "features/snapshot.js",
+        # Headless lighting work: a driver (LookCapture) swaps the bake and reads frames.
+        "look_capture": "features/look_capture.js",
+    }
+
+    #: Packaged scripts a deliverable turns on by itself: registered name ->
+    #: the root-extras key whose presence in a published GLB activates it.
+    #: The default set is otherwise empty (the page must not pay for a seam
+    #: nobody asked to use), but a script that exists to read a manifest the
+    #: conversion wrote is not optional in any useful sense -- the shadow rigs
+    #: ship as still planes without it, which reads as a broken export rather
+    #: than a missing checkbox. :meth:`publish` probes the GLB's JSON chunk
+    #: (never its geometry) and activates through :meth:`add_script`, so the
+    #: script joins whatever set the push named, in the same load order. Opt
+    #: out by removing the entry, or with :meth:`remove_script` after the push.
+    #: The keys are the records' own, never spelled here: a GLB carries each
+    #: record's block under its key.
+    AUTO_SCRIPTS: Dict[str, str] = {
+        "shadow_rig": SceneRecords.SHADOWS.key,
+        # An articulated rig is a prop a hand is meant to move; without its
+        # script the page shows it frozen at whatever the clip says, which
+        # reads as "the rig did not export" rather than as a missing option.
+        "articulated_rig": SceneRecords.ARTICULATION.key,
+        # A deliverable that ships clips grows a picker and a transport in the
+        # page; recording what that transport plays is the same kind of "not
+        # optional in any useful sense" as the shadow rigs. There is no
+        # checkbox for it because the alternative is worse: the button would be
+        # missing on exactly the push a reviewer just watched and wants to
+        # send on, and getting it would mean re-exporting the animation.
+        "playblast": SceneRecords.SHOTS.key,
+    }
+
+    #: Viewer scripts that write through the owner's routes -- a recording, a
+    #: still -- and are therefore withheld from a guest (:meth:`start_guest`).
+    #: The guest listener refuses every write, so served to a guest each would
+    #: be a button that fails; withheld, the guest never downloads it either. A
+    #: script registered under another name is served to guests: an overlay
+    #: that only reads needs nothing here.
+    OWNER_SCRIPTS = frozenset({"playblast", "snapshot"})
+
+    # -- sharing (_PreviewShare reads these through the server) ----------------
+    #: Guest tabs a share tracks at once (:meth:`guest_count`); past it the one
+    #: seen longest ago is forgotten. The ids are the guests' own choosing, so
+    #: the table has to be bounded by this side.
+    MAX_GUESTS = 256
+
+    #: Environment variables a share reads when its caller names no alias: where
+    #: to keep the stable redirect to the link (``ShareTunnel``'s *alias*: a
+    #: path or ``user@host:/path``), and the public address that is served at
+    #: -- the link to hand out instead of the tunnel's own. Machine config, so a
+    #: web root's hostname never lands in a repo.
+    ALIAS_ENV = "PYTHONTK_PREVIEW_ALIAS"
+    ALIAS_URL_ENV = "PYTHONTK_PREVIEW_ALIAS_URL"
+
+    #: Bytes of randomness in a private share's path segment: 96 bits, as
+    #: 16 URL-safe characters -- unguessable, and short enough to read out.
+    SHARE_TOKEN_BYTES = 12
+
+    # -- page outputs (_PageOutputs reads these through the server) ------------
+    #: Finished recordings kept addressable for download at once.
+    MAX_RECORDINGS: int = 8
+
+    #: Image types the page may post a still as: MIME -> (extension, the
+    #: signature its bytes must open with). PNG only -- the page's still is
+    #: lossless, and the table is the one place another type would be added.
+    #: The signature is checked because this route writes a file under a name
+    #: the page does not choose, and a body that is not the image it claims to
+    #: be should be refused rather than saved as one.
+    SNAPSHOT_TYPES: Dict[str, Tuple[str, bytes]] = {
+        "image/png": (".png", b"\x89PNG\r\n\x1a\n"),
+    }
+
+    #: Refuse a still larger than this. A 4K PNG of a production scene is tens
+    #: of megabytes at most; this is a guard against a runaway body, the same
+    #: ceiling a recording's frame gets.
+    MAX_SNAPSHOT_BYTES: int = 64 * 1024 * 1024
+
+    # -- the scene as data (_SceneDescription reads these through the server) --
+    #: Bytes of JSON the overview inlines, smallest section first, and the most
+    #: one page of a section carries -- past one item, which goes whatever its
+    #: size.
+    SCENE_INLINE_BYTES = 128 * 1024
+
+    #: The shape :meth:`describe_scene` answers in, for a reader that keys on it.
+    SCENE_SCHEMA = "pythontk.preview.scene/1"
+
+    #: What the overview tells a reader arriving with nothing else -- an agent
+    #: handed the link.
+    SCENE_ABOUT = (
+        "How this preview's scene is built, as data. 'gltf' is the published "
+        "asset's own glTF 2.0 JSON, verbatim, for each top-level section that "
+        "fit; 'sections' indexes every section with its size, and its 'url' "
+        "reads it a page at a time ('next' is the following page). "
+        "'rendering' is the lighting recipe the viewer renders this asset with "
+        "(three.js 'viewer.three'): tone mapping, environment, key light, and "
+        "what a lightmapped material takes from each -- 'renderingSource' "
+        "says whether the asset published it or the viewer's default applies. "
+        "The asset itself downloads from 'asset'; the page is 'viewer.page'."
+    )
+
+    #: The three.js release the served page imports, as its import map pins it.
+    _THREE_RELEASE = re.compile(r"three@(\d+\.\d+\.\d+)/build/")
+
     def __init__(
         self,
         root: Optional[Union[str, Path]] = None,
@@ -219,9 +359,16 @@ class PreviewServer(
         self.locomotion = locomotion
         self._requested_port = port
         self._viewer = viewer
+        #: The one state lock: what is published and what each collaborator
+        #: holds for a request to read, so a manifest is one instant's state.
         self._lock = threading.Lock()
+        #: The jobs beside the facade's own, each owning its state (built
+        #: first: nothing below, and no request, may find one missing).
+        self._serve_root = _ServeRoot(self)
+        self._share = _PreviewShare(self)
+        self._page_outputs = _PageOutputs(self)
+        self._scene = _SceneDescription(self)
         self._version = 0
-        self._viewer_stamp = ""
         self._asset: Optional[str] = None
         #: The file the current asset was published FROM, so a setting the page
         #: writes can reach the caller's own deliverable and not only the copy.
@@ -238,44 +385,9 @@ class PreviewServer(
         self._thread: Optional[threading.Thread] = None
         self._port: Optional[int] = None
         self._viewer_seen: Optional[float] = None
-        #: Active viewer scripts, registered name -> source file. Ordered, and
-        #: the page imports them in this order.
-        self._scripts: Dict[str, Path] = {}
-        #: The page's clip recorder, allocated on first use, and a lock of its
-        #: own for that one allocation -- see :meth:`playblast`.
-        self._playblast: Optional["PreviewPlayblast"] = None
-        self._playblast_lock = threading.Lock()
-        #: Finished recordings, token -> file, so a download can follow.
-        self._recordings: Dict[str, Path] = {}
-        #: Held from choosing a still's number to writing it: two stills posted
-        #: at once (a desktop tab and a headset) would otherwise both pick the
-        #: same free number. Its own lock, so a write never holds up a poll.
-        self._snapshot_lock = threading.Lock()
-        #: The read-only listener a share fronts (see :meth:`start_guest`).
-        self._guest_httpd: Optional[ThreadingHTTPServer] = None
-        self._guest_thread: Optional[threading.Thread] = None
-        #: Public names the guest listener answers to (:meth:`admit_host`).
-        self._admitted: set = set()
-        #: Guest tabs, page id -> last poll; oldest first (see _touch_guest).
-        self._guests: Dict[str, float] = {}
-        #: Pages that beaconed they closed, page id -> when (CLOSED_LINGER).
+        #: Pages that beaconed they closed, page id -> when (CLOSED_LINGER):
+        #: the owner's tab and a guest's alike.
         self._closed: Dict[str, float] = {}
-        #: The tunnel in front of the guest listener while sharing, and the
-        #: public address of its alias, when there is one.
-        self._tunnel = None
-        self._alias_url: Optional[str] = None
-        #: A private share's secret path segment, or ``None``: the guest
-        #: listener then answers only under ``/<token>/`` (see :meth:`share`).
-        self._share_token: Optional[str] = None
-        #: A share's tunnel while it still waits on its provider, so an
-        #: unshare can end that wait (:meth:`ShareTunnel.cancel`).
-        self._starting = None
-        #: Held while a share sets up or installs its tunnel and while
-        #: :meth:`unshare` runs -- never across a provider's wait -- and the
-        #: count of unshares, so a share whose wait an unshare interrupted can
-        #: tell (see :meth:`share`).
-        self._share_lock = threading.Lock()
-        self._share_generation = 0
 
         if root is None:
             # "session": a detached consumer (the browser) reads these while
@@ -373,7 +485,7 @@ class PreviewServer(
             manifest = {
                 "version": self._version,
                 # Page fingerprint; the viewer reloads when it changes.
-                "viewer": self._viewer_stamp,
+                "viewer": self._serve_root.viewer_stamp,
                 "asset": self._asset,
                 # Every part, the asset first: the page loads them together.
                 "parts": [dict(part) for part in self._parts],
@@ -385,11 +497,9 @@ class PreviewServer(
                 "locomotion": bool(self.locomotion),
                 # URLs rather than names: the page imports these directly, and
                 # the route is this module's business, not the viewer's.
-                "scripts": [
-                    self._script_url(name, source)
-                    for name, source in self._scripts.items()
-                    if not (guest and name in self.OWNER_SCRIPTS)
-                ],
+                "scripts": self._serve_root.script_urls(
+                    exclude=self.OWNER_SCRIPTS if guest else ()
+                ),
             }
         if guest:
             manifest["guest"] = True
@@ -427,8 +537,8 @@ class PreviewServer(
         """Bind the port and serve on a daemon thread. Idempotent."""
         if self._httpd is not None:
             return self
-        self._ensure_viewer()
-        self._ensure_scripts()
+        self._serve_root.ensure_viewer()
+        self._serve_root.ensure_scripts()
         handler = partial(_PreviewHandler, directory=str(self.root), owner=self)
         try:
             self._httpd = _PreviewHTTPServer((self.host, self._resolve_port()), handler)
@@ -579,17 +689,17 @@ class PreviewServer(
         # Re-sync the managed viewer here, not only in `start`: the server
         # outlives every individual push, so this is the only hook an edited
         # page has to reach a session that is already running.
-        self._ensure_viewer()
+        self._serve_root.ensure_viewer()
         # Same reasoning for the scripts: the active set is per *push* (a
         # bridge can name one for a single delivery), so it has to be
         # materialized here, not only at start.
-        self._ensure_scripts()
+        self._serve_root.ensure_scripts()
         with self._lock:
             settings = dict(self._settings)
         for src, name, _label in entries:
             # Before the copy, which may MOVE the source away.
             self._activate_auto_scripts(src)
-            self._write_asset(src, self.root / name, move)
+            self._serve_root.write_asset(src, self.root / name, move)
             if settings:
                 # A dial set in the page is a property of the DELIVERY, not of
                 # the file that happened to be open when it was set, so a
@@ -668,8 +778,7 @@ class PreviewServer(
             return []
         if not isinstance(extras, dict):
             return []
-        with self._lock:
-            active = set(self._scripts)
+        active = set(self.scripts)
         activated = [
             name
             for name, key in self.AUTO_SCRIPTS.items()
@@ -901,6 +1010,451 @@ class PreviewServer(
                 "No browser could be launched for %s - open it manually.", self.url
             )
         return opened
+
+    # ------------------------------------------------------------------
+    # Viewer scripts (_ServeRoot)
+    # ------------------------------------------------------------------
+    @property
+    def scripts(self) -> tuple:
+        """Registered names of the viewer scripts currently active, in load order."""
+        return self._serve_root.names()
+
+    def add_script(
+        self, name: str, path: Optional[Union[str, Path]] = None
+    ) -> "PreviewServer":
+        """Activate a viewer script, on disk and in the manifest at once.
+
+        Every mutator here materializes immediately rather than deferring to
+        the next publish, and that is a correctness requirement rather than a
+        convenience: the manifest starts naming a script the moment it is
+        registered, and the page claims a script URL *before* awaiting its
+        import, so a single 404 in the gap would retire that module for the
+        life of the page.
+
+        Parameters:
+            name: A key of :attr:`SCRIPTS` (a packaged script, imported from
+                its own path, ``features/turntable.js``), or any name at all
+                when *path* is given.
+            path: An ES module outside this package to serve under *name*
+                (``scripts/<name>.js``) -- the seam a consumer extends through
+                without vendoring anything into pythontk. It may import the
+                kernel's pure modules by their served path
+                (``../kernel/math.js``).
+
+        Re-registering a name replaces its source and keeps its position, so a
+        caller can override a packaged script with its own file.
+        """
+        self._serve_root.add(name, path)
+        return self
+
+    def remove_script(self, name: str) -> "PreviewServer":
+        """Deactivate a viewer script (unknown names are ignored), and sweep it.
+
+        Materialized at once, for the reason on :meth:`add_script`.
+        """
+        self._serve_root.remove(name)
+        return self
+
+    def set_scripts(
+        self, scripts: Optional[Union[Dict[str, Any], List[str], tuple]]
+    ) -> "PreviewServer":
+        """Replace the whole active set (``None`` or empty clears it).
+
+        Accepts an iterable of names (packaged scripts) or a ``{name: path}``
+        mapping (external modules). Replacing rather than merging is what makes
+        a per-push script set possible -- see :meth:`PreviewBridge.push`.
+
+        Materialized at once, for the reason on :meth:`add_script`.
+        """
+        self._serve_root.replace(scripts)
+        return self
+
+    # ------------------------------------------------------------------
+    # Sharing (_PreviewShare)
+    # ------------------------------------------------------------------
+    @property
+    def guest_port(self) -> Optional[int]:
+        """The guest listener's port, or ``None`` while it is closed."""
+        return self._share.guest_port
+
+    @property
+    def guest_url(self) -> Optional[str]:
+        """The guest listener on loopback: what a guest sees, from this machine
+        -- under a private share's path segment, the only place it answers."""
+        return self._share.guest_url
+
+    def start_guest(self, port: int = 0) -> int:
+        """Open the read-only listener a share points at; its port. Idempotent.
+
+        A second door onto the same serve root, and the only one a share ever
+        fronts. Its role is fixed by the socket rather than read from a
+        request, so nothing a guest sends can make it the owner's:
+
+        * reads are an allow-list -- the page, its manifest, and exactly what
+          that names (the asset, the scripts outside :attr:`OWNER_SCRIPTS`),
+          plus :meth:`describe_scene`, that same asset's JSON read for them;
+        * every write is refused, and a guest's close beacon retires only
+          that guest's tab;
+        * its polls count toward :meth:`guest_count`, never toward
+          :meth:`has_viewer` -- a guest watching must not stop the next push
+          from reopening the owner's closed tab;
+        * it answers the loopback spellings plus the names :meth:`admit_host`
+          lets in.
+
+        Parameters:
+            port: ``0`` (the default) takes an ephemeral port: a guest arrives
+                through a tunnel, so the number is never seen. Pin one for a
+                transport configured ahead of time (a reverse proxy of your
+                own).
+
+        Returns:
+            The bound port.
+        """
+        return self._share.start_guest(port)
+
+    def stop_guest(self) -> None:
+        """Close the read-only listener, forgetting its admitted names and its
+        guests. Idempotent."""
+        self._share.stop_guest()
+
+    def admit_host(self, netloc: str) -> None:
+        """Let the guest listener answer requests addressed to *netloc*.
+
+        *netloc* is the public name a proxy forwards (``name``, or
+        ``name:port`` off the default port -- as a ``Host`` header spells it).
+        The Host check is the guest listener's DNS-rebinding defence too, so a
+        proxy's name is named rather than the check dropped. :meth:`share`
+        admits its tunnel's name itself; this is for a transport of your own.
+        The owner's listener never admits one.
+        """
+        self._share.admit_host(netloc)
+
+    def guest_count(self) -> int:
+        """How many guest tabs are watching: polled within :attr:`VIEWER_TIMEOUT`."""
+        return self._share.guest_count()
+
+    def share(
+        self,
+        provider: Optional[str] = None,
+        alias: Union[
+            str, os.PathLike, Callable[[Optional[str]], Any], bool, None
+        ] = None,
+        alias_url: Optional[str] = None,
+        timeout: Optional[float] = None,
+        on_step: Optional[Callable[[Any], Any]] = None,
+        private: bool = False,
+    ) -> Dict[str, Any]:
+        """Give this preview a link anyone can open: view-only, and live.
+
+        Every later publish reaches the guests too -- the share is a second,
+        read-only door onto the same serve root (:meth:`start_guest`), fronted
+        by a :class:`pythontk.ShareTunnel`. The owner's page, its writes and its
+        tab are untouched. Starts serving if nothing is yet; a share already
+        running on the same provider and alias is returned as it stands.
+
+        Each guest's browser downloads the deliverable and renders it on its
+        own device -- a standalone headset included, since the link is HTTPS --
+        so this machine serves files and renders nothing for anyone. The link
+        is therefore the deliverable itself: a guest can save the GLB.
+
+        Parameters:
+            provider: A :attr:`ShareTunnel.PROVIDERS` name; ``None`` or
+                ``"auto"`` takes this machine's default
+                (:meth:`ShareTunnel.resolve_provider`).
+            alias: Where to keep a stable redirect to the link -- a path,
+                ``user@host:/path`` or a callable (see :class:`ShareTunnel`).
+                ``None`` reads :attr:`ALIAS_ENV`; ``False`` keeps none.
+            alias_url: The public address the alias is served at, handed out
+                while the alias is current. ``None`` reads :attr:`ALIAS_URL_ENV`.
+            timeout: Seconds to wait for the provider's link; ``None`` keeps
+                :class:`ShareTunnel`'s default.
+            on_step: Handed the :class:`ShareTunnel.StepRequired` of a one-time
+                step the provider stops on (Tailscale before the tailnet
+                enables Funnel), on the thread running this call -- which then
+                waits for the user to take it and returns the link. ``None``:
+                such a share fails at once as that ``StepRequired``.
+            private: Add a fresh random path segment to the link
+                (``https://<name>/<token>/``), answering nothing outside it:
+                each share's link is its own, dead once the share ends, and
+                the provider's name alone -- Tailscale's is the machine's,
+                for good -- opens nothing. Keeps no alias: a stable redirect
+                would be a lasting door to every private link. A share
+                running with the other choice is replaced.
+
+        Returns:
+            :meth:`share_info`.
+
+        Raises:
+            FileNotFoundError: The provider's CLI is not installed; the message
+                names the install (:meth:`ShareTunnel.settle` offers it).
+            ShareTunnel.StepRequired: The provider waits on a one-time step
+                and there is no *on_step* -- or it was not taken in time.
+            RuntimeError: The provider exited without a link; the message
+                carries what it printed. Also when :meth:`unshare` or
+                :meth:`stop` ran while the provider was starting: its tunnel
+                is stopped rather than kept, and a start still waiting --
+                on a step above all -- ends at once.
+            TimeoutError: The provider printed no link in time.
+        """
+        return self._share.share(
+            provider=provider,
+            alias=alias,
+            alias_url=alias_url,
+            timeout=timeout,
+            on_step=on_step,
+            private=private,
+        )
+
+    def unshare(self) -> None:
+        """Stop sharing: the tunnel stops (an alias then says the share ended)
+        and the guest listener closes. The owner's page is untouched.
+        Idempotent; a share still waiting on its provider stops as its link
+        arrives."""
+        self._share.unshare()
+
+    def share_info(self) -> Optional[Dict[str, Any]]:
+        """What is being shared, or ``None`` -- also once the provider exited
+        on its own, which is how a dropped share shows.
+
+        Returns:
+            ``{"url", "tunnel_url", "scene_url", "provider", "label",
+            "public", "private", "guests", "guest_url", "alias_error"}``.
+            ``url`` is the link to hand out: the alias's address when there
+            is an alias AND its last update landed, else the tunnel's own --
+            under a private share's segment -- since a stale alias must never
+            be what gets sent. ``tunnel_url`` is the link the tunnel serves,
+            the segment included. ``scene_url`` is where the share serves
+            :meth:`describe_scene` -- the link for someone's tools or agent --
+            always on the tunnel, since an alias is one redirect page rather
+            than a site.
+        """
+        return self._share.share_info()
+
+    def ping_share(
+        self, timeout: float = 10.0, attempts: int = 3, wait: float = 2.0
+    ) -> Dict[str, Any]:
+        """Ask the share's link for its manifest the way a guest's browser
+        does: whether someone ELSE can reach the share now.
+
+        End to end -- public DNS, the provider's TLS, the tunnel, the guest
+        listener -- and it is this share that answers: the reply must be the
+        guest manifest at this server's version, so a provider's error page
+        or a stale tunnel answering 200 does not pass. A ping is no guest: it
+        sends no page id, so :meth:`guest_count` never counts it. The tunnel's
+        own link is asked, never an alias, which is a page on another server.
+
+        A guest's route, not this machine's: for a public link the name is
+        resolved by public DNS (:meth:`NetUtils.public_addresses`) and the
+        request goes to that address -- this machine's resolver can send it
+        elsewhere (Tailscale's MagicDNS answers a ``ts.net`` name with the
+        tailnet address, which proves nothing about the public ingress). A
+        name public DNS does not have fails the ping: no stranger can open
+        it. The certificate is checked with the trust a browser has
+        (:meth:`NetUtils.tls_context`); one this machine still cannot verify
+        is asked again unverified, and the share answering then passes with
+        ``verified`` False -- the provider's certificate is a browser's to
+        judge, and a root missing here is no guest's problem.
+
+        A brand-new name can take seconds to reach every resolver, so a miss
+        is asked again, *attempts* times in all, *wait* seconds apart.
+
+        Parameters:
+            timeout: Seconds one request may take.
+            attempts: Requests at most; the first that passes ends it.
+            wait: Seconds between attempts.
+
+        Returns:
+            ``{"ok", "url", "status", "ms", "attempts", "error", "route",
+            "verified"}`` -- ``ms`` the round trip of the request that
+            answered (``None`` without one), ``status`` its HTTP status,
+            ``error`` why it did not pass (``None`` when it did), ``route``
+            ``"public"`` (public DNS, as a stranger resolves it) or
+            ``"local"`` (this machine's resolver: a tailnet-only link, plain
+            HTTP, or no public resolver could be asked), ``verified`` whether
+            the certificate was verified (``None`` for plain HTTP). Never
+            raises: nothing shared is a failed ping, said in ``error``.
+        """
+        return self._share.ping_share(timeout=timeout, attempts=attempts, wait=wait)
+
+    @property
+    def share_url(self) -> Optional[str]:
+        """The link to hand out while sharing, else ``None``."""
+        info = self.share_info()
+        return info["url"] if info else None
+
+    # ------------------------------------------------------------------
+    # Page outputs (_PageOutputs)
+    # ------------------------------------------------------------------
+    @property
+    def playblast(self) -> "PreviewPlayblast":
+        """The page's recorder, created on first use.
+
+        Deferred rather than built in ``__init__`` because it allocates a
+        scratch store, and the overwhelming majority of preview servers never
+        record anything.
+        """
+        return self._page_outputs.playblast()
+
+    def begin_playblast(self, **kwargs: Any) -> Dict[str, Any]:
+        """Open a recording (see :meth:`PreviewPlayblast.begin`)."""
+        return self.playblast.begin(**kwargs)
+
+    def finish_playblast(
+        self, token: str, target: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Encode a recording and report where it went.
+
+        The movie lands beside the file that was published, when that file is
+        still on disk -- an exporter's GLB, or one chosen with External GLB.
+        A scene push has no such file (its GLB is the bridge's own scratch,
+        released the moment it is published), so the movie goes to the serve
+        root instead and the page's ``url`` is how it is collected.
+
+        Returns:
+            :meth:`PreviewPlayblast.finish`'s report plus ``"url"`` -- always
+            present, and always the way to fetch the file from the page.
+        """
+        return self._page_outputs.finish_playblast(token, target)
+
+    def recording_path(self, token: str) -> Optional[Path]:
+        """The file a finished recording produced, or None."""
+        return self._page_outputs.recording_path(token)
+
+    def save_snapshot(
+        self, data: bytes, content_type: str = "image/png"
+    ) -> Dict[str, Any]:
+        """Write a still of the page's view, and report where it went.
+
+        The page renders its current view and posts the image; this decides
+        where it lands, by the rule a recording follows (see
+        :meth:`finish_playblast`): beside the published file when that file is
+        still on disk, else in the serve root, from which the returned ``url``
+        fetches it -- the only copy a scene push's still has.
+
+        Numbered, never overwritten, as ``<deliverable>_view_<NNN>.png``: a
+        still is taken again from another angle, and the second must not
+        replace the first. The name is composed here and not accepted from the
+        page, for the reason a recording's is.
+
+        Parameters:
+            data: The encoded image.
+            content_type: Its MIME type, one of :attr:`SNAPSHOT_TYPES`.
+
+        Returns:
+            ``{"output", "name", "url", "in_serve_root", "bytes"}``. ``url`` is
+            the still's served path RELATIVE to the page, or None when it
+            landed beside the deliverable, off the serve root -- where it is
+            already where its owner keeps it. Relative because the page is the
+            one that follows it: a browser honours ``download`` only on the
+            page's own origin, and the page is as validly open at
+            ``localhost`` as at the ``127.0.0.1`` this server's :attr:`url`
+            spells -- an absolute link navigated a ``localhost`` tab to the
+            bare PNG instead of saving it.
+
+        Raises:
+            ValueError: An unsupported type, an empty or oversized body, or
+                bytes that are not the image they claim to be.
+            OSError: The write itself failed.
+        """
+        return self._page_outputs.save_snapshot(data, content_type)
+
+    # ------------------------------------------------------------------
+    # The scene as data (_SceneDescription)
+    # ------------------------------------------------------------------
+    @property
+    def scene_url(self) -> Optional[str]:
+        """Where :meth:`describe_scene` is served on this machine, or ``None``
+        before :meth:`start`. A share's own is ``share_info()["scene_url"]``."""
+        return self._scene.scene_url()
+
+    def describe_scene(
+        self, section: Optional[str] = None, start: int = 0
+    ) -> Dict[str, Any]:
+        """The published scene as data: the payload served at ``/scene.json``.
+
+        Parameters:
+            section: ``None`` for the overview. Else a top-level glTF key
+                (``"nodes"``, ``"materials"`` ...): one page of it, from
+                *start*, within :attr:`SCENE_INLINE_BYTES` -- ``next`` names
+                the following page, ``None`` on the last. A key that is not a
+                list comes back whole, as ``value``.
+            start: The first item of the page.
+
+        Returns:
+            Always ``schema``, ``asset`` (the served name, or ``None`` before a
+            publish) and ``version`` -- a page read across a publish shows it
+            -- and ``parts`` (``[{"url", "name"}]``) when the scene was
+            published as several (:meth:`publish_parts`): ``asset`` is the
+            first, the one described.
+            The overview adds ``about``, ``title``, ``updated``, ``viewer``
+            (``{"page", "three"}``, or ``None`` when no page is served),
+            ``rendering`` and ``renderingSource`` (``"asset"`` or
+            ``"viewer default"``), ``gltf`` (the inlined sections) and
+            ``sections`` (``key -> {"items", "bytes", "inline", "url"}``;
+            ``items`` is ``None`` for a key that is not a list). Before a
+            publish, or for an asset that is not a GLB, a ``note`` says why
+            there is nothing more.
+
+        Raises:
+            KeyError: *section* is not a key of the asset's JSON.
+            ValueError: The asset is not a readable GLB, or *start* is negative.
+            OSError: The asset could not be read.
+        """
+        return self._scene.describe(section, start)
+
+    # ------------------------------------------------------------------
+    # Private names other code reads, forwarded to their owner
+    # ------------------------------------------------------------------
+    # The request handler (routes.py) asks the share about a guest's request.
+    def _guest_route(self, path: str) -> Optional[str]:
+        return self._share.guest_route(path)
+
+    def _guest_files(self) -> set:
+        """Served paths a guest may fetch besides the page: the kernel modules
+        it imports, and what its manifest names -- each script with the
+        modules it imports beside it, and every part of the asset. Composed
+        here, from the serve root and what is published."""
+        serve_root = self._serve_root
+        files = set(serve_root.kernel_files()) if self._viewer else set()
+        with self._lock:
+            files.update(serve_root.script_files(exclude=self.OWNER_SCRIPTS))
+            if self._asset:
+                files.add(self._asset)
+            files.update(part["url"] for part in self._parts)
+        return files
+
+    def _admitted_hosts(self) -> tuple:
+        return self._share.admitted_hosts()
+
+    def _touch_guest(self, viewer_id: str) -> None:
+        self._share.touch_guest(viewer_id)
+
+    def _drop_guest(self, viewer_id: str) -> None:
+        self._share.drop_guest(viewer_id)
+
+    @property
+    def _tunnel(self):
+        """The share's running tunnel, or ``None``."""
+        return self._share.tunnel
+
+    @property
+    def _guests(self) -> Dict[str, float]:
+        """The share's guest tabs, page id -> last poll, oldest first."""
+        return self._share.guests
+
+    @property
+    def _viewer_stamp(self) -> str:
+        """The served page's fingerprint (``manifest()["viewer"]``)."""
+        return self._serve_root.viewer_stamp
+
+    @_viewer_stamp.setter
+    def _viewer_stamp(self, value: str) -> None:
+        self._serve_root.viewer_stamp = value
+
+    # A ping's request and its empty result, read through the class so a
+    # replacement of either (a test's, a caller's) reaches ping_share.
+    _ask_share = staticmethod(_PreviewShare.ask_share)
+    _failed_ping = staticmethod(_PreviewShare.failed_ping)
 
     def __enter__(self) -> "PreviewServer":
         return self.start()

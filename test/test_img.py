@@ -4871,5 +4871,51 @@ class WarpQuadTest(unittest.TestCase):
         np.testing.assert_allclose(out, [[0.0, 1.0], [0.0, 1.0]], atol=1e-6)
 
 
+
+class ImgUtilsReportingTest(unittest.TestCase):
+    """What ImgUtils reports goes through its class logger, and a failure it
+    cannot recover from raises (CODE_STANDARD section 8) -- never a print."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="ptk_img_report_")
+        self.addCleanup(shutil.rmtree, self.temp_dir, ignore_errors=True)
+
+    def test_a_missing_or_unreadable_image_is_named_and_skipped(self):
+        good = os.path.join(self.temp_dir, "good.png")
+        Image.new("RGB", (4, 4)).save(good)
+        broken = os.path.join(self.temp_dir, "broken.png")
+        with open(broken, "wb") as f:
+            f.write(b"not an image")
+        missing = os.path.join(self.temp_dir, "missing.png")
+        with self.assertLogs(ImgUtils.logger, level="WARNING") as said:
+            info = ImgUtils.get_image_info([good, broken, missing])
+        self.assertEqual([entry["name"] for entry in info], ["good.png"])
+        text = "\n".join(said.output)
+        self.assertIn("broken.png", text)
+        self.assertIn("missing.png", text)
+
+    def test_an_unreadable_image_is_no_constant_colour_it_raises(self):
+        with self.assertRaises(Exception):
+            ImgUtils.is_image_constant(os.path.join(self.temp_dir, "nope.png"))
+
+    def test_a_pot_resize_is_shown_by_default(self):
+        """A resize the caller did not size itself is said where a user sees it."""
+        from conftest import shown_by_default
+
+        with shown_by_default(ImgUtils) as shown:
+            resized = ImgUtils.ensure_pot(Image.new("RGB", (100, 60)))
+        self.assertEqual(resized.size, (128, 64))
+        self.assertIn("Resizing to POT: 100x60 -> 128x64", shown.getvalue())
+
+    def test_a_constant_image_reads_its_colour(self):
+        self.assertEqual(
+            ImgUtils.is_image_constant(Image.new("RGB", (4, 4), (255, 0, 0))),
+            (True, (255, 0, 0)),
+        )
+        noisy = Image.new("L", (2, 1))
+        noisy.putpixel((1, 0), 200)
+        self.assertEqual(ImgUtils.is_image_constant(noisy), (False, None))
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

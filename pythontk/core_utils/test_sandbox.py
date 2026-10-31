@@ -538,9 +538,10 @@ class TestSandbox(_TestSandboxInternal):
             CONFIG_ENV_VAR,
             NamingConvention,
         )
-        from pythontk.core_utils.user_config import CONFIG_ROOT_ENV_VAR
+        from pythontk.core_utils.user_config import UserConfig
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
+        CONFIG_ROOT_ENV_VAR = UserConfig.CONFIG_ROOT_ENV_VAR
         saved = {
             var: os.environ.get(var) for var in (CONFIG_ROOT_ENV_VAR, CONFIG_ENV_VAR)
         }

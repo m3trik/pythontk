@@ -710,6 +710,26 @@ class TestCheckFailure(unittest.TestCase):
         self.assertIn("2 validation check(s) failed: check_a, check_b.", asked[0])
 
 
+class TestRunConfigFromValues(unittest.TestCase):
+    """The export button's contract over a panel's ``{objectName: value}``."""
+
+    def test_the_output_format_is_its_declared_rows_value(self):
+        exporter = _Exporter()
+        config = exporter.run_config_from_values({"cmb004": "glb"})
+        self.assertEqual(config["tasks"]["output_format"], "glb")
+        self.assertNotIn(
+            "output_format", exporter.run_config_from_values({})["tasks"]
+        )
+
+    def test_the_format_row_is_the_saved_cmb004(self):
+        """The Output Format's objectName is a saved name every export preset
+        stores, so its row keeps the spelling the presets hold."""
+        self.assertEqual(
+            SceneExporterBase.SETTINGS_DEFINITIONS["output_format"]["object_name"],
+            "cmb004",
+        )
+
+
 class TestRootExport(unittest.TestCase):
     def test_the_root_serves_the_class(self):
         import pythontk as ptk

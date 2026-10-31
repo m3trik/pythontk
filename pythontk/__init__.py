@@ -197,11 +197,9 @@ DEFAULT_INCLUDE = {
     # crossing of records into another scene.
     "core_utils.engines.scene_export.scene_records": [
         "Scope",
-        "Kind",
         "RecordSpec",
         "Record",
         "SceneRecords",
-        "Merge",
         "GlbBlock",
         "WebProjection",
     ],
@@ -420,7 +418,7 @@ DEFAULT_INCLUDE = {
         "BatchResult",
         "NormalOutputMode",
     ],
-    "core_utils.engines.textures.map_optimizer": ["MapOptimizer", "Op"],
+    "core_utils.engines.textures.map_optimizer": ["MapOptimizer"],
     "core_utils.engines.textures.region_masks": [
         "RegionGroup",
         "RegionGroupRegistry",
@@ -471,7 +469,7 @@ DEFAULT_INCLUDE = {
     "core_utils.hierarchy_utils.hierarchy_diff": "HierarchyDiff",
     "core_utils.singleton_mixin": "SingletonMixin",
     "core_utils.step_toggle": ["StepToggle"],
-    "core_utils.module_reloader": ["ModuleReloader", "ReloadReport", "reload_package"],
+    "core_utils.module_reloader": ["ModuleReloader", "ReloadReport"],
     "core_utils.execution_monitor._execution_monitor": "ExecutionMonitor",
     "core_utils.cancel_scope": ["CancelScope", "OperationCancelled"],
     "core_utils.qc_log": ["QcLog", "QcGate", "GateError"],
@@ -606,7 +604,7 @@ DEFAULT_INCLUDE = {
     "net_utils.rpc.installer": [
         "PluginInstaller",
     ],
-    "net_utils.rpc.job": ["Call", "Result", "RpcJob"],
+    "net_utils.rpc.job": ["RpcJob"],
     # The in-application half of the RPC pair (`client` drives it from outside).
     # Exposed here for the plugin that loads in place and can import pythontk;
     # installed plugins stage `plugin_core.py` into their payload instead.
@@ -624,7 +622,40 @@ DEFAULT_INCLUDE = {
 #: Public names that left this package (CODE_STANDARD section 5): no alias, so a
 #: read raises MovedNameError naming the new home. ``{name: (new home, version)}``;
 #: a move adds its names here in the same change set.
-MOVED_NAMES = {}
+MOVED_NAMES = {
+    # A flat wrapper over the class it fronted (CODE_STANDARD section 4).
+    "reload_package": ("pythontk.ModuleReloader().reload", "0.19.0"),
+    # Generic names off the root, on the class that owns them (the policy above).
+    "Kind": ("pythontk.SceneRecords.Kind", "0.19.0"),
+    "Merge": ("pythontk.SceneRecords.Merge", "0.19.0"),
+    "Op": ("pythontk.MapOptimizer.Op", "0.19.0"),
+    # The Scene Exporter panel reads its own rows (pythontk knows no Qt).
+    "ExportProfile.read_values": (
+        "tentacle.slots.tools.scene_exporter.SceneExporterSlots",
+        "0.19.0",
+    ),
+    "ExportProfile.value_method": (
+        "tentacle.slots.tools.scene_exporter.SceneExporterSlots",
+        "0.19.0",
+    ),
+    "ExportProfile.CHECKBOX": (
+        "tentacle.slots.tools.scene_exporter.SceneExporterSlots",
+        "0.19.0",
+    ),
+}
 
 bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)
-# Test: 222117
+
+# Generic names off the root, like Kind / Merge / Op above, but aliased for a window:
+# the released extapps imports these two at module top and publishes off the
+# cascade, so a moved-name error would break every install that upgrades
+# pythontk alone. Chains onto the bootstrap's ``__getattr__``.
+from pythontk.core_utils.deprecation import Deprecation as _Deprecation  # noqa: E402
+
+_Deprecation.attributes(
+    globals(),
+    {"Call": "pythontk.RpcJob.Call", "Result": "pythontk.RpcJob.Result"},
+    remove_in="0.20.0",
+    since="2026-10-29",
+)
+del _Deprecation

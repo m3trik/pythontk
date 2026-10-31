@@ -4837,7 +4837,10 @@ class PreviewShareTestCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIs(json.loads(body)["guest"], True)
         self.assertEqual(_raw(port, "GET", f"/{token}/", host=host)[0], 200)
-        for outside in ("/", "/manifest.json", f"/{token[:-1]}x/manifest.json"):
+        # A segment one character off -- never the token itself, whatever its
+        # last character (a token ending in the substitute was a 1-in-64 flake).
+        wrong = token[:-1] + ("y" if token.endswith("x") else "x")
+        for outside in ("/", "/manifest.json", f"/{wrong}/manifest.json"):
             self.assertEqual(_raw(port, "GET", outside, host=host)[0], 404, outside)
             self.assertEqual(_raw(port, "HEAD", outside, host=host)[0], 404, outside)
         # The bare segment is sent inside, or the page's relative URLs would
@@ -4852,6 +4855,71 @@ class PreviewShareTestCase(unittest.TestCase):
         self.assertEqual(
             _raw(port, "POST", "/viewer-closed?id=t", host=host, body=b"")[0], 404
         )
+
+    def _during_teardown(self, ask):
+        """Call *ask* while :meth:`unshare` stops the tunnel -- the step that
+        takes time -- and return what it answered."""
+        tunnel = self.server._tunnel
+        real_stop = tunnel.stop
+        seen = {}
+
+        def stop(*args, **kwargs):
+            seen.update(ask())
+            return real_stop(*args, **kwargs)
+
+        with unittest.mock.patch.object(tunnel, "stop", side_effect=stop):
+            self.server.unshare()
+        return seen
+
+    def test_a_guest_request_while_the_share_ends_is_refused(self):
+        """REGRESSION (2026-10-29): an unshare cleared the private segment
+        before it closed the guest listener, so for as long as the tunnel took
+        to stop, the still-open listener answered ``/`` and ``/manifest.json``
+        with no segment, under the public name it still admitted."""
+        _info, token = self._private()
+        port, host = self.server.guest_port, "guest-share.example.test"
+
+        def ask():
+            answers = {}
+            for path in ("/", "/manifest.json", f"/{token}/manifest.json"):
+                try:
+                    answers[path] = _raw(port, "GET", path, host=host)[0]
+                except OSError:
+                    answers[path] = "refused"
+            return answers
+
+        seen = self._during_teardown(ask)
+        self.assertEqual(len(seen), 3)
+        self.assertEqual(
+            {path: status for path, status in seen.items() if status == 200}, {}
+        )
+
+    def test_a_kept_alive_guest_connection_answers_nothing_once_the_share_ends(self):
+        """A connection a guest (or the tunnel) kept alive outlives the closed
+        listener: its handler thread reads the next request with the share's
+        state already gone, so a closing listener answers nothing at all."""
+        import http.client
+
+        _info, token = self._private()
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.server.guest_port, timeout=5
+        )
+        self.addCleanup(connection.close)
+        connection.request("GET", f"/{token}/manifest.json")
+        response = connection.getresponse()
+        response.read()
+        self.assertEqual(response.status, 200)
+
+        def ask():
+            try:
+                connection.request("GET", "/manifest.json")
+                answer = connection.getresponse()
+                answer.read()
+                return {"status": answer.status}
+            except (OSError, http.client.HTTPException):
+                return {"status": "refused"}
+
+        self.assertNotEqual(self._during_teardown(ask), {"status": 200})
 
     def test_each_private_share_mints_its_own_link(self):
         """A private link is good for one share: the next has another, and the

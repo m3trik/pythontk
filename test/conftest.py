@@ -9,6 +9,7 @@ This module provides:
 - Path management for test resources
 """
 
+import contextlib
 import json
 import os
 import re
@@ -291,6 +292,40 @@ def hard_edge_normal_map(size=(64, 64), mode="RGB"):
     if mode == "RGBA":
         image.putalpha(Image.new("L", size, 200))
     return image
+
+
+@contextlib.contextmanager
+def shown_by_default(cls):
+    """What *cls* reports that its OWN default handler shows, for the block.
+
+    The class logger's stock stream handler (WARNING and above, plus the
+    custom RESULT level) is pointed at a buffer: a line a user would see in a
+    DCC's script editor is in it, and a line only a configured host would see
+    is not -- which a capture handler of its own (level NOTSET) cannot tell.
+    """
+    import io
+    import logging
+
+    handlers = [
+        h for h in cls.logger.handlers if type(h) is logging.StreamHandler
+    ]
+    if not handlers:
+        raise AssertionError(f"{cls.__name__}.logger has no default stream handler")
+    buffer = io.StringIO()
+    # At the stock level (LoggerExt's WARNING): another test's assertLogs
+    # restores the logger through LoggerExt's level sync, which can leave the
+    # stock handler at NOTSET for the rest of the process.
+    levels = [h.level for h in handlers]
+    for handler in handlers:
+        handler.setLevel(logging.WARNING)
+    previous = [h.setStream(buffer) for h in handlers]
+    try:
+        yield buffer
+    finally:
+        for handler, stream, level in zip(handlers, previous, levels):
+            if stream is not None:
+                handler.setStream(stream)
+            handler.setLevel(level)
 
 
 def unit_length_error(image):

@@ -8,8 +8,10 @@ path, byte count) has to match what a real run then produces — a projection
 that drifts is worse than no projection at all.
 """
 
+import contextlib
 import glob
 import io
+import logging
 import os
 import shutil
 import struct
@@ -34,6 +36,18 @@ from pythontk import (
 from pythontk.core_utils.engines.textures.map_factory import MapFactory
 from pythontk.core_utils.engines.textures.map_optimizer import MapOptimizer, Op
 from conftest import hard_edge_normal_map, unit_length_error
+
+
+@contextlib.contextmanager
+def _report_into(buffer):
+    """What MapOptimizer reports while the block runs, written into *buffer*: its
+    class logger, never stdout (CODE_STANDARD section 8)."""
+    handler = logging.StreamHandler(buffer)
+    MapOptimizer.logger.addHandler(handler)
+    try:
+        yield buffer
+    finally:
+        MapOptimizer.logger.removeHandler(handler)
 
 
 class _TextureFixture(unittest.TestCase):
@@ -309,12 +323,11 @@ class TestPotAspectRatio(_TextureFixture):
         """The twins must say the same thing — a dry run that warns and a real
         run that stays quiet is the drift the plan/apply split exists to stop."""
         import io
-        from contextlib import redirect_stdout
 
         path = self.texture(size=(96, 1))
 
         buffer = io.StringIO()
-        with redirect_stdout(buffer):
+        with _report_into(buffer):
             MapOptimizer.optimize_map(path, force_pot=True)
 
         self.assertIn("aspect ratio", buffer.getvalue().lower())
@@ -500,7 +513,6 @@ class TestPaletteUpcastIsExplained(_TextureFixture):
 
     def test_the_upcast_out_of_a_palette_is_named_in_the_report(self):
         import io
-        from contextlib import redirect_stdout
 
         path = self.palette_texture()
         self.assertEqual(
@@ -508,7 +520,7 @@ class TestPaletteUpcastIsExplained(_TextureFixture):
         )
 
         buffer = io.StringIO()
-        with redirect_stdout(buffer):
+        with _report_into(buffer):
             MapOptimizer.optimize_map(path)
         printed = buffer.getvalue().lower()
 
@@ -522,13 +534,12 @@ class TestPaletteUpcastIsExplained(_TextureFixture):
         line the note exists to replace, so the causal clause is conditional.
         """
         import io
-        from contextlib import redirect_stdout
 
         path = self.palette_texture(size=(256, 256))
         size_before = os.path.getsize(path)
 
         buffer = io.StringIO()
-        with redirect_stdout(buffer):
+        with _report_into(buffer):
             written = MapOptimizer.optimize_map(path, max_size=32)
         printed = buffer.getvalue()
 
@@ -541,25 +552,50 @@ class TestPaletteUpcastIsExplained(_TextureFixture):
     def test_preserving_the_palette_says_nothing(self):
         """The note is about a conversion; there is none to explain here."""
         import io
-        from contextlib import redirect_stdout
 
         path = self.palette_texture()
         buffer = io.StringIO()
-        with redirect_stdout(buffer):
+        with _report_into(buffer):
             MapOptimizer.optimize_map(path, allow_palette=True)
 
         self.assertNotIn("palett", buffer.getvalue().lower())
 
     def test_a_plain_rgb_source_says_nothing(self):
         import io
-        from contextlib import redirect_stdout
 
         path = self.texture()
         buffer = io.StringIO()
-        with redirect_stdout(buffer):
+        with _report_into(buffer):
             MapOptimizer.optimize_map(path)
 
         self.assertNotIn("palett", buffer.getvalue().lower())
+
+
+class TestReportShownByDefault(_TextureFixture):
+    """Each map's outcome reaches the user with no logging set up: the result
+    lines print at RESULT, which the class's default handler shows -- at INFO
+    the Scene Exporter's texture pass and the Compositor went silent."""
+
+    def test_the_resize_and_the_saved_line_are_shown(self):
+        from conftest import shown_by_default
+
+        path = self.texture(size=(128, 128))
+        with shown_by_default(MapOptimizer) as shown:
+            MapOptimizer.optimize_map(path, max_size=32)
+        text = shown.getvalue()
+        self.assertIn("Resizing", text)
+        self.assertIn("Saved optimized texture", text)
+        self.assertIn("128x128 -> 32x32", text)
+
+    def test_a_batch_says_where_and_how_many(self):
+        from conftest import shown_by_default
+
+        self.texture(size=(16, 16))
+        with shown_by_default(MapOptimizer) as shown:
+            MapOptimizer.batch_optimize_maps(self.test_dir)
+        text = shown.getvalue()
+        self.assertIn(f"Optimizing maps in: {self.test_dir}", text)
+        self.assertIn("maps optimized.", text)
 
 
 class TestOptimizeReporting(_TextureFixture):
@@ -594,13 +630,12 @@ class TestOptimizeReporting(_TextureFixture):
         """Shrinking the file is the point of optimizing, so the size has to be
         in the output — it previously reported only resolution and bit depth."""
         import io
-        from contextlib import redirect_stdout
 
         path = self.texture(size=(256, 256))
         size_before = os.path.getsize(path)
 
         buffer = io.StringIO()
-        with redirect_stdout(buffer):
+        with _report_into(buffer):
             written = MapOptimizer.optimize_map(path, max_size=64)
         printed = buffer.getvalue()
 
@@ -612,13 +647,12 @@ class TestOptimizeReporting(_TextureFixture):
         """The original is moved to the old-files folder *before* the save, so
         its size has to be read up front or the report loses its 'from' half."""
         import io
-        from contextlib import redirect_stdout
 
         path = self.texture(size=(128, 128))
         size_before = os.path.getsize(path)
 
         buffer = io.StringIO()
-        with redirect_stdout(buffer):
+        with _report_into(buffer):
             MapOptimizer.optimize_map(path, max_size=64, old_files_folder="old")
 
         self.assertIn(FileUtils.format_bytes(size_before), buffer.getvalue())
@@ -1184,12 +1218,11 @@ class TestDeliveryBudget(_TextureFixture):
 
     def test_optimize_map_warns_by_default(self):
         import io
-        from contextlib import redirect_stdout
 
         path = self.texture(size=(256, 256))
 
         buffer = io.StringIO()
-        with redirect_stdout(buffer):
+        with _report_into(buffer):
             MapOptimizer.optimize_map(path, output_profile=self.PROFILE)
 
         self.assertIn("Over delivery budget", buffer.getvalue())
@@ -1959,11 +1992,10 @@ class TestKtx2Compression(_TextureFixture):
     def test_rdo_against_another_container_is_reported_not_silent(self):
         """Same rule as a lossy request against a lossless container: the run
         writes the map and says the dial did nothing. Added: 2026-09-19"""
-        from contextlib import redirect_stdout
 
         path = self.texture("wall_Normal_OpenGL.png")
         buffer = io.StringIO()
-        with redirect_stdout(buffer):
+        with _report_into(buffer):
             MapOptimizer.optimize_map(path, output_type="png", uastc_rdo=1.0)
         self.assertIn("UASTC RDO 1 ignored", buffer.getvalue())
         report = MapOptimizer.assess(path, output_type="png", uastc_rdo=1.0)

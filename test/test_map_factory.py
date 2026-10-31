@@ -1446,6 +1446,26 @@ class TestMapFactoryImageInputRegressions(unittest.TestCase):
             sorted(os.listdir(maps)), ["mat_Glossiness.png", "mat_Specular.png"]
         )
 
+    def test_a_spec_gloss_conversion_names_its_files_where_a_user_sees_it(self):
+        """The written maps are the conversion's result: said at RESULT, which
+        the class's default handler shows, not at INFO, which it hides."""
+        from PIL import Image
+
+        from conftest import shown_by_default
+
+        spec = os.path.join(self.test_dir, "mat_Specular.png")
+        gloss = os.path.join(self.test_dir, "mat_Glossiness.png")
+        Image.new("RGB", (8, 8), (128, 128, 128)).save(spec)
+        Image.new("L", (8, 8), 128).save(gloss)
+        with shown_by_default(MapFactory) as shown:
+            written = MapFactory.convert_spec_gloss_to_pbr(
+                spec, gloss, write_files=True
+            )
+        text = shown.getvalue()
+        self.assertIn("PBR Conversion complete", text)
+        for path in written:
+            self.assertIn(path, text)
+
     def test_a_dry_run_creates_no_output_folder(self):
         out_dir = os.path.join(self.test_dir, "not_yet")
         context = TextureProcessor(
