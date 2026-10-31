@@ -2894,6 +2894,168 @@ class SplitPivotInstancesTestCase(unittest.TestCase):
         self.assertEqual(report["deformed"], ["wallShape"])
 
 
+def build_placeholder_fbx(path: str, record, material="NS:openpbr_MAT") -> str:
+    """An FBX as Maya writes an openPBRSurface: a grey Lambert placeholder
+    (DiffuseColor 0.5, no transparency), its ``materials`` record on the
+    ``data_export`` carrier."""
+
+    def p(*values):
+        return ("P", list(values), [])
+
+    carrier = (
+        "Model",
+        [1002, b"data_export\x00\x01Model", b"Null"],
+        [
+            (
+                "Properties70",
+                [],
+                [p(b"materials", b"KString", b"", b"U", json.dumps(record).encode())],
+            )
+        ],
+    )
+    placeholder = (
+        "Material",
+        [3001, material.encode() + b"\x00\x01Material", b""],
+        [
+            ("ShadingModel", [b"lambert"], []),
+            (
+                "Properties70",
+                [],
+                [
+                    p(b"DiffuseColor", b"Color", b"", b"A", 0.5, 0.5, 0.5),
+                    p(b"Diffuse", b"Vector3D", b"Vector", b"", 0.4, 0.4, 0.4),
+                    p(b"DiffuseFactor", b"Number", b"", b"A", 0.8),
+                    p(b"TransparentColor", b"Color", b"", b"A", 0.0, 0.0, 0.0),
+                    p(b"TransparencyFactor", b"Number", b"", b"A", 1.0),
+                ],
+            ),
+        ],
+    )
+    other = ("Material", [3002, b"untold\x00\x01Material", b""], [("ShadingModel", [b"lambert"], [])])
+    objects = [
+        ("Model", [1001, b"Crate\x00\x01Model", b"Mesh"], []),
+        carrier,
+        placeholder,
+        other,
+    ]
+    connections = [
+        ("C", [b"OO", 1001, 0], []),
+        ("C", [b"OO", 1002, 0], []),
+        ("C", [b"OO", 3001, 1001], []),
+        ("C", [b"OO", 3002, 1001], []),
+    ]
+    return _write_fbx(path, [("Objects", [], objects), ("Connections", [], connections)])
+
+
+class StateMaterialsTestCase(unittest.TestCase):
+    """``state_materials``: the FBX states each material as its ``materials``
+    record does, so a reader of the file's own materials sees its colour.
+    Measured 2026-10-05 (Maya 2025 -> Unity): an openPBRSurface reached the
+    FBX as a grey Lambert placeholder, and Unity's own import showed it grey.
+    Added: 2026-10-31"""
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_state", policy="scoped")
+        self.addCleanup(self.temp.cleanup)
+        self.dir = self.temp.dir_path()
+
+    @staticmethod
+    def _record(**entry):
+        return {
+            "version": 1,
+            "materials": [
+                {
+                    "name": "NS:openpbr_MAT",
+                    "baseColorFactor": [0.8, 0.2, 0.1, 0.6],
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 0.5,
+                    "emissiveFactor": [0.0, 0.5, 1.0],
+                    "alphaMode": "BLEND",
+                    **entry,
+                }
+            ],
+        }
+
+    def _stated(self, path, name="NS:openpbr_MAT"):
+        return next(m for m in FbxFile.load(path).materials() if m["name"] == name)
+
+    def test_each_material_takes_its_entrys_colour_emission_and_alpha(self):
+        path = build_placeholder_fbx(os.path.join(self.dir, "p.fbx"), self._record())
+        self.assertEqual(FbxMedia.state_materials(path), {"materials": ["NS:openpbr_MAT"]})
+        props = self._stated(path)["props"]
+        rounded = lambda v: tuple(round(c, 6) for c in v)  # noqa: E731
+        self.assertEqual(rounded(props["DiffuseColor"]), (0.8, 0.2, 0.1))
+        self.assertEqual(props["DiffuseFactor"], 1.0)
+        self.assertEqual(rounded(props["Diffuse"]), (0.8, 0.2, 0.1), "the product too")
+        self.assertEqual(rounded(props["EmissiveColor"]), (0.0, 0.5, 1.0))
+        self.assertEqual(props["EmissiveFactor"], 1.0)
+        self.assertNotIn("Emissive", props, "a computed product it never wrote")
+        self.assertEqual(rounded(props["TransparentColor"]), (0.4, 0.4, 0.4))
+        self.assertEqual(props["TransparencyFactor"], 1.0)
+        self.assertAlmostEqual(props["Opacity"], 0.6, places=6)
+        self.assertEqual(self._stated(path, "untold")["props"], {}, "no entry, untouched")
+
+    def test_a_stock_reader_of_the_file_reads_back_what_the_record_states(self):
+        """The legacy family -- how every engine reads FBX's own models --
+        reads the stated material back as its entry."""
+        from pythontk.core_utils.engines.scene_export.material_record import (
+            MaterialFamilies,
+        )
+
+        record = self._record()
+        path = build_placeholder_fbx(os.path.join(self.dir, "p.fbx"), record)
+        FbxMedia.state_materials(path)
+        stated = self._stated(path)
+        read = MaterialFamilies.entry(
+            "legacy",
+            stated["name"],
+            {
+                k: v
+                for k, v in stated["props"].items()
+                if k in MaterialFamilies.PROPS["legacy"]
+            },
+        )
+        entry = record["materials"][0]
+        self.assertEqual(
+            [round(c, 6) for c in read["baseColorFactor"]], entry["baseColorFactor"]
+        )
+        self.assertEqual([round(c, 6) for c in read["emissiveFactor"]], entry["emissiveFactor"])
+        self.assertEqual(read["alphaMode"], "BLEND")
+
+    def test_over_a_map_the_factor_is_the_multiplier(self):
+        path = build_placeholder_fbx(
+            os.path.join(self.dir, "p.fbx"),
+            self._record(baseColorFactor=[0.5, 0.5, 0.5, 1.0], baseColorTexture="a.png"),
+        )
+        FbxMedia.state_materials(path)
+        props = self._stated(path)["props"]
+        self.assertEqual(props["DiffuseColor"], (1.0, 1.0, 1.0))
+        self.assertEqual(props["DiffuseFactor"], 0.5)
+        self.assertEqual(props["TransparentColor"], (0.0, 0.0, 0.0), "opaque, as Maya writes it")
+
+    def test_a_name_without_its_namespace_joins_by_its_leaf(self):
+        path = build_placeholder_fbx(
+            os.path.join(self.dir, "p.fbx"), self._record(), material="openpbr_MAT"
+        )
+        self.assertEqual(FbxMedia.state_materials(path), {"materials": ["openpbr_MAT"]})
+
+    def test_a_file_without_a_record_is_not_written(self):
+        path = build_placeholder_fbx(
+            os.path.join(self.dir, "p.fbx"), {"version": 1, "materials": []}
+        )
+        before = open(path, "rb").read()
+        self.assertEqual(FbxMedia.state_materials(path), {"materials": []})
+        self.assertEqual(open(path, "rb").read(), before)
+
+    def test_the_deliverable_finish_runs_it(self):
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        path = build_placeholder_fbx(os.path.join(self.dir, "p.fbx"), self._record())
+        report = MeshConvert.finish_fbx_deliverable(path)
+        self.assertEqual(report["materials"], {"materials": ["NS:openpbr_MAT"]})
+        self.assertEqual(self._stated(path)["props"]["DiffuseFactor"], 1.0)
+
+
 class DropHostLightingTestCase(unittest.TestCase):
     """``drop_host_lighting_media``: no host's own lighting rides a deliverable.
 

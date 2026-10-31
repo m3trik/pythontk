@@ -199,11 +199,15 @@ class MeshConvert(HelpMixin):
            environment maps leave the file;
         4. :meth:`FbxMedia.embed_dependencies` -- every file the records name
            (*search_dirs*, *walk_root*, *files*), the copies among them;
-        5. :meth:`FbxMedia.drop_redundant_properties` -- each baked object's
+        5. :meth:`FbxMedia.state_materials` -- each ``materials`` record entry
+           written onto its FBX material's legacy properties, so a stock
+           reader sees the colour the record states (an openPBR surface
+           reaches the file as a grey placeholder);
+        6. :meth:`FbxMedia.drop_redundant_properties` -- each baked object's
            ``lightmapInfo`` marker, which its ``lightmaps`` entry
            states whole, and the carrier's empty channels: the file states
            each thing once;
-        6. :meth:`_Sidecar._finish_fbx_handoff` -- the handoff stated again from the
+        7. :meth:`_Sidecar._finish_fbx_handoff` -- the handoff stated again from the
            records as the passes left them (the copies change what the
            lightmaps row says).
 
@@ -221,7 +225,7 @@ class MeshConvert(HelpMixin):
 
         Returns:
             ``{"instances", "host_lighting", "highlights", "dependencies",
-            "redundant", "handoff"}`` -- each pass's report (``highlights``
+            "materials", "redundant", "handoff"}`` -- each pass's report (``highlights``
             the copies' names, ``handoff`` whether it changed), ``None``
             for a pass that failed; ``{}`` for a file that is not a binary FBX.
         """
@@ -254,6 +258,7 @@ class MeshConvert(HelpMixin):
                     logger=log,
                 ),
             ),
+            ("materials", lambda: FbxMedia.state_materials(fbx)),
             (
                 "redundant",
                 lambda: FbxMedia.drop_redundant_properties(

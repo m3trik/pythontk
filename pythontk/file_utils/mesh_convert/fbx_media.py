@@ -1932,6 +1932,164 @@ class FbxMedia(_FbxMediaInternal):
         cls._promote(part, target)
         return report
 
+    #: The legacy ``Properties70`` rows :meth:`state_materials` writes, each
+    #: with the type, label and flags Maya's FBX writer declares it under.
+    LEGACY_MATERIAL_ROWS: Dict[str, Tuple[str, str, str]] = {
+        "DiffuseColor": ("Color", "", "A"),
+        "DiffuseFactor": ("Number", "", "A"),
+        "EmissiveColor": ("Color", "", "A"),
+        "EmissiveFactor": ("Number", "", "A"),
+        "TransparentColor": ("Color", "", "A"),
+        "TransparencyFactor": ("Number", "", "A"),
+        "Opacity": ("double", "Number", ""),
+        # The writer's computed products: set where it wrote them, never added.
+        "Diffuse": ("Vector3D", "Vector", ""),
+        "Emissive": ("Vector3D", "Vector", ""),
+    }
+    _COMPUTED_MATERIAL_ROWS = frozenset({"Diffuse", "Emissive"})
+
+    @staticmethod
+    def legacy_material_values(entry: Mapping[str, Any]) -> Dict[str, Tuple[float, ...]]:
+        """A ``materials`` record entry in FBX's legacy terms -- what a stock
+        reader of the file's own material reads: the base colour as
+        ``DiffuseColor`` x ``DiffuseFactor`` (white times the factor's mean
+        over a colour map, which the reader multiplies in), the emission
+        likewise, and the alpha as Maya writes a transparent Lambert
+        (``TransparentColor`` one minus it, ``TransparencyFactor`` 1,
+        ``Opacity`` it). Read back through ``MaterialFamilies``' ``legacy``
+        family: the same colour, emission and alpha."""
+        from pythontk.core_utils.engines.scene_export.material_record import (
+            MaterialFamilies,
+        )
+
+        base = MaterialFamilies.as_floats(entry.get("baseColorFactor"), 4, 1.0)
+        glow = MaterialFamilies.as_floats(entry.get("emissiveFactor"), 3, 0.0)
+
+        def colour(rgb, mapped):
+            if mapped:
+                return (1.0, 1.0, 1.0), sum(rgb) / 3.0
+            return tuple(rgb), 1.0
+
+        diffuse, diffuse_factor = colour(base[:3], entry.get("baseColorTexture"))
+        emissive, emissive_factor = colour(glow, entry.get("emissiveTexture"))
+        alpha = min(1.0, max(0.0, base[3]))
+        return {
+            "DiffuseColor": diffuse,
+            "DiffuseFactor": (diffuse_factor,),
+            "Diffuse": tuple(c * diffuse_factor for c in diffuse),
+            "EmissiveColor": emissive,
+            "EmissiveFactor": (emissive_factor,),
+            "Emissive": tuple(c * emissive_factor for c in emissive),
+            "TransparentColor": (1.0 - alpha,) * 3,
+            "TransparencyFactor": (1.0,),
+            "Opacity": (alpha,),
+        }
+
+    @classmethod
+    def state_materials(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]:
+        """Write each ``materials`` record entry onto its FBX material's legacy
+        properties (:meth:`legacy_material_values`), so a reader that knows
+        only the file's own materials -- an engine's stock FBX import -- sees
+        the colour, emission and opacity the record states.
+
+        Maya's FBX writer has no mapping for some surfaces: an openPBRSurface
+        reaches the file as a grey Lambert placeholder, which a stock reader
+        shows grey whatever the material was (measured 2026-10-05, Maya 2025
+        -> Unity). The record (the file's own carrier's, else a referenced
+        module's, as every reader takes it) names each material as the file
+        does, namespace included; a material named only by its leaf joins by
+        that. A post-write pass: the scene is not touched.
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+
+        Returns:
+            ``{"materials": [name, ...]}`` -- the materials stated. When the
+            file carries no record, or names none of its materials, it is not
+            written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+        """
+        key = SceneRecords.MATERIALS.key
+        stated: List[str] = []
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            record = cls.reader_records(cls._carrier_channels(roots, (key,))).get(key)
+            entries: Dict[str, Mapping[str, Any]] = {}
+            for entry in (record or {}).get("materials") or ():
+                if isinstance(entry, Mapping) and isinstance(entry.get("name"), str):
+                    entries.setdefault(entry["name"], entry)
+            if not entries:
+                return {"materials": stated}
+            leaves: Dict[str, Mapping[str, Any]] = {}
+            for name, entry in entries.items():
+                leaves.setdefault(name.rsplit(":", 1)[-1], entry)
+            hlen = cls._header_fmt(version >= 7500)[1]
+            for root in roots:
+                if root.name != b"Objects":
+                    continue
+                for material in root.children:
+                    if material.name != b"Material":
+                        continue
+                    head = cls._scalars(material)
+                    name = FbxFile._display_name(head[1]) if len(head) > 1 else None
+                    if not name:
+                        continue
+                    entry = entries.get(name) or leaves.get(name.rsplit(":", 1)[-1])
+                    if entry is None:
+                        continue
+                    cls._set_material_rows(
+                        material, cls.legacy_material_values(entry), hlen
+                    )
+                    stated.append(name)
+            if not stated:
+                return {"materials": stated}
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        cls._promote(part, target)
+        return {"materials": stated}
+
+    @classmethod
+    def _set_material_rows(
+        cls, material: _Record, values: Mapping[str, Tuple[float, ...]], hlen: int
+    ) -> None:
+        """Set *values* on *material*'s ``Properties70`` rows, as their
+        declared type (:attr:`LEGACY_MATERIAL_ROWS`), adding the rows it lacks
+        but the writer's computed products."""
+        block = cls._properties(material, hlen)
+        s = cls._pack_string
+        pending = {name.encode("utf-8"): tuple(v) for name, v in values.items()}
+
+        def doubles(numbers):
+            return [b"D" + struct.pack("<d", float(n)) for n in numbers]
+
+        for prop in block.children:
+            head = cls._scalars(prop)
+            if len(head) < 4 or head[0] not in pending:
+                continue
+            numbers = pending.pop(head[0])
+            prop.replaced = b"".join(s(h) for h in head[:4]) + b"".join(doubles(numbers))
+            prop.prop_count = 4 + len(numbers)
+        for name, numbers in pending.items():
+            label = name.decode("utf-8")
+            if label in cls._COMPUTED_MATERIAL_ROWS:
+                continue
+            kind, sub, flags = cls.LEGACY_MATERIAL_ROWS[label]
+            block.children.append(
+                cls._new_record(
+                    b"P",
+                    [s(name), s(kind.encode()), s(sub.encode()), s(flags.encode())]
+                    + doubles(numbers),
+                    (),
+                    hlen,
+                )
+            )
+
     @classmethod
     def drop_redundant_properties(
         cls, src: str, markers: Iterable[str] = (), dst: Optional[str] = None
