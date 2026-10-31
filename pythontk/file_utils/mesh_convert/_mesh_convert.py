@@ -2318,19 +2318,20 @@ class MeshConvert(HelpMixin):
         Parameters:
             glb: Path to a binary glTF (.glb) or an open :class:`GlbEdit`. Read
                 only -- nothing here marks the session dirty.
-            described: Material names the envelope's ``metallic_roughness``
-                section covers, i.e. the ones a repair pass validated and
-                rewrote. Their packing comes from the authoring maps rather
-                than from the converter, so they are exempt from both findings
-                (any whiteness in them is a source question
+            described: Material names whose metal/roughness packing this
+                pipeline wrote from the authoring maps -- the materials
+                record's ORM packs (:meth:`apply_glb_materials`), not the
+                converter's. They are exempt from both findings (any
+                whiteness in them is a source question
                 :meth:`MapFactory.pack_orm_texture` already logs per map).
                 A described material covers its LIGHTMAP CLONES too (see
-                :attr:`LIGHTMAP_CLONE_SUFFIX`): the envelope was written before
-                they existed, so matching literally reports the whole set. Safe
-                by construction rather than by assumption -- a clone is a deep
-                copy of its base that rebinds only the lightmap slot, and the
-                sidecar repair runs BEFORE the lightmap pass, so the binding
-                being exempted here is the repaired one the base was checked on.
+                :attr:`LIGHTMAP_CLONE_SUFFIX`): the record names the base
+                materials, written before the clones existed, so matching
+                literally reports the whole set. Safe by construction rather
+                than by assumption -- a clone is a deep copy of its base that
+                rebinds only the lightmap slot, and the materials pass runs
+                BEFORE the lightmap pass, so the binding being exempted here
+                is the packed one the base was checked on.
                 ``None`` means "nothing is known to be described", which
                 suppresses the ``unvalidated`` finding rather than reporting
                 every material.
