@@ -2387,6 +2387,14 @@ class FbxMedia(_FbxMediaInternal):
         (:meth:`dependencies`) -- and a lighting-only bake leaves its maps on
         no material, so the FBX used to carry none of them: the consumer
         copied them in by hand, or imported unlit with a silhouette shadow.
+        The ``audio`` record then states what went in: its ``media`` is the
+        SHA-256 of each audio file the FBX now carries, by the event name that
+        is its stem (:meth:`AudioUtils.media_digests
+        <pythontk.AudioUtils.media_digests>`), the bytes Unity compares a
+        same-named clip against before it reuses one; a digest of a file no
+        longer inside is dropped. Only this pass knows what was embedded, so a
+        write without it carries no digest -- a raw export reads as one from
+        before them, and Unity binds its clips as it did.
         Each name is resolved the way the GLB appliers resolve it: the first
         of *search_dirs* holding that file (the host's own answer to where
         its maps live), then the FBX's own folder, then -- for what those miss
@@ -2478,10 +2486,11 @@ class FbxMedia(_FbxMediaInternal):
             report["present"] += [
                 n for n in added["present"] if n not in report["present"]
             ]
-            if report["embedded"]:
+            digested = cls._digest_audio(roots)
+            if report["embedded"] or digested:
                 target = dst or src
                 part = cls._write_part(target, version, roots, footer_id, magic)
-        if report["embedded"]:
+        if report["embedded"] or digested:
             cls._promote(part, target)
             log.info(
                 "FBX dependencies: embedded %d file(s), %.1f MB: %s.",
@@ -2510,6 +2519,33 @@ class FbxMedia(_FbxMediaInternal):
                 ", ".join(names),
             )
         return report
+
+    @classmethod
+    def _digest_audio(cls, roots: List[_Record]) -> bool:
+        """Set the applied ``audio`` record's ``media`` to the digests of the
+        audio files *roots* embed (:meth:`AudioUtils.media_digests
+        <pythontk.AudioUtils.media_digests>`), in memory; ``True`` when that
+        changed the record. One with no digest to state carries no ``media``."""
+        from pythontk.audio_utils._audio_utils import AudioUtils
+
+        found = cls._applied_channel(roots, SceneRecords.AUDIO.key)
+        if found is None or not isinstance(found[1], dict):
+            return False
+        prop, payload = found
+        events = payload.get("events")
+        files = {
+            name: cls._raw(record)
+            for name, record in cls._video_records(roots)
+            if os.path.splitext(name)[1].lower() in AudioUtils.SOURCE_EXTENSIONS
+        }
+        media = AudioUtils.media_digests(events if isinstance(events, list) else [], files)
+        updated = {k: v for k, v in payload.items() if k != "media"}
+        if media:
+            updated["media"] = media
+        if updated == payload:
+            return False
+        cls._replace_prop(prop, 4, cls._pack_string(json.dumps(updated).encode("utf-8")))
+        return True
 
     @classmethod
     def extract_dependencies(cls, src: str, dst_dir: str) -> Dict[str, str]:

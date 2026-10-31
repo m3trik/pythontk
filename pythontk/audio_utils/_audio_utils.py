@@ -317,48 +317,51 @@ class AudioUtils(HelpMixin):
                 dropped.append(f"{name}@{frame}")
         return scoped, dropped
 
-    @staticmethod
+    @classmethod
     def media_digests(
+        cls,
         events: Iterable[Mapping[str, Any]],
-        track_files: Callable[[List[str]], Iterable[Tuple[str, str]]],
+        files: Mapping[str, bytes],
     ) -> Dict[str, str]:
-        """The content digest of each track file *events* play, by their name.
+        """The content digest of each audio file of *files* an event plays,
+        by the event's name.
 
-        The ``audio`` record's ``media`` (``SceneRecords.AUDIO``), written by
-        every DCC's producer. An event names its track and a reader finds the
-        clip by that name, so two deliverables can name different files alike
-        -- two models each embedding their own ``door.wav`` -- and the second
-        bound the first's (2026-10-19). A reader stands a same-named clip in
-        for the track only when its bytes hash to this; else it takes the
-        deliverable's own. The file each track resolves to is the one the
-        deliverable embeds: the FBX's dependency pass puts the same
-        ``track_files`` answer inside it byte for byte
-        (``FbxMedia.embed_dependencies``), and Unity extracts it byte for
-        byte, so all three hash one string of bytes.
+        The ``audio`` record's ``media`` (``SceneRecords.AUDIO``). An event
+        names its track and a reader finds the clip by that name, so two
+        deliverables can name different files alike -- two models each
+        embedding their own ``door.wav`` -- and the second bound the first's
+        (2026-10-19). A reader stands a same-named clip in for the track only
+        when its bytes hash to this; else it takes the deliverable's own. So
+        it is digested from the bytes the deliverable carries, never a source
+        that may not be in it: the FBX dependency pass writes it from what it
+        embedded (``FbxMedia.embed_dependencies``), and Unity extracts those
+        bytes byte for byte, so both hash one string of bytes.
+
+        An event's file is the audio file (:attr:`SOURCE_EXTENSIONS`) whose
+        stem is its name, ignoring case -- the reader's join; a stem two audio
+        files share tells the reader nothing, so that name gets no digest.
 
         Parameters:
-            events: The record's events (``{"name", ...}``; the scoped ones
-                :meth:`scope_events` returns).
-            track_files: The host's ``track_files(track_ids)``: ``(track id +
-                extension, path)`` of each track whose file exists.
+            events: The record's events (``{"name", ...}``).
+            files: ``{file name: bytes}`` -- what the deliverable embeds.
 
         Returns:
-            ``{track name: SHA-256 of the file's bytes, lowercase hex}``, in
-            event order; a track with no file is left out.
+            ``{event name: SHA-256 of its file's bytes, lowercase hex}``, in
+            event order; a name with no file among *files* is left out.
         """
-        from pythontk.file_utils._file_utils import FileUtils
-
+        by_stem: Dict[str, List[bytes]] = {}
+        for file_name, data in files.items():
+            stem, ext = os.path.splitext(file_name)
+            if ext.lower() in cls.SOURCE_EXTENSIONS:
+                by_stem.setdefault(stem.casefold(), []).append(data)
         media: Dict[str, str] = {}
-        asked: Set[str] = set()
         for event in events:
-            name = event.get("name")
-            if not name or name in asked:
+            name = event.get("name") if isinstance(event, Mapping) else None
+            if not isinstance(name, str) or not name or name in media:
                 continue
-            asked.add(name)
-            for _file_name, path in track_files([name]):
-                digest = FileUtils.get_file_info(path, "hash", hash_algo="sha256")
-                if digest:
-                    media[name] = digest[0]
+            found = by_stem.get(name.casefold(), [])
+            if len(found) == 1:
+                media[name] = hashlib.sha256(found[0]).hexdigest()
         return media
 
     @classmethod

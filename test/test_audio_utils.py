@@ -853,65 +853,46 @@ class TestScopeEvents(BaseTestCase):
 
 class TestMediaDigests(BaseTestCase):
     """``media_digests``: the ``audio`` record's ``media`` -- the content
-    digest of each track file its events play, by the name they give it --
-    what a reader compares a same-named file against before it stands that
-    file in for the deliverable's own. Two models each embedding a different
-    ``door.wav``: Unity bound the first model's clip for the second
-    (2026-10-19; matched by content since 2026-10-31)."""
-
-    def setUp(self):
-        import pythontk as ptk
-
-        self.tmp = ptk.TempArtifacts("ptk_media_digests", policy="scoped")
-        self.addCleanup(self.tmp.cleanup)
-        self.files = {}
-        for name, payload in (("door", b"door one"), ("Lamp Hum", b"hum")):
-            path = self.tmp.path(".wav")
-            with open(path, "wb") as fh:
-                fh.write(payload)
-            self.files[name] = path
-        self.asked = []
-
-    def track_files(self, names):
-        """A host's ``track_files``: ``(name + extension, path)`` per track
-        that has a file."""
-        self.asked.extend(names)
-        return [(f"{n}.wav", self.files[n]) for n in names if n in self.files]
+    digest of each track file a deliverable embeds, by the event name whose
+    stem it is -- what a reader compares a same-named clip against before it
+    stands that clip in for the deliverable's own. Two models each embedding a
+    different ``door.wav``: Unity bound the first model's clip for the second
+    (2026-10-19; matched by content since 2026-10-31). Given the bytes inside,
+    never a path: the FBX's dependency pass digests what it embedded."""
 
     @staticmethod
     def events(*names):
         return [{"clip": "", "frame": i, "name": n} for i, n in enumerate(names)]
 
-    def test_each_file_is_the_sha256_of_its_bytes_by_the_events_name(self):
-        media = AudioUtils.media_digests(self.events("door", "Lamp Hum"), self.track_files)
+    def test_each_audio_file_is_the_sha256_of_its_bytes_by_the_events_name(self):
+        files = {"door.wav": b"door one", "Lamp Hum.mp3": b"hum"}
         self.assertEqual(
-            media,
+            AudioUtils.media_digests(self.events("door", "lamp hum"), files),
             {
                 "door": hashlib.sha256(b"door one").hexdigest(),
-                "Lamp Hum": hashlib.sha256(b"hum").hexdigest(),
+                "lamp hum": hashlib.sha256(b"hum").hexdigest(),
             },
         )
 
-    def test_a_track_with_no_file_is_left_out_and_a_name_is_asked_once(self):
-        events = self.events("door", "ghost", "door", "ghost")
-        media = AudioUtils.media_digests(events, self.track_files)
-        self.assertEqual(list(media), ["door"])
-        self.assertEqual(self.asked, ["door", "ghost"])
+    def test_a_track_with_no_file_inside_is_left_out_and_a_name_is_digested_once(self):
+        files = {"door.wav": b"door one"}
+        media = AudioUtils.media_digests(self.events("door", "ghost", "door"), files)
+        self.assertEqual(media, {"door": hashlib.sha256(b"door one").hexdigest()})
 
-    def test_alike_bytes_digest_alike_wherever_they_lie(self):
-        # The reuse case: a library copy of the same file stands in for it.
-        copy = self.tmp.path(".wav")
-        shutil.copyfile(self.files["door"], copy)
-        self.files["door_copy"] = copy
-        media = AudioUtils.media_digests(
-            self.events("door", "door_copy"), self.track_files
+    def test_only_audio_files_answer_and_a_stem_two_share_names_none(self):
+        """A texture of the stem is no clip; two clips of one stem leave the
+        reader nothing to tell apart, so it gets no digest (the file reads as
+        one from before them)."""
+        self.assertEqual(
+            AudioUtils.media_digests(
+                self.events("door", "bell"),
+                {"door.png": b"wood", "door.wav": b"door", "bell.wav": b"a", "bell.ogg": b"b"},
+            ),
+            {"door": hashlib.sha256(b"door").hexdigest()},
         )
-        self.assertEqual(media["door"], media["door_copy"])
-        self.assertRegex(media["door"], r"^[0-9a-f]{64}$")
 
-    def test_no_events_ask_nothing(self):
-        self.assertEqual(AudioUtils.media_digests([], self.track_files), {})
-        self.assertEqual(self.asked, [])
+    def test_no_events_digest_nothing(self):
+        self.assertEqual(AudioUtils.media_digests([], {"door.wav": b"door"}), {})
 
 
 if __name__ == "__main__":

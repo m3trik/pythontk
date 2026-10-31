@@ -10,6 +10,7 @@ the writer here was also checked by hand against two Maya-written files
 byte for byte.
 """
 
+import hashlib
 import io
 import json
 import os
@@ -2421,6 +2422,80 @@ class EmbedTestCase(unittest.TestCase):
             for f in self._videos(out).values()
         }
         self.assertEqual(payloads["footstep.wav"], b"RIFF....WAVE take three")
+
+    # ---- the audio record's digests: what the pass embedded -------------
+    # ``media`` is the SHA-256 of each audio file the FBX carries, by the
+    # event name whose stem it is: the content Unity compares a same-named
+    # clip against before it reuses one. Written by the pass that embeds, from
+    # the bytes inside, so a write without it (a raw File > Export, whose
+    # producer digested nothing) reads as one from before the digests, and
+    # Unity extracts or binds by name as it did. Added: 2026-10-31
+
+    AUDIO = {
+        "version": 2,
+        "fps": 24.0,
+        "events": [
+            {"clip": "", "frame": 0, "name": "footstep"},
+            {"clip": "", "frame": 4, "name": "ghost"},
+        ],
+    }
+
+    def _audio_fbx(self, payload=None):
+        return build_carrier_fbx(
+            os.path.join(self.dir, "audio.fbx"), {"audio": payload or self.AUDIO}
+        )
+
+    def test_embed_dependencies_digests_the_audio_it_embeds_into_the_record(self):
+        take = os.path.join(self.dir, "footstep_take3.wav")
+        with open(take, "wb") as fh:
+            fh.write(b"RIFF....WAVE take three")
+        out = os.path.join(self.dir, "out.fbx")
+        FbxMedia.embed_dependencies(self._audio_fbx(), out, files=[("footstep.wav", take)])
+        record = FbxMedia.record(out, "audio")
+        self.assertEqual(
+            record["media"],
+            {"footstep": hashlib.sha256(b"RIFF....WAVE take three").hexdigest()},
+            "ghost has no file inside: no digest",
+        )
+        self.assertEqual(record["events"], self.AUDIO["events"])
+        self.assertIsNone(FbxMedia.record(self._audio_fbx(), "audio").get("media"))
+
+    def test_a_digest_is_of_the_bytes_inside_not_the_file_handed_over(self):
+        """A name the FBX already embeds stays as it is; its digest is its own."""
+        first = os.path.join(self.dir, "first.wav")
+        later = os.path.join(self.dir, "later.wav")
+        for path, data in ((first, b"RIFF first"), (later, b"RIFF later")):
+            with open(path, "wb") as fh:
+                fh.write(data)
+        once = os.path.join(self.dir, "once.fbx")
+        FbxMedia.embed(self._audio_fbx(), once, files=[("footstep.wav", first)])
+        out = os.path.join(self.dir, "out.fbx")
+        report = FbxMedia.embed_dependencies(once, out, files=[("footstep.wav", later)])
+        self.assertEqual(report["embedded"], [])
+        self.assertEqual(
+            FbxMedia.record(out, "audio")["media"],
+            {"footstep": hashlib.sha256(b"RIFF first").hexdigest()},
+        )
+
+    def test_a_digest_for_a_file_no_longer_inside_is_pruned(self):
+        stale = dict(self.AUDIO, media={"ghost": "ab" * 32})
+        src = self._audio_fbx(stale)
+        before = os.path.getmtime(src)
+        FbxMedia.embed_dependencies(src)
+        self.assertIsNone(FbxMedia.record(src, "audio").get("media"))
+        self.assertGreaterEqual(os.path.getmtime(src), before)
+
+    def test_digesting_again_writes_nothing(self):
+        take = os.path.join(self.dir, "footstep.wav")
+        with open(take, "wb") as fh:
+            fh.write(b"RIFF....WAVE")
+        out = os.path.join(self.dir, "out.fbx")
+        FbxMedia.embed_dependencies(self._audio_fbx(), out, files=[take])
+        with open(out, "rb") as fh:
+            written = fh.read()
+        FbxMedia.embed_dependencies(out, files=[take])
+        with open(out, "rb") as fh:
+            self.assertEqual(fh.read(), written)
 
     def test_audio_events_names_the_tracks_the_manifest_plays(self):
         """An audio event names its TRACK, not a file: a host resolves each

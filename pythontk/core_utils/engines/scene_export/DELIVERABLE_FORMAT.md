@@ -134,7 +134,7 @@ Audio events with the frames they fire on, scoped to their clip, and 'fps', the 
 
 ### In the FBX: `data_export.audio`, version 2
 
-Each event plays its audio track 'frame' frames into its 'clip' (at the record's 'fps'); an event whose 'clip' is empty plays in every clip, its frame counted from the first frame the file's animation holds. The track's file rides the file as media of its own, joined to the event's 'name' by file stem without regard to case; 'media' gives each such file's SHA-256 by that name, and a same-named file found elsewhere stands in for it only when its bytes hash alike.
+Each event plays its audio track 'frame' frames into its 'clip' (at the record's 'fps'); an event whose 'clip' is empty plays in every clip, its frame counted from the first frame the file's animation holds. The track's file rides the file as media of its own, joined to the event's 'name' by file stem without regard to case; 'media', where the file states it, gives the SHA-256 of the bytes it carries by that name, and a same-named file found elsewhere stands in for it only when its bytes hash alike.
 
 #### AudioRecord
 
@@ -145,7 +145,7 @@ The ``audio`` record's payload: the scene's audio events, each scoped to the cli
 | `version` | yes | The record's schema version (SceneRecords.AUDIO.version). | `2` |
 | `events` | yes | Every event in authoring-timeline order: a scoped one listed once for each take that holds its frame (one outside every take is left out), an unscoped one once. | see *AudioCue* below (list) |
 | `fps` | yes | The scene's frame rate: how many of the frames every event's 'frame' counts make one second. | `30.0` |
-| `media` | no | The content digest of each track file the deliverable embeds, by the name its events give the track: the SHA-256 of the file's bytes, in lowercase hex. A same-named clip found elsewhere stands in for the track only when its bytes hash alike; else the deliverable's own is taken. A track the export found no file for is left out, and a file written before 2026-10-31 carries no 'media' at all. | `{"Footstep": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b8…` |
+| `media` | no | The content digest of each audio file the deliverable embeds, by the event name that is its stem: the SHA-256 of the bytes inside, in lowercase hex, written by the pass that embedded them. A same-named clip found elsewhere stands in for the track only when its bytes hash alike; else the deliverable's own is taken. A track it carries no file for is left out, and a file written without that pass (a raw export) or before 2026-10-31 carries no 'media' at all. | `{"Footstep": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b8…` |
 
 ##### AudioCue
 
