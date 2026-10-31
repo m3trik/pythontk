@@ -193,6 +193,17 @@ class ProgressionCurvesTest(BaseTestCase):
             ProgressionCurves.generate_curve_samples("linear", num_samples=0), []
         )
 
+    def test_centered_offsets_span_symmetrically_about_the_middle(self):
+        """What both hosts' cut tools place their cuts by (``_cut_offsets``)."""
+        self.assertEqual(ProgressionCurves.centered_offsets(3, 5.0), [-2.5, 0.0, 2.5])
+        self.assertEqual(ProgressionCurves.centered_offsets(2, 4.0), [-2.0, 2.0])
+        self.assertEqual(ProgressionCurves.centered_offsets(1, 999.0, "weighted"), [0.0])
+        self.assertEqual(ProgressionCurves.centered_offsets(0, 5.0), [])
+        warped = ProgressionCurves.centered_offsets(5, 4.0, "exponential", weight_curve=2.0)
+        self.assertEqual((warped[0], warped[-1]), (-2.0, 2.0), "the ends stay at the span")
+        self.assertEqual(warped, sorted(warped))
+        self.assertNotEqual(warped, ProgressionCurves.centered_offsets(5, 4.0))
+
 
 if __name__ == "__main__":
     unittest.main(exit=False)

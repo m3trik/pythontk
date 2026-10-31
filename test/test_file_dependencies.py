@@ -72,6 +72,31 @@ class TestClaims(unittest.TestCase):
         self.assertEqual(os.path.basename(mine), "Crate_1.exr")
 
 
+class TestStrangers(_FilesCase):
+    """The files a write naming a stem must not replace: on disk, of its name,
+    read by nothing the host knows, and not written by it (another scene's)."""
+
+    def test_only_an_unread_file_the_host_did_not_write_is_a_stranger(self):
+        folder = self._dir("maps")
+        for name in ("Room.exr", "room_1.EXR", "Room_2.exr", "Room_x.exr", "Hall.exr", "Room.png"):
+            self._file("maps", name)
+        claims = FileDependencies.claims([("|a", "Room.exr")])
+        found = FileDependencies.strangers(
+            folder, "Room", ".exr", claims, wrote=lambda key: key == "room_2.exr"
+        )
+        self.assertEqual(
+            sorted(os.path.basename(p) for p in found), ["room_1.EXR"]
+        )
+        self.assertTrue(all(os.path.isabs(p) for p in found))
+
+    def test_a_folder_that_cannot_be_listed_holds_none(self):
+        missing = os.path.join(self._dir("maps"), "gone")
+        self.assertEqual(
+            FileDependencies.strangers(missing, "Room", ".exr", {}, wrote=lambda key: False),
+            set(),
+        )
+
+
 class TestRemoveSuperseded(_FilesCase):
     """What a re-bake may set aside: the files its owners read before, once
     nothing reads them. Every keep rule is a reader the move would strand.

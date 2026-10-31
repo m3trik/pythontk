@@ -3,6 +3,7 @@
 """BakeBaseline -- what a lightmap re-bake must redo, decided without a DCC."""
 
 import json
+import os
 import unittest
 
 import numpy as np
@@ -515,6 +516,74 @@ class TestAdvance(unittest.TestCase):
         )
 
 
+class TestKeepBaked(unittest.TestCase):
+    """A commit that only re-packed objects (``LightmapBaker.combine``) keeps
+    how each was baked; the saved record is the one both hosts wrote by hand
+    before the rule moved here (pinned field for field)."""
+
+    def setUp(self):
+        # A and C baked under one lighting; then a re-pack commit moved A's
+        # cell and stamped A, C and a newcomer D as baked now, under another.
+        self.before = BB.decode(first_bake())
+        self.before["objects"]["|grp|C"]["stale"] = [R.NEIGHBOUR.value]
+        scene = room(D=part(state((3.0, 0.0, 0.0))))
+        self.after = BB.advance(
+            BB.encode(self.before),
+            scene,
+            baked={
+                "|grp|A": dict(INFO, cell=[0.25, 0.25, 0.5, 0.5]),
+                "|grp|C": dict(INFO),
+                "|grp|D": dict(INFO),
+            },
+            lighting=lights(key=5.0),
+        )
+
+    def test_each_repacked_object_keeps_its_bake_and_its_new_cell(self):
+        kept = BB.decode(BB.keep_baked(self.after, self.before, ["|grp|A", "|grp|C", "|grp|D", "|grp|Z"]))
+        after, before = BB.decode(self.after), self.before
+        for obj in ("|grp|A", "|grp|C"):
+            for key in ("baked_at", "lighting", "stale", "untracked"):
+                self.assertEqual(kept["objects"][obj][key], before["objects"][obj][key], (obj, key))
+        self.assertEqual(kept["objects"]["|grp|A"]["cell"], [0.25, 0.25, 0.5, 0.5])
+        self.assertEqual(kept["objects"]["|grp|C"]["stale"], [R.NEIGHBOUR.value])
+        d = kept["objects"]["|grp|D"]
+        self.assertEqual((d["baked_at"], d["lighting"], d["untracked"]), (None, None, True))
+        self.assertNotIn("|grp|Z", kept["objects"])
+        self.assertEqual(kept["objects"]["|grp|B"], after["objects"]["|grp|B"])
+        old = BB.lighting_digest(lights())
+        self.assertEqual(kept["lightings"][old], before["lightings"][old])
+        self.assertEqual(kept["serial"], after["serial"])
+
+    def test_the_saved_record_is_what_the_hosts_wrote(self):
+        """The hosts' hand-written rule (mayatk and blendertk
+        ``LightmapRecords._keep_bake_state`` before 2026-10-29), replayed."""
+        objects = ["|grp|A", "|grp|C", "|grp|D"]
+        record = BB.decode(self.after)
+        for obj in objects:
+            entry = record["objects"].get(obj)
+            if entry is None:
+                continue
+            was = self.before["objects"].get(obj)
+            if was is None:
+                entry.update(baked_at=None, lighting=None, untracked=True)
+                continue
+            entry.update({key: was[key] for key in ("baked_at", "lighting", "stale", "untracked")})
+            state = self.before["lightings"].get(was["lighting"] or "")
+            if state is not None:
+                record["lightings"][was["lighting"]] = state
+        self.assertEqual(
+            json.dumps(BB.keep_baked(self.after, self.before, objects), sort_keys=True),
+            json.dumps(BB.encode(record), sort_keys=True),
+        )
+
+    def test_any_stored_form_is_read(self):
+        text = json.dumps(BB.encode(self.after))
+        self.assertEqual(
+            BB.keep_baked(text, json.dumps(BB.encode(self.before)), ["|grp|A"]),
+            BB.keep_baked(self.after, self.before, ["|grp|A"]),
+        )
+
+
 class TestLightingRecord(unittest.TestCase):
     """What a bake's recorded lighting tells a re-bake and an export: the rule
     each map was lit by, and the lights that lit it."""
@@ -566,6 +635,70 @@ class TestCellFits(unittest.TestCase):
         self.assertFalse(BB.cell_fits([100, 50], [100, 44.99]))
         self.assertFalse(BB.cell_fits(None, [100, 50]))
         self.assertTrue(BB.cell_fits([100, 50], [120, 50], tolerance=0.2))
+
+
+class TestAtlasFiles(unittest.TestCase):
+    """Which atlas each group owns, and which groups read more than one map
+    (a split) -- read from the markers, the files they resolve to and the
+    record, as both hosts' bakers read it."""
+
+    def files(self, groups, packing=None, objects=()):
+        """*groups*: ``{reader: (map file, group)}``."""
+        markers = {r: {"map": f} for r, (f, _g) in groups.items()}
+        path_of = {r: os.path.join("maps", f) for r, (f, _g) in groups.items()}
+        record = {
+            "objects": {
+                r: {"removed_at": None, "packing": (packing or {}).get(r)}
+                for r in groups
+            }
+        }
+        return BB.atlas_files(
+            markers, path_of, record, lambda objs: {o: groups[o][1] if o in groups else "new" for o in objs}, objects
+        )
+
+    def key(self, name):
+        return os.path.normcase(os.path.abspath(os.path.join("maps", name)))
+
+    def test_an_atlas_belongs_to_the_group_most_of_its_readers_are_in(self):
+        found = self.files({
+            "|a": ("Room.exr", "wood"), "|b": ("Room.exr", "wood"), "|c": ("Room.exr", "metal"),
+        })
+        self.assertEqual(found.owned, {"wood": {self.key("Room.exr")}})
+        self.assertEqual(found.by_file[self.key("Room.exr")], ["|a", "|b", "|c"])
+        self.assertEqual(found.splits(), {})
+
+    def test_a_group_reading_two_maps_is_split(self):
+        found = self.files(
+            {
+                "|a": ("Room.exr", "wood"), "|b": ("Room.exr", "wood"),
+                "|c": ("Room_1.exr", "wood"),  # an atlas bake's group of one
+                "|d": ("Crate.exr", "metal"),  # baked per object
+            },
+            packing={"|c": "atlas", "|d": "per_object"},
+        )
+        self.assertEqual(
+            found.splits(),
+            {"wood": ([os.path.join("maps", "Room.exr"), os.path.join("maps", "Room_1.exr")], ["|a", "|b", "|c"])},
+        )
+        self.assertNotIn("metal", found.owned)
+
+    def test_an_untracked_lone_map_is_a_split_off_only_beside_an_atlas_its_group_owns(self):
+        found = self.files({
+            "|a": ("Room.exr", "wood"), "|b": ("Room.exr", "wood"),
+            "|c": ("Old.exr", "wood"),  # no packing recorded
+            "|d": ("Crate.exr", "metal"), "|e": ("Lamp.exr", "metal"),
+        })
+        self.assertEqual(sorted(found.splits()), ["wood"])
+        self.assertEqual(found.group["|d"], "metal")
+
+    def test_every_map_its_objects_own_is_no_atlas(self):
+        self.assertIsNone(self.files({"|a": ("A.exr", "wood"), "|b": ("B.exr", "wood")}))
+
+    def test_the_objects_asked_about_are_grouped_too(self):
+        found = self.files(
+            {"|a": ("Room.exr", "wood"), "|b": ("Room.exr", "wood")}, objects=["|new"]
+        )
+        self.assertEqual(found.group["|new"], "new")
 
 
 class TestRecord(unittest.TestCase):

@@ -331,6 +331,43 @@ class ProgressionCurves:
             for i in range(num_samples)
         ]
 
+    @classmethod
+    def centered_offsets(
+        cls,
+        count: int,
+        span: float,
+        calculation_mode: str = "linear",
+        weight_bias: float = 0.5,
+        weight_curve: float = 2.0,
+    ) -> List[float]:
+        """Signed offsets from a midpoint for *count* points across *span*.
+
+        Each lands at ``(f - 0.5) * span``, ``f`` the curve evaluated on a
+        parameter ``t`` in ``[0, 1]`` centred on ``0.5``: ``"linear"`` spaces
+        them evenly and symmetrically, a non-linear curve warps the interior
+        toward one end while the ends stay at ``-span / 2`` and ``span / 2``. A
+        single point sits on the midpoint. What a cut tool places its cuts by
+        (both hosts' ``EditUtils.cut_along_axis``).
+
+        Parameters:
+            count (int): Number of points; none for 0 or fewer.
+            span (float): Distance between the first and the last.
+            calculation_mode (str): The curve (:meth:`get_curve_function`).
+            weight_bias (float): Bias for the ``"weighted"`` curve (0..1).
+            weight_curve (float): Curve strength for a non-linear curve.
+
+        Returns:
+            List[float]: One signed offset per point, in order.
+        """
+        if count <= 0:
+            return []
+        curve_fn = cls.get_curve_function(calculation_mode)
+        offsets = []
+        for i in range(count):
+            t = i / (count - 1) if count > 1 else 0.5
+            offsets.append((curve_fn(t, weight_curve, weight_bias) - 0.5) * span)
+        return offsets
+
 
 # -----------------------------------------------------------------------------
 

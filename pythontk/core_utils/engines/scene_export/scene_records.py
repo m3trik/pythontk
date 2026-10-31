@@ -1597,6 +1597,147 @@ class SceneRecords:
         return rows
 
     @staticmethod
+    def resolve_row(
+        label: str,
+        module: str,
+        owner: str,
+        *methods: Optional[str],
+        log: Optional[logging.Logger] = None,
+    ) -> Optional[Tuple[Optional[Callable], ...]]:
+        """The callables a producer, stager or hook row names: *owner*'s
+        *methods*, imported from *module* on first use.
+
+        ``None`` when the module or the class cannot be imported -- an
+        uninstalled subsystem is fine, and only debug-logged. A method the
+        class does not have resolves to ``None`` with a WARNING: that is a
+        misspelt row, and skipping it quietly would stop a record shipping (or
+        a stager finishing) with no sign of why. A method the row leaves
+        ``None`` resolves to ``None`` quietly: a declared one-way stage.
+
+        Parameters:
+            label: What the log calls the row (``"Producer for 'materials'"``).
+            module: The module the class lives in.
+            owner: The class.
+            methods: The method names, in the row's order.
+            log: The logger the row's library reports through; default this
+                module's.
+        """
+        import importlib
+
+        log = log or logger
+        try:
+            found = getattr(importlib.import_module(module), owner)
+        except Exception:  # an uninstalled subsystem is fine
+            log.debug("%s unavailable; skipped.", label, exc_info=True)
+            return None
+        resolved = []
+        for method in methods:
+            if not method:  # a column the row leaves empty: a one-way stage
+                resolved.append(None)
+                continue
+            fn = getattr(found, method, None)
+            if fn is None:
+                log.warning(
+                    "%s names %s.%s.%s, which does not exist; skipped.",
+                    label,
+                    module,
+                    owner,
+                    method,
+                )
+            resolved.append(fn)
+        return tuple(resolved)
+
+    @classmethod
+    def resolved_producers(
+        cls,
+        table: Mapping[Any, Tuple[str, str, str]],
+        host: str,
+        only: Optional[Iterable[Any]] = None,
+        log: Optional[logging.Logger] = None,
+    ) -> Dict[RecordSpec, Callable]:
+        """A host's producer *table* with the registered ones
+        (:meth:`producer_rows`), each resolved to its callable
+        (:meth:`resolve_row`); a row that does not resolve is skipped.
+
+        Parameters:
+            table: The library's own rows (``FbxUtils.PRODUCERS``).
+            host: The DCC (``"maya"``, ``"blender"``).
+            only: Specs or keys narrowing the table; ``None``: all.
+            log: As :meth:`resolve_row`'s.
+        """
+        wanted = None if only is None else {cls.resolve(k).key for k in only}
+        out: Dict[RecordSpec, Callable] = {}
+        for spec, row in cls.producer_rows(table, host).items():
+            if wanted is not None and spec.key not in wanted:
+                continue
+            resolved = cls.resolve_row(f"Producer for {spec.key!r}", *row, log=log)
+            if resolved and resolved[0] is not None:
+                out[spec] = resolved[0]
+        return out
+
+    @classmethod
+    def resolved_stagers(
+        cls,
+        table: Mapping[str, Tuple[str, str, str, Optional[str]]],
+        host: str,
+        names: Optional[Iterable[str]] = None,
+        log: Optional[logging.Logger] = None,
+    ) -> Dict[str, Tuple[Optional[Callable], ...]]:
+        """A host's stager *table* with the registered ones
+        (:meth:`stager_rows`), each resolved to its ``(prepare, finish)``
+        callables (:meth:`resolve_row`); a row whose class does not import is
+        skipped.
+
+        Parameters:
+            table: The library's own rows (``FbxUtils.STAGERS``).
+            host: The DCC (``"maya"``, ``"blender"``).
+            names: The stagers wanted; ``None``: all.
+            log: As :meth:`resolve_row`'s.
+        """
+        out: Dict[str, Tuple[Optional[Callable], ...]] = {}
+        for name, row in cls.stager_rows(table, host).items():
+            if names is not None and name not in names:
+                continue
+            resolved = cls.resolve_row(f"Stager {name!r}", *row, log=log)
+            if resolved is not None:
+                out[name] = resolved
+        return out
+
+    # -- stack-shaped records ------------------------------------------------
+    # A record holding a list of ``{"id": ...}`` entries, oldest first, that a
+    # host pushes onto and takes back off (``SMART_BAKE_SESSIONS``): the latest
+    # entry, or the latest with an id, read the same in every host.
+    @staticmethod
+    def peek_entry(
+        entries: Optional[List[dict]], entry_id: Optional[str] = None
+    ) -> Optional[dict]:
+        """The latest of *entries* (oldest first), or the latest whose ``id``
+        is *entry_id*; ``None`` when there is none."""
+        if not entries:
+            return None
+        if entry_id is None:
+            return entries[-1]
+        for entry in reversed(entries):
+            if entry.get("id") == entry_id:
+                return entry
+        return None
+
+    @staticmethod
+    def pop_entry(
+        entries: Optional[List[dict]], entry_id: Optional[str] = None
+    ) -> Optional[dict]:
+        """Remove and return what :meth:`peek_entry` would, from *entries* in
+        place; ``None`` (and *entries* untouched) when there is none."""
+        if not entries:
+            return None
+        if entry_id is None:
+            return entries.pop()
+        for i in range(len(entries) - 1, -1, -1):
+            if entries[i].get("id") == entry_id:
+                return entries.pop(i)
+        return None
+
+    @staticmethod
     def resolve_class(module: str, name: str) -> Any:
         """The class a ``(module, name)`` row names -- :attr:`CODECS`',
         :attr:`SceneStoreBase.OWNERS`' -- imported on first use, so declaring

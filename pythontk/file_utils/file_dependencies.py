@@ -43,6 +43,7 @@ from typing import (
     Iterable,
     Iterator,
     List,
+    Mapping,
     Optional,
     Pattern,
     Sequence,
@@ -143,6 +144,47 @@ class FileDependencies(LoggingMixin):
             if key:
                 readers.setdefault(key, set()).add(owner)
         return {key: frozenset(owners) for key, owners in readers.items()}
+
+    @staticmethod
+    def strangers(
+        folder: str,
+        stem: str,
+        ext: str,
+        claims: Mapping[str, Any],
+        wrote: Callable[[str], bool],
+    ) -> Set[str]:
+        """The files in *folder* a write naming ``<stem>`` must not replace:
+        ``<stem><ext>`` / ``<stem>_<k><ext>`` on disk (any case) that nothing
+        the host knows reads -- no key of *claims* (:meth:`claims`) -- and the
+        host did not write itself (*wrote*, handed the lower-case name).
+
+        :meth:`claims` holds only one scene's readers: two scenes in one
+        project whose names agree write the same files, and the second's write
+        would replace the first's. A file the host wrote and no longer reads
+        (a revert) stays its own to replace.
+
+        Parameters:
+            folder: The folder the write lands in.
+            stem: The name the write takes, without its ``_<k>`` or extension.
+            ext: The extension, with its dot.
+            claims: ``{lower-case file name: readers}``.
+            wrote: Whether the host wrote a file, by its lower-case name.
+
+        Returns:
+            Absolute paths; empty when *folder* cannot be listed.
+        """
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            return set()
+        pattern = re.compile(rf"{re.escape(stem)}(_\d+)?{re.escape(ext)}", re.IGNORECASE)
+        return {
+            os.path.abspath(os.path.join(folder, name))
+            for name in names
+            if pattern.fullmatch(name)
+            and name.lower() not in claims
+            and not wrote(name.lower())
+        }
 
     @classmethod
     def remove_superseded(
