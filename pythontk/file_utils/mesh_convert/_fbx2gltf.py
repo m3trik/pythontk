@@ -7,17 +7,19 @@ Resolves (or installs) the pinned godotengine/FBX2glTF binary, sizes the
 conversion's timeout from the FBX, runs it, and drives every post-conversion
 pass on one edit session. The spec-validity repairs of what the converter
 itself writes -- curve-proxy nodes, unbound skins, skin skeleton roots,
-tangent handedness -- live here with it.
+tangent handedness, non-finite animation keys -- live here with it.
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
 the other passes through the facade it holds (``self._mc``).
 """
 
 import logging
+import math
 import os
 import platform as _platform
 import shlex
 import shutil
+import struct
 import subprocess
 from time import perf_counter
 from typing import (
@@ -30,6 +32,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
     Union,
 )
 
@@ -465,6 +468,13 @@ class _Fbx2Gltf:
                     self._mc.restore_glb_skin_weights(edit, src_abs)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB skin weight restore skipped: %s", exc)
+                # Ahead of every pass that reads a key: the converter bakes
+                # each node's local matrix and decomposes it, and a degenerate
+                # one (a zero scale) comes out a NaN rotation glTF forbids.
+                try:
+                    self._mc.fix_glb_nonfinite_keys(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB non-finite key repair skipped: %s", exc)
                 try:
                     fixes = self._mc.fix_glb_phantom_opaque_alpha(edit)
                 except Exception as exc:  # noqa: BLE001
@@ -1048,6 +1058,326 @@ class _Fbx2Gltf:
                     ", ".join(outcomes),
                 )
             return repaired
+
+    def fix_glb_nonfinite_keys(self, glb: GlbTarget) -> Dict[str, int]:
+        with self._mc.open_glb(glb) as edit:
+            gltf = edit.gltf
+            accessors = gltf.get("accessors") or []
+            readers, times_of, cubic = self._key_readers(gltf)
+            blob: Optional[bytearray] = None
+            keys = 0
+            repaired: Set[Tuple[str, str]] = set()
+            hollow: Dict[int, str] = {}  # output -> why it has no key to keep
+            placed: Dict[int, List[float]] = {}  # time input -> its times, placed
+
+            # Key times first: every value is placed by them.
+            for source in sorted(set(times_of.values())):
+                rows = self._floats(edit, source)
+                if rows is None:
+                    continue
+                times = [row[0] for row in rows]
+                bad = [k for k, t in enumerate(times) if not math.isfinite(t)]
+                if bad:
+                    reading = [o for o, s in times_of.items() if s == source]
+                    if not self._place_times(times, bad):
+                        for output in reading:
+                            hollow[output] = "fewer than two finite key times"
+                        continue
+                    blob = self._splice(
+                        edit, blob, source, [(t,) for t in times], bad, 1
+                    )
+                    accessors[source]["min"] = [min(times)]
+                    accessors[source]["max"] = [max(times)]
+                    keys += len(bad)
+                    who = [r for output in reading for r in readers[output]]
+                    repaired.update((clip, label) for clip, label, _ in who)
+                    head, labels = self._said(who)
+                    logger.warning(
+                        "%s: the key times of %s held %d non-finite time(s) of %d, "
+                        "which glTF does not allow; each took its place in the "
+                        "keys' spacing.",
+                        head,
+                        labels,
+                        len(bad),
+                        len(times),
+                    )
+                placed[source] = times
+
+            for output, who in readers.items():
+                if output in hollow:
+                    continue
+                times = placed.get(times_of[output])
+                rows = self._floats(edit, output)
+                if rows is None or not times:
+                    continue
+                count = len(times)
+                if len(rows) % count:
+                    continue
+                group = len(rows) // count  # elements per key (3 per value: a spline)
+                values = [list(row) for row in rows]
+                finite = [
+                    all(
+                        math.isfinite(v)
+                        for row in values[k * group : (k + 1) * group]
+                        for v in row
+                    )
+                    for k in range(count)
+                ]
+                if all(finite):
+                    continue
+                if not any(finite):
+                    hollow[output] = "no finite key"
+                    continue
+                good = [k for k, ok in enumerate(finite) if ok]
+                bad = [k for k, ok in enumerate(finite) if not ok]
+                rotation = any(path == "rotation" for _, _, path in who)
+                self._interpolate(
+                    values, times, good, bad, group, output in cubic, rotation
+                )
+                blob = self._splice(edit, blob, output, values, bad, group)
+                accessor = accessors[output]
+                if "min" in accessor or "max" in accessor:
+                    width = len(values[0])
+                    accessor["min"] = [
+                        min(row[c] for row in values) for c in range(width)
+                    ]
+                    accessor["max"] = [
+                        max(row[c] for row in values) for c in range(width)
+                    ]
+                keys += len(bad)
+                repaired.update((clip, label) for clip, label, _ in who)
+                head, labels = self._said(who)
+                logger.warning(
+                    "%s: %s held %d non-finite key(s) of %d, which glTF does not "
+                    "allow%s; each was interpolated from its finite neighbours by "
+                    "time, and held from the nearest at an end.",
+                    head,
+                    labels,
+                    len(bad),
+                    count,
+                    " (a converter decomposing a degenerate transform, such as a "
+                    "zero scale, has no rotation to recover)"
+                    if rotation
+                    else "",
+                )
+            if blob is not None:
+                edit.replace_rest(blob)
+
+            dropped = 0
+            if hollow:
+                dropped = self._drop_channels(edit, set(hollow))
+                for output, why in hollow.items():
+                    head, labels = self._said(readers[output])
+                    logger.warning(
+                        "%s: %s held %s, which glTF does not allow; the channel is "
+                        "dropped (there is no value to give it).",
+                        head,
+                        labels,
+                        why,
+                    )
+            return {"keys": keys, "channels": len(repaired), "dropped": dropped}
+
+    @classmethod
+    def _key_readers(
+        cls, gltf: Dict[str, Any]
+    ) -> Tuple[Dict[int, List[Tuple[str, str, Any]]], Dict[int, int], Set[int]]:
+        """``({output: [(clip, channel label, path)]}, {output: its time input},
+        the cubic-spline outputs)``: who reads each animation output, once each."""
+        nodes = gltf.get("nodes") or []
+        readers: Dict[int, List[Tuple[str, str, Any]]] = {}
+        times_of: Dict[int, int] = {}
+        cubic: Set[int] = set()
+        for position, animation in enumerate(gltf.get("animations") or []):
+            clip = str(animation.get("name") or f"animations[{position}]")
+            samplers = animation.get("samplers") or []
+            for channel in animation.get("channels") or []:
+                index = channel.get("sampler")
+                if not isinstance(index, int) or not 0 <= index < len(samplers):
+                    continue
+                sampler = samplers[index] or {}
+                output, source = sampler.get("output"), sampler.get("input")
+                if not isinstance(output, int) or not isinstance(source, int):
+                    continue
+                target = channel.get("target") or {}
+                reader = (clip, cls._channel_label(nodes, target), target.get("path"))
+                if reader not in readers.setdefault(output, []):
+                    readers[output].append(reader)
+                times_of[output] = source
+                if sampler.get("interpolation") == "CUBICSPLINE":
+                    cubic.add(output)
+        return readers, times_of, cubic
+
+    @staticmethod
+    def _channel_label(nodes: List[Dict[str, Any]], target: Dict[str, Any]) -> str:
+        """``the <path> channel of node '<name>'`` for a channel *target* (a
+        KHR_animation_pointer one by its pointer), as a report names it."""
+        pointer = (
+            (target.get("extensions") or {}).get("KHR_animation_pointer") or {}
+        ).get("pointer")
+        node = target.get("node")
+        if pointer and node is None:
+            return f"the channel animating {pointer!r}"
+        named = (
+            nodes[node].get("name")
+            if isinstance(node, int) and 0 <= node < len(nodes)
+            else None
+        )
+        label = named if named else f"#{node}"
+        return f"the {target.get('path')} channel of node {label!r}"
+
+    @staticmethod
+    def _said(readers: List[Tuple[str, str, Any]]) -> Tuple[str, str]:
+        """``("Animation 'Take'", "the rotation channel of node 'x' and ...")``:
+        the clips and the channels *readers* name, each once."""
+        clips = list(dict.fromkeys(clip for clip, _, _ in readers))
+        labels = list(dict.fromkeys(label for _, label, _ in readers))
+        head = ("Animation " if len(clips) == 1 else "Animations ") + ", ".join(
+            repr(clip) for clip in clips
+        )
+        return head, " and ".join(labels)
+
+    def _floats(self, edit: "GlbEdit", index: int) -> Optional[List[Tuple[float, ...]]]:
+        """A tightly packed float accessor's elements; ``None`` for any other
+        (only a float holds a NaN, and a sparse or interleaved layout is left
+        as it is)."""
+        accessors = edit.gltf.get("accessors") or []
+        if not 0 <= index < len(accessors):
+            return None
+        if (accessors[index] or {}).get("componentType") != 5126:
+            return None
+        elements = self._mc._accessor_elements(edit, index)
+        if not elements:
+            return None
+        width = len(elements[0]) // 4
+        return [struct.unpack(f"<{width}f", element) for element in elements]
+
+    @staticmethod
+    def _place_times(times: List[float], bad: List[int]) -> bool:
+        """Give each *bad* key time its place in the finite ones' spacing, in
+        place: between two by index, past an end by the end pair's spacing.
+        ``False`` (nothing changed) with fewer than two finite times to space
+        by. A finite time out of order is not this repair's: it has no one
+        right place, and the converter refuses it by name."""
+        skip = set(bad)
+        good = [k for k in range(len(times)) if k not in skip]
+        if len(good) < 2:
+            return False
+        for k in bad:
+            lo = max((j for j in good if j < k), default=None)
+            hi = min((j for j in good if j > k), default=None)
+            if lo is None:
+                lo, hi = hi, min(j for j in good if j > hi)
+            elif hi is None:
+                lo, hi = max(j for j in good if j < lo), lo
+            times[k] = times[lo] + (times[hi] - times[lo]) * (k - lo) / (hi - lo)
+        return True
+
+    @staticmethod
+    def _interpolate(
+        values: List[List[float]],
+        times: List[float],
+        good: List[int],
+        bad: List[int],
+        group: int,
+        cubic: bool,
+        rotation: bool,
+    ) -> None:
+        """Each non-finite element of the *bad* keys, in place, from the finite
+        keys either side by time -- a slerp for a rotation, a lerp otherwise --
+        or held from the nearest at an end. A spline's repaired key keeps its
+        value's place between its tangents and takes flat ones."""
+        from pythontk.file_utils.mesh_convert.glb.clips import GlbClips
+
+        part = group // 3 if cubic else group
+        offset = part if cubic else 0
+        for k in bad:
+            lo = max((j for j in good if j < k), default=None)
+            hi = min((j for j in good if j > k), default=None)
+            span = times[hi] - times[lo] if lo is not None and hi is not None else 0.0
+            u = (times[k] - times[lo]) / span if span > 0.0 else 0.0
+            for i in range(offset, offset + part):
+                if all(math.isfinite(v) for v in values[k * group + i]):
+                    continue
+                a = values[lo * group + i] if lo is not None else None
+                b = values[hi * group + i] if hi is not None else None
+                if a is None or b is None:
+                    values[k * group + i] = list(a if b is None else b)
+                elif rotation and len(a) == 4:
+                    values[k * group + i] = list(GlbClips._slerp(a, b, u))
+                else:
+                    values[k * group + i] = list(GlbClips._lerp(a, b, u))
+            if cubic:
+                for i in list(range(part)) + list(range(2 * part, group)):
+                    values[k * group + i] = [0.0] * len(values[k * group + i])
+
+    @staticmethod
+    def _splice(
+        edit: "GlbEdit",
+        blob: Optional[bytearray],
+        index: int,
+        values: List[Sequence[float]],
+        keys: List[int],
+        group: int,
+    ) -> bytearray:
+        """*keys*' elements of accessor *index* written into a copy of the BIN
+        (made on the first write and handed back for the next)."""
+        accessor = edit.gltf["accessors"][index]
+        view = GlbEdit.bin_view(edit.gltf, accessor) or {}
+        start = int(view.get("byteOffset") or 0) + int(accessor.get("byteOffset") or 0)
+        if blob is None:
+            blob = bytearray(edit.bin_data)
+        width = len(values[0])
+        for k in keys:
+            for i in range(k * group, (k + 1) * group):
+                at = start + i * width * 4
+                blob[at : at + width * 4] = struct.pack(f"<{width}f", *values[i])
+        return blob
+
+    def _drop_channels(self, edit: "GlbEdit", outputs: Set[int]) -> int:
+        """Drop every channel reading one of *outputs*, the samplers left
+        unread (the rest renumbered), the accessors left orphaned and a clip
+        left empty; how many channels went."""
+        dropped = 0
+        released: Set[Any] = set()
+        for animation in edit.gltf.get("animations") or []:
+            samplers = animation.get("samplers") or []
+            wired = animation.get("channels") or []
+
+            def reads(channel: Dict[str, Any]) -> bool:
+                index = channel.get("sampler")
+                return (
+                    isinstance(index, int)
+                    and 0 <= index < len(samplers)
+                    and (samplers[index] or {}).get("output") in outputs
+                )
+
+            kept = [channel for channel in wired if not reads(channel)]
+            if len(kept) == len(wired):
+                continue
+            dropped += len(wired) - len(kept)
+            used = sorted(
+                {
+                    c["sampler"]
+                    for c in kept
+                    if isinstance(c.get("sampler"), int)
+                    and 0 <= c["sampler"] < len(samplers)
+                }
+            )
+            for index, sampler in enumerate(samplers):
+                if index not in used:
+                    released.update((sampler.get("input"), sampler.get("output")))
+            remap = {old: new for new, old in enumerate(used)}
+            for channel in kept:
+                channel["sampler"] = remap.get(
+                    channel.get("sampler"), channel.get("sampler")
+                )
+            animation["channels"] = kept
+            animation["samplers"] = [samplers[i] for i in used]
+        edit.dirty = True
+        self._mc._drop_orphaned_accessors(edit, released)
+        self._mc._compact_bin(edit)
+        self._mc.prune_glb_animations(edit)
+        return dropped
 
     @staticmethod
     def fbx_media_dirs(fbx_path: str) -> List[str]:

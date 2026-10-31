@@ -465,6 +465,8 @@ class _GltfToFbx(object):
         self._check_extensions()
         nodes = self.gltf.get("nodes") or []
         self.order, self.parent = self._scene_order()
+        if self.include_animation:
+            self._check_animation_values()
         self.joints = {
             j for skin in self.gltf.get("skins") or [] for j in skin.get("joints") or []
         }
@@ -523,6 +525,65 @@ class _GltfToFbx(object):
             )
         for ext in sorted(required - _UNDERSTOOD_EXTENSIONS):
             self._skip("required extensions (ignored)", ext)
+
+    def _check_animation_values(self) -> None:
+        """Refuse a channel this converts whose key times or values hold a NaN
+        or an infinity, or whose key times do not increase -- glTF allows
+        none of it -- naming its node, before anything is written."""
+        animations = self.gltf.get("animations") or []
+        if not animations:
+            return
+        nodes = self.gltf.get("nodes") or []
+        scene = set(self.order)
+        # The repair opens a .glb only; a .gltf is fixed where it was written.
+        fix = (
+            "repair the file (MeshConvert.fix_glb_nonfinite_keys) and convert it again"
+            if self.doc.path.lower().endswith(".glb")
+            else "fix it where it was written and convert it again"
+        )
+        samplers = animations[0].get("samplers") or []
+        for channel in animations[0].get("channels") or []:
+            target = channel.get("target") or {}
+            node, path = target.get("node"), target.get("path")
+            index = channel.get("sampler")
+            if (
+                node not in scene
+                or path not in ("translation", "rotation", "scale")
+                or not isinstance(index, int)
+                or not 0 <= index < len(samplers)
+            ):
+                continue
+            sampler = samplers[index] or {}
+            if not isinstance(sampler.get("input"), int) or not isinstance(
+                sampler.get("output"), int
+            ):
+                continue
+            name = nodes[node].get("name") or f"node{node}"
+            where = f"{os.path.basename(self.doc.path)}: node {name!r}'s {path} channel"
+            times = [t[0] for t in self.doc.accessor(sampler.get("input"))]
+            bad = [k for k, t in enumerate(times) if not math.isfinite(t)]
+            if bad:
+                raise ValueError(
+                    f"{where} holds {len(bad)} non-finite key time(s), the first "
+                    f"at key {bad[0]}, which glTF does not allow; {fix}."
+                )
+            back = next(
+                (k for k in range(1, len(times)) if times[k] <= times[k - 1]), None
+            )
+            if back is not None:
+                raise ValueError(
+                    f"{where}'s key times do not increase (key {back} at "
+                    f"{times[back]:g} s after {times[back - 1]:g} s), which glTF "
+                    "requires; fix them where the file was written and convert "
+                    "it again."
+                )
+            values = self.doc.accessor(sampler.get("output"))
+            bad = [k for k, v in enumerate(values) if not all(map(math.isfinite, v))]
+            if bad:
+                raise ValueError(
+                    f"{where} holds {len(bad)} non-finite value(s), the first at "
+                    f"element {bad[0]}, which glTF does not allow; {fix}."
+                )
 
     def _scene_order(self) -> Tuple[List[int], Dict[int, int]]:
         """Nodes of the default scene, parents first, and each one's parent."""

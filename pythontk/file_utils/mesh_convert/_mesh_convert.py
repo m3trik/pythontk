@@ -601,6 +601,42 @@ class MeshConvert(HelpMixin):
         """
         return cls._fbx2gltf.fix_glb_skin_skeletons(glb)
 
+    @classmethod
+    def fix_glb_nonfinite_keys(cls, glb: GlbTarget) -> Dict[str, int]:
+        """Give every non-finite animation key time and value a finite one.
+
+        glTF allows no NaN or infinity in an animation's key times or values,
+        and its validator refuses a file holding one. FBX2glTF writes one where
+        a node's transform is degenerate: it bakes each node's local matrix per
+        frame and decomposes it, and a zero scale leaves no rotation to
+        recover, so that frame's quaternion comes out NaN
+        (``test_assets/fbx/maya_tangents.fbx`` keys its ``tangents`` node at
+        scale 0 on frame 1). :meth:`fbx_to_glb` runs this first, on the
+        converter's own output, ahead of every pass that reads a key.
+
+        A non-finite key time takes its place in the finite ones' spacing:
+        between two by index, past an end by the end pair's spacing. A
+        non-finite value is what the motion had there: interpolated by time
+        from the finite keys either side (a slerp for a rotation, a lerp for
+        anything else), and held from the nearest finite key at an end. A cubic
+        spline's repaired key takes flat tangents. Each repaired output is
+        warned about once, naming its animations, its channels and how many
+        keys it lost. A channel with no finite value, or fewer than two finite
+        key times, is dropped with a warning: there is nothing to give it. A
+        finite key time out of order is left (it has no one right place;
+        :meth:`gltf_to_fbx` refuses it by name). Float accessors only, the one
+        kind that can hold a NaN; a sparse or interleaved one is left as it is.
+
+        Parameters:
+            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
+
+        Returns:
+            ``{"keys": n, "channels": n, "dropped": n}`` -- the key times and
+            values repaired, the channels reading them, and the channels
+            dropped.
+        """
+        return cls._fbx2gltf.fix_glb_nonfinite_keys(glb)
+
     @staticmethod
     def fbx_media_dirs(fbx_path: str) -> List[str]:
         """Where a file an FBX names loosely is looked for beside it.

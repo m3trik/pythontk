@@ -551,6 +551,50 @@ class Gltf2FbxTestCase(unittest.TestCase):
         self.assertIsNone(manifest.get(HandoffManifest.SCENE))
         self.assertEqual(self._objects(fbx, "AnimationStack"), [])
 
+    def test_a_non_finite_key_is_refused_by_name(self):
+        """glTF allows no NaN or infinity in an animation's values: such a file
+        is refused with the node and channel named, and the repair said, never
+        an arithmetic error from deep inside a key conversion."""
+        builder = scene_builder()
+        nan, half = float("nan"), math.sqrt(0.5)
+        builder.gltf["animations"][0]["samplers"][1]["output"] = builder.accessor(
+            [(nan, nan, nan, nan), (0, half, 0, half)], "VEC4"
+        )
+        with self.assertRaisesRegex(ValueError, r"'Turned'.*rotation") as caught:
+            self._convert(builder)
+        self.assertIn("fix_glb_nonfinite_keys", str(caught.exception))
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "out.fbx")))
+
+    def test_a_non_finite_key_time_is_refused_by_name(self):
+        builder = scene_builder()
+        builder.gltf["animations"][0]["samplers"][1]["input"] = builder.accessor(
+            [0.0, float("nan")], "SCALAR"
+        )
+        with self.assertRaisesRegex(ValueError, r"'Turned'.*rotation.*key time"):
+            self._convert(builder)
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "out.fbx")))
+
+    def test_key_times_that_do_not_increase_are_refused_by_name(self):
+        builder = scene_builder()
+        builder.gltf["animations"][0]["samplers"][1]["input"] = builder.accessor(
+            [0.5, 0.25], "SCALAR"
+        )
+        with self.assertRaisesRegex(ValueError, r"'Turned'.*rotation.*increase"):
+            self._convert(builder)
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "out.fbx")))
+
+    def test_a_gltf_refusal_names_no_repair_it_cannot_open(self):
+        """``fix_glb_nonfinite_keys`` opens a .glb only: a .gltf refused for a
+        non-finite key is not sent to it."""
+        builder = scene_builder()
+        nan, half = float("nan"), math.sqrt(0.5)
+        builder.gltf["animations"][0]["samplers"][1]["output"] = builder.accessor(
+            [(nan, nan, nan, nan), (0, half, 0, half)], "VEC4"
+        )
+        with self.assertRaisesRegex(ValueError, r"'Turned'.*rotation") as caught:
+            self._convert(builder, gltf=True)
+        self.assertNotIn("fix_glb_nonfinite_keys", str(caught.exception))
+
     # ------------------------------------------------------------ materials
     def test_images_are_named_for_the_map_they_feed(self):
         """The consumer classifies a manifest file by FILENAME, so an image the

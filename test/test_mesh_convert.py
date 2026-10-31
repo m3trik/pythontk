@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from pythontk import (
     FileUtils,
+    GlbReader,
     HandoffRecord,
     ImgUtils,
     Ktx2Encoder,
@@ -14528,6 +14529,452 @@ class TestFacadeComposition(unittest.TestCase):
                 problems.append(f"{fn.name}: forwards {passed}, declares {names}")
         self.assertGreater(checked, 80)
         self.assertEqual(problems, [])
+
+
+class TestNonFiniteKeys(unittest.TestCase):
+    """A converted GLB's animation values and key times are finite, as glTF
+    requires.
+
+    Repro (``test_assets/fbx/maya_tangents.fbx``, FBX2glTF 0.13.1): the file
+    keys node ``tangents`` at scale 0 on frame 1, and the converter, which bakes
+    each node's local matrix per frame and decomposes it, writes that frame's
+    rotation as a NaN quaternion -- a degenerate matrix has no rotation to
+    recover. The GLB then failed its own NaN gate, and ``gltf_to_fbx`` crashed
+    on it ("cannot convert float NaN to integer").
+    """
+
+    LOGGER = "pythontk.file_utils.mesh_convert._fbx2gltf"
+    NAN, INF = float("nan"), float("inf")
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_nonfinite_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _turn(degrees):
+        """A rotation of *degrees* about +Y, as a glTF quaternion."""
+        half = math.radians(degrees) / 2.0
+        return (0.0, math.sin(half), 0.0, math.cos(half))
+
+    def _glb(self, clips, image=False, name="anim.glb"):
+        """Nodes ``spin``, ``move``, ``void`` and *clips* ``{clip name: [(node,
+        path, values, options)]}``, three keys a frame apart unless *options*
+        says ``times``; ``interpolation`` sets the sampler's, ``bounds`` keeps
+        the output's min/max, ``share`` reads the output of the clip's channel
+        at that position, ``pointer`` targets a KHR_animation_pointer. With
+        *image*, a PNG lands in the BIN after every animation accessor."""
+        from test_gltf2fbx import GltfBuilder, png_bytes
+
+        b = GltfBuilder()
+        b.gltf["nodes"] = [{"name": "spin"}, {"name": "move"}, {"name": "void"}]
+        b.gltf["scenes"] = [{"nodes": [0, 1, 2]}]
+        animations = []
+        for clip, channels in clips.items():
+            samplers, wired, outputs = [], [], []
+            for node, path, values, options in channels:
+                times = options.get("times", [0.0, 1 / 24.0, 2 / 24.0])
+                source = b.accessor(times, "SCALAR")
+                finite = [t for t in times if math.isfinite(t)]
+                b.accessors[source]["min"] = [min(finite)]
+                b.accessors[source]["max"] = [max(finite)]
+                if "share" in options:
+                    output = outputs[options["share"]]
+                else:
+                    width = len(values[0])
+                    kind = {1: "SCALAR", 3: "VEC3", 4: "VEC4"}[width]
+                    output = b.accessor(values, kind)
+                    if options.get("bounds"):
+                        b.accessors[output]["min"] = [
+                            min(v[i] for v in values) for i in range(width)
+                        ]
+                        b.accessors[output]["max"] = [
+                            max(v[i] for v in values) for i in range(width)
+                        ]
+                    else:
+                        b.accessors[output].pop("min", None)
+                        b.accessors[output].pop("max", None)
+                outputs.append(output)
+                sampler = {"input": source, "output": output}
+                if "interpolation" in options:
+                    sampler["interpolation"] = options["interpolation"]
+                samplers.append(sampler)
+                target = {"node": node, "path": path}
+                if "pointer" in options:
+                    target = {
+                        "path": "pointer",
+                        "extensions": {
+                            "KHR_animation_pointer": {"pointer": options["pointer"]}
+                        },
+                    }
+                wired.append({"sampler": len(samplers) - 1, "target": target})
+            animations.append({"name": clip, "samplers": samplers, "channels": wired})
+        b.gltf["animations"] = animations
+        if image:
+            b.gltf["images"] = []
+            b.image(png_bytes((10, 20, 30, 255)), "after.png")
+        return b.write_glb(os.path.join(self.tmp, name))
+
+    @staticmethod
+    def _channel(glb, node, path, clip=0):
+        """``(times, values, output accessor)`` of one channel, as written."""
+        reader = GlbReader.load(glb)
+        animation = reader.gltf["animations"][clip]
+        for channel in animation["channels"]:
+            if channel["target"] == {"node": node, "path": path}:
+                sampler = animation["samplers"][channel["sampler"]]
+                return (
+                    [t[0] for t in reader.accessor(sampler["input"])],
+                    reader.accessor(sampler["output"]),
+                    reader.gltf["accessors"][sampler["output"]],
+                )
+        return None
+
+    def _repair(self, glb, level="WARNING"):
+        with self.assertLogs(self.LOGGER, level) as logs:
+            report = MeshConvert.fix_glb_nonfinite_keys(glb)
+        return report, logs.output
+
+    def assertClose(self, got, want, places=5):
+        self.assertEqual(len(got), len(want))
+        for a, b in zip(got, want):
+            self.assertAlmostEqual(a, b, places=places, msg=f"{got} != {want}")
+
+    # ---------------------------------------------------------------- values
+    def test_an_interior_key_is_interpolated_by_its_time(self):
+        """Between two finite keys, the value the motion had there: a slerp
+        for a rotation, a lerp otherwise, by time (here a third of the way)."""
+        times = [0.0, 1 / 24.0, 3 / 24.0]
+        glb = self._glb(
+            {
+                "Take": [
+                    (
+                        0,
+                        "rotation",
+                        [self._turn(0), (self.NAN,) * 4, self._turn(30)],
+                        {"times": times},
+                    ),
+                    (
+                        1,
+                        "translation",
+                        [(0, 0, 0), (self.INF, 0, 0), (3, 0, 0)],
+                        {"times": times, "bounds": True},
+                    ),
+                ]
+            }
+        )
+        report, said = self._repair(glb)
+        self.assertEqual(report, {"keys": 2, "channels": 2, "dropped": 0})
+        self.assertClose(self._channel(glb, 0, "rotation")[1][1], self._turn(10))
+        _, moved, accessor = self._channel(glb, 1, "translation")
+        self.assertClose(moved[1], (1.0, 0.0, 0.0))
+        # The bounds an output states are its values' bounds again.
+        self.assertEqual(
+            (accessor["min"], accessor["max"]), ([0.0, 0.0, 0.0], [3.0, 0.0, 0.0])
+        )
+        joined = "\n".join(said)
+        self.assertIn("'Take'", joined)
+        self.assertIn("'spin'", joined)
+        self.assertIn("'move'", joined)
+        self.assertEqual(GlbReader.load(glb).nan_findings(deep=True), [])
+
+    def test_an_end_key_holds_its_nearest_finite_key(self):
+        glb = self._glb(
+            {
+                "Take": [
+                    (
+                        0,
+                        "rotation",
+                        [(self.NAN,) * 4, (self.NAN,) * 4, self._turn(30)],
+                        {},
+                    ),
+                    (1, "translation", [(0, 0, 0), (1, 0, 0), (self.NAN, 0, 0)], {}),
+                ]
+            }
+        )
+        report, said = self._repair(glb)
+        self.assertEqual(report, {"keys": 3, "channels": 2, "dropped": 0})
+        turned = self._channel(glb, 0, "rotation")[1]
+        self.assertClose(turned[0], self._turn(30))
+        self.assertClose(turned[1], self._turn(30))
+        self.assertClose(self._channel(glb, 1, "translation")[1][2], (1.0, 0.0, 0.0))
+        # Only a rotation's report says why a converter writes one.
+        (moved,) = [line for line in said if "'move'" in line]
+        self.assertNotIn("rotation to recover", moved)
+        (spun,) = [line for line in said if "'spin'" in line]
+        self.assertIn("rotation to recover", spun)
+
+    def test_a_cubic_key_is_interpolated_with_flat_tangents(self):
+        zero, one, two = (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)
+        glb = self._glb(
+            {
+                "Take": [
+                    (
+                        1,
+                        "translation",
+                        [zero, zero, one, one, (self.NAN, 0, 0), one, one, two, zero],
+                        {"interpolation": "CUBICSPLINE"},
+                    )
+                ]
+            }
+        )
+        report, _ = self._repair(glb)
+        self.assertEqual(report, {"keys": 1, "channels": 1, "dropped": 0})
+        values = self._channel(glb, 1, "translation")[1]
+        self.assertEqual(
+            values[3:6], [zero, one, zero]
+        )  # in-tangent, value, out-tangent
+        self.assertEqual(values[:3] + values[6:], [zero, zero, one, one, two, zero])
+
+    def test_a_shared_output_is_repaired_once_and_said_once(self):
+        glb = self._glb(
+            {
+                "A": [
+                    (
+                        0,
+                        "rotation",
+                        [self._turn(0), (self.NAN,) * 4, self._turn(20)],
+                        {},
+                    )
+                ],
+                "B": [
+                    (1, "translation", [(0, 0, 0)] * 3, {}),
+                    (0, "rotation", None, {"share": 0}),
+                ],
+            }
+        )
+        # Clip B's second channel reads clip B's first output: rewire it to A's.
+        with MeshConvert.open_glb(glb) as edit:
+            first = edit.gltf["animations"][0]["samplers"][0]["output"]
+            edit.gltf["animations"][1]["samplers"][1]["output"] = first
+            edit.dirty = True
+        report, said = self._repair(glb)
+        self.assertEqual(report, {"keys": 1, "channels": 2, "dropped": 0})
+        self.assertEqual(len(said), 1, said)
+        self.assertIn("'A'", said[0])
+        self.assertIn("'B'", said[0])
+        self.assertEqual(said[0].count("'spin'"), 1, said[0])
+        self.assertClose(
+            self._channel(glb, 0, "rotation", clip=1)[1][1], self._turn(10)
+        )
+
+    def test_a_pointer_channel_is_named_by_its_pointer(self):
+        pointer = "/materials/0/pbrMetallicRoughness/baseColorFactor"
+        glb = self._glb(
+            {
+                "Fade": [
+                    (
+                        None,
+                        None,
+                        [(1, 1, 1, 1), (self.NAN,) * 4, (1, 1, 1, 0)],
+                        {"pointer": pointer},
+                    )
+                ]
+            }
+        )
+        report, said = self._repair(glb)
+        self.assertEqual(report["keys"], 1)
+        self.assertIn(repr(pointer), said[0])
+        self.assertNotIn("None", said[0])
+
+    # --------------------------------------------------------- key times
+    def test_a_non_finite_key_time_takes_its_place_in_the_spacing(self):
+        """A key time has no value to borrow: an interior one takes its place
+        between its finite neighbours by index, an end one its neighbours'
+        spacing; the input's bounds follow."""
+        glb = self._glb(
+            {
+                "Take": [
+                    (
+                        1,
+                        "translation",
+                        [(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+                        {"times": [0.0, self.NAN, 2 / 24.0]},
+                    ),
+                    (
+                        0,
+                        "rotation",
+                        [self._turn(0)] * 3,
+                        {"times": [0.0, 1 / 24.0, self.INF]},
+                    ),
+                ]
+            }
+        )
+        report, said = self._repair(glb)
+        self.assertEqual(report, {"keys": 2, "channels": 2, "dropped": 0})
+        self.assertClose(
+            self._channel(glb, 1, "translation")[0], [0.0, 1 / 24.0, 2 / 24.0]
+        )
+        times = self._channel(glb, 0, "rotation")[0]
+        self.assertClose(times, [0.0, 1 / 24.0, 2 / 24.0])
+        reader = GlbReader.load(glb)
+        source = reader.gltf["animations"][0]["samplers"][1]["input"]
+        self.assertAlmostEqual(
+            reader.gltf["accessors"][source]["max"][0], 2 / 24.0, places=6
+        )
+        self.assertTrue(any("key time" in line for line in said), said)
+
+    # ------------------------------------------------------- what is dropped
+    def test_a_channel_with_no_finite_key_is_dropped_and_the_file_stays_whole(self):
+        """The hollow channel is FIRST, so dropping it renumbers the samplers
+        the rest read; an image sits after the animation bytes, so the
+        compaction moves it; a clip left with nothing is pruned."""
+        bounded = [self._turn(0), self._turn(10), self._turn(20)]
+        glb = self._glb(
+            {
+                "Take": [
+                    (2, "scale", [(self.NAN,) * 3] * 3, {}),
+                    (0, "rotation", bounded, {"bounds": True}),
+                ],
+                "Only": [(2, "translation", [(self.INF, 0, 0)] * 3, {})],
+            },
+            image=True,
+        )
+        before = MeshConvert._read_glb(glb)
+        image = before.image_bytes(before.gltf["images"][0])
+        report, said = self._repair(glb)
+        self.assertEqual(report, {"keys": 0, "channels": 0, "dropped": 2})
+        self.assertTrue(all("'void'" in line for line in said), said)
+        after = MeshConvert._read_glb(glb)
+        (animation,) = after.gltf["animations"]
+        self.assertEqual(animation["name"], "Take")
+        self.assertEqual(
+            animation["channels"],
+            [{"sampler": 0, "target": {"node": 0, "path": "rotation"}}],
+        )
+        self.assertEqual(len(animation["samplers"]), 1)
+        _, turned, accessor = self._channel(glb, 0, "rotation")
+        for got, want in zip(turned, bounded):
+            self.assertClose(got, want)
+        self.assertIn("min", accessor)
+        self.assertEqual(after.image_bytes(after.gltf["images"][0]), image)
+        self.assertEqual(GlbReader.load(glb).nan_findings(deep=True), [])
+
+    def test_a_finite_file_is_left_as_it_is(self):
+        glb = self._glb({"Take": [(0, "rotation", [(0, 0, 0, 1)] * 3, {})]})
+        with open(glb, "rb") as fh:
+            before = fh.read()
+        self.assertEqual(
+            MeshConvert.fix_glb_nonfinite_keys(glb),
+            {"keys": 0, "channels": 0, "dropped": 0},
+        )
+        with open(glb, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+
+    # ------------------------------------------------------ the converter
+    @unittest.skipUnless(
+        _FBX2GLTF, "FBX2glTF is not installed; this test downloads nothing"
+    )
+    def test_the_fixtures_conversion_ships_only_finite_keys(self):
+        src = os.path.join(
+            os.path.dirname(__file__), "test_assets", "fbx", "maya_tangents.fbx"
+        )
+        fbx = os.path.join(self.tmp, "maya_tangents.fbx")
+        shutil.copy(src, fbx)
+        with self.assertLogs(self.LOGGER, "WARNING") as logs:
+            glb = MeshConvert.fbx_to_glb(fbx, os.path.join(self.tmp, "out.glb"))
+        self.assertEqual(GlbReader.load(glb).nan_findings(deep=True), [])
+        said = [line for line in logs.output if "non-finite" in line]
+        self.assertEqual(len(said), 1, logs.output)
+        for word in ("'Take 001'", "'tangents'", "rotation"):
+            self.assertIn(word, said[0])
+
+    @unittest.skipUnless(
+        _FBX2GLTF, "FBX2glTF is not installed; this test downloads nothing"
+    )
+    def test_a_mid_animation_zero_scale_keeps_the_authored_turn(self):
+        """The round trip that showed the hold was wrong: a node squashed flat
+        in the middle of a spin (scale Y through 0 at 0.5 s) comes back turned
+        as authored there, not paused at a neighbour's angle."""
+        from test_gltf2fbx import GltfBuilder
+
+        b = GltfBuilder()
+        times = [k / 24.0 for k in range(25)]
+        source = b.accessor(times, "SCALAR")
+        b.accessors[source].update(min=[0.0], max=[1.0])
+        spin = b.accessor([self._turn(10 * k) for k in range(25)], "VEC4")
+        squash = b.accessor([(1.0, abs(k - 12) / 12.0, 1.0) for k in range(25)], "VEC3")
+        for index in (spin, squash):
+            b.accessors[index].pop("min", None)
+            b.accessors[index].pop("max", None)
+        b.gltf.update(
+            scenes=[{"nodes": [0]}],
+            nodes=[{"name": "squash"}],
+            animations=[
+                {
+                    "name": "Take",
+                    "samplers": [
+                        {"input": source, "output": spin},
+                        {"input": source, "output": squash},
+                    ],
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 0, "path": "rotation"}},
+                        {"sampler": 1, "target": {"node": 0, "path": "scale"}},
+                    ],
+                }
+            ],
+        )
+        authored = b.write_glb(os.path.join(self.tmp, "squash.glb"))
+        fbx = MeshConvert.gltf_to_fbx(authored, os.path.join(self.tmp, "squash.fbx"))
+        glb = MeshConvert.fbx_to_glb(fbx, os.path.join(self.tmp, "squash_rt.glb"))
+        reader = GlbReader.load(glb)
+        self.assertEqual(reader.nan_findings(deep=True), [])
+        node = reader.node_index("squash")
+        animation = reader.gltf["animations"][0]
+        (channel,) = [
+            c
+            for c in animation["channels"]
+            if c["target"] == {"node": node, "path": "rotation"}
+        ]
+        sampler = animation["samplers"][channel["sampler"]]
+        keys = [t[0] for t in reader.accessor(sampler["input"])]
+        at = min(range(len(keys)), key=lambda k: abs(keys[k] - 0.5))
+        self.assertAlmostEqual(keys[at], 0.5, places=4)
+        got = reader.accessor(sampler["output"])[at]
+        want = self._turn(120)
+        self.assertAlmostEqual(
+            abs(sum(a * b for a, b in zip(got, want))), 1.0, places=4
+        )
+
+    @unittest.skipUnless(
+        _FBX2GLTF, "FBX2glTF is not installed; this test downloads nothing"
+    )
+    @unittest.expectedFailure  # BACKLOG 2026-10-31: FBX2glTF drops the channel
+    def test_a_flat_nodes_tilt_survives_the_converter(self):
+        """A node scaled flat on one axis for the whole clip decomposes to a
+        NaN rotation on every key, and FBX2glTF drops that channel itself:
+        the node plays unrotated before any repair here can run."""
+        from test_gltf2fbx import GltfBuilder
+
+        b = GltfBuilder()
+        source = b.accessor([k / 24.0 for k in range(6)], "SCALAR")
+        b.accessors[source].update(min=[0.0], max=[5 / 24.0])
+        half = [math.radians(9 * k) for k in range(6)]  # 18 degrees a key about X
+        tilt = b.accessor([(math.sin(h), 0.0, 0.0, math.cos(h)) for h in half], "VEC4")
+        b.gltf.update(
+            scenes=[{"nodes": [0]}],
+            nodes=[{"name": "flat", "scale": [1.0, 0.0, 1.0]}],
+            animations=[
+                {
+                    "name": "Take",
+                    "samplers": [{"input": source, "output": tilt}],
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 0, "path": "rotation"}}
+                    ],
+                }
+            ],
+        )
+        authored = b.write_glb(os.path.join(self.tmp, "flat.glb"))
+        fbx = MeshConvert.gltf_to_fbx(authored, os.path.join(self.tmp, "flat.fbx"))
+        glb = MeshConvert.fbx_to_glb(fbx, os.path.join(self.tmp, "flat_rt.glb"))
+        reader = GlbReader.load(glb)
+        node = reader.node_index("flat")
+        rotations = [
+            c
+            for a in reader.gltf.get("animations") or []
+            for c in a["channels"]
+            if c["target"] == {"node": node, "path": "rotation"}
+        ]
+        self.assertTrue(rotations, "the flat node's tilt did not survive")
 
 
 if __name__ == "__main__":
