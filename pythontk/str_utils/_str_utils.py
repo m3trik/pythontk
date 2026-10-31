@@ -50,7 +50,19 @@ class StrUtils(
     #: :attr:`LEGAL_NAME_PATTERN` in words, for tooltips and refusals.
     LEGAL_NAME_RULE = "letters, digits and '_'"
     #: The cases :meth:`set_case` applies -- what a case picker offers.
-    CASES = ("upper", "lower", "capitalize", "swapcase", "title", "pascal", "camel")
+    #: ``upper_first`` / ``upper_initials`` are the name-safe ``capitalize`` /
+    #: ``title``: they raise first letters and never lower one.
+    CASES = (
+        "upper",
+        "lower",
+        "capitalize",
+        "swapcase",
+        "title",
+        "pascal",
+        "camel",
+        "upper_first",
+        "upper_initials",
+    )
     #: The legal-name rules :meth:`apply_name_rule` applies, by name: ``legal``
     #: (:meth:`to_legal_name`), ``sanitized`` (:meth:`sanitize`, case kept)
     #: and ``filename`` (:meth:`to_legal_filename`).
@@ -646,15 +658,31 @@ class StrUtils(
         Parameters:
             string (str/list): The string(s) to format.
             case (str): The desired return case. Accepts all python case operators.
-                    valid: :attr:`CASES` ('upper', 'lower', 'capitalize', 'swapcase', 'title' (default), 'pascal', 'camel'), or None.
+                    valid: :attr:`CASES` ('upper', 'lower', 'capitalize', 'swapcase', 'title' (default), 'pascal', 'camel',
+                    'upper_first', 'upper_initials'), or None.
+                    'capitalize' and 'title' are Python's, and LOWER every other letter
+                    ('myBigBox' -> 'Mybigbox', 'arm_L_ctrl' -> 'Arm_l_ctrl'); for a name, use
+                    'upper_first' (the first letter raised, the rest kept: 'MyBigBox') or
+                    'upper_initials' (each word's first letter raised, the rest kept:
+                    'Arm_L_Ctrl'). A word starts at any letter that follows a non-letter,
+                    as in Python's 'title'.
         Returns:
             (str/list) List if 'string' given as list.
         """
         if (not string) or (not isinstance(string, str)):
             return ""
 
-        if case == "pascal":
+        if case in ("pascal", "upper_first"):
             return string[:1].capitalize() + string[1:]  # capitalize the first letter.
+
+        elif case == "upper_initials":
+            chars, after_letter = [], False
+            for char in string:
+                raised = char.upper() if not after_letter else char
+                # A letter whose upper case is two ('ß' -> 'SS') stays as it is.
+                chars.append(raised if len(raised) == 1 else char)
+                after_letter = char.isalpha()
+            return "".join(chars)
 
         elif case == "camel":
             return string[0].lower() + string[1:]  # lowercase the first letter.

@@ -78,6 +78,20 @@ class StrTest(BaseTestCase):
             self.assertNotEqual(StrUtils.set_case("aB c", case), "", case)
         self.assertEqual(StrUtils.set_case("aB c", "title"), "Ab C")
 
+    def test_upper_first_and_upper_initials_keep_the_rest(self):
+        """The name-safe forms of 'capitalize' / 'title': they raise first
+        letters and never lower one, so camelCase and side markers survive
+        (Python's own turned 'myBigBox' into 'Mybigbox', 'arm_L_ctrl' into
+        'Arm_l_ctrl')."""
+        self.assertEqual(StrUtils.set_case("myBigBox", "upper_first"), "MyBigBox")
+        self.assertEqual(StrUtils.set_case("arm_L_ctrl", "upper_first"), "Arm_L_ctrl")
+        self.assertEqual(StrUtils.set_case("arm_L_ctrl", "upper_initials"), "Arm_L_Ctrl")
+        self.assertEqual(StrUtils.set_case("myBigBox", "upper_initials"), "MyBigBox")
+        self.assertEqual(StrUtils.set_case("lod0_geo pCube1", "upper_initials"), "Lod0_Geo PCube1")
+        self.assertEqual(StrUtils.set_case("_x", "upper_first"), "_x")
+        self.assertIn("upper_first", StrUtils.CASES)
+        self.assertIn("upper_initials", StrUtils.CASES)
+
     def test_apply_name_rule_dispatches_to_each_legalizer(self):
         text = "Red Door  Lock."
         self.assertEqual(StrUtils.apply_name_rule(text, "legal"), "Red_Door__Lock_")
