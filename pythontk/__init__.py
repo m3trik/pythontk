@@ -651,6 +651,8 @@ MOVED_NAMES = {
         "tentacle.slots.tools.scene_exporter.SceneExporterSlots",
         "0.19.0",
     ),
+    # Where a node-keyed record lists its nodes, declared on the record itself.
+    "FbxMedia.NODE_ENTRIES": ("pythontk.RecordSpec.nodes", "0.19.0"),
 }
 
 bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)

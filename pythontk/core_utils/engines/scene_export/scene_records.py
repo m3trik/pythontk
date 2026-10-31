@@ -75,6 +75,45 @@ from pythontk.core_utils.deprecation import Deprecation
 logger = logging.getLogger(__name__)
 
 
+class _NodeNames:
+    """The names of the nodes an export ships, matched as a reader of the file
+    binds a record entry to its node: a name exactly, else its leaf -- what
+    follows a DAG path's last ``|`` and a namespace's last ``:`` -- against
+    theirs (the GLB and Unity appliers' join)."""
+
+    __slots__ = ("names", "leaves")
+
+    def __init__(self, names: Iterable[str]) -> None:
+        self.names = frozenset(n.rsplit("|", 1)[-1] for n in names if n)
+        self.leaves = frozenset(self.leaf(n) for n in self.names)
+
+    @staticmethod
+    def leaf(name: str) -> str:
+        return name.rsplit("|", 1)[-1].rsplit(":", 1)[-1]
+
+    def __contains__(self, name: Any) -> bool:
+        if not isinstance(name, str) or not name:
+            return False
+        name = name.rsplit("|", 1)[-1]
+        return name in self.names or self.leaf(name) in self.leaves
+
+    @staticmethod
+    def values(value: Any, path: Tuple[str, ...]) -> Iterable[Any]:
+        """The values at *path* in *value*; ``"*"`` walks a list."""
+        if not path:
+            yield value
+            return
+        step, rest = path[0], path[1:]
+        if step == "*":
+            items = value if isinstance(value, list) else []
+        elif isinstance(value, Mapping) and step in value:
+            items = [value[step]]
+        else:
+            items = []
+        for item in items:
+            yield from _NodeNames.values(item, rest)
+
+
 class Scope(str, Enum):
     """Where a record lives, and therefore what it can never do."""
 
@@ -408,12 +447,22 @@ class RecordSpec:
             payload is described only in prose.
         glb: The record's :class:`GlbBlock` -- the block a GLB carries it
             as; ``None`` when a GLB carries none.
-        export_scoped: Whether the record's producer narrows it to the export
-            set (:attr:`ExportContext.scope`): its entries are scene nodes and
-            the files they name ride the deliverable, so an entry for a node
-            the write leaves out ships that node's files with nothing to bind
-            them to. The scene's own copy stays whole: a scoped assembly keeps
-            it (:attr:`ExportSnapshot.scene_wide`) for the exporter to put back.
+        export_scoped: Whether the record is narrowed to the export set
+            (:attr:`ExportContext.scope`): its entries describe scene nodes,
+            and an entry for a node the write leaves out ships that node's
+            data (and the files it names) with nothing to bind it to. Its
+            producer narrows it, and the snapshot narrows what the producer
+            returns and a copy shipped as stored by :attr:`nodes`. The
+            scene's own copy stays whole: a scoped assembly keeps it
+            (:attr:`ExportSnapshot.scene_wide`) for the exporter to put back.
+            A timeline-level record (the shots, the audio) is not: every
+            write ships it whole.
+        nodes: Where an export-scoped record lists the nodes it describes:
+            ``(list field, name field)``, one entry per node -- the name field
+            a key, or a path into the entry (``"*"`` walking a list), an entry
+            kept when any node it names ships (:meth:`narrowed`). ``None``
+            when the payload names no node a reader could narrow it by (the
+            emissive groups name faces through their host's stores).
         assembly: What the record makes of the approved scene, field by field
             -- the handoff block's ``assembly`` row for it, so a reader holding
             nothing but the deliverable rebuilds what the record describes
@@ -460,6 +509,37 @@ class RecordSpec:
     transient: bool = False
     renamed_from: Tuple[str, ...] = ()
     clauses: Tuple[Clause, ...] = ()
+    nodes: Optional[Tuple[str, Union[str, Tuple[str, ...]]]] = None
+
+    def narrowed(self, payload: Any, nodes: Iterable[str]) -> Any:
+        """*payload* with only the entries (:attr:`nodes`) describing a node
+        among *nodes*, matched as a reader binds them (a name exactly, else its
+        namespace-stripped leaf); ``None`` when none is, or when the payload
+        holds no entry list. A record that declares no node entries is
+        returned as it is, and so is a payload every entry of which ships.
+
+        The one narrowing every reader of the rule applies: a scoped export's
+        snapshot (:class:`ExportSnapshot`), and the post-write embed reading a
+        referenced module's copy (``FbxMedia.reader_records``).
+        """
+        if self.nodes is None:
+            return payload
+        names = nodes if isinstance(nodes, _NodeNames) else _NodeNames(nodes)
+        field_name, name_path = self.nodes
+        path = (name_path,) if isinstance(name_path, str) else tuple(name_path)
+        entries = payload.get(field_name) if isinstance(payload, Mapping) else None
+        if not isinstance(entries, list):
+            return None
+        kept = [
+            entry
+            for entry in entries
+            if any(value in names for value in _NodeNames.values(entry, path))
+        ]
+        if not kept:
+            return None
+        if len(kept) == len(entries):
+            return payload
+        return {**payload, field_name: kept}
 
     def assembly_for(self, payload: Any = None) -> str:
         """The assembly a record *payload* needs (:meth:`Clause.join`): every
@@ -938,6 +1018,7 @@ class SceneRecords:
             clauses=(_LIGHTMAP_PROBE,),
         ),
         export_scoped=True,
+        nodes=("objects", "name"),
         assembly=(
             "Each 'objects' entry lights one object with a baked lightmap: "
             "the image 'map' names, wired to no material, read through UV set "
@@ -1023,6 +1104,7 @@ class SceneRecords:
             ),
         ),
         export_scoped=True,
+        nodes=("planes", "name"),
         assembly=(
             "A plane, its source and its contact are the nodes named 'name', "
             "'source' and 'contact'. " + _SHADOW_PLANE
@@ -1067,6 +1149,10 @@ class SceneRecords:
                 "translations."
             ),
         ),
+        # A rig ships when any of its joints does: an export of one prop of a
+        # scene of rigs states that prop's rig alone.
+        export_scoped=True,
+        nodes=("rigs", ("joints", "*", "name")),
         assembly=(
             "Each rig poses its joints as rotation = rest (x) Euler(channels) "
             "and translation = rest + rest.(tx, ty, tz), every channel within "
@@ -1087,6 +1173,14 @@ class SceneRecords:
         owner="Emissive Groups",
         description="named emissive material groups and their weights",
         # The payload is a RegionMaskManifest document (its VERSION is this).
+        # DERIVED, as the shots are: its registry is its one authority and the
+        # producer reads it pure, so every write refreshes it, a hand-off
+        # included -- the one way it is narrowed to what the write ships, since
+        # a group names its faces through the host's stores, not in the
+        # payload (no ``nodes``). Authored, a Unity push of one prop shipped
+        # every group in the scene (measured 2026-10-31).
+        kind=Kind.DERIVED,
+        export_scoped=True,
         consumers=("unity",),
         shape=(
             "pythontk.core_utils.engines.textures.region_masks",
@@ -1123,6 +1217,10 @@ class SceneRecords:
         kind=Kind.DERIVED,
         after=("animation",),
         consumers=("glb", "verifier"),
+        # Narrowed by its producer alone (no ``nodes``): with its tracks, the
+        # take spans it states are the shipped curves', and a record with no
+        # track still carries the measured clip origin.
+        export_scoped=True,
         assembly=(
             "Render effects over time, per 'tracks' entry and the subtree "
             "under its 'node', each a list of [frame, value] keys: "

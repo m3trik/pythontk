@@ -301,6 +301,24 @@ class TestRecords(_ModelCase):
         self.assertEqual(payload["groups"][0]["name"], "a")
         self.assertEqual(payload["groups"][0]["default"], 0.75)
 
+    def test_a_scoped_write_names_the_groups_with_a_shipped_member(self):
+        """Every export writes data for the objects it ships: a group whose
+        faces all stay behind has nothing to light. Measured 2026-10-31: a
+        Scene Exporter run of one cube shipped the other cube's group.
+        Added: 2026-10-31"""
+        self.model.add_group("front", {"cube": [0]})
+        self.model.add_group("glow", {"ball": [1]})
+        both = self.model.export_record(ptk.ExportContext(nodes=frozenset({"cube", "ball"})))
+        self.assertEqual([g["name"] for g in both.payload["groups"]], ["front", "glow"])
+        cube = self.model.export_record(ptk.ExportContext(nodes=frozenset({"cube"})))
+        self.assertEqual([g["name"] for g in cube.payload["groups"]], ["front"])
+        self.assertIsNone(
+            self.model.export_record(ptk.ExportContext(nodes=frozenset({"floor"}))),
+            "no group ships, so no record does",
+        )
+        scene = self.model.export_record(ptk.ExportContext())
+        self.assertEqual(len(scene.payload["groups"]), 2, "no scope: the whole scene")
+
     def test_authoring_refreshes_a_published_manifest_only(self):
         self.model.add_group("a", {"cube": [0]})
         self.assertEqual(self.host.published, [], "never stamps a manifest unasked")

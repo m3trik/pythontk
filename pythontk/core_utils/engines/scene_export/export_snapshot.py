@@ -21,6 +21,7 @@ from typing import (
     Any,
     Callable,
     Dict,
+    FrozenSet,
     Iterable,
     List,
     Mapping,
@@ -37,6 +38,7 @@ from pythontk.core_utils.engines.scene_export.scene_records import (
     RecordSpec,
     SceneRecords,
     Scope,
+    _NodeNames,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,7 +57,9 @@ class ExportContext:
     Attributes:
         mode: :attr:`PIPELINE` (an export pipeline, the authority on every
             record), :attr:`HANDOFF` (a bridge that ships the carrier: only
-            :attr:`Kind.DERIVED` records refresh) or :attr:`AUTHORING` (a
+            :attr:`Kind.DERIVED` records refresh, and an export-scoped one it
+            ships as stored is narrowed, :meth:`ExportSnapshot.commit`) or
+            :attr:`AUTHORING` (a
             tool republishing its own record -- no write, so a
             :attr:`RecordSpec.transient` record named is cleared, never
             produced).
@@ -85,8 +89,16 @@ class ExportContext:
             export or a hand-off writes; ``None`` is the whole scene (an
             authoring publish, a raw export).  The producer of an
             :attr:`RecordSpec.export_scoped` record keeps only the entries
-            whose node is one of these or sits under one (a hand-off refreshes
-            only the DERIVED ones, :meth:`refreshes`).
+            whose node is one of these or sits under one.
+        nodes: The names of every node the write ships -- *scope*'s roots
+            and all under them, each as the file names it (a DAG node's leaf,
+            namespace kept) -- filled once by the host that knows its scene
+            (``FbxUtils.export_context``); ``None`` names none (no scope, or
+            a context built without a host).  What the snapshot narrows an
+            export-scoped record by (:attr:`RecordSpec.nodes`), the produced
+            copy and, on a hand-off, the one shipped as stored; and what a
+            producer asks of a node (:meth:`ships`).  Shots and audio are the
+            timeline's and ship whole.
     """
 
     PIPELINE = "pipeline"
@@ -101,6 +113,35 @@ class ExportContext:
     records: Dict[str, Optional[Record]] = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)
     scope: Optional[Tuple[str, ...]] = None
+    nodes: Optional[FrozenSet[str]] = None
+    #: :attr:`nodes` as a reader matches them, built on first use.
+    _names: Optional[_NodeNames] = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
+    def ships(self, name: Any) -> bool:
+        """Whether the node *name* ships (:attr:`nodes`): matched as a reader
+        binds a record to its node -- a name exactly, else its leaf (a DAG
+        path's last part, a namespace's) -- so a producer asks in its host's
+        own spelling. Every node ships when :attr:`nodes` is ``None``."""
+        names = self._node_names()
+        return True if names is None else name in names
+
+    def narrowed(self, spec: RecordSpec, payload: Any) -> Any:
+        """*payload* of *spec* narrowed to the nodes the write ships
+        (:meth:`RecordSpec.narrowed`); as it is when :attr:`nodes` is ``None``
+        or *spec* is not export-scoped."""
+        names = self._node_names()
+        if names is None or not spec.export_scoped:
+            return payload
+        return spec.narrowed(payload, names)
+
+    def _node_names(self) -> Optional[_NodeNames]:
+        if self.nodes is None:
+            return None
+        if self._names is None:
+            self._names = _NodeNames(self.nodes)
+        return self._names
 
     def note(self, text: str) -> None:
         """Record one sentence for the report."""
@@ -160,9 +201,11 @@ class ExportSnapshot:
         #: The scene's own copy of each record this write's differs from, which
         #: :meth:`restore_scene_wide` puts back once the write is done: for a
         #: scoped assembly (``ctx.scope``), each export-scoped record the scope
-        #: narrowed, as the whole scene produces it (``None`` = cleared); and
-        #: ``None`` for every :attr:`RecordSpec.transient` record produced,
-        #: which the scene never holds.
+        #: narrowed, as the whole scene produces it (``None`` = cleared), or as
+        #: the scene stored it when the write ships it narrowed as stored
+        #: (:meth:`commit`); and ``None`` for every
+        #: :attr:`RecordSpec.transient` record produced, which the scene never
+        #: holds.
         self.scene_wide: Dict[str, Optional[Record]] = {}
 
     # ---------------------------------------------------------------- assemble
@@ -218,7 +261,7 @@ class ExportSnapshot:
                 continue
             before = len(ctx.notes)
             try:
-                records = cls._records_of(spec, table[spec](ctx))
+                records = cls._narrowed(ctx, cls._records_of(spec, table[spec](ctx)))
             except Exception:  # one subsystem's failure must not block the others
                 logger.warning(
                     "Scene record %r was not produced.", spec.key, exc_info=True
@@ -242,7 +285,7 @@ class ExportSnapshot:
                     ctx.records[record.spec.key] = record
         for note in ctx.notes:
             logger.warning(note)
-        if ctx.scope is not None:
+        if ctx.scope is not None or ctx.nodes is not None:
             snapshot._assemble_scene_wide(table, selected)
         for key, record in snapshot.produced.items():
             # A transient record describes this write alone: the scene's own
@@ -274,6 +317,22 @@ class ExportSnapshot:
             )
         return records
 
+    @staticmethod
+    def _narrowed(ctx: ExportContext, records: List[Record]) -> List[Record]:
+        """*records* narrowed to the nodes the write ships
+        (:meth:`ExportContext.narrowed`); one left with no entry is dropped,
+        so its key reads as cleared. The producer's own scoping comes first;
+        this holds every export-scoped record to the rule whatever its
+        producer did (an articulated rig names its joints alone)."""
+        out = []
+        for record in records:
+            payload = ctx.narrowed(record.spec, record.payload)
+            if payload is record.payload:
+                out.append(record)
+            elif payload is not None:
+                out.append(Record(record.spec, payload))
+        return out
+
     def _assemble_scene_wide(
         self, table: Mapping[RecordSpec, Producer], selected: Iterable[RecordSpec]
     ) -> None:
@@ -286,7 +345,9 @@ class ExportSnapshot:
         already, about a node the write ships, or about one it does not --
         and the export log is the deliverable's. A producer that fails keeps
         the narrow copy (logged)."""
-        whole = replace(self.ctx, scope=None, records=dict(self.ctx.records), notes=[])
+        whole = replace(
+            self.ctx, scope=None, nodes=None, records=dict(self.ctx.records), notes=[]
+        )
         for spec in selected:
             if not spec.export_scoped or spec.transient or spec.key in self.failed:
                 continue
@@ -408,6 +469,15 @@ class ExportSnapshot:
         attribute) is logged and added to :attr:`failed`, and the rest are
         still written.
 
+        A write that names the nodes it ships (``ctx.nodes``) ships every
+        export-scoped record narrowed to them, the ones this assembly did not
+        produce too: a hand-off refreshes only the derived records, so the
+        authored ones (the lightmaps, the shadow planes) would otherwise ship
+        the whole scene's entries, and the post-write embed their maps. Each
+        stored copy narrowed is committed narrowed and kept whole in
+        :attr:`scene_wide`, for the exporter's restore. A failed producer's
+        record stays as stored.
+
         Returns:
             :attr:`written` -- key -> the text stored (``None`` = cleared).
         """
@@ -432,6 +502,8 @@ class ExportSnapshot:
             store.migrate()
         except Exception:  # noqa: BLE001
             logger.warning("Scene records were not migrated.", exc_info=True)
+        if self.ctx.nodes is not None and self.ctx.mode != ExportContext.AUTHORING:
+            self._narrow_stored(store)
         for key, record in self.produced.items():
             if key in self.failed:
                 continue
@@ -464,6 +536,31 @@ class ExportSnapshot:
         except Exception:  # noqa: BLE001 - a missing description never costs the export
             logger.debug("Handoff record not stamped.", exc_info=True)
         return self.written
+
+    def _narrow_stored(self, store) -> None:
+        """Narrow each export-scoped record *store* holds that this assembly
+        did not produce (:attr:`RecordSpec.nodes`) to the nodes the write
+        ships, as :meth:`commit` writes it, keeping the stored copy in
+        :attr:`scene_wide`. A record its producer failed for stays as stored."""
+        for spec in SceneRecords.deliverable():
+            if not spec.export_scoped or spec.nodes is None:
+                continue
+            if spec.key in self.produced or spec.key in self.failed:
+                continue
+            try:
+                stored = spec.load(store, None)
+            except Exception:  # noqa: BLE001 - an unreadable copy ships as it is
+                logger.debug("Scene record %r not read.", spec.key, exc_info=True)
+                continue
+            if stored is None:
+                continue
+            narrowed = self.ctx.narrowed(spec, stored)
+            if narrowed is stored:
+                continue
+            self.scene_wide[spec.key] = Record(spec, stored)
+            self.produced[spec.key] = (
+                Record(spec, narrowed) if narrowed is not None else None
+            )
 
     # ------------------------------------------------------------------- reads
     @property

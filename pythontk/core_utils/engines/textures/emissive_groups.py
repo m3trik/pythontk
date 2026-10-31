@@ -711,13 +711,28 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         the registry and never writes.
 
         Parameters:
-            ctx: The export's decisions (unused: the manifest is a function of
-                the registry alone).
+            ctx: The export's decisions; only its ``nodes`` is read. A scoped
+                write names the groups with a member face on a mesh it ships
+                (the host's :meth:`EmissiveGroupsAdapter.members`), and none
+                when no group has: a group whose faces stay behind has nothing
+                to light (the record is ``export_scoped``).
         """
         manifest = cls._registry().manifest(color_set=cls.COLOR_SET)
         if manifest is None:
             return None
-        return ptk.SceneRecords.EMISSIVE_GROUPS.make(manifest.to_dict())
+        payload = manifest.to_dict()
+        if ctx.nodes is not None:
+            payload["groups"] = [
+                group
+                for group in payload["groups"]
+                if any(
+                    ctx.ships(obj)
+                    for obj in (cls.adapter.members(cls._store(group["name"])) or {})
+                )
+            ]
+            if not payload["groups"]:
+                return None
+        return ptk.SceneRecords.EMISSIVE_GROUPS.make(payload)
 
     @classmethod
     def refresh_export_metadata(cls) -> Optional[str]:

@@ -1480,14 +1480,6 @@ class FbxMedia(_FbxMediaInternal):
         ),
     }
 
-    #: Where each record of :attr:`DEPENDENCY_FIELDS` lists the scene nodes it
-    #: describes, one entry per node: ``{record key: (list field, name
-    #: field)}`` -- what :meth:`reader_records` narrows a module's copy by.
-    NODE_ENTRIES: Dict[str, Tuple[str, str]] = {
-        SceneRecords.LIGHTMAPS.key: ("objects", "name"),
-        SceneRecords.SHADOWS.key: ("planes", "name"),
-    }
-
     @classmethod
     def _dependency_names(cls, roots: Iterable[_Record]) -> List[str]:
         """:meth:`dependencies` of an already-parsed file."""
@@ -1514,8 +1506,9 @@ class FbxMedia(_FbxMediaInternal):
         order (unitytk ``CarrierImport.Collect``,
         ``_Sidecar._data_export_carrier``), so a module's copy beside the
         scene's is never applied. A module's copy read alone keeps only the
-        entries whose node the file carries (:attr:`NODE_ENTRIES`; the name
-        exactly, else its namespace-stripped leaf -- the appliers' match), and
+        entries whose node the file carries (``RecordSpec.narrowed``, by the
+        record's ``nodes``: the name exactly, else its namespace-stripped leaf
+        -- the appliers' match), and
         a copy with none of them left names nothing: no reader binds it, so
         neither its maps nor its probe belong to the file. The scene's own
         copy is taken as written: its producer scopes it to the export set.
@@ -1541,46 +1534,16 @@ class FbxMedia(_FbxMediaInternal):
             held = read.get(key)
             if held is None or (own and not held[0]):
                 read[key] = (own, payload)
-        names = leaves = None
-        if nodes is not None:
-            names = {name for name in nodes if name}
-            leaves = {name.rsplit(":", 1)[-1] for name in names}
+        nodes = None if nodes is None else [name for name in nodes if name]
         records: Dict[str, Any] = {}
         for key, (own, payload) in read.items():
-            if not own and names is not None:
-                payload = cls._carried_entries(key, payload, names, leaves)
+            spec = SceneRecords.by_key(key, Scope.DELIVERABLE)
+            if not own and nodes is not None and spec is not None:
+                payload = spec.narrowed(payload, nodes)
                 if payload is None:
                     continue
             records[key] = payload
         return records
-
-    @classmethod
-    def _carried_entries(
-        cls, key: str, payload: Any, names: set, leaves: set
-    ) -> Optional[Any]:
-        """*payload* with only the :attr:`NODE_ENTRIES` entries whose node is
-        among *names* (exactly, else by namespace-stripped leaf in *leaves*);
-        ``None`` when none is. A record that lists no nodes is returned as it
-        is."""
-        spec = cls.NODE_ENTRIES.get(key)
-        if spec is None:
-            return payload
-        field_name, node_field = spec
-        entries = payload.get(field_name) if isinstance(payload, Mapping) else None
-        if not isinstance(entries, list):
-            return None
-        kept = []
-        for entry in entries:
-            node = entry.get(node_field) if isinstance(entry, Mapping) else None
-            if not isinstance(node, str) or not node:
-                continue
-            if node in names or node.rsplit(":", 1)[-1] in leaves:
-                kept.append(entry)
-        if not kept:
-            return None
-        if len(kept) == len(entries):
-            return payload
-        return {**payload, field_name: kept}
 
     @classmethod
     def named_files(cls, payloads: Mapping[str, Iterable[Any]]) -> List[str]:
