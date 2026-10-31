@@ -53,6 +53,7 @@ from typing import (
 from pythontk.core_utils.app_launcher import AppLauncher
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.core_utils.handoff import script_template
+from pythontk.core_utils.handoff.handoff_scope import HandoffScope
 from pythontk.file_utils.usd import USD_EXTENSIONS
 
 if TYPE_CHECKING:  # import-time only: the runtime import is deferred into the body
@@ -469,10 +470,24 @@ class HandoffBridge(LoggingMixin):
         return (self.deliverers or {}).get(request.mode) or self.deliverer
 
     def _preflight(self, objects: List[Any], request: HandoffRequest) -> bool:
-        """Validate the request before producing. Delegates to the deliverer."""
+        """Validate the request before producing. Delegates to the deliverer.
+
+        A bridge with no deliverer for the mode and no ``_deliver`` of its own
+        has nowhere to send the payload, so it refuses here, before the export
+        is paid for: a bridge whose delivery the caller attaches (``deliverer=``)
+        says what is missing instead of exporting and then raising.
+        """
         deliverer = self._deliverer_for(request)
         if deliverer is not None:
             return deliverer.preflight(self, request)
+        if type(self)._deliver is HandoffBridge._deliver and "_deliver" not in vars(
+            self
+        ):
+            self.logger.error(
+                f"{type(self).__name__} has no deliverer for mode "
+                f"'{request.mode}': attach one (deliverer=) before sending."
+            )
+            return False
         return True
 
     def _deliver(
@@ -758,10 +773,40 @@ class HandoffBridge(LoggingMixin):
 
         Used by :meth:`ScriptLaunchBridge.save_as` ("save the scene as ..." means the
         scene, not whatever happens to be selected) and by the ``"all"`` scope of
-        :meth:`PreviewBridge.scope_objects`. ``None`` (the default) means the host
+        :meth:`scope_objects`. ``None`` (the default) means the host
         can't enumerate itself, and the caller falls back to the selection.
         """
         return None
+
+    def scope_objects(self, scope: str = HandoffScope.SELECTED) -> List[Any]:
+        """The objects *scope* resolves to, through the host hooks.
+
+        The scope vocabulary is the ecosystem's, not this bridge's:
+        :class:`~pythontk.core_utils.handoff.handoff_scope.HandoffScope`'s
+        ``"selected"`` / ``"all"`` / ``"visible"``, resolved by its one
+        precedence rule like every other hand-off. Public because a *caller*
+        needs the answer: a panel that sends blind cannot tell "nothing
+        selected" from "the scene is empty" from "the export failed", and those
+        three want three different messages. On the base rather than on one
+        kind of bridge, since every panel that sends a host's scope -- a preview
+        push, a Unity send -- asks it the same question.
+
+        ``"selected"`` is the default AND the fallback for any unknown value:
+        an unrecognised scope must never silently WIDEN a send to the whole
+        scene. A host that cannot answer a widening hook (either returns
+        ``None``) falls back to the selection for the same reason.
+        """
+        # ``None`` is the skeleton's "the selection" (``_resolve_objects``), so it
+        # is what the selection lookup answers -- and a widening hook that cannot
+        # enumerate its host (``None``) narrows to it, NOT to an empty scene,
+        # which would report a populated scene as nothing to send.
+        objects = HandoffScope.resolve(
+            scope,
+            selected=lambda: None,
+            all=self._scene_objects,
+            visible=self._visible_objects,
+        )
+        return self._resolve_objects(objects)
 
     def _visible_objects(self) -> Optional[List[Any]]:
         """Everything CURRENTLY VISIBLE, or ``None`` if unsupported.
