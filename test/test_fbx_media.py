@@ -892,6 +892,88 @@ class FbxMediaTestCase(unittest.TestCase):
             FbxMedia.embedded(junk)
 
 
+class RepairNullNormalsTestCase(unittest.TestCase):
+    """:meth:`FbxMedia.repair_null_normals` (2026-10-31): Maya writes a
+    ``(0, 0, 0)`` normal for each corner of a zero-area face, and Substance
+    Painter's FBX reader then drops the mesh's WHOLE normal layer (its hard
+    edges with it)."""
+
+    #: Quad A: a unit square. Quad B: zero-area, on A's edge 2-3, its other two
+    #: vertices (4, 5) coincident with 3 and 2 and used by no other face.
+    POINTS = [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0]
+    CORNERS = [0, 1, 2, -4, 3, 2, 5, -5]
+    QUAD_A = [0.0, 0.0, 1.0] * 4
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_normals", policy="scoped")
+        self.dir = self.temp.dir_path()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _fbx(self, quad_b):
+        layer = [
+            ("Version", [I32(102)], []),
+            ("Name", [b""], []),
+            ("MappingInformationType", [b"ByPolygonVertex"], []),
+            ("ReferenceInformationType", [b"Direct"], []),
+            ("Normals", [Doubles(self.QUAD_A + quad_b)], []),
+        ]
+        objects = [
+            (
+                "Geometry",
+                [3001, b"\x00\x01Geometry", b"Mesh"],
+                [
+                    ("Vertices", [Doubles(self.POINTS)], []),
+                    ("PolygonVertexIndex", [Ints(self.CORNERS)], []),
+                    ("LayerElementNormal", [I32(0)], layer),
+                ],
+            ),
+            ("Model", [3002, b"sliver\x00\x01Model", b"Mesh"], []),
+        ]
+        connections = [("C", [b"OO", 3001, 3002], [])]
+        return _write_fbx(
+            os.path.join(self.dir, "mesh.fbx"),
+            [("Objects", [], objects), ("Connections", [], connections)],
+        )
+
+    @staticmethod
+    def _normals(path):
+        def walk(nodes):
+            for node in nodes:
+                if node["name"] == "Normals":
+                    return list(node["props"][0])
+                found = walk(node["children"])
+                if found is not None:
+                    return found
+            return None
+
+        return walk(FbxFile.load(path, decode_arrays=True).roots)
+
+    def test_null_corners_take_a_neighbour_on_their_vertex_or_a_unit_vector(self):
+        path = self._fbx([0.0, 0.0, 0.0] * 4)
+
+        report = FbxMedia.repair_null_normals(path)
+
+        self.assertEqual(report, {"sliver": 4})
+        normals = self._normals(path)
+        self.assertEqual(normals[:12], self.QUAD_A, "a valid normal changed")
+        for k in range(len(normals) // 3):
+            vector = normals[k * 3 : k * 3 + 3]
+            self.assertAlmostEqual(sum(c * c for c in vector), 1.0, msg=f"corner {k}")
+        # Corners on vertices 3 and 2 borrow quad A's normal there.
+        self.assertEqual(normals[12:18], [0.0, 0.0, 1.0, 0.0, 0.0, 1.0])
+
+    def test_a_file_with_no_null_vector_is_not_rewritten(self):
+        path = self._fbx([0.0, 0.0, 1.0] * 4)
+        with open(path, "rb") as handle:
+            before = handle.read()
+
+        self.assertEqual(FbxMedia.repair_null_normals(path), {})
+        with open(path, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+
+
 class DropTakesTestCase(unittest.TestCase):
     TAKES = ["Take 001", "Shot_A", "Shot_B"]
 

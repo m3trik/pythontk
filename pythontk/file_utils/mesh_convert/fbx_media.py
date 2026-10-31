@@ -2033,6 +2033,126 @@ class FbxMedia(_FbxMediaInternal):
         cls._promote(part, target)
         return report
 
+    #: The per-corner vector layers a mesh carries, by the array holding them.
+    _VECTOR_LAYERS = {
+        b"LayerElementNormal": b"Normals",
+        b"LayerElementBinormal": b"Binormals",
+        b"LayerElementTangent": b"Tangents",
+    }
+
+    @classmethod
+    def repair_null_normals(cls, src: str, dst: Optional[str] = None) -> Dict[str, int]:
+        """Fill the zero-length normals, binormals and tangents a written FBX carries.
+
+        Maya writes a ``(0, 0, 0)`` normal for each corner of a zero-area face
+        (a hard-edged extrude that never moved), and Substance Painter's FBX
+        reader (Assimp) then throws that mesh's WHOLE normal layer away and
+        recomputes smooth normals, losing every hard edge (measured 2026-10-31;
+        Painter's USD reader keeps them). Each null vector takes the vector of
+        another corner on the same vertex that has one, else a unit vector: a
+        zero-area face draws nothing, so the value only has to be valid.
+        Nothing else in the file changes.
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+
+        Returns:
+            ``{mesh name: vectors filled}`` -- the name of the model the
+            geometry is wired to, where there is one. When nothing is null the
+            file is not written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+        """
+        report: Dict[str, int] = {}
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            sections = {record.name: record for record in roots}
+            objects = sections.get(b"Objects")
+            if objects is None:
+                return report
+            graph = cls._model_graph(objects, sections.get(b"Connections"))
+            model_of: Dict[int, str] = {}
+            for child, parent in graph["links"]:
+                if parent in graph["names"]:
+                    model_of.setdefault(child, graph["names"][parent])
+            for record in objects.children:
+                if record.name != b"Geometry":
+                    continue
+                filled = cls._fill_null_vectors(record)
+                if filled:
+                    gid = graph["id_of"].get(id(record))
+                    head = cls._scalars(record)
+                    name = (
+                        model_of.get(gid)
+                        or (FbxFile._display_name(head[1]) if len(head) > 1 else "")
+                        or f"Geometry {gid}"
+                    )
+                    report[name] = report.get(name, 0) + filled
+            if not report:
+                return report
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        cls._promote(part, target)
+        return report
+
+    @classmethod
+    def _fill_null_vectors(cls, geometry: _Record) -> int:
+        """:meth:`repair_null_normals` for one ``Geometry``; how many it filled."""
+
+        def text(record):
+            value = cls._decoded(record)[0] if record is not None else b""
+            return value.encode() if isinstance(value, str) else bytes(value or b"")
+
+        parts = {child.name: child for child in geometry.children}
+        index = parts.get(b"PolygonVertexIndex")
+        corners = (
+            [i if i >= 0 else ~i for i in cls._decoded(index)[0]]
+            if index is not None
+            else []
+        )
+        filled = 0
+        for layer in geometry.children:
+            array_name = cls._VECTOR_LAYERS.get(layer.name)
+            if array_name is None:
+                continue
+            fields = {child.name: child for child in layer.children}
+            array = fields.get(array_name)
+            if array is None:
+                continue
+            values = list(cls._decoded(array)[0])
+            vectors = [values[i : i + 3] for i in range(0, len(values) - len(values) % 3, 3)]
+            nulls = [k for k, vector in enumerate(vectors) if not any(vector)]
+            if not nulls:
+                continue
+            # The vertex each vector belongs to, where the layer says: another
+            # corner on that vertex lends its vector.
+            owner = None
+            mapping = text(fields.get(b"MappingInformationType"))
+            if (
+                mapping == b"ByPolygonVertex"
+                and text(fields.get(b"ReferenceInformationType")) == b"Direct"
+                and len(vectors) == len(corners)
+            ):
+                owner = corners
+            donors: Dict[int, List[float]] = {}
+            if owner is not None:
+                for k, vector in enumerate(vectors):
+                    if any(vector):
+                        donors.setdefault(owner[k], vector)
+            for k in nulls:
+                vectors[k] = donors.get(owner[k]) if owner is not None else None
+                vectors[k] = vectors[k] or [0.0, 0.0, 1.0]
+            flat = [c for vector in vectors for c in vector] + values[len(vectors) * 3 :]
+            code = bytes(array.payload)[:1].decode("ascii")
+            cls._replace_prop(array, 0, cls._pack_array(code, flat))
+            filled += len(nulls)
+        return filled
+
     @classmethod
     def drop_host_lighting_media(
         cls, src: str, dst: Optional[str] = None
