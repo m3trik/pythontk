@@ -8,6 +8,12 @@ _A break: each owes a `ptk.Deprecation` alias, or a `MOVED_NAMES` entry when the
 
 - `core_utils/engines/shots/manifest/mapping/_mapping.py::Mapping.retired` — was `(name: str) -> Optional[Tuple[str, Dict[str, Any]]]`
 
+## Moved out (3)
+
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.read_values` → `tentacle.slots.tools.scene_exporter.SceneExporterSlots` (from 0.19.0)
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.value_method` → `tentacle.slots.tools.scene_exporter.SceneExporterSlots` (from 0.19.0)
+- `core_utils/module_reloader.py::reload_package` → `pythontk.ModuleReloader().reload` (from 0.19.0)
+
 ## Retired (2)
 
 _Deprecated aliases whose window ran out._
@@ -15,17 +21,137 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column`
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard`
 
-## Added (53)
+## Added (254)
 
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.merge_carrier(cls, carriers: Any, other: Dict[Any, Any], ctx: Any) -> None`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.reconcile(self) -> List[int]`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStash.watch_undo(cls, owner: Any, widget: Any = None) -> List[int]`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStashConformance(class)`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStashConformance.fill(cls, store: 'KeyStash') -> 'KeyStash'`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStashConformance.payload(cls) -> str`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStashHost(class)`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStashHost.persistence(self, store_cls: type) -> Optional[ScenePersistence]`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStashHost.reconcile(self, store: 'KeyStash') -> List[int]`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStashHost.save_in_step(self, backend: ScenePersistence, data: Dict[str, Any]) -> bool`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStashHost.scene_fps(self) -> Optional[float]`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStashHost.schedule_flush(self, store: 'KeyStash') -> None`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStashHost.script_jobs(self) -> Any`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStashHost.store_state(self) -> Any`
+- `core_utils/engines/key_stash/key_stash_model.py::KeyStashHost.undo_chunk(self, name: str) -> ContextManager[Any]`
+- `core_utils/engines/key_stash/key_stash_model.py::PureKeyStashHost(class)`
+- `core_utils/engines/key_stash/key_stash_model.py::PureKeyStashHost.persistence(self, store_cls: type) -> Optional[ScenePersistence]`
+- `core_utils/engines/key_stash/key_stash_model.py::PureKeyStashHost.reconcile(self, store: 'KeyStash') -> List[int]`
+- `core_utils/engines/key_stash/key_stash_model.py::PureKeyStashHost.save_in_step(self, backend: ScenePersistence, data: Dict[str, Any]) -> bool`
+- `core_utils/engines/key_stash/key_stash_model.py::PureKeyStashHost.scene_fps(self) -> Optional[float]`
+- `core_utils/engines/key_stash/key_stash_model.py::PureKeyStashHost.schedule_flush(self, store: 'KeyStash') -> None`
+- `core_utils/engines/key_stash/key_stash_model.py::PureKeyStashHost.script_jobs(self) -> Any`
+- `core_utils/engines/key_stash/key_stash_model.py::PureKeyStashHost.store_state(self) -> Any`
+- `core_utils/engines/key_stash/key_stash_model.py::PureKeyStashHost.undo_chunk(self, name: str) -> ContextManager[Any]`
+- `core_utils/engines/lighting/look_match/session.py::LookSession.mix_dir(cls, path: str, data: Mapping[str, Any]) -> str`
+- `core_utils/engines/lighting/look_match/session.py::LookSession.mixes(cls, path: str, data: Mapping[str, Any]) -> PresetStore`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.atlas_files(cls, markers: Mapping[str, Mapping[str, Any]], path_of: Mapping[str, str], record: Mapping[str, Any], group_of: Callable[[List[str]], Mapping[str, str]], objects: Sequence[str] = ()) -> Optional['BakeBaseline.AtlasFiles']`
+- `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.keep_baked(cls, record: Any, before: Any, objects: Iterable[str]) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::PureSidecarHost(class)`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::PureSidecarHost.clean_path(path: str) -> str`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::PureSidecarHost.drop_intermediate(nodes: Iterable[str]) -> List[str]`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::PureSidecarHost.expand_to_descendants(objects: Iterable[Any]) -> List[str]`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SidecarHost(class)`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SidecarHost.clean_path(self, path: str) -> str`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SidecarHost.drop_intermediate(self, nodes: Iterable[str]) -> List[str]`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SidecarHost.expand_to_descendants(self, objects: Iterable[Any]) -> List[str]`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.definition_tables(self) -> Tuple[Dict[str, Any], Dict[str, Any]]`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.export_cancelled(self) -> bool`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.migrate_legacy_regex(self, store: Any, name_row: str, save: Callable[[str], Any]) -> Optional[str]`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.note_retired_panel_state(self, store: Any) -> None`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.note_retired_preset_rows(self, name: str, stored: Optional[Dict[str, Any]]) -> None`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.resolve_export_dir(self, export_dir: Optional[str]) -> str`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.peek_entry(entries: Optional[List[dict]], entry_id: Optional[str] = None) -> Optional[dict]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.pop_entry(entries: Optional[List[dict]], entry_id: Optional[str] = None) -> Optional[dict]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.resolve_row(label: str, module: str, owner: str, *methods: Optional[str], log: Optional[logging.Logger] = None) -> Optional[Tuple[Optional[Callable], ...]]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.resolved_producers(cls, table: Mapping[Any, Tuple[str, str, str]], host: str, only: Optional[Iterable[Any]] = None, log: Optional[logging.Logger] = None) -> Dict[RecordSpec, Callable]`
+- `core_utils/engines/scene_export/scene_records.py::SceneRecords.resolved_stagers(cls, table: Mapping[str, Tuple[str, str, str, Optional[str]]], host: str, names: Optional[Iterable[str]] = None, log: Optional[logging.Logger] = None) -> Dict[str, Tuple[Optional[Callable], ...]]`
+- `core_utils/engines/shots/shot_conformance.py::ShotStoreConformance(class)`
+- `core_utils/engines/shots/shot_conformance.py::ShotStoreConformance.cases(cls, seed: int = 0) -> Dict[str, Any]`
+- `core_utils/engines/shots/shot_conformance.py::ShotStoreConformance.fill(cls, store: Any) -> Any`
+- `core_utils/engines/shots/shot_conformance.py::ShotStoreConformance.payload(cls, member_ids: Optional[Dict[str, str]] = None) -> str`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost(class)`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.assess(self, store: 'ShotStore') -> Dict[int, str]`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.audio_spans(self) -> Iterable[Tuple[float, Optional[float]]]`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.available(self) -> bool`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.curve_ledger_keys(self, store: 'ShotStore', objects: Optional[Iterable[Any]]) -> Callable[[Any], Iterable[str]]`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.detection(self) -> Any`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.existing_objects(self, store: 'ShotStore', names: Iterable[str]) -> set`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.export_producer(self, enabled: bool) -> None`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.follow_renames(self, store: 'ShotStore') -> bool`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.has_animation(self) -> bool`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.install_undo_sync(self, on_step: Callable[..., None]) -> None`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.keyed_windows(self, store: 'ShotStore', windows: List[Tuple[float, float]]) -> List[bool]`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.legacy_prefs(self) -> Optional[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.member_ids(self, names: Iterable[str]) -> Dict[str, str]`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.member_nodes(self, name: str) -> List[str]`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.members_keyed_windows(self, store: 'ShotStore', entries: List[Tuple[List[str], Tuple[float, float]]]) -> List[Optional[bool]]`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.migrate_ledger(self, store: 'ShotStore') -> None`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.persistence(self) -> Optional[ScenePersistence]`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.publish_records(self, records: Dict[Any, Any]) -> Optional[str]`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.remove_undo_sync(self, on_step: Callable[..., None]) -> None`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.scene_fps(self) -> Optional[float]`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.schedule_flush(self, store: 'ShotStore') -> None`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.step_crossed(self, marker: Any, redo: bool) -> bool`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.store_state(self) -> Any`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.transfer(self) -> ShotTransferHost`
+- `core_utils/engines/shots/shot_model.py::PureShotsHost.undo_step(self, store: 'ShotStore', label: str, snapshot: bool)`
+- `core_utils/engines/shots/shot_model.py::ShotStore.apply_transfer(cls, section: Dict[str, Any], *, resolve: Optional[Callable[[str], Optional[str]]] = None, frame_offset: float = 0.0, replace: bool = False, converted: Optional[Callable[[str], bool]] = None, ctx: Any = None) -> Optional['ShotStore']`
+- `core_utils/engines/shots/shot_model.py::ShotStore.discard_carrier(cls, carriers, other, ctx) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.export_transfer(cls, spell: Optional[Callable[[str], str]] = None, objects=None) -> Optional[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_model.py::ShotStore.follow_renames(self) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotStore.merge_carrier(cls, carriers, other, ctx) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.register_host(cls, name: str, resolve: Callable[[], Optional[ShotsHost]]) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.running_host(cls) -> ShotsHost`
+- `core_utils/engines/shots/shot_model.py::ShotStore.save_user_prefs(self) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.set_host(cls, host: Optional[ShotsHost]) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.transfer_in(cls, payload: Dict[str, Any], ctx: Any) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotStore.transfer_out(cls, ctx: Any) -> Optional[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_model.py::ShotTransferHost(class)`
+- `core_utils/engines/shots/shot_model.py::ShotTransferHost.audio(self) -> List[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_model.py::ShotTransferHost.channels(self, names: Optional[List[str]]) -> Optional[Dict[str, Dict[str, Any]]]`
+- `core_utils/engines/shots/shot_model.py::ShotTransferHost.curve_key(self, node: str, label: str) -> Optional[str]`
+- `core_utils/engines/shots/shot_model.py::ShotTransferHost.curve_refs(self) -> Callable[[str], Any]`
+- `core_utils/engines/shots/shot_model.py::ShotTransferHost.key_exists(self, curve: str, time: float) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotTransferHost.resolve(self, name: str) -> Optional[str]`
+- `core_utils/engines/shots/shot_model.py::ShotTransferHost.spell(self, name: str) -> str`
+- `core_utils/engines/shots/shot_model.py::ShotTransferHost.write_audio(self, clips: List[Dict[str, Any]]) -> int`
+- `core_utils/engines/shots/shot_model.py::ShotTransferHost.write_channels(self, node: str, records: Dict[str, Any]) -> int`
+- `core_utils/engines/shots/shot_model.py::ShotsHost(class)`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.assess(self, store: 'ShotStore') -> Dict[int, str]`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.audio_spans(self) -> Iterable[Tuple[float, Optional[float]]]`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.available(self) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.curve_ledger_keys(self, store: 'ShotStore', objects: Optional[Iterable[Any]]) -> Callable[[Any], Iterable[str]]`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.detection(self) -> Any`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.existing_objects(self, store: 'ShotStore', names: Iterable[str]) -> set`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.export_producer(self, enabled: bool) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.follow_renames(self, store: 'ShotStore') -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.has_animation(self) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.install_undo_sync(self, on_step: Callable[..., None]) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.keyed_windows(self, store: 'ShotStore', windows: List[Tuple[float, float]]) -> List[bool]`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.legacy_prefs(self) -> Optional[Dict[str, Any]]`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.member_ids(self, names: Iterable[str]) -> Dict[str, str]`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.member_nodes(self, name: str) -> List[str]`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.members_keyed_windows(self, store: 'ShotStore', entries: List[Tuple[List[str], Tuple[float, float]]]) -> List[Optional[bool]]`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.migrate_ledger(self, store: 'ShotStore') -> None`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.persistence(self) -> Optional[ScenePersistence]`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.publish_records(self, records: Dict[Any, Any]) -> Optional[str]`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.remove_undo_sync(self, on_step: Callable[..., None]) -> None`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.scene_fps(self) -> Optional[float]`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.schedule_flush(self, store: 'ShotStore') -> None`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.step_crossed(self, marker: Any, redo: bool) -> bool`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.store_state(self) -> Any`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.transfer(self) -> ShotTransferHost`
+- `core_utils/engines/shots/shot_model.py::ShotsHost.undo_step(self, store: 'ShotStore', label: str, snapshot: bool) -> ContextManager['ShotStore.EditHandle']`
 - `core_utils/engines/shots/shot_report.py::ShotReport.removal_question(cls, shots: Sequence, scope: str) -> Tuple[str, str]`
 - `core_utils/engines/shots/shot_report.py::ShotReport.scope_count(cls, shots: Sequence, scope: str) -> str`
 - `core_utils/engines/shots/shot_report.py::ShotReport.scope_label(cls, scope: str) -> str`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.keyed_transforms(self, start: float, end: float, **kwargs) -> List[str]`
+- `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.source_shot_id(self, seq: Dict[str, Any]) -> Optional[int]`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter(class)`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.add_members(self, store: str, face_map: FaceMap) -> None`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.carrier_weights(self, prefix: str) -> List[str]`
@@ -70,6 +196,87 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.transfer_out(cls, ctx: 'ptk.TransferContext') -> Optional[dict]`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.validate(cls) -> List[str]`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.weight_attrs(cls) -> Dict[str, str]`
+- `file_utils/_file_utils.py::FileUtils.import_files(cls, paths: Iterable[str], folder: Optional[str], mode: str = 'copy', on_conflict: Union[str, Callable[[str], bool]] = 'reuse', validate: Optional[Callable[[str], Tuple[bool, str]]] = None, strict: bool = False) -> dict`
+- `file_utils/file_dependencies.py::FileDependencies.strangers(folder: str, stem: str, ext: str, claims: Mapping[str, Any], wrote: Callable[[str], bool]) -> Set[str]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fix_glb_nonfinite_keys(cls, glb: GlbTarget) -> Dict[str, int]`
+- `file_utils/scene_listing.py::SceneListing(class)`
+- `file_utils/scene_listing.py::SceneListing.default_save_name(cls, scene_path: Optional[str], case_style: str = 'None', suffix: str = '') -> str`
+- `file_utils/scene_listing.py::SceneListing.display_name(path: str, hide_extension: bool, hide_suffix: str) -> str`
+- `file_utils/scene_listing.py::SceneListing.filter_by_folder_structure(files: Iterable[str], workspace: str, pattern: str, suffix: str, scenes: str) -> List[str]`
+- `file_utils/scene_listing.py::SceneListing.format_name(name: str, case_style: str = 'None', suffix: str = '') -> str`
+- `file_utils/scene_listing.py::SceneListing.matches_notes_filter(cls, notes_text: str, filter_text: str, ignore_case: bool = True) -> bool`
+- `file_utils/scene_listing.py::SceneListing.normalize_structure_pattern(pattern: Optional[str]) -> str`
+- `file_utils/scene_listing.py::SceneListing.save_target(cls, workspace: str, name: str, case_style: str = 'None', suffix: str = '', pattern: str = '', extension: str = '') -> str`
+- `file_utils/scene_listing.py::SceneListing.scenes_folder(workspace: str) -> str`
+- `file_utils/scene_listing.py::SceneListing.split_patterns(cls, text: str) -> List[str]`
+- `file_utils/scene_listing.py::SceneListing.strip_all_suffixes(base: str, suffix: str) -> str`
+- `file_utils/scene_listing.py::SceneListing.text_matches_filter(text: str, filter_patterns: Sequence[str], ignore_case: bool = True) -> bool`
+- `file_utils/workspace_map.py::PureWorkspaceMapHost(class)`
+- `file_utils/workspace_map.py::PureWorkspaceMapHost.create_workspace(root: str) -> Optional[Workspace]`
+- `file_utils/workspace_map.py::PureWorkspaceMapHost.current_workspace() -> str`
+- `file_utils/workspace_map.py::PureWorkspaceMapHost.find_workspaces(self, root_dir: str, recursive: bool) -> List[str]`
+- `file_utils/workspace_map.py::PureWorkspaceMapHost.promote_workspace(self, root: str) -> Optional[Workspace]`
+- `file_utils/workspace_map.py::PureWorkspaceMapHost.scene_files(self, workspace: str) -> List[str]`
+- `file_utils/workspace_map.py::WorkspaceMapBase(class)`
+- `file_utils/workspace_map.py::WorkspaceMapBase.create_project(self, name: str) -> Optional[Workspace]`
+- `file_utils/workspace_map.py::WorkspaceMapBase.current_working_dir(self) -> str`
+- `file_utils/workspace_map.py::WorkspaceMapBase.current_workspace(self) -> str`
+- `file_utils/workspace_map.py::WorkspaceMapBase.find_available_workspaces(self, root_dir: Optional[str] = None) -> list`
+- `file_utils/workspace_map.py::WorkspaceMapBase.get_filtered_workspaces(self, filter_text: Optional[str] = None) -> List[Dict]`
+- `file_utils/workspace_map.py::WorkspaceMapBase.get_workspace_tree_data(self, filter_text: Optional[str] = None) -> Dict`
+- `file_utils/workspace_map.py::WorkspaceMapBase.invalidate_workspace_data(self) -> None`
+- `file_utils/workspace_map.py::WorkspaceMapBase.mark_root_as_project(self) -> Optional[Workspace]`
+- `file_utils/workspace_map.py::WorkspaceMapBase.recursive_search(self) -> bool`
+- `file_utils/workspace_map.py::WorkspaceMapBase.workspace_data(self) -> Dict[str, Dict]`
+- `file_utils/workspace_map.py::WorkspaceMapHost(class)`
+- `file_utils/workspace_map.py::WorkspaceMapHost.create_workspace(self, root: str) -> Optional[Workspace]`
+- `file_utils/workspace_map.py::WorkspaceMapHost.current_workspace(self) -> str`
+- `file_utils/workspace_map.py::WorkspaceMapHost.find_workspaces(self, root_dir: str, recursive: bool) -> List[str]`
+- `file_utils/workspace_map.py::WorkspaceMapHost.promote_workspace(self, root: str) -> Optional[Workspace]`
+- `file_utils/workspace_map.py::WorkspaceMapHost.scene_files(self, workspace: str) -> List[str]`
+- `geo_utils/curtain_drape.py::CurtainDrape(class)`
+- `geo_utils/curtain_drape.py::CurtainDrape.drape(self, u, v, pos, tan, normal) -> Vec`
+- `geo_utils/curtain_drape.py::CurtainDrape.grid_points(self) -> Tuple[int, int, List[Vec]]`
+- `geo_utils/curtain_drape.py::CurtainDrape.prepare(self) -> Tuple[int, int, List[Tuple[Vec, Vec, Vec]]]`
+- `geo_utils/probe_placement.py::ProbeHost(class)`
+- `geo_utils/probe_placement.py::ProbeHost.bounds(self, nodes: Sequence[Any]) -> Box`
+- `geo_utils/probe_placement.py::ProbeHost.lights(self) -> Tuple[List[Tuple[Vec, Optional[Any]]], bool]`
+- `geo_utils/probe_placement.py::ProbeHost.nodes(self, objects: Sequence[Any]) -> List[Any]`
+- `geo_utils/probe_placement.py::ProbeHost.rays(self, nodes: Sequence[Any]) -> 'ProbeRays'`
+- `geo_utils/probe_placement.py::ProbeHost.to_internal(self, point: Sequence[float]) -> List[float]`
+- `geo_utils/probe_placement.py::ProbeHost.to_scene(self, value: float) -> float`
+- `geo_utils/probe_placement.py::ProbeMesh(class)`
+- `geo_utils/probe_placement.py::ProbeMesh.intersect(self, payload: Any, origin: Sequence[float], direction: Sequence[float], far: float) -> Optional[Tuple[float, Vec, Any]]`
+- `geo_utils/probe_placement.py::ProbeMesh.normal(self, payload: Any, face: Any) -> Vec`
+- `math_utils/progression.py::ProgressionCurves.centered_offsets(cls, count: int, span: float, calculation_mode: str = 'linear', weight_bias: float = 0.5, weight_curve: float = 2.0) -> List[float]`
+- `vid_utils/sequence_exporter.py::PureSequenceHost(class)`
+- `vid_utils/sequence_exporter.py::PureSequenceHost.audio_source() -> Tuple[Optional[str], float]`
+- `vid_utils/sequence_exporter.py::PureSequenceHost.capture_frames(self, exporter: 'SequenceExporter', directory: str, prefix: str, start: int, end: int, camera: Any, image_format: str, padding: int, overrides: Dict[str, Any]) -> None`
+- `vid_utils/sequence_exporter.py::PureSequenceHost.capture_movie(self, exporter: 'SequenceExporter', filepath: str, fmt: str, compression: str, start: int, end: int, camera: Any, sound: Optional[str], overrides: Dict[str, Any]) -> str`
+- `vid_utils/sequence_exporter.py::PureSequenceHost.capture_still(self, exporter: 'SequenceExporter', filepath: str, frame: int, camera: Any, image_format: str, overrides: Dict[str, Any]) -> None`
+- `vid_utils/sequence_exporter.py::PureSequenceHost.export_target(self, exporter: 'SequenceExporter', spec: ExportTarget, output_dir: str, name: str, start: int, end: int, camera: Any, sound: Optional[str], overrides: Dict[str, Any]) -> Union[str, List[str]]`
+- `vid_utils/sequence_exporter.py::PureSequenceHost.frame_range(self, mode: str) -> Tuple[float, float]`
+- `vid_utils/sequence_exporter.py::PureSequenceHost.notify(message: str) -> bool`
+- `vid_utils/sequence_exporter.py::PureSequenceHost.resolve_path(path: str) -> str`
+- `vid_utils/sequence_exporter.py::PureSequenceHost.sequence_fps() -> Optional[float]`
+- `vid_utils/sequence_exporter.py::PureSequenceHost.sequence_name() -> Optional[str]`
+- `vid_utils/sequence_exporter.py::PureSequenceHost.sound_source() -> Optional[str]`
+- `vid_utils/sequence_exporter.py::PureSequenceHost.warn(message: str) -> bool`
+- `vid_utils/sequence_exporter.py::SequenceExporter.scene_fps(cls) -> float`
+- `vid_utils/sequence_exporter.py::SequenceExporter.scene_name(cls) -> str`
+- `vid_utils/sequence_exporter.py::SequenceHost(class)`
+- `vid_utils/sequence_exporter.py::SequenceHost.audio_source(self) -> Tuple[Optional[str], float]`
+- `vid_utils/sequence_exporter.py::SequenceHost.capture_frames(self, exporter: 'SequenceExporter', directory: str, prefix: str, start: int, end: int, camera: Any, image_format: str, padding: int, overrides: Dict[str, Any]) -> None`
+- `vid_utils/sequence_exporter.py::SequenceHost.capture_movie(self, exporter: 'SequenceExporter', filepath: str, fmt: str, compression: str, start: int, end: int, camera: Any, sound: Optional[str], overrides: Dict[str, Any]) -> str`
+- `vid_utils/sequence_exporter.py::SequenceHost.capture_still(self, exporter: 'SequenceExporter', filepath: str, frame: int, camera: Any, image_format: str, overrides: Dict[str, Any]) -> None`
+- `vid_utils/sequence_exporter.py::SequenceHost.export_target(self, exporter: 'SequenceExporter', spec: ExportTarget, output_dir: str, name: str, start: int, end: int, camera: Any, sound: Optional[str], overrides: Dict[str, Any]) -> Union[str, List[str]]`
+- `vid_utils/sequence_exporter.py::SequenceHost.frame_range(self, mode: str) -> Tuple[float, float]`
+- `vid_utils/sequence_exporter.py::SequenceHost.notify(self, message: str) -> bool`
+- `vid_utils/sequence_exporter.py::SequenceHost.resolve_path(self, path: str) -> str`
+- `vid_utils/sequence_exporter.py::SequenceHost.sequence_fps(self) -> Optional[float]`
+- `vid_utils/sequence_exporter.py::SequenceHost.sequence_name(self) -> Optional[str]`
+- `vid_utils/sequence_exporter.py::SequenceHost.sound_source(self) -> Optional[str]`
+- `vid_utils/sequence_exporter.py::SequenceHost.warn(self, message: str) -> bool`
 
 ## Deprecations (34)
 
@@ -109,3 +316,27 @@ _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived 
 - **HELD** `core_utils/engines/scene_export/scene_records.py::SceneRecords.web_projected` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `core_utils/engines/scene_export/scene_records.py::SceneRecords.web_shape` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `core_utils/engines/scene_export/scene_records.py::WebProjection` — remove in 0.18.0, not before 2026-11-23
+
+## Signature changed (7)
+
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.build_clean_path_set`
+  - was: `(paths) -> set`
+  - now: `(cls, paths) -> set`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.drop_intermediate`
+  - was: `(nodes) -> list`
+  - now: `(cls, nodes) -> list`
+- `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.expand_to_descendants`
+  - was: `(objects) -> list`
+  - now: `(cls, objects) -> list`
+- `core_utils/presets/store.py::PresetStore.delete`
+  - was: `(self, name: str, *, force: bool = False) -> bool`
+  - now: `(self, name: str, *, force: bool = False, trash: bool = False) -> bool`
+- `vid_utils/sequence_exporter.py::SequenceExporter.capture_sequence`
+  - was: `(self, directory: str, prefix: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Optional[str] = None, image_format: str = 'png', **overrides: Any) -> CaptureResult`
+  - now: `(self, directory: str, prefix: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Any = None, image_format: str = 'png', **overrides: Any) -> CaptureResult`
+- `vid_utils/sequence_exporter.py::SequenceExporter.capture_still`
+  - was: `(self, filepath: str, frame: Optional[int] = None, camera: Optional[str] = None, image_format: str = 'png', **overrides: Any) -> str`
+  - now: `(self, filepath: str, frame: Optional[int] = None, camera: Any = None, image_format: str = 'png', **overrides: Any) -> str`
+- `vid_utils/sequence_exporter.py::SequenceExporter.export`
+  - was: `(self, output_dir: str, name: Optional[str] = None, targets: Union[str, Sequence[str]] = ('mp4',), range_mode: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Optional[str] = None, keep_frames: bool = False, progress_callback: Optional[Callable[[int, int, str], None]] = None, **overrides: Any) -> List[ExportResult]`
+  - now: `(self, output_dir: str, name: Optional[str] = None, targets: Union[str, Sequence[str]] = ('mp4',), range_mode: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Any = None, keep_frames: bool = False, progress_callback: Optional[Callable[[int, int, str], None]] = None, **overrides: Any) -> List[ExportResult]`
