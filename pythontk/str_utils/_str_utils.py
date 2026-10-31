@@ -1451,6 +1451,7 @@ class StrUtils(
         exclude=(),
         one: bool = True,
         case_sensitive: bool = True,
+        numbered: bool = False,
     ) -> str:
         """Strip whichever affix in *known* the string carries, from either end.
 
@@ -1486,6 +1487,16 @@ class StrUtils(
                 is made of are not: folding case strips the ``cam`` out of
                 ``security_cam`` for a ``_CAM`` entry, the ``set`` out of
                 ``tile_set``, and the ``con`` out of ``con_rod``.
+            numbered: When no affix matches, also try with a trailing number
+                peeled off (``_?\d+`` or Blender's ``.001``) and, when that
+                strips an affix, put the number back on the base. A duplicate's
+                uniquifier or an index after the affix (``crate_GEO1``,
+                ``wall_GEO_01``) then yields ``crate1`` / ``wall_01`` -- so a
+                type pass re-affixes ``crate1_GEO`` instead of decorating
+                ``crate_GEO1_GEO``. A base that already ends in a digit keeps
+                the two numbers apart with ``_`` (``wall_01_GEO1`` ->
+                ``wall_01_1``). Off by default: a number after an affix is
+                otherwise name content (``body_GEO_02`` stays whole).
 
         Returns:
             The name with the matched affix (and its adjacent separator)
@@ -1498,7 +1509,12 @@ class StrUtils(
             strip_any_affix("security_cam", ["_CAM"])                # 'security_cam'
         """
         return _StrAffixInternal.strip_any_affix(
-            string, known, exclude=exclude, one=one, case_sensitive=case_sensitive
+            string,
+            known,
+            exclude=exclude,
+            one=one,
+            case_sensitive=case_sensitive,
+            numbered=numbered,
         )
 
     @staticmethod

@@ -156,8 +156,42 @@ class _StrAffixInternal:
         exclude=(),
         one: bool = True,
         case_sensitive: bool = True,
+        numbered: bool = False,
     ) -> str:
         """Body of :meth:`StrUtils.strip_any_affix`."""
+        core = _StrAffixInternal._strip_any_affix(
+            string, known, exclude=exclude, one=one, case_sensitive=case_sensitive
+        )
+        if core != string or not numbered:
+            return core
+        import re
+
+        # A trailing number after the affix: peel it, strip, re-attach.
+        m = re.search(r"([._]?)(\d+)$", string)
+        if not m or not string[: m.start()]:
+            return core
+        base = _StrAffixInternal._strip_any_affix(
+            string[: m.start()],
+            known,
+            exclude=exclude,
+            one=one,
+            case_sensitive=case_sensitive,
+        )
+        if base == string[: m.start()]:
+            return core
+        sep = m.group(1) or ("_" if base[-1:].isdigit() else "")
+        return f"{base}{sep}{m.group(2)}"
+
+    @staticmethod
+    def _strip_any_affix(
+        string: str,
+        known,
+        *,
+        exclude=(),
+        one: bool = True,
+        case_sensitive: bool = True,
+    ) -> str:
+        """One pass of :meth:`strip_any_affix` over the whole *string*."""
         skip = {a for a in exclude if a}
         core = string
         for token in sorted({a for a in known if a}, key=lambda a: (-len(a), a)):
