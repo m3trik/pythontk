@@ -1902,24 +1902,22 @@ class PreviewDelivererTestCase(unittest.TestCase):
     def _fake_convert(self, src, dst=None, **kwargs):
         """Stand in for FBX2glTF: record the call and write a GLB-shaped file.
 
-        A *parseable* GLB, not just the magic bytes: the sidecar step opens the
-        converted file once for all its sections, so a stub that only looked
-        like a GLB from four bytes away would now fail at the container rather
-        than exercise the appliers under test.
+        A *parseable* GLB, not just the magic bytes: the handoff step opens
+        the converted file, so a stub that only looked like a GLB from four
+        bytes away would fail at the container.
         """
         self.converted.append({"src": src, "dst": dst, **kwargs})
         Path(dst).write_bytes(self._glb_bytes({"asset": {"version": "2.0"}}))
-        # What the real chain does with an older host's envelope on a file
-        # that states no materials (this one): applies its sections inside the
-        # conversion, embeds its handoff and reports the outcome to the caller
-        # -- the deliverer applies nothing itself, so a stub that only wrote
-        # bytes would leave every sidecar assertion below testing air.
+        # What the real chain does with an older host's envelope: embeds its
+        # handoff inside the conversion -- its sections are read no more
+        # (removed 2026-10-31) -- so the deliverer embeds nothing itself.
         report = kwargs.get("report")
-        if report is not None:
-            sidecar = kwargs.get("sidecar")
-            report["sidecar"] = (
-                MeshConvert._apply_scene_sidecar(dst, sidecar) if sidecar else {}
-            )
+        sidecar = kwargs.get("sidecar")
+        if sidecar:
+            with MeshConvert.open_glb(dst) as edit:
+                MeshConvert.embed_glb_handoff(
+                    edit, MeshConvert._sidecar._handoff_of(sidecar)
+                )
         if report is not None and kwargs.get("data_export"):
             report["data_export"] = sorted(kwargs["data_export"])
         return dst
@@ -2612,25 +2610,6 @@ class PreviewDelivererTestCase(unittest.TestCase):
         # claim a tab exists on the one machine where none does.
         self.assertFalse(result["opened_browser"])
 
-    def test_scene_sidecar_section_is_applied_to_the_glb(self):
-        """The sidecar carries what FBX can't; sections dispatch by name."""
-        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        sections = {"emissive": {"m": {"color": (1, 0, 0)}}}
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        with unittest.mock.patch(target, side_effect=self._fake_convert):
-            with unittest.mock.patch(emissive_target, return_value=[{}]) as applied:
-                self.bridge.deliverer.deliver(
-                    self.bridge,
-                    Payload(
-                        primary=self._fbx(),
-                        extras={"scene_sidecar": _sidecar(sections)},
-                    ),
-                    HandoffRequest(),
-                )
-        applied.assert_called_once()
-        self.assertEqual(applied.call_args[0][1], sections["emissive"])
-
     def test_the_sidecar_is_handed_to_the_conversion_itself(self):
         """The conversion's own chain clones materials (one per faded
         subtree), and a clone copies its source as it stands -- so the
@@ -2690,66 +2669,6 @@ class PreviewDelivererTestCase(unittest.TestCase):
                     self.bridge, Payload(primary=self._fbx()), HandoffRequest()
                 )
         applied.assert_not_called()
-
-    def test_a_failing_sidecar_section_still_publishes(self):
-        """A broken section must not cost the whole preview."""
-        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        with unittest.mock.patch(target, side_effect=self._fake_convert):
-            with unittest.mock.patch(emissive_target, side_effect=ValueError("bad")):
-                result = self.bridge.deliverer.deliver(
-                    self.bridge,
-                    Payload(
-                        primary=self._fbx(),
-                        extras={
-                            "scene_sidecar": _sidecar(
-                                {"emissive": {"m": {"color": (1, 0, 0)}}}
-                            )
-                        },
-                    ),
-                    HandoffRequest(),
-                )
-        self.assertEqual(result["version"], 1)
-
-    def test_sidecar_summary_rides_back_on_the_result(self):
-        """The panel needs to say what happened; silence was the original bug."""
-        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        sections = {"emissive": {"a": {"color": (1, 0, 0)}, "b": {"color": (0, 1, 0)}}}
-        with unittest.mock.patch(target, side_effect=self._fake_convert):
-            with unittest.mock.patch(emissive_target, return_value=[{}, {}]):
-                result = self.bridge.deliverer.deliver(
-                    self.bridge,
-                    Payload(
-                        primary=self._fbx(),
-                        extras={"scene_sidecar": _sidecar(sections)},
-                    ),
-                    HandoffRequest(),
-                )
-        self.assertEqual(result["sidecar"], {"emissive": "2 of 2"})
-
-    def test_sidecar_that_matches_nothing_is_reported_not_silent(self):
-        """A name mismatch makes the section a no-op — it must not look like success."""
-        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        with unittest.mock.patch(target, side_effect=self._fake_convert):
-            with unittest.mock.patch(emissive_target, return_value=[]):
-                result = self.bridge.deliverer.deliver(
-                    self.bridge,
-                    Payload(
-                        primary=self._fbx(),
-                        extras={
-                            "scene_sidecar": _sidecar(
-                                {"emissive": {"gone": {"color": (1, 0, 0)}}}
-                            )
-                        },
-                    ),
-                    HandoffRequest(),
-                )
-        self.assertEqual(result["sidecar"], {"emissive": "0 of 1 matched"})
 
     def test_summary_separates_off_from_nothing_to_carry(self):
         """Both render the same unlit preview; the report must tell them apart.
@@ -2843,31 +2762,6 @@ class PreviewDelivererTestCase(unittest.TestCase):
         with self.assertWarns(DeprecationWarning):
             self.assertIn("nothing to carry", PreviewBridge.sidecar_summary(result))
 
-    def test_producer_envelope_reaches_the_appliers_unwrapped(self):
-        """Producer wraps, deliverer unwraps — the pair contract, end to end.
-
-        Everything between `_attach_sidecar` and the applier call is real
-        here; only the converter and the GLB writer are stubbed. A schema
-        drift between the two halves fails this test rather than surfacing as
-        a silently unlit preview in a live DCC.
-        """
-        bridge = _SidecarPreviewBridge()
-        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        with (
-            unittest.mock.patch(target, side_effect=self._fake_convert),
-            unittest.mock.patch(emissive_target, return_value=[{}]) as applied,
-            self.assertWarns(DeprecationWarning),
-        ):
-            result = bridge.send()
-        applied.assert_called_once()
-        self.assertEqual(
-            applied.call_args[0][1], _SidecarPreviewBridge.sections["emissive"]
-        )
-        self.assertEqual(result["sidecar"], {"emissive": "1 of 1"})
-        self.assertTrue(result["sidecar_requested"])
-
     def test_a_released_hosts_push_still_publishes(self):
         """Bug: mayatk 0.27.1 and blendertk 0.19.2 hand their scene read to
         ``PreviewBridge._attach_sidecar``, which this release had deleted --
@@ -2946,13 +2840,10 @@ class PreviewDelivererTestCase(unittest.TestCase):
 
     def test_the_envelopes_handoff_is_embedded_in_the_published_glb(self):
         """The published artifact is self-describing -- the handoff the
-        envelope's source makes, inside -- and the outcome rides the result.
-
-        No applier is patched here: the fake GLB has no materials, so the
-        emissive section reports "0 of 1 matched" -- on the result, which
-        describes the push; the file carries neither the envelope nor that
-        outcome, only what describes the asset, readable back out of the
-        served file with no side files.
+        envelope's source makes, inside -- readable back out of the served
+        file with no side files; the file carries no envelope, and the
+        envelope's sections are read no more (removed 2026-10-31), so the
+        result reports none applied.
         """
         bridge = _SidecarPreviewBridge()
         bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
@@ -2971,7 +2862,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         with MeshConvert.open_glb(str(served)) as edit:
             self.assertNotIn("scene_sidecar", edit.gltf["extras"])
             self.assertNotIn("scene_sidecar_applied", edit.gltf["extras"])
-        self.assertEqual(result["sidecar"], {"emissive": "0 of 1 matched"})
+        self.assertEqual(result["sidecar"], {})
 
     def test_the_deliverer_sets_the_start_and_locomotion_on_every_publish(self):
         """Its `user_pos` and `locomotion` are the one place each is set:

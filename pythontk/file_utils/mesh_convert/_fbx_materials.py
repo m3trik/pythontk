@@ -141,14 +141,9 @@ class _FbxMaterials:
     def _fbx_standard_surface_props(
         props: Mapping[str, Any], notes: List[str], name: Any
     ) -> Dict[str, Any]:
-        """A Standard Surface's attributes in the ``pbr`` vocabulary; its
-        transmission (glass) has no place in the record, and is said."""
-        opacity = MaterialFamilies.as_floats(props.get("Maya|opacity"), 3, 1.0)
-        if MaterialFamilies.as_float(props.get("Maya|transmission"), 0.0) > 0.0:
-            notes.append(
-                f"Material {name}: its transmission is not stated (the record "
-                "has no transmission); it reads as its opacity alone."
-            )
+        """A Standard Surface's attributes in the ``pbr`` vocabulary: its
+        opacity colour and its transmission (glass) as the family reads them
+        (``MaterialFamilies.opacity_scalar``, ``TRANSMISSION_NOTE``)."""
         return {
             "base_weight": props.get("Maya|base", 1.0),
             "base_color": props.get("Maya|baseColor"),
@@ -156,7 +151,8 @@ class _FbxMaterials:
             "roughness": props.get("Maya|specularRoughness"),
             "emission_weight": props.get("Maya|emission", 0.0),
             "emission_color": props.get("Maya|emissionColor"),
-            "opacity": sum(opacity) / 3.0,
+            "opacity": MaterialFamilies.as_floats(props.get("Maya|opacity"), 3, 1.0),
+            "transmission": props.get("Maya|transmission"),
         }
 
     def _carried_record(self, parsed) -> Optional[Dict[str, Any]]:

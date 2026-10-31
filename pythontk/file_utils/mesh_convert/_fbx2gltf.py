@@ -547,9 +547,6 @@ class _Fbx2Gltf:
                 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 
                 written = None
-                carried = self._mc.data_export_channel(
-                    edit.gltf, self._mc.MATERIALS_KEY
-                )
                 if FbxFile.is_fbx(src_abs):
                     try:
                         _stated, written = self._mc._fbx_materials._apply_fbx_materials(
@@ -564,49 +561,27 @@ class _Fbx2Gltf:
                 # implies -- its source and lighting, in this file's
                 # addresses. It names the blocks the file carries once every
                 # pass has run (the tail of this session).
-                applied: Dict[str, str] = {}
-                if not (sidecar and sidecar.get("sections") and carried is None):
-                    try:
-                        self._mc._sidecar._warn_destructive_orms(
-                            edit,
-                            described=[
-                                r["material"] for r in written or () if r.get("orm")
-                            ],
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning("ORM check skipped: %s", exc)
                 try:
-                    if sidecar and sidecar.get("sections") and carried is None:
-                        # Sections are what a host that predates the materials
-                        # record still sends, for a file that carries none:
-                        # they repair the reading, as they did, until they
-                        # retire.
-                        from pythontk.core_utils.deprecation import Deprecation
-
-                        Deprecation.warn(
-                            "a scene sidecar's material sections",
-                            "the FBX's materials record, which "
-                            "mayatk 0.28 / blendertk 0.20 publish",
-                            remove_in="0.18.0",
-                            since="2026-10-24",
-                        )
-                        applied = self._mc._apply_scene_sidecar(
-                            edit, sidecar, finish=False
-                        )
-                    else:
-                        handoff = (
-                            self._mc._sidecar._handoff_of(sidecar)
-                            if sidecar
-                            else self._mc._sidecar._fbx_handoff(edit.gltf, rendering)
-                        )
-                        if handoff:
-                            # Named last, once every pass has added its
-                            # block (_finish_glb_handoff, below).
-                            self._mc._write_glb_handoff(edit, handoff)
+                    self._mc._sidecar._warn_destructive_orms(
+                        edit,
+                        described=[
+                            r["material"] for r in written or () if r.get("orm")
+                        ],
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("ORM check skipped: %s", exc)
+                try:
+                    handoff = (
+                        self._mc._sidecar._handoff_of(sidecar)
+                        if sidecar
+                        else self._mc._sidecar._fbx_handoff(edit.gltf, rendering)
+                    )
+                    if handoff:
+                        # Named last, once every pass has added its block
+                        # (_finish_glb_handoff, below).
+                        self._mc._write_glb_handoff(edit, handoff)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB handoff skipped: %s", exc)
-                if report is not None:
-                    report["sidecar"] = applied
                 # Sweep images no material samples, BEFORE anything pays to
                 # re-encode them. An embedded-media export carries every wired
                 # file texture, which for a StingrayPBS scene includes

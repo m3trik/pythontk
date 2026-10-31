@@ -72,6 +72,30 @@ class TestPbr(unittest.TestCase):
         self.assertEqual((cut["alphaMode"], cut["alphaCutoff"]), ("MASK", 0.3))
         self.assertEqual(MaterialFamilies.entry("pbr", "a", {})["alphaMode"], "OPAQUE")
 
+    def test_an_opacity_colour_reads_as_its_channels_mean(self):
+        """The one opacity rule, in the model: a colour's channels' mean
+        (the hosts' producers and the record-less FBX read each wrote it, and
+        the Unity importer took the lowest channel). Added: 2026-10-31"""
+        tinted = MaterialFamilies.entry("pbr", "a", {"opacity": (0.25, 0.5, 0.75)})
+        self.assertEqual(round(tinted["baseColorFactor"][3], 6), 0.5)
+        self.assertEqual(tinted["alphaMode"], "BLEND")
+        self.assertEqual(MaterialFamilies.opacity_scalar([1.0, 1.0, 1.0]), 1.0)
+        self.assertEqual(MaterialFamilies.opacity_scalar(0.3), 0.3)
+        self.assertEqual(MaterialFamilies.opacity_scalar(None), 1.0)
+
+    def test_a_transmission_is_said_not_stated(self):
+        """The record has no transmission: a glass reads as its opacity alone,
+        and the entry says so -- once, in the model, for every host.
+        Added: 2026-10-31"""
+        notes = []
+        MaterialFamilies.entry("pbr", "glass", {"transmission": 0.9}, notes=notes)
+        self.assertEqual(
+            notes, [f"Material glass: {MaterialFamilies.TRANSMISSION_NOTE}"]
+        )
+        notes = []
+        MaterialFamilies.entry("pbr", "solid", {"transmission": 0.0}, notes=notes)
+        self.assertEqual(notes, [])
+
     def test_an_opacity_map_apart_from_the_colour_map_is_said(self):
         """REGRESSION (2026-10-24): a separate opacity map was dropped without
         a word, where the Stingray and legacy readers say it -- glTF takes

@@ -493,10 +493,8 @@ class PreviewBridge(HandoffBridge):
             return PreviewBridge.materials_summary(result)
         applied = result.get("sidecar") or {}
         if not applied:
-            # Section-agnostic on purpose: the sections are a registry
-            # (MeshConvert.SIDECAR_APPLIERS), so naming one here would go
-            # stale with every addition -- it already had, when base colour
-            # joined emissive and this line still said "no emissive found".
+            # Section-agnostic on purpose: a build applies no section any
+            # more (the FBX's materials record states every material).
             return (
                 "Scene sidecar: nothing to carry (the scene has nothing the FBX drops)."
             )

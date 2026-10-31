@@ -654,6 +654,12 @@ MOVED_NAMES = {
     ),
     # Where a node-keyed record lists its nodes, declared on the record itself.
     "FbxMedia.NODE_ENTRIES": ("pythontk.RecordSpec.nodes", "0.19.0"),
+    # The scene sidecar's material sections: the FBX's materials record states
+    # every material (removed 2026-10-31).
+    "MeshConvert.apply_scene_sidecar": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    "MeshConvert.SIDECAR_APPLIERS": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    "MeshConvert.embed_scene_sidecar": ("pythontk.MeshConvert.embed_glb_handoff", "0.19.0"),
+    "MeshConvert.sidecar_foreign_packings": ("pythontk.MapFactory.foreign_packings", "0.19.0"),
 }
 
 bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)

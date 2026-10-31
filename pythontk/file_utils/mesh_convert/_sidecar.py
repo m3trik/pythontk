@@ -67,21 +67,6 @@ class _Sidecar:
         HandoffRecord.carrier(carrier)
         return HandoffRecord.rendering_policy(overrides)
 
-    #: Sidecar section -> the writer that applied it to a GLB, in application
-    #: order: the repairs a host read off the live scene (``SceneState``) for
-    #: what the FBX mistranslated. Retired 2026-10-20 with those readers --
-    #: the ``materials`` record the FBX carries states every material, and no
-    #: host reads a section any more. Until the removal it still applies the
-    #: sections of an envelope from a host that predates the record
-    #: (:meth:`apply_scene_sidecar`).
-    _SIDECAR_APPLIERS: Dict[str, str] = {
-        "base_color": "set_glb_base_color",
-        "emissive": "set_glb_emissive",
-        "metallic_roughness": "set_glb_metallic_roughness",
-        "alpha_mode": "set_glb_alpha_mode",
-        "unlit": "set_glb_unlit",
-    }
-
     def build_scene_sidecar(
         self,
         sections: Optional[Dict[str, Any]],
@@ -269,176 +254,6 @@ class _Sidecar:
         held = HandoffRecord.carried(channels)
         return HandoffRecord.block("fbx", channels, source) if held else {}
 
-    @staticmethod
-    def _sidecar_section_scope(present: Set[str], data: Any) -> Optional[int]:
-        """How many of *data*'s entries name a material *present* in the GLB.
-
-        ``None`` when the section is not a map keyed by material name -- the
-        registry is an extension point, so a future section may be keyed on
-        anything, and reporting every entry of one as "not in this export"
-        would be worse than not scoping it at all. The test is an intersection
-        rather than a type check: a material-keyed section on a GLB that
-        carries none of its names is indistinguishable from a section keyed on
-        something else, and both want the same answer -- do not scope this.
-        """
-        if not isinstance(data, dict):
-            return None
-        overlap = len(present.intersection(map(str, data)))
-        return overlap or None
-
-    def _apply_scene_sidecar(
-        self, glb: GlbTarget, sidecar: Optional[Dict[str, Any]], *, finish: bool = True
-    ) -> Dict[str, str]:
-        """Apply a scene-sidecar envelope's sections to a GLB and embed the
-        handoff block its source and lighting make.
-
-        What an envelope from a host that predates the ``materials`` record
-        gets, until its sections retire (:attr:`SIDECAR_APPLIERS`). Every
-        section is dispatched through the applier table against **one** open
-        edit session; the images the writers displaced are swept, and the
-        file states itself as any GLB does -- ``extras.handoff``
-        (:meth:`embed_glb_handoff`), :meth:`read_glb_handoff` the counterpart.
-        The per-section outcome is the return value, not the file's.
-
-        A section absent from the envelope is simply skipped, and a section
-        failure is logged rather than raised: a deliverable missing one
-        section still beats no deliverable. Every failure an applier can
-        actually reach (an unreadable texture, an image no decoder wants) is
-        handled inside it and reported as a skipped image; the per-section
-        catch here is the backstop for anything that is not, and the
-        container-level catch reports *every* offered section as failed
-        rather than letting sections that "applied" claim a success that
-        never reached disk.
-
-        Parameters:
-            glb: Path to a binary glTF (.glb), modified in place, or an open
-                :class:`GlbEdit` session whose owner will write it.
-            sidecar: The envelope (:meth:`build_scene_sidecar`). ``None`` (or
-                anything falsy) is a true no-op; an envelope with empty
-                *sections* still embeds (sidecar was on, the scene had nothing
-                to carry) — the distinction is a real envelope vs no envelope.
-            finish: Name the file's blocks in the handoff now
-                (:meth:`embed_glb_handoff`); ``False`` inside a build that
-                still adds blocks and finishes it last (:meth:`fbx_to_glb`).
-
-        Returns:
-            ``{section: outcome}`` — ``"N of M"`` (with a
-            ``" (K not in this export)"`` clause when the envelope names
-            materials this GLB does not carry), ``"0 of M matched"`` or
-            ``"failed (...)"`` per offered section; empty when none offered.
-        """
-        if not sidecar:
-            return {}
-        sections = sidecar.get("sections") or {}
-        try:
-            with self._mc.open_glb(glb) as edit:
-                summary = self._apply_sidecar_sections(edit, sections)
-                # What the writers unbound (the converter's ORM, displaced by
-                # the repack) must not ship -- nor be decoded by the check.
-                self._mc.prune_glb_unreferenced_textures(edit)
-                self._warn_destructive_orms(
-                    edit, described=sections.get("metallic_roughness") or ()
-                )
-                write = (
-                    self._mc.embed_glb_handoff
-                    if finish
-                    else self._mc._write_glb_handoff
-                )
-                write(edit, self._handoff_of(sidecar))
-        except (OSError, ValueError) as error:
-            logger.warning("Sidecar not applied to %s: %s", glb, error)
-            return {
-                section: f"failed ({error})"
-                for section in self._SIDECAR_APPLIERS
-                if sections.get(section)
-            }
-        return summary
-
-    def _apply_sidecar_sections(
-        self, edit: "GlbEdit", sections: Mapping[str, Any]
-    ) -> Dict[str, str]:
-        """Each section through its :attr:`SIDECAR_APPLIERS` writer, against
-        *edit*; ``{section: outcome}`` as :meth:`_apply_scene_sidecar` reports."""
-        summary: Dict[str, str] = {}
-        present = {
-            str(m.get("name"))
-            for m in (edit.gltf.get("materials") or [])
-            if m.get("name")
-        }
-        for section, method in self._SIDECAR_APPLIERS.items():
-            data = sections.get(section)
-            if not data:
-                continue
-            # The writer on the class read through first, as every caller
-            # reaches it, else this part's own (the same lookup as
-            # ``_FbxMaterials._read_fbx_material``'s rows).
-            apply = getattr(self._mc, method, None) or getattr(self, method)
-            try:
-                applied = apply(edit, data)
-            except (OSError, ValueError) as error:
-                logger.warning("Sidecar %r not applied: %s", section, error)
-                summary[section] = f"failed ({error})"
-                continue
-            # Counted by NAME, not by record: a by-name writer lands on every
-            # material carrying the name (fade clones, the converter's own
-            # duplicates), and each landing is a record. The outcome the panel
-            # reads is "how many of the scene's materials were repaired", which
-            # is names. A record without a name -- or not a record at all, from
-            # a writer that reports differently -- counts as one.
-            landed = {
-                record.get("material", index) if isinstance(record, dict) else index
-                for index, record in enumerate(applied)
-            }
-            summary[section] = self._sidecar_outcome(section, data, present, landed)
-        return summary
-
-    def _sidecar_outcome(
-        self,
-        section: str,
-        data: Any,
-        present: Set[str],
-        landed: Iterable[Any],
-    ) -> str:
-        """One section's outcome line: ``"N of M"`` (with a ``" (K not in this
-        export)"`` clause), or ``"0 of M matched"`` -- logged as it reads.
-
-        The envelope describes the SCENE and the GLB carries the exported
-        subset, so entries naming a material that is not in this file were
-        never in scope. Counting them made a correct deliverable read "10 of
-        23" on a production assembly -- 13 reference/ID materials that never
-        exported, reported as if 13 repairs had failed. The same distinction
-        ``apply_glb_lightmaps`` draws with ``out_of_scope``; a section that
-        is not keyed by material name reports its plain count.
-        """
-        landed = len(set(landed))
-        in_scope = self._mc._sidecar_section_scope(present, data)
-        if in_scope is not None and landed > in_scope:
-            # More landed than the exact-name scope allows, so the applier does
-            # not match on the name alone (a namespace-tolerant resolver would
-            # do this): "12 of 10" is worse than the plain count.
-            in_scope = None
-        out_of_scope = len(data) - in_scope if in_scope is not None else 0
-        scope = f" ({out_of_scope} not in this export)" if out_of_scope else ""
-        if not landed and (in_scope is None or in_scope):
-            # Read but nothing landed -- almost always a name mismatch, which
-            # the applier has just logged in full. Only a miss when something
-            # WAS in scope to match.
-            logger.warning(
-                "Sidecar %r matched none of its %s entr(ies) in the GLB.",
-                section,
-                len(data),
-            )
-            return f"0 of {len(data)} matched"
-        denominator = len(data) if in_scope is None else in_scope
-        logger.info(
-            "Sidecar %r applied to %s of %s in this export%s.",
-            section,
-            landed,
-            denominator,
-            f"; {out_of_scope} scene material(s) not in it" if scope else "",
-        )
-        return f"{landed} of {denominator}{scope}"
-
     def embed_glb_handoff(self, edit: "GlbEdit", handoff: Mapping[str, Any]) -> None:
         self._mc._write_glb_handoff(edit, handoff)
         self._mc._finish_glb_handoff(edit)
@@ -516,17 +331,6 @@ class _Sidecar:
         )
         edit.dirty = True
         return True
-
-    def embed_scene_sidecar(
-        self,
-        edit: "GlbEdit",
-        sidecar: Dict[str, Any],
-        summary: Mapping[str, str],
-        *,
-        described: Iterable[str] = (),
-    ) -> None:
-        self._warn_destructive_orms(edit, described=described)
-        self._mc.embed_glb_handoff(edit, self._handoff_of(sidecar))
 
     def _warn_destructive_orms(
         self, edit: "GlbEdit", described: Iterable[str] = ()
@@ -615,25 +419,6 @@ class _Sidecar:
         asset["generator"] = f"{prior}{self._GENERATOR_SEP}{ours}" if prior else ours
         edit.dirty = True
         return asset["generator"]
-
-    def sidecar_foreign_packings(
-        self,
-        sidecar: Optional[Dict[str, Any]],
-        target: str = "ORM",
-        workflow: Optional[str] = None,
-    ) -> Dict[str, str]:
-        from pythontk.core_utils.engines.textures.map_factory import MapFactory
-
-        paths: List[str] = []
-        for entry in ((sidecar or {}).get("sections") or {}).values():
-            if not isinstance(entry, dict):
-                continue
-            for spec in entry.values():
-                if isinstance(spec, str):
-                    paths.append(spec)
-                elif isinstance(spec, dict):
-                    paths.extend(v for v in spec.values() if isinstance(v, str))
-        return MapFactory.foreign_packings(paths, target=target, workflow=workflow)
 
     def read_glb_handoff(self, glb: GlbTarget) -> Optional[Dict[str, Any]]:
         with self._mc.open_glb(glb) as edit:

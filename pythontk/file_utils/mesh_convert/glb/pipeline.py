@@ -101,8 +101,9 @@ class GlbPipeline(LoggingMixin):
     ) -> Dict[str, Any]:
         """The scene-sidecar envelope a build applies, from a host's reader.
 
-        *read_sections* is the DCC's scene-state read (``SceneState.read``,
-        bound to the export set) -- passed as a callable so its failure is
+        *read_sections* is a host's read of the sections it sends (no current
+        host sends any: the FBX's ``materials`` record states every material,
+        and a build reads no section) -- passed as a callable so its failure is
         handled HERE, the same way for every producer: a read that raises is
         logged and yields an envelope with no sections. Requested-but-empty
         stays distinguishable from switched-off (the caller attaches nothing

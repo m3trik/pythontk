@@ -432,11 +432,10 @@ class MeshConvert(HelpMixin):
                            place of the one the FBX's own ``handoff`` record
                            implies; ``None`` -- every export -- reads it off
                            the file, so the GLB says what its FBX says, and a
-                           file with no record gets none. An envelope a host
-                           built before the materials record
-                           (:meth:`build_scene_sidecar`) is still taken: its
-                           sections repair a file that carries no record, until
-                           they retire.
+                           file with no record gets none. An envelope
+                           (:meth:`build_scene_sidecar`) gives its handoff;
+                           its sections are no longer read -- the FBX's
+                           ``materials`` record states every material.
             rendering:     The export's choices over the lighting recipe
                            (:meth:`rendering_policy`), laid over what the FBX's
                            handoff states -- a preview's own GLB rows.
@@ -890,12 +889,6 @@ class MeshConvert(HelpMixin):
         remove_in=_REMOVE_IN,
         since=_SINCE,
     )
-    SIDECAR_APPLIERS = Deprecation.class_attribute(
-        _Sidecar._SIDECAR_APPLIERS,
-        "the FBX's materials record (MeshConvert.apply_glb_materials)",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
     #: The per-section outcome a GLB carried beside the envelope -- the
     #: build's own report, not the file's.
     SIDECAR_APPLIED_KEY = Deprecation.class_attribute(
@@ -1047,25 +1040,6 @@ class MeshConvert(HelpMixin):
         return cls._sidecar.build_fbx_handoff(channels, source)
 
     @classmethod
-    @Deprecation.symbol(
-        "MeshConvert.apply_glb_materials -- the FBX's materials record states "
-        "every material, so an envelope repairs none (a GLB's statement of "
-        "itself: MeshConvert.embed_glb_handoff)",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    def apply_scene_sidecar(
-        cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]]
-    ) -> Dict[str, str]:
-        """Apply a scene-sidecar envelope's sections to a GLB and embed it.
-
-        Retired with the hosts' section readers: what the sections repaired,
-        the ``materials`` record states. It still applies an envelope's
-        sections, as it did, until the removal (:meth:`_apply_scene_sidecar`).
-        """
-        return cls._apply_scene_sidecar(glb, sidecar)
-
-    @classmethod
     def embed_glb_handoff(cls, edit: "GlbEdit", handoff: Mapping[str, Any]) -> None:
         """Write *handoff* (``HandoffRecord.block("glb", ...)``) as the open GLB's
         ``extras.handoff``, name the root-``extras`` blocks the file carries
@@ -1077,78 +1051,6 @@ class MeshConvert(HelpMixin):
             handoff: The block. A copy is written: the caller's stays theirs.
         """
         return cls._sidecar.embed_glb_handoff(edit, handoff)
-
-    @classmethod
-    @Deprecation.symbol(
-        "MeshConvert.embed_glb_handoff -- a GLB carries extras.handoff",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    def embed_scene_sidecar(
-        cls,
-        edit: "GlbEdit",
-        sidecar: Dict[str, Any],
-        summary: Mapping[str, str],
-        *,
-        described: Iterable[str] = (),
-    ) -> None:
-        """Embed *sidecar* as the GLB's handoff block (:meth:`embed_glb_handoff`):
-        an envelope from a host that predates the block, as the block its
-        source and lighting make. *summary* is the build's report, no longer
-        the file's."""
-        return cls._sidecar.embed_scene_sidecar(
-            edit, sidecar, summary, described=described
-        )
-
-    @classmethod
-    @Deprecation.symbol(
-        "MapFactory.foreign_packings over the materials record's maps "
-        "(MaterialFamilies.texture_files)",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    def sidecar_foreign_packings(
-        cls,
-        sidecar: Optional[Dict[str, Any]],
-        target: str = "ORM",
-        workflow: Optional[str] = None,
-    ) -> Dict[str, str]:
-        """``{path: map type}`` for envelope textures authored for another engine.
-
-        Retired with the hosts' section readers: an exporter's check now asks
-        :meth:`MapFactory.foreign_packings` of the maps its materials record
-        names, so no envelope is read for it.
-
-        The pre-flight half of the compatibility story: given a built scene
-        sidecar, which of the maps it is about to carry into a glTF deliverable
-        are packed for a *different* engine family? Answers before any
-        conversion runs, so an exporter can gate on it (see mayatk's /
-        blendertk's ``check_material_compatibility``) rather than discovering it
-        in the log afterwards.
-
-        Lives here because :meth:`build_scene_sidecar` owns the envelope schema
-        and mayatk/blendertk cannot import each other -- written per DCC, the
-        walk over ``sections`` would drift the moment a section was added. The
-        *judgement* is not duplicated either: it delegates to
-        :meth:`MapFactory.foreign_packings`, the single predicate.
-
-        Every string value in every section is offered, so a section added
-        later is covered without editing this. That is safe because the
-        predicate only reports paths it can resolve to a declared map type.
-
-        Parameters:
-            sidecar: A :meth:`build_scene_sidecar` envelope, or ``None``.
-            target: The map type the deliverable wants (``"ORM"`` for glTF).
-            workflow: A registry workflow name instead of a map-type *target* --
-                the form an exporter's texture-template selection arrives in.
-                Takes precedence over *target*; see
-                :meth:`MapFactory.foreign_packings` for the two judgements.
-
-        Returns:
-            ``{path: map type}``; empty for ``None``, an empty envelope, or a
-            source set that is already appropriate.
-        """
-        return cls._sidecar.sidecar_foreign_packings(sidecar, target, workflow)
 
     @classmethod
     def read_glb_handoff(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
@@ -1254,14 +1156,6 @@ class MeshConvert(HelpMixin):
     @classmethod
     def _lift_scene_blocks(cls, gltf: dict) -> bool:
         return cls._sidecar._lift_scene_blocks(gltf)
-
-    _sidecar_section_scope = staticmethod(_Sidecar._sidecar_section_scope)
-
-    @classmethod
-    def _apply_scene_sidecar(
-        cls, glb: GlbTarget, sidecar: Optional[Dict[str, Any]], *, finish: bool = True
-    ) -> Dict[str, str]:
-        return cls._sidecar._apply_scene_sidecar(glb, sidecar, finish=finish)
 
     @classmethod
     def _write_glb_handoff(cls, edit: "GlbEdit", handoff: Mapping[str, Any]) -> None:
@@ -2543,9 +2437,8 @@ class MeshConvert(HelpMixin):
         cutout material (``MASK``: alpha test, depth writes, the opaque queue)
         cannot be expressed by the FBX at all, and a solid body wearing a
         blended material sorts its own back faces through its front in every
-        WebXR viewer. The DCC knows which it authored (Maya's
-        ``SceneState._read_alpha_mode`` reads the StingrayPBS graph) and says
-        so through this section.
+        WebXR viewer. The DCC knows which it authored (its ``materials``
+        record states the alpha mode the graph authors).
 
         Parameters:
             glb: Path to a binary glTF (.glb), modified in place, or an open
@@ -2573,8 +2466,8 @@ class MeshConvert(HelpMixin):
         surface takes the viewer's environment specular, and a shadow plane
         measured BRIGHTER than the floor it lies on (2026-10-15, WebXR: 24.4
         -> 28.3 mean luminance, off -> on). Unlit, its base colour and alpha
-        are what shows. The DCC says which materials it authored unlit
-        (mayatk ``SceneState._read_unlit``) through this section.
+        are what shows. The DCC says which materials it authored unlit (its
+        ``materials`` record's ``unlit``).
 
         Metallic 0 / roughness 1 ride along for a viewer without the
         extension, which then falls back to lit PBR at its most diffuse.

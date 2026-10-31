@@ -3695,12 +3695,13 @@ class TestGlbHandoff(unittest.TestCase):
 
 
 class TestSceneSidecar(unittest.TestCase):
-    """The retired scene-sidecar envelope (2026-10-20; removed in 0.18.0).
+    """The retired scene-sidecar envelope (2026-10-20).
 
-    What a host that predates the ``materials`` record still sends: its
-    sections are applied as they were, and the file carries the handoff its
-    source and lighting make (``extras.handoff``) -- never the envelope, nor
-    the per-section outcome, which is the build's report.
+    What a host that predates the ``materials`` record still sends: the file
+    carries the handoff its source and lighting make (``extras.handoff``),
+    never the envelope; its sections are read no more (their appliers were
+    removed 2026-10-31 -- the FBX's ``materials`` record states every
+    material).
     """
 
     def setUp(self):
@@ -3734,11 +3735,6 @@ class TestSceneSidecar(unittest.TestCase):
                 asset="scene.fbx",
             )
 
-    def _apply(self, glb, envelope):
-        """The retired applier, which still applies an envelope's sections."""
-        with self.assertWarns(DeprecationWarning):
-            return MeshConvert.apply_scene_sidecar(glb, envelope)
-
     def _assert_embeds(self, glb, envelope):
         """The GLB carries the envelope's handoff and nothing else of it --
         named against the file's blocks (none here) as every handoff is.
@@ -3761,23 +3757,6 @@ class TestSceneSidecar(unittest.TestCase):
             "the caller's envelope was mutated",
         )
         return extras[HandoffRecord.KEY]
-
-    def test_apply_scene_sidecar_prunes_what_its_appliers_displace(self):
-        """The applier tail sweeps the images the section writers unbound:
-        the converter's ORM, displaced by the repack, must not ship as dead
-        payload."""
-        from PIL import Image
-
-        rough = os.path.join(self.tmp, "rough.png")
-        Image.new("L", (4, 4), 128).save(rough)
-        path, geometry = _converted_orm_glb(self.tmp)
-        envelope = self._envelope(
-            {"metallic_roughness": {"Room": {"roughness": rough}}}
-        )
-        self.assertEqual(
-            self._apply(path, envelope), {"metallic_roughness": "1 of 1"}
-        )
-        _assert_no_dead_payload(self, path, geometry)
 
     def test_build_scene_sidecar_wraps_the_glb_handoff(self):
         """What a host that predates the materials record builds: its
@@ -3809,182 +3788,20 @@ class TestSceneSidecar(unittest.TestCase):
         self.assertIsNone(MeshConvert.read_glb_handoff(glb))
 
         current = self._write_glb("current.glb", materials=[{"name": "m"}])
-        self._apply(current, self._envelope({}))
+        with MeshConvert.open_glb(current) as edit:
+            MeshConvert.embed_glb_handoff(
+                edit, HandoffRecord.block("glb", None, self._envelope({})["source"])
+            )
         with self.assertWarns(DeprecationWarning):
             self.assertEqual(
                 MeshConvert.read_scene_sidecar(current),
                 MeshConvert.read_glb_handoff(current),
             )
 
-    def test_every_material_carrying_a_name_is_repaired_not_just_the_last(self):
-        """glTF names are not unique, and this pipeline relies on that: the
-        fade pass clones a material per faded subtree and keeps its name, and
-        FBX2glTF itself emits duplicates. The matcher held a ``{name: material}``
-        dict, so a repair landed on whichever copy came LAST -- measured on a
-        production assembly as the one-primitive fade clone of a screen
-        material, while the eleven-primitive original kept the converter's
-        white metallic-roughness packing.
-
-        The summary still counts NAMES: three copies of one material repaired
-        is "1 of 1", not "3 of 1".
-        """
-        glb = self._write_glb(
-            materials=[{"name": "m"}, {"name": "m"}, {"name": "other"}, {"name": "m"}]
-        )
-        envelope = self._envelope({"alpha_mode": {"m": {"mode": "MASK"}}})
-
-        summary = self._apply(glb, envelope)
-
-        self.assertEqual(summary, {"alpha_mode": "1 of 1"})
-        modes = [
-            m.get("alphaMode") for m in MeshConvert._read_glb(glb).gltf["materials"]
-        ]
-        self.assertEqual(modes, ["MASK", "MASK", None, "MASK"])
-
-    def test_apply_survives_a_malformed_section(self):
-        """A null section is skipped by the dispatch, never the thing that
-        raises: the container catch handles OSError/ValueError only, so a
-        TypeError would abort an apply that was otherwise entirely fine."""
-        glb = self._write_glb(materials=[{"name": "m"}])
-        envelope = self._envelope(
-            {"emissive": None, "base_color": {"m": {"color": [0, 1, 0]}}}
-        )
-        self.assertEqual(self._apply(glb, envelope), {"base_color": "1 of 1"})
-        self._assert_embeds(glb, envelope)
-
-    def test_the_summary_denominator_counts_only_materials_this_glb_HAS(self):
-        """A scene-wide envelope measured against an exported subset.
-
-        ``SceneState.read`` describes the SCENE, so its sections name every
-        material the scene holds -- reference materials, ID materials, anything
-        on geometry that did not export. Counting those as the denominator made
-        a correct deliverable report ``base_color: 10 of 23`` on a production
-        assembly: 13 of the 23 named materials were not in the GLB at all, and
-        an artist reading that sees 13 failed repairs. Same distinction the
-        lightmap pass already draws with ``out_of_scope``.
-        """
-        glb = self._write_glb(materials=[{"name": "here"}])
-        envelope = self._envelope(
-            {
-                "base_color": {
-                    "here": {"color": [0, 1, 0]},
-                    "REF_elsewhere": {"color": [1, 0, 0]},
-                    "standardSurface1": {"color": [0, 0, 1]},
-                }
-            }
-        )
-        summary = self._apply(glb, envelope)
-        self.assertEqual(
-            summary,
-            {"base_color": "1 of 1 (2 not in this export)"},
-            "the count must separate what MISSED from what was never here",
-        )
-
-    def test_a_genuine_miss_is_still_counted_as_a_miss(self):
-        """The scope clause must not become a way to hide real failures: a
-        material the GLB HAS and the applier did not write is a defect."""
-        glb = self._write_glb(materials=[{"name": "here"}, {"name": "also_here"}])
-        envelope = self._envelope({"alpha_mode": {"here": "OPAQUE"}})
-        with unittest.mock.patch.object(
-            MeshConvert, "set_glb_alpha_mode", return_value=[]
-        ):
-            summary = self._apply(glb, envelope)
-        self.assertEqual(summary, {"alpha_mode": "0 of 1 matched"})
-
-    def test_a_section_matching_NOTHING_stays_loud_rather_than_claiming_scope(self):
-        """Zero overlap is the one case scope cannot explain away.
-
-        "every name is out of scope" and "every name is misspelled" are the
-        same observation from inside the file, and one of them is a defect. The
-        applier's own warning names the entries AND lists the GLB's materials,
-        which is what a reader needs to tell them apart -- so this keeps the
-        miss wording and does not offer an excuse it cannot justify.
-        """
-        glb = self._write_glb(materials=[{"name": "here"}])
-        envelope = self._envelope(
-            {"base_color": {"REF_elsewhere": {"color": [1, 0, 0]}}}
-        )
-        summary = self._apply(glb, envelope)
-        self.assertEqual(summary, {"base_color": "0 of 1 matched"})
-
-    def test_an_applier_that_matches_MORE_than_the_names_falls_back(self):
-        """The scope model assumes exact-name matching, which every shipped
-        applier does. One that resolved namespace-tolerantly would land more
-        than the intersection allows, and the count would read "2 of 1" -- a
-        number that cannot be true. Fall back to the plain count instead."""
-        glb = self._write_glb(materials=[{"name": "here"}, {"name": "NS:here"}])
-        envelope = self._envelope(
-            {"base_color": {"here": {"color": [0, 1, 0]}, "gone": {"color": [1, 0, 0]}}}
-        )
-        with unittest.mock.patch.object(
-            MeshConvert, "set_glb_base_color", return_value=["here", "NS:here"]
-        ):
-            summary = self._apply(glb, envelope)
-        self.assertEqual(summary, {"base_color": "2 of 2"})
-
-    def test_a_section_not_keyed_by_material_keeps_the_plain_count(self):
-        """The scope test is an INTERSECTION with the file's material names, so
-        a future section keyed on anything else must fall back rather than
-        report every entry as out of scope."""
-        self.assertIsNone(
-            MeshConvert._sidecar_section_scope({"here"}, ["not", "a", "map"])
-        )
-        self.assertIsNone(MeshConvert._sidecar_section_scope({"here"}, {"nope": 1}))
-        self.assertEqual(
-            MeshConvert._sidecar_section_scope({"here"}, {"here": 1, "gone": 2}), 1
-        )
-
-    def test_apply_dispatches_sections_and_embeds_the_handoff(self):
-        """Apply + embed happen in one session: the sections land in the
-        materials, the envelope's handoff in the root extras."""
-        glb = self._write_glb(materials=[{"name": "m"}])
-        envelope = self._envelope({"emissive": {"m": {"color": [1, 0, 0]}}})
-        summary = self._apply(glb, envelope)
-        self.assertEqual(summary, {"emissive": "1 of 1"})
-
-        with MeshConvert.open_glb(glb) as edit:
-            self.assertEqual(
-                edit.gltf["materials"][0]["emissiveFactor"], [1.0, 0.0, 0.0]
-            )
-        self._assert_embeds(glb, envelope)
-
-    def test_apply_composes_with_an_open_session(self):
-        """Session form: the owner writes once; apply must not write for itself."""
-        glb = self._write_glb(materials=[{"name": "m"}])
-        envelope = self._envelope({"base_color": {"m": {"color": [0, 0.5, 0]}}})
-        with MeshConvert.open_glb(glb) as edit:
-            summary = self._apply(edit, envelope)
-        self.assertEqual(summary, {"base_color": "1 of 1"})
-        with MeshConvert.open_glb(glb) as edit:
-            self.assertEqual(
-                edit.gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"],
-                [0.0, 0.5, 0.0, 1.0],
-            )
-
-    def test_apply_none_is_a_true_noop(self):
-        glb = self._write_glb(materials=[{"name": "m"}])
-        before = open(glb, "rb").read()
-        self.assertEqual(self._apply(glb, None), {})
-        self.assertEqual(open(glb, "rb").read(), before)
-        self.assertIsNone(MeshConvert.read_glb_handoff(glb))
-
-    def test_apply_empty_sections_still_embeds(self):
-        """An envelope with nothing to repair still carries its handoff."""
-        glb = self._write_glb(materials=[{"name": "m"}])
-        envelope = self._envelope({})
-        self.assertEqual(self._apply(glb, envelope), {})
-        self._assert_embeds(glb, envelope)
-
-    def test_unknown_sections_are_skipped_never_fatal(self):
-        """Forward compatibility: a reader skips sections it does not know."""
-        glb = self._write_glb(materials=[{"name": "m"}])
-        envelope = self._envelope({"lights": {"key": {"intensity": 5}}})
-        self.assertEqual(self._apply(glb, envelope), {})
-        self._assert_embeds(glb, envelope)
-
-    def test_fbx_to_glb_sidecar_param_applies_in_the_conversion_pass(self):
+    def test_an_envelopes_sections_are_read_no_more(self):
         """An older host's envelope, on a file carrying no materials record:
-        its sections still repair the conversion, said as retired."""
+        its handoff is embedded and its sections repair nothing -- their
+        appliers were removed 2026-10-31. Added: 2026-10-31"""
         src = os.path.join(self.tmp, "model.fbx")
         with open(src, "wb") as fh:
             fh.write(b"fake-fbx")
@@ -4010,18 +3827,15 @@ class TestSceneSidecar(unittest.TestCase):
         with (
             patch("shutil.which", return_value=os.path.join(self.tmp, "bin")),
             patch("subprocess.run", side_effect=fake_run),
-            self.assertWarns(DeprecationWarning),
         ):
             out = MeshConvert.fbx_to_glb(
                 src, dst, overwrite=True, sidecar=envelope, report=report
             )
 
         self._assert_embeds(out, envelope)
-        self.assertEqual(report["sidecar"], {"emissive": "1 of 1"})
+        self.assertNotIn("sidecar", report, "no section applied, none reported")
         with MeshConvert.open_glb(out) as edit:
-            self.assertEqual(
-                edit.gltf["materials"][0]["emissiveFactor"], [0.0, 1.0, 0.0]
-            )
+            self.assertNotIn("emissiveFactor", edit.gltf["materials"][0])
 
     def test_a_file_that_states_its_materials_takes_only_the_envelopes_handoff(self):
         """The ``materials`` record states every material, so an envelope's
@@ -4050,7 +3864,7 @@ class TestSceneSidecar(unittest.TestCase):
         report = {}
         out = _convert_prebuilt(self.tmp, converted, sidecar=envelope, report=report)
         self._assert_embeds(out, envelope)
-        self.assertEqual(report["sidecar"], {})
+        self.assertNotIn("sidecar", report)
         with MeshConvert.open_glb(out) as edit:
             self.assertNotIn("emissiveFactor", edit.gltf["materials"][0])
             self.assertEqual(edit.gltf.get("nodes") or [], [])
@@ -4877,14 +4691,13 @@ class TestSuspectOrmMaterials(unittest.TestCase):
             MeshConvert.GLTF_ORM_CHANNELS[MeshConvert._ORM_HARMFUL_CHANNEL], "Metallic"
         )
 
-    def test_apply_scene_sidecar_reports_what_its_sections_left_behind(self):
+    def test_the_build_warns_of_what_its_repairs_left_behind(self):
         """The warning has to fire where the deliverable is actually built.
 
-        A producer whose sidecar covers only some materials is the measured
-        production case -- the covered room looks right, the omitted material
-        ships black -- so the check runs inside the apply pass, against the
-        section's own name set. (The retired envelope's path; the materials
-        record's exempts what it packed the same way.)
+        A repair that covers only some materials is the measured production
+        case -- the covered room looks right, the omitted material ships
+        black -- so the build's check is told the names it repaired (the
+        materials record's packed ORMs, ``fbx_to_glb``) and names the rest.
         """
         path = self._glb(
             materials=[
@@ -4893,18 +4706,11 @@ class TestSuspectOrmMaterials(unittest.TestCase):
             ],
             blobs=[self._png((255, 255, 255))],
         )
-        with self.assertWarns(DeprecationWarning):
-            envelope = MeshConvert.build_scene_sidecar(
-                {"metallic_roughness": {"repaired": {"metallic": "m.png"}}},
-                source={"application": "test", "version": "0"},
-                asset="scene.fbx",
-            )
-
         with (
             self.assertLogs("pythontk.file_utils.mesh_convert", level="WARNING") as caught,
-            self.assertWarns(DeprecationWarning),
+            MeshConvert.open_glb(path) as edit,
         ):
-            MeshConvert.apply_scene_sidecar(path, envelope)
+            MeshConvert._sidecar._warn_destructive_orms(edit, described=["repaired"])
 
         flagged = [m for m in caught.output if "Metallic=1 everywhere" in m]
         self.assertEqual(len(flagged), 1)
@@ -4924,21 +4730,14 @@ class TestSuspectOrmMaterials(unittest.TestCase):
             materials=[self._orm_material("undescribed", 0)],
             blobs=[self._png((40, 190, 90))],
         )
-        with self.assertWarns(DeprecationWarning):
-            envelope = MeshConvert.build_scene_sidecar(
-                {"emissive": {"other": {"color": [0, 1, 0]}}},
-                source={"application": "test", "version": "0"},
-                asset="scene.fbx",
-            )
-
         with (
             self.assertLogs("pythontk.file_utils.mesh_convert", level="WARNING") as caught,
-            self.assertWarns(DeprecationWarning),
+            MeshConvert.open_glb(path) as edit,
         ):
             logging.getLogger("pythontk.file_utils.mesh_convert").warning(
                 "sentinel so assertLogs always has a record"
             )
-            MeshConvert.apply_scene_sidecar(path, envelope)
+            MeshConvert._sidecar._warn_destructive_orms(edit, described=["other"])
 
         self.assertEqual(
             [m for m in caught.output if "Metallic=1" in m or "unvalidated" in m], []
@@ -8126,12 +7925,6 @@ class TestSetGlbAlphaMode(unittest.TestCase):
         self.assertEqual(mat["alphaMode"], "BLEND")
         self.assertNotIn("alphaCutoff", mat)
 
-    def test_registered_as_a_sidecar_section(self):
-        with self.assertWarns(DeprecationWarning):
-            appliers = MeshConvert.SIDECAR_APPLIERS
-        self.assertEqual(appliers.get("alpha_mode"), "set_glb_alpha_mode")
-
-
 class TestSetGlbUnlit(unittest.TestCase):
     """The sidecar's unlit section: KHR_materials_unlit by material name.
 
@@ -8172,12 +7965,6 @@ class TestSetGlbUnlit(unittest.TestCase):
         path = self._glb("plain.glb", [{"name": "Floor"}])
         self.assertEqual(MeshConvert.set_glb_unlit(path, {"Missing": {}}), [])
         self.assertNotIn("extensionsUsed", self._gltf(path))
-
-    def test_registered_as_a_sidecar_section(self):
-        with self.assertWarns(DeprecationWarning):
-            appliers = MeshConvert.SIDECAR_APPLIERS
-        self.assertEqual(appliers.get("unlit"), "set_glb_unlit")
-
 
 class TestSetGlbBaseColorAlpha(unittest.TestCase):
     """The base-colour section's ``alpha``: the material's own opacity factor.
@@ -9680,10 +9467,10 @@ class TestFbxToGlbReport(unittest.TestCase):
             ],
         }
 
-    def test_the_sidecar_outcome_is_the_builds_report_not_the_files(self):
-        """An older host's envelope on a file with no materials record: what
-        its sections did is reported to the caller, and the file carries the
-        handoff alone -- the outcome described the build, not the asset."""
+    def test_an_envelope_gives_the_file_its_handoff_alone(self):
+        """An older host's envelope on a file with no materials record: the
+        file carries the handoff alone, named against the blocks the build
+        added, and no section is applied or reported (removed 2026-10-31)."""
         with self.assertWarns(DeprecationWarning):
             envelope = MeshConvert.build_scene_sidecar(
                 {"emissive": {"roomMat": {"color": [1, 0, 0]}}},
@@ -9691,9 +9478,8 @@ class TestFbxToGlbReport(unittest.TestCase):
                 asset="in.fbx",
             )
         report = {}
-        with self.assertWarns(DeprecationWarning):
-            out = self._convert(self._lit_glb({}), sidecar=envelope, report=report)
-        self.assertEqual(report["sidecar"], {"emissive": "1 of 1"})
+        out = self._convert(self._lit_glb({}), sidecar=envelope, report=report)
+        self.assertNotIn("sidecar", report)
         extras = MeshConvert._read_glb(out).gltf["extras"]
         self.assertNotIn("scene_sidecar_applied", extras)
         self.assertNotIn("scene_sidecar", extras)
@@ -9779,9 +9565,9 @@ class TestFbxToGlbReport(unittest.TestCase):
     def test_images_no_material_samples_are_swept_inside_the_chain(self):
         """Maya's IBL maps (`diffuse_cube` / `specular_cube` / `ibl_brdf_lut`)
         ride every embedded-media export and FBX2glTF re-embeds them; glTF has
-        no slot for them. `apply_scene_sidecar` swept them at its tail, so a
-        conversion offered NO envelope shipped the dead payload and paid the
-        texture pass to compress it. The sweep is the chain's own now."""
+        no slot for them. The retired sidecar applier swept them at its tail,
+        so a conversion offered NO envelope shipped the dead payload and paid
+        the texture pass to compress it. The sweep is the chain's own now."""
         pixel = "data:image/png;base64,iVBORw0KGgo="
         images = [{"name": "Albedo", "uri": pixel}] + [
             {"name": name, "uri": pixel}
